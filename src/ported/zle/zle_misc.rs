@@ -129,9 +129,9 @@ impl Zle {
     /// Self insert - insert the typed character
     /// Port of selfinsert(UNUSED(char **args)) from zle_misc.c
     pub fn self_insert(&mut self, c: char) {                                 // c:113
-        self.zleline.insert(self.zlecs, c);
-        self.zlecs += 1;
-        self.zlell += 1;
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), c);
+        crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
@@ -149,21 +149,21 @@ impl Zle {
     /// Accept line - return the current line for execution
     /// Port of acceptline(UNUSED(char **args)) from zle_misc.c
     pub fn accept_line(&self) -> String {                                    // c:401
-        self.zleline.iter().collect()
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect()
     }
 
     /// Accept and hold - accept line but keep it in the buffer
     /// Port of acceptandhold(UNUSED(char **args)) from zle_misc.c
     pub fn accept_and_hold(&self) -> String {
-        self.zleline.iter().collect()
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect()
     }
 
     /// Quoted insert - insert next char literally
     /// Port of quotedinsert(char **args) from zle_misc.c
     pub fn quotedinsert(&mut self, c: char) {
-        self.zleline.insert(self.zlecs, c);
-        self.zlecs += 1;
-        self.zlell += 1;
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), c);
+        crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
@@ -172,9 +172,9 @@ impl Zle {
     pub fn bracketedpaste(&mut self, text: &str) {
         for c in text.chars() {
             if c != '\x1b' {
-                self.zleline.insert(self.zlecs, c);
-                self.zlecs += 1;
-                self.zlell += 1;
+                crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), c);
+                crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
         }
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -183,9 +183,9 @@ impl Zle {
     /// Delete char under cursor
     /// Port of deletechar(char **args) from zle_misc.c
     pub fn deletechar(&mut self) {                                          // c:157
-        if self.zlecs < self.zlell {
-            self.zleline.remove(self.zlecs);
-            self.zlell -= 1;
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+            crate::ported::zle::zle_main::ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
@@ -193,10 +193,10 @@ impl Zle {
     /// Delete char before cursor
     /// Port of backwarddeletechar(char **args) from zle_misc.c
     pub fn backwarddeletechar(&mut self) {
-        if self.zlecs > 0 {
-            self.zlecs -= 1;
-            self.zleline.remove(self.zlecs);
-            self.zlell -= 1;
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+            crate::ported::zle::zle_main::ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
@@ -204,13 +204,13 @@ impl Zle {
     /// Kill from cursor to end of line
     /// Port of killline(char **args) from zle_misc.c
     pub fn killline(&mut self) {                                            // c:419
-        if self.zlecs < self.zlell {
-            let text: Vec<char> = self.zleline.drain(self.zlecs..).collect();
-            self.killring.push_front(text);
-            if self.killring.len() > self.killringmax {
-                self.killring.pop_back();
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+            let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..).collect();
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+            if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+                crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
             }
-            self.zlell = self.zlecs;
+            crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
             crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
@@ -218,14 +218,14 @@ impl Zle {
     /// Kill from beginning of line to cursor
     /// Port of backwardkillline(char **args) from zle_misc.c
     pub fn backwardkillline(&mut self) {
-        if self.zlecs > 0 {
-            let text: Vec<char> = self.zleline.drain(..self.zlecs).collect();
-            self.killring.push_front(text);
-            if self.killring.len() > self.killringmax {
-                self.killring.pop_back();
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(..crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)).collect();
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+            if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+                crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
             }
-            self.zlell -= self.zlecs;
-            self.zlecs = 0;
+            crate::ported::zle::zle_main::ZLELL.fetch_sub(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
             crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
@@ -233,15 +233,15 @@ impl Zle {
     /// Kill entire buffer
     /// Port of killbuffer(UNUSED(char **args)) from zle_misc.c
     pub fn kill_buffer(&mut self) {
-        if !self.zleline.is_empty() {
-            let text: Vec<char> = self.zleline.drain(..).collect();
-            self.killring.push_front(text);
-            if self.killring.len() > self.killringmax {
-                self.killring.pop_back();
+        if !crate::ported::zle::zle_main::ZLELINE.lock().unwrap().is_empty() {
+            let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(..).collect();
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+            if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+                crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
             }
-            self.zlell = 0;
-            self.zlecs = 0;
-            self.mark = 0;
+            crate::ported::zle::zle_main::ZLELL.store(0, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::MARK.store(0, std::sync::atomic::Ordering::SeqCst);
             crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
@@ -259,7 +259,7 @@ impl Zle {
     /// This bare method only swaps; the widget-level
     /// `widget_exchange_point_and_mark` honours the count semantics.
     pub fn exchange_point_and_mark(&mut self) {
-        std::mem::swap(&mut self.zlecs, &mut self.mark);
+        std::mem::swap(&mut crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), &mut crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst));
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
@@ -269,57 +269,57 @@ impl Zle {
     /// `widget_set_mark_command` covers the negative-count
     /// deactivate path that the bare C source supports.
     pub fn set_mark_here(&mut self) {
-        self.mark = self.zlecs;
+        crate::ported::zle::zle_main::MARK.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Copy region as kill
     /// Port of copyregionaskill(char **args) from zle_misc.c
     pub fn copyregionaskill(&mut self) {                                  // c:494
-        let (start, end) = if self.zlecs < self.mark {
-            (self.zlecs, self.mark)
+        let (start, end) = if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) {
+            (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst))
         } else {
-            (self.mark, self.zlecs)
+            (crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst))
         };
 
-        let text: Vec<char> = self.zleline[start..end].to_vec();
-        self.killring.push_front(text);
-        if self.killring.len() > self.killringmax {
-            self.killring.pop_back();
+        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[start..end].to_vec();
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
         }
     }
 
     /// Kill region (between point and mark)
     /// Port of killregion(UNUSED(char **args)) from zle_misc.c
     pub fn kill_region(&mut self) {                                          // c:463
-        let (start, end) = if self.zlecs < self.mark {
-            (self.zlecs, self.mark)
+        let (start, end) = if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) {
+            (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst))
         } else {
-            (self.mark, self.zlecs)
+            (crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst))
         };
 
-        let text: Vec<char> = self.zleline.drain(start..end).collect();
-        self.killring.push_front(text);
-        if self.killring.len() > self.killringmax {
-            self.killring.pop_back();
+        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(start..end).collect();
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
         }
 
-        self.zlell -= end - start;
-        self.zlecs = start;
-        self.mark = start;
+        crate::ported::zle::zle_main::ZLELL.fetch_sub(end - start, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(start, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(start, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Yank - insert from kill ring
     /// Port of yank(UNUSED(char **args)) from zle_misc.c
     pub fn yank(&mut self) {                                                 // c:533
-        if let Some(text) = self.killring.front() {
-            self.mark = self.zlecs;
+        if let Some(text) = crate::ported::zle::zle_main::KILLRING.lock().unwrap().front() {
+            crate::ported::zle::zle_main::MARK.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
             for &c in text {
-                self.zleline.insert(self.zlecs, c);
-                self.zlecs += 1;
+                crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), c);
+                crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
-            self.zlell = self.zleline.len();
-            self.yanklast = true;
+            crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::YANKLAST.store(true, std::sync::atomic::Ordering::SeqCst);
             crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
@@ -327,33 +327,33 @@ impl Zle {
     /// Yank pop - cycle through kill ring
     /// Port of yankpop(UNUSED(char **args)) from zle_misc.c
     pub fn yank_pop(&mut self) {                                             // c:728
-        if !self.yanklast || self.killring.is_empty() {
+        if !crate::ported::zle::zle_main::YANKLAST.load(std::sync::atomic::Ordering::SeqCst) || crate::ported::zle::zle_main::KILLRING.lock().unwrap().is_empty() {
             return;
         }
 
         // Remove previously yanked text
-        let prev_len = self.killring.front().map(|v| v.len()).unwrap_or(0);
-        let start = self.mark;
+        let prev_len = crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().map(|v| v.len()).unwrap_or(0);
+        let start = crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst);
         for _ in 0..prev_len {
-            if start < self.zleline.len() {
-                self.zleline.remove(start);
+            if start < crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len() {
+                crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(start);
             }
         }
-        self.zlecs = start;
-        self.zlell = self.zleline.len();
+        crate::ported::zle::zle_main::ZLECS.store(start, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
 
         // Rotate kill ring
-        if let Some(front) = self.killring.pop_front() {
-            self.killring.push_back(front);
+        if let Some(front) = crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_front() {
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_back(front);
         }
 
         // Insert new text
-        if let Some(text) = self.killring.front() {
+        if let Some(text) = crate::ported::zle::zle_main::KILLRING.lock().unwrap().front() {
             for &c in text {
-                self.zleline.insert(self.zlecs, c);
-                self.zlecs += 1;
+                crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), c);
+                crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
-            self.zlell = self.zleline.len();
+            crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
         }
 
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -362,19 +362,19 @@ impl Zle {
     /// Transpose chars
     /// Port of transposechars(UNUSED(char **args)) from zle_misc.c
     pub fn transpose_chars(&mut self) {
-        if self.zlecs == 0 || self.zlell < 2 {
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == 0 || crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) < 2 {
             return;
         }
 
-        let pos = if self.zlecs == self.zlell {
-            self.zlecs - 1
+        let pos = if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - 1
         } else {
-            self.zlecs
+            crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)
         };
 
         if pos > 0 {
-            self.zleline.swap(pos - 1, pos);
-            self.zlecs = pos + 1;
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().swap(pos - 1, pos);
+            crate::ported::zle::zle_main::ZLECS.store(pos + 1, std::sync::atomic::Ordering::SeqCst);
             crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
@@ -385,24 +385,24 @@ impl Zle {
     /// uses `casemodifyword()` with a CASMOD_CAPS flag). Mirrors emacs's
     /// M-c convention. Cursor lands past the modified word.
     pub fn capitalize_word(&mut self) {
-        while self.zlecs < self.zlell && !self.zleline[self.zlecs].is_alphanumeric() {
-            self.zlecs += 1;
+        while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && !crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)].is_alphanumeric() {
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
 
-        if self.zlecs < self.zlell && self.zleline[self.zlecs].is_alphabetic() {
-            self.zleline[self.zlecs] = self.zleline[self.zlecs]
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)].is_alphabetic() {
+            { let mut __g = crate::ported::zle::zle_main::ZLELINE.lock().unwrap(); __g[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)] = __g[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)]
                 .to_uppercase()
                 .next()
-                .unwrap_or(self.zleline[self.zlecs]);
-            self.zlecs += 1;
+                .unwrap_or(__g[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)]); }
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
 
-        while self.zlecs < self.zlell && self.zleline[self.zlecs].is_alphanumeric() {
-            self.zleline[self.zlecs] = self.zleline[self.zlecs]
+        while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)].is_alphanumeric() {
+            { let mut __g = crate::ported::zle::zle_main::ZLELINE.lock().unwrap(); __g[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)] = __g[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)]
                 .to_lowercase()
                 .next()
-                .unwrap_or(self.zleline[self.zlecs]);
-            self.zlecs += 1;
+                .unwrap_or(__g[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)]); }
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
 
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -412,16 +412,16 @@ impl Zle {
     /// Port of `downcaseword(UNUSED(char **args))` from Src/Zle/zle_word.c — calls
     /// `casemodifyword()` with the CASMOD_LOWER flag.
     pub fn downcase_word(&mut self) {
-        while self.zlecs < self.zlell && !self.zleline[self.zlecs].is_alphanumeric() {
-            self.zlecs += 1;
+        while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && !crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)].is_alphanumeric() {
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
 
-        while self.zlecs < self.zlell && self.zleline[self.zlecs].is_alphanumeric() {
-            self.zleline[self.zlecs] = self.zleline[self.zlecs]
+        while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)].is_alphanumeric() {
+            { let mut __g = crate::ported::zle::zle_main::ZLELINE.lock().unwrap(); __g[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)] = __g[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)]
                 .to_lowercase()
                 .next()
-                .unwrap_or(self.zleline[self.zlecs]);
-            self.zlecs += 1;
+                .unwrap_or(__g[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)]); }
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
 
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -431,16 +431,16 @@ impl Zle {
     /// Port of `upcaseword(UNUSED(char **args))` from Src/Zle/zle_word.c — calls
     /// `casemodifyword()` with the CASMOD_UPPER flag.
     pub fn upcase_word(&mut self) {
-        while self.zlecs < self.zlell && !self.zleline[self.zlecs].is_alphanumeric() {
-            self.zlecs += 1;
+        while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && !crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)].is_alphanumeric() {
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
 
-        while self.zlecs < self.zlell && self.zleline[self.zlecs].is_alphanumeric() {
-            self.zleline[self.zlecs] = self.zleline[self.zlecs]
+        while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)].is_alphanumeric() {
+            { let mut __g = crate::ported::zle::zle_main::ZLELINE.lock().unwrap(); __g[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)] = __g[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)]
                 .to_uppercase()
                 .next()
-                .unwrap_or(self.zleline[self.zlecs]);
-            self.zlecs += 1;
+                .unwrap_or(__g[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)]); }
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
 
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -449,57 +449,57 @@ impl Zle {
     /// Transpose words
     /// Port of transpose words logic
     pub fn transpose_words(&mut self) {
-        if self.zlell < 3 {
+        if crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) < 3 {
             return;
         }
 
         // Find boundaries of two words
-        let mut end2 = self.zlecs;
-        while end2 < self.zlell && self.zleline[end2].is_alphanumeric() {
+        let mut end2 = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+        while end2 < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[end2].is_alphanumeric() {
             end2 += 1;
         }
-        while end2 < self.zlell && !self.zleline[end2].is_alphanumeric() {
+        while end2 < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && !crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[end2].is_alphanumeric() {
             end2 += 1;
         }
-        while end2 < self.zlell && self.zleline[end2].is_alphanumeric() {
+        while end2 < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[end2].is_alphanumeric() {
             end2 += 1;
         }
 
         let mut start2 = end2;
-        while start2 > 0 && self.zleline[start2 - 1].is_alphanumeric() {
+        while start2 > 0 && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[start2 - 1].is_alphanumeric() {
             start2 -= 1;
         }
 
         let mut end1 = start2;
-        while end1 > 0 && !self.zleline[end1 - 1].is_alphanumeric() {
+        while end1 > 0 && !crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[end1 - 1].is_alphanumeric() {
             end1 -= 1;
         }
 
         let mut start1 = end1;
-        while start1 > 0 && self.zleline[start1 - 1].is_alphanumeric() {
+        while start1 > 0 && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[start1 - 1].is_alphanumeric() {
             start1 -= 1;
         }
 
         if start1 < end1 && start2 < end2 {
-            let word1: Vec<char> = self.zleline[start1..end1].to_vec();
-            let word2: Vec<char> = self.zleline[start2..end2].to_vec();
+            let word1: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[start1..end1].to_vec();
+            let word2: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[start2..end2].to_vec();
 
             // Replace word2 first (higher index)
-            self.zleline.drain(start2..end2);
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(start2..end2);
             for (i, c) in word1.iter().enumerate() {
-                self.zleline.insert(start2 + i, *c);
+                crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(start2 + i, *c);
             }
 
             // Replace word1
             let new_end1 = end1 - (end2 - start2) + word1.len();
             let _new_start1 = start1;
-            self.zleline.drain(start1..end1);
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(start1..end1);
             for (i, c) in word2.iter().enumerate() {
-                self.zleline.insert(start1 + i, *c);
+                crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(start1 + i, *c);
             }
 
-            self.zlell = self.zleline.len();
-            self.zlecs = new_end1;
+            crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLECS.store(new_end1, std::sync::atomic::Ordering::SeqCst);
             crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
@@ -507,39 +507,39 @@ impl Zle {
     /// Quote line
     /// Port of quoteline(UNUSED(char **args)) from zle_misc.c
     pub fn quote_line(&mut self) {
-        self.zleline.insert(0, '\'');
-        self.zlell += 1;
-        self.zlecs += 1;
-        self.zleline.push('\'');
-        self.zlell += 1;
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(0, '\'');
+        crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().push('\'');
+        crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Quote region
     /// Port of quoteregion(UNUSED(char **args)) from zle_misc.c
     pub fn quote_region(&mut self) {
-        let (start, end) = if self.zlecs < self.mark {
-            (self.zlecs, self.mark)
+        let (start, end) = if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) {
+            (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst))
         } else {
-            (self.mark, self.zlecs)
+            (crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst))
         };
 
-        self.zleline.insert(end, '\'');
-        self.zleline.insert(start, '\'');
-        self.zlell += 2;
-        self.zlecs = end + 2;
-        self.mark = start;
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(end, '\'');
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(start, '\'');
+        crate::ported::zle::zle_main::ZLELL.fetch_add(2, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(end + 2, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(start, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// What cursor position - display cursor info
     /// Port of whatcursorposition(UNUSED(char **args)) from zle_misc.c
     pub fn what_cursor_position(&self) -> String {
-        if self.zlecs >= self.zlell {
-            return format!("point={} of {} (EOL)", self.zlecs, self.zlell);
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) >= crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+            return format!("point={} of {} (EOL)", crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst));
         }
 
-        let c = self.zleline[self.zlecs];
+        let c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)];
         let code = c as u32;
         format!(
             "Char: {} (0{:o}, {:?}, 0x{:x})  point {} of {} ({}%)",
@@ -547,31 +547,31 @@ impl Zle {
             code,
             code,
             code,
-            self.zlecs,
-            self.zlell,
-            (self.zlecs * 100).checked_div(self.zlell).unwrap_or(0)
+            crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst),
+            crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst),
+            (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) * 100).checked_div(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)).unwrap_or(0)
         )
     }
 
     /// Universal argument - multiply next command
     /// Port of universalargument(char **args) from zle_misc.c
     pub fn universalargument(&mut self) {
-        self.mult = self.mult.saturating_mul(4);
+        crate::ported::zle::zle_main::MULT.store(crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst).saturating_mul(4), std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Digit argument - accumulate numeric argument
     /// Port of digitargument(UNUSED(char **args)) from zle_misc.c
     pub fn digit_argument(&mut self, digit: u8) {
-        if self.mult == 1 && !self.neg_arg {
-            self.mult = 0;
+        if crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst) == 1 && !crate::ported::zle::zle_main::NEG_ARG.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::MULT.store(0, std::sync::atomic::Ordering::SeqCst);
         }
-        self.mult = self.mult.saturating_mul(10).saturating_add(digit as i32);
+        crate::ported::zle::zle_main::MULT.store(crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst).saturating_mul(10).saturating_add(digit as i32), std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Negative argument
     /// Port of negargument(UNUSED(char **args)) from zle_misc.c
     pub fn neg_argument(&mut self) {
-        self.neg_arg = !self.neg_arg;
+        crate::ported::zle::zle_main::NEG_ARG.store(!crate::ported::zle::zle_main::NEG_ARG.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Undefined key - beep
@@ -583,22 +583,22 @@ impl Zle {
     /// Send break - abort current operation
     /// Port of sendbreak(UNUSED(char **args)) from zle_misc.c
     pub fn send_break(&mut self) {
-        self.zleline.clear();
-        self.zlell = 0;
-        self.zlecs = 0;
-        self.mark = 0;
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().clear();
+        crate::ported::zle::zle_main::ZLELL.store(0, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(0, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Vi put after cursor
     /// Port of viputafter(UNUSED(char **args)) from zle_misc.c
     pub fn vi_put_after(&mut self) {
-        if self.zlecs < self.zlell {
-            self.zlecs += 1;
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         self.yank();
-        if self.zlecs > 0 {
-            self.zlecs -= 1;
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -617,27 +617,27 @@ impl Zle {
     /// Copy previous word
     /// Port of copyprevword(UNUSED(char **args)) from zle_misc.c
     pub fn copy_prev_word(&mut self) {
-        if self.zlecs == 0 {
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == 0 {
             return;
         }
 
         // Find start of previous word
-        let mut end = self.zlecs;
-        while end > 0 && self.zleline[end - 1].is_whitespace() {
+        let mut end = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+        while end > 0 && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[end - 1].is_whitespace() {
             end -= 1;
         }
         let mut start = end;
-        while start > 0 && !self.zleline[start - 1].is_whitespace() {
+        while start > 0 && !crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[start - 1].is_whitespace() {
             start -= 1;
         }
 
         if start < end {
-            let word: Vec<char> = self.zleline[start..end].to_vec();
+            let word: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[start..end].to_vec();
             for c in word {
-                self.zleline.insert(self.zlecs, c);
-                self.zlecs += 1;
+                crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), c);
+                crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
-            self.zlell = self.zleline.len();
+            crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
             crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
@@ -652,16 +652,16 @@ impl Zle {
     /// Pound insert - comment toggle for vi mode
     /// Port of poundinsert(UNUSED(char **args)) from zle_misc.c
     pub fn pound_insert(&mut self) {
-        if !self.zleline.is_empty() && self.zleline[0] == '#' {
-            self.zleline.remove(0);
-            self.zlell -= 1;
-            if self.zlecs > 0 {
-                self.zlecs -= 1;
+        if !crate::ported::zle::zle_main::ZLELINE.lock().unwrap().is_empty() && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[0] == '#' {
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(0);
+            crate::ported::zle::zle_main::ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+                crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             }
         } else {
-            self.zleline.insert(0, '#');
-            self.zlell += 1;
-            self.zlecs += 1;
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(0, '#');
+            crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
@@ -679,16 +679,16 @@ pub fn acceptandhold(args: &mut Zle) -> i32 {                                 //
     // ```
     use std::sync::atomic::Ordering;
     // c:411 — `zpushnode(bufstack, zlelineasstring(...))`.
-    let line_str: String = args.zleline.iter().take(args.zlell).collect();
-    args.bufstack.insert(0, line_str.clone());                                // c:411 push to front
-    args.stackcs = args.zlecs;                                                 // c:412
+    let line_str: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().take(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)).collect();
+    crate::ported::zle::zle_main::BUFSTACK.lock().unwrap().insert(0, line_str.clone());                                // c:411 push to front
+    crate::ported::zle::zle_main::STACKCS.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);                                                 // c:412
     // Keep killring snapshot for backward-compat with callers that
     // recover via the kill-buffer surface.
-    let line: Vec<char> = args.zleline.iter().take(args.zlell).copied().collect();
+    let line: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().take(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)).copied().collect();
     if !line.is_empty() {
-        args.killring.push_front(line);
-        if args.killring.len() > args.killringmax {
-            args.killring.pop_back();
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(line);
+        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
         }
     }
     DONE.store(1, Ordering::SeqCst);                                         // c:413 done = 1
@@ -772,18 +772,18 @@ pub fn argumentbase(zle: &mut Zle, args: &[String]) -> i32 {                 // 
             s.parse::<i32>().unwrap_or(0)
         }
     } else {
-        zle.zmod.mult                                                        // c:1045
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult                                                        // c:1045
     };
     // c:1047-1048 — range check 2..(10+26)=36.
     if multbase < 2 || multbase > 36 {
         return 1;
     }
-    zle.zmod.base = multbase;                                                // c:1050
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = multbase;                                                // c:1050
     // c:1053-1056 — reset modifier apart from base.
-    zle.zmod.flags = 0;
-    zle.zmod.mult = 1;
-    zle.zmod.tmult = 1;
-    zle.zmod.vibuf = 0;
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags = 0;
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 1;
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = 1;
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().vibuf = 0;
     // c:1059 — still operating on prefix arg.
     crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:1061 return 0
@@ -793,21 +793,21 @@ pub fn argumentbase(zle: &mut Zle, args: &[String]) -> i32 {                 // 
 pub fn backwarddeletechar(args: &mut Zle) -> i32 {                            // c:180
     // c:180-188 — `if (zmult < 0) { negate, recurse to forward,
     //               restore zmult, return ret }`.
-    let n = args.zmod.mult;
+    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
     if n < 0 {
         let saved = n;
-        args.zmod.mult = -n;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = -n;
         let ret = deletechar(args);
-        args.zmod.mult = saved;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = saved;
         return ret;
     }
     // c:189 — `backdel(zmult > zlecs ? zlecs : zmult, 0)`.
-    let count = (n as usize).min(args.zlecs);
+    let count = (n as usize).min(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
     for _ in 0..count {
-        if args.zlecs > 0 {
-            args.zlecs -= 1;
-            args.zleline.remove(args.zlecs);
-            args.zlell -= 1;
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+            crate::ported::zle::zle_main::ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -817,23 +817,23 @@ pub fn backwarddeletechar(args: &mut Zle) -> i32 {                            //
 /// Port of `backwardkillline(char **args)` from Src/Zle/zle_misc.c:225.
 pub fn backwardkillline(args: &mut Zle) -> i32 {                              // c:225
     // c:225-234 — `if (n < 0) { negate, recurse killline, restore }`.
-    let n = args.zmod.mult;
+    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
     if n < 0 {
-        args.zmod.mult = -n;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = -n;
         let ret = killline(args);
-        args.zmod.mult = n;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = n;
         return ret;
     }
     let mut nn = n;
     let mut i = 0_usize;
     // c:236-242 — walk back; '\n' on the LEFT bumps zlecs--, i++.
     while nn > 0 {
-        if args.zlecs > 0 && args.zleline[args.zlecs - 1] == '\n' {
-            args.zlecs -= 1;
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - 1] == '\n' {
+            crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             i += 1;
         } else {
-            while args.zlecs > 0 && args.zleline[args.zlecs - 1] != '\n' {
-                args.zlecs -= 1;
+            while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - 1] != '\n' {
+                crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                 i += 1;
             }
         }
@@ -843,12 +843,12 @@ pub fn backwardkillline(args: &mut Zle) -> i32 {                              //
     // current zlecs by i chars; push to killring with FRONT semantics
     // (prepended to the existing front entry if present, else new).
     if i > 0 {
-        let text: Vec<char> = args.zleline.drain(args.zlecs..args.zlecs + i).collect();
-        args.killring.push_front(text);
-        if args.killring.len() > args.killringmax {
-            args.killring.pop_back();
+        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i).collect();
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
         }
-        args.zlell -= i;
+        crate::ported::zle::zle_main::ZLELL.fetch_sub(i, std::sync::atomic::Ordering::SeqCst);
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:245
@@ -873,7 +873,7 @@ pub fn bracketedpaste(zle: &mut Zle, args: &[String]) -> i32 {               // 
     }
     // c:822-825 — quote when zmult != 1 then convert to ZLE_CHAR_T,
     //              cuttext (REPLACE) the prior cutbuf with the paste.
-    let payload = if zle.zmod.mult == 1 {                                    // c:823
+    let payload = if crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult == 1 {                                    // c:823
         pbuf.clone()
     } else {
         quotestring(&pbuf, crate::ported::zsh_h::QT_SINGLE_OPTIONAL)                        // c:824
@@ -882,17 +882,17 @@ pub fn bracketedpaste(zle: &mut Zle, args: &[String]) -> i32 {               // 
     // c:826-834 — !(zmod.flags & MOD_VIBUF) → reset kct, killregion if
     // region_active, then doinsert(wpaste).
     use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
-    if !zle.zmod.flags & MOD_VIBUF != 0 {
-        zle.zmod.mult = 1;                                                   // c:829
+    if !crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 1;                                                   // c:829
         // c:830-832 — `if (region_active) killregion(...)`.
-        if zle.region_active != 0 {
+        if crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) != 0 {
             let _ = killregion(zle);
         }
         // c:833 — `doinsert(wpaste, n)`. Inline insert at zlecs.
         for c in wpaste.iter().copied() {
-            zle.zleline.insert(zle.zlecs, c);
-            zle.zlecs += 1;
-            zle.zlell += 1;
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), c);
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
@@ -922,21 +922,21 @@ pub fn copyprevshellword(args: &mut Zle) -> i32 {                             //
     // identify the previous WORD (whitespace-bounded chunk). Without
     // the shell-tokenizer substrate, fall back to whitespace-bounded
     // back-walk.
-    let mut t1 = args.zlecs;
-    while t1 > 0 && args.zleline[t1 - 1].is_whitespace() {
+    let mut t1 = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    while t1 > 0 && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[t1 - 1].is_whitespace() {
         t1 -= 1;
     }
     let mut t0 = t1;
-    while t0 > 0 && !args.zleline[t0 - 1].is_whitespace() {
+    while t0 > 0 && !crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[t0 - 1].is_whitespace() {
         t0 -= 1;
     }
     if t0 == t1 { return 1; }
-    let copied: Vec<char> = args.zleline[t0..t1].to_vec();
+    let copied: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[t0..t1].to_vec();
     for (i, &c) in copied.iter().enumerate() {
-        args.zleline.insert(args.zlecs + i, c);
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i, c);
     }
-    args.zlecs += copied.len();
-    args.zlell += copied.len();
+    crate::ported::zle::zle_main::ZLECS.fetch_add(copied.len(), std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLELL.fetch_add(copied.len(), std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
@@ -946,33 +946,33 @@ pub fn copyprevword(args: &mut Zle) -> i32 {                                  //
     // C body (c:1066-1110): walk back over zmult words, copy that
     // span, insert at cursor. Simplified: locate previous whitespace-
     // separated word, copy + insert.
-    let n = args.zmod.mult;
+    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
     if n <= 0 { return 1; }
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
-    let mut t0 = args.zlecs;
+    let mut t0 = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
     for _ in 0..n {
         // skip back over non-word-chars
-        while t0 > 0 && !is_word(args.zleline[t0 - 1]) {
+        while t0 > 0 && !is_word(crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[t0 - 1]) {
             t0 -= 1;
         }
         // skip back over word
-        while t0 > 0 && is_word(args.zleline[t0 - 1]) {
+        while t0 > 0 && is_word(crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[t0 - 1]) {
             t0 -= 1;
         }
     }
     // span: t0..(start of search)
     let mut t1 = t0;
-    while t1 < args.zlecs && is_word(args.zleline[t1]) {
+    while t1 < crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) && is_word(crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[t1]) {
         t1 += 1;
     }
     let len = t1 - t0;
     if len == 0 { return 1; }
-    let copied: Vec<char> = args.zleline[t0..t1].to_vec();
+    let copied: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[t0..t1].to_vec();
     for (i, &c) in copied.iter().enumerate() {
-        args.zleline.insert(args.zlecs + i, c);
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i, c);
     }
-    args.zlecs += len;
-    args.zlell += len;
+    crate::ported::zle::zle_main::ZLECS.fetch_add(len, std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLELL.fetch_add(len, std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
@@ -984,25 +984,25 @@ pub fn copyregionaskill(zle: &mut Zle, args: &[String]) -> i32 {             // 
     // c:494-501 — `if (*args) { stringaszleline; cuttext(line, len, CUT_REPLACE) }`.
     if let Some(arg) = args.first() {
         let text: Vec<char> = arg.chars().collect();
-        zle.killring.push_front(text);
-        if zle.killring.len() > zle.killringmax {
-            zle.killring.pop_back();
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
         }
         return 0;
     }
     // c:503-512 — copy region between point and mark.
-    if zle.mark > zle.zlell {
-        zle.mark = zle.zlell;
+    if crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) > crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+        crate::ported::zle::zle_main::MARK.store(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
     }
-    let (start, end) = if zle.mark > zle.zlecs {
-        (zle.zlecs, zle.mark)
+    let (start, end) = if crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) > crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
+        (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst))
     } else {
-        (zle.mark, zle.zlecs)
+        (crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst))
     };
-    let text: Vec<char> = zle.zleline[start..end].to_vec();
-    zle.killring.push_front(text);
-    if zle.killring.len() > zle.killringmax {
-        zle.killring.pop_back();
+    let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[start..end].to_vec();
+    crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+    if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
     }
     0
 }
@@ -1011,31 +1011,31 @@ pub fn copyregionaskill(zle: &mut Zle, args: &[String]) -> i32 {             // 
 pub fn deletechar(args: &mut Zle) -> i32 {                                    // c:157
     // c:157-166 — `if (zmult < 0) { negate, recurse to backward,
     //               restore zmult, return ret }`.
-    let mut n = args.zmod.mult;
+    let mut n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
     if n < 0 {
         let saved = n;
-        args.zmod.mult = -n;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = -n;
         let ret = backwarddeletechar(args);
-        args.zmod.mult = saved;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = saved;
         return ret;
     }
-    n = args.zmod.mult;
+    n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
     // c:169-173 — `while (n--) { if (zlecs == zlell) return 1; INCCS() }`.
     while n > 0 {
-        if args.zlecs == args.zlell {
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
             return 1;
         }
         crate::ported::zle::zle_move::inccs(args);
         n -= 1;
     }
     // c:174 — `backdel(zmult, 0)`. Method deletechar does forward.
-    let count = args.zmod.mult.max(0) as usize;
+    let count = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult.max(0) as usize;
     for _ in 0..count {
-        if args.zlecs > 0 {
-            args.zlecs -= 1;
-            if args.zlecs < args.zleline.len() {
-                args.zleline.remove(args.zlecs);
-                args.zlell -= 1;
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len() {
+                crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+                crate::ported::zle::zle_main::ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             }
         }
     }
@@ -1047,25 +1047,26 @@ pub fn deletechar(args: &mut Zle) -> i32 {                                    //
 pub fn digitargument(args: &mut Zle) -> i32 {                                 // c:950
     use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // c:1044 — `int sign = (zmult < 0) ? -1 : 1`.
-    let sign: i32 = if args.zmod.mult < 0 { -1 } else { 1 };
+    let sign: i32 = if crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult < 0 { -1 } else { 1 };
     // c:1045 — `parsedigit(lastchar)`.
     let newdigit = parsedigit(args, crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst));
     if newdigit < 0 {                                                        // c:1047
         return 1;                                                            // c:1048
     }
     // c:1050-1051 — `if (!(zmod.flags & MOD_TMULT)) zmod.tmult = 0`.
-    if !args.zmod.flags & MOD_TMULT != 0 {
-        args.zmod.tmult = 0;
+    if !crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_TMULT != 0 {
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = 0;
     }
     // c:1052-1057 — MOD_NEG path: replace tmult with sign*newdigit.
-    if args.zmod.flags & MOD_NEG != 0 {
-        args.zmod.tmult = sign * newdigit;
-        args.zmod.flags &= !MOD_NEG;
+    if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_NEG != 0 {
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = sign * newdigit;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags &= !MOD_NEG;
     } else {
         // c:1058 — `zmod.tmult = zmod.tmult * zmod.base + sign*newdigit`.
-        args.zmod.tmult = args.zmod.tmult * args.zmod.base + sign * newdigit;
+        let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
+        __g_zmod.tmult = __g_zmod.tmult * __g_zmod.base + sign * newdigit;
     }
-    args.zmod.flags |= MOD_TMULT;                             // c:1059
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_TMULT;                             // c:1059
     crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);                                                   // c:1060
     0                                                                        // c:1061
 }
@@ -1085,16 +1086,16 @@ pub fn digitargument(args: &mut Zle) -> i32 {                                 //
 /// machinery that needs the suffixlist substrate.
 /// WARNING: param names don't match C — Rust=(zle, zstr) vs C=(zstr, len)
 pub fn doinsert(zle: &mut Zle, zstr: &[char]) {                              // c:37
-    let m = zle.zmod.mult.unsigned_abs() as usize;
-    let neg = zle.zmod.mult < 0;
+    let m = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult.unsigned_abs() as usize;
+    let neg = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult < 0;
     for _ in 0..m {
         for (i, &c) in zstr.iter().enumerate() {
-            zle.zleline.insert(zle.zlecs + i, c);
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i, c);
         }
         if !neg {
-            zle.zlecs += zstr.len();
+            crate::ported::zle::zle_main::ZLECS.fetch_add(zstr.len(), std::sync::atomic::Ordering::SeqCst);
         }
-        zle.zlell += zstr.len();
+        crate::ported::zle::zle_main::ZLELL.fetch_add(zstr.len(), std::sync::atomic::Ordering::SeqCst);
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
@@ -1156,22 +1157,22 @@ pub fn gosmacstransposechars(args: &mut Zle) -> i32 {                         //
     // C body (c:276-307): gosmacs-style: transpose char before cursor
     // with char at cursor; advance cursor. Skips through newlines and
     // multi-byte combining chars.
-    if args.zlecs < 2 || args.zlecs > args.zlell {
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < 2 || crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
         // Edge: try to advance past initial newline so we can transpose.
-        let twice = args.zlecs == 0 || args.zleline.get(args.zlecs.saturating_sub(1)) == Some(&'\n');
-        if args.zlecs >= args.zlell || args.zleline.get(args.zlecs) == Some(&'\n') {
+        let twice = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == 0 || crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst).saturating_sub(1)) == Some(&'\n');
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) >= crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) || crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) == Some(&'\n') {
             return 1;
         }
-        args.zlecs += 1;
+        crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if twice {
-            if args.zlecs >= args.zlell || args.zleline.get(args.zlecs) == Some(&'\n') {
+            if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) >= crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) || crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) == Some(&'\n') {
                 return 1;
             }
-            args.zlecs += 1;
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
-    if args.zlecs >= 2 && args.zlecs <= args.zleline.len() {
-        args.zleline.swap(args.zlecs - 2, args.zlecs - 1);
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) >= 2 && crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) <= crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len() {
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().swap(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - 2, crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - 1);
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
     0
@@ -1245,14 +1246,14 @@ pub static SUFFIXFUNC: std::sync::OnceLock<std::sync::Mutex<String>>
 /// Port of `killbuffer(UNUSED(char **args))` from Src/Zle/zle_misc.c:215.
 pub fn killbuffer(args: &mut Zle) -> i32 {                                    // c:215
     // c:215-219 — `zlecs = 0; forekill(zlell, CUT_RAW); clearlist=1`.
-    args.zlecs = 0;
-    if !args.zleline.is_empty() {
-        let text: Vec<char> = args.zleline.drain(..).collect();
-        args.killring.push_front(text);
-        if args.killring.len() > args.killringmax {
-            args.killring.pop_back();
+    crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
+    if !crate::ported::zle::zle_main::ZLELINE.lock().unwrap().is_empty() {
+        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(..).collect();
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
         }
-        args.zlell = 0;
+        crate::ported::zle::zle_main::ZLELL.store(0, std::sync::atomic::Ordering::SeqCst);
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:220
@@ -1261,24 +1262,24 @@ pub fn killbuffer(args: &mut Zle) -> i32 {                                    //
 /// Port of `killline(char **args)` from Src/Zle/zle_misc.c:419.
 pub fn killline(args: &mut Zle) -> i32 {                                      // c:419
     // c:419-428 — `if (n < 0) { backward delegate w/ negated zmult }`.
-    let n_orig = args.zmod.mult;
+    let n_orig = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
     if n_orig < 0 {
-        args.zmod.mult = -n_orig;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = -n_orig;
         let ret = backwardkillline(args);
-        args.zmod.mult = n_orig;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = n_orig;
         return ret;
     }
     let mut n = n_orig;
-    let start = args.zlecs;
+    let start = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
     let mut i = 0_usize;
     // c:430-436 — walk to next newline; skip past existing newline.
     while n > 0 {
-        if args.zlecs < args.zleline.len() && args.zleline[args.zlecs] == '\n' {
-            args.zlecs += 1;
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len() && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)] == '\n' {
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             i += 1;
         } else {
-            while args.zlecs != args.zlell && args.zleline[args.zlecs] != '\n' {
-                args.zlecs += 1;
+            while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)] != '\n' {
+                crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 i += 1;
             }
         }
@@ -1287,13 +1288,13 @@ pub fn killline(args: &mut Zle) -> i32 {                                      //
     // c:437 — `backkill(i, CUT_RAW)`. Drain the killed range and
     // push to killring; cursor returns to start.
     if i > 0 {
-        let text: Vec<char> = args.zleline.drain(start..start + i).collect();
-        args.killring.push_front(text);
-        if args.killring.len() > args.killringmax {
-            args.killring.pop_back();
+        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(start..start + i).collect();
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
         }
-        args.zlell -= i;
-        args.zlecs = start;
+        crate::ported::zle::zle_main::ZLELL.fetch_sub(i, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(start, std::sync::atomic::Ordering::SeqCst);
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:439
@@ -1302,25 +1303,25 @@ pub fn killline(args: &mut Zle) -> i32 {                                      //
 /// Port of `killregion(UNUSED(char **args))` from Src/Zle/zle_misc.c:463.
 pub fn killregion(args: &mut Zle) -> i32 {                                    // c:463
     // c:463-466 — `if (mark > zlell) mark = zlell`.
-    if args.mark > args.zlell {
-        args.mark = args.zlell;
+    if crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) > crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+        crate::ported::zle::zle_main::MARK.store(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
     }
     // c:467-479 — region_active==2 (visual-line); skip the line-mode
     // path for the simplified port.
-    let (start, end) = if args.mark > args.zlecs {
-        (args.zlecs, args.mark)
+    let (start, end) = if crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) > crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
+        (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst))
     } else {
-        (args.mark, args.zlecs)
+        (crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst))
     };
     if start < end {
-        let text: Vec<char> = args.zleline.drain(start..end).collect();
-        args.killring.push_front(text);
-        if args.killring.len() > args.killringmax {
-            args.killring.pop_back();
+        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(start..end).collect();
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
         }
-        args.zlell -= end - start;
-        args.zlecs = start;
-        args.mark = start;
+        crate::ported::zle::zle_main::ZLELL.fetch_sub(end - start, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(start, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(start, std::sync::atomic::Ordering::SeqCst);
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
@@ -1328,36 +1329,36 @@ pub fn killregion(args: &mut Zle) -> i32 {                                    //
 
 /// Port of `killwholeline(UNUSED(char **args))` from Src/Zle/zle_misc.c:195.
 pub fn killwholeline(args: &mut Zle) -> i32 {                                 // c:195
-    let mut n = args.zmod.mult;
+    let mut n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
     if n < 0 {                                                               // c:199
         return 1;                                                            // c:200
     }
     while n > 0 {                                                            // c:201
         // c:202-203 — last-line edge: at zlell with non-empty buffer
         // step back one so the trailing '\n' belongs to this line.
-        let _fg = args.zlecs > 0 && args.zlecs == args.zlell;
+        let _fg = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 && crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst);
         if _fg {
-            args.zlecs -= 1;
+            crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         }
         // c:204-205 — walk back to bol.
-        while args.zlecs > 0 && args.zleline[args.zlecs - 1] != '\n' {
-            args.zlecs -= 1;
+        while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - 1] != '\n' {
+            crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         }
         // c:206 — `for (i=zlecs; i!=zlell && zleline[i]!='\n'; i++)`.
-        let mut i = args.zlecs;
-        while i != args.zlell && args.zleline[i] != '\n' {
+        let mut i = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+        while i != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[i] != '\n' {
             i += 1;
         }
         // c:207 — `forekill(i - zlecs + (i != zlell), ...)`. Include
         // the trailing '\n' if there is one.
-        let drop = i - args.zlecs + (if i != args.zlell { 1 } else { 0 });
+        let drop = i - crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + (if i != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) { 1 } else { 0 });
         if drop > 0 {
-            let text: Vec<char> = args.zleline.drain(args.zlecs..args.zlecs + drop).collect();
-            args.killring.push_front(text);
-            if args.killring.len() > args.killringmax {
-                args.killring.pop_back();
+            let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + drop).collect();
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+            if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+                crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
             }
-            args.zlell -= drop;
+            crate::ported::zle::zle_main::ZLELL.fetch_sub(drop, std::sync::atomic::Ordering::SeqCst);
         }
         n -= 1;
     }
@@ -1438,11 +1439,11 @@ pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {  // c:1642
 /// Refuses if a tmult is already in flight.
 pub fn negargument(args: &mut Zle) -> i32 {                                   // c:974
     use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
-    if args.zmod.flags & MOD_TMULT != 0 {                       // c:976
+    if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_TMULT != 0 {                       // c:976
         return 1;                                                            // c:977
     }
-    args.zmod.tmult = -1;                                                     // c:978
-    args.zmod.flags |= MOD_TMULT | MOD_NEG;             // c:979
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = -1;                                                     // c:978
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_TMULT | MOD_NEG;             // c:979
     crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);                                                   // c:980
     0                                                                        // c:981 return 0
 }
@@ -1469,7 +1470,7 @@ pub fn parsedigit(zle: &Zle, inkey: i32) -> i32 {                            // 
     // skips this; we mirror by always masking since Rust char vals
     // fit ASCII for digit chars.
     let inkey = inkey & 0x7f;
-    let base = zle.zmod.base;
+    let base = crate::ported::zle::zle_main::ZMOD.lock().unwrap().base;
     // c:1082-1090 — base > 10: accept lowercase a..(a+base-11) and
     // uppercase, plus digits 0-9.
     if base > 10 {
@@ -1504,26 +1505,26 @@ pub fn pastebuf(zle: &mut Zle, buf: &[char], mult: i32, position: i32) -> i32 { 
         return 0;
     }
     // c:591-592 — `if (position == 1 && zlecs != findeol()) INCCS()`.
-    if position == 1 && zle.zlecs < zle.zlell {
-        zle.zlecs += 1;
+    if position == 1 && crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+        crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
     // c:593 — `yankb = zlecs`.
-    zle.yank_start = zle.zlecs;
+    crate::ported::zle::zle_main::YANKB.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
     // c:595-599 — `while (mult--) { spaceinline(cc); ZS_memcpy; zlecs += cc }`.
     let mut n = mult;
     while n > 0 {
         for (i, &c) in buf.iter().enumerate() {
-            zle.zleline.insert(zle.zlecs + i, c);
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i, c);
         }
-        zle.zlecs += buf.len();
-        zle.zlell += buf.len();
+        crate::ported::zle::zle_main::ZLECS.fetch_add(buf.len(), std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELL.fetch_add(buf.len(), std::sync::atomic::Ordering::SeqCst);
         n -= 1;
     }
     // c:600 — `yanke = zlecs`.
-    zle.yank_end = zle.zlecs;
+    crate::ported::zle::zle_main::YANKE.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
     // c:601-602 — vicmd → DECCS.
-    if zle.zlecs > 0 && *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd" {
-        zle.zlecs -= 1;
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 && *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd" {
+        crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
@@ -1539,34 +1540,34 @@ pub fn poundinsert(args: &mut Zle) -> i32 {                                   //
     //                  while (zlecs != zlell) { ... } }
     //              else { foredel(1, 0); zlecs = findeol(); ... }
     //              done = 1; return 0`.
-    args.zlecs = 0;                                                           // c:371
+    crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);                                                           // c:371
     vifirstnonblank(args);                                                    // c:372
-    let at_pound = args.zleline.get(args.zlecs) == Some(&'#');
+    let at_pound = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) == Some(&'#');
     if !at_pound {
         // c:374-383 — insert # at this line, advance to next, repeat.
-        args.zleline.insert(args.zlecs, '#');
-        args.zlell += 1;
-        args.zlecs = crate::ported::zle::zle_utils::findeol(args);
-        while args.zlecs != args.zlell {
-            args.zlecs += 1;
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), '#');
+        crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_utils::findeol(args), std::sync::atomic::Ordering::SeqCst);
+        while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             vifirstnonblank(args);
-            args.zleline.insert(args.zlecs, '#');
-            args.zlell += 1;
-            args.zlecs = crate::ported::zle::zle_utils::findeol(args);
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), '#');
+            crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_utils::findeol(args), std::sync::atomic::Ordering::SeqCst);
         }
     } else {
         // c:384-393 — strip leading # from each line.
-        args.zleline.remove(args.zlecs);
-        args.zlell -= 1;
-        args.zlecs = crate::ported::zle::zle_utils::findeol(args);
-        while args.zlecs != args.zlell {
-            args.zlecs += 1;
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+        crate::ported::zle::zle_main::ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_utils::findeol(args), std::sync::atomic::Ordering::SeqCst);
+        while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             vifirstnonblank(args);
-            if args.zleline.get(args.zlecs) == Some(&'#') {
-                args.zleline.remove(args.zlecs);
-                args.zlell -= 1;
+            if crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) == Some(&'#') {
+                crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+                crate::ported::zle::zle_main::ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             }
-            args.zlecs = crate::ported::zle::zle_utils::findeol(args);
+            crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_utils::findeol(args), std::sync::atomic::Ordering::SeqCst);
         }
     }
     DONE.store(1, Ordering::SeqCst);                                         // c:395
@@ -1578,28 +1579,28 @@ pub fn poundinsert(args: &mut Zle) -> i32 {                                   //
 pub fn putreplaceselection(args: &mut Zle) -> i32 {                           // c:680
     use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     use crate::ported::zle::zle_vi::startvichange;
-    let n = args.zmod.mult;                                                   // c:682
+    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;                                                   // c:682
     let mut pos = 2;                                                         // c:686
     startvichange(args, -1);                                                  // c:688
-    if n < 0 || args.zmod.flags & MOD_NULL != 0 {
+    if n < 0 || crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_NULL != 0 {
         return 1;                                                            // c:690
     }
-    let prevbuf: Vec<char> = if args.zmod.flags & MOD_VIBUF != 0 {
-        let idx = args.zmod.vibuf as usize;
-        if idx >= args.vibuf.len() {
+    let prevbuf: Vec<char> = if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
+        let idx = crate::ported::zle::zle_main::ZMOD.lock().unwrap().vibuf as usize;
+        if idx >= crate::ported::zle::zle_main::vibuf().lock().unwrap().len() {
             return 1;
         }
-        args.vibuf[idx].clone()                                               // c:700
+        crate::ported::zle::zle_main::vibuf().lock().unwrap()[idx].clone()                                               // c:700
     } else {
-        args.killring.front().cloned().unwrap_or_default()                    // c:702
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().cloned().unwrap_or_default()                    // c:702
     };
     if prevbuf.is_empty() {
         return 1;                                                            // c:702
     }
-    args.zmod.flags = 0;                                 // c:712
-    if args.region_active == 2 {                                              // c:713
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags = 0;                                 // c:712
+    if crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) == 2 {                                              // c:713
         // c:714-717 — regionlines split; lines-flag check elided.
-        pos = if args.zlell == args.zlecs { 1 } else { 0 };
+        pos = if crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) { 1 } else { 0 };
     }
     let _ = killregion(args);                                                 // c:719
     pastebuf(args, &prevbuf, n, pos)                                          // c:721
@@ -1630,12 +1631,12 @@ pub fn quotedinsert(zle: &mut Zle) -> i32 {                                  // 
 /// Port of `quoteline(UNUSED(char **args))` from Src/Zle/zle_misc.c:1187.
 pub fn quoteline(args: &mut Zle) -> i32 {                                     // c:1187
     // c:1187 — `len = zlell`. Quote whole buffer.
-    let quoted = makequote(&args.zleline[..args.zlell]);
+    let quoted = makequote(&crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[..crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)]);
     let len = quoted.len();
     // c:1193-1195 — `sizeline; ZS_memcpy; zlecs = zlell = len`.
-    args.zleline = quoted;
-    args.zlell = len;
-    args.zlecs = len;
+    *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = quoted;
+    crate::ported::zle::zle_main::ZLELL.store(len, std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLECS.store(len, std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0                                                                        // c:1196
 }
@@ -1646,38 +1647,38 @@ pub fn quoteregion(args: &mut Zle) -> i32 {                                   //
     let _ = &args;
     let mut extra = *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd";
     // c:1158-1159 — `if (mark > zlell) mark = zlell`.
-    if args.mark > args.zlell {
-        args.mark = args.zlell;
+    if crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) > crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+        crate::ported::zle::zle_main::MARK.store(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
     }
     // c:1160-1170 — visual-line vs. char modes; normalize zlecs/mark.
-    if args.region_active == 2 {
+    if crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) == 2 {
         let (a, b) = regionlines(args);
-        args.zlecs = a;
-        args.mark = b;
+        crate::ported::zle::zle_main::ZLECS.store(a, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(b, std::sync::atomic::Ordering::SeqCst);
         extra = false;
-    } else if args.mark < args.zlecs {
-        std::mem::swap(&mut args.mark, &mut args.zlecs);
+    } else if crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
+        std::mem::swap(&mut crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst), &mut crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
     }
     // c:1171-1172 — `if (extra) INCPOS(mark)`. Include cursor cell.
-    if extra && args.mark < args.zlell {
-        args.mark += 1;
+    if extra && crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+        crate::ported::zle::zle_main::MARK.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
     // c:1173-1175 — copy region into temp str; foredel; quote; insert.
-    let region: Vec<char> = args.zleline[args.zlecs..args.mark].to_vec();
+    let region: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst)].to_vec();
     let len = region.len();
     let quoted = makequote(&region);
     let qlen = quoted.len();
     // c:1176 — `foredel(len, CUT_RAW)` — delete region (no kill).
-    args.zleline.drain(args.zlecs..args.zlecs + len);
-    args.zlell -= len;
+    crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + len);
+    crate::ported::zle::zle_main::ZLELL.fetch_sub(len, std::sync::atomic::Ordering::SeqCst);
     // c:1178-1179 — insert quoted text at cursor.
     for (i, &c) in quoted.iter().enumerate() {
-        args.zleline.insert(args.zlecs + i, c);
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i, c);
     }
-    args.zlell += qlen;
+    crate::ported::zle::zle_main::ZLELL.fetch_add(qlen, std::sync::atomic::Ordering::SeqCst);
     // c:1180-1181 — `mark = zlecs; zlecs += len`.
-    args.mark = args.zlecs;
-    args.zlecs += qlen;
+    crate::ported::zle::zle_main::MARK.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLECS.fetch_add(qlen, std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
@@ -1687,22 +1688,22 @@ pub fn quoteregion(args: &mut Zle) -> i32 {                                   //
 pub fn regionlines(zle: &mut Zle) -> (usize, usize) {                        // c:444
     use crate::ported::zle::zle_utils::{findbol, findeol};
     // c:446 — `int origcs = zlecs`. Save cursor.
-    let origcs = zle.zlecs;
+    let origcs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
     let start;
     let end;
-    if zle.zlecs < zle.mark {                                                // c:449
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) {                                                // c:449
         // c:450-452 — start=findbol(); zlecs=min(mark,zlell); end=findeol().
         start = findbol(zle);
-        zle.zlecs = if zle.mark > zle.zlell { zle.zlell } else { zle.mark };
+        crate::ported::zle::zle_main::ZLECS.store(if crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) > crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) { crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) } else { crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) }, std::sync::atomic::Ordering::SeqCst);
         end = findeol(zle);
     } else {
         // c:454-456 — end=findeol(); zlecs=mark; start=findbol().
         end = findeol(zle);
-        zle.zlecs = zle.mark;
+        crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
         start = findbol(zle);
     }
     // c:458 — `zlecs = origcs`. Restore.
-    zle.zlecs = origcs;
+    crate::ported::zle::zle_main::ZLECS.store(origcs, std::sync::atomic::Ordering::SeqCst);
     (start, end)
 }
 
@@ -1826,13 +1827,13 @@ pub fn transpose_swap(zle: &mut Zle, start: usize, middle: usize, end: usize) { 
     let len1 = middle - start;                                               // c:255
     let len2 = end - middle;                                                 // c:261
     // c:263-264 — copy first slice into temp buffer.
-    let first: Vec<char> = zle.zleline[start..middle].to_vec();
+    let first: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[start..middle].to_vec();
     // c:266 — `ZS_memmove(zleline + start, zleline + middle, len2)`.
     // Vec doesn't overlap when copy_within is used.
-    zle.zleline.copy_within(middle..end, start);
+    crate::ported::zle::zle_main::ZLELINE.lock().unwrap().copy_within(middle..end, start);
     // c:267 — `ZS_memcpy(zleline + start + len2, first, len1)`.
     for (i, &ch) in first.iter().enumerate() {
-        zle.zleline[start + len2 + i] = ch;
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[start + len2 + i] = ch;
     }
     let _ = len1;
 }
@@ -1840,16 +1841,16 @@ pub fn transpose_swap(zle: &mut Zle, start: usize, middle: usize, end: usize) { 
 /// Port of `transposechars(UNUSED(char **args))` from Src/Zle/zle_misc.c:313.
 pub fn transposechars(args: &mut Zle) -> i32 {                                // c:313
     use crate::ported::zle::zle_move::{deccs, decpos, inccs, incpos};
-    let mut n = args.zmod.mult;
+    let mut n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
     let neg = n < 0;                                                         // c:317
     if neg {
         n = -n;                                                              // c:319
     }
     while n > 0 {                                                            // c:321
         n -= 1;
-        let mut ct = args.zlecs;                                              // c:322
-        if ct == 0 || args.zleline[args.zlecs - 1] == '\n' {                   // c:322
-            if args.zlell == args.zlecs || args.zleline[args.zlecs] == '\n' {    // c:323
+        let mut ct = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);                                              // c:322
+        if ct == 0 || crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - 1] == '\n' {                   // c:322
+            if crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) || crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)] == '\n' {    // c:323
                 return 1;
             }
             if !neg {
@@ -1858,25 +1859,25 @@ pub fn transposechars(args: &mut Zle) -> i32 {                                //
             incpos(&mut ct);                                                 // c:327
         }
         if neg {
-            if args.zlecs > 0 && args.zleline[args.zlecs - 1] != '\n' {         // c:330
+            if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - 1] != '\n' {         // c:330
                 deccs(args);                                                  // c:331
-                if ct > 1 && args.zleline[ct - 2] != '\n' {                   // c:332
+                if ct > 1 && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[ct - 2] != '\n' {                   // c:332
                     decpos(&mut ct);                                         // c:333
                 }
             }
-        } else if args.zlecs != args.zlell && args.zleline[args.zlecs] != '\n' {
+        } else if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)] != '\n' {
             inccs(args);                                                      // c:338
         }
-        if ct == args.zlell || args.zleline[ct] == '\n' {                      // c:340
+        if ct == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) || crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[ct] == '\n' {                      // c:340
             decpos(&mut ct);                                                 // c:341
         }
-        if ct < 1 || args.zleline[ct - 1] == '\n' {                           // c:343
+        if ct < 1 || crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[ct - 1] == '\n' {                           // c:343
             return 1;
         }
         // c:345-358 — MULTIBYTE branch uses transpose_swap with surrounding
         //              positions; non-multibyte branch swaps two ZLE_CHAR_T.
         //              Rust ZleString is Vec<char> so we can swap directly.
-        args.zleline.swap(ct - 1, ct);
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().swap(ct - 1, ct);
     }
     0
 }
@@ -1906,8 +1907,8 @@ pub fn universalargument(zle: &mut Zle, args: &[String]) -> i32 {            // 
     //              explicit numeric arg.
     if let Some(a) = args.first() {
         if let Ok(n) = a.parse::<i32>() {
-            zle.zmod.mult = n;
-            zle.zmod.flags |= MOD_MULT;
+            crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = n;
+            crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_MULT;
             return 0;
         }
     }
@@ -1916,9 +1917,9 @@ pub fn universalargument(zle: &mut Zle, args: &[String]) -> i32 {            // 
     //               (no digits) which multiplies tmult by 4.
     let digcnt = 0;
     if digcnt == 0 {
-        zle.zmod.tmult = zle.zmod.tmult.saturating_mul(4);                   // c:1027
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult.saturating_mul(4);                   // c:1027
     }
-    zle.zmod.flags |= MOD_TMULT;                             // c:1029
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_TMULT;                             // c:1029
     crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);                                                   // c:1030
     0
 }
@@ -1927,24 +1928,24 @@ pub fn universalargument(zle: &mut Zle, args: &[String]) -> i32 {            // 
 pub fn viputafter(args: &mut Zle) -> i32 {                                    // c:644
     use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     use crate::ported::zle::zle_vi::startvichange;
-    let n = args.zmod.mult;                                                   // c:646
+    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;                                                   // c:646
     startvichange(args, -1);                                                  // c:648
     if n < 0 {
         return 1;                                                            // c:650
     }
-    if args.zmod.flags & MOD_NULL != 0 {
+    if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_NULL != 0 {
         return 0;                                                            // c:652
     }
     // c:653-665 — OS selection branch (MOD_OSSEL = PRI|CLIP). Without
     //              system_clipget we fall through to the cut-buffer path.
-    let buf: Vec<char> = if args.zmod.flags & MOD_VIBUF != 0 {
-        let idx = args.zmod.vibuf as usize;
-        if idx >= args.vibuf.len() {
+    let buf: Vec<char> = if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
+        let idx = crate::ported::zle::zle_main::ZMOD.lock().unwrap().vibuf as usize;
+        if idx >= crate::ported::zle::zle_main::vibuf().lock().unwrap().len() {
             return 1;
         }
-        args.vibuf[idx].clone()                                               // c:667
+        crate::ported::zle::zle_main::vibuf().lock().unwrap()[idx].clone()                                               // c:667
     } else {
-        args.killring.front().cloned().unwrap_or_default()                                                   // c:669
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().cloned().unwrap_or_default()                                                   // c:669
     };
     if buf.is_empty() {
         return 1;                                                            // c:671
@@ -1956,22 +1957,22 @@ pub fn viputafter(args: &mut Zle) -> i32 {                                    //
 pub fn viputbefore(args: &mut Zle) -> i32 {                                   // c:608
     use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     use crate::ported::zle::zle_vi::startvichange;
-    let n = args.zmod.mult;                                                   // c:610
+    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;                                                   // c:610
     startvichange(args, -1);                                                  // c:612
     if n < 0 {
         return 1;                                                            // c:614
     }
-    if args.zmod.flags & MOD_NULL != 0 {
+    if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_NULL != 0 {
         return 0;                                                            // c:616
     }
-    let buf: Vec<char> = if args.zmod.flags & MOD_VIBUF != 0 {
-        let idx = args.zmod.vibuf as usize;
-        if idx >= args.vibuf.len() {
+    let buf: Vec<char> = if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
+        let idx = crate::ported::zle::zle_main::ZMOD.lock().unwrap().vibuf as usize;
+        if idx >= crate::ported::zle::zle_main::vibuf().lock().unwrap().len() {
             return 1;
         }
-        args.vibuf[idx].clone()                                               // c:631
+        crate::ported::zle::zle_main::vibuf().lock().unwrap()[idx].clone()                                               // c:631
     } else {
-        args.killring.front().cloned().unwrap_or_default()                                                   // c:633
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().cloned().unwrap_or_default()                                                   // c:633
     };
     if buf.is_empty() {
         return 1;                                                            // c:635
@@ -1984,11 +1985,11 @@ pub fn whatcursorposition(args: &mut Zle) -> i32 {                            //
     use crate::ported::zle::zle_utils::findbol;
     let bol = findbol(args);                                                  // c:855
     let mut msg = String::with_capacity(100);
-    if args.zlecs == args.zlell {                                              // c:858
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {                                              // c:858
         msg.push_str("EOF");                                                 // c:859
     } else {
         msg.push_str("Char: ");                                              // c:861
-        let c = args.zleline[args.zlecs];                                      // c:856
+        let c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)];                                      // c:856
         match c {
             ' ' => msg.push_str("SPC"),                                      // c:864
             '\t' => msg.push_str("TAB"),                                     // c:867
@@ -1998,13 +1999,13 @@ pub fn whatcursorposition(args: &mut Zle) -> i32 {                            //
         let cu = c as u32;
         msg.push_str(&format!(" (0{:o}, {}, 0x{:x})", cu, cu, cu));          // c:881
     }
-    let pct = if args.zlell > 0 { 100 * args.zlecs / args.zlell } else { 0 };
+    let pct = if crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) > 0 { 100 * crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) / crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) } else { 0 };
     msg.push_str(&format!(
         "  point {} of {}({}%)  column {}",
-        args.zlecs + 1,
-        args.zlell + 1,
+        crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + 1,
+        crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) + 1,
         pct,
-        args.zlecs - bol,
+        crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - bol,
     ));                                                                      // c:884
     tracing::info!(target: "args", "{}", msg);                                // c:887 — showmsg
     0
@@ -2018,31 +2019,31 @@ pub fn yankpop(args: &mut Zle) -> i32 {                                       //
     let last = WidgetFlags::from_bits_truncate(
         crate::ported::zle::zle_main::LASTCMD.load(std::sync::atomic::Ordering::SeqCst),
     );
-    if !last.contains(WidgetFlags::YANK) || args.killring.is_empty() {
+    if !last.contains(WidgetFlags::YANK) || crate::ported::zle::zle_main::KILLRING.lock().unwrap().is_empty() {
         return 1;
     }
     // C body cycles the kill ring index `kct` and re-inserts the
     // previous yank. zshrs uses VecDeque<ZleString> with the rotation
     // index `yank_ring_idx`. Simplified: rotate front entry to back,
     // delete previous yank text from line, insert new front.
-    let prev_start = args.yank_start;
-    let prev_end   = args.yank_end;
-    if prev_end > prev_start && prev_end <= args.zleline.len() {
-        args.zleline.drain(prev_start..prev_end);
-        args.zlell -= prev_end - prev_start;
-        args.zlecs = prev_start;
+    let prev_start = crate::ported::zle::zle_main::YANKB.load(std::sync::atomic::Ordering::SeqCst);
+    let prev_end   = crate::ported::zle::zle_main::YANKE.load(std::sync::atomic::Ordering::SeqCst);
+    if prev_end > prev_start && prev_end <= crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len() {
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(prev_start..prev_end);
+        crate::ported::zle::zle_main::ZLELL.fetch_sub(prev_end - prev_start, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(prev_start, std::sync::atomic::Ordering::SeqCst);
     }
-    if let Some(top) = args.killring.pop_front() {
-        args.killring.push_back(top);
+    if let Some(top) = crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_front() {
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_back(top);
     }
-    if let Some(next) = args.killring.front().cloned() {
+    if let Some(next) = crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().cloned() {
         for (i, &c) in next.iter().enumerate() {
-            args.zleline.insert(args.zlecs + i, c);
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i, c);
         }
-        args.yank_start = args.zlecs;
-        args.zlecs += next.len();
-        args.zlell += next.len();
-        args.yank_end = args.zlecs;
+        crate::ported::zle::zle_main::YANKB.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.fetch_add(next.len(), std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELL.fetch_add(next.len(), std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::YANKE.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     0
@@ -2108,14 +2109,14 @@ mod tests {
         use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
         let mut z = Zle::new();
         // Ensure clean modifier state.
-        z.zmod.tmult = 1;
-        z.zmod.flags = 0;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = 1;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags = 0;
         crate::ported::zle::zle_main::PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
         let r = negargument(&mut z);
         assert_eq!(r, 0);
-        assert_eq!(z.zmod.tmult, -1);
-        assert!(z.zmod.flags & MOD_TMULT != 0);
-        assert!(z.zmod.flags & MOD_NEG != 0);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult, -1);
+        assert!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_TMULT != 0);
+        assert!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_NEG != 0);
         assert!(crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0);
     }
 
@@ -2124,12 +2125,12 @@ mod tests {
         // c:976-977 — if MOD_TMULT already set → return 1.
         use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
         let mut z = Zle::new();
-        z.zmod.flags |= MOD_TMULT;
-        z.zmod.tmult = 7; // some pre-existing value
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_TMULT;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = 7; // some pre-existing value
         let r = negargument(&mut z);
         assert_eq!(r, 1);
         // tmult NOT clobbered (early return).
-        assert_eq!(z.zmod.tmult, 7);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult, 7);
     }
 
     #[test]
@@ -2151,41 +2152,41 @@ mod tests {
         let mut z = Zle::new();
         let r = argumentbase(&mut z, &["8".to_string()]);
         assert_eq!(r, 0);
-        assert_eq!(z.zmod.base, 8);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().base, 8);
         assert!(crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0);
         // c:1053-1056 — modifier reset.
-        assert_eq!(z.zmod.mult, 1);
-        assert_eq!(z.zmod.tmult, 1);
-        assert_eq!(z.zmod.vibuf, 0);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult, 1);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult, 1);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().vibuf, 0);
     }
 
     #[test]
     fn argumentbase_no_arg_uses_zmod_mult() {
         // c:1045 — fallback to zmod.mult when no arg.
         let mut z = Zle::new();
-        z.zmod.mult = 16;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 16;
         argumentbase(&mut z, &[]);
-        assert_eq!(z.zmod.base, 16);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().base, 16);
     }
 
     #[test]
     fn argumentbase_rejects_below_two() {
         // c:1047-1048 — base < 2 → return 1, state unchanged.
         let mut z = Zle::new();
-        z.zmod.base = 10;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 10;
         let r = argumentbase(&mut z, &["1".to_string()]);
         assert_eq!(r, 1);
-        assert_eq!(z.zmod.base, 10); // unchanged
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().base, 10); // unchanged
     }
 
     #[test]
     fn argumentbase_rejects_above_36() {
         // c:1047-1048 — base > 36 → return 1.
         let mut z = Zle::new();
-        z.zmod.base = 10;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 10;
         let r = argumentbase(&mut z, &["100".to_string()]);
         assert_eq!(r, 1);
-        assert_eq!(z.zmod.base, 10);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().base, 10);
     }
 
     #[test]
@@ -2193,7 +2194,7 @@ mod tests {
         // c:1043 — `zstrtol(s, NULL, 0)`: '0x10' → 16.
         let mut z = Zle::new();
         argumentbase(&mut z, &["0x10".to_string()]);
-        assert_eq!(z.zmod.base, 16);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().base, 16);
     }
 
     #[test]
@@ -2201,7 +2202,7 @@ mod tests {
         // c:1043 — '010' → octal 8.
         let mut z = Zle::new();
         argumentbase(&mut z, &["010".to_string()]);
-        assert_eq!(z.zmod.base, 8);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().base, 8);
     }
 
     // ---------- parsedigit real-port tests ----------
@@ -2210,7 +2211,7 @@ mod tests {
     fn parsedigit_decimal_base() {
         // c:1092 — base=10, '0'..'9' → 0..9.
         let mut z = Zle::new();
-        z.zmod.base = 10;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 10;
         assert_eq!(parsedigit(&z, b'0' as i32), 0);
         assert_eq!(parsedigit(&z, b'5' as i32), 5);
         assert_eq!(parsedigit(&z, b'9' as i32), 9);
@@ -2222,7 +2223,7 @@ mod tests {
     fn parsedigit_octal_base() {
         // c:1092 — base=8, '0'..'7'.
         let mut z = Zle::new();
-        z.zmod.base = 8;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 8;
         assert_eq!(parsedigit(&z, b'7' as i32), 7);
         // '8' rejected (out of range for octal).
         assert_eq!(parsedigit(&z, b'8' as i32), -1);
@@ -2232,7 +2233,7 @@ mod tests {
     fn parsedigit_hex_lowercase() {
         // c:1083 — base=16, 'a'..'f' → 10..15.
         let mut z = Zle::new();
-        z.zmod.base = 16;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 16;
         assert_eq!(parsedigit(&z, b'a' as i32), 10);
         assert_eq!(parsedigit(&z, b'f' as i32), 15);
         // 'g' out of range (only a..f for base 16).
@@ -2243,7 +2244,7 @@ mod tests {
     fn parsedigit_hex_uppercase() {
         // c:1085 — base=16, 'A'..'F' → 10..15.
         let mut z = Zle::new();
-        z.zmod.base = 16;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 16;
         assert_eq!(parsedigit(&z, b'A' as i32), 10);
         assert_eq!(parsedigit(&z, b'F' as i32), 15);
     }
@@ -2252,7 +2253,7 @@ mod tests {
     fn parsedigit_hex_digits_still_work() {
         // c:1087 — base > 10 still accepts '0'..'9' via idigit branch.
         let mut z = Zle::new();
-        z.zmod.base = 16;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 16;
         assert_eq!(parsedigit(&z, b'7' as i32), 7);
     }
 
@@ -2260,7 +2261,7 @@ mod tests {
     fn parsedigit_strips_meta_bit() {
         // c:1077 — `inkey &= 0x7f`. 0xb5 = '5' | 0x80 → strips to '5'.
         let mut z = Zle::new();
-        z.zmod.base = 10;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 10;
         assert_eq!(parsedigit(&z, 0x80 | (b'5' as i32)), 5);
     }
 
@@ -2272,14 +2273,14 @@ mod tests {
         // then tmult = 0*10 + 1*5 = 5.
         use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
         let mut z = Zle::new();
-        z.zmod.flags = 0;
-        z.zmod.base = 10;
-        z.zmod.mult = 1; // sign = 1
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags = 0;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 10;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 1; // sign = 1
         crate::ported::zle::compcore::LASTCHAR.store((b'5' as i32) as i32, std::sync::atomic::Ordering::SeqCst);
         let r = digitargument(&mut z);
         assert_eq!(r, 0);
-        assert_eq!(z.zmod.tmult, 5);
-        assert!(z.zmod.flags & MOD_TMULT != 0);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult, 5);
+        assert!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_TMULT != 0);
         assert!(crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0);
     }
 
@@ -2288,20 +2289,20 @@ mod tests {
         // c:1058 — second digit: tmult = 5*10 + 1*7 = 57.
         use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
         let mut z = Zle::new();
-        z.zmod.flags = MOD_TMULT;
-        z.zmod.tmult = 5;
-        z.zmod.base = 10;
-        z.zmod.mult = 1; // sign = 1
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags = MOD_TMULT;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = 5;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 10;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 1; // sign = 1
         crate::ported::zle::compcore::LASTCHAR.store((b'7' as i32) as i32, std::sync::atomic::Ordering::SeqCst);
         digitargument(&mut z);
-        assert_eq!(z.zmod.tmult, 57);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult, 57);
     }
 
     #[test]
     fn digitargument_invalid_returns_one() {
         // c:1047-1048 — parsedigit < 0 → return 1.
         let mut z = Zle::new();
-        z.zmod.base = 10;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 10;
         crate::ported::zle::compcore::LASTCHAR.store((b'a' as i32) as i32, std::sync::atomic::Ordering::SeqCst); // not a decimal digit
         assert_eq!(digitargument(&mut z), 1);
     }
@@ -2312,16 +2313,16 @@ mod tests {
         // sign = -1 (zmult<0); first digit '3' → tmult = -1*3 = -3.
         use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
         let mut z = Zle::new();
-        z.zmod.flags = MOD_TMULT | MOD_NEG;
-        z.zmod.tmult = -1;  // set by negargument
-        z.zmod.base = 10;
-        z.zmod.mult = -1;   // negative → sign = -1
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags = MOD_TMULT | MOD_NEG;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = -1;  // set by negargument
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = 10;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = -1;   // negative → sign = -1
         crate::ported::zle::compcore::LASTCHAR.store((b'3' as i32) as i32, std::sync::atomic::Ordering::SeqCst);
         digitargument(&mut z);
-        assert_eq!(z.zmod.tmult, -3);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult, -3);
         // NEG cleared.
-        assert!(!z.zmod.flags & MOD_NEG != 0);
-        assert!(z.zmod.flags & MOD_TMULT != 0);
+        assert!(!crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_NEG != 0);
+        assert!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_TMULT != 0);
     }
 
     // ---------- transpose_swap real-port tests ----------
@@ -2330,11 +2331,11 @@ mod tests {
     fn transpose_swap_equal_halves() {
         // c:254 — swap two equal-length adjacent slices.
         let mut z = Zle::new();
-        z.zleline = "abcdef".chars().collect();
-        z.zlell = 6;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcdef".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
         // Swap [0..2]="ab" with [2..4]="cd" → "cdabef".
         transpose_swap(&mut z, 0, 2, 4);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "cdabef");
     }
 
@@ -2342,11 +2343,11 @@ mod tests {
     fn transpose_swap_unequal_halves() {
         // First chunk len 1, second len 3.
         let mut z = Zle::new();
-        z.zleline = "abcdef".chars().collect();
-        z.zlell = 6;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcdef".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
         // Swap [0..1]="a" with [1..4]="bcd" → "bcdaef".
         transpose_swap(&mut z, 0, 1, 4);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "bcdaef");
     }
 
@@ -2354,11 +2355,11 @@ mod tests {
     fn transpose_swap_first_longer() {
         // First chunk len 3, second len 1.
         let mut z = Zle::new();
-        z.zleline = "abcdef".chars().collect();
-        z.zlell = 6;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcdef".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
         // Swap [0..3]="abc" with [3..4]="d" → "dabcef".
         transpose_swap(&mut z, 0, 3, 4);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "dabcef");
     }
 
@@ -2366,11 +2367,11 @@ mod tests {
     fn transpose_swap_mid_buffer() {
         // Swap not at the start.
         let mut z = Zle::new();
-        z.zleline = "0123456789".chars().collect();
-        z.zlell = 10;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "0123456789".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(10, std::sync::atomic::Ordering::SeqCst);
         // Swap [3..5]="34" with [5..7]="56" → "0125634789".
         transpose_swap(&mut z, 3, 5, 7);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "0125634789");
     }
 
@@ -2390,128 +2391,128 @@ mod tests {
     #[test]
     fn selfinsert_inserts_lastchar() {
         let mut z = Zle::new();
-        z.zleline = "abc".chars().collect();
-        z.zlell = 3;
-        z.zlecs = 1;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::compcore::LASTCHAR.store((b'X' as i32) as i32, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(0, std::sync::atomic::Ordering::SeqCst);
         selfinsert(&mut z);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "aXbc");
     }
 
     #[test]
     fn selfinsertunmeta_chains_fixunmeta_and_selfinsert() {
         let mut z = Zle::new();
-        z.zleline = "ab".chars().collect();
-        z.zlell = 2;
-        z.zlecs = 1;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "ab".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::compcore::LASTCHAR.store((0x80 | b'X' as i32) as i32, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(0, std::sync::atomic::Ordering::SeqCst);
         selfinsertunmeta(&mut z);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "aXb");
     }
 
     #[test]
     fn deletechar_removes_n_chars() {
         let mut z = Zle::new();
-        z.zleline = "hello".chars().collect();
-        z.zlell = 5;
-        z.zlecs = 0;
-        z.zmod.mult = 2;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 2;
         let r = deletechar(&mut z);
         assert_eq!(r, 0);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "llo");
     }
 
     #[test]
     fn deletechar_returns_one_at_eol() {
         let mut z = Zle::new();
-        z.zleline = "ab".chars().collect();
-        z.zlell = 2;
-        z.zlecs = 2;
-        z.zmod.mult = 1;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "ab".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(2, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 1;
         assert_eq!(deletechar(&mut z), 1);
     }
 
     #[test]
     fn backwarddeletechar_clamps_to_zlecs() {
         let mut z = Zle::new();
-        z.zleline = "abc".chars().collect();
-        z.zlell = 3;
-        z.zlecs = 2;
-        z.zmod.mult = 99;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(2, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 99;
         backwarddeletechar(&mut z);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "c");
-        assert_eq!(z.zlecs, 0);
+        assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[test]
     fn killline_kills_to_eol_and_pushes_killring() {
         let mut z = Zle::new();
-        z.zleline = "hello world".chars().collect();
-        z.zlell = 11;
-        z.zlecs = 6;
-        z.zmod.mult = 1;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(6, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 1;
         killline(&mut z);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "hello ");
-        assert_eq!(z.zlecs, 6);
-        assert_eq!(z.killring.front().map(|v| v.iter().collect::<String>()),
+        assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 6);
+        assert_eq!(crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().map(|v| v.iter().collect::<String>()),
                    Some("world".to_string()));
     }
 
     #[test]
     fn killbuffer_clears_and_pushes() {
         let mut z = Zle::new();
-        z.zleline = "abc".chars().collect();
-        z.zlell = 3;
-        z.zlecs = 2;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(2, std::sync::atomic::Ordering::SeqCst);
         killbuffer(&mut z);
-        assert!(z.zleline.is_empty());
-        assert_eq!(z.zlell, 0);
-        assert_eq!(z.zlecs, 0);
-        assert_eq!(z.killring.front().map(|v| v.iter().collect::<String>()),
+        assert!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().is_empty());
+        assert_eq!(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().map(|v| v.iter().collect::<String>()),
                    Some("abc".to_string()));
     }
 
     #[test]
     fn killwholeline_drops_one_line() {
         let mut z = Zle::new();
-        z.zleline = "abc\ndef\nghi".chars().collect();
-        z.zlell = 11;
-        z.zlecs = 5; // 'e' in 'def'
-        z.zmod.mult = 1;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc\ndef\nghi".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(5, std::sync::atomic::Ordering::SeqCst); // 'e' in 'def'
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 1;
         killwholeline(&mut z);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "abc\nghi");
     }
 
     #[test]
     fn copyregionaskill_copies_between_point_mark() {
         let mut z = Zle::new();
-        z.zleline = "hello".chars().collect();
-        z.zlell = 5;
-        z.zlecs = 0;
-        z.mark = 3;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(3, std::sync::atomic::Ordering::SeqCst);
         copyregionaskill(&mut z, &[]);
-        assert_eq!(z.killring.front().map(|v| v.iter().collect::<String>()),
+        assert_eq!(crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().map(|v| v.iter().collect::<String>()),
                    Some("hel".to_string()));
         // Buffer unchanged
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "hello");
     }
 
     #[test]
     fn regionlines_returns_bol_eol_around_region() {
         let mut z = Zle::new();
-        z.zleline = "abc\ndef\nghi".chars().collect();
-        z.zlell = 11;
-        z.zlecs = 1;
-        z.mark = 5;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc\ndef\nghi".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(5, std::sync::atomic::Ordering::SeqCst);
         let (start, end) = regionlines(&mut z);
         // mark > zlecs branch: start=findbol(zlecs)=0, end=findeol(mark)=7
         assert_eq!(start, 0);
@@ -2521,34 +2522,34 @@ mod tests {
     #[test]
     fn killregion_drains_between_mark_and_cursor() {
         let mut z = Zle::new();
-        z.zleline = "abcdef".chars().collect();
-        z.zlell = 6;
-        z.zlecs = 1;
-        z.mark = 4;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcdef".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(4, std::sync::atomic::Ordering::SeqCst);
         killregion(&mut z);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "aef");
-        assert_eq!(z.killring.front().map(|v| v.iter().collect::<String>()),
+        assert_eq!(crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().map(|v| v.iter().collect::<String>()),
                    Some("bcd".to_string()));
     }
 
     #[test]
     fn quoteline_wraps_in_single_quotes() {
         let mut z = Zle::new();
-        z.zleline = "abc".chars().collect();
-        z.zlell = 3;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         quoteline(&mut z);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "'abc'");
     }
 
     #[test]
     fn quoteline_escapes_internal_quote() {
         let mut z = Zle::new();
-        z.zleline = "it's".chars().collect();
-        z.zlell = 4;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "it's".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(4, std::sync::atomic::Ordering::SeqCst);
         quoteline(&mut z);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "'it'\\''s'");
     }
 
@@ -2569,25 +2570,25 @@ mod tests {
     #[test]
     fn pastebuf_inserts_at_cursor_position_zero() {
         let mut z = Zle::new();
-        z.zleline = "foo".chars().collect();
-        z.zlell = 3;
-        z.zlecs = 1;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "foo".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
         let buf: Vec<char> = "XX".chars().collect();
         pastebuf(&mut z, &buf, 1, 0);
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "fXXoo");
     }
 
     #[test]
     fn pastebuf_inserts_after_cursor_position_one() {
         let mut z = Zle::new();
-        z.zleline = "foo".chars().collect();
-        z.zlell = 3;
-        z.zlecs = 1;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "foo".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
         let buf: Vec<char> = "XX".chars().collect();
         pastebuf(&mut z, &buf, 1, 1);
         // position=1 → INCCS first → insert at zlecs+1
-        let s: String = z.zleline.iter().collect();
+        let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "foXXo");
     }
 

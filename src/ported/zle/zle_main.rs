@@ -443,7 +443,7 @@ impl Zle {
     pub fn zsetterm(&mut self) -> io::Result<()> {                           // c:210
         // termios::FromRawFd is not used directly here — the path goes
         // through termios::Termios::from_fd which already opens the fd.
-        let mut termios = termios::Termios::from_fd(self.ttyfd)?;
+        let mut termios = termios::Termios::from_fd(crate::ported::zle::zle_main::TTYFD.load(std::sync::atomic::Ordering::SeqCst))?;
 
         // Capture VEOF before we mask it — zlecore checks lastchar
         // against eofchar for the empty-line EOF branch (zle_main.c:1139).
@@ -457,7 +457,7 @@ impl Zle {
         termios.c_cc[termios::VMIN] = 1;
         termios.c_cc[termios::VTIME] = 0;
 
-        termios::tcsetattr(self.ttyfd, termios::TCSANOW, &termios)?;
+        termios::tcsetattr(crate::ported::zle::zle_main::TTYFD.load(std::sync::atomic::Ordering::SeqCst), termios::TCSANOW, &termios)?;
         Ok(())
     }
 
@@ -466,7 +466,7 @@ impl Zle {
     /// keymap-trie resolution and `quoted-insert` to put back a byte
     /// the loop already read but isn't ready to consume.
     pub fn ungetbyte(&mut self, ch: u8) {                                    // c:348
-        self.unget_buf.push_front(ch);
+        crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().push_front(ch);
     }
 
     /// Push a byte slice back onto the input queue, preserving order.
@@ -477,7 +477,7 @@ impl Zle {
     /// WARNING: param names don't match C — Rust=(s) vs C=(s, len)
     pub fn ungetbytes(&mut self, s: &[u8]) {
         for &b in s.iter().rev() {
-            self.unget_buf.push_front(b);
+            crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().push_front(b);
         }
     }
 
@@ -512,7 +512,7 @@ impl Zle {
     /// WARNING: param names don't match C — Rust=(do_keytmout) vs C=(do_keytmout, cptr, full)
     pub fn raw_getbyte(&mut self, do_keytmout: bool) -> Option<u8> {
         // Check unget buffer first
-        if let Some(b) = self.unget_buf.pop_front() {
+        if let Some(b) = crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front() {
             return Some(b);
         }
 
@@ -733,7 +733,7 @@ impl Zle {
 
             // EOF on empty line: matches C's eofchar branch
             // (zle_main.c:1139-1150 — guarded by ZLRF_IGNOREEOF too).
-            if self.zlell == 0
+            if crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) == 0
                 && crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) == EOFCHAR.load(std::sync::atomic::Ordering::SeqCst)
                 && (crate::ported::zle::zle_main::ZLEREADFLAGS.load(std::sync::atomic::Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY) != 0
             {
@@ -742,8 +742,8 @@ impl Zle {
                 continue;
             }
 
-            self.lbindk = self.bindk.take();
-            self.bindk = Some(thingy.clone());
+            *crate::ported::zle::zle_main::LBINDK.lock().unwrap() = crate::ported::zle::zle_main::BINDK.lock().unwrap().take();
+            *crate::ported::zle::zle_main::BINDK.lock().unwrap() = Some(thingy.clone());
 
             if let Some(widget) = &thingy.widget {
                 self.execute_widget(widget);
@@ -761,12 +761,12 @@ impl Zle {
             //   redrawhook()      → queue zle-line-pre-redraw
             self.handleprefixes();
             if self.in_vi_cmd_mode()
-                && self.zlecs > self.findbol(self.zlecs)
-                && (self.zlecs == self.zlell
-                    || self.zleline.get(self.zlecs).copied() == Some('\n'))
-                && self.zlecs > 0
+                && crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > self.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst))
+                && (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)
+                    || crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)).copied() == Some('\n'))
+                && crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0
             {
-                self.zlecs -= 1;
+                crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             }
             self.redrawhook();
 
@@ -873,7 +873,7 @@ impl Zle {
     fn execute_widget(&mut self, widget: &Widget) {
         // Reset sticky column unless the widget keeps it.
         if !widget.flags.contains(super::widget::WidgetFlags::LASTCOL) {
-            self.lastcol = -1;
+            crate::ported::zle::zle_main::LASTCOL.store(-1, std::sync::atomic::Ordering::SeqCst);
         }
 
         // Snapshot the line so mkundoent can diff it post-widget.
@@ -893,7 +893,7 @@ impl Zle {
                 // it after the key dispatch returns and runs the function
                 // with its own ShellExecutor — the same pattern used by
                 // zle_call_hook.
-                self.pending_hooks.push((name.clone(), None));
+                crate::ported::zle::zle_main::PENDING_HOOKS.lock().unwrap().push((name.clone(), None));
             }
         }
 
@@ -912,18 +912,18 @@ impl Zle {
     fn do_self_insert(&mut self, c: char) {
         if (crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0) {
             // Insert mode
-            self.zleline.insert(self.zlecs, c);
-            self.zlecs += 1;
-            self.zlell += 1;
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), c);
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         } else {
             // Overwrite mode
-            if self.zlecs < self.zlell {
-                self.zleline[self.zlecs] = c;
+            if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+                crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)] = c;
             } else {
-                self.zleline.push(c);
-                self.zlell += 1;
+                crate::ported::zle::zle_main::ZLELINE.lock().unwrap().push(c);
+                crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
-            self.zlecs += 1;
+            crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
@@ -949,18 +949,18 @@ impl Zle {
         // Stash the unexpanded templates so reexpandprompt() can re-run
         // expansion later. C zsh saves these in the global raw_lp/raw_rp
         // slots; we keep them on the Zle struct to avoid a global.
-        self.lprompt_raw = lprompt.to_string();
-        self.rprompt_raw = rprompt.to_string();
-        self.lprompt = crate::prompt::expand_prompt(lprompt);
-        self.rprompt = crate::prompt::expand_prompt(rprompt);
+        *crate::ported::zle::zle_main::RAW_LP.lock().unwrap() = lprompt.to_string();
+        *crate::ported::zle::zle_main::RAW_RP.lock().unwrap() = rprompt.to_string();
+        *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = crate::prompt::expand_prompt(lprompt);
+        *crate::ported::zle::zle_main::RPROMPT.lock().unwrap() = crate::prompt::expand_prompt(rprompt);
         crate::ported::zle::zle_main::ZLEREADFLAGS.store(flags, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECONTEXT.store(context, std::sync::atomic::Ordering::SeqCst);
 
         // Initialize line
-        self.zleline.clear();
-        self.zlecs = 0;
-        self.zlell = 0;
-        self.mark = 0;
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().clear();
+        crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELL.store(0, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(0, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_misc::DONE.store(0, std::sync::atomic::Ordering::SeqCst);
 
         // Set up terminal
@@ -974,7 +974,7 @@ impl Zle {
         self.zlecore();
 
         // Return the line
-        Ok(self.zleline.iter().collect())
+        Ok(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect())
     }
 
     /// Initialize ZLE modifiers
@@ -1003,10 +1003,11 @@ impl Zle {
     pub fn handleprefixes(&mut self) {
         if (crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0) {
             crate::ported::zle::zle_main::PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
-            if self.zmod.flags & MOD_TMULT != 0 {
-                self.zmod.flags &= !MOD_TMULT;
-                self.zmod.flags |= MOD_MULT;
-                self.zmod.mult = self.zmod.tmult;
+            if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_TMULT != 0 {
+                crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags &= !MOD_TMULT;
+                crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_MULT;
+                let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
+                __g_zmod.mult = __g_zmod.tmult;
             }
         } else {
             self.initmodifier();
@@ -1052,8 +1053,8 @@ impl Zle {
         // PromptContext was removed from prompt.rs's public surface;
         // expand_prompt() takes only the format string now and reads
         // env/state internally.
-        self.lprompt = crate::prompt::expand_prompt(&self.lprompt_raw);
-        self.rprompt = crate::prompt::expand_prompt(&self.rprompt_raw);
+        *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = crate::prompt::expand_prompt(&self.lprompt_raw);
+        *crate::ported::zle::zle_main::RPROMPT.lock().unwrap() = crate::prompt::expand_prompt(&self.rprompt_raw);
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
@@ -1107,9 +1108,9 @@ impl Zle {
     /// (the `errflag |= ERRFLAG_ERROR; break;` arm). The C source uses
     /// errflag globals to communicate the abort; we model it with a bool.
     pub fn abort_line(&mut self) {
-        self.zleline.clear();
-        self.zlecs = 0;
-        self.zlell = 0;
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().clear();
+        crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELL.store(0, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
@@ -1238,14 +1239,14 @@ impl Zle {
 
     /// Set prompt
     pub fn set_prompt(&mut self, prompt: &str) {
-        self.lprompt = prompt.to_string();
+        *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = prompt.to_string();
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Get repeat count
     pub fn get_mult(&self) -> i32 {
-        if self.zmod.flags & MOD_MULT != 0 {
-            self.zmod.mult
+        if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_MULT != 0 {
+            crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult
         } else {
             1
         }
@@ -1253,12 +1254,12 @@ impl Zle {
 
     /// Toggle negative argument flag
     pub fn toggle_neg_arg(&mut self) {
-        self.zmod.flags ^= MOD_NEG;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags ^= MOD_NEG;
     }
 
     /// Check if negative argument
     pub fn is_neg(&self) -> bool {
-        self.zmod.flags & MOD_NEG != 0
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_NEG != 0
     }
 
     /// Vi command mode flag
@@ -1488,26 +1489,26 @@ mod tests {
     #[test]
     fn handleprefixes_promotes_tmult_to_mult_when_prefixflag_set() {
         let mut zle = Zle::new();
-        zle.zmod.flags |= MOD_TMULT;
-        zle.zmod.tmult = 7;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_TMULT;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = 7;
         crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
         zle.handleprefixes();
-        assert!(zle.zmod.flags & MOD_MULT != 0);
-        assert!(!zle.zmod.flags & MOD_TMULT != 0);
-        assert_eq!(zle.zmod.mult, 7);
+        assert!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_MULT != 0);
+        assert!(!crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_TMULT != 0);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult, 7);
         assert!(crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) == 0);
     }
 
     #[test]
     fn handleprefixes_resets_modifier_when_prefixflag_cleared() {
         let mut zle = Zle::new();
-        zle.zmod.flags |= MOD_MULT;
-        zle.zmod.mult = 9;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_MULT;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 9;
         crate::ported::zle::zle_main::PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
         zle.handleprefixes();
         // initmodifier resets to defaults: mult=1, no flags.
-        assert_eq!(zle.zmod.mult, 1);
-        assert!(!zle.zmod.flags & MOD_MULT != 0);
+        assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult, 1);
+        assert!(!crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_MULT != 0);
     }
 
     #[test]
@@ -1554,13 +1555,13 @@ mod tests {
     #[test]
     fn handle_undo_snapshots_line_for_subsequent_diff() {
         let mut zle = Zle::new();
-        zle.zleline = "abc".chars().collect();
-        zle.zlell = 3;
-        zle.zlecs = 3;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);
         zle.handleundo();
-        assert_eq!(zle.last_line.iter().collect::<String>(), "abc");
-        assert_eq!(zle.last_ll, 3);
-        assert_eq!(zle.last_cs, 3);
+        assert_eq!(crate::ported::zle::zle_main::LASTLINE.lock().unwrap().iter().collect::<String>(), "abc");
+        assert_eq!(crate::ported::zle::zle_main::LASTLL.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(crate::ported::zle::zle_main::LASTCS.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     #[test]
@@ -1579,13 +1580,13 @@ mod tests {
         // c:375 — non-Meta bytes pushed back in reverse.
         let mut zle = Zle::new();
         // Pre-clear unget_buf in case Zle::new() leaves anything.
-        zle.unget_buf.clear();
+        crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(&mut zle, b"abc");
         // After backward walk: ungetbyte('c'), then 'b', then 'a'
         // → unget_buf front = ['a', 'b', 'c'] in read order.
-        assert_eq!(zle.unget_buf.pop_front(), Some(b'a'));
-        assert_eq!(zle.unget_buf.pop_front(), Some(b'b'));
-        assert_eq!(zle.unget_buf.pop_front(), Some(b'c'));
+        assert_eq!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front(), Some(b'a'));
+        assert_eq!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front(), Some(b'b'));
+        assert_eq!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front(), Some(b'c'));
     }
 
     #[test]
@@ -1594,10 +1595,10 @@ mod tests {
         // Encode 'a' meta-quoted: 0x83 followed by 'a' XOR 0x20 = 0x41.
         // So [0x83, 0x41] → emit 0x41 ^ 0x20 = 0x61 = 'a'.
         let mut zle = Zle::new();
-        zle.unget_buf.clear();
+        crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(&mut zle, &[0x83, 0x41]);
-        assert_eq!(zle.unget_buf.pop_front(), Some(b'a'));
-        assert!(zle.unget_buf.is_empty());
+        assert_eq!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front(), Some(b'a'));
+        assert!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -1605,20 +1606,20 @@ mod tests {
         // 'X' + Meta + 'a'XOR0x20 + 'Z' → 3 chars: 'X', 'a', 'Z'.
         // Encoded: [0x58, 0x83, 0x41, 0x5a].
         let mut zle = Zle::new();
-        zle.unget_buf.clear();
+        crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(&mut zle, &[0x58, 0x83, 0x41, 0x5a]);
-        assert_eq!(zle.unget_buf.pop_front(), Some(b'X'));
-        assert_eq!(zle.unget_buf.pop_front(), Some(b'a'));
-        assert_eq!(zle.unget_buf.pop_front(), Some(b'Z'));
-        assert!(zle.unget_buf.is_empty());
+        assert_eq!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front(), Some(b'X'));
+        assert_eq!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front(), Some(b'a'));
+        assert_eq!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front(), Some(b'Z'));
+        assert!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().is_empty());
     }
 
     #[test]
     fn ungetbytes_unmeta_empty_input() {
         let mut zle = Zle::new();
-        zle.unget_buf.clear();
+        crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(&mut zle, b"");
-        assert!(zle.unget_buf.is_empty());
+        assert!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().is_empty());
     }
 }
 
@@ -2073,6 +2074,123 @@ pub static LASTCMD: std::sync::atomic::AtomicU32 =                           // 
 /// reads it to know which fds to watch.
 pub static WATCH_FDS: std::sync::Mutex<Vec<super::zle_h::watch_fd>> =        // c:204
     std::sync::Mutex::new(Vec::new());
+
+// =====================================================================
+// Former `Zle` struct fields, migrated to file-scope statics matching
+// the C source's file-`static`s. Bucket 1 (per-evaluator) per
+// docs/PORT_PLAN.md.
+// =====================================================================
+
+/// Port of `ZLE_STRING_T zleline` from `Src/Zle/zle_main.c:40`.
+pub static ZLELINE: std::sync::Mutex<Vec<ZleChar>> = std::sync::Mutex::new(Vec::new());
+/// Port of `int zlecs` from `Src/Zle/zle_main.c:45`.
+pub static ZLECS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Port of `int zlell` from `Src/Zle/zle_main.c:45`.
+pub static ZLELL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Port of `int mark` from `Src/Zle/zle_main.c:81`.
+pub static MARK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Port of `Thingy lbindk` from `Src/Zle/zle_main.c`.
+pub static LBINDK: std::sync::Mutex<Option<Thingy>> = std::sync::Mutex::new(None);
+/// Port of `Thingy bindk` from `Src/Zle/zle_main.c`.
+pub static BINDK: std::sync::Mutex<Option<Thingy>> = std::sync::Mutex::new(None);
+/// Port of `struct modifier zmod` from `Src/Zle/zle_main.c:169`.
+pub static ZMOD: std::sync::Mutex<modifier> = std::sync::Mutex::new(modifier { flags: 0, mult: 1, tmult: 1, vibuf: 0, base: 10 });
+/// Port of `char *statusline` from `Src/Zle/zle_main.c`.
+pub static STATUSLINE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// Port of `zlong stackhist` from `Src/Zle/zle_hist.c`.
+pub static STACKHIST: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// Port of `int stackcs` from `Src/Zle/zle_hist.c`.
+pub static STACKCS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Port of `zlong vistartchange` from `Src/Zle/zle_vi.c`.
+pub static VISTARTCHANGE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Port of `struct change *changes` from `Src/Zle/zle_utils.c`.
+pub static UNDO_STACK: std::sync::Mutex<Vec<change>> = std::sync::Mutex::new(Vec::new());
+/// Port of `zlong changeno` from `Src/Zle/zle_utils.c`.
+pub static CHANGENO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Port of `char *kungetbuf` from `Src/Zle/zle_main.c:185`.
+pub static KUNGETBUF: std::sync::Mutex<VecDeque<u8>> = std::sync::Mutex::new(VecDeque::new());
+/// Port of `int baud` from `Src/Zle/zle_main.c`.
+pub static BAUD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(38400);
+/// Port of `Widget compwidget` from `Src/Zle/zle_tricky.c`.
+pub static COMPWIDGET: std::sync::Mutex<Option<Widget>> = std::sync::Mutex::new(None);
+/// Port of `int hascompmod` from `Src/Zle/zle_tricky.c`.
+pub static HASCOMPMOD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Port of `int SHTTY` from `Src/Zle/zle_main.c`.
+pub static TTYFD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// Port of `char *lprompt` (expanded) from `Src/Zle/zle_main.c`.
+pub static LPROMPT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+/// Port of `char *rprompt` (expanded) from `Src/Zle/zle_main.c`.
+pub static RPROMPT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+/// Port of `int pre_zle_status` from `Src/Zle/zle_main.c`.
+pub static PRE_ZLE_STATUS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// Port of `ZLE_STRING_T vibuf[36]` from `Src/Zle/zle_misc.c`.
+pub static VIBUF: std::sync::OnceLock<std::sync::Mutex<[Vec<ZleChar>; 36]>> = std::sync::OnceLock::new();
+pub fn vibuf() -> &'static std::sync::Mutex<[Vec<ZleChar>; 36]> {
+    VIBUF.get_or_init(|| std::sync::Mutex::new(std::array::from_fn(|_| Vec::new())))
+}
+/// Port of `LinkList kring` from `Src/Zle/zle_misc.c`.
+pub static KILLRING: std::sync::Mutex<VecDeque<Vec<ZleChar>>> = std::sync::Mutex::new(VecDeque::new());
+/// Port of `int kringsize` from `Src/Zle/zle_misc.c`.
+pub static KILLRINGMAX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(8);
+/// Port of `int yanklast` from `Src/Zle/zle_misc.c`.
+pub static YANKLAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Port of `int neg_arg` from `Src/Zle/zle_main.c`.
+pub static NEG_ARG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Port of `int mult` from `Src/Zle/zle_main.c`.
+pub static MULT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1);
+/// Port of `Histent histlist` ZLE-session view from `Src/Zle/zle_hist.c`.
+pub static HISTORY: std::sync::OnceLock<std::sync::Mutex<super::zle_hist::History>> = std::sync::OnceLock::new();
+pub fn history() -> &'static std::sync::Mutex<super::zle_hist::History> {
+    HISTORY.get_or_init(|| std::sync::Mutex::new(super::zle_hist::History::new(2000)))
+}
+/// Port of `int lastcol` from `Src/Zle/zle_hist.c`.
+pub static LASTCOL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+/// Port of `LinkList bufstack` from `Src/Zle/zle_hist.c`.
+pub static BUFSTACK: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+/// Port of `char *vichgbuf` from `Src/Zle/zle_vi.c`.
+pub static VICHGBUF: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+/// Port of `char *srch_str` from `Src/Zle/zle_hist.c`.
+pub static SRCH_STR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// Port of `ZLE_STRING_T lastline` from `Src/Zle/zle_utils.c`.
+pub static LASTLINE: std::sync::Mutex<Vec<ZleChar>> = std::sync::Mutex::new(Vec::new());
+/// Port of `int lastll` from `Src/Zle/zle_utils.c`.
+pub static LASTLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Port of `int lastcs` from `Src/Zle/zle_utils.c`.
+pub static LASTCS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Port of `struct change *curchange` from `Src/Zle/zle_utils.c` (as index).
+pub static CURCHANGE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Port of `zlong undo_changeno` from `Src/Zle/zle_utils.c`.
+pub static UNDO_CHANGENO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Port of `zlong undo_limitno` from `Src/Zle/zle_utils.c`.
+pub static UNDO_LIMITNO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Port of `int viinsbegin` from `Src/Zle/zle_vi.c:78`.
+pub static VIINSBEGIN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Port of `int yankb` from `Src/Zle/zle_misc.c`.
+pub static YANKB: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Port of `int yanke` from `Src/Zle/zle_misc.c`.
+pub static YANKE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Port of `int yankcs` from `Src/Zle/zle_misc.c`.
+pub static YANKCS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Port of `int kct` from `Src/Zle/zle_misc.c`.
+pub static KCT: std::sync::Mutex<Option<usize>> = std::sync::Mutex::new(None);
+/// Port of `int vimarkcs[27]` + `zlong vimarkline[27]` from `Src/Zle/zle_move.c`.
+pub static VIMARKS: std::sync::OnceLock<std::sync::Mutex<[Option<(usize, i32)>; 27]>> = std::sync::OnceLock::new();
+pub fn vimarks() -> &'static std::sync::Mutex<[Option<(usize, i32)>; 27]> {
+    VIMARKS.get_or_init(|| std::sync::Mutex::new([None; 27]))
+}
+/// Port of `int region_active` from `Src/Zle/zle_main.c`.
+pub static REGION_ACTIVE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+/// Rust-only queue for hooks. C dispatches inline via `zle_call_hook` (Src/Zle/zle_utils.c:1755).
+pub static PENDING_HOOKS: std::sync::Mutex<Vec<(String, Option<String>)>> = std::sync::Mutex::new(Vec::new());
+/// Port of `char *raw_lp` from `Src/Zle/zle_main.c`.
+pub static RAW_LP: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+/// Port of `char *raw_rp` from `Src/Zle/zle_main.c`.
+pub static RAW_RP: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+/// Port of `Region_highlight region_highlights` from `Src/Zle/zle_refresh.c`.
+pub static HIGHLIGHT: std::sync::OnceLock<std::sync::Mutex<super::zle_refresh::HighlightManager>> = std::sync::OnceLock::new();
+pub fn highlight() -> &'static std::sync::Mutex<super::zle_refresh::HighlightManager> {
+    HIGHLIGHT.get_or_init(|| std::sync::Mutex::new(super::zle_refresh::HighlightManager::new()))
+}
 
 /// Port of `zleaftertrap(UNUSED(Hookdef dummy), UNUSED(void *dat))` from `Src/Zle/zle_main.c:2114`.
 /// ```c

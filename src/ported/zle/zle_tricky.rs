@@ -361,16 +361,16 @@ pub fn addx(zle: &mut crate::ported::zle::zle_main::Zle, ptmp: &mut String) -> i
     // C body c:924-955 — inserts an "x" placeholder at the cursor so
     //                    the parser sees a complete word; saves the
     //                    snapshot in *ptmp.
-    let snap: String = zle.zleline.iter().collect();
+    let snap: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
     *ptmp = snap;
-    let need_space = zle.zlecs == zle.zlell
+    let need_space = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)
         || matches!(
-            zle.zleline.get(zle.zlecs).copied(),
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)).copied(),
             Some(' ' | '\t' | '\n' | ')' | '`' | '}' | ';' | '|' | '&' | '>' | '<')
         );
     let ins = if need_space { "x " } else { "x" };                           // c:945
     for (i, ch) in ins.chars().enumerate() {
-        zle.zleline.insert(zle.zlecs + i, ch);
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i, ch);
     }
     if need_space {
         2
@@ -480,7 +480,7 @@ pub fn deletecharorlist(args: &mut crate::ported::zle::zle_main::Zle) -> i32 { /
     WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:275
     // c:277-279 — `if (zlecs == zlell) return docomplete(COMP_LIST_COMPLETE);
     //              else deletechar()`.
-    if args.zlecs == args.zlell {
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
         docomplete(COMP_LIST_COMPLETE)
     } else {
         crate::ported::zle::zle_misc::deletechar(args)
@@ -701,7 +701,7 @@ pub fn expandorcompleteprefix(args: &mut crate::ported::zle::zle_main::Zle) -> i
     use std::sync::atomic::Ordering;
     COMPPREF.store(1, Ordering::SeqCst);                                     // c:3045
     let ret = expandorcomplete();                                            // c:3046
-    if args.zlecs > 0 && args.zleline[args.zlecs - 1] == ' ' {                  // c:3047
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - 1] == ' ' {                  // c:3047
         crate::ported::zle::zle_misc::makesuffixstr(None, Some("\\-"), 0);   // c:3048
     }
     COMPPREF.store(0, Ordering::SeqCst);                                     // c:3049
@@ -761,8 +761,8 @@ pub fn freebrinfo(p: Option<crate::ported::zle::zle_h::BrinfoPtr>) {         // 
 /// completion paths.
 /// WARNING: param names don't match C — Rust=(zle) vs C=()
 pub fn get_comp_string(zle: &crate::ported::zle::zle_main::Zle) -> Option<String> { // c:1087
-    let snap: String = zle.zleline.iter().collect();
-    let cs = zle.zlecs.min(snap.len());
+    let snap: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
+    let cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst).min(snap.len());
     let bytes = snap.as_bytes();
     let mut start = cs;
     while start > 0 && !bytes[start - 1].is_ascii_whitespace() {
@@ -791,8 +791,8 @@ pub fn getcurcmd(zle: &crate::ported::zle::zle_main::Zle) -> Option<String> { //
     //                      of a pipeline segment). This matches the
     //                      common case of `processcmd` invoked in the
     //                      first segment.
-    let snap: String = zle.zleline.iter().collect();
-    let cs = zle.zlecs.min(snap.len());
+    let snap: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
+    let cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst).min(snap.len());
     let prefix = &snap[..cs];
     let mut last_seg_start = 0;
     for (i, b) in prefix.bytes().enumerate() {
@@ -839,10 +839,10 @@ pub fn inststrlen(                                                           // 
     // c:2237-2247 — meta vs wide branches; we work in chars directly.
     let n = (len as usize).min(str.len());
     for (i, ch) in str.chars().take(n).enumerate() {
-        zle.zleline.insert(zle.zlecs + i, ch);
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i, ch);
     }
     if move_cursor {
-        zle.zlecs += n;                                                      // c:2241
+        crate::ported::zle::zle_main::ZLECS.fetch_add(n, std::sync::atomic::Ordering::SeqCst);                                                      // c:2241
     }
     len
 }
@@ -945,8 +945,8 @@ pub fn magicspace(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {      //
     fixmagicspace(args);                                                      // c:2891
     let ret = expandhistory();
     if ret != 0 {
-        args.zleline.insert(args.zlecs, ' ');
-        args.zlecs += 1;
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), ' ');
+        crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
     ret
 }
@@ -1076,19 +1076,19 @@ pub fn processcmd(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {      //
         Some(s) if !s.is_empty() => s,
         _ => return 1,                                                       // c:2980
     };
-    let m = args.zmod.mult;                                                   // c:2974
-    args.zmod.mult = 1;                                                       // c:2981
+    let m = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;                                                   // c:2974
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 1;                                                       // c:2981
     let _ = crate::ported::zle::zle_hist::pushline(args);                     // c:2982
-    args.zmod.mult = m;                                                       // c:2983
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = m;                                                       // c:2983
     // c:2984 — `inststr(bindk->nam)` injects the bound widget name.
     //           Without bindk live we use the literal "run-help " marker
     //           commonly bound to processcmd in zsh.
     let q = quotename(&s, 0);
     let combined = format!("run-help {}", q);
     for (i, ch) in combined.chars().enumerate() {
-        args.zleline.insert(args.zlecs + i, ch);
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i, ch);
     }
-    args.zlecs += combined.chars().count();
+    crate::ported::zle::zle_main::ZLECS.fetch_add(combined.chars().count(), std::sync::atomic::Ordering::SeqCst);
     0
 }
 
@@ -1122,7 +1122,7 @@ pub fn quotename(s: &str, instring: i32) -> String {                         // 
 pub fn reversemenucomplete(args: &mut crate::ported::zle::zle_main::Zle) -> i32 { // c:344
     use std::sync::atomic::Ordering;
     WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:346
-    args.zmod.mult = -args.zmod.mult;                                          // c:347
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = -crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;                                          // c:347
     menucomplete()                                                           // c:348
 }
 
@@ -1158,9 +1158,9 @@ pub fn usetab(zle: &crate::ported::zle::zle_main::Zle, keybuf: &[u8]) -> i32 { /
     }
     // c:189-191 — walk back from cursor-1 to BOL; only \t and ' '
     //              allowed for usetab to fire.
-    let mut i = zle.zlecs;
+    let mut i = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
     while i > 0 {
-        let c = zle.zleline[i - 1];
+        let c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[i - 1];
         if c == '\n' {
             break;
         }

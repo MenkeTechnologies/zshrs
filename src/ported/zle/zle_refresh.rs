@@ -33,11 +33,11 @@ impl Zle {
 
         let prompt = self.prompt().to_string();
         let rprompt = self.rprompt().to_string();
-        let cursor = self.zlecs;
+        let cursor = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
 
         let prompt_width = countprompt(&prompt);
         let rprompt_width = countprompt(&rprompt);
-        let buffer_before_cursor: String = self.zleline[..cursor.min(self.zleline.len())]
+        let buffer_before_cursor: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[..cursor.min(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len())]
             .iter()
             .collect();
         let cursor_col = prompt_width + countprompt(&buffer_before_cursor);
@@ -153,7 +153,7 @@ impl Zle {
     /// region themselves — matching zle_refresh.c's auto-promotion of
     /// `region_active` into a paintable highlight.
     pub fn compute_render_attrs(&self) -> Vec<Option<TextAttr>> {
-        let buf_len = self.zleline.len();
+        let buf_len = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len();
         let mut attrs: Vec<Option<TextAttr>> = vec![None; buf_len];
 
         // Visual-region attr: prefer the user's `region:` setting from
@@ -169,11 +169,11 @@ impl Zle {
                 ..TextAttr::default()
             });
 
-        if self.region_active != 0 {
-            let (lo, hi) = if self.mark <= self.zlecs {
-                (self.mark, self.zlecs)
+        if crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+            let (lo, hi) = if crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) <= crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
+                (crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst))
             } else {
-                (self.zlecs, self.mark)
+                (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst))
             };
             let lo = lo.min(buf_len);
             let hi = hi.min(buf_len);
@@ -181,7 +181,7 @@ impl Zle {
                 *slot = Some(visual_attr);
             }
         }
-        for region in &self.highlight.regions {
+        for region in &crate::ported::zle::zle_main::highlight().lock().unwrap().regions {
             let start = region.start.min(buf_len);
             let end = region.end.min(buf_len);
             for slot in attrs.iter_mut().take(end).skip(start) {
@@ -544,11 +544,11 @@ mod tests {
     #[test]
     fn compute_render_attrs_visual_mode_paints_mark_to_cursor_in_standout() {
         let mut zle = Zle::new();
-        zle.zleline = "hello world".chars().collect();
-        zle.zlell = zle.zleline.len();
-        zle.mark = 2;
-        zle.zlecs = 7;
-        zle.region_active = 1; // charwise visual
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(2, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(7, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst); // charwise visual
         let attrs = zle.compute_render_attrs();
         assert_eq!(attrs.len(), 11);
         // [0..2) and [7..11) are unstyled.
@@ -568,11 +568,11 @@ mod tests {
     #[test]
     fn compute_render_attrs_visual_mode_handles_reverse_mark_order() {
         let mut zle = Zle::new();
-        zle.zleline = "abcdef".chars().collect();
-        zle.zlell = 6;
-        zle.mark = 5;
-        zle.zlecs = 1;
-        zle.region_active = 2; // linewise — same swap behavior
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcdef".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(5, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::REGION_ACTIVE.store(2, std::sync::atomic::Ordering::SeqCst); // linewise — same swap behavior
         let attrs = zle.compute_render_attrs();
         // Range collapses to (1..5).
         assert!(attrs[0].is_none());
@@ -653,11 +653,11 @@ mod tests {
         // zle_set_highlight, vi visual-mode should paint the region
         // with that attr instead of the default standout.
         let mut zle = Zle::new();
-        zle.zleline = "abcde".chars().collect();
-        zle.zlell = 5;
-        zle.mark = 1;
-        zle.zlecs = 4;
-        zle.region_active = 1;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcde".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MARK.store(1, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
         zle_set_highlight(&mut zle.highlight, &["region:fg=red,bold"]);
         let attrs = zle.compute_render_attrs();
         for slot in attrs.iter().take(4).skip(1) {
@@ -672,8 +672,8 @@ mod tests {
     #[test]
     fn compute_render_attrs_explicit_regions_override_default() {
         let mut zle = Zle::new();
-        zle.zleline = "abcde".chars().collect();
-        zle.zlell = 5;
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcde".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         let custom = TextAttr {
             bold: true,
             fg_color: Some(1),
