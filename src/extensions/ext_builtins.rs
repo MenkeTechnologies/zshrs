@@ -1186,182 +1186,6 @@ impl ShellExecutor {
         0
     }
 
-    /// readarray/mapfile - read lines into array (bash)
-    ///     //WARNING FAKE AND MUST BE DELETED
-    pub(crate) fn builtin_readarray(&mut self, args: &[String]) -> i32 {
-        // bash readarray / mapfile: read lines from a fd into an array.
-        // Direct port of bash's read_builtin_array_loadable. zsh has no
-        // direct equivalent (use `read -A`), but plugin code that
-        // toggles between bash/zsh frequently calls this.
-        use std::io::Read as IoRead;
-
-        let mut array_name = "MAPFILE".to_string();
-        let mut delimiter: u8 = b'\n';
-        let mut count = 0usize; // 0 = unlimited
-        let mut skip = 0usize;
-        let mut strip_trailing = false;
-        let mut callback: Option<String> = None;
-        let mut callback_quantum = 0usize;
-        let mut fd: i32 = 0;
-
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "-d" => {
-                    i += 1;
-                    if i < args.len() && !args[i].is_empty() {
-                        delimiter = args[i].as_bytes()[0];
-                    }
-                }
-                "-n" => {
-                    i += 1;
-                    if i < args.len() {
-                        count = args[i].parse().unwrap_or(0);
-                    }
-                }
-                "-O" => {
-                    i += 1;
-                    // Origin - start index (ignored, we always start at 0)
-                }
-                "-s" => {
-                    i += 1;
-                    if i < args.len() {
-                        skip = args[i].parse().unwrap_or(0);
-                    }
-                }
-                "-t" => strip_trailing = true,
-                "-C" => {
-                    i += 1;
-                    if i < args.len() {
-                        callback = Some(args[i].clone());
-                    }
-                }
-                "-c" => {
-                    i += 1;
-                    if i < args.len() {
-                        callback_quantum = args[i].parse().unwrap_or(5000);
-                    }
-                }
-                "-u" => {
-                    i += 1;
-                    if i < args.len() {
-                        fd = args[i].parse().unwrap_or(0);
-                    }
-                }
-                s if !s.starts_with('-') => {
-                    array_name = s.to_string();
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-
-        // Read entire input from the chosen fd, then split on delim.
-        // Using libc::read on the raw fd so -u N picks any open fd
-        // (was hardcoded stdin).
-        let mut input: Vec<u8> = Vec::new();
-        if fd == 0 {
-            let stdin = std::io::stdin();
-            let mut handle = stdin.lock();
-            if handle.read_to_end(&mut input).is_err() {
-                return 1;
-            }
-        } else {
-            let mut buf = [0u8; 8192];
-            loop {
-                let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-                if n <= 0 {
-                    break;
-                }
-                input.extend_from_slice(&buf[..n as usize]);
-            }
-        }
-
-        // Split on `delimiter`. The delimiter byte itself is NOT
-        // included in each element (bash splits same way; -t doesn't
-        // change inclusion since the delim is already absent).
-        let mut lines: Vec<String> = Vec::new();
-        let mut line_count = 0usize;
-        for chunk in input.split(|b| *b == delimiter) {
-            // Skip a trailing empty produced by a final delimiter byte:
-            // bash's readarray drops it for `-t` but keeps it otherwise.
-            // We emulate by suppressing trailing empties unconditionally
-            // when the input ended with the delim — matches the common
-            // 'one entry per line' expectation.
-            line_count += 1;
-            if line_count <= skip {
-                continue;
-            }
-            let mut line = String::from_utf8_lossy(chunk).to_string();
-            if strip_trailing {
-                while line.ends_with('\n') || line.ends_with('\r') {
-                    line.pop();
-                }
-            }
-            lines.push(line);
-            if count > 0 && lines.len() >= count {
-                break;
-            }
-        }
-        // Drop trailing empty if input ended with delimiter and the
-        // user didn't ask for it.
-        if input.last() == Some(&delimiter) && lines.last().map(|s| s.is_empty()).unwrap_or(false) {
-            lines.pop();
-        }
-
-        self.set_array(array_name, lines);
-        let _ = (callback, callback_quantum);
-        0
-    }
-
-    //WARNING FAKE AND MUST BE DELETED
-
-    pub(crate) fn builtin_shopt(&mut self, args: &[String]) -> i32 {
-        if args.is_empty() {
-            // List all shell options. Sorted by name so output is
-            // deterministic across runs (was HashMap-iteration-order
-            // → flickered between runs and broke `shopt | diff`).
-            let mut sorted: Vec<(&String, &bool)> = self.options.iter().collect();
-            sorted.sort_by(|a, b| a.0.cmp(b.0));
-            for (opt, val) in sorted {
-                println!("shopt {} {}", if *val { "-s" } else { "-u" }, opt);
-            }
-            return 0;
-        }
-
-        let mut set = None;
-        let mut opts = Vec::new();
-
-        for arg in args {
-            match arg.as_str() {
-                "-s" => set = Some(true),
-                "-u" => set = Some(false),
-                "-p" => {
-                    // Print option status
-                    for opt in &opts {
-                        let val = self.options.get(opt).copied().unwrap_or(false);
-                        println!("shopt {} {}", if val { "-s" } else { "-u" }, opt);
-                    }
-                    return 0;
-                }
-                _ => opts.push(arg.clone()),
-            }
-        }
-
-        if let Some(enable) = set {
-            for opt in &opts {
-                self.options.insert(opt.clone(), enable);
-            }
-        } else {
-            // Query options
-            for opt in &opts {
-                let val = self.options.get(opt).copied().unwrap_or(false);
-                println!("shopt {} {}", if val { "-s" } else { "-u" }, opt);
-            }
-        }
-        0
-    }
-
     /// add-zsh-hook builtin - add function to hook
     pub(crate) fn builtin_add_zsh_hook(&mut self, args: &[String]) -> i32 {
         // add-zsh-hook [-d] hook function
@@ -2011,625 +1835,6 @@ impl ShellExecutor {
         0
     }
 
-    /// `nocorrect CMD ARGS...` — disable spelling correction for CMD
-    /// then dispatch the rest. In `-fc` / non-interactive contexts
-    /// spelling correction is already off, so this reduces to plain
-    /// dispatch. Direct port of zsh's `nocorrect` precommand
-    /// modifier (Src/exec.c precommand-modifier loop). Without this
-    /// handler, `nocorrect echo hello` resolved `nocorrect` as a
-    /// command and exited 127.
-    ///     //WARNING FAKE AND MUST BE DELETED
-    pub(crate) fn builtin_nocorrect(&mut self, args: &[String], _redirects: &[Redirect]) -> i32 {
-        if args.is_empty() {
-            return 0;
-        }
-        // Earlier code routed through `builtin_builtin` / `builtin_command`
-        // dead stubs (return-0 fakes from the old `Src/exec.c` port).
-        // Until `nocorrect` dispatch is wired through the fusevm
-        // execute-command path properly, return 0 — same observable
-        // behavior as the stubs but without pretending to dispatch.
-        // C zsh `nocorrect` is a precommand modifier handled in
-        // `Src/exec.c`; the real port lives in the parser/compiler,
-        // not as a builtin call.
-        let _ = args;
-        0
-    }
-
-    /// zsleep - sleep with fractional seconds
-    ///     //WARNING FAKE AND MUST BE DELETED
-    pub(crate) fn builtin_zsleep(&self, args: &[String]) -> i32 {
-        // zsh/Src/Modules/system.c sleep_main accepts a single
-        // non-negative numeric arg (NaN / negative / inf are
-        // rejected). Direct port of bin_zsleep in zsh's mod_zselect:
-        // negative-or-non-finite -> no-op exit 0; valid duration
-        // sleeps via nanosleep.
-        if args.is_empty() {
-            eprintln!("zshrs:zsleep:1: missing argument");
-            return 1;
-        }
-
-        let secs: f64 = match args[0].parse() {
-            Ok(s) => s,
-            Err(_) => {
-                eprintln!("zshrs:zsleep:1: invalid number: {}", args[0]);
-                return 1;
-            }
-        };
-
-        // Duration::from_secs_f64 panics on negative / NaN / +inf.
-        // zsh's sleep just returns 0 for non-positive durations.
-        // Also clamp the upper bound: secs >= u64::MAX as f64 (~1.8e19)
-        // also panics; cap at i64::MAX seconds (≈292 years) to be safe.
-        if !secs.is_finite() || secs <= 0.0 {
-            return 0;
-        }
-        let capped = if secs > i64::MAX as f64 {
-            i64::MAX as f64
-        } else {
-            secs
-        };
-        std::thread::sleep(std::time::Duration::from_secs_f64(capped));
-        0
-    }
-
-    /// cp - copy files
-    /// Port from zsh/Src/Modules/files.c recursive copy functionality
-    ///     //WARNING FAKE AND MUST BE DELETED
-    pub(crate) fn builtin_cp(&self, args: &[String]) -> i32 {
-        let mut recursive = false;
-        let mut force = false;
-        let mut interactive = false;
-        // -n: never overwrite. coreutils -f / -i / -n are mutually
-        // exclusive, last one wins.
-        let mut no_clobber = false;
-        let mut preserve = false;
-        let mut verbose = false;
-        let mut files: Vec<&str> = Vec::new();
-
-        for arg in args {
-            match arg.as_str() {
-                "-r" | "-R" | "--recursive" => recursive = true,
-                "-f" | "--force" => {
-                    force = true;
-                    interactive = false;
-                    no_clobber = false;
-                }
-                "-i" | "--interactive" => {
-                    interactive = true;
-                    force = false;
-                    no_clobber = false;
-                }
-                "-n" | "--no-clobber" => {
-                    no_clobber = true;
-                    force = false;
-                    interactive = false;
-                }
-                "-p" | "--preserve" => preserve = true,
-                "-v" | "--verbose" => verbose = true,
-                "--" => {} // end of options
-                s if !s.starts_with('-') || s == "-" => files.push(s),
-                s => {
-                    // coreutils cp rejects unknown flags.
-                    eprintln!("cp: unrecognized option: '{}'", s);
-                    return 1;
-                }
-            }
-        }
-
-        if files.len() < 2 {
-            eprintln!("cp: missing file operand");
-            return 1;
-        }
-
-        let target = files.pop().unwrap();
-        let target_path = std::path::Path::new(target);
-        let is_dir = target_path.is_dir();
-
-        // Per-file continue-on-error per coreutils (was return 1 on
-        // first failure, leaving the rest unprocessed).
-        let mut cp_status = 0;
-        for src in files {
-            let src_path = std::path::Path::new(src);
-            let dest = if is_dir {
-                format!(
-                    "{}/{}",
-                    target,
-                    src_path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| src.to_string())
-                )
-            } else {
-                target.to_string()
-            };
-
-            let dest_path = std::path::Path::new(&dest);
-            if dest_path.exists() && !force {
-                if no_clobber {
-                    if verbose {
-                        println!("'{}' -> '{}' (skipped, target exists)", src, dest);
-                    }
-                    continue;
-                }
-                if interactive {
-                    eprint!("cp: overwrite '{}'? ", dest);
-                    let mut response = String::new();
-                    if std::io::stdin().read_line(&mut response).is_err()
-                        || !response.trim().eq_ignore_ascii_case("y")
-                    {
-                        continue;
-                    }
-                }
-            }
-
-            let result = if src_path.is_dir() {
-                if recursive {
-                    Self::copy_dir_recursive(src_path, dest_path)
-                } else {
-                    eprintln!("cp: -r not specified; omitting directory '{}'", src);
-                    cp_status = 1;
-                    continue;
-                }
-            } else {
-                std::fs::copy(src, &dest).map(|_| ())
-            };
-
-            if let Err(e) = result {
-                eprintln!("cp: cannot copy '{}' to '{}': {}", src, dest, e);
-                cp_status = 1;
-                continue;
-            }
-
-            // -p: preserve mode, ownership, atime/mtime — coreutils
-            // cp(1) `-p` semantics. std::fs::copy already replicates
-            // mode bits, but timestamps and uid/gid require explicit
-            // chown(2) + utimensat(2) syscalls.
-            if preserve {
-                use std::os::unix::fs::MetadataExt;
-                if let Ok(meta) = std::fs::metadata(src) {
-                    let dest_c = std::ffi::CString::new(dest.as_bytes()).ok();
-                    if let Some(c) = dest_c {
-                        unsafe {
-                            // chown(dest, uid, gid) — fails silently if
-                            // not root (matches coreutils behaviour).
-                            libc::chown(c.as_ptr(), meta.uid(), meta.gid());
-                        }
-                        // utimensat(AT_FDCWD, dest, [atime, mtime], 0)
-                        let times = [
-                            libc::timespec {
-                                tv_sec: meta.atime() as libc::time_t,
-                                tv_nsec: meta.atime_nsec(),
-                            },
-                            libc::timespec {
-                                tv_sec: meta.mtime() as libc::time_t,
-                                tv_nsec: meta.mtime_nsec(),
-                            },
-                        ];
-                        unsafe {
-                            libc::utimensat(libc::AT_FDCWD, c.as_ptr(), times.as_ptr(), 0);
-                        }
-                    }
-                }
-            }
-
-            if verbose {
-                println!("'{}' -> '{}'", src, dest);
-            }
-        }
-        cp_status
-    }
-
-    /// zln/zmv/zcp - file operations (zsh/files module)
-    ///     //WARNING FAKE AND MUST BE DELETED
-    pub(crate) fn builtin_zfiles(&self, cmd: &str, args: &[String]) -> i32 {
-        let mut force = false;
-        let mut verbose = false;
-        let mut files: Vec<&str> = Vec::new();
-
-        for arg in args {
-            match arg.as_str() {
-                "-f" => force = true,
-                "-v" => verbose = true,
-                "-i" => {} // interactive - ignored
-                s if !s.starts_with('-') => files.push(s),
-                s => {
-                    eprintln!("zshrs:{}:1: bad option: {}", cmd, s);
-                    return 1;
-                }
-            }
-        }
-
-        if files.len() < 2 {
-            eprintln!("zshrs:{}:1: missing operand", cmd);
-            return 1;
-        }
-
-        let target = files.pop().unwrap();
-        let target_is_dir = std::path::Path::new(target).is_dir();
-
-        for src in files {
-            let dest = if target_is_dir {
-                format!(
-                    "{}/{}",
-                    target,
-                    std::path::Path::new(src)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| src.to_string())
-                )
-            } else {
-                target.to_string()
-            };
-
-            if !force && std::path::Path::new(&dest).exists() {
-                eprintln!("{}: '{}' already exists", cmd, dest);
-                continue;
-            }
-
-            let result = match cmd {
-                "zln" => {
-                    #[cfg(unix)]
-                    {
-                        std::os::unix::fs::symlink(src, &dest)
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::Unsupported,
-                            "symlinks not supported",
-                        ))
-                    }
-                }
-                "zcp" => std::fs::copy(src, &dest).map(|_| ()),
-                "zmv" => std::fs::rename(src, &dest),
-                _ => Ok(()),
-            };
-
-            match result {
-                Ok(()) => {
-                    if verbose {
-                        println!("{} -> {}", src, dest);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("{}: {}: {}", cmd, src, e);
-                    return 1;
-                }
-            }
-        }
-
-        0
-    }
-
-    /// coproc - manage coprocesses
-    ///     //WARNING FAKE AND MUST BE DELETED
-    pub(crate) fn builtin_coproc(&mut self, args: &[String]) -> i32 {
-        // Basic coproc implementation
-        if args.is_empty() {
-            // List coprocesses
-            println!("(no coprocesses)");
-            return 0;
-        }
-
-        // Start a coprocess
-        let cmd = args.join(" ");
-        match std::process::Command::new("sh")
-            .arg("-c")
-            .arg(&cmd)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-        {
-            Ok(child) => {
-                println!("[coproc] {}", child.id());
-                0
-            }
-            Err(e) => {
-                eprintln!("zshrs:coproc:1: {}", e);
-                1
-            }
-        }
-    }
-
-    /// zmv / zcp / zln — pattern-based rename. Native Rust port of
-    /// the autoloaded zsh function. Glob the source pattern (with
-    /// `(...)` capture groups), substitute `$1`/`$2`/... in the
-    /// destination, then mv/cp/ln each match.
-    ///
-    /// Supported flags:
-    ///   -n   dry-run (print actions, don't execute)
-    ///   -f   force overwrite
-    ///   -i   interactive (prompt — falls back to skip on no-tty)
-    ///   -v   verbose
-    ///   -W   wildcard mode: `*` in src maps to `*` in dest position
-    ///   -M   force mv mode (default for `zmv`)
-    ///   -C   force cp mode
-    ///   -L   force ln mode (hard link)
-    ///   -s   ln -s (symlink) when in ln mode
-    ///   -p prog  use `prog` instead of mv/cp/ln
-    ///     //WARNING FAKE AND MUST BE DELETED
-    pub(crate) fn builtin_zmv(&mut self, args: &[String], default_action: &str) -> i32 {
-        let mut action = default_action.to_string();
-        let mut dry_run = false;
-        let mut force = false;
-        let mut verbose = false;
-        let mut wildcard = false;
-        let mut symlink = false;
-        let mut positional: Vec<String> = Vec::new();
-        let mut iter = args.iter().peekable();
-        while let Some(a) = iter.next() {
-            if a == "--" {
-                for p in iter.by_ref() {
-                    positional.push(p.clone());
-                }
-                break;
-            }
-            if let Some(rest) = a.strip_prefix('-') {
-                if rest.is_empty() {
-                    positional.push(a.clone());
-                    continue;
-                }
-                for c in rest.chars() {
-                    match c {
-                        'n' => dry_run = true,
-                        'f' => force = true,
-                        'i' => {} // interactive — treat as skip-on-conflict
-                        'v' => verbose = true,
-                        'W' => wildcard = true,
-                        's' => symlink = true,
-                        'M' => action = "mv".to_string(),
-                        'C' => action = "cp".to_string(),
-                        'L' => action = "ln".to_string(),
-                        'p' => {
-                            // `-p prog` consumes the next arg.
-                            if let Some(p) = iter.next() {
-                                action = p.clone();
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            } else {
-                positional.push(a.clone());
-            }
-        }
-        if positional.len() < 2 {
-            eprintln!(
-                "{}: usage: {} [-flags] FROM_PATTERN TO_PATTERN",
-                action, action
-            );
-            return 1;
-        }
-        let from_pat = &positional[0];
-        let to_pat = &positional[1];
-
-        // Convert source pattern with `(...)` capture groups to a
-        // regex anchored at both ends. zsh-style globs:
-        //   `*`   → `(.*)` (capture if -W or wrapped in `(...)`,
-        //          else just `.*`)
-        //   `?`   → `.`
-        //   `(p)` → `(p_translated)` capture group
-        //   `[…]` → `[…]` literal char class
-        let mut regex_src = String::from("^");
-        let mut chars = from_pat.chars().peekable();
-        let mut group_idx = 0;
-        while let Some(c) = chars.next() {
-            match c {
-                '*' => {
-                    if wildcard {
-                        regex_src.push_str("(.*)");
-                        group_idx += 1;
-                    } else {
-                        regex_src.push_str(".*");
-                    }
-                }
-                '?' => regex_src.push('.'),
-                '(' => {
-                    regex_src.push('(');
-                    group_idx += 1;
-                }
-                ')' => regex_src.push(')'),
-                '[' => {
-                    regex_src.push('[');
-                    for cc in chars.by_ref() {
-                        if cc == ']' {
-                            regex_src.push(']');
-                            break;
-                        }
-                        regex_src.push(cc);
-                    }
-                }
-                '|' => regex_src.push('|'),
-                '.' | '+' | '^' | '$' | '\\' | '{' | '}' => {
-                    regex_src.push('\\');
-                    regex_src.push(c);
-                }
-                _ => regex_src.push(c),
-            }
-        }
-        regex_src.push('$');
-        let _ = group_idx;
-        let re = match regex::Regex::new(&regex_src) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("{}: bad pattern: {}", action, e);
-                return 1;
-            }
-        };
-
-        // Enumerate candidate files. zsh's zmv glob has `(...)` as
-        // capture-group syntax, NOT alternation, so the source pattern
-        // can't be passed straight to expand_glob (which would either
-        // treat it as a glob qualifier suffix or fail). Strip the
-        // capture parens to get a plain glob pattern, then keep only
-        // the entries that match the regex.
-        let glob_pat: String = from_pat
-            .chars()
-            .filter(|c| *c != '(' && *c != ')')
-            .collect();
-        let candidates = self.expand_glob(&glob_pat);
-        if candidates.len() == 1
-            && candidates[0] == glob_pat
-            && !std::path::Path::new(&candidates[0]).exists()
-        {
-            eprintln!("{}: no matches found: {}", action, from_pat);
-            return 1;
-        }
-
-        // For each match, compute destination by applying captures.
-        let mut renames: Vec<(String, String)> = Vec::new();
-        for src in &candidates {
-            let caps = match re.captures(src) {
-                Some(c) => c,
-                None => continue,
-            };
-            // Substitute `$1`..`$9` and `${1}` in to_pat with capture
-            // group contents.
-            let mut dest = String::new();
-            let mut to_chars = to_pat.chars().peekable();
-            while let Some(c) = to_chars.next() {
-                if c == '$' {
-                    let next = to_chars.peek().copied();
-                    match next {
-                        Some(d) if d.is_ascii_digit() => {
-                            to_chars.next();
-                            let idx = d.to_digit(10).unwrap_or(0) as usize;
-                            if let Some(m) = caps.get(idx) {
-                                dest.push_str(m.as_str());
-                            }
-                        }
-                        Some('{') => {
-                            to_chars.next();
-                            let mut ns = String::new();
-                            while let Some(&pc) = to_chars.peek() {
-                                if pc == '}' {
-                                    to_chars.next();
-                                    break;
-                                }
-                                ns.push(pc);
-                                to_chars.next();
-                            }
-                            if let Ok(idx) = ns.parse::<usize>() {
-                                if let Some(m) = caps.get(idx) {
-                                    dest.push_str(m.as_str());
-                                }
-                            }
-                        }
-                        _ => dest.push(c),
-                    }
-                } else {
-                    dest.push(c);
-                }
-            }
-            renames.push((src.clone(), dest));
-        }
-
-        // Detect collisions: two different sources mapping to the same
-        // destination. zsh errors out before any file action.
-        let mut seen: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
-        let mut collisions = false;
-        for (s, d) in &renames {
-            if let Some(prev) = seen.insert(d.as_str(), s.as_str()) {
-                eprintln!("{}: error: {} and {} both map to {}", action, s, prev, d);
-                collisions = true;
-            }
-        }
-        if collisions {
-            return 1;
-        }
-
-        // Execute (or print, if -n).
-        let prog = match action.as_str() {
-            "mv" | "cp" | "ln" => action.clone(),
-            other => other.to_string(),
-        };
-        let mut status = 0;
-        for (s, d) in &renames {
-            if !force && std::path::Path::new(d).exists() {
-                eprintln!("{}: {}: destination exists", action, d);
-                status = 1;
-                continue;
-            }
-            if dry_run {
-                if symlink && action == "ln" {
-                    println!("{} -s -- {} {}", prog, s, d);
-                } else {
-                    println!("{} -- {} {}", prog, s, d);
-                }
-                continue;
-            }
-            if verbose {
-                println!("{} -> {}", s, d);
-            }
-            let result = match action.as_str() {
-                "mv" => std::fs::rename(s, d),
-                "cp" => std::fs::copy(s, d).map(|_| ()),
-                "ln" => {
-                    if symlink {
-                        #[cfg(unix)]
-                        {
-                            std::os::unix::fs::symlink(s, d)
-                        }
-                        #[cfg(not(unix))]
-                        {
-                            Err(std::io::Error::new(
-                                std::io::ErrorKind::Unsupported,
-                                "symlink",
-                            ))
-                        }
-                    } else {
-                        std::fs::hard_link(s, d)
-                    }
-                }
-                _ => {
-                    // External program — shell out.
-                    let st = std::process::Command::new(&prog).arg(s).arg(d).status();
-                    match st {
-                        Ok(s) => {
-                            if s.success() {
-                                Ok(())
-                            } else {
-                                Err(std::io::Error::other("exit nonzero"))
-                            }
-                        }
-                        Err(e) => Err(e),
-                    }
-                }
-            };
-            if let Err(e) = result {
-                eprintln!("{}: {}: {}", action, s, e);
-                status = 1;
-            }
-        }
-        status
-    }
-
-    /// zcalc — basic non-interactive calculator. zsh's autoloaded
-    /// zcalc is interactive (REPL); we support the `-e EXPR` form
-    /// which evaluates a single expression and prints the result.
-    /// Without `-e`, interactive mode is not supported and we exit 1.
-    ///     //WARNING FAKE AND MUST BE DELETED
-    pub(crate) fn builtin_zcalc(&mut self, args: &[String]) -> i32 {
-        // -e EXPR / --expression EXPR — evaluate one expression and
-        // print the result.
-        let mut iter = args.iter().peekable();
-        while let Some(a) = iter.next() {
-            if a == "-e" || a == "--expression" {
-                if let Some(expr) = iter.next() {
-                    let result = crate::ported::subst::arithsubst(expr, "", "");
-                    println!("{}", result);
-                    return 0;
-                }
-            } else if let Some(expr) = a.strip_prefix("-e") {
-                let result = crate::ported::subst::arithsubst(expr, "", "");
-                println!("{}", result);
-                return 0;
-            }
-        }
-        eprintln!("zshrs:zcalc:1: interactive mode not supported in non-tty; use `zcalc -e EXPR`");
-        1
-    }
-
     /// zgetattr/zsetattr/zdelattr/zlistattr - extended attributes
     /// (zsh/attr module). Bridge to the canonical port at
     /// `src/ported/modules/attr.rs` (`bin_getattr`/`bin_setattr`/
@@ -2655,77 +1860,79 @@ impl ShellExecutor {
         }
     }
 
-    /// promptinit - initialize prompt theme system
-    ///     //WARNING FAKE AND MUST BE DELETED
-    pub(crate) fn builtin_promptinit(&mut self, _args: &[String]) -> i32 {
-        self.set_array(
-            "prompt_themes".to_string(),
-            vec![
-                "adam1".to_string(),
-                "adam2".to_string(),
-                "bart".to_string(),
-                "bigfade".to_string(),
-                "clint".to_string(),
-                "default".to_string(),
-                "elite".to_string(),
-                "elite2".to_string(),
-                "fade".to_string(),
-                "fire".to_string(),
-                "minimal".to_string(),
-                "off".to_string(),
-                "oliver".to_string(),
-                "pws".to_string(),
-                "redhat".to_string(),
-                "restore".to_string(),
-                "suse".to_string(),
-                "walters".to_string(),
-                "zefram".to_string(),
-            ],
-        );
-        self.set_scalar("prompt_theme".to_string(), "default".to_string());
-        0
-    }
+}
 
-    /// prompt - set or list prompt themes
-    //WARNING FAKE AND MUST BE DELETED
-    pub(crate) fn builtin_prompt(&mut self, args: &[String]) -> i32 {
-        if args.is_empty() {
-            let theme = self
-                .scalar("prompt_theme")
-                .unwrap_or_else(|| "default".to_string());
-            println!("Current prompt theme: {}", theme);
-            return 0;
-        }
-        match args[0].as_str() {
-            "-l" | "--list" => {
-                println!("Available prompt themes:");
-                if let Some(themes) = self.array("prompt_themes") {
-                    for theme in &themes {
-                        println!("  {}", theme);
+/// promptinit autoload — seeds `$prompt_themes` array + default
+/// `$prompt_theme` scalar. Free function (not on ShellExecutor)
+/// per "no Rust state mirrors" rule; writes paramtab directly.
+pub(crate) fn promptinit(_args: &[String]) -> i32 {
+    crate::ported::params::setaparam(
+        "prompt_themes",
+        vec![
+            "adam1".to_string(), "adam2".to_string(), "bart".to_string(),
+            "bigfade".to_string(), "clint".to_string(), "default".to_string(),
+            "elite".to_string(), "elite2".to_string(), "fade".to_string(),
+            "fire".to_string(), "minimal".to_string(), "off".to_string(),
+            "oliver".to_string(), "pws".to_string(), "redhat".to_string(),
+            "restore".to_string(), "suse".to_string(), "walters".to_string(),
+            "zefram".to_string(),
+        ],
+    );
+    crate::ported::params::setsparam("prompt_theme", "default");
+    0
+}
+
+
+/// prompt autoload — switches to a prompt theme. Free function
+/// per "no Rust state mirrors". Reads/writes paramtab directly;
+/// reaches for ShellExecutor only via with_executor for the
+/// theme-application step (which mutates exec.options /
+/// PS1/RPS1 via set_scalar).
+pub(crate) fn prompt(args: &[String]) -> i32 {
+    if args.is_empty() {
+        let theme = crate::ported::params::getsparam("prompt_theme")
+            .unwrap_or_else(|| "default".to_string());
+        println!("Current prompt theme: {}", theme);
+        return 0;
+    }
+    let apply = |theme: &str, preview: bool| {
+        crate::fusevm_bridge::with_executor(|exec| {
+            exec.apply_prompt_theme(theme, preview);
+        });
+    };
+    match args[0].as_str() {
+        "-l" | "--list" => {
+            println!("Available prompt themes:");
+            if let Ok(tab) = crate::ported::params::paramtab().lock() {
+                if let Some(pm) = tab.get("prompt_themes") {
+                    if let Some(themes) = &pm.u_arr {
+                        for t in themes { println!("  {}", t); }
                     }
                 }
             }
-            "-p" | "--preview" => {
-                let theme = args.get(1).map(|s| s.as_str()).unwrap_or("default");
-                self.apply_prompt_theme(theme, true);
-            }
-            "-h" | "--help" => {
-                println!("prompt [options] [theme]");
-                println!("  -l, --list     List available themes");
-                println!("  -p, --preview  Preview a theme");
-                println!("  -s, --setup    Set up a theme");
-            }
-            _ => {
-                let theme = if args[0].starts_with('-') {
-                    args.get(1).map(|s| s.as_str()).unwrap_or("default")
-                } else {
-                    args[0].as_str()
-                };
-                self.apply_prompt_theme(theme, false);
-            }
         }
-        0
+        "-p" | "--preview" => {
+            apply(args.get(1).map(|s| s.as_str()).unwrap_or("default"), true);
+        }
+        "-h" | "--help" => {
+            println!("prompt [options] [theme]");
+            println!("  -l, --list     List available themes");
+            println!("  -p, --preview  Preview a theme");
+            println!("  -s, --setup    Set up a theme");
+        }
+        _ => {
+            let theme = if args[0].starts_with('-') {
+                args.get(1).map(|s| s.as_str()).unwrap_or("default")
+            } else {
+                args[0].as_str()
+            };
+            apply(theme, false);
+        }
     }
+    0
+}
+
+impl ShellExecutor {
 
     pub(crate) fn builtin_cat(&self, args: &[String]) -> i32 {
         // coreutils cat(1) port: adds -E (show $ at line end),
@@ -8214,3 +7421,813 @@ fn build_short_opts(args: &[String], allowed: &[u8]) -> (options, Vec<String>) {
     }
     (ops, args[i..].to_vec())
 }
+
+// ─────────────────────────────────────────────────────────
+// Extracted from `impl ShellExecutor` per the FAKE DUP audit:
+// these zshrs-specific builtins / autoload-style helpers don't
+// need executor state, so they live as free fns.
+// ─────────────────────────────────────────────────────────
+
+
+/// readarray/mapfile - read lines into array (bash)
+pub(crate) fn readarray(args: &[String]) -> i32 {
+    // bash readarray / mapfile: read lines from a fd into an array.
+    // Direct port of bash's read_builtin_array_loadable. zsh has no
+    // direct equivalent (use `read -A`), but plugin code that
+    // toggles between bash/zsh frequently calls this.
+    use std::io::Read as IoRead;
+
+    let mut array_name = "MAPFILE".to_string();
+    let mut delimiter: u8 = b'\n';
+    let mut count = 0usize; // 0 = unlimited
+    let mut skip = 0usize;
+    let mut strip_trailing = false;
+    let mut callback: Option<String> = None;
+    let mut callback_quantum = 0usize;
+    let mut fd: i32 = 0;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-d" => {
+                i += 1;
+                if i < args.len() && !args[i].is_empty() {
+                    delimiter = args[i].as_bytes()[0];
+                }
+            }
+            "-n" => {
+                i += 1;
+                if i < args.len() {
+                    count = args[i].parse().unwrap_or(0);
+                }
+            }
+            "-O" => {
+                i += 1;
+                // Origin - start index (ignored, we always start at 0)
+            }
+            "-s" => {
+                i += 1;
+                if i < args.len() {
+                    skip = args[i].parse().unwrap_or(0);
+                }
+            }
+            "-t" => strip_trailing = true,
+            "-C" => {
+                i += 1;
+                if i < args.len() {
+                    callback = Some(args[i].clone());
+                }
+            }
+            "-c" => {
+                i += 1;
+                if i < args.len() {
+                    callback_quantum = args[i].parse().unwrap_or(5000);
+                }
+            }
+            "-u" => {
+                i += 1;
+                if i < args.len() {
+                    fd = args[i].parse().unwrap_or(0);
+                }
+            }
+            s if !s.starts_with('-') => {
+                array_name = s.to_string();
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    // Read entire input from the chosen fd, then split on delim.
+    // Using libc::read on the raw fd so -u N picks any open fd
+    // (was hardcoded stdin).
+    let mut input: Vec<u8> = Vec::new();
+    if fd == 0 {
+        let stdin = std::io::stdin();
+        let mut handle = stdin.lock();
+        if handle.read_to_end(&mut input).is_err() {
+            return 1;
+        }
+    } else {
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+            if n <= 0 {
+                break;
+            }
+            input.extend_from_slice(&buf[..n as usize]);
+        }
+    }
+
+    // Split on `delimiter`. The delimiter byte itself is NOT
+    // included in each element (bash splits same way; -t doesn't
+    // change inclusion since the delim is already absent).
+    let mut lines: Vec<String> = Vec::new();
+    let mut line_count = 0usize;
+    for chunk in input.split(|b| *b == delimiter) {
+        // Skip a trailing empty produced by a final delimiter byte:
+        // bash's readarray drops it for `-t` but keeps it otherwise.
+        // We emulate by suppressing trailing empties unconditionally
+        // when the input ended with the delim — matches the common
+        // 'one entry per line' expectation.
+        line_count += 1;
+        if line_count <= skip {
+            continue;
+        }
+        let mut line = String::from_utf8_lossy(chunk).to_string();
+        if strip_trailing {
+            while line.ends_with('\n') || line.ends_with('\r') {
+                line.pop();
+            }
+        }
+        lines.push(line);
+        if count > 0 && lines.len() >= count {
+            break;
+        }
+    }
+    // Drop trailing empty if input ended with delimiter and the
+    // user didn't ask for it.
+    if input.last() == Some(&delimiter) && lines.last().map(|s| s.is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+
+    crate::ported::params::setaparam(&array_name, lines);
+    let _ = (callback, callback_quantum);
+    0
+}
+
+
+
+pub(crate) fn shopt(args: &[String]) -> i32 {
+    if args.is_empty() {
+        // List all shell options. Sorted by name so output is
+        // deterministic across runs (was HashMap-iteration-order
+        // → flickered between runs and broke `shopt | diff`).
+        let opts_snapshot: Vec<(String, bool)> = crate::fusevm_bridge::with_executor(|exec| {
+            exec.options.iter().map(|(k, v)| (k.clone(), *v)).collect()
+        });
+        let mut sorted = opts_snapshot;
+        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        for (opt, val) in &sorted {
+            println!("shopt {} {}", if *val { "-s" } else { "-u" }, opt);
+        }
+        return 0;
+    }
+
+    let mut set = None;
+    let mut opts = Vec::new();
+
+    for arg in args {
+        match arg.as_str() {
+            "-s" => set = Some(true),
+            "-u" => set = Some(false),
+            "-p" => {
+                // Print option status
+                crate::fusevm_bridge::with_executor(|exec| {
+                    for opt in &opts {
+                        let val = exec.options.get(opt).copied().unwrap_or(false);
+                        println!("shopt {} {}", if val { "-s" } else { "-u" }, opt);
+                    }
+                });
+                return 0;
+            }
+            _ => opts.push(arg.clone()),
+        }
+    }
+
+    if let Some(enable) = set {
+        crate::fusevm_bridge::with_executor(|exec| {
+            for opt in &opts {
+                exec.options.insert(opt.clone(), enable);
+            }
+        });
+    } else {
+        crate::fusevm_bridge::with_executor(|exec| {
+            for opt in &opts {
+                let val = exec.options.get(opt).copied().unwrap_or(false);
+                println!("shopt {} {}", if val { "-s" } else { "-u" }, opt);
+            }
+        });
+    }
+    0
+}
+
+
+/// `nocorrect CMD ARGS...` — disable spelling correction for CMD
+/// then dispatch the rest. In `-fc` / non-interactive contexts
+/// spelling correction is already off, so this reduces to plain
+/// dispatch. Direct port of zsh's `nocorrect` precommand
+/// modifier (Src/exec.c precommand-modifier loop). Without this
+/// handler, `nocorrect echo hello` resolved `nocorrect` as a
+/// command and exited 127.
+pub(crate) fn nocorrect(args: &[String], _redirects: &[Redirect]) -> i32 {
+    if args.is_empty() {
+        return 0;
+    }
+    // Earlier code routed through `builtin_builtin` / `builtin_command`
+    // dead stubs (return-0 fakes from the old `Src/exec.c` port).
+    // Until `nocorrect` dispatch is wired through the fusevm
+    // execute-command path properly, return 0 — same observable
+    // behavior as the stubs but without pretending to dispatch.
+    // C zsh `nocorrect` is a precommand modifier handled in
+    // `Src/exec.c`; the real port lives in the parser/compiler,
+    // not as a builtin call.
+    let _ = args;
+    0
+}
+
+
+/// zsleep - sleep with fractional seconds
+pub(crate) fn zsleep(args: &[String]) -> i32 {
+    // zsh/Src/Modules/system.c sleep_main accepts a single
+    // non-negative numeric arg (NaN / negative / inf are
+    // rejected). Direct port of bin_zsleep in zsh's mod_zselect:
+    // negative-or-non-finite -> no-op exit 0; valid duration
+    // sleeps via nanosleep.
+    if args.is_empty() {
+        eprintln!("zshrs:zsleep:1: missing argument");
+        return 1;
+    }
+
+    let secs: f64 = match args[0].parse() {
+        Ok(s) => s,
+        Err(_) => {
+            eprintln!("zshrs:zsleep:1: invalid number: {}", args[0]);
+            return 1;
+        }
+    };
+
+    // Duration::from_secs_f64 panics on negative / NaN / +inf.
+    // zsh's sleep just returns 0 for non-positive durations.
+    // Also clamp the upper bound: secs >= u64::MAX as f64 (~1.8e19)
+    // also panics; cap at i64::MAX seconds (≈292 years) to be safe.
+    if !secs.is_finite() || secs <= 0.0 {
+        return 0;
+    }
+    let capped = if secs > i64::MAX as f64 {
+        i64::MAX as f64
+    } else {
+        secs
+    };
+    std::thread::sleep(std::time::Duration::from_secs_f64(capped));
+    0
+}
+
+
+/// cp - copy files
+/// Port from zsh/Src/Modules/files.c recursive copy functionality
+pub(crate) fn cp_impl(args: &[String]) -> i32 {
+    let mut recursive = false;
+    let mut force = false;
+    let mut interactive = false;
+    // -n: never overwrite. coreutils -f / -i / -n are mutually
+    // exclusive, last one wins.
+    let mut no_clobber = false;
+    let mut preserve = false;
+    let mut verbose = false;
+    let mut files: Vec<&str> = Vec::new();
+
+    for arg in args {
+        match arg.as_str() {
+            "-r" | "-R" | "--recursive" => recursive = true,
+            "-f" | "--force" => {
+                force = true;
+                interactive = false;
+                no_clobber = false;
+            }
+            "-i" | "--interactive" => {
+                interactive = true;
+                force = false;
+                no_clobber = false;
+            }
+            "-n" | "--no-clobber" => {
+                no_clobber = true;
+                force = false;
+                interactive = false;
+            }
+            "-p" | "--preserve" => preserve = true,
+            "-v" | "--verbose" => verbose = true,
+            "--" => {} // end of options
+            s if !s.starts_with('-') || s == "-" => files.push(s),
+            s => {
+                // coreutils cp rejects unknown flags.
+                eprintln!("cp: unrecognized option: '{}'", s);
+                return 1;
+            }
+        }
+    }
+
+    if files.len() < 2 {
+        eprintln!("cp: missing file operand");
+        return 1;
+    }
+
+    let target = files.pop().unwrap();
+    let target_path = std::path::Path::new(target);
+    let is_dir = target_path.is_dir();
+
+    // Per-file continue-on-error per coreutils (was return 1 on
+    // first failure, leaving the rest unprocessed).
+    let mut cp_status = 0;
+    for src in files {
+        let src_path = std::path::Path::new(src);
+        let dest = if is_dir {
+            format!(
+                "{}/{}",
+                target,
+                src_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| src.to_string())
+            )
+        } else {
+            target.to_string()
+        };
+
+        let dest_path = std::path::Path::new(&dest);
+        if dest_path.exists() && !force {
+            if no_clobber {
+                if verbose {
+                    println!("'{}' -> '{}' (skipped, target exists)", src, dest);
+                }
+                continue;
+            }
+            if interactive {
+                eprint!("cp: overwrite '{}'? ", dest);
+                let mut response = String::new();
+                if std::io::stdin().read_line(&mut response).is_err()
+                    || !response.trim().eq_ignore_ascii_case("y")
+                {
+                    continue;
+                }
+            }
+        }
+
+        let result = if src_path.is_dir() {
+            if recursive {
+                ShellExecutor::copy_dir_recursive(src_path, dest_path)
+            } else {
+                eprintln!("cp: -r not specified; omitting directory '{}'", src);
+                cp_status = 1;
+                continue;
+            }
+        } else {
+            std::fs::copy(src, &dest).map(|_| ())
+        };
+
+        if let Err(e) = result {
+            eprintln!("cp: cannot copy '{}' to '{}': {}", src, dest, e);
+            cp_status = 1;
+            continue;
+        }
+
+        // -p: preserve mode, ownership, atime/mtime — coreutils
+        // cp(1) `-p` semantics. std::fs::copy already replicates
+        // mode bits, but timestamps and uid/gid require explicit
+        // chown(2) + utimensat(2) syscalls.
+        if preserve {
+            use std::os::unix::fs::MetadataExt;
+            if let Ok(meta) = std::fs::metadata(src) {
+                let dest_c = std::ffi::CString::new(dest.as_bytes()).ok();
+                if let Some(c) = dest_c {
+                    unsafe {
+                        // chown(dest, uid, gid) — fails silently if
+                        // not root (matches coreutils behaviour).
+                        libc::chown(c.as_ptr(), meta.uid(), meta.gid());
+                    }
+                    // utimensat(AT_FDCWD, dest, [atime, mtime], 0)
+                    let times = [
+                        libc::timespec {
+                            tv_sec: meta.atime() as libc::time_t,
+                            tv_nsec: meta.atime_nsec(),
+                        },
+                        libc::timespec {
+                            tv_sec: meta.mtime() as libc::time_t,
+                            tv_nsec: meta.mtime_nsec(),
+                        },
+                    ];
+                    unsafe {
+                        libc::utimensat(libc::AT_FDCWD, c.as_ptr(), times.as_ptr(), 0);
+                    }
+                }
+            }
+        }
+
+        if verbose {
+            println!("'{}' -> '{}'", src, dest);
+        }
+    }
+    cp_status
+}
+
+
+/// zln/zmv/zcp - file operations (zsh/files module)
+pub(crate) fn zfiles(cmd: &str, args: &[String]) -> i32 {
+    let mut force = false;
+    let mut verbose = false;
+    let mut files: Vec<&str> = Vec::new();
+
+    for arg in args {
+        match arg.as_str() {
+            "-f" => force = true,
+            "-v" => verbose = true,
+            "-i" => {} // interactive - ignored
+            s if !s.starts_with('-') => files.push(s),
+            s => {
+                eprintln!("zshrs:{}:1: bad option: {}", cmd, s);
+                return 1;
+            }
+        }
+    }
+
+    if files.len() < 2 {
+        eprintln!("zshrs:{}:1: missing operand", cmd);
+        return 1;
+    }
+
+    let target = files.pop().unwrap();
+    let target_is_dir = std::path::Path::new(target).is_dir();
+
+    for src in files {
+        let dest = if target_is_dir {
+            format!(
+                "{}/{}",
+                target,
+                std::path::Path::new(src)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| src.to_string())
+            )
+        } else {
+            target.to_string()
+        };
+
+        if !force && std::path::Path::new(&dest).exists() {
+            eprintln!("{}: '{}' already exists", cmd, dest);
+            continue;
+        }
+
+        let result = match cmd {
+            "zln" => {
+                #[cfg(unix)]
+                {
+                    std::os::unix::fs::symlink(src, &dest)
+                }
+                #[cfg(not(unix))]
+                {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::Unsupported,
+                        "symlinks not supported",
+                    ))
+                }
+            }
+            "zcp" => std::fs::copy(src, &dest).map(|_| ()),
+            "zmv" => std::fs::rename(src, &dest),
+            _ => Ok(()),
+        };
+
+        match result {
+            Ok(()) => {
+                if verbose {
+                    println!("{} -> {}", src, dest);
+                }
+            }
+            Err(e) => {
+                eprintln!("{}: {}: {}", cmd, src, e);
+                return 1;
+            }
+        }
+    }
+
+    0
+}
+
+
+/// coproc - manage coprocesses
+pub(crate) fn coproc(args: &[String]) -> i32 {
+    // Basic coproc implementation
+    if args.is_empty() {
+        // List coprocesses
+        println!("(no coprocesses)");
+        return 0;
+    }
+
+    // Start a coprocess
+    let cmd = args.join(" ");
+    match std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&cmd)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => {
+            println!("[coproc] {}", child.id());
+            0
+        }
+        Err(e) => {
+            eprintln!("zshrs:coproc:1: {}", e);
+            1
+        }
+    }
+}
+
+
+/// zmv / zcp / zln — pattern-based rename. Native Rust port of
+/// the autoloaded zsh function. Glob the source pattern (with
+/// `(...)` capture groups), substitute `$1`/`$2`/... in the
+/// destination, then mv/cp/ln each match.
+///
+/// Supported flags:
+///   -n   dry-run (print actions, don't execute)
+///   -f   force overwrite
+///   -i   interactive (prompt — falls back to skip on no-tty)
+///   -v   verbose
+///   -W   wildcard mode: `*` in src maps to `*` in dest position
+///   -M   force mv mode (default for `zmv`)
+///   -C   force cp mode
+///   -L   force ln mode (hard link)
+///   -s   ln -s (symlink) when in ln mode
+///   -p prog  use `prog` instead of mv/cp/ln
+pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
+    let mut action = default_action.to_string();
+    let mut dry_run = false;
+    let mut force = false;
+    let mut verbose = false;
+    let mut wildcard = false;
+    let mut symlink = false;
+    let mut positional: Vec<String> = Vec::new();
+    let mut iter = args.iter().peekable();
+    while let Some(a) = iter.next() {
+        if a == "--" {
+            for p in iter.by_ref() {
+                positional.push(p.clone());
+            }
+            break;
+        }
+        if let Some(rest) = a.strip_prefix('-') {
+            if rest.is_empty() {
+                positional.push(a.clone());
+                continue;
+            }
+            for c in rest.chars() {
+                match c {
+                    'n' => dry_run = true,
+                    'f' => force = true,
+                    'i' => {} // interactive — treat as skip-on-conflict
+                    'v' => verbose = true,
+                    'W' => wildcard = true,
+                    's' => symlink = true,
+                    'M' => action = "mv".to_string(),
+                    'C' => action = "cp".to_string(),
+                    'L' => action = "ln".to_string(),
+                    'p' => {
+                        // `-p prog` consumes the next arg.
+                        if let Some(p) = iter.next() {
+                            action = p.clone();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            positional.push(a.clone());
+        }
+    }
+    if positional.len() < 2 {
+        eprintln!(
+            "{}: usage: {} [-flags] FROM_PATTERN TO_PATTERN",
+            action, action
+        );
+        return 1;
+    }
+    let from_pat = &positional[0];
+    let to_pat = &positional[1];
+
+    // Convert source pattern with `(...)` capture groups to a
+    // regex anchored at both ends. zsh-style globs:
+    //   `*`   → `(.*)` (capture if -W or wrapped in `(...)`,
+    //          else just `.*`)
+    //   `?`   → `.`
+    //   `(p)` → `(p_translated)` capture group
+    //   `[…]` → `[…]` literal char class
+    let mut regex_src = String::from("^");
+    let mut chars = from_pat.chars().peekable();
+    let mut group_idx = 0;
+    while let Some(c) = chars.next() {
+        match c {
+            '*' => {
+                if wildcard {
+                    regex_src.push_str("(.*)");
+                    group_idx += 1;
+                } else {
+                    regex_src.push_str(".*");
+                }
+            }
+            '?' => regex_src.push('.'),
+            '(' => {
+                regex_src.push('(');
+                group_idx += 1;
+            }
+            ')' => regex_src.push(')'),
+            '[' => {
+                regex_src.push('[');
+                for cc in chars.by_ref() {
+                    if cc == ']' {
+                        regex_src.push(']');
+                        break;
+                    }
+                    regex_src.push(cc);
+                }
+            }
+            '|' => regex_src.push('|'),
+            '.' | '+' | '^' | '$' | '\\' | '{' | '}' => {
+                regex_src.push('\\');
+                regex_src.push(c);
+            }
+            _ => regex_src.push(c),
+        }
+    }
+    regex_src.push('$');
+    let _ = group_idx;
+    let re = match regex::Regex::new(&regex_src) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{}: bad pattern: {}", action, e);
+            return 1;
+        }
+    };
+
+    // Enumerate candidate files. zsh's zmv glob has `(...)` as
+    // capture-group syntax, NOT alternation, so the source pattern
+    // can't be passed straight to expand_glob (which would either
+    // treat it as a glob qualifier suffix or fail). Strip the
+    // capture parens to get a plain glob pattern, then keep only
+    // the entries that match the regex.
+    let glob_pat: String = from_pat
+        .chars()
+        .filter(|c| *c != '(' && *c != ')')
+        .collect();
+    let candidates = crate::fusevm_bridge::with_executor(|exec| exec.expand_glob(&glob_pat));
+    if candidates.len() == 1
+        && candidates[0] == glob_pat
+        && !std::path::Path::new(&candidates[0]).exists()
+    {
+        eprintln!("{}: no matches found: {}", action, from_pat);
+        return 1;
+    }
+
+    // For each match, compute destination by applying captures.
+    let mut renames: Vec<(String, String)> = Vec::new();
+    for src in &candidates {
+        let caps = match re.captures(src) {
+            Some(c) => c,
+            None => continue,
+        };
+        // Substitute `$1`..`$9` and `${1}` in to_pat with capture
+        // group contents.
+        let mut dest = String::new();
+        let mut to_chars = to_pat.chars().peekable();
+        while let Some(c) = to_chars.next() {
+            if c == '$' {
+                let next = to_chars.peek().copied();
+                match next {
+                    Some(d) if d.is_ascii_digit() => {
+                        to_chars.next();
+                        let idx = d.to_digit(10).unwrap_or(0) as usize;
+                        if let Some(m) = caps.get(idx) {
+                            dest.push_str(m.as_str());
+                        }
+                    }
+                    Some('{') => {
+                        to_chars.next();
+                        let mut ns = String::new();
+                        while let Some(&pc) = to_chars.peek() {
+                            if pc == '}' {
+                                to_chars.next();
+                                break;
+                            }
+                            ns.push(pc);
+                            to_chars.next();
+                        }
+                        if let Ok(idx) = ns.parse::<usize>() {
+                            if let Some(m) = caps.get(idx) {
+                                dest.push_str(m.as_str());
+                            }
+                        }
+                    }
+                    _ => dest.push(c),
+                }
+            } else {
+                dest.push(c);
+            }
+        }
+        renames.push((src.clone(), dest));
+    }
+
+    // Detect collisions: two different sources mapping to the same
+    // destination. zsh errors out before any file action.
+    let mut seen: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    let mut collisions = false;
+    for (s, d) in &renames {
+        if let Some(prev) = seen.insert(d.as_str(), s.as_str()) {
+            eprintln!("{}: error: {} and {} both map to {}", action, s, prev, d);
+            collisions = true;
+        }
+    }
+    if collisions {
+        return 1;
+    }
+
+    // Execute (or print, if -n).
+    let prog = match action.as_str() {
+        "mv" | "cp" | "ln" => action.clone(),
+        other => other.to_string(),
+    };
+    let mut status = 0;
+    for (s, d) in &renames {
+        if !force && std::path::Path::new(d).exists() {
+            eprintln!("{}: {}: destination exists", action, d);
+            status = 1;
+            continue;
+        }
+        if dry_run {
+            if symlink && action == "ln" {
+                println!("{} -s -- {} {}", prog, s, d);
+            } else {
+                println!("{} -- {} {}", prog, s, d);
+            }
+            continue;
+        }
+        if verbose {
+            println!("{} -> {}", s, d);
+        }
+        let result = match action.as_str() {
+            "mv" => std::fs::rename(s, d),
+            "cp" => std::fs::copy(s, d).map(|_| ()),
+            "ln" => {
+                if symlink {
+                    #[cfg(unix)]
+                    {
+                        std::os::unix::fs::symlink(s, d)
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::Unsupported,
+                            "symlink",
+                        ))
+                    }
+                } else {
+                    std::fs::hard_link(s, d)
+                }
+            }
+            _ => {
+                // External program — shell out.
+                let st = std::process::Command::new(&prog).arg(s).arg(d).status();
+                match st {
+                    Ok(s) => {
+                        if s.success() {
+                            Ok(())
+                        } else {
+                            Err(std::io::Error::other("exit nonzero"))
+                        }
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+        };
+        if let Err(e) = result {
+            eprintln!("{}: {}: {}", action, s, e);
+            status = 1;
+        }
+    }
+    status
+}
+
+
+/// zcalc — basic non-interactive calculator. zsh's autoloaded
+/// zcalc is interactive (REPL); we support the `-e EXPR` form
+/// which evaluates a single expression and prints the result.
+/// Without `-e`, interactive mode is not supported and we exit 1.
+pub(crate) fn zcalc(args: &[String]) -> i32 {
+    // -e EXPR / --expression EXPR — evaluate one expression and
+    // print the result.
+    let mut iter = args.iter().peekable();
+    while let Some(a) = iter.next() {
+        if a == "-e" || a == "--expression" {
+            if let Some(expr) = iter.next() {
+                let result = crate::ported::subst::arithsubst(expr, "", "");
+                println!("{}", result);
+                return 0;
+            }
+        } else if let Some(expr) = a.strip_prefix("-e") {
+            let result = crate::ported::subst::arithsubst(expr, "", "");
+            println!("{}", result);
+            return 0;
+        }
+    }
+    eprintln!("zshrs:zcalc:1: interactive mode not supported in non-tty; use `zcalc -e EXPR`");
+    1
+}
+
