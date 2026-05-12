@@ -2656,7 +2656,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 let t = s.trim();
                                 if t.is_empty() { return None; }
                                 if let Ok(i) = t.parse::<i64>() { return Some(i); }
-                                Some(exec.eval_arith_expr(t))
+                                Some(crate::ported::math::mathevali(&crate::ported::subst::singsub(t)).unwrap_or(0))
                             };
                             let s_opt = parse_one(start_s, exec);
                             let e_opt = parse_one(end_s, exec);
@@ -2666,7 +2666,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         }
                         let i = match idx.parse::<i64>() {
                             Ok(i) => i,
-                            Err(_) => exec.eval_arith_expr(&idx),
+                            Err(_) => crate::ported::math::mathevali(&crate::ported::subst::singsub(&idx)).unwrap_or(0),
                         };
                         return Value::str(crate::ported::params::getarrvalue(&s_chars, i, i).concat());
                     }
@@ -2712,7 +2712,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         let t = s.trim();
                         if t.is_empty() { return None; }
                         if let Ok(i) = t.parse::<i64>() { return Some(i); }
-                        Some(exec.eval_arith_expr(t))
+                        Some(crate::ported::math::mathevali(&crate::ported::subst::singsub(t)).unwrap_or(0))
                     };
                     let start = parse_one(start_s, exec);
                     let end = parse_one(end_s, exec);
@@ -2753,7 +2753,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // "before first" per the standard 1-based path).
                 let i = match idx.parse::<i64>() {
                     Ok(i) => i,
-                    Err(_) => exec.eval_arith_expr(&idx),
+                    Err(_) => crate::ported::math::mathevali(&crate::ported::subst::singsub(&idx)).unwrap_or(0),
                 };
                 let len = arr.len() as i64;
                 let ksh = exec.options.get("ksharrays").copied().unwrap_or(false);
@@ -3268,7 +3268,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     //   if MULTIBYTE && ires>127: ucs4tomb           // 1508-1511
                     //   else: single-byte sprintf                    // 1514-1518
                     let to_char = |s: &str| -> String {
-                        let n = with_executor(|exec| exec.eval_arith_expr(s));
+                        let n = with_executor(|exec| crate::ported::math::mathevali(&crate::ported::subst::singsub(s)).unwrap_or(0));
                         // zsh subst.c:1504-1518 — negative WARNS but
                         // STILL outputs the low byte (truncated cast
                         // through `(int)ires` + `%c` sprintf at line
@@ -3345,10 +3345,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let width: usize = if let Ok(n) = width_str.parse() {
                         n
                     } else {
-                        with_executor(|exec| {
-                            let arith_str = exec.evaluate_arithmetic(&width_str);
-                            arith_str.parse::<i64>().map(|v| v.unsigned_abs() as usize).unwrap_or(0)
-                        })
+                        let arith_str = crate::ported::subst::arithsubst(&width_str, "", "");
+                        arith_str.parse::<i64>().map(|v| v.unsigned_abs() as usize).unwrap_or(0)
                     };
                     // Optional `:fill:` after the width.
                     let mut fill = String::from(" ");
@@ -4657,7 +4655,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // For an existing indexed array, fall back to arith eval so
             // `a[i+1]=v` works when `i` is set.
             let key_int_for_indexed = if is_indexed {
-                key_literal_int.or_else(|| Some(exec.eval_arith_expr(&key)))
+                key_literal_int.or_else(|| Some(crate::ported::math::mathevali(&crate::ported::subst::singsub(&key)).unwrap_or(0)))
             } else {
                 key_literal_int
             };
@@ -5395,7 +5393,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if is_integer {
                 let prev = exec.get_variable(&name);
                 let prev_n: i64 = prev.parse().unwrap_or(0);
-                let added = exec.eval_arith_expr(&value);
+                let added = crate::ported::math::mathevali(&crate::ported::subst::singsub(&value)).unwrap_or(0);
                 let new_val = (prev_n + added).to_string();
                 exec.set_scalar(name.clone(), new_val.clone());
                 // PFA-SMR aspect: integer-typed append. The append
@@ -5486,7 +5484,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 None
             };
             let stored = if is_integer && !value.is_empty() {
-                let evaluated = exec.eval_arith_expr(&value).to_string();
+                let evaluated = crate::ported::math::mathevali(&crate::ported::subst::singsub(&value)).unwrap_or(0).to_string();
                 if let Some(base) = int_base {
                     evaluated
                         .parse::<i64>()
@@ -6986,9 +6984,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Arr(Vec<String>),
         }
         let result = with_executor(|exec| {
-            let offset = exec.eval_arith_expr(&off_expr);
+            let offset = crate::ported::math::mathevali(&crate::ported::subst::singsub(&off_expr)).unwrap_or(0);
             let length_opt: Option<i64> = if has_len {
-                Some(exec.eval_arith_expr(&len_expr))
+                Some(crate::ported::math::mathevali(&crate::ported::subst::singsub(&len_expr)).unwrap_or(0))
             } else {
                 None
             };
@@ -7248,7 +7246,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // word context.
     vm.register_builtin(BUILTIN_ARITH_EVAL, |vm, _argc| {
         let expr = vm.pop().to_str();
-        let result = with_executor(|exec| exec.evaluate_arithmetic(&expr));
+        let result = crate::ported::subst::arithsubst(&expr, "", "");
         fusevm::Value::str(result)
     });
 

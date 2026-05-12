@@ -5679,7 +5679,7 @@ fn filesub(s: &str, flags: i32) -> String {
 /// to `(expr, prefix, rest) -> String` because Rust strings
 /// own their storage; the caller now consumes the returned String
 /// directly instead of the C in-out buffer protocol.
-fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
+pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     // c:4485
     // Pre-resolve `$#NAME` before singsub — singsub treats `$#` as
     // positional-count (`$#`) followed by literal `NAME`, which mangles
