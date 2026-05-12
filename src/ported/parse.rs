@@ -3454,19 +3454,50 @@ fn error(msg: &str) {
 //
 // The wordcode dump format (`.zwc`) is a serialized parse tree zsh can
 // `mmap()` and dispatch from without re-parsing on every shell start.
-// `bin_zcompile` writes one (default mode) or inspects/lists one
-// (`-t` mode). The supporting helpers (`load_dump_header`,
-// `dump_find_func`, `build_dump`, `build_cur_dump`) are stubs until
-// the wordcode emitter side lands; the option-validation / dispatch
-// shape is faithfully ported so call sites get C-identical errors.
+// File layout (one struct = `FD_PRELEN` `u32`s):
+//   - `pre[0]` = magic word (FD_MAGIC native byte-order, FD_OMAGIC
+//     opposite byte-order).
+//   - `pre[1]` = packed `{flags(8) | other_offset(24)}` byte field.
+//   - `pre[2..12]` = `ZSH_VERSION` C-string padded to 40 bytes.
+//   - `pre[12]` = `fdheaderlen` (total prelude+header word count).
+//   - Then a sequence of `struct fdhead` records, one per function,
+//     each followed by its NUL-terminated name (padded to 4-byte).
+//   - Then the wordcode bytes for every function back-to-back.
+//
+// On a little-endian host writing a dump twice: first `FD_MAGIC` for
+// native readers, then re-walks the body byte-swapped and emits a
+// second `FD_OMAGIC` copy so big-endian readers can mmap it too.
 // =====================================================================
+
+// File-format constants — port of `Src/parse.c:3104-3150`.
 
 /// `#define FD_EXT ".zwc"` from `Src/parse.c:3104`.
 pub const FD_EXT: &str = ".zwc";
 
+/// `#define FD_MINMAP 4096` from `Src/parse.c:3105`. mmap threshold
+/// — `-M` mode only kicks in when the wordcode body is at least
+/// this many bytes (otherwise read(2) is preferred).
+pub const FD_MINMAP: usize = 4096;
+
+/// `#define FD_PRELEN 12` from `Src/parse.c:3107`. File-header
+/// length in u32 words: magic + packed-flags-byte + 10 version words.
+pub const FD_PRELEN: usize = 12;
+
+/// `#define FD_MAGIC 0x04050607` from `Src/parse.c:3108`. Sentinel
+/// for native-byte-order dumps.
+pub const FD_MAGIC: u32 = 0x04050607;
+
+/// `#define FD_OMAGIC 0x07060504` from `Src/parse.c:3109`. Sentinel
+/// for opposite-byte-order dumps (byte-swapped FD_MAGIC).
+pub const FD_OMAGIC: u32 = 0x07060504;
+
 /// `#define FDF_MAP 1` from `Src/parse.c:3111`. Bit set when the
 /// dump should be `mmap()`-ed (`-M` flag) vs read normally (`-R`).
 pub const FDF_MAP: u32 = 1;
+
+/// `#define FDF_OTHER 2` from `Src/parse.c:3112`. Bit indicating
+/// this dump has an opposite-byte-order copy at `fdother(f)`.
+pub const FDF_OTHER: u32 = 2;
 
 /// `#define FDHF_KSHLOAD 1` from `Src/parse.c:3149`. Function-header
 /// flag word — `-k` ksh-style autoload marker.
@@ -3476,30 +3507,295 @@ pub const FDHF_KSHLOAD: u32 = 1;
 /// autoload marker.
 pub const FDHF_ZSHLOAD: u32 = 2;
 
+/// Port of `struct fdhead` from `Src/parse.c:3116`. One per function
+/// inside a wordcode dump. All fields are `wordcode` (u32).
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy)]
+pub struct fdhead {
+    /// Offset (in u32 words) to the start of this function's
+    /// wordcode body inside the dump.
+    pub start: u32,                                                          // c:3117
+    /// Wordcode-byte length of the body (excludes pattern-prog slots).
+    pub len: u32,                                                            // c:3118
+    /// Number of compiled patterns the body references.
+    pub npats: u32,                                                          // c:3119
+    /// Offset of the string table inside `prog->prog`.
+    pub strs: u32,                                                           // c:3120
+    /// Header-record length in u32 words (record + name).
+    pub hlen: u32,                                                           // c:3121
+    /// Packed `{ kshload_bits(2) | name_tail_offset(30) }` field.
+    pub flags: u32,                                                          // c:3122
+}
+
+/// Size of `struct fdhead` in `wordcode` (u32) units. Used by all
+/// the header-walk macros below.
+pub const FDHEAD_WORDS: usize = std::mem::size_of::<fdhead>() / 4;
+
+/// Port of `struct wcfunc` from `Src/parse.c:3158`. Build-time
+/// per-function aggregate before write_dump emits it. The Rust
+/// port stores the source-text body inline since the C-side
+/// `Eprog` ↔ `parse_string` chain isn't fully wired through this
+/// layer yet (`build_dump` falls back to source-text caching).
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
+pub struct wcfunc {
+    pub name: String,                                                        // c:3159
+    pub flags: u32,                                                          // c:3161
+    /// Compiled body wordcode (one `u32` array per fn). Empty until
+    /// the eprog emit-side lands; `write_dump` then walks each entry.
+    pub body: Vec<u32>,
+}
+
+// `fdheaderlen` / `fdmagic` / `fdflags` / etc. macros from
+// `Src/parse.c:3125-3152`. C uses raw pointer arithmetic on a
+// `Wordcode` (= `u32 *`); the Rust port takes a slice and indexes.
+
+/// Port of `fdheaderlen(f)` macro (`Src/parse.c:3125`) — header
+/// length in u32 words (read from prelude word `FD_PRELEN`).
+#[inline]
+pub fn fdheaderlen(f: &[u32]) -> u32 {
+    f[FD_PRELEN]
+}
+
+/// Port of `fdmagic(f)` macro (`Src/parse.c:3127`) — first prelude
+/// word, either `FD_MAGIC` or `FD_OMAGIC`.
+#[inline]
+pub fn fdmagic(f: &[u32]) -> u32 {
+    f[0]
+}
+
+/// Port of `fdflags(f)` macro (`Src/parse.c:3131`) — low byte of
+/// the packed `pre[1]` word.
+#[inline]
+pub fn fdflags(f: &[u32]) -> u32 {
+    // `pre[1]` is a u32 viewed as 4 bytes; flags = byte 0.
+    f[1] & 0xff
+}
+
+/// Port of `fdsetflags(f, v)` macro (`Src/parse.c:3132`) — write
+/// the low byte of `pre[1]`.
+#[inline]
+pub fn fdsetflags(f: &mut [u32], v: u8) {
+    f[1] = (f[1] & !0xff) | (v as u32);
+}
+
+/// Port of `fdother(f)` macro (`Src/parse.c:3133`) — high 24 bits
+/// of `pre[1]`, holds the byte-offset to the opposite-byte-order
+/// dump copy.
+#[inline]
+pub fn fdother(f: &[u32]) -> u32 {
+    (f[1] >> 8) & 0x00ff_ffff
+}
+
+/// Port of `fdsetother(f, o)` macro (`Src/parse.c:3134`).
+#[inline]
+pub fn fdsetother(f: &mut [u32], o: u32) {
+    f[1] = (f[1] & 0xff) | ((o & 0x00ff_ffff) << 8);
+}
+
+/// Port of `fdversion(f)` macro (`Src/parse.c:3140`) — read the
+/// `ZSH_VERSION` C-string from `pre[2..]`.
+pub fn fdversion(f: &[u32]) -> String {
+    let bytes: Vec<u8> = f[2..].iter().take(10)
+        .flat_map(|w| w.to_le_bytes().into_iter())
+        .collect();
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
+}
+
+/// Port of `firstfdhead(f)` macro (`Src/parse.c:3142`) — pointer
+/// to the first `struct fdhead` past the prelude.
+#[inline]
+pub fn firstfdhead_offset() -> usize {
+    FD_PRELEN
+}
+
+/// Port of `nextfdhead(f)` macro (`Src/parse.c:3143`) — advance to
+/// the next header by reading the current `hlen` slot.
+#[inline]
+pub fn nextfdhead_offset(f: &[u32], cur: usize) -> usize {
+    cur + (f[cur + 4] as usize)  // .hlen is field 4 of fdhead
+}
+
+/// Port of `fdhflags(f)` macro (`Src/parse.c:3145`) — low 2 bits
+/// of the header's `flags` field (the kshload/zshload marker).
+#[inline]
+pub fn fdhflags(h: &fdhead) -> u32 {
+    h.flags & 0x3
+}
+
+/// Port of `fdhtail(f)` macro (`Src/parse.c:3146`) — high 30 bits
+/// of `flags`, byte offset from the name start to its basename.
+#[inline]
+pub fn fdhtail(h: &fdhead) -> u32 {
+    h.flags >> 2
+}
+
+/// Port of `fdhbldflags(f, t)` macro (`Src/parse.c:3147`) — pack
+/// `(flags, tail)` into one u32 (low 2 bits = flags, high 30 = tail).
+#[inline]
+pub fn fdhbldflags(flags: u32, tail: u32) -> u32 {
+    flags | (tail << 2)
+}
+
+/// Port of `fdname(f)` macro (`Src/parse.c:3152`) — name string
+/// follows the fdhead record immediately. Reads bytes from the
+/// dump buffer until NUL.
+pub fn fdname(buf: &[u32], header_offset: usize) -> String {
+    let name_word_off = header_offset + FDHEAD_WORDS;
+    let bytes: Vec<u8> = buf[name_word_off..].iter()
+        .flat_map(|w| w.to_le_bytes().into_iter())
+        .take_while(|&b| b != 0)
+        .collect();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Decode a `fdhead` record at the given u32-word offset in the
+/// dump buffer. Used by the header-walk loops in `bin_zcompile -t`.
+pub fn read_fdhead(buf: &[u32], offset: usize) -> Option<fdhead> {
+    if offset + FDHEAD_WORDS > buf.len() {
+        return None;
+    }
+    Some(fdhead {
+        start: buf[offset],
+        len:   buf[offset + 1],
+        npats: buf[offset + 2],
+        strs:  buf[offset + 3],
+        hlen:  buf[offset + 4],
+        flags: buf[offset + 5],
+    })
+}
+
+/// Port of `fdswap(Wordcode p, int n)` from `Src/parse.c:3318`.
+/// Byte-swap each u32 in `p[..n]` in place. Used when writing the
+/// opposite-byte-order copy of a wordcode dump.
+pub fn fdswap(p: &mut [u32]) {                                                // c:3318
+    for w in p.iter_mut() {
+        *w = w.swap_bytes();
+    }
+}
+
 /// Port of `dump_find_func(Wordcode h, char *name)` from
-/// `Src/parse.c:3167`. Scans a loaded dump header for a function by
-/// name; returns true on hit. Stub until the wordcode emitter port
-/// lands.
-pub fn dump_find_func(_h: *const u32, _name: &str) -> bool { // c:3167
+/// `Src/parse.c:3167`. Walks the header table inside a loaded
+/// dump for a function with the given basename; returns true on hit.
+pub fn dump_find_func(h: &[u32], name: &str) -> bool {                        // c:3167
+    let header_words = fdheaderlen(h) as usize;
+    let end = header_words; // walking u32 offsets, end-exclusive
+    let mut cur = firstfdhead_offset();
+    while cur < end {
+        if let Some(fh) = read_fdhead(h, cur) {
+            let full = fdname(h, cur);
+            let tail = fdhtail(&fh) as usize;
+            let basename = if tail <= full.len() { &full[tail..] } else { "" };
+            if basename == name {
+                return true;
+            }
+            cur = nextfdhead_offset(h, cur);
+        } else {
+            break;
+        }
+    }
     false
 }
 
 /// Port of `load_dump_header(char *nam, char *name, int err)` from
-/// `Src/parse.c:3258`. Reads + validates a `.zwc` header; returns
-/// `Some(buf)` on success or `None` on bad-magic / version mismatch.
-/// Stub: emits the same `not a wordcode file` warning C does on
-/// failure and returns None.
+/// `Src/parse.c:3258`. Opens the file, reads + validates the magic
+/// and version, then slurps the full header table into memory.
+/// Returns the header u32-array on success or None on any failure
+/// (emitting C-shaped warnings when `err != 0`).
 pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> { // c:3258
-    if err != 0 {
-        crate::ported::utils::zwarnnam(nam, &format!("{}: not a wordcode file", name));
+    use std::fs::File;
+    use std::io::{Read, Seek, SeekFrom};
+    use crate::ported::utils::zwarnnam;
+
+    let mut f = match File::open(name) {                                      // c:3263
+        Ok(h) => h,
+        Err(_) => {
+            if err != 0 {
+                zwarnnam(nam, &format!("can't open zwc file: {}", name));     // c:3265
+            }
+            return None;
+        }
+    };
+
+    // Read FD_PRELEN+1 u32 words = 52 bytes.
+    let mut buf_bytes = vec![0u8; (FD_PRELEN + 1) * 4];
+    if f.read_exact(&mut buf_bytes).is_err() {
+        if err != 0 {
+            zwarnnam(nam, &format!("invalid zwc file: {}", name));            // c:3277
+        }
+        return None;
     }
-    None
+    let mut buf: Vec<u32> = buf_bytes.chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+
+    // c:3270 — magic + version check. `ZSH_VERSION` (the C-side
+    // global) — zshrs reports "5.9" in `--zsh` mode (Src/init.c parity).
+    let magic_ok = fdmagic(&buf) == FD_MAGIC || fdmagic(&buf) == FD_OMAGIC;
+    let v_ok = fdversion(&buf) == "5.9";
+    if !magic_ok {
+        if err != 0 {
+            zwarnnam(nam, &format!("invalid zwc file: {}", name));            // c:3277
+        }
+        return None;
+    }
+    if !v_ok {
+        if err != 0 {
+            zwarnnam(nam, &format!("zwc file has wrong version (zsh-{}): {}", // c:3274
+                                   fdversion(&buf), name));
+        }
+        return None;
+    }
+
+    // c:3285 — if magic matches host byte order, head len is `pre[FD_PRELEN]`.
+    // Else seek to `fdother(buf)` and re-read.
+    if fdmagic(&buf) != FD_MAGIC {
+        let other = fdother(&buf) as u64;                                     // c:3290
+        if f.seek(SeekFrom::Start(other)).is_err()
+            || f.read_exact(&mut buf_bytes).is_err()
+        {
+            zwarnnam(nam, &format!("invalid zwc file: {}", name));            // c:3295
+            return None;
+        }
+        buf = buf_bytes.chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+    }
+
+    let total_words = fdheaderlen(&buf) as usize;                             // c:3286/3299
+    if total_words < FD_PRELEN + 1 {
+        zwarnnam(nam, &format!("invalid zwc file: {}", name));
+        return None;
+    }
+
+    // Read the remaining header words.
+    let mut head: Vec<u32> = Vec::with_capacity(total_words);
+    head.extend_from_slice(&buf);
+    let remaining_words = total_words - (FD_PRELEN + 1);
+    if remaining_words > 0 {
+        let mut rest_bytes = vec![0u8; remaining_words * 4];                  // c:3305
+        if f.read_exact(&mut rest_bytes).is_err() {
+            zwarnnam(nam, &format!("invalid zwc file: {}", name));            // c:3307
+            return None;
+        }
+        for c in rest_bytes.chunks_exact(4) {
+            head.push(u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+        }
+    }
+    Some(head)                                                                 // c:3311
 }
 
 /// Port of `build_dump(char *nam, char *dump, char **files, int ali, int map, int flags)`
-/// from `Src/parse.c:3397`. Compiles a list of source files into a
-/// single `.zwc` dump. Stub returns 1 (error) until the wordcode
-/// emitter port lands; matches C's failure return on I/O error.
+/// from `Src/parse.c:3397`. Source-file → wordcode dump compiler.
+///
+/// Status: scaffolded but the wordcode-emit step depends on
+/// `parse_string` returning a fully-wired `Eprog` with `prog/strs/
+/// npats` fields populated. The current `parse_string`/`parse` shape
+/// emits an AST (`ZshProgram`) but not yet the wordcode array C
+/// expects in this dump format. Until that lands, this returns 1
+/// with a clear "wordcode emit not yet ported" message so callers
+/// (autoload from `.zwc`, `zcompile path/to/file`) fail loud.
 pub fn build_dump(nam: &str,                                                  // c:3397
                   dump: &str,
                   _files: &[String],
@@ -3513,7 +3809,7 @@ pub fn build_dump(nam: &str,                                                  //
 /// Port of `build_cur_dump(char *nam, char *dump, char **names, int match, int map, int what)`
 /// from `Src/parse.c:3536`. Compiles currently-loaded functions
 /// (`-c` for functions, `-a` for aliases) into a `.zwc` dump.
-/// Stub: returns 1 like `build_dump` does.
+/// Same wordcode-emit dependency as `build_dump`.
 pub fn build_cur_dump(nam: &str,                                              // c:3536
                       dump: &str,
                       _names: &[String],
@@ -3521,6 +3817,94 @@ pub fn build_cur_dump(nam: &str,                                              //
                       _map: i32,
                       _what: i32) -> i32 {
     crate::ported::utils::zwarnnam(nam, &format!("{}: wordcode dump-current emit not yet ported", dump));
+    1
+}
+
+/// Port of `zwcstat(char *filename, struct stat *buf)` from
+/// `Src/parse.c:3656`. Stats a `.zwc` file, falling back to
+/// `.zwc.old` if the primary doesn't exist (zsh uses the `.old`
+/// suffix to keep a previous dump readable while a rewrite is in
+/// progress).
+pub fn zwcstat(filename: &str) -> Option<std::fs::Metadata> {                 // c:3656
+    if let Ok(m) = std::fs::metadata(filename) {
+        return Some(m);
+    }
+    let old = format!("{}.old", filename);
+    std::fs::metadata(&old).ok()
+}
+
+/// Port of `load_dump_file(char *dump, struct stat *sbuf, int other, int len)`
+/// from `Src/parse.c:3675`. Reads (or mmap()'s) a complete `.zwc`
+/// file into memory. Returns the u32 buffer or None on I/O error.
+pub fn load_dump_file(dump: &str,                                             // c:3675
+                      _sbuf: &std::fs::Metadata,
+                      other: i32,
+                      _len: usize) -> Option<Vec<u32>> {
+    use std::fs::File;
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = File::open(dump).ok()?;
+    if other != 0 {
+        f.seek(SeekFrom::Start(other as u64)).ok()?;
+    }
+    let mut bytes = Vec::new();
+    f.read_to_end(&mut bytes).ok()?;
+    Some(bytes.chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect())
+}
+
+/// Port of `try_dump_file(char *path, char *name, char *file, int *ksh, int test_only)`
+/// from `Src/parse.c:3746`. Tries to load a function from a `.zwc`
+/// in the given fpath directory. Returns `(found, ksh_load)` —
+/// stub: returns false until the dump-cache port (`FuncDump`) lands.
+pub fn try_dump_file(_path: &str, _name: &str, _file: &str,                   // c:3746
+                     _test_only: bool) -> Option<(bool, bool)> {
+    None
+}
+
+/// Port of `try_source_file(char *file)` from `Src/parse.c:3795`.
+/// Tries `source <file>` then falls back to `source <file>.zwc`.
+/// Returns the resolved path on hit. Stub: returns None until the
+/// dump-cache port lands.
+pub fn try_source_file(_file: &str) -> Option<String> {                       // c:3795
+    None
+}
+
+/// Port of `check_dump_file(char *file, struct stat *sbuf, char *name, int *ksh, int test_only)`
+/// from `Src/parse.c:3833`. Opens + validates a `.zwc` file,
+/// returning its loaded buffer or None.
+pub fn check_dump_file(_file: &str,                                           // c:3833
+                       _sbuf: &std::fs::Metadata,
+                       _name: &str,
+                       _test_only: bool) -> Option<(Vec<u32>, bool)> {
+    None
+}
+
+/// Port of `incrdumpcount(FuncDump f)` from `Src/parse.c:3970/4021`.
+/// Refcount-up a loaded `.zwc` dump. No-op stub.
+pub fn incrdumpcount() {}                                                     // c:3970
+
+/// Port of `decrdumpcount(FuncDump f)` from `Src/parse.c:3988/4026`.
+/// Refcount-down + free if zero. No-op stub.
+pub fn decrdumpcount() {}                                                     // c:3988
+
+/// Port of `freedump(FuncDump f)` from `Src/parse.c:3976`. Releases
+/// the per-dump memory + close fd. No-op stub.
+pub fn freedump() {}                                                          // c:3976
+
+/// Port of `closedumps(void)` from `Src/parse.c:4008/4033`. Walks
+/// the `dumps` list and frees every entry. No-op stub.
+pub fn closedumps() {}                                                        // c:4008
+
+/// Port of `dump_autoload(char *nam, char *file, int on, Options ops, int func)`
+/// from `Src/parse.c:4042`. Registers every function in a `.zwc`
+/// for autoload via `shfunctab`. Stub: returns 1 (error) until the
+/// dump-cache port lands.
+pub fn dump_autoload(nam: &str, file: &str,                                   // c:4042
+                     _on: i32,
+                     _ops: &crate::ported::zsh_h::options,
+                     _func: i32) -> i32 {
+    crate::ported::utils::zwarnnam(nam, &format!("{}: zwc-based autoload not yet ported", file));
     1
 }
 
@@ -3581,16 +3965,24 @@ pub fn bin_zcompile(nam: &str,                                                //
         // c:3209 — per-function check.
         if args.len() > 1 {
             for name in &args[1..] {                                          // c:3210
-                if !dump_find_func(f.as_ptr(), name) {                        // c:3212
+                if !dump_find_func(&f, name) {                                // c:3212
                     return 1;
                 }
             }
             return 0;
         }
-        // c:3215-3221 — listing arm. Stub prints what we have.
-        println!("zwc file ({}) for zsh-{}",
-                 "read",
-                 env!("CARGO_PKG_VERSION"));
+        // c:3215-3221 — listing arm. Walk every fdhead, print
+        // each function's full name. C uses `fdname(h)` which
+        // includes the path prefix; matches our `fdname()` impl.
+        let mapped = if (fdflags(&f) & FDF_MAP) != 0 { "mapped" } else { "read" };
+        println!("zwc file ({}) for zsh-{}", mapped, fdversion(&f));
+        let header_words = fdheaderlen(&f) as usize;
+        let mut cur = firstfdhead_offset();
+        while cur < header_words {
+            if read_fdhead(&f, cur).is_none() { break; }
+            println!("{}", fdname(&f, cur));
+            cur = nextfdhead_offset(&f, cur);
+        }
         return 0;
     }
 
