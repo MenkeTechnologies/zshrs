@@ -136,7 +136,7 @@ The static path has been the standard answer (zinit's `@zinit-report`, antibody'
 
 ### The runtime answer
 
-Run the user's actual init under instrumented zshrs. Every time a state-mutating builtin executes, capture (kind, name, value, file, line, fn_chain, timestamp) and forward it to the daemon. The shell already has the lineno and file context — `parse/src/parser.rs` plumbs it through `ZshPipe.lineno` and `ZshLexer.toklineno`. We just need to carry it across the builtin dispatch boundary and emit a record.
+Run the user's actual init under instrumented zshrs. Every time a state-mutating builtin executes, capture (kind, name, value, file, line, fn_chain, timestamp) and forward it to the daemon. The shell already has the lineno and file context — `parse/src/parser.rs` plumbs it through `ZshPipe.lineno` and `crate::ported::lex::toklineno()`. We just need to carry it across the builtin dispatch boundary and emit a record.
 
 This is plugin-framework-**agnostic by construction**: it doesn't matter how the alias got defined — through 5 layers of zinit ice modifiers or in raw .zshrc — the `bin_alias` dispatcher fires once per definition, with the file:line at the moment of execution. The recorder catches all of them uniformly.
 

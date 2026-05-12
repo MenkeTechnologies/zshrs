@@ -110,10 +110,10 @@ uname  date  mktemp
 Every command compiles to [fusevm](https://github.com/MenkeTechnologies/fusevm) bytecodes via a faithful port of zsh's lexer + parser:
 
 ```
-Interactive command  ──► ZshLexer ──► ZshParser ──► ZshCompiler ──► fusevm::Op ──► VM::run()
+Interactive command  ──► lex::zshlex ──► parse::parse ──► ZshCompiler ──► fusevm::Op ──► VM::run()
                          (port of    (port of      (original;
                           Src/lex.c)  Src/parse.c)  ~1.4k LOC)
-Script file (first)  ──► ZshLexer ──► ZshParser ──► ZshCompiler ──► VM::run() ──► persist rkyv shard
+Script file (first)  ──► lex::zshlex ──► parse::parse ──► ZshCompiler ──► VM::run() ──► persist rkyv shard
 Script file (cached) ──► index.rkyv + mmap shard ──► deserialize Chunk ──► VM::run()
                          (no lex, no parse, no compile)
 Autoload function    ──► rkyv shard ──► deserialize Chunk ──► VM::run()
@@ -137,7 +137,7 @@ The lexer and parser are direct ports from zsh's C source (`Src/lex.c`, `Src/par
 │       ├─── HIT (100x faster) ────────────────────────┐                 │
 │       │                                               │                 │
 │       ▼ MISS                                          ▼                 │
-│  ZshLexer → ZshParser → ZshCompiler ────────► fusevm::Chunk            │
+│  lex+parse → ZshCompiler ────────► fusevm::Chunk            │
 │                         │                             │                 │
 │                         ▼                             │                 │
 │                  persist_shard()                      │                 │
@@ -424,7 +424,7 @@ intercept before git { …; }       # AOP advice fires for both literal and dyna
 | Suite | Tests | Coverage |
 |-------|-------|----------|
 | `zsh_construct_corpus` | 392 | Every sh/zsh construct outside modules |
-| `zsh_corpus_via_new_pipeline` | 123 | Native ZshLexer+ZshParser+ZshCompiler path |
+| `zsh_corpus_via_new_pipeline` | 123 | Native lex+parse+ZshCompiler path |
 | `no_tree_walker_dispatch` | 158 | Behavioral pins for the no-tree-walker invariant |
 | `compile_zsh_smoke` | 28 | Per-construct bytecode-level smoke |
 | `tree_walker_absent` | 8 | Source-level absence checks (anti-regression) |
