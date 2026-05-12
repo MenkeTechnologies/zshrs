@@ -325,7 +325,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // typeset error-prefix. compile_zsh special-cases `declare`
         // to register BUILTIN_DECLARE explicitly so that path keeps
         // the `declare:` prefix in error messages.
-        let status = with_executor(|exec| exec.bin_typeset(&args));
+        let status = dispatch_builtin("typeset", args);
         Value::Status(status)
     });
 
@@ -356,7 +356,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // I/O
     vm.register_builtin(BUILTIN_READ, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_read(&args));
+        let status = dispatch_builtin("read", args);
         Value::Status(status)
     });
 
@@ -631,13 +631,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_COMPADD, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_compadd(&args));
+        let status = dispatch_builtin("compadd", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_COMPSET, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_compset(&args));
+        let status = dispatch_builtin("compset", args);
         Value::Status(status)
     });
 
@@ -674,7 +674,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_BINDKEY, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_bindkey(&args));
+        let status = dispatch_builtin("bindkey", args);
         Value::Status(status)
     });
 
@@ -698,7 +698,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ZFORMAT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_zformat(&args));
+        let status = dispatch_builtin("zformat", args);
         Value::Status(status)
     });
 
@@ -710,7 +710,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ZREGEXPARSE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_zregexparse(&args));
+        let status = dispatch_builtin("zregexparse", args);
         Value::Status(status)
     });
 
