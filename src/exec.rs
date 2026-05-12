@@ -1305,12 +1305,21 @@ impl ShellExecutor {
         // `loop()` without engaging the history layer.
         let content =
             std::fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
+        // Save & clear errflag around the parse so we can detect a
+        // fresh syntax error vs an inherited one. Direct port of
+        // Src/init.c source()'s `errflag &= ~ERRFLAG_ERROR;` before
+        // `parse_event(ENDINPUT)` and the post-parse errflag check.
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+        use std::sync::atomic::Ordering;
+        let saved_errflag = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
         let mut parser = crate::parse::ZshParser::new(&content);
-        let program = parser.parse().map_err(|errs| {
-            errs.first()
-                .map(|e| format!("{}", e))
-                .unwrap_or_else(|| "parse error".to_string())
-        })?;
+        let program = parser.parse();
+        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        errflag.store(saved_errflag, Ordering::Relaxed);
+        if parse_failed {
+            return Err("parse error".to_string());
+        }
 
         let compiler = crate::compile_zsh::ZshCompiler::new();
         let chunk = compiler.compile(&program);
@@ -1353,16 +1362,20 @@ impl ShellExecutor {
         // a pre-parsed script body. The interactive REPL has its
         // own dedicated path that calls expand_history before
         // dispatching here.
+        // Save & clear errflag around the parse so a fresh syntax
+        // error is distinguishable from one already in flight. Mirrors
+        // Src/init.c loop()'s pre-parse `errflag &= ~ERRFLAG_ERROR;`.
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+        use std::sync::atomic::Ordering;
+        let saved_errflag = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
         let mut parser = crate::parse::ZshParser::new(script);
-        let program = match parser.parse() {
-            Ok(p) => p,
-            Err(errs) => {
-                return Err(errs
-                    .first()
-                    .map(|e| format!("{}", e))
-                    .unwrap_or_else(|| "parse error".to_string()));
-            }
-        };
+        let program = parser.parse();
+        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        errflag.store(saved_errflag, Ordering::Relaxed);
+        if parse_failed {
+            return Err("parse error".to_string());
+        }
 
         let compiler = crate::compile_zsh::ZshCompiler::new();
         let chunk = compiler.compile(&program);
@@ -1692,11 +1705,21 @@ impl ShellExecutor {
     /// simple shape — pipelines / compound forms aren't process-sub
     /// friendly anyway.
     fn simple_cmd_words(&mut self, cmd_str: &str) -> Vec<String> {
+        // Mirror Src/init.c-style errflag save/clear/check around the
+        // parse. Process-sub argv extraction silently bails on syntax
+        // errors (matches zsh's behavior when the inner command can't
+        // be parsed).
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+        use std::sync::atomic::Ordering;
+        let saved_errflag = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
         let mut parser = crate::parse::ZshParser::new(cmd_str);
-        let prog = match parser.parse() {
-            Ok(p) => p,
-            Err(_) => return Vec::new(),
-        };
+        let prog = parser.parse();
+        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        errflag.store(saved_errflag, Ordering::Relaxed);
+        if parse_failed {
+            return Vec::new();
+        }
         let first = match prog.lists.first() {
             Some(l) => l,
             None => return Vec::new(),
@@ -1890,8 +1913,18 @@ impl ShellExecutor {
             .scalar("LINENO")
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(0);
+        // Mirror Src/init.c errflag save/clear/check pattern around
+        // the nested parse so an inner syntax error doesn't bleed into
+        // the outer execution.
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+        use std::sync::atomic::Ordering;
+        let saved_errflag = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
         let mut parser = crate::parse::ZshParser::new(cmd_str);
-        let prog = parser.parse().ok();
+        let parsed = parser.parse();
+        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        errflag.store(saved_errflag, Ordering::Relaxed);
+        let prog = if parse_failed { None } else { Some(parsed) };
         let mut cmd_status: Option<i32> = None;
         if let Some(prog) = prog {
             let mut compiler = crate::compile_zsh::ZshCompiler::new();
@@ -2001,7 +2034,7 @@ mod tests {
         let mut exec = ShellExecutor::new();
         exec.execute_script("for i in a b c; do true; done")
             .unwrap();
-        assert_eq!(exec.last_status, 0);
+        assert_eq!(exec.last_status(), 0);
     }
 
     #[test]

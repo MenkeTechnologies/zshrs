@@ -945,37 +945,38 @@ impl ShellExecutor {
         // Compile template once, execute for each item on VM — no forks
         let mut results: Vec<(i32, String)> = Vec::with_capacity(items.len());
 
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+        use std::sync::atomic::Ordering;
         for item in items {
             let cmd = template.replace("{}", item);
             // Phase 2 migration: ZshParser + ZshCompiler.
+            // Mirror Src/init.c errflag save/clear/check around parse.
+            let saved_errflag = errflag.load(Ordering::Relaxed);
+            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
             let mut parser = crate::parse::ZshParser::new(&cmd);
-            match parser.parse() {
-                Ok(prog) => {
-                    let compiler = crate::compile_zsh::ZshCompiler::new();
-                    let chunk = compiler.compile(&prog);
-
-                    // Capture stdout
-                    let output = Vec::new();
-                    let status = {
-                        let mut vm = fusevm::VM::new(chunk);
-                        register_builtins(&mut vm);
-                        let _ctx = ExecutorContext::enter(self);
-                        match vm.run() {
-                            fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
-                            fusevm::VMResult::Error(_) => 1,
-                        }
-                    };
-                    results.push((status, String::from_utf8_lossy(&output).to_string()));
-                }
-                Err(errs) => {
-                    let msg = errs
-                        .first()
-                        .map(|e| format!("{}", e))
-                        .unwrap_or_else(|| "parse error".to_string());
-                    eprintln!("zshrs:pmap:1: parse error: {}", msg);
-                    results.push((1, String::new()));
-                }
+            let prog = parser.parse();
+            let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+            errflag.store(saved_errflag, Ordering::Relaxed);
+            if parse_failed {
+                eprintln!("zshrs:pmap:1: parse error");
+                results.push((1, String::new()));
+                continue;
             }
+            let compiler = crate::compile_zsh::ZshCompiler::new();
+            let chunk = compiler.compile(&prog);
+
+            // Capture stdout
+            let output = Vec::new();
+            let status = {
+                let mut vm = fusevm::VM::new(chunk);
+                register_builtins(&mut vm);
+                let _ctx = ExecutorContext::enter(self);
+                match vm.run() {
+                    fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
+                    fusevm::VMResult::Error(_) => 1,
+                }
+            };
+            results.push((status, String::from_utf8_lossy(&output).to_string()));
         }
 
         let mut any_fail = false;
@@ -1011,24 +1012,33 @@ impl ShellExecutor {
         let items = &args[1..];
 
         // Compile and run on VM — no forks. Phase 2: ZshParser+ZshCompiler.
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+        use std::sync::atomic::Ordering;
         for item in items {
             let cmd = template.replace("{}", item);
+            // Mirror Src/init.c errflag save/clear/check around parse.
+            let saved_errflag = errflag.load(Ordering::Relaxed);
+            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
             let mut parser = crate::parse::ZshParser::new(&cmd);
-            if let Ok(prog) = parser.parse() {
-                let compiler = crate::compile_zsh::ZshCompiler::new();
-                let chunk = compiler.compile(&prog);
+            let prog = parser.parse();
+            let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+            errflag.store(saved_errflag, Ordering::Relaxed);
+            if parse_failed {
+                continue;
+            }
+            let compiler = crate::compile_zsh::ZshCompiler::new();
+            let chunk = compiler.compile(&prog);
 
-                let mut vm = fusevm::VM::new(chunk);
-                register_builtins(&mut vm);
-                let _ctx = ExecutorContext::enter(self);
-                let status = match vm.run() {
-                    fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
-                    fusevm::VMResult::Error(_) => 1,
-                };
+            let mut vm = fusevm::VM::new(chunk);
+            register_builtins(&mut vm);
+            let _ctx = ExecutorContext::enter(self);
+            let status = match vm.run() {
+                fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
+                fusevm::VMResult::Error(_) => 1,
+            };
 
-                if status == 0 {
-                    println!("{}", item);
-                }
+            if status == 0 {
+                println!("{}", item);
             }
         }
 
@@ -1052,27 +1062,35 @@ impl ShellExecutor {
 
         // Compile and run on VM — no forks, fire-and-forget style.
         // Phase 2: ZshParser+ZshCompiler.
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+        use std::sync::atomic::Ordering;
         let mut any_fail = false;
 
         for item in items {
             let cmd = template.replace("{}", item);
+            // Mirror Src/init.c errflag save/clear/check around parse.
+            let saved_errflag = errflag.load(Ordering::Relaxed);
+            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
             let mut parser = crate::parse::ZshParser::new(&cmd);
-            if let Ok(prog) = parser.parse() {
-                let compiler = crate::compile_zsh::ZshCompiler::new();
-                let chunk = compiler.compile(&prog);
+            let prog = parser.parse();
+            let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+            errflag.store(saved_errflag, Ordering::Relaxed);
+            if parse_failed {
+                any_fail = true;
+                continue;
+            }
+            let compiler = crate::compile_zsh::ZshCompiler::new();
+            let chunk = compiler.compile(&prog);
 
-                let mut vm = fusevm::VM::new(chunk);
-                register_builtins(&mut vm);
-                let _ctx = ExecutorContext::enter(self);
-                let status = match vm.run() {
-                    fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
-                    fusevm::VMResult::Error(_) => 1,
-                };
+            let mut vm = fusevm::VM::new(chunk);
+            register_builtins(&mut vm);
+            let _ctx = ExecutorContext::enter(self);
+            let status = match vm.run() {
+                fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
+                fusevm::VMResult::Error(_) => 1,
+            };
 
-                if status != 0 {
-                    any_fail = true;
-                }
-            } else {
+            if status != 0 {
                 any_fail = true;
             }
         }
@@ -1659,20 +1677,29 @@ impl ShellExecutor {
                                         };
                                         let mut batch: std::collections::HashMap<String, Vec<u8>> =
                                             std::collections::HashMap::with_capacity(bodies.len());
+                                        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+                                        use std::sync::atomic::Ordering;
                                         for (name, body) in &bodies {
+                                            // Mirror Src/init.c errflag save/clear/check around parse.
+                                            let saved_errflag = errflag.load(Ordering::Relaxed);
+                                            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
                                             let mut parser = crate::parse::ZshParser::new(body);
-                                            if let Ok(program) = parser.parse() {
-                                                if !program.lists.is_empty() {
-                                                    // ksh_autoload_body stub (deleted with the
-                                                    // old exec.c port) returned `Some(program)`
-                                                    // unchanged — same observable behavior as
-                                                    // using `&program` directly.
-                                                    let target = &program;
-                                                    let _ = name;
-                                                    let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
-                                                    if let Ok(blob) = bincode::serialize(&chunk) {
-                                                        batch.insert(name.clone(), blob);
-                                                    }
+                                            let program = parser.parse();
+                                            let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+                                            errflag.store(saved_errflag, Ordering::Relaxed);
+                                            if parse_failed {
+                                                continue;
+                                            }
+                                            if !program.lists.is_empty() {
+                                                // ksh_autoload_body stub (deleted with the
+                                                // old exec.c port) returned `Some(program)`
+                                                // unchanged — same observable behavior as
+                                                // using `&program` directly.
+                                                let target = &program;
+                                                let _ = name;
+                                                let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
+                                                if let Ok(blob) = bincode::serialize(&chunk) {
+                                                    batch.insert(name.clone(), blob);
                                                 }
                                             }
                                         }
@@ -1761,30 +1788,32 @@ impl ShellExecutor {
             let mut all_entries: std::collections::HashMap<String, Vec<u8>> =
                 std::collections::HashMap::with_capacity(result.files.len());
 
+            use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+            use std::sync::atomic::Ordering;
             for file in &result.files {
                 if let Some(ref body) = file.body {
+                    // Mirror Src/init.c errflag save/clear/check around parse.
+                    let saved_errflag = errflag.load(Ordering::Relaxed);
+                    errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
                     let mut parser = crate::parse::ZshParser::new(body);
-                    match parser.parse() {
-                        Ok(program) if !program.lists.is_empty() => {
-                            // ksh-style file (`name() { body }`) — compile only
-                            // the inner body so the chunk runs the function on
-                            // call instead of re-registering it.
-                            // ksh_autoload_body stub (deleted with old exec.c)
-                            // returned `Some(program)` unchanged.
-                            let target = &program;
-                            let _ = &file.name;
-                            let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
-                            if let Ok(blob) = bincode::serialize(&chunk) {
-                                all_entries.insert(file.name.clone(), blob);
-                                parse_ok += 1;
-                            }
-                        }
-                        Ok(_) => {
-                            parse_fail += 1;
-                        }
-                        Err(_) => {
-                            parse_fail += 1;
-                        }
+                    let program = parser.parse();
+                    let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+                    errflag.store(saved_errflag, Ordering::Relaxed);
+                    if parse_failed || program.lists.is_empty() {
+                        parse_fail += 1;
+                        continue;
+                    }
+                    // ksh-style file (`name() { body }`) — compile only
+                    // the inner body so the chunk runs the function on
+                    // call instead of re-registering it.
+                    // ksh_autoload_body stub (deleted with old exec.c)
+                    // returned `Some(program)` unchanged.
+                    let target = &program;
+                    let _ = &file.name;
+                    let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
+                    if let Ok(blob) = bincode::serialize(&chunk) {
+                        all_entries.insert(file.name.clone(), blob);
+                        parse_ok += 1;
                     }
                 } else {
                     no_body += 1;

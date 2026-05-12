@@ -1667,8 +1667,17 @@ impl ZshCompiler {
         {
             let is_in = untoked.starts_with("<(") || is_eq_psub;
             let inner = &untoked[2..untoked.len() - 1];
+            // Mirror Src/init.c errflag save/clear/check around the
+            // process-sub inner parse.
+            use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+            use std::sync::atomic::Ordering;
+            let saved_errflag = errflag.load(Ordering::Relaxed);
+            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
             let mut sub_parser = crate::parse::ZshParser::new(inner);
-            if let Ok(prog) = sub_parser.parse() {
+            let prog = sub_parser.parse();
+            let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+            errflag.store(saved_errflag, Ordering::Relaxed);
+            if !parse_failed {
                 let mut sub = ZshCompiler::new();
                 sub.compile_program(&prog);
                 let sub_end = sub.builder.current_pos();

@@ -1156,20 +1156,25 @@ impl crate::ported::exec::ShellExecutor {
         // Plugin cache replay: each bincode blob is a ShellCommand AST.
         // Replay each function's source text through ZshParser + ZshCompiler.
         // Delta format: name → UTF-8 source bytes (no AST round-trip needed).
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+        use std::sync::atomic::Ordering;
         for (name, bytes) in &delta.functions {
             let Ok(source) = std::str::from_utf8(bytes) else {
                 continue;
             };
-            if let Some(program) = crate::parse::ZshParser::new(source)
-                .parse()
-                .ok()
-                .filter(|p| !p.lists.is_empty())
-            {
-                let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
-                self.functions_compiled.insert(name.clone(), chunk);
-                self.function_source
-                    .insert(name.clone(), source.to_string());
+            // Mirror Src/init.c errflag save/clear/check around parse.
+            let saved_errflag = errflag.load(Ordering::Relaxed);
+            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+            let program = crate::parse::ZshParser::new(source).parse();
+            let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+            errflag.store(saved_errflag, Ordering::Relaxed);
+            if parse_failed || program.lists.is_empty() {
+                continue;
             }
+            let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
+            self.functions_compiled.insert(name.clone(), chunk);
+            self.function_source
+                .insert(name.clone(), source.to_string());
         }
     }
 }
