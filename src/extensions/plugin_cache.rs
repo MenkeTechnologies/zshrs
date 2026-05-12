@@ -836,9 +836,9 @@ impl crate::ported::exec::ShellExecutor {
     pub(crate) fn snapshot_state(&self) -> PluginSnapshot {
         PluginSnapshot {
             functions: self.function_names().into_iter().collect(),
-            aliases: self.aliases.keys().cloned().collect(),
-            global_aliases: self.global_aliases.keys().cloned().collect(),
-            suffix_aliases: self.suffix_aliases.keys().cloned().collect(),
+            aliases: self.alias_entries().into_iter().map(|(k, _)| k).collect(),
+            global_aliases: self.global_alias_entries().into_iter().map(|(k, _)| k).collect(),
+            suffix_aliases: self.suffix_alias_entries().into_iter().map(|(k, _)| k).collect(),
             variables: if let Ok(tab) = crate::ported::params::paramtab().lock() {
                 tab.iter()
                     .filter(|(_, pm)| pm.u_arr.is_none())
@@ -891,31 +891,20 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         let push_alias = |delta: &mut PluginDelta,
-                          map: &indexmap::IndexMap<String, String>,
+                          entries: Vec<(String, String)>,
                           snap_set: &std::collections::HashSet<String>,
                           kind: AliasKind| {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            for name in keys {
-                if !snap_set.contains(name) {
-                    let value = map.get(name).unwrap();
-                    delta.aliases.push((name.clone(), value.clone(), kind));
+            let mut entries = entries;
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            for (name, value) in entries {
+                if !snap_set.contains(&name) {
+                    delta.aliases.push((name, value, kind));
                 }
             }
         };
-        push_alias(&mut delta, &self.aliases, &snap.aliases, AliasKind::Regular);
-        push_alias(
-            &mut delta,
-            &self.global_aliases,
-            &snap.global_aliases,
-            AliasKind::Global,
-        );
-        push_alias(
-            &mut delta,
-            &self.suffix_aliases,
-            &snap.suffix_aliases,
-            AliasKind::Suffix,
-        );
+        push_alias(&mut delta, self.alias_entries(), &snap.aliases, AliasKind::Regular);
+        push_alias(&mut delta, self.global_alias_entries(), &snap.global_aliases, AliasKind::Global);
+        push_alias(&mut delta, self.suffix_alias_entries(), &snap.suffix_aliases, AliasKind::Suffix);
 
         // New/changed variables. Skip shell-special parameters whose
         // values are runtime-state, not script-state — replaying them
@@ -1065,13 +1054,13 @@ impl crate::ported::exec::ShellExecutor {
         for (name, value, kind) in &delta.aliases {
             match kind {
                 AliasKind::Regular => {
-                    self.aliases.insert(name.clone(), value.clone());
+                    self.set_alias(name.clone(), value.clone());
                 }
                 AliasKind::Global => {
-                    self.global_aliases.insert(name.clone(), value.clone());
+                    self.set_global_alias(name.clone(), value.clone());
                 }
                 AliasKind::Suffix => {
-                    self.suffix_aliases.insert(name.clone(), value.clone());
+                    self.set_suffix_alias(name.clone(), value.clone());
                 }
             }
         }

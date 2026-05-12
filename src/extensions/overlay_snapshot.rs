@@ -54,14 +54,17 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
     crate::fusevm_bridge::with_executor(|exec| {
         // Plain string maps — alias / galias / salias / setopt all
         // follow the same shape: `{key: value}` JSON object.
-        if !exec.aliases.is_empty() {
-            out.push(("alias".into(), map_to_json(&exec.aliases)));
+        let alias_e = exec.alias_entries();
+        if !alias_e.is_empty() {
+            out.push(("alias".into(), entries_to_json(&alias_e)));
         }
-        if !exec.global_aliases.is_empty() {
-            out.push(("galias".into(), map_to_json(&exec.global_aliases)));
+        let galias_e = exec.global_alias_entries();
+        if !galias_e.is_empty() {
+            out.push(("galias".into(), entries_to_json(&galias_e)));
         }
-        if !exec.suffix_aliases.is_empty() {
-            out.push(("salias".into(), map_to_json(&exec.suffix_aliases)));
+        let salias_e = exec.suffix_alias_entries();
+        if !salias_e.is_empty() {
+            out.push(("salias".into(), entries_to_json(&salias_e)));
         }
         if !exec.options.is_empty() {
             // Bool → string ("on"/"off") so the canonical store's
@@ -222,6 +225,18 @@ where
 {
     let map: serde_json::Map<String, Value> = iter
         .into_iter()
+        .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+        .collect();
+    Value::Object(map)
+}
+
+/// Take owned `(name, value)` pairs (from alias_entries() etc.) and
+/// serialize as a JSON object. Used for the alias snapshots which
+/// now read from canonical aliastab via accessors rather than from
+/// a HashMap reference.
+fn entries_to_json(entries: &[(String, String)]) -> Value {
+    let map: serde_json::Map<String, Value> = entries
+        .iter()
         .map(|(k, v)| (k.clone(), Value::String(v.clone())))
         .collect();
     Value::Object(map)

@@ -187,9 +187,9 @@ impl ShellExecutor {
 
         // --- Shell State ---
         println!("{}", bold("Shell State"));
-        println!("  aliases:     {}", self.aliases.len());
-        println!("  global:      {} aliases", self.global_aliases.len());
-        println!("  suffix:      {} aliases", self.suffix_aliases.len());
+        println!("  aliases:     {}", self.alias_entries().len());
+        println!("  global:      {} aliases", self.global_alias_entries().len());
+        println!("  suffix:      {} aliases", self.suffix_alias_entries().len());
         println!("  variables:   {}", crate::ported::params::paramtab().lock().map(|t| t.iter().filter(|(_, p)| p.u_arr.is_none()).count()).unwrap_or(0));
         println!("  arrays:      {}", crate::ported::params::paramtab().lock().map(|t| t.iter().filter(|(_, p)| p.u_arr.is_some()).count()).unwrap_or(0));
         println!("  assoc:       {}", crate::ported::params::paramtab_hashed_storage().lock().map(|m| m.len()).unwrap_or(0));
@@ -1276,7 +1276,8 @@ impl ShellExecutor {
         for action in actions {
             match action {
                 "alias" => {
-                    let mut names: Vec<String> = self.aliases.keys().cloned().collect();
+                    let mut names: Vec<String> =
+                        self.alias_entries().into_iter().map(|(k, _)| k).collect();
                     names.sort();
                     for name in names {
                         if name.starts_with(&prefix) {
