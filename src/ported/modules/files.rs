@@ -304,7 +304,7 @@ pub fn bin_ln(nam: &str, args: &[String],                                    // 
                 None => src.as_str(),
             };
             let dest = format!("{}/{}", dir, basename);                      // c:289 strcat
-            err |= domove(nam, &movefn, src, &dest, flags);                  // c:290
+            err |= domove(nam, movefn, src, &dest, flags);                  // c:290
         }
         return err;                                                          // c:295
     }
@@ -321,7 +321,7 @@ pub fn bin_ln(nam: &str, args: &[String],                                    // 
     } else {
         (args[0].clone(), args[1].clone())
     };
-    domove(nam, &movefn, &src, &dest, flags)                                 // c:275
+    domove(nam, movefn, &src, &dest, flags)                                 // c:275
 }
 
 /// Direct port of `domove(char *nam, MoveFunc movefn, char *p, char *q, int flags)` from `Src/Modules/files.c:298`.

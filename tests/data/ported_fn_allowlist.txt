@@ -848,6 +848,14 @@ apply_modespec
 # this via BRANCH opcodes in pattern.c's compiled Patprog; Rust port
 # pre-expands at glob.rs level until the per-component Patprog port lands.
 expand_glob_alternation
+# mv_rename / mv_symlink / mv_link — `bin_ln`/`domove` MoveFunc adapters.
+# C uses raw `(MoveFunc) rename` / `(MoveFunc) symlink` / `(MoveFunc) link`
+# casts on libc fns (`Src/Modules/files.c:210, 219, 223`). Rust can't cast
+# libc fn pointers to a wrapper-signature type, so these adapters wrap
+# the libc calls with a `(&CStr, &CStr) -> i32` signature.
+mv_rename
+mv_symlink
+mv_link
 
 # Pre-existing zsh.h macro-shaped helpers (Src/zsh.h is a header,
 # not in zsh_c_fn_names.txt which only lists fns from .c files).
