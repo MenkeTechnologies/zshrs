@@ -1156,12 +1156,227 @@ pub fn par_pipe_wordcode() {
     });
 }
 
-/// P9c stub: direct port of `par_cmd(int *complex, int zsh_construct)`
-/// from `Src/parse.c:1022-1320`. Real implementation dispatches on tok
-/// to ~15 different par_* subroutines (par_for, par_case, par_if, etc.);
-/// this stub falls through to par_simple_wordcode for every shape.
+/// P9c: direct port of `par_cmd(int *complex, int zsh_construct)` from
+/// `Src/parse.c:1022-1320`. Dispatches on the current token to the
+/// appropriate par_* subroutine. Each form emits its WC_* opcode +
+/// payload; default falls through to par_simple_wordcode.
 pub fn par_cmd_wordcode() {
+    match crate::ported::lex::tok() {
+        FOR | FOREACH => par_for_wordcode(),
+        SELECT => par_select_wordcode(),
+        CASE => par_case_wordcode(),
+        IF => par_if_wordcode(),
+        WHILE => par_while_wordcode(),
+        UNTIL => par_until_wordcode(),
+        REPEAT => par_repeat_wordcode(),
+        FUNC => par_funcdef_wordcode(),
+        INPAR_TOK => par_subsh_wordcode(),
+        INBRACE_TOK => par_cursh_wordcode(),
+        TIME => par_time_wordcode(),
+        DINBRACK => par_cond_wordcode(),
+        DINPAR => par_arith_wordcode(),
+        _ => par_simple_wordcode(),
+    }
+}
+
+/// P9c stub: direct port of `par_for(int *complex)` from
+/// `Src/parse.c:1641-1820`. Emits WC_FOR header + var-name strcode +
+/// list-words + body wordcode. Stub form: emit WC_FOR header with
+/// zero skip + zero param-name slot; real implementation parses
+/// `for VAR in WORDS; do BODY; done`.
+pub fn par_for_wordcode() {
+    crate::ported::lex::zshlex(); // consume FOR
+    let p = ecadd(0);
+    ecadd(0); // param-name strcode placeholder
+    par_list_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            b[p] = crate::ported::zsh_h::WC_FOR
+                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: `par_select`. Direct port shape of Src/parse.c:1822-1860.
+pub fn par_select_wordcode() {
+    crate::ported::lex::zshlex();
+    let p = ecadd(0);
+    ecadd(0);
+    par_list_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            b[p] = crate::ported::zsh_h::WC_SELECT
+                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: direct port of `par_case` from
+/// `Src/parse.c:1862-1990`. Emits WC_CASE + word + arms.
+pub fn par_case_wordcode() {
+    crate::ported::lex::zshlex();
+    let p = ecadd(0);
+    par_list_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            b[p] = crate::ported::zsh_h::WC_CASE
+                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: direct port of `par_if` from
+/// `Src/parse.c:1992-2090`. Emits WC_IF + cond + then + elif chain.
+pub fn par_if_wordcode() {
+    crate::ported::lex::zshlex();
+    let p = ecadd(0);
+    par_list_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            b[p] = crate::ported::zsh_h::WC_IF
+                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: direct port of `par_while` from
+/// `Src/parse.c:2092-2150`. Emits WC_WHILE + cond + body.
+pub fn par_while_wordcode() {
+    crate::ported::lex::zshlex();
+    let p = ecadd(0);
+    par_list_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            b[p] = crate::ported::zsh_h::WC_WHILE
+                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: WC_WHILE with the until flag set on the header.
+pub fn par_until_wordcode() {
+    crate::ported::lex::zshlex();
+    let p = ecadd(0);
+    par_list_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            // WC_WHILE with type bit set = UNTIL (parse.c:2105 sets
+            // type = WC_WHILE_UNTIL).
+            let data = 1u32 | ((skip as u32) << 1);
+            b[p] = crate::ported::zsh_h::WC_WHILE
+                | (data << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: direct port of `par_repeat` from
+/// `Src/parse.c:2152-2200`. Emits WC_REPEAT + count strcode + body.
+pub fn par_repeat_wordcode() {
+    crate::ported::lex::zshlex();
+    let p = ecadd(0);
+    par_list_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            b[p] = crate::ported::zsh_h::WC_REPEAT
+                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: direct port of `par_funcdef` from
+/// `Src/parse.c:2202-2310`. Emits WC_FUNCDEF + name-list strcodes +
+/// body. Real implementation parses multi-name funcdefs; stub emits
+/// a header for a single-name body.
+pub fn par_funcdef_wordcode() {
+    crate::ported::lex::zshlex();
+    let p = ecadd(0);
+    par_list_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            b[p] = crate::ported::zsh_h::WC_FUNCDEF
+                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: direct port of `par_subsh` for `(...)` subshell.
+pub fn par_subsh_wordcode() {
+    crate::ported::lex::zshlex();
+    let p = ecadd(0);
+    par_list_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            b[p] = crate::ported::zsh_h::WC_SUBSH
+                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: direct port of `par_cursh` for `{...}` brace group.
+pub fn par_cursh_wordcode() {
+    crate::ported::lex::zshlex();
+    let p = ecadd(0);
+    par_list_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            b[p] = crate::ported::zsh_h::WC_CURSH
+                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: direct port of `par_time` for `time` reserved-word.
+pub fn par_time_wordcode() {
+    crate::ported::lex::zshlex();
+    let p = ecadd(0);
+    par_pipe_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            b[p] = crate::ported::zsh_h::WC_TIMED
+                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: direct port of `par_cond` for `[[ ... ]]` cond expression.
+pub fn par_cond_wordcode() {
+    crate::ported::lex::zshlex();
+    let p = ecadd(0);
     par_simple_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            b[p] = crate::ported::zsh_h::WC_COND
+                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: direct port of `par_arith` for `(( ... ))` arith block.
+pub fn par_arith_wordcode() {
+    crate::ported::lex::zshlex();
+    let p = ecadd(0);
+    let expr = crate::ported::lex::tokstr().unwrap_or_default();
+    let coded = ecstrcode(&expr);
+    ecadd(coded);
+    crate::ported::lex::zshlex();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            b[p] = crate::ported::zsh_h::WC_ARITH
+                | (1u32 << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
 }
 
 /// P9c stub: direct port of `par_simple(int *complex, int nr)` from
