@@ -862,7 +862,20 @@ impl crate::ported::exec::ShellExecutor {
             },
             fpath: self.fpath.clone(),
             options: self.options.clone(),
-            hooks: self.hook_functions.clone(),
+            hooks: {
+                // Snapshot `<hook>_functions` arrays from canonical paramtab.
+                let names = ["chpwd", "precmd", "preexec", "periodic", "zshexit", "zshaddhistory"];
+                let mut m = std::collections::HashMap::new();
+                for h in &names {
+                    let arr_name = format!("{}_functions", h);
+                    if let Some(arr) = self.array(&arr_name) {
+                        if !arr.is_empty() {
+                            m.insert(h.to_string(), arr);
+                        }
+                    }
+                }
+                m
+            },
             autoloads: self.autoload_pending.keys().cloned().collect(),
         }
     }
@@ -1020,16 +1033,18 @@ impl crate::ported::exec::ShellExecutor {
             }
         }
 
-        // New hooks
-        let mut hook_keys: Vec<&String> = self.hook_functions.keys().collect();
-        hook_keys.sort();
-        for hook in hook_keys {
-            let funcs = self.hook_functions.get(hook).unwrap();
-            let old_funcs = snap.hooks.get(hook);
-            for f in funcs {
+        // New hooks — read from canonical `<hook>_functions` arrays.
+        let names = ["chpwd", "precmd", "preexec", "periodic", "zshexit", "zshaddhistory"];
+        let mut hook_names: Vec<&&str> = names.iter().collect();
+        hook_names.sort();
+        for &h in hook_names {
+            let arr_name = format!("{}_functions", h);
+            let funcs = self.array(&arr_name).unwrap_or_default();
+            let old_funcs = snap.hooks.get(h);
+            for f in &funcs {
                 let is_new = old_funcs.is_none_or(|old| !old.contains(f));
                 if is_new {
-                    delta.hooks.push((hook.clone(), f.clone()));
+                    delta.hooks.push((h.to_string(), f.clone()));
                 }
             }
         }
@@ -1145,12 +1160,9 @@ impl crate::ported::exec::ShellExecutor {
             self.options.insert(name.clone(), *enabled);
         }
 
-        // Hooks
+        // Hooks — append into the canonical `<hook>_functions` paramtab array.
         for (hook, func) in &delta.hooks {
-            self.hook_functions
-                .entry(hook.clone())
-                .or_default()
-                .push(func.clone());
+            self.add_hook(hook, func);
         }
 
         // Plugin cache replay: each bincode blob is a ShellCommand AST.
