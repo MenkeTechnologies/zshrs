@@ -29,8 +29,8 @@ pub use crate::ported::zsh_h::MN_INTEGER;
 pub use crate::ported::zsh_h::MN_FLOAT;
 /// Re-export of `MN_UNSET` (defined in zsh_h.rs as the Src/zsh.h:105 port).
 pub use crate::ported::zsh_h::MN_UNSET;
-/// Re-export of `Mnumber` (defined in zsh_h.rs as the Src/zsh.h:95 port).
-pub use crate::ported::zsh_h::Mnumber;
+/// Re-export of `mnumber` (defined in zsh_h.rs as the Src/zsh.h:95 port).
+pub use crate::ported::zsh_h::mnumber;
 
 /// Math tokens — direct port of Src/math.c:109-162. C uses bare
 /// `#define`s; the Rust port mirrors as `pub const` ints so
@@ -229,7 +229,7 @@ pub enum prec_type {
 // calls (function-arg eval, indirect string eval) don't clobber
 // the outer evaluator's state.
 //
-// Cell for Copy types (i64/i32/usize/bool/Mnumber/i32/&'static
+// Cell for Copy types (i64/i32/usize/bool/mnumber/i32/&'static
 // slice). RefCell for owned/non-Copy (String, Vec, HashMap, Option).
 // ============================================================
 
@@ -243,13 +243,13 @@ thread_local! {
     /// Used to format zsh-style "at `<remaining>'" error pointers.
     static M_TOK_START: Cell<usize> = const { Cell::new(0) };
     /// `static mnumber yyval` (math.c:62) — value lexed by zzlex.
-    static M_YYVAL: Cell<Mnumber> = const { Cell::new(Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }) };
+    static M_YYVAL: Cell<mnumber> = const { Cell::new(mnumber { l: 0, d: 0.0, type_: MN_INTEGER }) };
     /// `static char *yylval` (math.c:63) — identifier or function-call
     /// text lexed by zzlex (caller side reads via `M_YYLVAL.with(...)`).
     static M_YYLVAL: RefCell<String> = const { RefCell::new(String::new()) };
     /// `static struct mathvalue *stack` — operand stack for the
     /// shunting-yard evaluator. Mirrors C's heap-grown array.
-    static M_STACK: RefCell<Vec<MathValue>> = const { RefCell::new(Vec::new()) };
+    static M_STACK: RefCell<Vec<mathvalue >> = const { RefCell::new(Vec::new()) };
     /// `int mtok` — current token tag set by zzlex.
     static M_MTOK: Cell<i32> = const { Cell::new(EOI) };
     /// `static int unary` (math.c:71) — 1 when the parser is expecting
@@ -272,8 +272,8 @@ thread_local! {
     /// `setopt OCTALZEROES` mirror.
     static M_OCTAL_ZEROES: Cell<bool> = const { Cell::new(false) };
     /// In-memory params table (zshrs uses this instead of the C param
-    /// table). Carries float/integer Mnumber results.
-    static M_VARIABLES: RefCell<HashMap<String, Mnumber>> = RefCell::new(HashMap::new());
+    /// table). Carries float/integer mnumber results.
+    static M_VARIABLES: RefCell<HashMap<String, mnumber>> = RefCell::new(HashMap::new());
     /// Raw string values for variables whose contents aren't a plain
     /// number — recursively re-eval'd by `getmathparam` for
     /// `a="3+2"; $((a))` semantics.
@@ -322,8 +322,8 @@ thread_local! {
 #[inline] fn m_tok_start() -> usize { M_TOK_START.with(|c| c.get()) }
 #[inline] fn m_tok_start_set(v: usize) { M_TOK_START.with(|c| c.set(v)) }
 
-#[inline] fn m_yyval() -> Mnumber { M_YYVAL.with(|c| c.get()) }
-#[inline] fn m_yyval_set(v: Mnumber) { M_YYVAL.with(|c| c.set(v)) }
+#[inline] fn m_yyval() -> mnumber { M_YYVAL.with(|c| c.get()) }
+#[inline] fn m_yyval_set(v: mnumber) { M_YYVAL.with(|c| c.set(v)) }
 
 #[inline] fn m_yylval_clone() -> String { M_YYLVAL.with(|c| c.borrow().clone()) }
 #[inline] fn m_yylval_set(v: String) { M_YYLVAL.with(|c| *c.borrow_mut() = v) }
@@ -376,23 +376,23 @@ pub fn lastbase() -> i32 { M_LASTBASE.with(|c| c.get()) }
 #[inline] fn m_error_clear() { M_ERROR.with(|c| *c.borrow_mut() = None) }
 
 // Stack helpers — mathvalue stack operations.
-#[inline] fn m_stack_push(v: MathValue) { M_STACK.with(|c| c.borrow_mut().push(v)) }
-#[inline] fn m_stack_pop() -> Option<MathValue> { M_STACK.with(|c| c.borrow_mut().pop()) }
+#[inline] fn m_stack_push(v: mathvalue) { M_STACK.with(|c| c.borrow_mut().push(v)) }
+#[inline] fn m_stack_pop() -> Option<mathvalue> { M_STACK.with(|c| c.borrow_mut().pop()) }
 #[inline] fn m_stack_len() -> usize { M_STACK.with(|c| c.borrow().len()) }
 #[inline] fn m_stack_is_empty() -> bool { M_STACK.with(|c| c.borrow().is_empty()) }
-#[inline] fn m_stack_top_clone() -> Option<MathValue> { M_STACK.with(|c| c.borrow().last().cloned()) }
+#[inline] fn m_stack_top_clone() -> Option<mathvalue> { M_STACK.with(|c| c.borrow().last().cloned()) }
 
 // Variable map helpers.
-#[inline] fn m_variables_get(name: &str) -> Option<Mnumber> {
+#[inline] fn m_variables_get(name: &str) -> Option<mnumber> {
     M_VARIABLES.with(|c| c.borrow().get(name).copied())
 }
-#[inline] fn m_variables_insert(k: String, v: Mnumber) {
+#[inline] fn m_variables_insert(k: String, v: mnumber) {
     M_VARIABLES.with(|c| { c.borrow_mut().insert(k, v); })
 }
-#[inline] fn m_variables_clone() -> HashMap<String, Mnumber> {
+#[inline] fn m_variables_clone() -> HashMap<String, mnumber> {
     M_VARIABLES.with(|c| c.borrow().clone())
 }
-#[inline] fn m_variables_set(map: HashMap<String, Mnumber>) {
+#[inline] fn m_variables_set(map: HashMap<String, mnumber>) {
     M_VARIABLES.with(|c| *c.borrow_mut() = map)
 }
 
@@ -423,14 +423,14 @@ struct xyy_locals {
     input: String,
     pos: usize,
     tok_start: usize,
-    yyval: Mnumber,
+    yyval: mnumber,
     yylval: String,
-    stack: Vec<MathValue>,
+    stack: Vec<mathvalue>,
     mtok: i32,
     unary: bool,
     noeval: i32,
     error: Option<String>,
-    variables: HashMap<String, Mnumber>,
+    variables: HashMap<String, mnumber>,
     string_variables: HashMap<String, String>,
     prec: &'static [u8; TOKCOUNT],
     c_precedences: bool,
@@ -497,8 +497,8 @@ fn restore_state(saved: xyy_locals) {
 /// };
 /// ```
 #[derive(Clone)]
-pub(crate) struct MathValue {
-    pub val: Mnumber,
+pub(crate) struct mathvalue {
+    pub val: mnumber,
     pub lval: Option<String>,
     /// `Value pval` slot from the C source. zsh uses it to cache the
     /// resolved parameter handle so write-back doesn't re-parse the
@@ -508,10 +508,10 @@ pub(crate) struct MathValue {
     pub pval: (),
 }
 
-impl Default for MathValue {
+impl Default for mathvalue {
     fn default() -> Self {
-        MathValue {
-            val: Mnumber { l: 0, d: 0.0, type_: MN_INTEGER },
+        mathvalue {
+            val: mnumber { l: 0, d: 0.0, type_: MN_INTEGER },
             lval: None,
             pval: (),
         }
@@ -532,7 +532,7 @@ pub(crate) fn new(input: &str) {
     m_input_set(input.to_string());
     m_pos_set(0);
     m_tok_start_set(0);
-    m_yyval_set(Mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
+    m_yyval_set(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
     m_yylval_set(String::new());
     M_STACK.with(|c| { c.borrow_mut().clear(); });
     m_mtok_set(EOI);
@@ -553,20 +553,20 @@ pub(crate) fn new(input: &str) {
 // WARNING: NOT IN MATH.C — Rust-only setter. zsh C reads parameters
 // directly from the global param table on demand; the Rust port
 // caller seeds an in-memory map up front via this fn.
-pub(crate) fn with_variables(vars: HashMap<String, Mnumber>) {
+pub(crate) fn with_variables(vars: HashMap<String, mnumber>) {
     m_variables_set(vars);
 }
 
 // WARNING: NOT IN MATH.C — Rust-only setter. Parses each value as
-// numeric → `Mnumber` if possible, otherwise stores the raw string
+// numeric → `mnumber` if possible, otherwise stores the raw string
 // for `getmathparam`'s recursive-eval path (e.g. `a="3+2"; $((a))`).
 /// Inject variables from string->string mapping (for shell integration)
 pub(crate) fn with_string_variables(vars: &HashMap<String, String>) {
     for (k, v) in vars {
         if let Ok(i) = v.parse::<i64>() {
-            m_variables_insert(k.clone(), Mnumber { l: i, d: 0.0, type_: MN_INTEGER });
+            m_variables_insert(k.clone(), mnumber { l: i, d: 0.0, type_: MN_INTEGER });
         } else if let Ok(f) = v.parse::<f64>() {
-            m_variables_insert(k.clone(), Mnumber { l: 0, d: f, type_: MN_FLOAT });
+            m_variables_insert(k.clone(), mnumber { l: 0, d: f, type_: MN_FLOAT });
         } else if !v.is_empty() {
             // Non-numeric string — keep raw so getmathparam can
             // recursively evaluate it as an arith expression.
@@ -698,9 +698,9 @@ pub(crate) fn lexconstant() -> i32 {
                     let val = i64::from_str_radix(&hex_str, 16).unwrap_or(0);
                     m_lastbase_set(16);
                     m_yyval_set(if m_force_float() {
-                        Mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
+                        mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
                     } else {
-                        Mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
+                        mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
                     });
                     return NUM;
                 }
@@ -722,9 +722,9 @@ pub(crate) fn lexconstant() -> i32 {
                     let val = i64::from_str_radix(&bin_str, 2).unwrap_or(0);
                     m_lastbase_set(2);
                     m_yyval_set(if m_force_float() {
-                        Mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
+                        mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
                     } else {
-                        Mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
+                        mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
                     });
                     return NUM;
                 }
@@ -739,7 +739,7 @@ pub(crate) fn lexconstant() -> i32 {
                         "bad math expression: operator expected at `{}'",
                         &m_input_clone()[m_pos()..]
                     ));
-                    m_yyval_set(Mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
+                    m_yyval_set(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
                     return NUM;
                 }
                 _ => {
@@ -769,9 +769,9 @@ pub(crate) fn lexconstant() -> i32 {
                             let val = i64::from_str_radix(&oct_str, 8).unwrap_or(0);
                             m_lastbase_set(8);
                             m_yyval_set(if m_force_float() {
-                                Mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
+                                mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
                             } else {
-                                Mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
+                                mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
                             });
                             return NUM;
                         }
@@ -824,7 +824,7 @@ pub(crate) fn lexconstant() -> i32 {
                 .filter(|&c| c != '_')
                 .collect();
             let val: f64 = float_str.parse().unwrap_or(0.0);
-            m_yyval_set(Mnumber { l: 0, d: if is_neg { -val } else { val }, type_: MN_FLOAT });
+            m_yyval_set(mnumber { l: 0, d: if is_neg { -val } else { val }, type_: MN_FLOAT });
             return NUM;
         }
 
@@ -843,7 +843,7 @@ pub(crate) fn lexconstant() -> i32 {
                     "invalid base (must be 2 to 36 inclusive): {}",
                     base
                 ));
-                m_yyval_set(Mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
+                m_yyval_set(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
                 return NUM;
             }
             m_lastbase_set(base as i32);
@@ -891,9 +891,9 @@ pub(crate) fn lexconstant() -> i32 {
                 advance();
             }
             m_yyval_set(if m_force_float() {
-                Mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
+                mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
             } else {
-                Mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
+                mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
             });
             return NUM;
         }
@@ -905,9 +905,9 @@ pub(crate) fn lexconstant() -> i32 {
             .collect();
         let val: i64 = int_str.parse().unwrap_or(0);
         m_yyval_set(if m_force_float() {
-            Mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
+            mnumber { l: 0, d: if is_neg { -(val as f64) } else { val as f64 }, type_: MN_FLOAT }
         } else {
-            Mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
+            mnumber { l: if is_neg { -val } else { val }, d: 0.0, type_: MN_INTEGER }
         });
         NUM
     }
@@ -921,7 +921,7 @@ pub(crate) fn lexconstant() -> i32 {
 /// constants (`#x`, `##varname`), and dispatches numeric literals
 /// to `lexconstant()`.
 pub(crate) fn zzlex() -> i32 {
-        m_yyval_set(Mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
+        m_yyval_set(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
 
         loop {
             let pre_pos = m_pos();
@@ -1122,14 +1122,14 @@ pub(crate) fn zzlex() -> i32 {
 
                 '$' => {
                     // $$ = pid
-                    m_yyval_set(Mnumber { l: m_pid(), d: 0.0, type_: MN_INTEGER });
+                    m_yyval_set(mnumber { l: m_pid(), d: 0.0, type_: MN_INTEGER });
                     return NUM;
                 }
 
                 '?' => {
                     if m_unary() {
                         // $? = lastval
-                        m_yyval_set(Mnumber { l: m_lastval() as i64, d: 0.0, type_: MN_INTEGER });
+                        m_yyval_set(mnumber { l: m_lastval() as i64, d: 0.0, type_: MN_INTEGER });
                         return NUM;
                     }
                     return QUEST;
@@ -1171,7 +1171,7 @@ pub(crate) fn zzlex() -> i32 {
                                 "invalid base (must be 2 to 36 inclusive): {}",
                                 base
                             ));
-                            m_yyval_set(Mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
+                            m_yyval_set(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
                             return NUM;
                         }
 
@@ -1186,7 +1186,7 @@ pub(crate) fn zzlex() -> i32 {
                         let val_str = &m_input_clone()[val_start..m_pos()];
                         let val = i64::from_str_radix(val_str, base).unwrap_or(0);
                         m_lastbase_set(base as i32);
-                        m_yyval_set(Mnumber { l: val, d: 0.0, type_: MN_INTEGER });
+                        m_yyval_set(mnumber { l: val, d: 0.0, type_: MN_INTEGER });
                         return NUM;
                     }
                     // Output format specifier [#base] - skip for now
@@ -1209,7 +1209,7 @@ pub(crate) fn zzlex() -> i32 {
                     if peek() == Some('\\') || peek() == Some('#') {
                         advance();
                         if let Some(ch) = advance() {
-                            m_yyval_set(Mnumber { l: ch as i64, d: 0.0, type_: MN_INTEGER });
+                            m_yyval_set(mnumber { l: ch as i64, d: 0.0, type_: MN_INTEGER });
                             return NUM;
                         }
                     }
@@ -1252,11 +1252,11 @@ pub(crate) fn zzlex() -> i32 {
                         // Check for Inf/NaN
                         let id_lower = id.to_lowercase();
                         if id_lower == "nan" {
-                            m_yyval_set(Mnumber { l: 0, d: f64::NAN, type_: MN_FLOAT });
+                            m_yyval_set(mnumber { l: 0, d: f64::NAN, type_: MN_FLOAT });
                             return NUM;
                         }
                         if id_lower == "inf" {
-                            m_yyval_set(Mnumber { l: 0, d: f64::INFINITY, type_: MN_FLOAT });
+                            m_yyval_set(mnumber { l: 0, d: f64::INFINITY, type_: MN_FLOAT });
                             return NUM;
                         }
 
@@ -1314,19 +1314,19 @@ pub(crate) fn zzlex() -> i32 {
 /// optional lvalue name (set when the value came from a variable
 /// reference; needed for `++`/`--`/assignment-op write-back).
 /// WARNING: param names don't match C — Rust=(lval) vs C=(val, lval, getme)
-pub(crate) fn push(val: Mnumber, lval: Option<String>) {
-    m_stack_push(MathValue { val, lval, pval: () });
+pub(crate) fn push(val: mnumber, lval: Option<String>) {
+    m_stack_push(mathvalue { val, lval, pval: () });
 }
 
 /// Port of `pop(int noget)` from `Src/math.c:931`.
 ///
 /// Pop the top operand from the stack, resolving any deferred
-/// variable read (`Mnumber { l: 0, d: 0.0, type_: MN_UNSET }` + lval set). The C source
+/// variable read (`mnumber { l: 0, d: 0.0, type_: MN_UNSET }` + lval set). The C source
 /// passes a `noget` flag to skip the resolution; the Rust port
 /// always resolves since callers that want the raw lvalue use
 /// `pop_with_lval` instead.
 /// WARNING: param names don't match C — Rust=() vs C=(noget)
-pub(crate) fn pop() -> Mnumber {
+pub(crate) fn pop() -> mnumber {
     if let Some(mv) = m_stack_pop() {
         if (mv.val.type_ == MN_UNSET) {
             if let Some(ref name) = mv.lval {
@@ -1336,7 +1336,7 @@ pub(crate) fn pop() -> Mnumber {
         mv.val
     } else {
         m_error_set("stack underflow".to_string());
-        Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+        mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
     }
     }
 
@@ -1345,7 +1345,7 @@ pub(crate) fn pop() -> Mnumber {
     // whether to resolve the deferred Unset+lval read; zshrs splits
     // the two paths into separate fns so the resolved-vs-raw choice
     // is at the call site.
-    pub(crate) fn pop_with_lval() -> MathValue {
+    pub(crate) fn pop_with_lval() -> mathvalue {
         m_stack_pop().unwrap_or_default()
     }
 
@@ -1353,7 +1353,7 @@ pub(crate) fn pop() -> Mnumber {
     // the deferred-variable-read pattern inside `pop()` and `op()`
     // (math.c:931, 1154); the Rust port factors it out for `bop`
     // and `mathparse` to inspect-without-consuming.
-    pub(crate) fn get_value(mv: &MathValue) -> Mnumber {
+    pub(crate) fn get_value(mv: &mathvalue) -> mnumber {
         if (mv.val.type_ == MN_UNSET) {
             if let Some(ref name) = mv.lval {
                 return getmathparam(name);
@@ -1371,7 +1371,7 @@ pub(crate) fn pop() -> Mnumber {
 /// type-coercion. Indirect-string mode (`a="3+2"; $((a))`) is
 /// handled by recursively evaluating the string value.
 /// WARNING: param names don't match C — Rust=() vs C=(mptr)
-pub(crate) fn getmathparam(name: &str) -> Mnumber {
+pub(crate) fn getmathparam(name: &str) -> mnumber {
     // Strip array subscript if present
         let base_name = if let Some(bracket) = name.find('[') {
             &name[..bracket]
@@ -1404,10 +1404,10 @@ pub(crate) fn getmathparam(name: &str) -> Mnumber {
                         if pos >= 0 && (pos as usize) < arr.len() {
                             let raw = &arr[pos as usize];
                             if let Ok(n) = raw.parse::<i64>() {
-                                return Mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
+                                return mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
                             }
                             if let Ok(f) = raw.parse::<f64>() {
-                                return Mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
+                                return mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
                             }
                         }
                     }
@@ -1418,22 +1418,22 @@ pub(crate) fn getmathparam(name: &str) -> Mnumber {
                 if let Some(map) = m.get(arr_name) {
                     if let Some(v) = map.get(idx_str) {
                         if let Ok(n) = v.parse::<i64>() {
-                            return Mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
+                            return mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
                         }
                         if let Ok(f) = v.parse::<f64>() {
-                            return Mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
+                            return mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
                         }
                     }
                 }
             }
-            return Mnumber { l: 0, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
+            return mnumber { l: 0, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
         }
         if let Some(raw) = crate::ported::params::getsparam(base_name) {
             if let Ok(n) = raw.parse::<i64>() {
-                return Mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
+                return mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
             }
             if let Ok(f) = raw.parse::<f64>() {
-                return Mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
+                return mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
             }
             // Non-numeric string: fall through to recursive-eval below.
         }
@@ -1467,7 +1467,7 @@ pub(crate) fn getmathparam(name: &str) -> Mnumber {
                 return r;
             }
         }
-        Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+        mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
     }
 
 /// Port of `setmathvar(struct mathvalue *mvp, mnumber v)` from `Src/math.c:972`.
@@ -1478,7 +1478,7 @@ pub(crate) fn getmathparam(name: &str) -> Mnumber {
 /// only handles the scalar case. Returns the stored value so
 /// `op` can leave it on the stack.
 /// WARNING: param names don't match C — Rust=(val) vs C=(mvp, v)
-pub(crate) fn setmathvar(name: &str, val: Mnumber) -> Mnumber {
+pub(crate) fn setmathvar(name: &str, val: mnumber) -> mnumber {
     let base_name = if let Some(bracket) = name.find('[') {
         &name[..bracket]
     } else {
@@ -1521,7 +1521,7 @@ pub(crate) fn op(what: i32) {
                 if let Some(ref name) = mv_a.lval {
                     getmathparam(name)
                 } else {
-                    Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+                    mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
                 }
             } else {
                 mv_a.val
@@ -1530,28 +1530,28 @@ pub(crate) fn op(what: i32) {
             // Coerce types
             let (a, b) = if (tp & (OP_A2IO | OP_E2IO)) != 0 {
                 // Must be integers
-                (Mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }), d: 0.0, type_: MN_INTEGER }, Mnumber { l: (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER })
+                (mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }), d: 0.0, type_: MN_INTEGER }, mnumber { l: (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER })
             } else if (a.type_ == MN_FLOAT) != (b.type_ == MN_FLOAT) && what != COMMA {
                 // Different types, coerce to float
-                (Mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }), type_: MN_FLOAT }, Mnumber { l: 0, d: (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT })
+                (mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }), type_: MN_FLOAT }, mnumber { l: 0, d: (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT })
             } else {
                 (a, b)
             };
 
             let result = if m_noeval() > 0 {
-                Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+                mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
             } else {
                 let is_float = (a.type_ == MN_FLOAT);
                 match what {
-                    AND | ANDEQ => Mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) & (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER },
-                    XOR | XOREQ => Mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) ^ (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER },
-                    OR | OREQ => Mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) | (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER },
+                    AND | ANDEQ => mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) & (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER },
+                    XOR | XOREQ => mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) ^ (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER },
+                    OR | OREQ => mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) | (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER },
 
                     MUL | MULEQ => {
                         if is_float {
-                            Mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) * (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
+                            mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) * (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
                         } else {
-                            Mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }).wrapping_mul((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })), d: 0.0, type_: MN_INTEGER }
+                            mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }).wrapping_mul((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })), d: 0.0, type_: MN_INTEGER }
                         }
                     }
 
@@ -1563,7 +1563,7 @@ pub(crate) fn op(what: i32) {
                         // of returning `Inf`.
                         if is_float {
                             // Let f64 semantics handle 0.0, -0.0, NaN.
-                            Mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) / (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
+                            mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) / (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
                         } else {
                             if !notzero(b) {
                                 m_error_set("division by zero".to_string());
@@ -1571,9 +1571,9 @@ pub(crate) fn op(what: i32) {
                             }
                             let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l });
                             if bi == -1 {
-                                Mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }).wrapping_neg(), d: 0.0, type_: MN_INTEGER }
+                                mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }).wrapping_neg(), d: 0.0, type_: MN_INTEGER }
                             } else {
-                                Mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) / bi, d: 0.0, type_: MN_INTEGER }
+                                mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) / bi, d: 0.0, type_: MN_INTEGER }
                             }
                         }
                     }
@@ -1583,84 +1583,84 @@ pub(crate) fn op(what: i32) {
                             // float % 0.0 → NaN per IEEE; let it fall
                             // through to f64 semantics rather than
                             // raising the integer-only error.
-                            Mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) % (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
+                            mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) % (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
                         } else if !notzero(b) {
                             m_error_set("division by zero".to_string());
                             return;
                         } else {
                             let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l });
                             if bi == -1 {
-                                Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+                                mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
                             } else {
-                                Mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) % bi, d: 0.0, type_: MN_INTEGER }
+                                mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) % bi, d: 0.0, type_: MN_INTEGER }
                             }
                         }
                     }
 
                     PLUS | PLUSEQ => {
                         if is_float {
-                            Mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) + (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
+                            mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) + (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
                         } else {
-                            Mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }).wrapping_add((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })), d: 0.0, type_: MN_INTEGER }
+                            mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }).wrapping_add((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })), d: 0.0, type_: MN_INTEGER }
                         }
                     }
 
                     MINUS | MINUSEQ => {
                         if is_float {
-                            Mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) - (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
+                            mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) - (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT }
                         } else {
-                            Mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }).wrapping_sub((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })), d: 0.0, type_: MN_INTEGER }
+                            mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }).wrapping_sub((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })), d: 0.0, type_: MN_INTEGER }
                         }
                     }
 
                     SHLEFT | SHLEFTEQ => {
-                        Mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) << ((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) as u32 & 63), d: 0.0, type_: MN_INTEGER }
+                        mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) << ((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) as u32 & 63), d: 0.0, type_: MN_INTEGER }
                     }
                     SHRIGHT | SHRIGHTEQ => {
-                        Mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) >> ((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) as u32 & 63), d: 0.0, type_: MN_INTEGER }
+                        mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) >> ((if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) as u32 & 63), d: 0.0, type_: MN_INTEGER }
                     }
 
-                    LES => Mnumber { l: if is_float {
+                    LES => mnumber { l: if is_float {
                         ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) < (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 })) as i64
                     } else {
                         ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) < (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })) as i64
                     }, d: 0.0, type_: MN_INTEGER },
-                    LEQ => Mnumber { l: if is_float {
+                    LEQ => mnumber { l: if is_float {
                         ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) <= (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 })) as i64
                     } else {
                         ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) <= (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })) as i64
                     }, d: 0.0, type_: MN_INTEGER },
-                    GRE => Mnumber { l: if is_float {
+                    GRE => mnumber { l: if is_float {
                         ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) > (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 })) as i64
                     } else {
                         ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) > (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })) as i64
                     }, d: 0.0, type_: MN_INTEGER },
-                    GEQ => Mnumber { l: if is_float {
+                    GEQ => mnumber { l: if is_float {
                         ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) >= (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 })) as i64
                     } else {
                         ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) >= (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })) as i64
                     }, d: 0.0, type_: MN_INTEGER },
-                    DEQ => Mnumber { l: if is_float {
+                    DEQ => mnumber { l: if is_float {
                         ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) == (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 })) as i64
                     } else {
                         ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) == (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })) as i64
                     }, d: 0.0, type_: MN_INTEGER },
-                    NEQ => Mnumber { l: if is_float {
+                    NEQ => mnumber { l: if is_float {
                         ((if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }) != (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 })) as i64
                     } else {
                         ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l })) as i64
                     }, d: 0.0, type_: MN_INTEGER },
 
                     DAND | DANDEQ => {
-                        Mnumber { l: ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0 && (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0) as i64, d: 0.0, type_: MN_INTEGER }
+                        mnumber { l: ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0 && (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0) as i64, d: 0.0, type_: MN_INTEGER }
                     }
                     DOR | DOREQ => {
-                        Mnumber { l: ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0 || (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0) as i64, d: 0.0, type_: MN_INTEGER }
+                        mnumber { l: ((if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0 || (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0) as i64, d: 0.0, type_: MN_INTEGER }
                     }
                     DXOR | DXOREQ => {
                         let ai = (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }) != 0;
                         let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }) != 0;
-                        Mnumber { l: (ai != bi) as i64, d: 0.0, type_: MN_INTEGER }
+                        mnumber { l: (ai != bi) as i64, d: 0.0, type_: MN_INTEGER }
                     }
 
                     POWER | POWEREQ => {
@@ -1671,7 +1671,7 @@ pub(crate) fn op(what: i32) {
                             for _ in 0..bi {
                                 result = result.wrapping_mul(base);
                             }
-                            Mnumber { l: result, d: 0.0, type_: MN_INTEGER }
+                            mnumber { l: result, d: 0.0, type_: MN_INTEGER }
                         } else {
                             let af = (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 });
                             let bf = (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 });
@@ -1683,14 +1683,14 @@ pub(crate) fn op(what: i32) {
                                 m_error_set("imaginary power".to_string());
                                 return;
                             }
-                            Mnumber { l: 0, d: af.powf(bf), type_: MN_FLOAT }
+                            mnumber { l: 0, d: af.powf(bf), type_: MN_FLOAT }
                         }
                     }
 
                     COMMA => b,
                     EQ => b,
 
-                    _ => Mnumber { l: 0, d: 0.0, type_: MN_INTEGER },
+                    _ => mnumber { l: 0, d: 0.0, type_: MN_INTEGER },
                 }
             };
 
@@ -1701,7 +1701,7 @@ pub(crate) fn op(what: i32) {
                     push(final_val, Some(name.clone()));
                 } else {
                     m_error_set("lvalue required".to_string());
-                    push(Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }, None);
+                    push(mnumber { l: 0, d: 0.0, type_: MN_INTEGER }, None);
                 }
             } else {
                 push(result, None);
@@ -1724,7 +1724,7 @@ pub(crate) fn op(what: i32) {
             if let Some(ref name) = mv.lval {
                 getmathparam(name)
             } else {
-                Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+                mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
             }
         } else {
             mv.val
@@ -1732,11 +1732,11 @@ pub(crate) fn op(what: i32) {
 
         match what {
             NOT => {
-                let result = Mnumber { l: if ((val.type_ == MN_INTEGER && val.l == 0) || (val.type_ == MN_FLOAT && val.d == 0.0) || val.type_ == MN_UNSET) { 1 } else { 0 }, d: 0.0, type_: MN_INTEGER };
+                let result = mnumber { l: if ((val.type_ == MN_INTEGER && val.l == 0) || (val.type_ == MN_FLOAT && val.d == 0.0) || val.type_ == MN_UNSET) { 1 } else { 0 }, d: 0.0, type_: MN_INTEGER };
                 push(result, None);
             }
             COMP => {
-                let result = Mnumber { l: !(if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }), d: 0.0, type_: MN_INTEGER };
+                let result = mnumber { l: !(if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }), d: 0.0, type_: MN_INTEGER };
                 push(result, None);
             }
             UPLUS => {
@@ -1744,9 +1744,9 @@ pub(crate) fn op(what: i32) {
             }
             UMINUS => {
                 let result = if (val.type_ == MN_FLOAT) {
-                    Mnumber { l: 0, d: -(if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }), type_: MN_FLOAT }
+                    mnumber { l: 0, d: -(if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }), type_: MN_FLOAT }
                 } else {
-                    Mnumber { l: -(if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }), d: 0.0, type_: MN_INTEGER }
+                    mnumber { l: -(if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }), d: 0.0, type_: MN_INTEGER }
                 };
                 push(result, None);
             }
@@ -1761,9 +1761,9 @@ pub(crate) fn op(what: i32) {
                 }
                 let name = mv.lval.as_ref().unwrap();
                 let new_val = if (val.type_ == MN_FLOAT) {
-                    Mnumber { l: 0, d: (if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }) + 1.0, type_: MN_FLOAT }
+                    mnumber { l: 0, d: (if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }) + 1.0, type_: MN_FLOAT }
                 } else {
-                    Mnumber { l: (if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }) + 1, d: 0.0, type_: MN_INTEGER }
+                    mnumber { l: (if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }) + 1, d: 0.0, type_: MN_INTEGER }
                 };
                 setmathvar(name, new_val);
                 push(val, None); // Return original value
@@ -1775,9 +1775,9 @@ pub(crate) fn op(what: i32) {
                 }
                 let name = mv.lval.as_ref().unwrap();
                 let new_val = if (val.type_ == MN_FLOAT) {
-                    Mnumber { l: 0, d: (if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }) - 1.0, type_: MN_FLOAT }
+                    mnumber { l: 0, d: (if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }) - 1.0, type_: MN_FLOAT }
                 } else {
-                    Mnumber { l: (if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }) - 1, d: 0.0, type_: MN_INTEGER }
+                    mnumber { l: (if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }) - 1, d: 0.0, type_: MN_INTEGER }
                 };
                 setmathvar(name, new_val);
                 push(val, None);
@@ -1789,9 +1789,9 @@ pub(crate) fn op(what: i32) {
                 }
                 let name = mv.lval.as_ref().unwrap();
                 let new_val = if (val.type_ == MN_FLOAT) {
-                    Mnumber { l: 0, d: (if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }) + 1.0, type_: MN_FLOAT }
+                    mnumber { l: 0, d: (if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }) + 1.0, type_: MN_FLOAT }
                 } else {
-                    Mnumber { l: (if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }) + 1, d: 0.0, type_: MN_INTEGER }
+                    mnumber { l: (if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }) + 1, d: 0.0, type_: MN_INTEGER }
                 };
                 setmathvar(name, new_val);
                 push(new_val, mv.lval);
@@ -1803,9 +1803,9 @@ pub(crate) fn op(what: i32) {
                 }
                 let name = mv.lval.as_ref().unwrap();
                 let new_val = if (val.type_ == MN_FLOAT) {
-                    Mnumber { l: 0, d: (if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }) - 1.0, type_: MN_FLOAT }
+                    mnumber { l: 0, d: (if val.type_ == MN_FLOAT { val.d } else { val.l as f64 }) - 1.0, type_: MN_FLOAT }
                 } else {
-                    Mnumber { l: (if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }) - 1, d: 0.0, type_: MN_INTEGER }
+                    mnumber { l: (if val.type_ == MN_FLOAT { val.d as i64 } else { val.l }) - 1, d: 0.0, type_: MN_INTEGER }
                 };
                 setmathvar(name, new_val);
                 push(new_val, mv.lval);
@@ -1849,7 +1849,7 @@ pub(crate) fn bop(tk: i32) {
             if let Some(ref name) = mv.lval {
                 getmathparam(name)
             } else {
-                Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+                mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
             }
         } else {
             mv.val
@@ -1980,15 +1980,15 @@ pub(crate) fn checkunary() {
                 ID => {
                     let lval = m_yylval_clone();
                     if m_noeval() > 0 {
-                        push(Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }, Some(lval));
+                        push(mnumber { l: 0, d: 0.0, type_: MN_INTEGER }, Some(lval));
                     } else {
-                        push(Mnumber { l: 0, d: 0.0, type_: MN_UNSET }, Some(lval));
+                        push(mnumber { l: 0, d: 0.0, type_: MN_UNSET }, Some(lval));
                     }
                 }
                 CID => {
                     let lval = m_yylval_clone();
                     let val = if m_noeval() > 0 {
-                        Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+                        mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
                     } else {
                         getcvar(&lval)
                     };
@@ -1997,7 +1997,7 @@ pub(crate) fn checkunary() {
                 FUNC => {
                     let func_call = m_yylval_clone();
                     let val = if m_noeval() > 0 {
-                        Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+                        mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
                     } else {
                         callmathfunc(&func_call)
                     };
@@ -2108,7 +2108,7 @@ pub(crate) fn checkunary() {
     /// Call a math function
 /// Port of `callmathfunc(char *o)` from `Src/math.c:1037`.
     /// WARNING: param names don't match C — Rust=() vs C=(o)
-    pub(crate) fn callmathfunc(call: &str) -> Mnumber {
+    pub(crate) fn callmathfunc(call: &str) -> mnumber {
         // Parse function name and args
         let paren = call.find('(').unwrap_or(call.len());
         let name = &call[..paren];
@@ -2119,10 +2119,10 @@ pub(crate) fn checkunary() {
         };
 
         // Parse arguments. Keep both the float view (for trig) and the
-        // original Mnumber so int-preserving functions (abs/min/max/
+        // original mnumber so int-preserving functions (abs/min/max/
         // int/floor/ceil/trunc) can return integer when all inputs
         // were integer.
-        let arg_nums: Vec<Mnumber> = if args_str.is_empty() {
+        let arg_nums: Vec<mnumber> = if args_str.is_empty() {
             vec![]
         } else {
             args_str
@@ -2146,7 +2146,7 @@ pub(crate) fn checkunary() {
             !arg_nums.is_empty() && arg_nums.iter().all(|n| (n.type_ == MN_INTEGER));
 
         // Functions that preserve int-ness: when all args are int,
-        // return Mnumber::Integer instead of Float to avoid the
+        // return mnumber::Integer instead of Float to avoid the
         // trailing "." in the string output ("5." instead of "5").
         //
         // `int`/`floor`/`ceil`/`trunc` ALWAYS return Integer per zsh
@@ -2164,7 +2164,7 @@ pub(crate) fn checkunary() {
                 "ceil" => args.first().map(|x| x.ceil() as i64).unwrap_or(0),
                 _ => 0,
             };
-            return Mnumber { l: i, d: 0.0, type_: MN_INTEGER };
+            return mnumber { l: i, d: 0.0, type_: MN_INTEGER };
         }
         let int_preserving = matches!(name, "abs" | "min" | "max");
         if all_int && int_preserving {
@@ -2174,7 +2174,7 @@ pub(crate) fn checkunary() {
                 "max" => arg_nums.iter().map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).max().unwrap_or(0),
                 _ => 0,
             };
-            return Mnumber { l: i, d: 0.0, type_: MN_INTEGER };
+            return mnumber { l: i, d: 0.0, type_: MN_INTEGER };
         }
 
         // Built-in math functions
@@ -2228,13 +2228,13 @@ pub(crate) fn checkunary() {
             }
         };
 
-        Mnumber { l: 0, d: result, type_: MN_FLOAT }
+        mnumber { l: 0, d: result, type_: MN_FLOAT }
     }
 
     /// Evaluate the expression
 /// Port of `mathevall(char *s, enum prec_type prec_tp, char **ep)` from `Src/math.c:367`.
     /// WARNING: param names don't match C — Rust=() vs C=(s, prec_tp, ep)
-    pub(crate) fn mathevall() -> Result<Mnumber, String> {
+    pub(crate) fn mathevall() -> Result<mnumber, String> {
         m_prec_set(if m_c_precedences() { &C_PREC } else { &Z_PREC });
 
         // Skip leading whitespace and Nularg
@@ -2247,7 +2247,7 @@ pub(crate) fn checkunary() {
         }
 
         if m_pos() >= m_input_len() {
-            return Ok(Mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
+            return Ok(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
         }
 
         mathparse(top_prec());
@@ -2270,7 +2270,7 @@ pub(crate) fn checkunary() {
         }
 
         if m_stack_is_empty() {
-            return Ok(Mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
+            return Ok(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
         }
 
         let mv = m_stack_pop().unwrap();
@@ -2278,7 +2278,7 @@ pub(crate) fn checkunary() {
             if let Some(ref name) = mv.lval {
                 getmathparam(name)
             } else {
-                Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+                mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
             }
         } else {
             mv.val
@@ -2292,14 +2292,14 @@ pub(crate) fn checkunary() {
 // table directly post-eval; this returns a snapshot of the in-memory
 // variables map for ShellExecutor integration.
 /// Get updated variables after evaluation
-pub(crate) fn getmathparams() -> HashMap<String, Mnumber> {
+pub(crate) fn getmathparams() -> HashMap<String, mnumber> {
     m_variables_clone()
 }
 
 /// Convenience function to evaluate a math expression
 /// Top-level math-expression evaluator.
 /// Port of `matheval(char *s)` from Src/math.c:1480 — wraps `mathevall()`\n/// (line 367) with the C source's standard error-message\n/// formatting.
-pub fn matheval(s: &str) -> Result<Mnumber, String> {                     // c:1480
+pub fn matheval(s: &str) -> Result<mnumber, String> {                     // c:1480
     new(s);
     mathevall()
 }
@@ -2401,8 +2401,8 @@ mod tests {
     #[test]
     fn test_variables() {
         let mut vars = HashMap::new();
-        vars.insert("x".to_string(), Mnumber { l: 10, d: 0.0, type_: MN_INTEGER });
-        vars.insert("y".to_string(), Mnumber { l: 20, d: 0.0, type_: MN_INTEGER });
+        vars.insert("x".to_string(), mnumber { l: 10, d: 0.0, type_: MN_INTEGER });
+        vars.insert("y".to_string(), mnumber { l: 20, d: 0.0, type_: MN_INTEGER });
 
         new("x + y");
         with_variables(vars);
@@ -2423,7 +2423,7 @@ mod tests {
     #[test]
     fn test_increment() {
         let mut vars = HashMap::new();
-        vars.insert("x".to_string(), Mnumber { l: 5, d: 0.0, type_: MN_INTEGER });
+        vars.insert("x".to_string(), mnumber { l: 5, d: 0.0, type_: MN_INTEGER });
 
         new("++x");
         with_variables(vars.clone());
@@ -2773,7 +2773,7 @@ pub(crate) fn isnan(x: f64) -> bool { store(x) != store(x) || x.is_nan() }
 /// IEEE 754 (1/0.0 → Inf, not an error) — only integer zero
 /// trips the check, matching math.c's `if (!a.u.l) zerr(…)`.
 /// WARNING: param names don't match C — Rust=() vs C=(a)
-pub(crate) fn notzero(a: Mnumber) -> bool {
+pub(crate) fn notzero(a: mnumber) -> bool {
     if (a.type_ == MN_UNSET) {
         return false;
     }
@@ -2798,9 +2798,9 @@ pub(crate) fn store(x: f64) -> f64 { x }
 /// (CId): `x="hello"; (( y = #x ))` puts 104 (`'h'`) into y.
 /// On miss or empty value, returns 0 (matches zsh's `*s ? *s : 0`).
 /// WARNING: param names don't match C — Rust=() vs C=(s)
-pub(crate) fn getcvar(name: &str) -> Mnumber {
+pub(crate) fn getcvar(name: &str) -> mnumber {
     if let Some(raw) = m_string_variables_get(name) {
-        return Mnumber { l: raw.chars().next().map(|c| c as i64).unwrap_or(0), d: 0.0, type_: MN_INTEGER };
+        return mnumber { l: raw.chars().next().map(|c| c as i64).unwrap_or(0), d: 0.0, type_: MN_INTEGER };
     }
     if let Some(v) = m_variables_get(name) {
         let s = match v.type_ {
@@ -2813,9 +2813,9 @@ pub(crate) fn getcvar(name: &str) -> Mnumber {
             }
             _ => "0".to_string(),
         };
-        return Mnumber { l: s.chars().next().map(|c| c as i64).unwrap_or(0), d: 0.0, type_: MN_INTEGER };
+        return mnumber { l: s.chars().next().map(|c| c as i64).unwrap_or(0), d: 0.0, type_: MN_INTEGER };
     }
-    Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+    mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
 }
 
 /// Port of `mathevalarg(char *s, char **ss)` from Src/math.c:1514 — evaluate one

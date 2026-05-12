@@ -34,7 +34,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::ported::compat::output64;
 use crate::ported::cond::{cond_str, cond_val};
-use crate::ported::math::{Mnumber, MN_FLOAT, MN_INTEGER};
+use crate::ported::math::{mnumber, MN_FLOAT, MN_INTEGER};
 use crate::ported::string::dyncat;
 use crate::ported::zsh_h::{module, options, Eprog, FuncWrap, OPT_ISSET};
 
@@ -177,9 +177,9 @@ pub fn cond_i_ex(a: &[String], id: i32) -> i32 {                            // c
 
 /// Port of `math_sum(UNUSED(char *name), int argc, mnumber *argv, UNUSED(int id))` from `Src/Modules/example.c:104`.
 #[allow(unused_variables)]
-pub fn math_sum(name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber { // c:104
+pub fn math_sum(name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber { // c:104
     // c:104 — `mnumber ret;`
-    let mut ret = Mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
+    let mut ret = mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
     // c:107 — `int f = 0;`
     let mut f: i32 = 0;
     // c:109 — `ret.u.l = 0;`
@@ -218,11 +218,11 @@ pub fn math_sum(name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber { /
 
 /// Port of `math_length(UNUSED(char *name), char *arg, UNUSED(int id))` from `Src/Modules/example.c:133`.
 #[allow(unused_variables)]
-pub fn math_length(name: &str, arg: &str, id: i32) -> Mnumber {            // c:133
+pub fn math_length(name: &str, arg: &str, id: i32) -> mnumber {            // c:133
     // c:133 — `mnumber ret;`
     // c:137 — `ret.type = MN_INTEGER;`
     // c:138 — `ret.u.l = strlen(arg);`
-    Mnumber {
+    mnumber {
         type_: MN_INTEGER,
         l: arg.len() as i64,
         d: 0.0,
@@ -457,12 +457,12 @@ mod tests {
     /// promotes to float once a float arg appears — c:111/116/126.
     #[test]
     fn math_sum_int_then_float_promotion() {
-        let ints = [Mnumber { l: 1, d: 0.0, type_: MN_INTEGER }, Mnumber { l: 2, d: 0.0, type_: MN_INTEGER }, Mnumber { l: 3, d: 0.0, type_: MN_INTEGER }];
+        let ints = [mnumber { l: 1, d: 0.0, type_: MN_INTEGER }, mnumber { l: 2, d: 0.0, type_: MN_INTEGER }, mnumber { l: 3, d: 0.0, type_: MN_INTEGER }];
         let r = math_sum("sum", 3, &ints, 0);
         assert_eq!(r.type_, MN_INTEGER);
         assert_eq!(r.l, 6);
 
-        let mixed = [Mnumber { l: 1, d: 0.0, type_: MN_INTEGER }, Mnumber { l: 0, d: 2.5, type_: MN_FLOAT }, Mnumber { l: 3, d: 0.0, type_: MN_INTEGER }];
+        let mixed = [mnumber { l: 1, d: 0.0, type_: MN_INTEGER }, mnumber { l: 0, d: 2.5, type_: MN_FLOAT }, mnumber { l: 3, d: 0.0, type_: MN_INTEGER }];
         let r = math_sum("sum", 3, &mixed, 0);
         assert_eq!(r.type_, MN_FLOAT);
         assert!((r.d - 6.5).abs() < 1e-9);

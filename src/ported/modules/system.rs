@@ -24,7 +24,7 @@
 //! Order in this file mirrors C source order verbatim.
 
 use crate::ported::exec::ShellExecutor;
-use crate::ported::math::{Mnumber, MN_INTEGER, MN_FLOAT};
+use crate::ported::math::{mnumber, MN_INTEGER, MN_FLOAT};
 use crate::ported::params::{setiparam, setsparam, setiparam_no_convert};
 use crate::ported::utils::{isident, metafy, unmeta, zwarnnam, zclose, movefd};
 
@@ -58,9 +58,9 @@ pub fn getposint(instr: &str, nam: &str) -> i32 {                        // c:45
 ///   3 — Write error (errno set; partial residue stashed)
 ///   4 — Timeout on read
 ///   5 — Zero bytes read (EOF)
-/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
+#[allow(unused_variables)]
 pub fn bin_sysread(nam: &str, args: &[String],                               // c:72
-                   ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+                   ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // c:74 — `int infd = 0, outfd = -1, bufsize = SYSREAD_BUFSIZE, count;`
     let mut infd: i32 = 0;                                                    // c:74
@@ -506,7 +506,7 @@ pub fn bin_sysseek(nam: &str, args: &[String],                               // 
 /// Returns the current `lseek(fd, 0, SEEK_CUR)` position of `argv[0]`
 /// as an `mnumber`. Negative fds error via `zerr` and return 0.
 #[allow(unused_variables)]
-pub fn math_systell(name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber {  // c:467
+pub fn math_systell(name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber {  // c:467
     // c:467 — `int fd = (argv->type == MN_INTEGER) ? argv->u.l : (int)argv->u.d;`
     let fd: i32 = if argv[0].type_ == MN_INTEGER {
         argv[0].l as i32
@@ -514,7 +514,7 @@ pub fn math_systell(name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber
         argv[0].d as i32
     };
     // c:470-472 — `mnumber ret; ret.type = MN_INTEGER; ret.u.l = 0;`
-    let mut ret = Mnumber {
+    let mut ret = mnumber {
         type_: MN_INTEGER,                                               // c:471
         l: 0,                                                            // c:472
         d: 0.0,
@@ -1130,7 +1130,7 @@ pub static ERRNO_NAMES: &[(&str, i32)] = SYS_ERRNAMES;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ported::math::{Mnumber, MN_INTEGER};
+    use crate::ported::math::{mnumber, MN_INTEGER};
     use std::fs::File;
     use std::io::Write as _;
     use tempfile::TempDir;
@@ -1341,7 +1341,7 @@ mod tests {
         let path_c = std::ffi::CString::new(p.to_str().unwrap()).unwrap();
         let fd = unsafe { libc::open(path_c.as_ptr(), libc::O_RDONLY) };
         unsafe { libc::lseek(fd, 7, libc::SEEK_SET); }
-        let argv = vec![Mnumber { l: fd as i64, d: 0.0, type_: MN_INTEGER }];
+        let argv = vec![mnumber { l: fd as i64, d: 0.0, type_: MN_INTEGER }];
         let r = math_systell("systell", 1, &argv, 0);
         assert_eq!(r.type_, MN_INTEGER);
         assert_eq!(r.l, 7);

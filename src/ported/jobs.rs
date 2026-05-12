@@ -50,16 +50,10 @@ pub const MAXJOBS_ALLOC: usize = 50;
 /// Port of `MAX_MAXJOBS` from `Src/jobs.c:2221`.
 pub const MAX_MAXJOBS: usize = 1000;
 
-/// Process timing information
-#[derive(Clone, Debug, Default)]
-/// CPU/elapsed time accounting for a job/process.
-/// Port of `child_times_t` (Src/zsh.h) — populated by
-/// `update_process()` (Src/jobs.c:363) from `wait4(2)` /
-/// `getrusage(2)`. Same `user` / `system` / `real` triple.
-pub struct TimeInfo {
-    pub user_time: Duration,
-    pub sys_time: Duration,
-}
+// `TimeInfo` / `ChildTimes` deleted — both folded into canonical
+// `timeinfo` at `zsh_h.rs:2153` (direct port of `struct timeinfo`
+// from `Src/zsh.h:1099`).
+pub use crate::ported::zsh_h::timeinfo;
 
 /// A single process in a pipeline
 #[derive(Clone, Debug)]
@@ -71,7 +65,7 @@ pub struct Process {
     pub status: i32,
     pub start_time: Option<Instant>,
     pub end_time: Option<Instant>,
-    pub ti: TimeInfo,
+    pub ti: timeinfo,
     pub text: String,
 }
 
@@ -82,7 +76,7 @@ impl Process {
             status: SP_RUNNING,
             start_time: Some(Instant::now()),
             end_time: None,
-            ti: TimeInfo::default(),
+            ti: timeinfo::default(),
             text: String::new(),
         }
     }
@@ -1137,46 +1131,44 @@ pub fn scanjobs(table: &crate::exec_jobs::JobTable) -> Vec<String> {         // 
     output
 }
 
-/// Shell time accounting (from jobs.c shelltime)
-#[derive(Debug, Clone, Default)]
-pub struct ChildTimes {
-    pub user_sec: f64,
-    pub sys_sec: f64,
-}
+// `ChildTimes` struct deleted — folded into the canonical `timeinfo`
+// at the top of this file. C uses `child_times_t` (typedef onto
+// `struct rusage` or `struct timeinfo` per `Src/zsh.h:1112-1114`).
 
 /// Port of `shelltime(child_times_t *shell, child_times_t *kids, struct timespec *then, int delta)` from `Src/jobs.c:1926`.
-/// WARNING: param names don't match C — Rust=() vs C=(shell, kids, then, delta)
-pub fn shelltime() -> ChildTimes {
+pub fn shelltime() -> timeinfo {
     #[cfg(unix)]
     {
         let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
         if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } == 0 {
-            return ChildTimes {
-                user_sec: usage.ru_utime.tv_sec as f64
-                    + usage.ru_utime.tv_usec as f64 / 1_000_000.0,
-                sys_sec: usage.ru_stime.tv_sec as f64 + usage.ru_stime.tv_usec as f64 / 1_000_000.0,
+            return timeinfo {
+                ut: usage.ru_utime.tv_sec as i64 * 1_000_000
+                    + usage.ru_utime.tv_usec as i64,
+                st: usage.ru_stime.tv_sec as i64 * 1_000_000
+                    + usage.ru_stime.tv_usec as i64,
             };
         }
     }
-    ChildTimes::default()
+    timeinfo::default()
 }
 
 /// Get children's time accounting.
 /// Port of `get_usage()` from Src/jobs.c — fills `child_usage`
 /// from `getrusage(RUSAGE_CHILDREN)` on supported systems.
-pub fn get_usage() -> ChildTimes {
+pub fn get_usage() -> timeinfo {
     #[cfg(unix)]
     {
         let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
         if unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut usage) } == 0 {
-            return ChildTimes {
-                user_sec: usage.ru_utime.tv_sec as f64
-                    + usage.ru_utime.tv_usec as f64 / 1_000_000.0,
-                sys_sec: usage.ru_stime.tv_sec as f64 + usage.ru_stime.tv_usec as f64 / 1_000_000.0,
+            return timeinfo {
+                ut: usage.ru_utime.tv_sec as i64 * 1_000_000
+                    + usage.ru_utime.tv_usec as i64,
+                st: usage.ru_stime.tv_sec as i64 * 1_000_000
+                    + usage.ru_stime.tv_usec as i64,
             };
         }
     }
-    ChildTimes::default()
+    timeinfo::default()
 }
 
 /// Port of `update_process(Process pn, int status)` from `Src/jobs.c:363`.
@@ -1199,10 +1191,8 @@ pub fn update_process(pn: &mut Process, status: i32) {
     let now = get_usage();
     pn.end_time = Some(Instant::now());
     pn.status = status;
-    let user_delta = (now.user_sec - prev.user_sec).max(0.0);
-    let sys_delta = (now.sys_sec - prev.sys_sec).max(0.0);
-    pn.ti.user_time = Duration::from_secs_f64(user_delta);
-    pn.ti.sys_time = Duration::from_secs_f64(sys_delta);
+    pn.ti.ut = (now.ut - prev.ut).max(0);
+    pn.ti.st = (now.st - prev.st).max(0);
 }
 
 // Find process and job associated with pid.                                // c:191
@@ -1409,8 +1399,8 @@ pub fn dumptime(job: &Job, format: &str) -> Option<String> {
     let mut total_user = 0.0;
     let mut total_sys = 0.0;
     for proc in &job.procs {
-        total_user += proc.ti.user_time.as_secs_f64();
-        total_sys += proc.ti.sys_time.as_secs_f64();
+        total_user += proc.ti.ut as f64 / 1_000_000.0;
+        total_sys  += proc.ti.st as f64 / 1_000_000.0;
     }
 
     Some(printtime(

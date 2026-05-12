@@ -951,13 +951,20 @@ pub fn zfopendata(name: &str) -> (i32, bool) {                                  
 /// `zfsess_current` pointer Src/Modules/zftp.c keeps —
 /// `zftp_session()` (line 2889) drives the switch,
 /// `zftp_rmsession()` (line 2915) the removal.
+// `Zftp` struct renamed to `zftp_globals` — C has no `struct zftp`;
+// the equivalent state in `Src/Modules/zftp.c` lives in file-scope
+// globals (`Zfsess zfsessions` linked list head + `Zfsess
+// zfsesscurrent`). Rust collapses these into one container accessed
+// via `ZFTP_STATE_INNER`; the suffix names this as a Rust extension
+// that bags the module's C-static state.
+#[allow(non_camel_case_types)]
 #[derive(Debug, Default)]
-pub struct Zftp {
+pub struct zftp_globals {
     sessions: HashMap<String, zftp_session>,
     current: Option<String>,
 }
 
-impl Zftp {
+impl zftp_globals {
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
     /// of any function in `Src/Modules/zftp.c`.
     pub fn new() -> Self {
@@ -1566,7 +1573,7 @@ mod tests {
     /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_zftp_new() {
-        let zftp = Zftp::new();
+        let zftp = zftp_globals::new();
         assert!(zftp.session_names().is_empty());
     }
 
@@ -1574,7 +1581,7 @@ mod tests {
     /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_zftp_create_session() {
-        let mut zftp = Zftp::new();
+        let mut zftp = zftp_globals::new();
         zftp.create_session("test");
         assert!(zftp.sessions.contains_key("test"));
     }
@@ -1583,7 +1590,7 @@ mod tests {
     /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_zftp_remove_session() {
-        let mut zftp = Zftp::new();
+        let mut zftp = zftp_globals::new();
         zftp.create_session("test");
         assert!(zftp.remove_session("test").is_some());
         assert!(zftp.remove_session("test").is_none());
@@ -1593,7 +1600,7 @@ mod tests {
     /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_zftp_set_current() {
-        let mut zftp = Zftp::new();
+        let mut zftp = zftp_globals::new();
         zftp.create_session("test");
         assert!(zftp.set_current("test"));
         assert!(!zftp.set_current("nonexistent"));
@@ -1603,7 +1610,7 @@ mod tests {
     /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_builtin_zftp_no_args() {
-        let mut zftp = Zftp::new();
+        let mut zftp = zftp_globals::new();
         let status = bin_zftp("zftp", &[].iter().map(|s: &&str| s.to_string()).collect::<Vec<_>>(), &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
         assert_eq!(status, 1);
     }
@@ -1623,7 +1630,7 @@ mod tests {
     /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_builtin_zftp_test_not_connected() {
-        let mut zftp = Zftp::new();
+        let mut zftp = zftp_globals::new();
         let status = bin_zftp("zftp", &["test"].iter().map(|s: &&str| s.to_string()).collect::<Vec<_>>(), &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
         assert_eq!(status, 1);
     }
@@ -1776,7 +1783,7 @@ pub fn savesession() {                                                        //
 pub fn switchsession(nm: &str) {
     if let Ok(mut state) = zftp_state().lock() {
         // C: walks zfsessions list for matching `nm`; if missing,
-        // creates one. Static-link path: register-or-create on the Zftp wrapper.
+        // creates one. Static-link path: register-or-create on the zftp_globals wrapper.
         let _ = state.create_session(nm);
         state.set_current(nm);
     }
@@ -3048,7 +3055,7 @@ pub fn zfstats(fnam: &str, remote: i32,                                       //
 // The C source parses the first argv element as the subcommand name
 // and dispatches via `zftpcmdtab[]`. Rust port: each free fn matches
 // the C signature and routes through the global `ZFTP_STATE` to call
-// the corresponding `Zftp::<method>` on the live state.
+// the corresponding `zftp_globals::<method>` on the live state.
 
 /// Port of `zftp_open(char *name, char **args, int flags)` from `Src/Modules/zftp.c:1690`.
 /// C: `int zftp_open(char *name, char **args, int flags)` — opens a
@@ -4016,7 +4023,7 @@ pub fn zftp_rmsession(name: &str, args: &[&str], flags: i32) -> i32 {         //
     }
 
     // c:2964-2993 — remove session from list + switch to newsess if any.
-    // Rust port: remove via Zftp::remove_session; newsess switch via
+    // Rust port: remove via zftp_globals::remove_session; newsess switch via
     // switchsession (already ported above).
     if let Ok(mut state) = zftp_state().lock() {
         state.remove_session(&target_name);
@@ -4058,7 +4065,7 @@ pub fn zftp_cleanup() -> i32 {                                              // c
     }
     zfunsetparam("ZFTP_SESSION");                                           // c:3149
     if let Ok(mut state) = zftp_state().lock() {
-        *state = Zftp::new();                                               // c:3150 freelinklist
+        *state = zftp_globals::new();                                               // c:3150 freelinklist
     }
     // c:3152 — zfree(zfstatusp): per-session status array. zfstatusp
     // substrate isn't ported (per-session bits live on zftp_session
@@ -4070,14 +4077,14 @@ pub fn zftp_cleanup() -> i32 {                                              // c
 /// `static Zftp_session zfsessions[]` and friends in zftp.c. Holds
 /// all sessions and the currently-active one. Free fns above route
 /// through this so subcommand dispatch matches C behaviour.
-static ZFTP_STATE_INNER: std::sync::OnceLock<std::sync::Mutex<Zftp>> = std::sync::OnceLock::new();
+static ZFTP_STATE_INNER: std::sync::OnceLock<std::sync::Mutex<zftp_globals>> = std::sync::OnceLock::new();
 
 /// Accessor for the live zftp module state. C's `Src/Modules/zftp.c`
 /// keeps per-session state in scattered file-statics (`zfsess`,
 /// `zfsessions`, `zfcommand`, ...); this fn returns the single
-/// `Mutex<Zftp>` aggregating those into one shared store.
-pub fn zftp_state() -> &'static std::sync::Mutex<Zftp> {
-    ZFTP_STATE_INNER.get_or_init(|| std::sync::Mutex::new(Zftp::new()))
+/// `Mutex<zftp_globals>` aggregating those into one shared store.
+pub fn zftp_state() -> &'static std::sync::Mutex<zftp_globals> {
+    ZFTP_STATE_INNER.get_or_init(|| std::sync::Mutex::new(zftp_globals::new()))
 }
 
 /// Clear poison on the zftp state mutex (test teardown helper).

@@ -201,14 +201,27 @@ pub fn bin_rmdir(nam: &str, args: &[String],                                 // 
 // bin_ln + domove — `Src/Modules/files.c:200`, `:298`.
 // =====================================================================
 
-/// Move-function discriminant for `bin_ln` / `domove` — `Src/Modules/
-/// files.c:198`. C has a `MoveFunc` typedef (`int (*)(const char *,
-/// const char *)`); Rust uses an enum so each branch can call the
-/// right libc fn directly.
-pub enum MoveFunc {
-    Link,                                                                    // c:226
-    Symlink,                                                                 // c:222
-    Rename,                                                                  // c:200
+// `enum MoveFunc` deleted — C uses a bare function-pointer typedef
+// `typedef int (*MoveFunc)(char const *, char const *);` at
+// `Src/Modules/files.c:32`. Rust ports it directly as the same
+// function-pointer type alias below, so call sites can do
+// `movefn = mv_rename;` matching C's `movefn = rename;`.
+#[allow(non_camel_case_types)]
+pub type MoveFunc = fn(p: &std::ffi::CStr, q: &std::ffi::CStr) -> i32;
+
+/// Adapter for `rename(2)` — used by `bin_mv`.
+pub fn mv_rename(p: &std::ffi::CStr, q: &std::ffi::CStr) -> i32 {
+    unsafe { libc::rename(p.as_ptr(), q.as_ptr()) }
+}
+
+/// Adapter for `symlink(2)` — used by `bin_ln -s`.
+pub fn mv_symlink(p: &std::ffi::CStr, q: &std::ffi::CStr) -> i32 {
+    unsafe { libc::symlink(p.as_ptr(), q.as_ptr()) }
+}
+
+/// Adapter for `link(2)` — used by `bin_ln` default.
+pub fn mv_link(p: &std::ffi::CStr, q: &std::ffi::CStr) -> i32 {
+    unsafe { libc::link(p.as_ptr(), q.as_ptr()) }
 }
 
 /// Direct port of `bin_ln(char *nam, char **args, Options ops, int func)` from `Src/Modules/files.c:200`.
@@ -226,7 +239,7 @@ pub fn bin_ln(nam: &str, args: &[String],                                    // 
     let mut flags: i32;
     let mut err = 0i32;
     if func == BIN_MV {                                                      // c:209
-        movefn = MoveFunc::Rename;                                           // c:210
+        movefn = mv_rename;                                                  // c:210
         flags = if OPT_ISSET(ops, b'f') { 0 } else { MV_ASKNW };             // c:211
         flags |= MV_ATOMIC;                                                  // c:212
     } else {
@@ -235,9 +248,9 @@ pub fn bin_ln(nam: &str, args: &[String],                                    // 
             flags |= MV_NOCHASETARGET;
         }
         if OPT_ISSET(ops, b's') {                                            // c:219
-            movefn = MoveFunc::Symlink;                                      // c:220
+            movefn = mv_symlink;                                             // c:220
         } else {
-            movefn = MoveFunc::Link;                                         // c:226
+            movefn = mv_link;                                                // c:226
             if !OPT_ISSET(ops, b'd') {                                       // c:227
                 flags |= MV_NODIRS;
             }
@@ -315,7 +328,7 @@ pub fn bin_ln(nam: &str, args: &[String],                                    // 
 /// C body (c:300-360): if MV_NODIRS, refuse src that is dir; if dest
 /// exists, force/interactive/asknw checks; unlink dest if not atomic;
 /// then call movefn(src, dest) and report errno on failure.
-pub fn domove(nam: &str, movefn: &MoveFunc, p: &str, q: &str, flags: i32) -> i32 { // c:298
+pub fn domove(nam: &str, movefn: MoveFunc, p: &str, q: &str, flags: i32) -> i32 { // c:298
     if (flags & MV_NODIRS) != 0 {                                            // c:298
         match std::fs::symlink_metadata(p) {                                 // c:308 lstat
             Ok(meta) if meta.is_dir() => {                                   // c:308 S_ISDIR
@@ -359,18 +372,10 @@ pub fn domove(nam: &str, movefn: &MoveFunc, p: &str, q: &str, flags: i32) -> i32
             let _ = std::fs::remove_file(q);                                 // c:348 unlink
         }
     }
-    let r = match movefn {                                                   // c:350 movefn(p, q)
-        MoveFunc::Rename => std::fs::rename(p, q).map(|_| 0).unwrap_or(-1),
-        MoveFunc::Link => unsafe {
-            let cp = std::ffi::CString::new(p).unwrap_or_default();
-            let cq = std::ffi::CString::new(q).unwrap_or_default();
-            libc::link(cp.as_ptr(), cq.as_ptr())
-        },
-        MoveFunc::Symlink => unsafe {
-            let cp = std::ffi::CString::new(p).unwrap_or_default();
-            let cq = std::ffi::CString::new(q).unwrap_or_default();
-            libc::symlink(cp.as_ptr(), cq.as_ptr())
-        },
+    let r = {                                                                // c:350 movefn(p, q)
+        let cp = std::ffi::CString::new(p).unwrap_or_default();
+        let cq = std::ffi::CString::new(q).unwrap_or_default();
+        movefn(&cp, &cq)
     };
     if r != 0 {                                                              // c:350
         let osek = std::io::Error::last_os_error();

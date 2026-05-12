@@ -62,7 +62,7 @@ use crate::ported::exec::{
 // arms and the parity tests can reference by bare name.
 #[allow(unused_imports)]
 use crate::parse::{ShellWord, VarModifier, ZshParamFlag};
-use crate::ported::hist::{casemodify, rembutext, remlpaths, remtext, remtpath, CaseMod};
+use crate::ported::hist::{casemodify, rembutext, remlpaths, remtext, remtpath, CASMOD_CAPS, CASMOD_LOWER, CASMOD_UPPER};
 use crate::ported::utils::{xsymlinks, zerr};
 
 use std::sync::atomic::Ordering;
@@ -5736,7 +5736,7 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     // params into env vars). No ShellExecutor reach.
     let v = match crate::math::matheval(&expanded) {                         // c:4490 matheval
         Ok(n) => n,
-        Err(_) => crate::math::Mnumber { l: 0, d: 0.0, type_: crate::ported::zsh_h::MN_UNSET },
+        Err(_) => crate::math::mnumber { l: 0, d: 0.0, type_: crate::ported::zsh_h::MN_UNSET },
     };
 
     // c: math.c:580-583 — `outputradix` / `outputunderscore` are set while
@@ -6374,8 +6374,8 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
                 // returned the extension and `${path:e}` returned the root.
                 'r' => Some(remtext(w)),   // c:4585 (:r root)
                 'e' => Some(rembutext(w)), // c:4585 (:e ext)
-                'l' => Some(casemodify(w, CaseMod::CASMOD_LOWER)), // c:4585 (:l)
-                'u' => Some(casemodify(w, CaseMod::CASMOD_UPPER)), // c:4585 (:u)
+                'l' => Some(casemodify(w, CASMOD_LOWER)), // c:4585 (:l)
+                'u' => Some(casemodify(w, CASMOD_UPPER)), // c:4585 (:u)
                 'q' => Some(crate::ported::utils::quotestring(
                     // c:4585 (:q)
                     w,
@@ -7277,18 +7277,18 @@ mod tests {
     fn casemodify_lower_uppercases_via_lowercase() {
         // utils.c:6915
         // Src/hist.c:CASMOD_LOWER applies tolower() per char.
-        assert_eq!(casemodify("Hello World", CaseMod::CASMOD_LOWER), "hello world"); // utils.c:6915
-        assert_eq!(casemodify("MIXED-Case_42", CaseMod::CASMOD_LOWER), "mixed-case_42"); // utils.c:6915
-        assert_eq!(casemodify("", CaseMod::CASMOD_LOWER), ""); // utils.c:6915
+        assert_eq!(casemodify("Hello World", CASMOD_LOWER), "hello world"); // utils.c:6915
+        assert_eq!(casemodify("MIXED-Case_42", CASMOD_LOWER), "mixed-case_42"); // utils.c:6915
+        assert_eq!(casemodify("", CASMOD_LOWER), ""); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
     fn casemodify_upper_uppercases_each_char() {
         // utils.c:6915
         // Src/hist.c:CASMOD_UPPER applies toupper() per char.
-        assert_eq!(casemodify("Hello World", CaseMod::CASMOD_UPPER), "HELLO WORLD"); // utils.c:6915
-        assert_eq!(casemodify("ünicode", CaseMod::CASMOD_UPPER), "ÜNICODE"); // utils.c:6915
-        assert_eq!(casemodify("", CaseMod::CASMOD_UPPER), ""); // utils.c:6915
+        assert_eq!(casemodify("Hello World", CASMOD_UPPER), "HELLO WORLD"); // utils.c:6915
+        assert_eq!(casemodify("ünicode", CASMOD_UPPER), "ÜNICODE"); // utils.c:6915
+        assert_eq!(casemodify("", CASMOD_UPPER), ""); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
@@ -7296,8 +7296,8 @@ mod tests {
         // utils.c:6915
         // Src/hist.c:CASMOD_CAPS — uppercase first letter of each word,
         // lowercase the rest. zsh treats whitespace as a word boundary.
-        assert_eq!(casemodify("hello world", CaseMod::CASMOD_CAPS), "Hello World"); // utils.c:6915
-        assert_eq!(casemodify("FOO BAR", CaseMod::CASMOD_CAPS), "Foo Bar"); // utils.c:6915
+        assert_eq!(casemodify("hello world", CASMOD_CAPS), "Hello World"); // utils.c:6915
+        assert_eq!(casemodify("FOO BAR", CASMOD_CAPS), "Foo Bar"); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
@@ -7306,8 +7306,8 @@ mod tests {
         // Port of CASMOD_CAPS from Src/hist.c — non-alphanumerics
         // (incl. `-`, `.`, digits-then-alpha) reset `nextupper`.
         // Verified live: `print -r -- ${(C)"a-b c.d"}` → `A-B C.D`.
-        assert_eq!(casemodify("a-b c.d", CaseMod::CASMOD_CAPS), "A-B C.D"); // utils.c:6915
-        assert_eq!(casemodify("foo_bar.baz", CaseMod::CASMOD_CAPS), "Foo_Bar.Baz"); // utils.c:6915
+        assert_eq!(casemodify("a-b c.d", CASMOD_CAPS), "A-B C.D"); // utils.c:6915
+        assert_eq!(casemodify("foo_bar.baz", CASMOD_CAPS), "Foo_Bar.Baz"); // utils.c:6915
     } // utils.c:6915
 
     // ─── remtpath (Src/hist.c:2055-2118) ────────────────────────────

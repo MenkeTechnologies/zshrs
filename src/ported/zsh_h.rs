@@ -67,8 +67,9 @@ pub const ZLONG_MAX: zlong = i64::MAX; // c:40-57
 /// sibling fields plus a discriminant — `type_` selects which side
 /// of the prior `u` union is live. Read `l` when
 /// `type_ == MN_INTEGER`, read `d` when `type_ == MN_FLOAT`.
+#[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy)] // c:95
-pub struct Mnumber {
+pub struct mnumber {
     // c:95
     pub l: i64,     // c:97 (u.l)
     pub d: f64,     // c:98 (u.d)
@@ -85,10 +86,10 @@ pub const MN_UNSET: u32 = 4; // c:105
 pub type MathFunc = Box<mathfunc>; // c:107
 
 /// Port of `typedef mnumber (*NumMathFunc)(...)` from `Src/zsh.h:108`.
-pub type NumMathFunc = fn(name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber;
+pub type NumMathFunc = fn(name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber;
 
 /// Port of `typedef mnumber (*StrMathFunc)(...)` from `Src/zsh.h:109`.
-pub type StrMathFunc = fn(name: &str, arg: &str, id: i32) -> Mnumber;
+pub type StrMathFunc = fn(name: &str, arg: &str, id: i32) -> mnumber;
 
 /// Port of `struct mathfunc` from `Src/zsh.h:111-121`.
 #[allow(non_camel_case_types)]
@@ -468,14 +469,10 @@ pub struct timedfn {
     pub when: i64, // time_t
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[allow(non_camel_case_types)]
-pub enum CaseMod {
-    CASMOD_NONE,  // c:3123
-    CASMOD_UPPER, // c:3124
-    CASMOD_LOWER, // c:3125
-    CASMOD_CAPS,  // c:3126
-}
+// `enum CaseMod` deleted — C uses an anonymous enum at
+// `Src/zsh.h:3122-3127` with bare values 0..3. Canonical `CASMOD_*`
+// `pub const`s are below at the "42. Case modify" section, matching
+// C's structural placement.
 
 /// Port of `typedef int (*CondHandler)(...)` from `Src/zsh.h:681`.
 pub type CondHandler = fn(args: &[String], id: i32) -> i32;
@@ -2153,10 +2150,16 @@ pub const MAXJOBS_ALLOC: i32 = 50; // c:1107
 pub const MAX_PIPESTATS: usize = 256; // c:1166
 
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Default)]
 pub struct timeinfo {
     // c:1099
     pub ut: i64,
     pub st: i64,
+}
+
+impl timeinfo {
+    pub fn user_dur(&self) -> std::time::Duration { std::time::Duration::from_micros(self.ut as u64) }
+    pub fn sys_dur(&self)  -> std::time::Duration { std::time::Duration::from_micros(self.st as u64) }
 }
 
 // =============================================================================

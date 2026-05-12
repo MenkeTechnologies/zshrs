@@ -399,7 +399,8 @@ pub struct complist {                                                        // 
 /// `gd_gf_*` glob-flag bag into `options: GlobOptions`, but the
 /// 1:1 correspondence to `struct globdata` is otherwise faithful.
 // struct to easily save/restore current state                              // c:166
-pub struct GlobData {                                                       // c:168
+#[allow(non_camel_case_types)]
+pub struct globdata {                                                       // c:168
     pub matches: Vec<gmatch>,
     pub qualifiers: Option<QualifierSet>,
     pub pathbuf: String,                                                     // c:170 gd_pathbuf
@@ -408,9 +409,9 @@ pub struct GlobData {                                                       // c
     pub pathbufcwd: i32,                                                     // c:175 gd_pathbufcwd
 }
 
-impl GlobData {
+impl globdata {
     pub fn new() -> Self {
-        GlobData {
+        globdata {
             matches: Vec::new(),
             qualifiers: None,
             pathbuf: String::with_capacity(4096),
@@ -422,7 +423,7 @@ impl GlobData {
 }
 
 // ===========================================================
-// `impl GlobData` block above kept only for the `new()`
+// `impl globdata` block above kept only for the `new()`
 // constructor (Default-style). All scanner / parser / qualifier
 // fns below are top-level — C glob.c has them as top-level
 // statics that mutate the file-static `curglobdata`. Each is
@@ -438,7 +439,7 @@ impl GlobData {
 /// here orchestrates qualifier parsing, brace expansion (which C
 /// does separately in `xpandbraces`), and the Rust scanner
 /// trio (`scanner`/`scan_pattern`/`scan_recursive`).
-pub fn globdata_glob(state: &mut GlobData, pattern: &str) -> Vec<String> {   // RUST-ONLY
+pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {   // RUST-ONLY
         // Brace pre-expansion. In zsh, `xpandbraces` (zsh/Src/glob.c:2275)
         // runs during substitution before glob — patterns reaching glob()
         // are already brace-free in the production path (exec.rs handles
@@ -988,7 +989,7 @@ fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {           // 
 /// `fs::read_dir(absolute_path)` strings instead — no chdir,
 /// no error path. Faithful port is deferred (see
 /// docs/PORT_CHECKLIST.md glob.rs entry).
-fn scanner(state: &mut GlobData, components: &[PatternComponent], depth: usize) { // c:500 partial port
+fn scanner(state: &mut globdata, components: &[PatternComponent], depth: usize) { // c:500 partial port
         if components.is_empty() {
             return;
         }
@@ -1021,7 +1022,7 @@ fn scanner(state: &mut GlobData, components: &[PatternComponent], depth: usize) 
 ///   - the accumulated path would exceed PATH_MAX and `lchdir` fails (c:539-541)
 ///   - the discovered match path likewise exceeds PATH_MAX and `lchdir` fails (c:608-610)
 ///   - `restoredir` fails at the end of the walk (c:696-697)
-fn scan_pattern(state: &mut GlobData, base: &str, pattern: &str, rest: &[PatternComponent], depth: usize) { // c:580
+fn scan_pattern(state: &mut globdata, base: &str, pattern: &str, rest: &[PatternComponent], depth: usize) { // c:580
     use crate::ported::utils::{init_dirsav, restoredir, lchdir};
     let pbcwdsav = state.pathbufcwd;                                         // c:504
     let mut ds = init_dirsav();                                              // c:510
@@ -1147,7 +1148,7 @@ fn scan_pattern(state: &mut GlobData, base: &str, pattern: &str, rest: &[Pattern
 /// **RUST-ONLY** — C handles recursion via the `closure` bit on
 /// each `struct complist` node, not via a separate function.
 fn scan_recursive(                                                           // RUST-ONLY
-    state: &mut GlobData,
+    state: &mut globdata,
     base: &str,
     rest: &[PatternComponent],
     follow_links: bool,
@@ -1195,7 +1196,7 @@ fn scan_recursive(                                                           // 
 
 /// Drive the OR-of-AND qualifier filter against `path`. **RUST-ONLY**
 /// — C glob.c does qualifier eval inline inside `insert()` (c:381+).
-fn check_qualifiers(state: &GlobData, path: &Path) -> bool {                 // RUST-ONLY
+fn check_qualifiers(state: &globdata, path: &Path) -> bool {                 // RUST-ONLY
         let qs = match &state.qualifiers {
             Some(q) => q,
             None => return true,
@@ -1386,7 +1387,7 @@ fn check_single_qualifier(qual: &Qualifier, path: &Path, meta: &Metadata) -> boo
 /// Sort the per-state matches per the qualifier `o`/`O` keys.
 /// **RUST-ONLY** — C does this inline at the end of `scanner()`
 /// (glob.c:1700ish, qsort with `gmatchcmp` comparator).
-fn sort_matches(state: &mut GlobData) {                                      // RUST-ONLY
+fn sort_matches(state: &mut globdata) {                                      // RUST-ONLY
         // Default sort is GS_NAME ascending (c:204 gf_sortlist
         // initial setup). Per-qualifier `o<key>` / `O<key>` overrides.
         let specs: Vec<i32> = state
@@ -1407,7 +1408,7 @@ fn sort_matches(state: &mut GlobData) {                                      // 
 /// Apply `[FIRST,LAST]` qualifier subscript on the match list.
 /// **RUST-ONLY** — C uses `gd_pre_first` / `gd_first` index tracking
 /// during scanner emit; here we slice after the full walk.
-fn apply_selection(state: &mut GlobData) {                                   // RUST-ONLY
+fn apply_selection(state: &mut globdata) {                                   // RUST-ONLY
         let (first, last) = match &state.qualifiers {
             Some(q) => (q.first, q.last),
             None => return,
@@ -2456,7 +2457,7 @@ fn glob_emit_path(path: &std::path::Path) -> String {
 /// `crate::ported::options::opt_state_get` — same path C uses via
 /// `isset(NULL_GLOB)` etc. on the global `opts[]` array.
 pub fn glob(pattern: &str) -> Vec<String> {                                  // c:1214
-    let mut state = GlobData::new();
+    let mut state = globdata::new();
     globdata_glob(&mut state, pattern)
 }
 
@@ -2728,22 +2729,17 @@ pub mod qualifiers {
 // Pattern matching with replacement (from glob.c getmatch family)
 // ============================================================================
 
-/// Match flags for getmatch
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MatchFlags {
-    /// Match at start
-    pub anchored_start: bool,
-    /// Match at end
-    pub anchored_end: bool,
-    /// Shortest match
-    pub shortest: bool,
-    /// Subexpression matching
-    pub subexpr: bool,
-}
+// `MatchFlags` deleted — Rust-only bool-bag wrapper. C uses bare
+// `int fl` with `SUB_*` bits from `Src/zsh.h:1981+` (mirrored at
+// `zsh_h.rs:2463+`). Callers now pass an `i32` and test bits.
 
-/// Internal match data
+/// Internal match data — port of `struct imatchdata` from
+/// `Src/glob.c:1751` (the local helper used by `igetmatch` and
+/// friends). C fields: `imd->ustr/imd->upat/imd->mb_ind/...`. Rust
+/// keeps a trimmed shape (the parts call sites actually use).
+#[allow(non_camel_case_types)]
 #[derive(Debug, Clone)]
-pub struct MatchData {
+pub struct imatchdata {
     pub str: String,
     pub pattern: String,
     pub match_start: usize,
@@ -2753,7 +2749,7 @@ pub struct MatchData {
 
 /// Get match return value (from glob.c get_match_ret line 2550)
 /// Port of `get_match_ret(Imatchdata imd, int b, int e)` from `Src/glob.c:2550`.
-pub fn get_match_ret(imd: &MatchData, b: usize, e: usize) -> String {
+pub fn get_match_ret(imd: &imatchdata, b: usize, e: usize) -> String {
     if b >= e || b >= imd.str.len() {
         return String::new();
     }
@@ -2765,27 +2761,29 @@ pub fn get_match_ret(imd: &MatchData, b: usize, e: usize) -> String {
 /// Compile pattern and get match info (from glob.c compgetmatch line 2650)
 /// Port of `compgetmatch(char *pat, int *flp, char **replstrp)` from `Src/glob.c:2650`.
 /// WARNING: param names don't match C — Rust=(pat) vs C=(pat, flp, replstrp)
-pub fn compgetmatch(pat: &str) -> Option<(String, MatchFlags)> {
-    let mut flags = MatchFlags::default();
+pub fn compgetmatch(pat: &str) -> Option<(String, i32)> {
+    use crate::ported::zsh_h::{SUB_END, SUB_LONG};
+    // C uses local bits `SUB_START` (anchor at head) / `SUB_END`
+    // (anchor at tail) / `SUB_LONG` (`##`/`%%` doubled = longest).
+    // `SUB_START` is `0x1000` in zsh.h:1993.
+    const SUB_START: i32 = 0x1000;
+    let mut flags: i32 = 0;
     let mut pattern = pat.to_string();
 
-    // Check for anchors
     if pattern.starts_with('#') {
-        flags.anchored_start = true;
+        flags |= SUB_START;
         pattern = pattern[1..].to_string();
     }
     if pattern.starts_with("##") {
-        flags.anchored_start = true;
-        flags.shortest = false;
+        flags |= SUB_START | SUB_LONG;
         pattern = pattern[2..].to_string();
     }
     if pattern.ends_with('%') {
-        flags.anchored_end = true;
+        flags |= SUB_END;
         pattern.pop();
     }
     if pattern.ends_with("%%") {
-        flags.anchored_end = true;
-        flags.shortest = false;
+        flags |= SUB_END | SUB_LONG;
         pattern.truncate(pattern.len().saturating_sub(2));
     }
 
@@ -2797,7 +2795,12 @@ pub fn compgetmatch(pat: &str) -> Option<(String, MatchFlags)> {
 /// This implements ${var#pat}, ${var##pat}, ${var%pat}, ${var%%pat},
 /// ${var/pat/repl}, ${var//pat/repl}
 /// Port of `getmatch(char **sp, char *pat, int fl, int n, char *replstr)` from `Src/glob.c:2710`.
-pub fn getmatch(sp: &str, pat: &str, fl: MatchFlags, n: i32, replstr: Option<&str>) -> String {
+pub fn getmatch(sp: &str, pat: &str, fl: i32, n: i32, replstr: Option<&str>) -> String {
+    use crate::ported::zsh_h::{SUB_END, SUB_LONG};
+    const SUB_START: i32 = 0x1000;
+    let anchored_start = (fl & SUB_START) != 0;
+    let anchored_end = (fl & SUB_END) != 0;
+    let shortest = (fl & SUB_LONG) == 0;
     let chars: Vec<char> = sp.chars().collect();
     let len = chars.len();
 
@@ -2806,20 +2809,20 @@ pub fn getmatch(sp: &str, pat: &str, fl: MatchFlags, n: i32, replstr: Option<&st
     }
 
     // Find match
-    let (match_start, match_end) = if fl.anchored_start && fl.anchored_end {
+    let (match_start, match_end) = if anchored_start && anchored_end {
         // Full match
         if matchpat(pat, sp, true, true) {
             (0, len)
         } else {
             return sp.to_string();
         }
-    } else if fl.anchored_start {
+    } else if anchored_start {
         // Match from start (# or ##)
         let mut best_end = 0;
         for end in 1..=len {
             let substr: String = chars[..end].iter().collect();
             if matchpat(pat, &substr, true, true) {
-                if fl.shortest {
+                if shortest {
                     return match replstr {
                         Some(r) => format!("{}{}", r, chars[end..].iter().collect::<String>()),
                         None => chars[end..].iter().collect(),
@@ -2833,13 +2836,13 @@ pub fn getmatch(sp: &str, pat: &str, fl: MatchFlags, n: i32, replstr: Option<&st
         } else {
             return sp.to_string();
         }
-    } else if fl.anchored_end {
+    } else if anchored_end {
         // Match from end (% or %%)
         let mut best_start = len;
         for start in (0..len).rev() {
             let substr: String = chars[start..].iter().collect();
             if matchpat(pat, &substr, true, true) {
-                if fl.shortest {
+                if shortest {
                     return match replstr {
                         Some(r) => format!("{}{}", chars[..start].iter().collect::<String>(), r),
                         None => chars[..start].iter().collect(),
@@ -2886,7 +2889,7 @@ pub fn getmatch(sp: &str, pat: &str, fl: MatchFlags, n: i32, replstr: Option<&st
 pub fn getmatcharr(
     ap: &[String],
     pat: &str,
-    fl: MatchFlags,
+    fl: i32,
     n: i32,
     replstr: Option<&str>,
 ) -> Vec<String> {
@@ -3108,20 +3111,20 @@ pub fn remnulargs(s: &mut Vec<GlobToken>) {
 // Mode specification parsing (from glob.c qgetmodespec)
 // ============================================================================
 
-/// Parsed mode specification
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ModeSpec {
-    pub who: u32,  // u, g, o, a masks
-    pub op: char,  // +, -, =
-    pub perm: u32, // r, w, x, s, t masks
-}
+// `ModeSpec` struct deleted — Rust-only helper. C `qgetmodespec`
+// (`Src/glob.c:844`) parses one clause and returns the combined
+// `long` mode-bits directly, mutating the parse cursor via `char**`.
+// The Rust port now returns `(who, op, perm, rest)` as a flat tuple
+// so the canonical "no intermediate struct" pattern is preserved.
 
 /// Parse mode specification like chmod (from glob.c qgetmodespec lines 790-920)
-/// Examples: u+x, go-w, a=r, 755
+/// Examples: u+x, go-w, a=r, 755 — returns `(who, op, perm, rest)`.
 /// Port of `qgetmodespec(char **s)` from `Src/glob.c:844`.
-pub fn qgetmodespec(s: &str) -> Option<(ModeSpec, &str)> {
+pub fn qgetmodespec(s: &str) -> Option<(u32, char, u32, &str)> {
     let mut chars = s.chars().peekable();
-    let mut spec = ModeSpec::default();
+    let mut spec_who: u32 = 0;
+    let mut spec_op: char = '\0';
+    let mut spec_perm: u32 = 0;
 
     // Check for octal mode
     if chars.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
@@ -3135,11 +3138,11 @@ pub fn qgetmodespec(s: &str) -> Option<(ModeSpec, &str)> {
             }
         }
         if let Ok(mode) = u32::from_str_radix(&mode_str, 8) {
-            spec.perm = mode;
-            spec.op = '=';
-            spec.who = 0o7777;
+            spec_perm = mode;
+            spec_op = '=';
+            spec_who = 0o7777;
             let rest_pos = s.len() - chars.collect::<String>().len();
-            return Some((spec, &s[rest_pos..]));
+            return Some((spec_who, spec_op, spec_perm, &s[rest_pos..]));
         }
         return None;
     }
@@ -3149,32 +3152,20 @@ pub fn qgetmodespec(s: &str) -> Option<(ModeSpec, &str)> {
     let mut who = 0u32;
     while let Some(&c) = chars.peek() {
         match c {
-            'u' => {
-                who |= 0o4700;
-                chars.next();
-            }
-            'g' => {
-                who |= 0o2070;
-                chars.next();
-            }
-            'o' => {
-                who |= 0o1007;
-                chars.next();
-            }
-            'a' => {
-                who |= 0o7777;
-                chars.next();
-            }
+            'u' => { who |= 0o4700; chars.next(); }
+            'g' => { who |= 0o2070; chars.next(); }
+            'o' => { who |= 0o1007; chars.next(); }
+            'a' => { who |= 0o7777; chars.next(); }
             _ => break,
         }
     }
     if who == 0 {
         who = 0o7777; // Default to all
     }
-    spec.who = who;
+    spec_who = who;
 
     // Op: +, -, =
-    spec.op = match chars.next() {
+    spec_op = match chars.next() {
         Some('+') => '+',
         Some('-') => '-',
         Some('=') => '=',
@@ -3185,45 +3176,29 @@ pub fn qgetmodespec(s: &str) -> Option<(ModeSpec, &str)> {
     let mut perm = 0u32;
     while let Some(&c) = chars.peek() {
         match c {
-            'r' => {
-                perm |= 0o444;
-                chars.next();
-            }
-            'w' => {
-                perm |= 0o222;
-                chars.next();
-            }
-            'x' => {
-                perm |= 0o111;
-                chars.next();
-            }
-            'X' => {
-                perm |= 0o111;
-                chars.next();
-            } // Conditional execute
-            's' => {
-                perm |= 0o6000;
-                chars.next();
-            }
-            't' => {
-                perm |= 0o1000;
-                chars.next();
-            }
+            'r' => { perm |= 0o444; chars.next(); }
+            'w' => { perm |= 0o222; chars.next(); }
+            'x' => { perm |= 0o111; chars.next(); }
+            'X' => { perm |= 0o111; chars.next(); } // Conditional execute
+            's' => { perm |= 0o6000; chars.next(); }
+            't' => { perm |= 0o1000; chars.next(); }
             _ => break,
         }
     }
-    spec.perm = perm & who;
+    spec_perm = perm & who;
 
     let rest_pos = s.len() - chars.collect::<String>().len();
-    Some((spec, &s[rest_pos..]))
+    Some((spec_who, spec_op, spec_perm, &s[rest_pos..]))
 }
 
-/// Apply mode spec to existing mode
-pub fn apply_modespec(mode: u32, spec: &ModeSpec) -> u32 {
-    match spec.op {
-        '+' => mode | spec.perm,
-        '-' => mode & !spec.perm,
-        '=' => (mode & !spec.who) | spec.perm,
+/// Apply mode spec to existing mode. Port of the
+/// `spec_op`/`spec_who`/`spec_perm` inline application at the end of
+/// C's `qgetmodespec` (`Src/glob.c:919-922`).
+pub fn apply_modespec(mode: u32, who: u32, op: char, perm: u32) -> u32 {
+    match op {
+        '+' => mode | perm,
+        '-' => mode & !perm,
+        '=' => (mode & !who) | perm,
         _ => mode,
     }
 }
@@ -3424,7 +3399,7 @@ mod tests {
         let dir = setup_test_dir();
         let pattern = format!("{}/*.txt", dir.path().display());
 
-        let mut state = GlobData::new();
+        let mut state = globdata::new();
         let results = globdata_glob(&mut state, &pattern);
 
         assert_eq!(results.len(), 2);
@@ -3443,13 +3418,13 @@ mod tests {
         // the C-faithful read goes through `isset(GLOBDOTS)` which
         // resolves the canonical name.
         opt_state_set("globdots", false);
-        let mut state = GlobData::new();
+        let mut state = globdata::new();
         let results = globdata_glob(&mut state, &pattern);
         assert!(!results.iter().any(|s| s.contains(".hidden")));
 
         // setopt globdots → hidden files included.
         opt_state_set("globdots", true);
-        let mut state = GlobData::new();
+        let mut state = globdata::new();
         let results = globdata_glob(&mut state, &pattern);
         assert!(results.iter().any(|s| s.contains(".hidden")));
         opt_state_set("globdots", false);  // reset for other tests
@@ -3893,7 +3868,7 @@ pub fn glob_path(pattern: &str) -> Vec<String> {                             // 
     }
 
     // Main walk via the canonical glob driver.
-    let mut state = GlobData::new();
+    let mut state = globdata::new();
     let matches = globdata_glob(&mut state, pattern);
     if matches.is_empty() && !null_glob {
         return vec![pattern.to_string()];
