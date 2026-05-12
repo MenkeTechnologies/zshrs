@@ -427,20 +427,10 @@ pub struct ShellExecutor {
     /// original separator (newlines) instead of re-joining with
     /// IFS-first-char (space).
     pub in_scalar_assign: u32,
-    /// Command-context stack — direct port of zsh's `cmdstack`
-    /// global (Src/prompt.c:56 `unsigned char *cmdstack`). Pushed
-    /// by `BUILTIN_CMD_PUSH` (compile_zsh emits around each
-    /// compound command), popped by `BUILTIN_CMD_POP`. Read by
-    /// `%_` in PS4 / prompt expansion to render the cumulative
-    /// control-flow context labels in the xtrace prefix
-    /// (`if`, `then`, `cmdand`, `cmdor`, `cmdsubst`, …).
-    /// `prompt_tls::sync_from_executor` copies this into per-thread TLS so
-    /// the prompt expander sees the live stack.
-    /// Direct port of `unsigned char *cmdstack; int cmdsp;` from
-    /// `Src/prompt.c:55-58`. Each byte is a `CS_*` value from
-    /// `zsh_h::CS_FOR..CS_ALWAYS` (`Src/zsh.h:2775-2806`); read by
-    /// `%_` and the xtrace prefix.
-    pub cmd_stack: Vec<u8>, // c:55
+    // `cmd_stack` deleted — duplicated the canonical `prompt::CMDSTACK`
+    // thread_local (`Src/prompt.c:56 unsigned char *cmdstack`).
+    // `BUILTIN_CMD_PUSH`/`BUILTIN_CMD_POP` now call `cmdpush`/`cmdpop`
+    // on the canonical TLS only; prompt expansion reads it directly.
     /// IDs of history entries explicitly added during this session
     /// via `print -s`. `fc -l` uses this to scope listings to just
     /// the script-added entries (matches zsh's `-c` semantics where
@@ -1081,7 +1071,6 @@ impl ShellExecutor {
             pending_underscore: None,
             in_dq_context: 0,
             in_scalar_assign: 0,
-            cmd_stack: Vec::new(),
             session_history_ids: Vec::new(),
             autoload_pending: HashMap::new(),
             open_fds: HashMap::new(),
@@ -2357,7 +2346,7 @@ impl ShellExecutor {
         // Src/exec.c:4783 `cmdpush(CS_CMDSUBST);` around execode().
         // Trace lines emitted by the inner program inherit this token
         // so their PS4 prefix shows "cmdsubst" matching zsh -x.
-        self.cmd_stack.push(crate::ported::zsh_h::CS_CMDSUBST as u8); // c:zsh.h:2799
+        crate::ported::prompt::cmdpush(crate::ported::zsh_h::CS_CMDSUBST as u8); // c:zsh.h:2799
         // Save LINENO so the inner cmdsubst's line counter doesn't
         // leak into the outer trace — direct port of Src/exec.c:1407
         // `oldlineno = lineno;` followed by `lineno = oldlineno;`
@@ -2414,7 +2403,7 @@ impl ShellExecutor {
         if let Some(ln) = saved_lineno {
             self.set_scalar("LINENO".to_string(), ln);
         }
-        self.cmd_stack.pop();
+        crate::ported::prompt::cmdpop();
         // Propagate the inner cmd's status to the parent shell. zsh:
         // `a=$(false); echo $?` → 1 because cmd-subst status leaks to
         // $?. Set last_status on the executor so $? reads the right

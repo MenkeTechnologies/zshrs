@@ -5848,22 +5848,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if (token as i32) < crate::ported::zsh_h::CS_COUNT {
             crate::ported::prompt::cmdpush(token);
         }
-        // Mirror to exec.cmd_stack for any reader still on the
-        // legacy field (TODO: dissolve).
-        with_executor(|exec| {
-            if (token as i32) < crate::ported::zsh_h::CS_COUNT {
-                exec.cmd_stack.push(token);
-            }
-        });
+        // Canonical `cmdpush()` above already mirrors into the
+        // `prompt::CMDSTACK` thread_local (Src/prompt.c:1620). The
+        // legacy `exec.cmd_stack` mirror is gone.
+        let _ = token;
         fusevm::Value::Status(0)
     });
 
     // Direct port of Src/prompt.c:1631 cmdpop.
     vm.register_builtin(BUILTIN_CMD_POP, |_vm, _argc| {
         crate::ported::prompt::cmdpop();
-        with_executor(|exec| {
-            exec.cmd_stack.pop();
-        });
         fusevm::Value::Status(0)
     });
 
