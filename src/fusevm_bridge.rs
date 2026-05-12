@@ -1750,22 +1750,32 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| -> Option<Value> {
             match name {
                 "commands" => {
+                    // Canonical command-hash is `cmdnamtab` — HASHED
+                    // entries store their resolved path in `cmd`.
+                    let tab = crate::ported::hashtable::cmdnamtab_lock();
                     if idx == "@" || idx == "*" {
                         return Some(Value::Array(
-                            exec.command_hash.values().map(Value::str).collect(),
+                            tab.read().ok()
+                                .map(|t| t.iter()
+                                    .filter_map(|(_, c)| c.cmd.clone())
+                                    .map(Value::str)
+                                    .collect())
+                                .unwrap_or_default(),
                         ));
                     }
                     Some(Value::str(
-                        exec.command_hash.get(idx).cloned().unwrap_or_else(|| {
-                            // Fall back to PATH scan for first match
-                            for dir in env::var("PATH").unwrap_or_default().split(':') {
-                                let p = std::path::PathBuf::from(dir).join(idx);
-                                if p.is_file() {
-                                    return p.to_string_lossy().into_owned();
+                        tab.read().ok()
+                            .and_then(|t| t.get_full_path(idx).map(|p| p.display().to_string()))
+                            .unwrap_or_else(|| {
+                                // Fall back to PATH scan for first match
+                                for dir in env::var("PATH").unwrap_or_default().split(':') {
+                                    let p = std::path::PathBuf::from(dir).join(idx);
+                                    if p.is_file() {
+                                        return p.to_string_lossy().into_owned();
+                                    }
                                 }
-                            }
-                            String::new()
-                        }),
+                                String::new()
+                            }),
                     ))
                 }
                 "aliases" | "galiases" | "saliases" => Some(Value::str(
@@ -5499,8 +5509,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // assignment. zsh's bin_set rehashes lazily; this is
                 // the simplest equivalent.
                 if name == "PATH" {
-                    exec.command_hash.clear();
+                    if let Ok(mut t) = crate::ported::hashtable::cmdnamtab_lock().write() {
+                        t.clear();
+                    }
                 }
+                let _ = exec; // silence unused-binding in the no-PATH branch
             }
             // zsh enforces a minimum of 1 on `HISTSIZE` — `HISTSIZE=0`
             // and `HISTSIZE=-5` both clamp to `1`. Mirror at storage
@@ -7579,7 +7592,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             match name.as_str() {
                 "errnos" => return crate::modules::system::ERRNO_NAMES.len(),
                 "epochtime" => return 2, // [seconds, nanoseconds]
-                "commands" => return exec.command_hash.len(),
+                "commands" => return crate::ported::hashtable::cmdnamtab_lock()
+                    .read().map(|t| t.len()).unwrap_or(0),
                 "aliases" => return exec.alias_entries().len(),
                 "galiases" => return exec.global_alias_entries().len(),
                 "saliases" => return exec.suffix_alias_entries().len(),
