@@ -3823,15 +3823,34 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
                     .map(String::from)
                     .collect();
                 if is_hashed {
-                    // c:2960-2975 — `setdataparam(..., PM_HASHED,
-                    //                pair-walked map)`. Pair-walk
-                    // alternating k/v elements into an IndexMap.
+                    // c:2960-2975 — `setdataparam(..., PM_HASHED, …)`.
+                    // Two assoc-init shapes accepted by zsh:
+                    //  1. flat alternating k/v: `m=(k1 v1 k2 v2)`
+                    //  2. per-element [K]=V:    `m=([k1]=v1 [k2]=v2)`
+                    // The parser hands all elements as one `(…)` body,
+                    // so we detect shape 2 when every element starts
+                    // with `[` and contains `]=`. Otherwise fall back
+                    // to alternating pairs.
+                    let bracket_shape = !elems.is_empty()
+                        && elems.iter().all(|e| {
+                            e.starts_with('[')
+                                && e.contains("]=")
+                        });
                     let mut map: indexmap::IndexMap<String, String>
                         = indexmap::IndexMap::new();
-                    let mut it = elems.into_iter();                          // c:2960 pair walk
-                    while let Some(k) = it.next() {
-                        let v = it.next().unwrap_or_default();
-                        map.insert(k, v);                                    // c:2964 hashtab insert
+                    if bracket_shape {
+                        for e in &elems {
+                            let close = e.find("]=").unwrap();
+                            let k = e[1..close].to_string();
+                            let v = e[close + 2..].to_string();
+                            map.insert(k, v);
+                        }
+                    } else {
+                        let mut it = elems.into_iter();                      // c:2960 pair walk
+                        while let Some(k) = it.next() {
+                            let v = it.next().unwrap_or_default();
+                            map.insert(k, v);                                // c:2964 hashtab insert
+                        }
                     }
                     let n_owned = n.to_string();
                     crate::fusevm_bridge::with_executor(|exec| {
