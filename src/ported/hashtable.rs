@@ -183,7 +183,7 @@ pub fn cmdnam_hashed(name: &str, path: &str) -> CmdName {                    // 
         node: crate::ported::zsh_h::hashnode {
             next: None,
             nam: name.to_string(),
-            flags: flags::HASHED as i32,
+            flags: HASHED as i32,
         },
         name: None,
         cmd: Some(path.to_string()),
@@ -253,7 +253,7 @@ impl cmdnam_table {
 
     pub fn get(&self, name: &str) -> Option<&CmdName> {
         self.table.get(name)
-            .filter(|c| (c.node.flags & flags::DISABLED as i32) == 0)
+            .filter(|c| (c.node.flags & DISABLED as i32) == 0)
     }
 
     pub fn get_including_disabled(&self, name: &str) -> Option<&CmdName> {
@@ -349,11 +349,11 @@ impl cmdnam_table {
     /// `findcmd(name, 1, 0)` lookup via cmdnamtab (Src/exec.c:5260).
     pub fn get_full_path(&self, name: &str) -> Option<PathBuf> {
         let cmd = self.table.get(name)?;
-        if (cmd.node.flags & flags::DISABLED as i32) != 0 {
+        if (cmd.node.flags & DISABLED as i32) != 0 {
             return None;
         }
         // HASHED branch: cn->u.cmd holds the resolved path.
-        if (cmd.node.flags & flags::HASHED as i32) != 0 {
+        if (cmd.node.flags & HASHED as i32) != 0 {
             if let Some(ref s) = cmd.cmd {
                 return Some(PathBuf::from(s));
             }
@@ -422,7 +422,7 @@ pub fn shfunc_autoload(name: &str) -> ShFunc {                               // 
         node: crate::ported::zsh_h::hashnode {
             next: None,
             nam: name.to_string(),
-            flags: flags::PM_UNDEFINED as i32,
+            flags: PM_UNDEFINED as i32,
         },
         filename: None,
         lineno: 0,
@@ -465,7 +465,7 @@ impl shfunc_table {
     pub fn get(&self, name: &str) -> Option<&ShFunc> {
         self.table
             .get(name)
-            .filter(|f| (f.node.flags & flags::DISABLED as i32) == 0)
+            .filter(|f| (f.node.flags & DISABLED as i32) == 0)
     }
 
     pub fn get_including_disabled(&self, name: &str) -> Option<&ShFunc> {
@@ -475,7 +475,7 @@ impl shfunc_table {
     pub fn get_mut(&mut self, name: &str) -> Option<&mut ShFunc> {
         self.table
             .get_mut(name)
-            .filter(|f| (f.node.flags & flags::DISABLED as i32) == 0)
+            .filter(|f| (f.node.flags & DISABLED as i32) == 0)
     }
 
     pub fn remove(&mut self, name: &str) -> Option<ShFunc> {
@@ -484,7 +484,7 @@ impl shfunc_table {
 
     pub fn disable(&mut self, name: &str) -> bool {
         if let Some(func) = self.table.get_mut(name) {
-            func.node.flags |= flags::DISABLED as i32;
+            func.node.flags |= DISABLED as i32;
             true
         } else {
             false
@@ -493,7 +493,7 @@ impl shfunc_table {
 
     pub fn enable(&mut self, name: &str) -> bool {
         if let Some(func) = self.table.get_mut(name) {
-            func.node.flags &= !(flags::DISABLED as i32);
+            func.node.flags &= !(DISABLED as i32);
             true
         } else {
             false
@@ -627,7 +627,7 @@ impl reswd_table {
 
     pub fn get(&self, name: &str) -> Option<&Reswd> {
         self.table.get(name)
-            .filter(|r| (r.node.flags & flags::DISABLED as i32) == 0)
+            .filter(|r| (r.node.flags & DISABLED as i32) == 0)
     }
 
     pub fn get_including_disabled(&self, name: &str) -> Option<&Reswd> {
@@ -636,7 +636,7 @@ impl reswd_table {
 
     pub fn disable(&mut self, name: &str) -> bool {
         if let Some(rw) = self.table.get_mut(name) {
-            rw.node.flags |= flags::DISABLED as i32;
+            rw.node.flags |= DISABLED as i32;
             true
         } else {
             false
@@ -645,7 +645,7 @@ impl reswd_table {
 
     pub fn enable(&mut self, name: &str) -> bool {
         if let Some(rw) = self.table.get_mut(name) {
-            rw.node.flags &= !(flags::DISABLED as i32);
+            rw.node.flags &= !(DISABLED as i32);
             true
         } else {
             false
@@ -673,7 +673,9 @@ impl Default for reswd_table {
 // `text: String` (c:1255) + `inuse: i32` (c:1256); the Rust-only
 // had a flat `name: String, flags: u32, text: String, inuse: i32`
 // (missing the hashnode embedding).
-pub use crate::ported::zsh_h::alias as Alias;                                // c:1253
+pub use crate::ported::zsh_h::alias as Alias;
+use crate::zsh_h::{ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED, PM_LOADDIR, PM_TAGGED, PM_UNDEFINED};
+// c:1253
 
 /// Build an alias node with the canonical `alias` shape.
 /// Mirrors C `addaliasnode(aliastab, name, createaliasnode(text, flags))`
@@ -726,7 +728,7 @@ impl alias_table {
 
     pub fn get(&self, name: &str) -> Option<&Alias> {
         self.table.get(name)
-            .filter(|a| (a.node.flags & flags::DISABLED as i32) == 0)
+            .filter(|a| (a.node.flags & DISABLED as i32) == 0)
     }
 
     pub fn get_including_disabled(&self, name: &str) -> Option<&Alias> {
@@ -735,7 +737,7 @@ impl alias_table {
 
     pub fn get_mut(&mut self, name: &str) -> Option<&mut Alias> {
         self.table.get_mut(name)
-            .filter(|a| (a.node.flags & flags::DISABLED as i32) == 0)
+            .filter(|a| (a.node.flags & DISABLED as i32) == 0)
     }
 
     pub fn remove(&mut self, name: &str) -> Option<Alias> {
@@ -744,7 +746,7 @@ impl alias_table {
 
     pub fn disable(&mut self, name: &str) -> bool {
         if let Some(alias) = self.table.get_mut(name) {
-            alias.node.flags |= flags::DISABLED as i32;
+            alias.node.flags |= DISABLED as i32;
             true
         } else {
             false
@@ -753,7 +755,7 @@ impl alias_table {
 
     pub fn enable(&mut self, name: &str) -> bool {
         if let Some(alias) = self.table.get_mut(name) {
-            alias.node.flags &= !(flags::DISABLED as i32);
+            alias.node.flags &= !(DISABLED as i32);
             true
         } else {
             false
@@ -847,7 +849,7 @@ pub mod print_flags {
 /// WARNING: param names don't match C — Rust=(cmd, _path, print_flags) vs C=(hn, printflags)
 pub fn printcmdnamnode(cmd: &CmdName, _path: &[String], print_flags: u32) -> String {
     let name = &cmd.node.nam;
-    let is_hashed = (cmd.node.flags & flags::HASHED as i32) != 0;
+    let is_hashed = (cmd.node.flags & HASHED as i32) != 0;
     // Resolved path either from cn->u.cmd (HASHED) or from first
     // entry of cn->u.name (unhashed PATH-array slice).
     let resolved = || -> Option<String> {
@@ -911,7 +913,7 @@ pub fn printshfuncnode(func: &ShFunc, print_flags: u32) -> String {
             return format!("{}: function\n", name);
         }
 
-        let kind = if (func.node.flags & flags::PM_UNDEFINED as i32) != 0 {
+        let kind = if (func.node.flags & PM_UNDEFINED as i32) != 0 {
             "is an autoload shell function"
         } else {
             "is a shell function"
@@ -927,19 +929,19 @@ pub fn printshfuncnode(func: &ShFunc, print_flags: u32) -> String {
 
     let mut result = format!("{} () {{\n", name);
 
-    if (func.node.flags & flags::PM_UNDEFINED as i32) != 0 {
+    if (func.node.flags & PM_UNDEFINED as i32) != 0 {
         result.push_str("\t# undefined\n");
-        if (func.node.flags & flags::PM_TAGGED as i32) != 0 {
+        if (func.node.flags & PM_TAGGED as i32) != 0 {
             result.push_str("\t# traced\n");
         }
         result.push_str("\tbuiltin autoload -X");
         if let Some(ref filename) = func.filename {
-            if (func.node.flags & flags::PM_LOADDIR as i32) != 0 {
+            if (func.node.flags & PM_LOADDIR as i32) != 0 {
                 result.push_str(&format!(" {}", filename));
             }
         }
     } else if let Some(ref body) = func.body {
-        if (func.node.flags & flags::PM_TAGGED as i32) != 0 {
+        if (func.node.flags & PM_TAGGED as i32) != 0 {
             result.push_str("\t# traced\n");
         }
         for line in body.lines() {
@@ -978,8 +980,8 @@ pub fn format_alias(alias: &Alias, print_flags: u32) -> String {
     let name = &alias.node.nam;
     let text = &alias.text;
     let af = alias.node.flags;
-    let is_suffix = (af & flags::ALIAS_SUFFIX as i32) != 0;
-    let is_global = (af & flags::ALIAS_GLOBAL as i32) != 0;
+    let is_suffix = (af & ALIAS_SUFFIX as i32) != 0;
+    let is_global = (af & ALIAS_GLOBAL as i32) != 0;
 
     if print_flags & print_flags::NAMEONLY != 0 {
         return format!("{}\n", name);
@@ -1084,8 +1086,8 @@ mod tests {
         assert!(table.get("nonexistent").is_none());
 
         let ls = table.get("ls").unwrap();
-        assert!((ls.node.flags & flags::HASHED as i32) != 0);
-        assert!((ls.node.flags & flags::DISABLED as i32) == 0);
+        assert!((ls.node.flags & HASHED as i32) != 0);
+        assert!((ls.node.flags & DISABLED as i32) == 0);
     }
 
     #[test]
@@ -1096,10 +1098,10 @@ mod tests {
 
         assert!(table.get("myfunc").is_some());
         assert!(
-            (table.get("myfunc").unwrap().node.flags & flags::PM_UNDEFINED as i32) == 0
+            (table.get("myfunc").unwrap().node.flags & PM_UNDEFINED as i32) == 0
         );
         assert!(
-            (table.get("lazy").unwrap().node.flags & flags::PM_UNDEFINED as i32) != 0
+            (table.get("lazy").unwrap().node.flags & PM_UNDEFINED as i32) != 0
         );
 
         table.disable("myfunc");
@@ -1130,13 +1132,13 @@ mod tests {
         assert!(table.get("run-help").is_some());
         assert_eq!(table.get("run-help").unwrap().text, "man");
 
-        table.add(createaliasnode("G", "| grep", flags::ALIAS_GLOBAL));
+        table.add(createaliasnode("G", "| grep", ALIAS_GLOBAL as u32));
         let g = table.get("G").unwrap();
-        assert!((g.node.flags & flags::ALIAS_GLOBAL as i32) != 0);
+        assert!((g.node.flags & ALIAS_GLOBAL as i32) != 0);
 
-        table.add(createaliasnode("pdf", "zathura", flags::ALIAS_SUFFIX));
+        table.add(createaliasnode("pdf", "zathura", ALIAS_SUFFIX as u32));
         let p = table.get("pdf").unwrap();
-        assert!((p.node.flags & flags::ALIAS_SUFFIX as i32) != 0);
+        assert!((p.node.flags & ALIAS_SUFFIX as i32) != 0);
 
         table.disable("G");
         assert!(table.get("G").is_none());
@@ -1167,7 +1169,7 @@ mod tests {
         let output = format_alias(&alias, print_flags::WHENCE_VERBOSE);
         assert!(output.contains("is an alias for"));
 
-        let global = createaliasnode("G", "| grep", flags::ALIAS_GLOBAL);
+        let global = createaliasnode("G", "| grep", ALIAS_GLOBAL as u32);
         let output = format_alias(&global, print_flags::WHENCE_WORD);
         assert!(output.contains("global alias"));
     }
@@ -1370,10 +1372,10 @@ mod tests {
 
     #[test]
     fn test_createaliasnode_sets_flags() {
-        let a = createaliasnode("foo", "echo bar", flags::ALIAS_GLOBAL);
+        let a = createaliasnode("foo", "echo bar", ALIAS_GLOBAL as u32);
         assert_eq!(a.node.nam, "foo");
         assert_eq!(a.text, "echo bar");
-        assert!((a.node.flags & flags::ALIAS_GLOBAL as i32) != 0);
+        assert!((a.node.flags & ALIAS_GLOBAL as i32) != 0);
     }
 
     #[test]
@@ -1703,19 +1705,19 @@ pub trait HashNodeFlags {
     fn flags(&self) -> u32;
     fn set_disabled(&mut self, disabled: bool);
     fn is_disabled(&self) -> bool {
-        self.flags() & flags::DISABLED != 0
+        self.flags() & (DISABLED as u32) != 0
     }
 }
 
-impl HashNodeFlags for Alias {
+impl HashNodeFlags for Alias {  
     fn flags(&self) -> u32 {
         self.node.flags as u32
     }
     fn set_disabled(&mut self, disabled: bool) {
         if disabled {
-            self.node.flags |= flags::DISABLED as i32;
+            self.node.flags |= DISABLED as i32;
         } else {
-            self.node.flags &= !(flags::DISABLED as i32);
+            self.node.flags &= !(DISABLED as i32);
         }
     }
 }
@@ -1726,9 +1728,9 @@ impl HashNodeFlags for ShFunc {
     }
     fn set_disabled(&mut self, disabled: bool) {
         if disabled {
-            self.node.flags |= flags::DISABLED as i32;
+            self.node.flags |= DISABLED as i32;
         } else {
-            self.node.flags &= !(flags::DISABLED as i32);
+            self.node.flags &= !(DISABLED as i32);
         }
     }
 }
@@ -1739,9 +1741,9 @@ impl HashNodeFlags for CmdName {
     }
     fn set_disabled(&mut self, disabled: bool) {
         if disabled {
-            self.node.flags |= flags::DISABLED as i32;
+            self.node.flags |= DISABLED as i32;
         } else {
-            self.node.flags &= !(flags::DISABLED as i32);
+            self.node.flags &= !(DISABLED as i32);
         }
     }
 }
@@ -1752,9 +1754,9 @@ impl HashNodeFlags for Reswd {
     }
     fn set_disabled(&mut self, disabled: bool) {
         if disabled {
-            self.node.flags |= flags::DISABLED as i32;
+            self.node.flags |= DISABLED as i32;
         } else {
-            self.node.flags &= !(flags::DISABLED as i32);
+            self.node.flags &= !(DISABLED as i32);
         }
     }
 }
@@ -2256,8 +2258,8 @@ pub fn freealiasnode(hn: &str) {
 pub fn printaliasnode(hn: &Alias, printflags: u32) -> String {
     let nam = &hn.node.nam;
     let af = hn.node.flags;
-    let is_suffix = (af & flags::ALIAS_SUFFIX as i32) != 0;
-    let is_global = (af & flags::ALIAS_GLOBAL as i32) != 0;
+    let is_suffix = (af & ALIAS_SUFFIX as i32) != 0;
+    let is_global = (af & ALIAS_GLOBAL as i32) != 0;
     if printflags & print_flags::NAMEONLY != 0 {
         return nam.clone();
     }
