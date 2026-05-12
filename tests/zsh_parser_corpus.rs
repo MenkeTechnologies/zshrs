@@ -1,6 +1,6 @@
 //! Test that parses all zsh functions from the homebrew zsh distribution.
 //!
-//! This tests the ZshParser against real-world zsh code from /opt/homebrew/Cellar/zsh/
+//! This tests the parser against real-world zsh code from /opt/homebrew/Cellar/zsh/
 //! which has been copied to test_data/zsh_functions/
 
 use std::fs;

@@ -2099,8 +2099,8 @@ fn inull(c: char) -> bool {                                                  // 
 ///   - inull/Bnull adjustment loop (c:2931-2952)
 ///   - nested makecomplistcmd dispatch (c:3006)
 ///
-/// The actual `ctxtlex()` driver is replaced by Rust`s lex module`
-/// from parse/src/lex.rs — for this port we approximate by
+/// The actual `ctxtlex()` driver is replaced by the lex.rs module
+/// — for this port we approximate by
 /// splitting the temp string on whitespace + tracking the cursor
 /// word. Full lexer-token reconstruction (LEXERR/STRING/ENDINPUT
 /// handling for unbalanced quotes per c:2842-2855) is the

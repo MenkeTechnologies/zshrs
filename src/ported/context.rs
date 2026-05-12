@@ -4,7 +4,7 @@
 //!
 //! This short file provides a home for the stack of saved contexts.
 //! The actions for saving and restoring are encapsulated within
-//! individual modules. After P7-P8 dissolved ZshLexer + ZshParser into
+//! individual modules. After P7-P8 dissolved the ZshLexer and ZshParser structs into
 //! free fns + thread_locals, the save/restore signatures simplified —
 //! the lexer/parser parameters went away. Callers just call zcontext_*
 //! and the underlying thread_local state is what's saved/restored.

@@ -1,4 +1,4 @@
-//! Run the full construct corpus through the ZshLexer + ZshParser +
+//! Run the full construct corpus through the lex+parse +
 //! ZshCompiler pipeline. Same scripts as `zsh_construct_corpus.rs`.
 //! Failures here are the punch list for `compile_zsh.rs`.
 

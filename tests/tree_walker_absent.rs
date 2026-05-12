@@ -11,7 +11,7 @@
 //! What we *don't* assert dead:
 //!   - `execute_command` itself: kept as a public entry point that
 //!     compiles to a fusevm `Chunk` and runs on the bytecode VM. The
-//!     body must compile via `ZshParser` + `ZshCompiler`; if it goes
+//!     body must compile via parse_init+parse + ZshCompiler; if it goes
 //!     back to a `match cmd`-style dispatch, this test fails.
 //!   - `execute_command_capture`: kept, but bytecode-routed (compile +
 //!     run + pipe-capture stdout). Asserted to use `ZshCompiler` and
@@ -71,7 +71,7 @@ fn execute_command_bg_is_deleted() {
 fn execute_command_dispatches_via_compiler_or_is_absent() {
     // `execute_command` is the legacy AST-based entry point. If it
     // still exists in src/exec.rs, the body MUST compile via
-    // `ZshParser` + `ZshCompiler` and run the chunk on a fusevm VM —
+    // parse_init+parse + ZshCompiler and run the chunk on a fusevm VM —
     // never match-dispatch to a tree walker.
     let src = read_exec_rs();
     let Some(entry) = src.find("pub fn execute_command(&mut self, cmd: &ShellCommand)") else {
@@ -81,7 +81,7 @@ fn execute_command_dispatches_via_compiler_or_is_absent() {
     let window = &src[entry..entry + 1800];
     assert!(
         (window.contains("parse_init(") || window.contains("ZshParser::new")) && window.contains("ZshCompiler::new()"),
-        "execute_command must compile via ZshParser+ZshCompiler:\n{}",
+        "execute_command must compile via parse_init+parse+ZshCompiler:\n{}",
         window
     );
     assert!(
@@ -98,7 +98,7 @@ fn execute_command_dispatches_via_compiler_or_is_absent() {
 #[test]
 fn execute_command_substitution_uses_pipe_capture_or_is_absent() {
     // If `execute_command_capture` exists, it MUST compile via
-    // `ZshParser` + `ZshCompiler` and capture stdout via `os_pipe`,
+    // parse_init+parse + ZshCompiler and capture stdout via `os_pipe`,
     // with no hand-rolled `echo`/`printf`/`pwd` shortcut. If the
     // function is gone entirely, the invariant is trivially satisfied.
     let src = read_exec_rs();
@@ -108,7 +108,7 @@ fn execute_command_substitution_uses_pipe_capture_or_is_absent() {
     let window = &src[entry..entry + 2200];
     assert!(
         (window.contains("parse_init(") || window.contains("ZshParser::new")) && window.contains("ZshCompiler::new()"),
-        "capture must compile via ZshParser+ZshCompiler"
+        "capture must compile via parse_init+parse+ZshCompiler"
     );
     assert!(
         window.contains("os_pipe::pipe()"),
