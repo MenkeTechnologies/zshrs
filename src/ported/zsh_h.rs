@@ -690,16 +690,50 @@ pub struct execcmd_params {
 /// Port of `struct module` from `Src/zsh.h:1503-1513`. C uses a union
 /// for handle/linked/alias dispatched implicitly by load type; Rust
 /// port keeps three Options.
+///
+/// `autoloads`/`deps` are `LinkList<String>` because C's untyped
+/// `LinkList` carries `char *` payload for these fields (see
+/// `Src/module.c:2392` `zaddlinknode(m->deps, dep)` etc.).
 #[allow(non_camel_case_types)]
+#[derive(Debug)]
 pub struct module {
     // c:1503
     pub node: hashnode,              // c:1504
     pub handle: Option<usize>,       // c:1506 union.handle (void *)
     pub linked: Option<Linkedmod>,   // c:1507 union.linked
     pub alias: Option<String>,       // c:1508 union.alias
-    pub autoloads: Option<LinkList>, // c:1510
-    pub deps: Option<LinkList>,      // c:1511
+    pub autoloads: Option<crate::ported::linklist::LinkList<String>>, // c:1510
+    pub deps: Option<crate::ported::linklist::LinkList<String>>,      // c:1511
     pub wrapper: i32,                // c:1512
+}
+
+impl module {
+    /// Construct a fresh statically-linked module entry. Mirrors C's
+    /// `zshcalloc(sizeof(*m))` + `m->node.nam = ztrdup(name)` pattern
+    /// at `Src/module.c:361` (`register_module`).
+    pub fn new(name: &str) -> Self {
+        Self {
+            node: hashnode {
+                next: None,
+                nam: name.to_string(),
+                flags: MOD_LINKED,
+            },
+            handle: None,
+            linked: None,
+            alias: None,
+            autoloads: None,
+            deps: None,
+            wrapper: 0,
+        }
+    }
+
+    /// True if the module is currently usable.
+    /// Mirrors C's `MOD_BUSY`/`MOD_UNLOAD` checks at `Src/module.c:1703`
+    /// (`module_loaded`): the module exists and `MOD_UNLOAD` is clear.
+    pub fn is_loaded(&self) -> bool {
+        (self.node.flags & MOD_LINKED) != 0
+            && (self.node.flags & MOD_UNLOAD) == 0
+    }
 }
 
 /// Port of module fn-pointer typedefs from `Src/zsh.h:1534-1537`.
@@ -710,6 +744,7 @@ pub type Module_enables_func = fn(m: &module, enables: &mut Vec<i32>) -> i32;
 
 /// Port of `struct linkedmod` from `Src/zsh.h:1539-1547`.
 #[allow(non_camel_case_types)]
+#[derive(Debug)]
 pub struct linkedmod {
     // c:1539
     pub name: String,                           // c:1540
