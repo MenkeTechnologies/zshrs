@@ -2560,30 +2560,49 @@ impl ShellExecutor {
         }
     }
     pub(crate) fn builtin_local(&mut self, args: &[String]) -> i32 {
+        self.dispatch_typeset_as("local", args)
+    }
+    pub(crate) fn builtin_export(&mut self, args: &[String]) -> i32 {
+        self.dispatch_typeset_as("export", args)
+    }
+    pub(crate) fn builtin_readonly(&mut self, args: &[String]) -> i32 {
+        self.dispatch_typeset_as("readonly", args)
+    }
+    pub(crate) fn builtin_declare(&mut self, args: &[String]) -> i32 {
+        self.dispatch_typeset_as("declare", args)
+    }
+    pub(crate) fn builtin_typeset_named(&mut self, name: &str, args: &[String]) -> i32 {
+        self.dispatch_typeset_as(name, args)
+    }
+    pub(crate) fn builtin_integer(&mut self, args: &[String]) -> i32 {
+        self.dispatch_typeset_as("integer", args)
+    }
+    pub(crate) fn builtin_float(&mut self, args: &[String]) -> i32 {
+        self.dispatch_typeset_as("float", args)
+    }
+    /// Route `local`/`export`/`readonly`/`declare`/`integer`/`float`
+    /// through canonical `bin_typeset` via `execbuiltin` so the
+    /// BUILTIN("…") entry's optstr is parsed and the `nm0` char in
+    /// `bin_typeset` picks up the PM_LOCAL implicit-scope path
+    /// (`l` → local, `r`+func → PM_READONLY etc.). The old stub
+    /// only `env::set_var`-d which gave no local scoping or
+    /// type-flag effect.
+    fn dispatch_typeset_as(&mut self, name: &str, args: &[String]) -> i32 {
+        let bn_idx = crate::ported::builtin::BUILTINS.iter()
+            .position(|b| b.node.nam == name);
+        if let Some(idx) = bn_idx {
+            let bn_static: &'static crate::ported::zsh_h::builtin =
+                &crate::ported::builtin::BUILTINS[idx];
+            let bn_ptr = bn_static as *const _ as *mut _;
+            return crate::ported::builtin::execbuiltin(args.to_vec(), Vec::new(), bn_ptr);
+        }
+        // Fallback: best-effort env mirror.
         for a in args {
             if let Some(eq) = a.find('=') {
                 std::env::set_var(&a[..eq], &a[eq+1..]);
             }
         }
         0
-    }
-    pub(crate) fn builtin_export(&mut self, args: &[String]) -> i32 {
-        self.builtin_local(args)
-    }
-    pub(crate) fn builtin_readonly(&mut self, args: &[String]) -> i32 {
-        self.builtin_local(args)
-    }
-    pub(crate) fn builtin_declare(&mut self, args: &[String]) -> i32 {
-        self.builtin_local(args)
-    }
-    pub(crate) fn builtin_typeset_named(&mut self, _name: &str, args: &[String]) -> i32 {
-        self.builtin_local(args)
-    }
-    pub(crate) fn builtin_integer(&mut self, args: &[String]) -> i32 {
-        self.builtin_local(args)
-    }
-    pub(crate) fn builtin_float(&mut self, args: &[String]) -> i32 {
-        self.builtin_local(args)
     }
     // Stubs deleted — these were leftover from the old `Src/exec.c`
     // tree-walking interpreter port that the fusevm bytecode VM
