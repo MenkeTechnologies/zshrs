@@ -50,6 +50,11 @@ thread_local! {
     static ECNFUNC: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     static ECSTRS_INDEX: std::cell::RefCell<std::collections::HashMap<(i32, String), u32>>
         = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Reverse index for `ecgetstr`: offs → owned string. Populated
+    /// at ecstrcode time so the consumer can recover the string from
+    /// the wordcode offs without walking the encode-time HashMap.
+    pub static ECSTRS_REVERSE: std::cell::RefCell<std::collections::HashMap<u32, String>>
+        = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 // Direct port of `Src/parse.c:287-289` grow-policy constants.
@@ -570,6 +575,7 @@ pub fn init_parse() {
     ECSSUB.set(0);
     ECNFUNC.set(0);
     ECSTRS_INDEX.with_borrow_mut(|m| m.clear());
+    ECSTRS_REVERSE.with_borrow_mut(|m| m.clear());
 
     PARSER_RECURSION_DEPTH.set(0);
     PARSER_GLOBAL_ITERATIONS.set(0);
@@ -897,9 +903,50 @@ pub fn ecstrcode(s: &str) -> u32 {
         ECSTRS_INDEX.with_borrow_mut(|m| {
             m.insert(key, offs);
         });
+        ECSTRS_REVERSE.with_borrow_mut(|m| {
+            m.insert(offs, s.to_string());
+        });
         ECSOFFS.set(ECSOFFS.get() + l as i32);
         offs
     }
+}
+
+/// P9b decoder (wordcode-pipeline variant): direct port of
+    /// `ecgetstr(Estate s, int dup, int *tokflag)` from
+    /// `Src/parse.c:2855-2890`. Reads a wordcode at `pc`, decodes the
+    /// encoded string back to owned String. Returns (string,
+    /// pc_after_consumed). Distinct from the existing `ecgetstr` (which
+    /// takes a separate strs buffer for text.rs) — this variant uses
+    /// the live ECSTRS_REVERSE HashMap populated at ecstrcode time.
+    pub fn ecgetstr_wordcode(buf: &[u32], pc: usize) -> (String, usize) {
+        if pc >= buf.len() {
+            return (String::new(), pc);
+        }
+        let c = buf[pc];
+        let next = pc + 1;
+        // parse.c:2862-2863 — empty-string sentinels.
+        if c == 6 || c == 7 {
+            return (String::new(), next);
+        }
+        // parse.c:2864-2871 — inline-packed short string.
+        if (c & 2) != 0 {
+            let b0 = ((c >> 3) & 0xff) as u8;
+            let b1 = ((c >> 11) & 0xff) as u8;
+            let b2 = ((c >> 19) & 0xff) as u8;
+            let mut bytes: Vec<u8> = Vec::new();
+            for b in [b0, b1, b2] {
+                if b == 0 {
+                    break;
+                }
+                bytes.push(b);
+            }
+            return (String::from_utf8_lossy(&bytes).into_owned(), next);
+        }
+        // parse.c:2872-2873 — long string via offs lookup.
+    let s = ECSTRS_REVERSE
+        .with_borrow(|m| m.get(&c).cloned())
+        .unwrap_or_default();
+    (s, next)
 }
 
 /// Direct port of `ecispace` at `Src/parse.c:371-388`. Insert `n`

@@ -1530,26 +1530,62 @@ impl ShellExecutor {
         (0, pc + 1 + skip)
     }
 
-    /// P9d stub: direct port of `execsimple` from
-    /// `Src/exec.c:3702-4100`. Walks WC_SIMPLE header + word slots,
-    /// decodes the interned strings via `ecgetstr`, and invokes the
-    /// command. Real implementation handles assignments, redirections,
-    /// builtin/function dispatch, fork/exec; this stub just decodes
-    /// the WC_SIMPLE word count + returns the count as a status proxy
-    /// (so the wordcode walk completes without invoking commands).
+    /// P9d: direct port of `execsimple` from `Src/exec.c:3702-4100`.
+    /// Walks WC_SIMPLE header + word slots, decodes the interned
+    /// strings via `ecgetstr`, builds argv, invokes the command.
+    /// Real implementation handles assignments + redirections inline
+    /// from the same wordcode; this minimal version pulls just words.
     pub fn exec_simple_wordcode(&mut self, buf: &[u32], mut pc: usize) -> (i32, usize) {
+        use crate::ported::parse::ecgetstr_wordcode as ecgetstr;
         use crate::ported::zsh_h::{wc_code, wc_data, WC_SIMPLE};
         let mut last_status: i32 = 0;
         if pc < buf.len() && wc_code(buf[pc]) == WC_SIMPLE {
             let header = buf[pc];
             let nwords = wc_data(header) as usize;
             pc += 1;
-            // Skip the nwords interned-string slots — real exec would
-            // call ecgetstr() for each and invoke the resolved command.
-            pc += nwords;
-            last_status = 0;
+            // Decode the interned strings into an argv vector.
+            let mut argv: Vec<String> = Vec::with_capacity(nwords);
+            for _ in 0..nwords {
+                let (word, next) = ecgetstr(buf, pc);
+                argv.push(word);
+                pc = next;
+            }
+            // Invoke via the existing command-execution path. argv[0]
+            // is the command name; remainder are arguments. Real exec
+            // (Src/exec.c:3850 execcmd_analyze) would resolve builtin /
+            // function / external + fork/exec; we delegate to the
+            // existing AST-based simple-cmd executor's argv hook.
+            if !argv.is_empty() {
+                last_status = self.invoke_argv_wordcode(&argv);
+            }
         }
         (last_status, pc)
+    }
+
+    /// Minimal command invoker for wordcode-driven simple commands.
+    /// Bridges the wordcode-side argv into the existing AST-side
+    /// simple-cmd dispatch by constructing a single-Simple ZshProgram
+    /// and running it through `execute_script_zsh_pipeline`. Real exec
+    /// (P9d full) bypasses the AST and dispatches builtin/function/
+    /// external directly from the wordcode — but the AST path
+    /// already does this correctly today, so until the full
+    /// builtin/function/external dispatch is ported into the wordcode
+    /// consumer, this bridge keeps actual execution working.
+    fn invoke_argv_wordcode(&mut self, argv: &[String]) -> i32 {
+        let script = argv
+            .iter()
+            .map(|s| {
+                // Minimal shell-escape: wrap in single quotes if
+                // the arg contains whitespace or special chars.
+                if s.chars().any(|c| c.is_whitespace() || "\"'`$\\|;&<>(){}[]*?~".contains(c)) {
+                    format!("'{}'", s.replace('\'', "'\\''"))
+                } else {
+                    s.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.execute_script_zsh_pipeline(&script).unwrap_or(1)
     }
 
     /// Execute via the ZshLexer + ZshParser + ZshCompiler pipeline.
