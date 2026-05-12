@@ -1353,6 +1353,39 @@ impl ShellExecutor {
         Ok(self.last_status())
     }
 
+    /// P9d: wordcode-consumer entry. Direct port of zsh's `execlist`
+    /// from `Src/exec.c:1551-1671` — walks the wordcode buffer that
+    /// P9c's `par_event_wordcode` emitted into `ECBUF`, dispatching on
+    /// `WC_KIND` (wc_code) for each entry.
+    ///
+    /// Minimal implementation: walks ECBUF, dispatches WC_END to a
+    /// no-op return-0 path. The full WC_LIST/WC_SUBLIST/WC_PIPE/WC_CMD/
+    /// WC_REDIR/WC_SIMPLE/... dispatch tree (Src/exec.c ~30k lines
+    /// total) is the multi-week rewrite called out in PORT_PLAN.md.
+    /// This stub establishes the entry point and proves the consumer
+    /// can walk a buffer P9c emitted into.
+    pub fn exec_wordcode(&mut self) -> i32 {
+        use crate::ported::parse::ECBUF;
+        use crate::ported::zsh_h::{wc_code, WC_END};
+        let buf = ECBUF.with_borrow(|b| b.clone());
+        let mut pc = 0usize;
+        let mut last_status: i32 = 0;
+        while pc < buf.len() {
+            let code = wc_code(buf[pc]);
+            // parse.c:712 — `WCB_END()` terminates every parse_event.
+            // exec.c:1551-1671 `execlist` walks until WC_END.
+            if code == WC_END {
+                break;
+            }
+            // Full WC_KIND dispatch tree lives in Src/exec.c; this stub
+            // just advances past unrecognized opcodes so the loop
+            // terminates instead of hanging.
+            pc += 1;
+        }
+        self.set_last_status(last_status);
+        last_status
+    }
+
     /// Execute via the ZshLexer + ZshParser + ZshCompiler pipeline.
     /// This is the only execution path; `execute_script` delegates here.
     pub fn execute_script_zsh_pipeline(&mut self, script: &str) -> Result<i32, String> {
