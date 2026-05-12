@@ -251,76 +251,76 @@ thread_local! {
     /// Input source (owned). C uses input-stack `struct inputstack` +
     /// `hgetc()` (lex.c:input.c); zshrs P7 collapses to an owned String
     /// until the inputstack subsystem is ported.
-    static LEX_INPUT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
-    static LEX_POS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static LEX_UNGET_BUF: std::cell::RefCell<std::collections::VecDeque<char>>
+    pub static LEX_INPUT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    pub static LEX_POS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub static LEX_UNGET_BUF: std::cell::RefCell<std::collections::VecDeque<char>>
         = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
     /// `char *tokstr` (lex.c:170).
-    static LEX_TOKSTR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    pub static LEX_TOKSTR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     /// `enum lextok tok` (lex.c:180).
-    static LEX_TOK: std::cell::Cell<lextok> = const { std::cell::Cell::new(ENDINPUT) };
+    pub static LEX_TOK: std::cell::Cell<lextok> = const { std::cell::Cell::new(ENDINPUT) };
     /// `int tokfd` (lex.c:191).
-    static LEX_TOKFD: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
+    pub static LEX_TOKFD: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
     /// `zlong toklineno` (lex.c:198).
-    static LEX_TOKLINENO: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
-    static LEX_LINENO: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+    pub static LEX_TOKLINENO: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+    pub static LEX_LINENO: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
     /// `int lexstop` (lex.c:175).
-    static LEX_LEXSTOP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub static LEX_LEXSTOP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// `int incmdpos` (lex.c:122 + extern in zsh.h).
-    static LEX_INCMDPOS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    pub static LEX_INCMDPOS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// `int incond` (lex.c:127).
-    static LEX_INCOND: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    pub static LEX_INCOND: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// In pattern context (RHS of == != =~ in [[ ]]) — zshrs extension
     /// over the bare incond state.
-    static LEX_INCONDPAT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub static LEX_INCONDPAT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// `int incasepat` (lex.c:130).
-    static LEX_INCASEPAT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    pub static LEX_INCASEPAT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// `int inredir` (lex.c:126).
-    static LEX_INREDIR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub static LEX_INREDIR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Saved incmdpos from before a redirop/for/foreach/select. Mirrors
     /// `static int oldpos` in ctxtlex (lex.c:319).
-    static LEX_OLDPOS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    pub static LEX_OLDPOS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// `int infor` (lex.c:128).
-    static LEX_INFOR: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    pub static LEX_INFOR: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// `int inrepeat_` (lex.c:129).
-    static LEX_INREPEAT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    pub static LEX_INREPEAT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// `int intypeset` (lex.c:131).
-    static LEX_INTYPESET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub static LEX_INTYPESET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// `int dbparens` (lex.c:141).
-    static LEX_DBPARENS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub static LEX_DBPARENS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// `int noaliases` (lex.c:135).
-    static LEX_NOALIASES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub static LEX_NOALIASES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// `int nocorrect` (lex.c:144).
-    static LEX_NOCORRECT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    pub static LEX_NOCORRECT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// `int nocomments` (lex.c:148).
-    static LEX_NOCOMMENTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub static LEX_NOCOMMENTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// `int lexflags` (lex.c:118).
-    static LEX_LEXFLAGS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    pub static LEX_LEXFLAGS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// `int isfirstln` (lex.c:114).
-    static LEX_ISFIRSTLN: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    pub static LEX_ISFIRSTLN: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// `int isfirstch` (lex.c:116).
-    static LEX_ISFIRSTCH: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    pub static LEX_ISFIRSTCH: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// Pending heredocs — Rust-only working set until P9c reinstates
     /// the C `struct heredocs` linked-list shape (zsh.h:1152).
-    static LEX_HEREDOCS: std::cell::RefCell<Vec<HereDoc>> = const { std::cell::RefCell::new(Vec::new()) };
+    pub static LEX_HEREDOCS: std::cell::RefCell<Vec<HereDoc>> = const { std::cell::RefCell::new(Vec::new()) };
     /// Heredoc-terminator-expected flag (0/1/2 for none / `<<` / `<<-`).
-    static LEX_HEREDOC_PENDING: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    pub static LEX_HEREDOC_PENDING: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
     /// `struct lexbufstate lexbuf` (lex.c:210).
-    static LEX_LEXBUF: std::cell::RefCell<lexbufstate> = const { std::cell::RefCell::new(
+    pub static LEX_LEXBUF: std::cell::RefCell<lexbufstate> = const { std::cell::RefCell::new(
         lexbufstate { ptr: None, siz: 0, len: 0 }
     )};
     /// `int isnewlin` (lex.c:119).
-    static LEX_ISNEWLIN: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    pub static LEX_ISNEWLIN: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// Last-error message — zshrs working state, not in C.
-    static LEX_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    pub static LEX_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     /// Safety counter for runaway iterations.
-    static LEX_GLOBAL_ITERATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub static LEX_GLOBAL_ITERATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Safety counter for runaway recursion.
-    static LEX_RECURSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub static LEX_RECURSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// `int lex_add_raw` (lex.c:161).
-    static LEX_LEX_ADD_RAW: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    pub static LEX_LEX_ADD_RAW: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// `struct lexbufstate lexbuf_raw` (lex.c:166).
-    static LEX_LEXBUF_RAW: std::cell::RefCell<lexbufstate> = const { std::cell::RefCell::new(
+    pub static LEX_LEXBUF_RAW: std::cell::RefCell<lexbufstate> = const { std::cell::RefCell::new(
         lexbufstate { ptr: None, siz: 0, len: 0 }
     )};
 }
@@ -350,43 +350,27 @@ pub struct ZshLexer<'a> {
     pub toklineno: u64,
     /// Current line number
     pub lineno: u64,
-    /// Lexer has stopped (EOF or error)
-    pub lexstop: bool,
+    // P7-batch-3: lexstop → LEX_LEXSTOP, incondpat → LEX_INCONDPAT,
+    // oldpos → LEX_OLDPOS, dbparens → LEX_DBPARENS, noaliases → LEX_NOALIASES,
+    // nocorrect → LEX_NOCORRECT, nocomments → LEX_NOCOMMENTS,
+    // lexflags → LEX_LEXFLAGS, isfirstln → LEX_ISFIRSTLN,
+    // lex_add_raw → LEX_LEX_ADD_RAW. All bool/i32 fields with zero
+    // cross-file users — internal `self.X` accesses rewired to
+    // LEX_X.get()/set() in this commit.
     /// In command position (can accept reserved words)
     pub incmdpos: bool,
     /// In condition [[ ... ]]
     pub incond: i32,
-    /// In pattern context (RHS of == != =~ in [[ ]])
-    pub incondpat: bool,
     /// In case pattern
     pub incasepat: i32,
     /// In redirection
     pub inredir: bool,
-    /// Saved `incmdpos` from before a redirop / for / foreach / select
-    /// — restored on the NEXT non-redir token. Mirrors `static int oldpos`
-    /// in C zsh's `ctxtlex` (lex.c:319). Required for cases like
-    /// `for x ( ... )` where `(` after the var name should tokenize as
-    /// INPAR — that depends on incmdpos being restored to 1 from before
-    /// FOR was lexed, which in turn depends on this saved value.
-    pub oldpos: bool,
     /// After 'for' keyword
     pub infor: i32,
     /// After 'repeat' keyword
     pub inrepeat: i32,
     /// Parsing typeset arguments
     pub intypeset: bool,
-    /// Inside (( ... )) arithmetic
-    pub dbparens: bool,
-    /// Disable alias expansion
-    pub noaliases: bool,
-    /// Disable spelling correction
-    pub nocorrect: i32,
-    /// Disable comment recognition
-    pub nocomments: bool,
-    /// Lexer flags
-    pub lexflags: i32,
-    /// Whether this is the first line
-    pub isfirstln: bool,
     // `isfirstch` field DELETED — never read for any logic (was
     // `#[allow(dead_code)]`); the save/restore round-trip through
     // lex_stack stores a constant zero now.
@@ -401,15 +385,7 @@ pub struct ZshLexer<'a> {
     /// Error message if any
     pub error: Option<String>,
     // `global_iterations` + `recursion_depth` migrated to
-    // LEX_GLOBAL_ITERATIONS + LEX_RECURSION_DEPTH thread_locals. These
-    // are Rust-only safety nets (not in C), but they belong at file
-    // scope per the bucket-1 dissolution pattern in PORT_PLAN.md.
-    /// Raw-input capture flag — when nonzero, every char read through
-    /// `hgetc` is also appended to `tokstr_raw` via zshlex_raw_add.
-    /// Direct mirror of zsh/Src/lex.c:161 `lex_add_raw`. Used by
-    /// skipcomm (lex.c:2082) to preserve the literal text of `$(...)`
-    /// command substitutions for re-execution / display.
-    pub lex_add_raw: i32,
+    // LEX_GLOBAL_ITERATIONS + LEX_RECURSION_DEPTH thread_locals.
     // `lexbuf_raw: lexbufstate` migrated to LEX_LEXBUF_RAW thread_local
     // (direct port of C's `static struct lexbufstate lexbuf_raw` at
     // lex.c:166).
@@ -430,6 +406,17 @@ impl<'a> ZshLexer<'a> {
         LEX_RECURSION_DEPTH.set(0);
         LEX_LEXBUF.with_borrow_mut(|b| *b = lexbufstate::new());
         LEX_LEXBUF_RAW.with_borrow_mut(|b| *b = lexbufstate::new());
+        // P7-batch-3 fields: reset to their C-source initial values.
+        LEX_LEXSTOP.set(false);
+        LEX_INCONDPAT.set(false);
+        LEX_OLDPOS.set(true);
+        LEX_DBPARENS.set(false);
+        LEX_NOALIASES.set(false);
+        LEX_NOCORRECT.set(0);
+        LEX_NOCOMMENTS.set(false);
+        LEX_LEXFLAGS.set(0);
+        LEX_ISFIRSTLN.set(true);
+        LEX_LEX_ADD_RAW.set(0);
         ZshLexer {
             input,
             pos: 0,
@@ -438,26 +425,16 @@ impl<'a> ZshLexer<'a> {
             tokfd: -1,
             toklineno: 1,
             lineno: 1,
-            lexstop: false,
             incmdpos: true,
             incond: 0,
-            incondpat: false,
             incasepat: 0,
             inredir: false,
-            oldpos: true,
             infor: 0,
             inrepeat: 0,
             intypeset: false,
-            dbparens: false,
-            noaliases: false,
-            nocorrect: 0,
-            nocomments: false,
-            lexflags: 0,
-            isfirstln: true,
             heredocs: Vec::new(),
             isnewlin: 0,
             error: None,
-            lex_add_raw: 0,
         }
     }
 
@@ -467,7 +444,7 @@ impl<'a> ZshLexer<'a> {
     /// `<(...)`, `>(...)`) can be replayed verbatim without re-lexing.
     pub fn zshlex_raw_add(&mut self, c: char) {
         // lex.c:2027-2028 — guard on lex_add_raw flag.
-        if self.lex_add_raw == 0 {
+        if LEX_LEX_ADD_RAW.get() == 0 {
             return;
         }
         // lex.c:2030-2038 — append to lexbuf_raw. The C source manages
@@ -532,8 +509,8 @@ impl<'a> ZshLexer<'a> {
         };
 
         // lex.c:1982-1991 — ZLE word-tracking for completion.
-        if self.lexflags & LEXFLAGS_ZLE != 0 {
-            let zp = self.lexflags;
+        if LEX_LEXFLAGS.get() & LEXFLAGS_ZLE != 0 {
+            let zp = LEX_LEXFLAGS.get();
             self.gotword();
             // lex.c:1986-1990 — if gotword cleared lexflags, the cursor
             // word has been reached; abort exalias so completion can
@@ -541,7 +518,7 @@ impl<'a> ZshLexer<'a> {
             // lex.c:1986 — `(zp & LEXFLAGS_ZLE) && !lexflags` — gotword
             // fully cleared lexflags (not just ZLE) when the cursor word
             // was reached.
-            if (zp & LEXFLAGS_ZLE) != 0 && self.lexflags == 0 {
+            if (zp & LEXFLAGS_ZLE) != 0 && LEX_LEXFLAGS.get() == 0 {
                 return false;
             }
         }
@@ -610,7 +587,7 @@ impl<'a> ZshLexer<'a> {
         // lex.c:1909-1911 — guard: alias expansion is disabled, or
         // POSIX aliases require the token to be a STRING_TOK and not a
         // reserved word.
-        if self.noaliases {
+        if LEX_NOALIASES.get() {
             return false;
         }
 
@@ -631,7 +608,7 @@ impl<'a> ZshLexer<'a> {
                 // lex.c:1918-1927 — if the next char isn't blank,
                 // insert a space so the alias body can't accidentally
                 // join the following word.
-                if !self.lexstop {
+                if !LEX_LEXSTOP.get() {
                     if let Some(c) = self.peek() {
                         if !Self::is_blank(c) {
                             self.inject_alias_text(" ");
@@ -648,7 +625,7 @@ impl<'a> ZshLexer<'a> {
                     a.inuse = 1;
                 }
                 drop(guard);
-                self.lexstop = false;
+                LEX_LEXSTOP.set(false);
                 return true;
             }
         }
@@ -684,7 +661,7 @@ impl<'a> ZshLexer<'a> {
                                 a.inuse = 1;
                             }
                             drop(guard);
-                            self.lexstop = false;
+                            LEX_LEXSTOP.set(false);
                             return true;
                         }
                     }
@@ -716,7 +693,7 @@ impl<'a> ZshLexer<'a> {
     /// buffer must mirror the live input so this undoes the last add.
     pub fn zshlex_raw_back(&mut self) {
         // lex.c:2045-2046 — guard.
-        if self.lex_add_raw == 0 {
+        if LEX_LEX_ADD_RAW.get() == 0 {
             return;
         }
         // lex.c:2047-2048 — `lexbuf_raw.ptr--; lexbuf_raw.len--;`
@@ -728,7 +705,7 @@ impl<'a> ZshLexer<'a> {
     /// `len + offset` so callers can restore via `back_to_mark`.
     pub fn zshlex_raw_mark(&self, offset: i64) -> i64 {
         // lex.c:2055-2056 — guard.
-        if self.lex_add_raw == 0 {
+        if LEX_LEX_ADD_RAW.get() == 0 {
             return 0;
         }
         // lex.c:2057 — `return lexbuf_raw.len + offset;`
@@ -742,7 +719,7 @@ impl<'a> ZshLexer<'a> {
     /// and the lexer rolls back).
     pub fn zshlex_raw_back_to_mark(&mut self, mark: i64) {
         // lex.c:2064-2065 — guard.
-        if self.lex_add_raw == 0 {
+        if LEX_LEX_ADD_RAW.get() == 0 {
             return;
         }
         // lex.c:2066-2067 — `lexbuf_raw.ptr = tokstr_raw + mark;
@@ -776,12 +753,12 @@ impl<'a> ZshLexer<'a> {
         // mirrors the C fields with idiomatic Rust types (bool / u64);
         // canonical `lex_stack` (zsh_h.rs:1045, port of zsh.h:3082) is
         // i32 / i64 / lexbufstate — convert at the boundary.
-        ls.dbparens = self.dbparens as i32;
-        ls.isfirstln = self.isfirstln as i32;
+        ls.dbparens = LEX_DBPARENS.get() as i32;
+        ls.isfirstln = LEX_ISFIRSTLN.get() as i32;
         // isfirstch — field deleted (was unused). Stash 0; canonical
         // C tracks this for spell-correction which zshrs doesn't run.
         ls.isfirstch = 0;
-        ls.lexflags = self.lexflags;
+        ls.lexflags = LEX_LEXFLAGS.get();
         ls.tok = self.tok;
         ls.tokstr = self.tokstr.take();
         LEX_LEXBUF.with_borrow_mut(|b| {
@@ -789,7 +766,7 @@ impl<'a> ZshLexer<'a> {
             ls.lexbuf.siz = b.siz;
             ls.lexbuf.len = b.len;
         });
-        ls.lexstop = self.lexstop as i32;
+        ls.lexstop = LEX_LEXSTOP.get() as i32;
         ls.toklineno = self.toklineno as i64;
         // zshlextext / lex_add_raw / tokstr_raw / lexbuf_raw — these
         // are real `struct lex_stack` fields (zsh.h:3089-3093) but the
@@ -812,11 +789,11 @@ impl<'a> ZshLexer<'a> {
     /// `lex_context_save`. Called after the nested parse completes.
     pub fn lex_context_restore(&mut self, ls: &mut lex_stack) {
         // lex.c:249-261 — copy stack state back into live fields.
-        self.dbparens = ls.dbparens != 0;
-        self.isfirstln = ls.isfirstln != 0;
+        LEX_DBPARENS.set(ls.dbparens != 0);
+        LEX_ISFIRSTLN.set(ls.isfirstln != 0);
         // isfirstch — field deleted (was unused); discard ls.isfirstch.
         let _ = ls.isfirstch;
-        self.lexflags = ls.lexflags;
+        LEX_LEXFLAGS.set(ls.lexflags);
         self.tok = ls.tok;
         self.tokstr = ls.tokstr.take();
         LEX_LEXBUF.with_borrow_mut(|b| {
@@ -824,7 +801,7 @@ impl<'a> ZshLexer<'a> {
             b.siz = ls.lexbuf.siz;
             b.len = ls.lexbuf.len;
         });
-        self.lexstop = ls.lexstop != 0;
+        LEX_LEXSTOP.set(ls.lexstop != 0);
         self.toklineno = ls.toklineno as u64;
     }
 
@@ -836,9 +813,9 @@ impl<'a> ZshLexer<'a> {
     /// to recycle a `ZshLexer` across multiple input strings.
     pub fn lexinit(&mut self) {
         // lex.c:443 — `nocorrect = dbparens = lexstop = 0;`
-        self.nocorrect = 0;
-        self.dbparens = false;
-        self.lexstop = false;
+        LEX_NOCORRECT.set(0);
+        LEX_DBPARENS.set(false);
+        LEX_LEXSTOP.set(false);
         // lex.c:444 — `tok = ENDINPUT;`
         self.tok = ENDINPUT;
     }
@@ -848,7 +825,7 @@ impl<'a> ZshLexer<'a> {
     fn check_recursion(&mut self) -> bool {
         if LEX_RECURSION_DEPTH.get() > MAX_LEXER_RECURSION {
             self.error = Some("lexer exceeded max recursion depth".to_string());
-            self.lexstop = true;
+            LEX_LEXSTOP.set(true);
             true
         } else {
             false
@@ -875,7 +852,7 @@ impl<'a> ZshLexer<'a> {
                 "lexer exceeded {} hgetc iterations — possible infinite loop",
                 Self::LEXER_HGETC_CAP
             ));
-            self.lexstop = true;
+            LEX_LEXSTOP.set(true);
             self.tok = LEXERR;
             true
         } else {
@@ -919,7 +896,7 @@ impl<'a> ZshLexer<'a> {
         if c == '\n' && self.lineno > 1 {
             self.lineno -= 1;
         }
-        self.lexstop = false;
+        LEX_LEXSTOP.set(false);
     }
 
     /// Peek at next character without consuming
@@ -1049,7 +1026,7 @@ impl<'a> ZshLexer<'a> {
         // lex.c:277 — `nocorrect &= 1;` — clear bit 1 (lookahead-only)
         // so the persistent low bit survives but the per-word bit is
         // dropped.
-        self.nocorrect &= 1;
+        LEX_NOCORRECT.set(LEX_NOCORRECT.get() & 1);
 
         // lex.c:278-306 — drain pending here-documents at the start
         // of a new line. zshrs's process_heredocs reads the full body
@@ -1070,7 +1047,7 @@ impl<'a> ZshLexer<'a> {
         // lex.c:311-312 — fold SEMI / NEWLIN into SEPER unless
         // LEXFLAGS_NEWLINE is set to preserve newlines (used by
         // ZLE for completion of partial lines).
-        if self.tok == SEMI || (self.tok == NEWLIN && self.lexflags & LEXFLAGS_NEWLINE == 0) {
+        if self.tok == SEMI || (self.tok == NEWLIN && LEX_LEXFLAGS.get() & LEXFLAGS_NEWLINE == 0) {
             self.tok = SEPER;
         }
 
@@ -1154,8 +1131,8 @@ impl<'a> ZshLexer<'a> {
                     || s == "\u{8d}~"
                     || s == "\u{8d}\u{98}"
                 {
-                    self.incondpat = true;
-                } else if self.incondpat {
+                    LEX_INCONDPAT.set(true);
+                } else if LEX_INCONDPAT.get() {
                     // We were in pattern context, now we've consumed the pattern
                     // Reset after the pattern token is consumed
                     // But actually, pattern can span multiple tokens, so we should
@@ -1177,12 +1154,12 @@ impl<'a> ZshLexer<'a> {
                 | INPAR_TOK
                 | OUTPAR_TOK
                 | BANG_TOK => {
-                    self.incondpat = false;
+                    LEX_INCONDPAT.set(false);
                 }
                 _ => {}
             }
         } else {
-            self.incondpat = false;
+            LEX_INCONDPAT.set(false);
         }
 
         // Update command position for next token based on current token
@@ -1261,7 +1238,7 @@ impl<'a> ZshLexer<'a> {
 
         // Handle redirection / for-loop context. Mirrors lex.c:359-368
         // ctxtlex `oldpos` save/restore. The saved value lives in
-        // `self.oldpos` (struct field) so it survives across zshlex
+        // `LEX_OLDPOS.get()` (struct field) so it survives across zshlex
         // calls — the previous local `let oldpos = self.incmdpos`
         // captured the JUST-updated value (always wrong) and lost the
         // pre-FOR incmdpos. With the field, FOR x → STRING_TOK x → INPAR
@@ -1272,10 +1249,10 @@ impl<'a> ZshLexer<'a> {
             || self.tok == SELECT
         {
             self.inredir = true;
-            self.oldpos = self.incmdpos;
+            LEX_OLDPOS.set(self.incmdpos);
             self.incmdpos = false;
         } else if self.inredir {
-            self.incmdpos = self.oldpos;
+            self.incmdpos = LEX_OLDPOS.get();
             self.inredir = false;
         }
     }
@@ -1402,7 +1379,7 @@ impl<'a> ZshLexer<'a> {
                 None => {
                     // lex.c:624-625 — lexstop set, return ENDINPUT
                     // (or LEXERR if errflag is set elsewhere).
-                    self.lexstop = true;
+                    LEX_LEXSTOP.set(true);
                     return if self.error.is_some() {
                         LEXERR
                     } else {
@@ -1420,7 +1397,7 @@ impl<'a> ZshLexer<'a> {
         let c = match self.hgetc() {
             Some(c) => c,
             None => {
-                self.lexstop = true;
+                LEX_LEXSTOP.set(true);
                 return ENDINPUT;
             }
         };
@@ -1429,13 +1406,13 @@ impl<'a> ZshLexer<'a> {
         self.toklineno = self.lineno;
         // lex.c:626 — `isfirstln = 0;` once we've consumed any non-
         // blank.
-        self.isfirstln = false;
+        LEX_ISFIRSTLN.set(false);
 
         // lex.c:631-648 — dbparens (inside `(( … ))`) special path:
         // call dquote_parse with `;` or `)` as the end-char and
         // either return DINPAR (continue for-loop arith) or DOUTPAR
         // (close the arith block) or LEXERR.
-        if self.dbparens {
+        if LEX_DBPARENS.get() {
             return self.lex_arith(c);
         }
 
@@ -1471,7 +1448,7 @@ impl<'a> ZshLexer<'a> {
                 }
                 None => {}
             }
-            self.lexstop = false;
+            LEX_LEXSTOP.set(false);
         }
 
         // lex.c:670-936 — main dispatch on the leading char. zshrs
@@ -1493,7 +1470,7 @@ impl<'a> ZshLexer<'a> {
 
         self.tokstr = Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string()));
 
-        if !self.lexstop && self.infor > 0 {
+        if !LEX_LEXSTOP.get() && self.infor > 0 {
             self.infor -= 1;
             return DINPAR;
         }
@@ -1501,7 +1478,7 @@ impl<'a> ZshLexer<'a> {
         // Check for closing ))
         match self.hgetc() {
             Some(')') => {
-                self.dbparens = false;
+                LEX_DBPARENS.set(false);
                 DOUTPAR
             }
             c => {
@@ -1516,7 +1493,7 @@ impl<'a> ZshLexer<'a> {
     /// Handle initial character of token
     fn lex_initial(&mut self, c: char) -> lextok {
         // Handle comments
-        if c == '#' && !self.nocomments {
+        if c == '#' && !LEX_NOCOMMENTS.get() {
             return self.lex_comment();
         }
 
@@ -1530,7 +1507,7 @@ impl<'a> ZshLexer<'a> {
                 if let Some(d) = d {
                     self.hungetc(d);
                 }
-                self.lexstop = false;
+                LEX_LEXSTOP.set(false);
                 self.gettokstr(c, false)
             }
 
@@ -1546,7 +1523,7 @@ impl<'a> ZshLexer<'a> {
                         if let Some(d) = d {
                             self.hungetc(d);
                         }
-                        self.lexstop = false;
+                        LEX_LEXSTOP.set(false);
                         SEMI
                     }
                 }
@@ -1570,7 +1547,7 @@ impl<'a> ZshLexer<'a> {
                                         if let Some(f) = f {
                                             self.hungetc(f);
                                         }
-                                        self.lexstop = false;
+                                        LEX_LEXSTOP.set(false);
                                         DOUTANGAMP
                                     }
                                 }
@@ -1579,7 +1556,7 @@ impl<'a> ZshLexer<'a> {
                                 if let Some(e) = e {
                                     self.hungetc(e);
                                 }
-                                self.lexstop = false;
+                                LEX_LEXSTOP.set(false);
                                 AMPOUTANG
                             }
                         }
@@ -1588,7 +1565,7 @@ impl<'a> ZshLexer<'a> {
                         if let Some(d) = d {
                             self.hungetc(d);
                         }
-                        self.lexstop = false;
+                        LEX_LEXSTOP.set(false);
                         AMPER
                     }
                 }
@@ -1603,7 +1580,7 @@ impl<'a> ZshLexer<'a> {
                         if let Some(d) = d {
                             self.hungetc(d);
                         }
-                        self.lexstop = false;
+                        LEX_LEXSTOP.set(false);
                         BAR_TOK
                     }
                 }
@@ -1614,7 +1591,7 @@ impl<'a> ZshLexer<'a> {
                 match d {
                     Some('(') => {
                         if self.infor > 0 {
-                            self.dbparens = true;
+                            LEX_DBPARENS.set(true);
                             return DINPAR;
                         }
                         if self.incmdpos {
@@ -1633,7 +1610,7 @@ impl<'a> ZshLexer<'a> {
                             }
                         }
                         self.hungetc('(');
-                        self.lexstop = false;
+                        LEX_LEXSTOP.set(false);
                         self.gettokstr('(', false)
                     }
                     Some(')') => INOUTPAR,
@@ -1641,7 +1618,7 @@ impl<'a> ZshLexer<'a> {
                         if let Some(d) = d {
                             self.hungetc(d);
                         }
-                        self.lexstop = false;
+                        LEX_LEXSTOP.set(false);
                         // Per lex.c:822 LX1_INPAR — at word boundary `(`
                         // tokenizes as INPAR when SHGLOB || incond==1 ||
                         // incmdpos. Otherwise falls through to gettokstr
@@ -1753,7 +1730,7 @@ impl<'a> ZshLexer<'a> {
 
             '<' => {
                 // In pattern context, < is literal (e.g., <-> in glob)
-                if self.incondpat || self.incasepat > 0 {
+                if LEX_INCONDPAT.get() || self.incasepat > 0 {
                     self.gettokstr(c, false)
                 } else {
                     self.lex_inang()
@@ -1762,7 +1739,7 @@ impl<'a> ZshLexer<'a> {
 
             '>' => {
                 // In pattern context, > is literal
-                if self.incondpat || self.incasepat > 0 {
+                if LEX_INCONDPAT.get() || self.incasepat > 0 {
                     self.gettokstr(c, false)
                 } else {
                     self.lex_outang()
@@ -1775,7 +1752,7 @@ impl<'a> ZshLexer<'a> {
 
     /// Lex comment
     fn lex_comment(&mut self) -> lextok {
-        if self.lexflags & LEXFLAGS_COMMENTS_KEEP != 0 {
+        if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_KEEP != 0 {
             LEX_LEXBUF.with_borrow_mut(|b| b.clear());
             self.add('#');
         }
@@ -1785,22 +1762,22 @@ impl<'a> ZshLexer<'a> {
             match c {
                 Some('\n') | None => break,
                 Some(c) => {
-                    if self.lexflags & LEXFLAGS_COMMENTS_KEEP != 0 {
+                    if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_KEEP != 0 {
                         self.add(c);
                     }
                 }
             }
         }
 
-        if self.lexflags & LEXFLAGS_COMMENTS_KEEP != 0 {
+        if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_KEEP != 0 {
             self.tokstr = Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string()));
-            if !self.lexstop {
+            if !LEX_LEXSTOP.get() {
                 self.hungetc('\n');
             }
             return STRING_LEX;
         }
 
-        if self.lexflags & LEXFLAGS_COMMENTS_STRIP != 0 && self.lexstop {
+        if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_STRIP != 0 && LEX_LEXSTOP.get() {
             return ENDINPUT;
         }
 
@@ -1814,7 +1791,7 @@ impl<'a> ZshLexer<'a> {
             Some('(') => {
                 // Process substitution <(...)
                 self.hungetc('(');
-                self.lexstop = false;
+                LEX_LEXSTOP.set(false);
                 self.gettokstr('<', false)
             }
             Some('>') => INOUTANG,
@@ -1835,7 +1812,7 @@ impl<'a> ZshLexer<'a> {
                         if let Some(e) = e {
                             self.hungetc(e);
                         }
-                        self.lexstop = false;
+                        LEX_LEXSTOP.set(false);
                         LEX_HEREDOC_PENDING.set(1); // << expects terminator next
                         DINANG
                     }
@@ -1846,7 +1823,7 @@ impl<'a> ZshLexer<'a> {
                 if let Some(d) = d {
                     self.hungetc(d);
                 }
-                self.lexstop = false;
+                LEX_LEXSTOP.set(false);
                 INANG_TOK
             }
         }
@@ -1859,7 +1836,7 @@ impl<'a> ZshLexer<'a> {
             Some('(') => {
                 // Process substitution >(...)
                 self.hungetc('(');
-                self.lexstop = false;
+                LEX_LEXSTOP.set(false);
                 self.gettokstr('>', false)
             }
             Some('&') => {
@@ -1870,7 +1847,7 @@ impl<'a> ZshLexer<'a> {
                         if let Some(e) = e {
                             self.hungetc(e);
                         }
-                        self.lexstop = false;
+                        LEX_LEXSTOP.set(false);
                         OUTANGAMP
                     }
                 }
@@ -1887,7 +1864,7 @@ impl<'a> ZshLexer<'a> {
                                 if let Some(f) = f {
                                     self.hungetc(f);
                                 }
-                                self.lexstop = false;
+                                LEX_LEXSTOP.set(false);
                                 DOUTANGAMP
                             }
                         }
@@ -1902,7 +1879,7 @@ impl<'a> ZshLexer<'a> {
                         if let Some(e) = e {
                             self.hungetc(e);
                         }
-                        self.lexstop = false;
+                        LEX_LEXSTOP.set(false);
                         DOUTANG
                     }
                 }
@@ -1911,7 +1888,7 @@ impl<'a> ZshLexer<'a> {
                 if let Some(d) = d {
                     self.hungetc(d);
                 }
-                self.lexstop = false;
+                LEX_LEXSTOP.set(false);
                 OUTANG_TOK
             }
         }
@@ -2048,7 +2025,7 @@ impl<'a> ZshLexer<'a> {
                                                 self.add(n);
                                             }
                                             None => {
-                                                self.lexstop = true;
+                                                LEX_LEXSTOP.set(true);
                                                 unmatched = '\'';
                                                 peek = LEXERR;
                                                 break;
@@ -2057,7 +2034,7 @@ impl<'a> ZshLexer<'a> {
                                     }
                                     Some(ch) => self.add(ch),
                                     None => {
-                                        self.lexstop = true;
+                                        LEX_LEXSTOP.set(true);
                                         unmatched = '\'';
                                         peek = LEXERR;
                                         break;
@@ -2085,7 +2062,7 @@ impl<'a> ZshLexer<'a> {
                             if let Some(e) = e {
                                 self.hungetc(e);
                             }
-                            self.lexstop = false;
+                            LEX_LEXSTOP.set(false);
                             self.add(STRING_TOK);
                         }
                     }
@@ -2122,7 +2099,7 @@ impl<'a> ZshLexer<'a> {
                         if let Some(ch) = e {
                             self.hungetc(ch);
                         }
-                        self.lexstop = false;
+                        LEX_LEXSTOP.set(false);
                         if e == Some(')') {
                             // `name()` — terminate STRING_TOK at `(` so the
                             // following `()` re-lexes as INOUTPAR. The
@@ -2166,7 +2143,7 @@ impl<'a> ZshLexer<'a> {
 
                 '>' => {
                     // In pattern context (incondpat), > is literal
-                    if in_brace_param > 0 || sub || self.incondpat || self.incasepat > 0 {
+                    if in_brace_param > 0 || sub || LEX_INCONDPAT.get() || self.incasepat > 0 {
                         self.add(c);
                     } else {
                         let e = self.hgetc();
@@ -2174,7 +2151,7 @@ impl<'a> ZshLexer<'a> {
                             if let Some(e) = e {
                                 self.hungetc(e);
                             }
-                            self.lexstop = false;
+                            LEX_LEXSTOP.set(false);
                             break;
                         }
                         // >(...)
@@ -2189,7 +2166,7 @@ impl<'a> ZshLexer<'a> {
 
                 '<' => {
                     // In pattern context (incondpat), < is literal
-                    if in_brace_param > 0 || sub || self.incondpat || self.incasepat > 0 {
+                    if in_brace_param > 0 || sub || LEX_INCONDPAT.get() || self.incasepat > 0 {
                         self.add(c);
                     } else if let Some(range_chars) = self.try_numeric_range_glob() {
                         // zsh numeric range glob `<N-M>`, `<->`, `<N->`,
@@ -2206,7 +2183,7 @@ impl<'a> ZshLexer<'a> {
                             if let Some(e) = e {
                                 self.hungetc(e);
                             }
-                            self.lexstop = false;
+                            LEX_LEXSTOP.set(false);
                             break;
                         }
                         // <(...)
@@ -2235,7 +2212,7 @@ impl<'a> ZshLexer<'a> {
                                 if let Some(e) = e {
                                     self.hungetc(e);
                                 }
-                                self.lexstop = false;
+                                LEX_LEXSTOP.set(false);
                                 self.add(EQUALS);
                             }
                         } else if peek != ENVSTRING
@@ -2263,7 +2240,7 @@ impl<'a> ZshLexer<'a> {
                                 if let Some(next) = next {
                                     self.hungetc(next);
                                 }
-                                self.lexstop = false;
+                                LEX_LEXSTOP.set(false);
                                 peek = ENVSTRING;
                                 intpos = 2;
                                 self.add(EQUALS);
@@ -2305,7 +2282,7 @@ impl<'a> ZshLexer<'a> {
                             Some('\'') => break,
                             Some(ch) => self.add(ch),
                             None => {
-                                self.lexstop = true;
+                                LEX_LEXSTOP.set(true);
                                 unmatched = '\'';
                                 peek = LEXERR;
                                 break;
@@ -2323,7 +2300,7 @@ impl<'a> ZshLexer<'a> {
                     self.add(DNULL);
                     if self.dquote_parse('"', sub).is_err() {
                         unmatched = '"';
-                        if self.lexflags & LEXFLAGS_ACTIVE == 0 {
+                        if LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE == 0 {
                             peek = LEXERR;
                         }
                         break;
@@ -2355,7 +2332,7 @@ impl<'a> ZshLexer<'a> {
                             }
                             Some(ch) => self.add(ch),
                             None => {
-                                self.lexstop = true;
+                                LEX_LEXSTOP.set(true);
                                 unmatched = '`';
                                 peek = LEXERR;
                                 break;
@@ -2423,7 +2400,7 @@ impl<'a> ZshLexer<'a> {
             c = match self.hgetc() {
                 Some(c) => c,
                 None => {
-                    self.lexstop = true;
+                    LEX_LEXSTOP.set(true);
                     break;
                 }
             };
@@ -2434,11 +2411,11 @@ impl<'a> ZshLexer<'a> {
         }
 
         // Put back the character that ended the token
-        if !self.lexstop {
+        if !LEX_LEXSTOP.get() {
             self.hungetc(c);
         }
 
-        if unmatched != '\0' && self.lexflags & LEXFLAGS_ACTIVE == 0 {
+        if unmatched != '\0' && LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE == 0 {
             self.error = Some(format!("unmatched {}", unmatched));
         }
 
@@ -2561,7 +2538,7 @@ impl<'a> ZshLexer<'a> {
                 }
                 Some(c) => c,
                 None => {
-                    self.lexstop = true;
+                    LEX_LEXSTOP.set(true);
                     return Err(());
                 }
             };
@@ -2634,7 +2611,7 @@ impl<'a> ZshLexer<'a> {
                             if let Some(next) = next {
                                 self.hungetc(next);
                             }
-                            self.lexstop = false;
+                            LEX_LEXSTOP.set(false);
                             self.add(QSTRING);
                         }
                     }
@@ -2731,7 +2708,7 @@ impl<'a> ZshLexer<'a> {
                 }
             }
             self.hungetc('(');
-            self.lexstop = false;
+            LEX_LEXSTOP.set(false);
             return if self.skip_command_sub().is_err() {
                 CMD_OR_MATH_ERR
             } else {
@@ -2750,7 +2727,7 @@ impl<'a> ZshLexer<'a> {
         if let Some(c) = c {
             self.hungetc(c);
         }
-        self.lexstop = false;
+        LEX_LEXSTOP.set(false);
 
         // Back up token
         while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
@@ -2792,7 +2769,7 @@ impl<'a> ZshLexer<'a> {
                         self.hungetc(c2);
                     }
                     self.hungetc('\\');
-                    self.lexstop = false;
+                    LEX_LEXSTOP.set(false);
                     return if self.skip_command_sub().is_err() {
                         CMD_OR_MATH_ERR
                     } else {
@@ -2828,12 +2805,12 @@ impl<'a> ZshLexer<'a> {
                     }
                 }
                 self.hungetc('(');
-                self.lexstop = false;
+                LEX_LEXSTOP.set(false);
             } else {
                 if let Some(c) = c {
                     self.hungetc(c);
                 }
-                self.lexstop = false;
+                LEX_LEXSTOP.set(false);
             }
 
             return if self.skip_command_sub().is_err() {
@@ -2875,7 +2852,7 @@ impl<'a> ZshLexer<'a> {
             let c = match c {
                 Some(c) => c,
                 None => {
-                    self.lexstop = true;
+                    LEX_LEXSTOP.set(true);
                     return Err(());
                 }
             };
@@ -2911,7 +2888,7 @@ impl<'a> ZshLexer<'a> {
                             }
                             Some(ch) => self.add(ch),
                             None => {
-                                self.lexstop = true;
+                                LEX_LEXSTOP.set(true);
                                 return Err(());
                             }
                         }
@@ -2934,7 +2911,7 @@ impl<'a> ZshLexer<'a> {
                             }
                             Some(ch) => self.add(ch),
                             None => {
-                                self.lexstop = true;
+                                LEX_LEXSTOP.set(true);
                                 return Err(());
                             }
                         }
@@ -2957,7 +2934,7 @@ impl<'a> ZshLexer<'a> {
                             }
                             Some(ch) => self.add(ch),
                             None => {
-                                self.lexstop = true;
+                                LEX_LEXSTOP.set(true);
                                 return Err(());
                             }
                         }
@@ -3085,10 +3062,10 @@ impl<'a> ZshLexer<'a> {
             || self.tok == SELECT
         {
             self.inredir = true;
-            self.oldpos = self.incmdpos;
+            LEX_OLDPOS.set(self.incmdpos);
             self.incmdpos = false;
         } else if self.inredir {
-            self.incmdpos = self.oldpos;
+            self.incmdpos = LEX_OLDPOS.get();
             self.inredir = false;
         }
     }
@@ -3107,7 +3084,7 @@ impl<'a> ZshLexer<'a> {
     /// reproducible without that integration.
     pub fn gotword(&mut self) {
         // lex.c:1895 — `lexflags = 0;`
-        self.lexflags = 0;
+        LEX_LEXFLAGS.set(0);
     }
 
     /// Register a heredoc to be processed at next newline
