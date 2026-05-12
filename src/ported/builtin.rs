@@ -221,6 +221,34 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
     BUILTIN("which", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("ampsSwx:"), Some("c")),
     BUILTIN("zmodload", 0, None, 0, -1, 0, Some("AFRILP:abcfdilmpsue"), None),
     BUILTIN("zcompile", 0, None, 0, -1, 0, Some("tUMRcmzka"), None),
+    // Module builtins (zsh/zutil, zsh/cap, zsh/pcre, etc.) — these
+    // live in src/ported/modules/* and src/ported/zle/* but their
+    // canonical pub fn signatures match HandlerFunc, so they can be
+    // dispatched via execbuiltin alongside the main builtins.
+    BUILTIN("zstyle", 0, Some(crate::ported::modules::zutil::bin_zstyle as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("LeLdgabsTtmnH"), None),
+    BUILTIN("zformat", 0, Some(crate::ported::modules::zutil::bin_zformat as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("Faf"), None),
+    BUILTIN("zparseopts", 0, Some(crate::ported::modules::zutil::bin_zparseopts as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("D-EFK-M-a:"), None),
+    BUILTIN("zregexparse", 0, Some(crate::ported::modules::zutil::bin_zregexparse as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("c"), None),
+    BUILTIN("cap", 0, Some(crate::ported::modules::cap::bin_cap as crate::ported::zsh_h::HandlerFunc), 0, 1, 0, None, None),
+    BUILTIN("getcap", 0, Some(crate::ported::modules::cap::bin_getcap as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
+    BUILTIN("setcap", 0, Some(crate::ported::modules::cap::bin_setcap as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
+    BUILTIN("pcre_compile", 0, Some(crate::ported::modules::pcre::bin_pcre_compile as crate::ported::zsh_h::HandlerFunc), 1, 1, 0, Some("aimx"), None),
+    BUILTIN("pcre_study", 0, Some(crate::ported::modules::pcre::bin_pcre_study as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, None, None),
+    // bin_pcre_match returns (i32, Option<String>, Vec<...>) — non-standard
+    // signature, can't dispatch via execbuiltin. Wrapper stays in exec.rs.
+    BUILTIN("pcre_match", 0, None, 1, -1, 0, Some("ab:nv:"), None),
+    BUILTIN("ztcp", 0, Some(crate::ported::modules::tcp::bin_ztcp as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("acdflLtv"), None),
+    BUILTIN("ztie", 0, Some(crate::ported::modules::db_gdbm::bin_ztie as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("d:f:r"), None),
+    BUILTIN("zuntie", 0, Some(crate::ported::modules::db_gdbm::bin_zuntie as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("u"), None),
+    BUILTIN("zgdbmpath", 0, Some(crate::ported::modules::db_gdbm::bin_zgdbmpath as crate::ported::zsh_h::HandlerFunc), 1, 1, 0, None, None),
+    BUILTIN("echoti", 0, Some(crate::ported::modules::terminfo::bin_echoti as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
+    BUILTIN("fg", 0, Some(crate::ported::jobs::bin_fg as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_FG, None, None),
+    BUILTIN("kill", BINF_HANDLES_OPTS, Some(crate::ported::jobs::bin_kill as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, None, None),
+    BUILTIN("suspend", 0, Some(crate::ported::jobs::bin_suspend as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, Some("f"), None),
+    BUILTIN("bindkey", 0, Some(crate::ported::zle::zle_keymap::bin_bindkey as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("evaMldDANmrsLR"), None),
+    BUILTIN("vared", 0, Some(crate::ported::zle::zle_main::bin_vared as crate::ported::zsh_h::HandlerFunc), 1, 1, 0, Some("AaceghM:m:p:r:i:f:"), None),
+    BUILTIN("compadd", 0, Some(crate::ported::zle::complete::bin_compadd as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("J:V:1X:fnqQF:Wsi"), None),
+    BUILTIN("compset", 0, Some(crate::ported::zle::complete::bin_compset as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("npqPS:"), None),
 ]);
 // hash table containing builtin commands                                   // c:143
 /// Process-wide builtin lookup table. Filled lazily the first time
