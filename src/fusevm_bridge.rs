@@ -1956,9 +1956,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     ))
                 }
                 "nameddirs" => Some(Value::str(
-                    exec.named_dirs
-                        .get(idx)
-                        .map(|p| p.to_string_lossy().into_owned())
+                    crate::ported::hashnameddir::nameddirtab()
+                        .lock().ok()
+                        .and_then(|g| g.get(idx).map(|nd| nd.dir.clone()))
                         .unwrap_or_default(),
                 )),
                 //WARNING FAKE AND MUST BE DELETED
@@ -3767,14 +3767,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // shadowing (a `~zpwr=/Users/wizard/zpwr`
                     // override beats the bare `~=/Users/wizard`).
                     let render_d = |s: &str| -> String {
-                        with_executor(|exec| {
+                        with_executor(|_exec| {
                             let mut out = s.to_string();
                             // First the longer named dirs.
-                            let mut entries: Vec<(String, std::path::PathBuf)> = exec
-                                .named_dirs
-                                .iter()
-                                .map(|(k, v)| (k.clone(), v.clone()))
-                                .collect();
+                            let mut entries: Vec<(String, std::path::PathBuf)> =
+                                crate::ported::hashnameddir::nameddirtab()
+                                    .lock().ok()
+                                    .map(|g| g.iter()
+                                        .map(|(k, nd)| (k.clone(), std::path::PathBuf::from(&nd.dir)))
+                                        .collect())
+                                    .unwrap_or_default();
                             entries.sort_by_key(|(_, p)| std::cmp::Reverse(p.as_os_str().len()));
                             for (name, path) in &entries {
                                 let path_s = path.to_string_lossy();
