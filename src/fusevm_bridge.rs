@@ -415,7 +415,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Job control
     vm.register_builtin(BUILTIN_JOBS, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_jobs(&args));
+        let status = dispatch_builtin("jobs", args);
         Value::Status(status)
     });
 
@@ -427,7 +427,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_BG, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_bg(&args));
+        let status = dispatch_builtin("bg", args);
         Value::Status(status)
     });
 
@@ -439,13 +439,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_DISOWN, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_disown(&args));
+        let status = dispatch_builtin("disown", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_WAIT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_wait(&args));
+        let status = dispatch_builtin("wait", args);
         Value::Status(status)
     });
 
