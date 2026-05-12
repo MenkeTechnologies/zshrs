@@ -3870,21 +3870,35 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
                 };
                 crate::ported::params::setsparam(n, &folded);                // c:params.c:3350
                 std::env::set_var(n, &folded);                               // c:3024 addenv
-                if lower || upper {
-                    let n_owned = n.to_string();
-                    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
+                // Mirror to exec.variables (legacy store) so arith
+                // eval (`evaluate_arithmetic` seeds `extras` from
+                // `self.variables`) sees the typed assignment. Without
+                // this, `typeset -i n=10; echo $((n+5))` returned 5
+                // instead of 15 because $((n)) resolved to 0.
+                let is_int = (on & PM_INTEGER) != 0;
+                let is_float = (on & (PM_EFLOAT | PM_FFLOAT)) != 0;
+                let n_owned = n.to_string();
+                let folded_clone = folded.clone();
+                let _ = crate::fusevm_bridge::try_with_executor(|exec| {
+                    exec.variables.insert(n_owned.clone(), folded_clone);
+                    if lower || upper || is_int || is_float
+                        || (on & PM_READONLY) != 0
+                    {
                         let attr = exec.var_attrs
-                            .entry(n_owned.clone())
+                            .entry(n_owned)
                             .or_default();
                         attr.lowercase = lower;
                         attr.uppercase = upper;
-                        // Mirror to legacy variables map so `$s` reads
-                        // pick up the folded value too (the fusevm
-                        // get_variable path consults `exec.variables`
-                        // before paramtab).
-                        exec.variables.insert(n_owned, folded.clone());
-                    });
-                }
+                        if is_int {
+                            attr.kind = crate::ported::params::VarKind::Integer;
+                        } else if is_float {
+                            attr.kind = crate::ported::params::VarKind::Float;
+                        }
+                        if (on & PM_READONLY) != 0 {
+                            attr.readonly = true;
+                        }
+                    }
+                });
             }
         } else if is_hashed || is_array {
             // c:3060-3070 — bare name + `-A`/`-a` declares an empty
