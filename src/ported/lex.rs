@@ -394,8 +394,8 @@ pub struct ZshLexer<'a> {
     pub heredocs: Vec<HereDoc>,
     // `heredoc_pending: u8` migrated to LEX_HEREDOC_PENDING thread_local
     // (file-static parity with C). Access via LEX_HEREDOC_PENDING.get()/set().
-    /// Token buffer
-    lexbuf: lexbufstate,
+    // `lexbuf: lexbufstate` migrated to LEX_LEXBUF thread_local
+    // (direct port of C's `static struct lexbufstate lexbuf` at lex.c:210).
     /// After newline
     pub isnewlin: i32,
     /// Error message if any
@@ -410,11 +410,9 @@ pub struct ZshLexer<'a> {
     /// skipcomm (lex.c:2082) to preserve the literal text of `$(...)`
     /// command substitutions for re-execution / display.
     pub lex_add_raw: i32,
-    /// Raw-input capture buffer. Direct mirror of lex.c:165
-    /// `tokstr_raw` / lex.c:166 `lexbuf_raw`. Combined into one
-    /// `LexBuf` here since Rust's String tracks both the data and
-    /// length internally.
-    lexbuf_raw: lexbufstate,
+    // `lexbuf_raw: lexbufstate` migrated to LEX_LEXBUF_RAW thread_local
+    // (direct port of C's `static struct lexbufstate lexbuf_raw` at
+    // lex.c:166).
 }
 
 const MAX_LEXER_RECURSION: usize = 200;
@@ -430,6 +428,8 @@ impl<'a> ZshLexer<'a> {
         LEX_HEREDOC_PENDING.set(0);
         LEX_GLOBAL_ITERATIONS.set(0);
         LEX_RECURSION_DEPTH.set(0);
+        LEX_LEXBUF.with_borrow_mut(|b| *b = lexbufstate::new());
+        LEX_LEXBUF_RAW.with_borrow_mut(|b| *b = lexbufstate::new());
         ZshLexer {
             input,
             pos: 0,
@@ -455,11 +455,9 @@ impl<'a> ZshLexer<'a> {
             lexflags: 0,
             isfirstln: true,
             heredocs: Vec::new(),
-            lexbuf: lexbufstate::new(),
             isnewlin: 0,
             error: None,
             lex_add_raw: 0,
-            lexbuf_raw: lexbufstate::new(),
         }
     }
 
@@ -475,7 +473,7 @@ impl<'a> ZshLexer<'a> {
         // lex.c:2030-2038 — append to lexbuf_raw. The C source manages
         // explicit ptr/len/siz with hrealloc; Rust's String handles
         // resize automatically.
-        self.lexbuf_raw.add(c);
+        LEX_LEXBUF_RAW.with_borrow_mut(|b| b.add(c));
     }
 
     /// Run alias / reserved-word expansion on the just-lexed token.
@@ -722,7 +720,7 @@ impl<'a> ZshLexer<'a> {
             return;
         }
         // lex.c:2047-2048 — `lexbuf_raw.ptr--; lexbuf_raw.len--;`
-        self.lexbuf_raw.pop();
+        LEX_LEXBUF_RAW.with_borrow_mut(|b| b.pop());
     }
 
     /// Mark the current raw-buffer offset (for restore later). Direct
@@ -734,7 +732,7 @@ impl<'a> ZshLexer<'a> {
             return 0;
         }
         // lex.c:2057 — `return lexbuf_raw.len + offset;`
-        (self.lexbuf_raw.buf_len() as i64) + offset
+        (LEX_LEXBUF_RAW.with_borrow(|b| b.buf_len()) as i64) + offset
     }
 
     /// Restore raw-buffer offset to a previously-saved mark. Direct
@@ -750,20 +748,24 @@ impl<'a> ZshLexer<'a> {
         // lex.c:2066-2067 — `lexbuf_raw.ptr = tokstr_raw + mark;
         // lexbuf_raw.len = mark;` — String::truncate handles both.
         let m = mark.max(0) as usize;
-        if let Some(p) = self.lexbuf_raw.ptr.as_mut() {
-            p.truncate(m);
-        }
-        self.lexbuf_raw.len = m as i32;
+        LEX_LEXBUF_RAW.with_borrow_mut(|b| {
+            if let Some(p) = b.ptr.as_mut() {
+                p.truncate(m);
+            }
+            b.len = m as i32;
+        });
     }
 
     /// Take the captured raw-input buffer, clearing it. Useful for
     /// callers that need the literal command-sub body after lexing
     /// (e.g. compile-time string capture for `$(...)`).
     pub fn take_raw_buf(&mut self) -> String {
-        let out = self.lexbuf_raw.ptr.take().unwrap_or_default();
-        self.lexbuf_raw.ptr = Some(String::with_capacity(256));
-        self.lexbuf_raw.len = 0;
-        out
+        LEX_LEXBUF_RAW.with_borrow_mut(|b| {
+            let out = b.ptr.take().unwrap_or_default();
+            b.ptr = Some(String::with_capacity(256));
+            b.len = 0;
+            out
+        })
     }
 
     /// zsh/Src/lex.c:215-239 `lex_context_save`. After save, the lexer
@@ -782,9 +784,11 @@ impl<'a> ZshLexer<'a> {
         ls.lexflags = self.lexflags;
         ls.tok = self.tok;
         ls.tokstr = self.tokstr.take();
-        ls.lexbuf.ptr = self.lexbuf.ptr.take();
-        ls.lexbuf.siz = self.lexbuf.siz;
-        ls.lexbuf.len = self.lexbuf.len;
+        LEX_LEXBUF.with_borrow_mut(|b| {
+            ls.lexbuf.ptr = b.ptr.take();
+            ls.lexbuf.siz = b.siz;
+            ls.lexbuf.len = b.len;
+        });
         ls.lexstop = self.lexstop as i32;
         ls.toklineno = self.toklineno as i64;
         // zshlextext / lex_add_raw / tokstr_raw / lexbuf_raw — these
@@ -797,9 +801,11 @@ impl<'a> ZshLexer<'a> {
         // parse starts from a clean slate. tokstr/lexbuf are zeroed,
         // lexbuf.siz reset to 256 (the C-source initial alloc).
         self.tokstr = None;
-        self.lexbuf.ptr = Some(String::with_capacity(256));
-        self.lexbuf.siz = 256;
-        self.lexbuf.len = 0;
+        LEX_LEXBUF.with_borrow_mut(|b| {
+            b.ptr = Some(String::with_capacity(256));
+            b.siz = 256;
+            b.len = 0;
+        });
     }
 
     /// zsh/Src/lex.c:244-262 `lex_context_restore`. Inverse of
@@ -813,9 +819,11 @@ impl<'a> ZshLexer<'a> {
         self.lexflags = ls.lexflags;
         self.tok = ls.tok;
         self.tokstr = ls.tokstr.take();
-        self.lexbuf.ptr = Some(ls.lexbuf.ptr.take().unwrap_or_default());
-        self.lexbuf.siz = ls.lexbuf.siz;
-        self.lexbuf.len = ls.lexbuf.len;
+        LEX_LEXBUF.with_borrow_mut(|b| {
+            b.ptr = Some(ls.lexbuf.ptr.take().unwrap_or_default());
+            b.siz = ls.lexbuf.siz;
+            b.len = ls.lexbuf.len;
+        });
         self.lexstop = ls.lexstop != 0;
         self.toklineno = ls.toklineno as u64;
     }
@@ -925,7 +933,7 @@ impl<'a> ZshLexer<'a> {
 
     /// Add character to token buffer
     fn add(&mut self, c: char) {
-        self.lexbuf.add(c);
+        LEX_LEXBUF.with_borrow_mut(|b| b.add(c));
     }
 
     /// Check if character is blank (space or tab)
@@ -1475,7 +1483,7 @@ impl<'a> ZshLexer<'a> {
 
     /// Lex (( ... )) arithmetic expression
     fn lex_arith(&mut self, c: char) -> lextok {
-        self.lexbuf.clear();
+        LEX_LEXBUF.with_borrow_mut(|b| b.clear());
         self.hungetc(c);
 
         let end_char = if self.infor > 0 { ';' } else { ')' };
@@ -1483,7 +1491,7 @@ impl<'a> ZshLexer<'a> {
             return LEXERR;
         }
 
-        self.tokstr = Some(self.lexbuf.as_str().to_string());
+        self.tokstr = Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string()));
 
         if !self.lexstop && self.infor > 0 {
             self.infor -= 1;
@@ -1611,10 +1619,10 @@ impl<'a> ZshLexer<'a> {
                         }
                         if self.incmdpos {
                             // Could be (( arithmetic )) or ( subshell )
-                            self.lexbuf.clear();
+                            LEX_LEXBUF.with_borrow_mut(|b| b.clear());
                             match self.cmd_or_math() {
                                 CMD_OR_MATH_MATH => {
-                                    self.tokstr = Some(self.lexbuf.as_str().to_string());
+                                    self.tokstr = Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string()));
                                     return DINPAR;
                                 }
                                 CMD_OR_MATH_CMD => {
@@ -1768,7 +1776,7 @@ impl<'a> ZshLexer<'a> {
     /// Lex comment
     fn lex_comment(&mut self) -> lextok {
         if self.lexflags & LEXFLAGS_COMMENTS_KEEP != 0 {
-            self.lexbuf.clear();
+            LEX_LEXBUF.with_borrow_mut(|b| b.clear());
             self.add('#');
         }
 
@@ -1785,7 +1793,7 @@ impl<'a> ZshLexer<'a> {
         }
 
         if self.lexflags & LEXFLAGS_COMMENTS_KEEP != 0 {
-            self.tokstr = Some(self.lexbuf.as_str().to_string());
+            self.tokstr = Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string()));
             if !self.lexstop {
                 self.hungetc('\n');
             }
@@ -1923,7 +1931,7 @@ impl<'a> ZshLexer<'a> {
         let mut iterations = 0;
 
         if !sub {
-            self.lexbuf.clear();
+            LEX_LEXBUF.with_borrow_mut(|b| b.clear());
         }
 
         loop {
@@ -2237,7 +2245,7 @@ impl<'a> ZshLexer<'a> {
                             && self.incasepat == 0
                         {
                             // Check for VAR=value assignment (but not in case pattern context)
-                            let tok_so_far = self.lexbuf.as_str().to_string();
+                            let tok_so_far = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
                             if self.is_valid_assignment_target(&tok_so_far) {
                                 let next = self.hgetc();
                                 if next == Some('(') {
@@ -2249,7 +2257,7 @@ impl<'a> ZshLexer<'a> {
                                     // parser knows ENVARRAY means assign-
                                     // array and reads the body that
                                     // follows.
-                                    self.tokstr = Some(self.lexbuf.as_str().to_string());
+                                    self.tokstr = Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string()));
                                     return ENVARRAY;
                                 }
                                 if let Some(next) = next {
@@ -2438,7 +2446,7 @@ impl<'a> ZshLexer<'a> {
             self.error = Some("closing brace expected".to_string());
         }
 
-        self.tokstr = Some(self.lexbuf.as_str().to_string());
+        self.tokstr = Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string()));
         peek
     }
 
@@ -2707,7 +2715,7 @@ impl<'a> ZshLexer<'a> {
     /// paren of `(( ))`), it's math. Otherwise rewinds and treats as
     /// a command substitution.
     fn cmd_or_math(&mut self) -> i32 {
-        let oldlen = self.lexbuf.buf_len();
+        let oldlen = LEX_LEXBUF.with_borrow(|b| b.buf_len());
 
         // Per lex.c:498-518 — `cmd_or_math` calls `dquote_parse(')')`
         // which fills lexbuf with ONLY the inner expression, then checks
@@ -2717,8 +2725,8 @@ impl<'a> ZshLexer<'a> {
         // Removed to match C exactly.
         if self.dquote_parse(')', false).is_err() {
             // Back up and try as command
-            while self.lexbuf.buf_len() > oldlen {
-                if let Some(c) = self.lexbuf.pop() {
+            while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
+                if let Some(c) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
                     self.hungetc(c);
                 }
             }
@@ -2745,8 +2753,8 @@ impl<'a> ZshLexer<'a> {
         self.lexstop = false;
 
         // Back up token
-        while self.lexbuf.buf_len() > oldlen {
-            if let Some(c) = self.lexbuf.pop() {
+        while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
+            if let Some(c) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
                 self.hungetc(c);
             }
         }
@@ -2798,7 +2806,7 @@ impl<'a> ZshLexer<'a> {
             // Not a line continuation, process normally
             if c == Some('(') {
                 // Might be $((...))
-                let lexpos = self.lexbuf.buf_len();
+                let lexpos = LEX_LEXBUF.with_borrow(|b| b.buf_len());
                 self.add(INPAR);
                 self.add('(');
 
@@ -2814,8 +2822,8 @@ impl<'a> ZshLexer<'a> {
                 }
 
                 // Not math, restore and parse as command
-                while self.lexbuf.buf_len() > lexpos {
-                    if let Some(ch) = self.lexbuf.pop() {
+                while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > lexpos {
+                    if let Some(ch) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
                         self.hungetc(ch);
                     }
                 }
