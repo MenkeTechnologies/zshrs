@@ -1131,6 +1131,33 @@ pub fn opt_state_set(name: &str, value: bool) {
     }
 }
 
+/// !!! RUST-ONLY HELPER — see WARNING block above. Remove an entry
+/// from the process-wide option store (`!= isset(opt)`).
+pub fn opt_state_unset(name: &str) {
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(
+        std::collections::HashMap::new()));
+    if let Ok(mut g) = m.write() {
+        g.remove(name);
+    }
+}
+
+/// !!! RUST-ONLY HELPER — see WARNING block above. Snapshot the
+/// full option store. Caller gets a HashMap<String, bool>.
+pub fn opt_state_snapshot() -> std::collections::HashMap<String, bool> {
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(
+        std::collections::HashMap::new()));
+    m.read().map(|g| g.clone()).unwrap_or_default()
+}
+
+/// !!! RUST-ONLY HELPER — see WARNING block above. Number of entries
+/// currently in the option store (= count of options that have been
+/// touched by set/setopt/unset).
+pub fn opt_state_len() -> usize {
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(
+        std::collections::HashMap::new()));
+    m.read().map(|g| g.len()).unwrap_or(0)
+}
+
 /// Direct port of `dosetopt(int optno, int value, int force, char *new_opts)` from Src/options.c:735. C body:
 /// negate value when optno < 0 (the "no" prefix marker); look up
 /// option name by optno; reject emulation-locked options; write

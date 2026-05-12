@@ -145,11 +145,11 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
 
     // setopt / unsetopt.
     for opt in shard.setopts {
-        executor.options.insert(opt, true);
+        crate::ported::options::opt_state_set(&opt, true);
         total += 1;
     }
     for opt in shard.unsetopts {
-        executor.options.insert(opt, false);
+        crate::ported::options::opt_state_set(&opt, false);
         total += 1;
     }
 

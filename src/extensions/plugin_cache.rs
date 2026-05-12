@@ -861,7 +861,7 @@ impl crate::ported::exec::ShellExecutor {
                 std::collections::HashSet::new()
             },
             fpath: self.fpath.clone(),
-            options: self.options.clone(),
+            options: crate::ported::options::opt_state_snapshot(),
             hooks: {
                 // Snapshot `<hook>_functions` arrays from canonical paramtab.
                 let names = ["chpwd", "precmd", "preexec", "periodic", "zshexit", "zshaddhistory"];
@@ -1022,11 +1022,12 @@ impl crate::ported::exec::ShellExecutor {
             }
         }
 
-        // Changed options
-        let mut opt_keys: Vec<&String> = self.options.keys().collect();
+        // Changed options — diff against canonical OPTS_LIVE snapshot.
+        let current = crate::ported::options::opt_state_snapshot();
+        let mut opt_keys: Vec<&String> = current.keys().collect();
         opt_keys.sort();
         for name in opt_keys {
-            let value = self.options.get(name).unwrap();
+            let value = current.get(name).unwrap();
             match snap.options.get(name) {
                 Some(old) if old == value => {}
                 _ => delta.options_changed.push((name.clone(), *value)),
@@ -1155,9 +1156,9 @@ impl crate::ported::exec::ShellExecutor {
             self.set_assoc("_comps".to_string(), comps);
         }
 
-        // Options
+        // Options — write into canonical OPTS_LIVE.
         for (name, enabled) in &delta.options_changed {
-            self.options.insert(name.clone(), *enabled);
+            crate::ported::options::opt_state_set(name, *enabled);
         }
 
         // Hooks — append into the canonical `<hook>_functions` paramtab array.

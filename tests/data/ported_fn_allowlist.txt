@@ -566,6 +566,9 @@ make_empty_special_pm
 # because optno is FNV-hashed (no flat range).
 opt_state_get
 opt_state_set
+opt_state_unset
+opt_state_snapshot
+opt_state_len
 
 
 # opt_state_get / opt_state_set (options.rs) — Rust mirror of C

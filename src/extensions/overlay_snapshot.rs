@@ -66,11 +66,11 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
         if !salias_e.is_empty() {
             out.push(("salias".into(), entries_to_json(&salias_e)));
         }
-        if !exec.options.is_empty() {
+        let opts_snap = crate::ported::options::opt_state_snapshot();
+        if !opts_snap.is_empty() {
             // Bool → string ("on"/"off") so the canonical store's
             // string-only value column doesn't have to special-case.
-            let map: serde_json::Map<String, Value> = exec
-                .options
+            let map: serde_json::Map<String, Value> = opts_snap
                 .iter()
                 .map(|(k, v)| (k.clone(), Value::String(if *v { "on" } else { "off" }.into())))
                 .collect();
