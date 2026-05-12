@@ -926,16 +926,30 @@ impl ZshCompiler {
         // `'builtin' 'local' '-a' 'arr'` failed with `command not found:
         // builtin` because the lookup table didn't contain the SNULL-
         // wrapped form `\u{9d}builtin\u{9d}`.
-        let first_clean = crate::lex::untokenize(first);
-        let builtin_id = if first == "shopt" || first_clean == "shopt" {
+        // Precommand-modifier strip for dispatch: `builtin foo`,
+        // `command foo`, `exec foo`, `nocorrect foo`, `noglob foo`,
+        // and `- foo` should dispatch as if the modifier weren't
+        // there (per Src/exec.c:3086 BINF_PREFIX). xtrace already
+        // strips at line 891 above; mirror for builtin_id lookup
+        // so `builtin false` runs `false` (returning 1) instead of
+        // falling through to BUILTIN_BUILTIN no-op.
+        let dispatch_first_raw: &str = if precmd_skip > 0
+            && precmd_skip < simple.words.len()
+        {
+            &simple.words[precmd_skip]
+        } else {
+            first
+        };
+        let first_clean = crate::lex::untokenize(dispatch_first_raw);
+        let builtin_id = if dispatch_first_raw == "shopt" || first_clean == "shopt" {
             None
-        } else if first == "declare" || first_clean == "declare" {
+        } else if dispatch_first_raw == "declare" || first_clean == "declare" {
             Some(fusevm::shell_builtins::BUILTIN_DECLARE)
         } else {
             // Try the raw form first (handles already-untokenized inputs
             // from internal callers); fall back to the cleaned form so
             // quoted command names resolve.
-            fusevm::shell_builtins::builtin_id(first)
+            fusevm::shell_builtins::builtin_id(dispatch_first_raw)
                 .or_else(|| fusevm::shell_builtins::builtin_id(&first_clean))
         };
         if let Some(builtin_id) = builtin_id {
