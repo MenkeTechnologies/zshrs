@@ -723,12 +723,18 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 
 /// Port of `boot_()` from `Src/Modules/watch.c:738`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:738
-    // C body c:740-770 — ties $watch and $WATCH (lower- and upper-
-    //                    case alias), creates empty `watch` array,
-    //                    sets WATCHFMT/LOGCHECK defaults if unset,
-    //                    installs the checksched preprompt hook.
-    //                    Without paramtab integration we can only
-    //                    record success.
+    // C body c:740-770: ties $watch and $WATCH, creates empty `watch`
+    // array, sets WATCHFMT/LOGCHECK defaults IFF unset, installs the
+    // checksched preprompt hook. Seed `WATCHFMT` and `LOGCHECK` only
+    // when no env value pre-exists — preserves the `${WATCHFMT-unset}`
+    // distinction zsh makes between "unset" (no zmodload) and "set
+    // to default" (after zmodload).
+    if crate::ported::params::getsparam("WATCHFMT").is_none() {
+        crate::ported::params::setsparam("WATCHFMT", DEFAULT_WATCHFMT);     // c:758
+    }
+    if crate::ported::params::getsparam("LOGCHECK").is_none() {
+        crate::ported::params::setsparam("LOGCHECK", "60");                 // c:760
+    }
     0
 }
 

@@ -816,12 +816,20 @@ impl ShellExecutor {
         variables.insert("histchars".to_string(),
             crate::ported::params::histcharsgetfn());                                       // c:params.c:5064
 
-        // `$WATCHFMT` — `Src/Modules/watch.c:137 #define DEFAULT_WATCHFMT`
-        // (the `WATCH_UTMP_UT_HOST` build sets `%n has %a %l from %m.`).
-        // Use the canonical constant from the watch.rs port instead of
-        // a literal duplicate.
+        // c:Src/params.c:858-860 standard non-special param defaults.
+        variables.insert("MAILCHECK".to_string(), "60".to_string());                    // c:858
+        variables.insert("KEYTIMEOUT".to_string(), "40".to_string());                   // c:859
+        variables.insert("LISTMAX".to_string(), "100".to_string());                     // c:860
+        // `$WATCHFMT` — `Src/Modules/watch.c:137 DEFAULT_WATCHFMT`.
+        // zsh's watch boot_ seeds WATCHFMT to the default when the
+        // module loads. zshrs's modules are statically linked but
+        // boot_ isn't wired into require_module yet, so seed the
+        // default here. `print "$WATCHFMT"` prints the default
+        // (diverges from `/bin/zsh -fc` which leaves it unset until
+        // an explicit `zmodload zsh/watch`, but matches the
+        // post-zmodload state that most plugin code expects).
         variables.insert("WATCHFMT".to_string(),
-            crate::ported::modules::watch::DEFAULT_WATCHFMT.to_string());                   // c:watch.c:137
+            crate::ported::modules::watch::DEFAULT_WATCHFMT.to_string());
 
         // `$FUNCNEST` default. Real zsh defaults to 500 (Src/zsh.h
         // MAXNEST), but zshrs's bytecode-VM recursion eats ~40KB of
