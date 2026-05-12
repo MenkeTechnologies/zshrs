@@ -1517,67 +1517,221 @@ impl ShellExecutor {
         }
         (last_status, end_pc)
     }
-    /// P9d: direct port of `execif` from `Src/exec.c:1552-1620`.
-    /// Walks cond → exec → on status==0 exec then; else walk elif chain
-    /// → exec else. Reads WC_IF_TYPE / WC_IF_SKIP.
+    /// P9d: full port of `execif` from `Src/loop.c:299-340`.
+    ///
+    /// C body walks the if/elif/else chain. Each cond is an inner
+    /// WC_IF header with WC_IF_TYPE distinguishing IF / ELIF / ELSE.
+    /// Returns lastval = status of the run branch, or 0 if no branch
+    /// matched.
     pub fn exec_if_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
-        use crate::ported::zsh_h::{WC_IF_SKIP, WC_IF_TYPE};
+        use crate::ported::builtin::RETFLAG;
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+        use crate::ported::zsh_h::{wc_code, WC_IF, WC_IF_SKIP, WC_IF_TYPE};
+        use std::sync::atomic::Ordering;
         if pc >= buf.len() {
             return (0, pc);
         }
         let header = buf[pc];
-        let _type_bits = WC_IF_TYPE(header);
         let skip = WC_IF_SKIP(header) as usize;
-        let mut last_status: i32 = 0;
         let end_pc = pc + 1 + skip;
-        let body_pc = pc + 1;
-        if body_pc < end_pc {
-            let (s, _) = self.exec_list_wordcode(buf, body_pc);
-            last_status = s;
+        let mut cur = pc + 1;
+        let mut run: i32 = 0; // 0=no branch, 1=if/elif body, 2=else body
+        let mut s = 0; // 0=in if/elif chain, 1=elif seen at least once
+        let mut last_status: i32 = 0;
+        // loop.c:307-326 — walk the chain.
+        while cur < end_pc {
+            if cur >= buf.len() {
+                break;
+            }
+            let code = buf[cur];
+            cur += 1;
+            if wc_code(code) != WC_IF {
+                // Past the IF header chain — must be the body of a
+                // previously-selected branch we should run.
+                run = 1;
+                cur -= 1;
+                break;
+            }
+            // WC_IF_TYPE == ELSE (2) — unconditional else body.
+            if WC_IF_TYPE(code) == 2 {
+                run = 2;
+                break;
+            }
+            let next = cur + WC_IF_SKIP(code) as usize;
+            let (cond_status, after_cond) = self.exec_list_wordcode(buf, cur);
+            last_status = cond_status;
+            if cond_status == 0 {
+                run = 1;
+                cur = after_cond;
+                break;
+            }
+            if RETFLAG.load(Ordering::SeqCst) != 0 {
+                break;
+            }
+            s = 1;
+            cur = next;
+        }
+        let _ = s;
+        // loop.c:328-336 — run the selected branch body.
+        if run != 0 && cur < end_pc {
+            let (body_status, _) = self.exec_list_wordcode(buf, cur);
+            last_status = body_status;
+        } else if RETFLAG.load(Ordering::SeqCst) == 0
+            && (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) == 0
+        {
+            last_status = 0;
         }
         (last_status, end_pc)
     }
-    /// P9d: direct port of `execwhile` from `Src/exec.c:1622-1690`.
-    /// Loops: exec cond → if status==0 (or != 0 for UNTIL) → exec body.
-    /// Reads WC_WHILE_TYPE / WC_WHILE_SKIP.
+    /// P9d: full port of `execwhile` from `Src/loop.c:432-498`.
+    ///
+    /// Loops {exec cond; check status XOR isuntil; exec body; check
+    /// breaks/contflag/retflag/errflag} until termination.
     pub fn exec_while_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        use crate::ported::builtin::{BREAKS, CONTFLAG, LOOPS, RETFLAG};
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
         use crate::ported::zsh_h::{WC_WHILE_SKIP, WC_WHILE_TYPE};
+        use std::sync::atomic::Ordering;
         if pc >= buf.len() {
             return (0, pc);
         }
         let header = buf[pc];
-        let _type_bits = WC_WHILE_TYPE(header);
+        // loop.c:438 — `isuntil = (WC_WHILE_TYPE(code) == WC_WHILE_UNTIL)`.
+        // WC_WHILE_UNTIL = 2 per zsh.h:1015.
+        let isuntil = WC_WHILE_TYPE(header) == 2;
         let skip = WC_WHILE_SKIP(header) as usize;
-        // Full implementation: loop cond+body. Stub walks the payload
-        // once with an iteration cap (matches C's safety limit on
-        // pathological infinite loops).
-        let mut last_status: i32 = 0;
         let end_pc = pc + 1 + skip;
-        let body_pc = pc + 1;
-        let mut iters = 0;
-        while iters < 1 && body_pc < end_pc {
-            let (s, _) = self.exec_list_wordcode(buf, body_pc);
-            last_status = s;
+        let loop_pc = pc + 1;
+        // loop.c:443-446 — pushheap; cmdpush; loops++.
+        LOOPS.fetch_add(1, Ordering::SeqCst);
+        let mut last_status: i32 = 0;
+        let mut oldval: i32 = 0;
+        // Safety cap to prevent runaway infinite loops in stubs — real
+        // C loops forever if conditions hold.
+        let mut iters = 0u64;
+        const ITER_CAP: u64 = 1_000_000;
+        loop {
             iters += 1;
+            if iters > ITER_CAP {
+                break;
+            }
+            // loop.c:467 — exec cond (first inner list).
+            let (cond_status, after_cond) = self.exec_list_wordcode(buf, loop_pc);
+            last_status = cond_status;
+            // loop.c:473 — `if (!((lastval == 0) ^ isuntil)) break;`
+            let cond_passed = (cond_status == 0) ^ isuntil;
+            if !cond_passed {
+                if BREAKS.load(Ordering::SeqCst) > 0 {
+                    BREAKS.fetch_sub(1, Ordering::SeqCst);
+                }
+                if RETFLAG.load(Ordering::SeqCst) == 0 {
+                    last_status = oldval;
+                }
+                break;
+            }
+            // loop.c:481 — retflag bail.
+            if RETFLAG.load(Ordering::SeqCst) != 0 {
+                if BREAKS.load(Ordering::SeqCst) > 0 {
+                    BREAKS.fetch_sub(1, Ordering::SeqCst);
+                }
+                break;
+            }
+            // loop.c:489 — exec body.
+            let (body_status, _) = self.exec_list_wordcode(buf, after_cond);
+            last_status = body_status;
+            // loop.c:493-497 — breaks/continue handling.
+            if BREAKS.load(Ordering::SeqCst) > 0 {
+                let prev = BREAKS.fetch_sub(1, Ordering::SeqCst);
+                if prev - 1 > 0 || CONTFLAG.load(Ordering::SeqCst) == 0 {
+                    break;
+                }
+                CONTFLAG.store(0, Ordering::SeqCst);
+            }
+            // loop.c:498-501 — errflag bail.
+            if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+                last_status = 1;
+                break;
+            }
+            // loop.c:502 — retflag bail.
+            if RETFLAG.load(Ordering::SeqCst) != 0 {
+                break;
+            }
+            oldval = last_status;
         }
+        LOOPS.fetch_sub(1, Ordering::SeqCst);
         (last_status, end_pc)
     }
-    /// P9d: direct port of `execrepeat` from `Src/exec.c:1692-1750`.
-    /// Reads count, loops N times executing body. Uses WC_REPEAT_SKIP.
+    /// P9d: full port of `execrepeat` from `Src/loop.c:499-552`.
+    ///
+    /// C body:
+    ///   end = state->pc + WC_REPEAT_SKIP(code);
+    ///   tmp = ecgetstr(state, EC_DUPTOK, &htok);
+    ///   if (htok) { singsub(&tmp); untokenize(tmp); }
+    ///   count = mathevali(tmp);
+    ///   loops++;
+    ///   loop = state->pc;
+    ///   while (count-- > 0) {
+    ///     state->pc = loop;
+    ///     execlist(state, 1, 0);
+    ///     if (breaks) { breaks--; if (breaks || !contflag) break; contflag = 0; }
+    ///     if (errflag) { lastval = 1; break; }
+    ///     if (retflag) break;
+    ///   }
+    ///   loops--;
     pub fn exec_repeat_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        use crate::ported::builtin::{BREAKS, CONTFLAG, LOOPS, RETFLAG};
+        use crate::ported::math::mathevali;
+        use crate::ported::parse::ecgetstr_wordcode;
+        use crate::ported::subst::singsub;
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
         use crate::ported::zsh_h::WC_REPEAT_SKIP;
+        use std::sync::atomic::Ordering;
         if pc >= buf.len() {
             return (0, pc);
         }
         let header = buf[pc];
         let skip = WC_REPEAT_SKIP(header) as usize;
-        let mut last_status: i32 = 0;
         let end_pc = pc + 1 + skip;
-        let body_pc = pc + 1;
-        if body_pc < end_pc {
-            let (s, _) = self.exec_list_wordcode(buf, body_pc);
-            last_status = s;
+        // loop.c:511 — `tmp = ecgetstr(state, EC_DUPTOK, &htok);`
+        let (count_expr_raw, after_count) = ecgetstr_wordcode(buf, pc + 1);
+        // loop.c:512-515 — singsub + untokenize on tokenized count.
+        let count_expr_sub = singsub(&count_expr_raw);
+        let count_expr = crate::ported::lex::untokenize(&count_expr_sub);
+        // loop.c:516 — `count = mathevali(tmp);`
+        let count_val = mathevali(&count_expr).unwrap_or(0);
+        if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+            return (1, end_pc);
         }
+        let mut last_status: i32 = 0; // loop.c:519 — `lastval = 0` for zero count.
+        // loop.c:520-522 — `pushheap(); cmdpush(CS_REPEAT); loops++;`
+        LOOPS.fetch_add(1, Ordering::SeqCst);
+        let loop_body_pc = after_count;
+        // loop.c:523-545 — main iteration.
+        let mut remaining = count_val;
+        while remaining > 0 {
+            remaining -= 1;
+            let (s, _) = self.exec_list_wordcode(buf, loop_body_pc);
+            last_status = s;
+            // loop.c:528-533 — breaks/continue handling.
+            if BREAKS.load(Ordering::SeqCst) > 0 {
+                let prev = BREAKS.fetch_sub(1, Ordering::SeqCst);
+                if prev - 1 > 0 || CONTFLAG.load(Ordering::SeqCst) == 0 {
+                    break;
+                }
+                CONTFLAG.store(0, Ordering::SeqCst);
+            }
+            // loop.c:534-537 — errflag bail.
+            if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+                last_status = 1;
+                break;
+            }
+            // loop.c:538 — retflag bail (function return).
+            if RETFLAG.load(Ordering::SeqCst) != 0 {
+                break;
+            }
+        }
+        // loop.c:546-549 — `cmdpop(); popheap(); loops--;`
+        LOOPS.fetch_sub(1, Ordering::SeqCst);
         (last_status, end_pc)
     }
     /// P9d stub: `execfuncdef`.
