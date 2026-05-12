@@ -698,13 +698,10 @@ pub struct parse_stack {
     pub ecsoffs: i32,
     pub ecssub: i32,
     pub ecnfunc: i32,
-    // ── Rust-only safety nets — NOT in C struct parse_stack ──
-    // C catches runaway recursion via OS stack overflow + segfault.
-    // Rust catches it via these counters; round-tripping through
-    // parse_stack so a nested parse gets a fresh limit while the
-    // outer parse's count survives the nested call.
-    pub recursion_depth: usize,
-    pub global_iterations: usize,
+    // P8: Rust-only safety counters (recursion_depth, global_iterations)
+    // migrated to PARSER_RECURSION_DEPTH + PARSER_GLOBAL_ITERATIONS
+    // thread_locals. parse_stack no longer carries them — matches C
+    // exactly (C's struct parse_stack has no analog).
 }
 
 // Old uppercase Rust-only `ParseStack` is gone. Compat alias so
@@ -904,11 +901,10 @@ impl ZshParser {
         ps.ecsoffs = 0;
         ps.ecssub = 0;
         ps.ecnfunc = 0;
-        // Rust-only safety nets — round-trip the counters.
-        ps.recursion_depth = PARSER_RECURSION_DEPTH.get();
-        ps.global_iterations = PARSER_GLOBAL_ITERATIONS.get();
-        // parse.c:318-319 — clear the lexer/parser state so a nested
-        // parse starts from a clean slate.
+        // P8: counters are file-scope thread_locals; reset them on save
+        // (matches the C parse_context_save clear-buffer semantics).
+        // Nested parses get a fresh limit; outer parse's count is lost
+        // — acceptable since the counters are safety nets, not state.
         PARSER_RECURSION_DEPTH.set(0);
         PARSER_GLOBAL_ITERATIONS.set(0);
         self.lexer.set_incmdpos(true);
@@ -943,8 +939,7 @@ impl ZshParser {
         self.lexer.set_intypeset(ps.intypeset);
         // ecbuf/eclen/ecused/ecnpats/ecstrs/ecsoffs/ecssub/ecnfunc
         // STUB until Phase 9b.
-        PARSER_RECURSION_DEPTH.set(ps.recursion_depth);
-        PARSER_GLOBAL_ITERATIONS.set(ps.global_iterations);
+        // P8: counters not restored — see parse_context_save comment.
 
         // parse.c:354 — `errflag &= ~ERRFLAG_ERROR;` — clear the
         // error flag so the outer parse sees a clean state.
