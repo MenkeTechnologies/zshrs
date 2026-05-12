@@ -506,7 +506,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_SHOPT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_shopt(&args));
+        let status = crate::extensions::ext_builtins::shopt(&args);
         Value::Status(status)
     });
 
@@ -848,7 +848,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ZSLEEP, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_zsleep(&args));
+        let status = crate::extensions::ext_builtins::zsleep(&args);
         Value::Status(status)
     });
 
@@ -906,14 +906,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Prompt
     vm.register_builtin(BUILTIN_PROMPTINIT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_promptinit(&args));
-        Value::Status(status)
+        Value::Status(crate::extensions::ext_builtins::promptinit(&args))
     });
 
     vm.register_builtin(BUILTIN_PROMPT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_prompt(&args));
-        Value::Status(status)
+        Value::Status(crate::extensions::ext_builtins::prompt(&args))
     });
 
     // Async / Parallel (zshrs extensions)
@@ -9187,16 +9185,16 @@ impl fusevm::ShellHost for ZshrsHost {
         // Native Rust impls live in builtin_zmv / builtin_zcalc.
         match name {
             "zmv" => {
-                return Some(with_executor(|exec| exec.builtin_zmv(&args, "mv")));
+                return Some(crate::extensions::ext_builtins::zmv(&args, "mv"));
             }
             "zcp" => {
-                return Some(with_executor(|exec| exec.builtin_zmv(&args, "cp")));
+                return Some(crate::extensions::ext_builtins::zmv(&args, "cp"));
             }
             "zln" => {
-                return Some(with_executor(|exec| exec.builtin_zmv(&args, "ln")));
+                return Some(crate::extensions::ext_builtins::zmv(&args, "ln"));
             }
             "zcalc" => {
-                return Some(with_executor(|exec| exec.builtin_zcalc(&args)));
+                return Some(crate::extensions::ext_builtins::zcalc(&args));
             }
             // Daemon-managed z* builtins — thin IPC wrappers. Short-circuit BEFORE
             // the function-lookup path so a missing daemon doesn't fall through to
@@ -9882,10 +9880,10 @@ impl crate::ported::exec::ShellExecutor {
             // zsh-bundled rename helpers — implemented natively in
             // Rust so `autoload -U zmv` works without shipping the
             // function source. (Without this, the autoload path hangs.)
-            "zmv" => return self.builtin_zmv(&rest_vec, "mv"),
-            "zcp" => return self.builtin_zmv(&rest_vec, "cp"),
-            "zln" => return self.builtin_zmv(&rest_vec, "ln"),
-            "zcalc" => return self.builtin_zcalc(&rest_vec),
+            "zmv" => return crate::extensions::ext_builtins::zmv(&rest_vec, "mv"),
+            "zcp" => return crate::extensions::ext_builtins::zmv(&rest_vec, "cp"),
+            "zln" => return crate::extensions::ext_builtins::zmv(&rest_vec, "ln"),
+            "zcalc" => return crate::extensions::ext_builtins::zcalc(&rest_vec),
             "zselect" => {
                 // Canonical bin_zselect per zselect.c:65 takes
                 // (nam, args, ops, func); the C source parses its
