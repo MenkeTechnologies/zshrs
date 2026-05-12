@@ -219,7 +219,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
     BUILTIN("whence", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("acmpvfsSwx:"), None),
     BUILTIN("where", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("pmsSwx:"), Some("ca")),
     BUILTIN("which", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("ampsSwx:"), Some("c")),
-    BUILTIN("zmodload", 0, None, 0, -1, 0, Some("AFRILP:abcfdilmpsue"), None),
+    BUILTIN("zmodload", 0, Some(crate::ported::module::bin_zmodload as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("AFRILP:abcfdilmpsue"), None),
     BUILTIN("zcompile", 0, None, 0, -1, 0, Some("tUMRcmzka"), None),
     // Module builtins (zsh/zutil, zsh/cap, zsh/pcre, etc.) — these
     // live in src/ported/modules/* and src/ported/zle/* but their
@@ -249,6 +249,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
     BUILTIN("vared", 0, Some(crate::ported::zle::zle_main::bin_vared as crate::ported::zsh_h::HandlerFunc), 1, 1, 0, Some("AaceghM:m:p:r:i:f:"), None),
     BUILTIN("compadd", 0, Some(crate::ported::zle::complete::bin_compadd as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("J:V:1X:fnqQF:Wsi"), None),
     BUILTIN("compset", 0, Some(crate::ported::zle::complete::bin_compset as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("npqPS:"), None),
+    BUILTIN("zle", 0, Some(crate::ported::zle::zle_thingy::bin_zle as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("aAcCDfFIKlLmMNRTU"), None),
 ]);
 // hash table containing builtin commands                                   // c:143
 /// Process-wide builtin lookup table. Filled lazily the first time

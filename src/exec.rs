@@ -787,16 +787,6 @@ impl ShellExecutor {
     /// Replaces the bot-invented `expand_string` method that was deleted
     /// in the citation purge (180463e1e7). All call sites that previously
     /// did `exec.singsub(s)` now do `exec.singsub(s)` and route
-    /// through the C-faithful `singsub`.
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub fn singsub(&mut self, s: &str) -> String {
-        let _ctx = crate::fusevm_bridge::ExecutorContext::enter(self);
-        let r = crate::ported::subst::singsub(s);
-        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            self.set_last_status(1);
-        }
-        r
-    }
 
 
     pub fn new() -> Self {
@@ -1620,7 +1610,7 @@ impl ShellExecutor {
                     // Untokenize then variable-expand — text-based
                     // word expansion for the spawned argv.
                     let untoked = crate::lex::untokenize(w);
-                    self.singsub(&untoked)
+                    crate::ported::subst::singsub(&untoked)
                 })
                 .collect()
         } else {
@@ -1728,7 +1718,7 @@ impl ShellExecutor {
             // Expand any leading $ / tilde in the filename so
             // `$(< $f)` and `$(< ~/x)` work.
             let resolved = if filename.contains('$') || filename.starts_with('~') {
-                self.singsub(filename)
+                crate::ported::subst::singsub(filename)
             } else {
                 filename.to_string()
             };
@@ -4703,209 +4693,11 @@ impl crate::ported::exec::ShellExecutor {
 }
 
 // =====================================================================
-// MOVED FROM: src/ported/prompt.rs
-// =====================================================================
-
-impl crate::ported::exec::ShellExecutor {
-}
-
-// =====================================================================
-// MOVED FROM: src/ported/module.rs
-// =====================================================================
-
-impl crate::ported::exec::ShellExecutor {
-    /// zmodload - load/unload zsh modules (stub)
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_zmodload(&mut self, args: &[String]) -> i32 {
-        // PFA-SMR aspect: emit one `zmodload` event per module name (only
-        // for load form — listing/query/unload are not state mutations
-        // we want recorded as definitions).
-        #[cfg(feature = "recorder")]
-        if crate::recorder::is_enabled() {
-            let mut listing_or_query = false;
-            let mut flags: Vec<&str> = Vec::new();
-            for a in args {
-                match a.as_str() {
-                    "-l" | "-L" | "-e" | "-u" => listing_or_query = true,
-                    s if s.starts_with('-') => flags.push(s),
-                    _ => {}
-                }
-            }
-            if !listing_or_query {
-                let ctx = self.recorder_ctx();
-                let flag_blob = flags.join(" ");
-                for a in args {
-                    if a.starts_with('-') {
-                        continue;
-                    }
-                    crate::recorder::emit_zmodload(a, &flag_blob, ctx.clone());
-                }
-            }
-        }
-        // Direct port of zsh/Src/module.c bin_zmodload control flow.
-        // zshrs's modules are compiled-in, so load/unload simply toggle
-        // a tracking flag in self.options['_module_<name>']. Listing
-        // returns the union of always-loaded compiled-in modules plus
-        // any user-zmodload'd entries.
-        let mut list_loaded = false;
-        let mut list_reusable = false;
-        let mut unload = false;
-        let mut existence_test = false; // -e: query whether loaded
-        let mut modules: Vec<&str> = Vec::new();
-
-        for arg in args {
-            match arg.as_str() {
-                "-l" => list_loaded = true,
-                "-L" => {
-                    list_loaded = true;
-                    list_reusable = true;
-                }
-                "-u" => unload = true,
-                "-e" => existence_test = true,
-                "-a" | "-b" | "-c" | "-d" | "-f" | "-i" | "-p" | "-s" | "-A" | "-R" | "-F"
-                | "-I" | "-P" => {}
-                _ if arg.starts_with('-') => {
-                    // BUILTIN("zmodload", ..., "AFRILP:abcfdilmpsue")
-                    // declares the valid letter set. Unknown flags
-                    // silently dropped previously, masking typos.
-                    let bad: String = arg[1..].chars().take(1).collect();
-                    zwarnnam("zmodload", &format!("bad option: -{}", bad));
-                    return 1;
-                }
-                _ => modules.push(arg),
-            }
-        }
-
-        // Compiled-in modules zshrs supports. Same set the brew zsh
-        // ships in /opt/homebrew/lib/zsh/*.bundle, plus a few zshrs-
-        // specific entries (`zsh/profiler`, `zsh/main`, `zsh/random_real`,
-        // `zsh/param_private`, etc.). `zmodload NAME` accepts any of
-        // these; unknown names error like `failed to load module`.
-        const ALWAYS_LOADED: &[&str] = &[
-            "zsh/attr",
-            "zsh/cap",
-            "zsh/clone",
-            "zsh/compctl",
-            "zsh/complete",
-            "zsh/complist",
-            "zsh/computil",
-            "zsh/curses",
-            "zsh/datetime",
-            "zsh/db/gdbm",
-            "zsh/deltochar",
-            "zsh/example",
-            "zsh/files",
-            "zsh/hlgroup",
-            "zsh/ksh93",
-            "zsh/langinfo",
-            "zsh/main",
-            "zsh/mapfile",
-            "zsh/mathfunc",
-            "zsh/nearcolor",
-            "zsh/net/socket",
-            "zsh/net/tcp",
-            "zsh/newuser",
-            "zsh/param/private",
-            "zsh/parameter",
-            "zsh/pcre",
-            "zsh/private",
-            "zsh/profiler",
-            "zsh/random",
-            "zsh/random_real",
-            "zsh/regex",
-            "zsh/rlimits",
-            "zsh/sched",
-            "zsh/stat",
-            "zsh/system",
-            "zsh/termcap",
-            "zsh/terminfo",
-            "zsh/watch",
-            "zsh/zftp",
-            "zsh/zle",
-            "zsh/zleparameter",
-            "zsh/zprof",
-            "zsh/zpty",
-            "zsh/zselect",
-            "zsh/zutil",
-        ];
-
-        // `is_loaded` answers: has the user explicitly loaded this
-        // module via `zmodload NAME` in this shell? Direct port of
-        // zsh's `-e` semantics (Src/module.c bin_zmodload case 'e'):
-        // "loaded" is observable state, NOT compile-time presence.
-        // zshrs links every module statically, but `-e` must reflect
-        // user-controlled load actions only; otherwise scripts that
-        // do `zmodload -e zsh/datetime || zmodload zsh/datetime` get
-        // the wrong answer.
-        let is_loaded = |this: &Self, name: &str| -> bool {
-            this
-                .options
-                .get(&format!("_module_{}", name))
-                .copied()
-                .unwrap_or(false)
-        };
-
-        // -e: existence test. Exit 0 if all named modules are loaded,
-        // else 1. zsh module.c bin_zmodload case 'e'.
-        if existence_test {
-            for m in &modules {
-                if !is_loaded(self, m) {
-                    return 1;
-                }
-            }
-            return 0;
-        }
-
-        if list_loaded || modules.is_empty() {
-            let mut all: Vec<String> = ALWAYS_LOADED.iter().map(|s| s.to_string()).collect();
-            for (k, v) in &self.options {
-                if *v {
-                    if let Some(name) = k.strip_prefix("_module_") {
-                        all.push(name.to_string());
-                    }
-                }
-            }
-            all.sort();
-            all.dedup();
-            for m in &all {
-                if list_reusable {
-                    println!("zmodload {}", m);
-                } else {
-                    println!("{}", m);
-                }
-            }
-            return 0;
-        }
-
-        // Reject unknown module names. zsh's bin_zmodload (Src/module.c)
-        // attempts dlopen on the named bundle and reports
-        // "failed to load module" when the lookup misses; zshrs has
-        // no dlopen layer (modules are statically linked), so we
-        // gate on the `ALWAYS_LOADED` whitelist instead. Without
-        // this check, `zmodload zsh/no_such_module` silently
-        // succeeded, masking typos in user scripts.
-        for module in &modules {
-            if !ALWAYS_LOADED.contains(module) {
-                zwarnnam("zmodload", &format!("failed to load module: {}", module));
-                return 1;
-            }
-        }
-        for module in modules {
-            if unload {
-                self.options.remove(&format!("_module_{}", module));
-            } else {
-                self.options.insert(format!("_module_{}", module), true);
-            }
-        }
-        0
-    }
-}
-
-// =====================================================================
 // MOVED FROM: src/ported/math.rs
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
+    //WARNING FAKE AND MUST BE DELETED
     pub fn evaluate_arithmetic(&mut self, expr: &str) -> String {
         // First, resolve `$NAME[(flags)pat]` / `$@[(flags)pat]`
         // before expand_string — otherwise `$@` gets joined into
@@ -4921,7 +4713,7 @@ impl crate::ported::exec::ShellExecutor {
         // expand_string would tilde-expand `~` (bitwise NOT in arith
         // context) into "no such user" errors.
         let expr = if expr_pre.contains('$') || expr_pre.contains('`') {
-            self.singsub(&expr_pre)
+            crate::ported::subst::singsub(&expr_pre)
         } else {
             expr_pre
         };
@@ -5329,9 +5121,12 @@ impl crate::ported::exec::ShellExecutor {
             }
         }
     }
+
+    //WARNING FAKE AND MUST BE DELETED
+
     pub(crate) fn eval_arith_expr(&mut self, expr: &str) -> i64 {
         let expr_expanded = if expr.contains('$') || expr.contains('`') {
-            self.singsub(expr)
+            crate::ported::subst::singsub(expr)
         } else {
             expr.to_string()
         };
@@ -5442,6 +5237,7 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
+
     pub(crate) fn builtin_jobs(&mut self, args: &[String]) -> i32 {
         // jobs [ -dlprsZ ] [ job ... ]
         // -l: long format (show PID)
@@ -8121,328 +7917,6 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
-    /// bindkey - key binding management
-    /// zle - line editor control
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_zle(&mut self, args: &[String]) -> i32 {
-        use crate::zle::zle;
-
-        if args.is_empty() {
-            return 0;
-        }
-
-        let mut iter = args.iter().peekable();
-
-        while let Some(arg) = iter.next() {
-            match arg.as_str() {
-                "-l" => {
-                    // zsh: in non-interactive mode (`-c`), the ZLE
-                    // module is not loaded, so `zle -l` outputs
-                    // nothing and returns 0. zshrs eagerly preloads
-                    // its built-in widget table, so the listing fired
-                    // even in scripts — diverging from zsh's silent
-                    // empty output. Match zsh by returning 0 with no
-                    // listing when stdin is not a tty.
-                    if !atty::is(atty::Stream::Stdin) {
-                        return 0;
-                    }
-                    let zle = zle();
-                    let mut widgets: Vec<&str> = zle.list_widgets();
-                    widgets.sort();
-                    for w in widgets {
-                        println!("{}", w);
-                    }
-                    return 0;
-                }
-                "-la" | "-lL" => {
-                    // Same non-tty silence rule as bare `-l`.
-                    if !atty::is(atty::Stream::Stdin) {
-                        return 0;
-                    }
-                    let zle = zle();
-                    let mut widgets: Vec<&str> = zle.list_widgets();
-                    widgets.sort();
-                    for w in widgets {
-                        println!("{}", w);
-                    }
-                    return 0;
-                }
-                "-N" => {
-                    // Define new widget: zle -N widget-name [function]
-                    if let Some(widget_name) = iter.next() {
-                        let func_name = iter
-                            .next()
-                            .map(|s| s.as_str())
-                            .unwrap_or(widget_name.as_str());
-                        let mut zle = zle();
-                        zle.define_widget(widget_name, func_name);
-                        // PFA-SMR aspect: ZLE widget definition.
-                        // zinit-report lists these (along with bindkey
-                        // and zstyle); the recorder gives them a
-                        // dedicated `zle` kind so query-side can
-                        // surface "every widget this plugin installed".
-                        // Value field carries the underlying handler
-                        // function name (defaults to the widget name
-                        // for self-bound widgets).
-                        #[cfg(feature = "recorder")]
-                        if crate::recorder::is_enabled() {
-                            let ctx = self.recorder_ctx();
-                            crate::recorder::emit_zle(widget_name, Some(func_name), ctx);
-                        }
-                    }
-                    return 0;
-                }
-                "-D" => {
-                    // zle -D widget...: delete one or more user
-                    // widgets. zsh: missing target -> exit 1 silently;
-                    // unknown widget -> 'no such widget: NAME' exit 1.
-                    let mut returnval = 0;
-                    let mut had_arg = false;
-                    let mut zle = zle();
-                    for name in iter.by_ref() {
-                        had_arg = true;
-                        if !zle.delete_widget(name) {
-                            zwarnnam("zle", &format!("no such widget: {}", name));
-                            returnval = 1;
-                        }
-                    }
-                    if !had_arg {
-                        return 1;
-                    }
-                    return returnval;
-                }
-                "-A" => {
-                    // zle -A old new: alias `new` to dispatch as `old`.
-                    // zsh: needs exactly two args; unknown source ->
-                    // 'no such widget: OLD' exit 1.
-                    let old = match iter.next() {
-                        Some(s) => s.clone(),
-                        None => {
-                            zwarnnam("zle", "-A requires source widget");
-                            return 1;
-                        }
-                    };
-                    let new = match iter.next() {
-                        Some(s) => s.clone(),
-                        None => {
-                            zwarnnam("zle", "-A requires destination widget");
-                            return 1;
-                        }
-                    };
-                    let mut zle = zle();
-                    if !zle.alias_widget(&new, &old) {
-                        zwarnnam("zle", &format!("no such widget: {}", old));
-                        return 1;
-                    }
-                    // PFA-SMR aspect: ZLE widget alias `zle -A old new`.
-                    // Recorder treats it as a `zle` event for `new` with
-                    // value `old` so the alias relationship is queryable.
-                    #[cfg(feature = "recorder")]
-                    if crate::recorder::is_enabled() {
-                        let ctx = self.recorder_ctx();
-                        crate::recorder::emit_zle(&new, Some(&old), ctx);
-                    }
-                    return 0;
-                }
-                "-R" => {
-                    // Port of bin_zle_refresh from Src/Zle/zle_thingy.c:418.
-                    // The C source: "zle -R [-c] [STATUS [LIST...]]"
-                    //   - Without -c or args: just rerun zrefresh.
-                    //   - With STATUS: set the status line, then refresh.
-                    //   - With LIST...: display the list below the prompt.
-                    //   - With -c: clear the prior list before refresh.
-                    // C errors with `not bound` when zleactive is false; we
-                    // approximate that by silently no-oping (the bin holds
-                    // the live ZLE session, which we don't reach from
-                    // here). For consistency: parse remaining args
-                    // (status + list elems) and discard, then return 0.
-                    let mut clear = false;
-                    let mut status: Option<String> = None;
-                    let mut list_items: Vec<String> = Vec::new();
-                    for arg in iter.by_ref() {
-                        match arg.as_str() {
-                            "-c" => clear = true,
-                            s if status.is_none() => status = Some(s.to_string()),
-                            s => list_items.push(s.to_string()),
-                        }
-                    }
-                    let _ = (clear, status, list_items);
-                    return 0;
-                }
-                "-U" => {
-                    // Port of bin_zle_unget from Src/Zle/zle_thingy.c:473.
-                    // The C source ungets each byte of args[0] back into
-                    // the input stream. zsh errors when zleactive==0 with
-                    // "can only be called from widget function". We don't
-                    // hold the live ZLE state here; emit the same
-                    // diagnostic + exit 1 instead of silently dropping.
-                    if iter.next().is_none() {
-                        zwarnnam("zle", "-U requires a string argument");
-                        return 1;
-                    }
-                    zwarnnam("zle", "can only be called from widget function");
-                    return 1;
-                }
-                "-K" => {
-                    // zle -K NAME: select active keymap. zsh:
-                    // unknown name -> 'no such keymap: NAME' exit 1.
-                    let name = match iter.next() {
-                        Some(s) => s.clone(),
-                        None => {
-                            zwarnnam("zle", "-K requires keymap name");
-                            return 1;
-                        }
-                    };
-                    let mut zle = zle();
-                    if !zle.select_keymap(&name) {
-                        zwarnnam("zle", &format!("no such keymap: {}", name));
-                        return 1;
-                    }
-                    return 0;
-                }
-                "-F" => {
-                    // Port of bin_zle_fd from Src/Zle/zle_thingy.c:857.
-                    //   zle -F [-L|-w] [FD [HANDLER]]
-                    // The C source tracks watch_fds globally so zselect
-                    // can dispatch to user handlers when fds become
-                    // readable. Without a live ZLE event loop, we still
-                    // need to parse args correctly so -L (list) returns
-                    // empty cleanly and add/remove forms validate the
-                    // fd argument.
-                    let mut list = false;
-                    let mut widget_mode = false;
-                    let mut fd_arg: Option<String> = None;
-                    let mut handler: Option<String> = None;
-                    for arg in iter.by_ref() {
-                        match arg.as_str() {
-                            "-L" => list = true,
-                            "-w" => widget_mode = true,
-                            s if fd_arg.is_none() => fd_arg = Some(s.to_string()),
-                            s if handler.is_none() => handler = Some(s.to_string()),
-                            _ => {
-                                zwarnnam("zle", "too many arguments for -F");
-                                return 1;
-                            }
-                        }
-                    }
-                    let _ = widget_mode;
-                    // Validate fd if supplied (mirrors zle_thingy.c:865).
-                    if let Some(ref s) = fd_arg {
-                        match s.parse::<i32>() {
-                            Ok(n) if n >= 0 => {}
-                            _ => {
-                                zwarnnam("zle", &format!("bad file descriptor number for -F: {}", s));
-                                return 1;
-                            }
-                        }
-                    }
-                    // Listing path: no watch_fds tracked here → exit 0
-                    // for empty list, exit 1 if a specific fd was asked
-                    // for and "not found" (matches zle_thingy.c:886
-                    // `*args && !found`).
-                    if list || (fd_arg.is_some() && handler.is_none()) {
-                        return if fd_arg.is_some() { 1 } else { 0 };
-                    }
-                    // Add/remove path: silently no-op since the watch
-                    // dispatch lives in the ZLE main loop we don't run
-                    // from script context. Future port will wire watch
-                    // registration through a host-side hook.
-                    return 0;
-                }
-                "-M" => {
-                    // zle -M message: display a message in the editor
-                    // status area. Outside ZLE we have no status line,
-                    // so emit to stderr (matches zsh's non-interactive
-                    // fallback at zle_main.c:bin_zle 'M' branch).
-                    if let Some(msg) = iter.next() {
-                        eprintln!("{}", msg);
-                    }
-                    return 0;
-                }
-                "-I" => {
-                    // Port of bin_zle_invalidate from Src/Zle/zle_thingy.c:830.
-                    // The C source: if zleactive, calls trashzle() to move
-                    // past the prompt and arms fetchttyinfo for a
-                    // settyinfo restore on next zsetterm; if zleactive==0
-                    // it returns 1. Without a live ZLE here we always
-                    // take the inactive branch — return 1 to mirror
-                    // zsh's exit status when no live editor is up.
-                    return 1;
-                }
-                "-C" => {
-                    // Port of bin_zle_complete from Src/Zle/zle_thingy.c:600.
-                    //   zle -C completion-name builtin-widget shell-fn
-                    // Defines a *completion* widget — a user-named widget
-                    // that wraps a built-in completion widget but runs a
-                    // shell function for the actual match generation.
-                    // Used to define plugin completion widgets:
-                    //   zle -C my-comp expand-or-complete _my_comp_fn
-                    let name = match iter.next() {
-                        Some(s) => s.clone(),
-                        None => {
-                            zwarnnam("zle", "-C requires a name");
-                            return 1;
-                        }
-                    };
-                    let target = match iter.next() {
-                        Some(s) => s.clone(),
-                        None => {
-                            zwarnnam("zle", "-C requires a target completion widget");
-                            return 1;
-                        }
-                    };
-                    let func = match iter.next() {
-                        Some(s) => s.clone(),
-                        None => {
-                            zwarnnam("zle", "-C requires a shell function");
-                            return 1;
-                        }
-                    };
-                    // The C source validates that `target` is a
-                    // completion widget (ZLE_ISCOMP flag). Our widget
-                    // table doesn't carry that flag yet — accept any
-                    // target and register the user widget pointing to
-                    // the func. zinit's _zinit and compsys's _* widgets
-                    // depend on this for plugin loading.
-                    let mut zle = zle();
-                    zle.define_widget(&name, &func);
-                    let _ = target; // referenced for future ZLE_ISCOMP check
-                    return 0;
-                }
-                "-f" => {
-                    // Check widget exists
-                    if let Some(name) = iter.next() {
-                        let zle = zle();
-                        return if zle.get_widget(name).is_some() { 0 } else { 1 };
-                    }
-                    return 1;
-                }
-                widget_name if !widget_name.starts_with('-') => {
-                    // Call widget
-                    let mut zle = zle();
-                    match zle.execute_widget(widget_name, None) {
-                        crate::zle::WidgetResult::Ok => return 0,
-                        crate::zle::WidgetResult::Error(e) => {
-                            zwarnnam("zle", &format!("{}", e));
-                            return 1;
-                        }
-                        crate::zle::WidgetResult::CallFunction(func) => {
-                            // Call user widget through compiled-function dispatch.
-                            drop(zle);
-                            if let Some(status) = self.dispatch_function_call(&func, &[]) {
-                                return status;
-                            }
-                            return 1;
-                        }
-                        _ => return 0,
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        0
-    }
     // `vared` shim — parses the `"AaceghM:m:p:r:i:f:"` BUILTIN spec
     // from zle_main.c:2186 into a real `options` struct, then invokes
     // the canonical free-fn port at
