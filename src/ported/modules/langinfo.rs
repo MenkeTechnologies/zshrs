@@ -100,6 +100,7 @@ pub fn liitem(name: &str) -> Option<libc::nl_item> {                     // c:37
     })
 }
 
+/// Port of `liitem()` from `Src/Modules/langinfo.c:379`.
 /// Non-Unix fallback for `liitem` — `nl_item` is POSIX-only.
 #[cfg(not(unix))]
 pub fn liitem(_name: &str) -> Option<i32> {                                  // c:379
@@ -139,6 +140,7 @@ pub fn getlanginfo(name: &str) -> Option<String> {                       // c:39
     }
 }
 
+/// Port of `getlanginfo()` from `Src/Modules/langinfo.c:396`.
 /// Non-Unix fallback for `getlanginfo` — `nl_langinfo(3)` is
 /// POSIX-only.
 #[cfg(not(unix))]
@@ -219,23 +221,31 @@ pub fn finish_(_m: *const module) -> i32 {                               // c:50
 mod tests {
     use super::*;
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/langinfo.c`.
     #[test]
     fn nl_names_includes_codeset() {
         assert!(NL_NAMES.contains(&"CODESET"));
         assert!(NL_NAMES.contains(&"D_T_FMT"));
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/langinfo.c`.
     #[cfg(unix)]
     #[test]
     fn getlanginfo_codeset_is_some() {
         assert!(getlanginfo("CODESET").is_some());
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/langinfo.c`.
     #[test]
     fn getlanginfo_invalid_returns_none() {
         assert!(getlanginfo("INVALID_NAME").is_none());
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/langinfo.c`.
     #[cfg(unix)]
     #[test]
     fn liitem_codeset_resolves() {
@@ -243,6 +253,8 @@ mod tests {
         assert!(liitem("DOES_NOT_EXIST").is_none());
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/langinfo.c`.
     #[cfg(unix)]
     #[test]
     fn scanlanginfo_emits_items() {
@@ -257,6 +269,8 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/langinfo.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -276,10 +290,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/langinfo.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["p:langinfo".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/langinfo.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -291,6 +309,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/langinfo.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

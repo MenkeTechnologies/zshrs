@@ -248,6 +248,8 @@ pub fn bin_strftime(nam: &str, argv: &[&str],                                // 
     result                                                                // c:202
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/datetime.c`.
 /// Identifier validity check matching zsh's `isident()` (Src/utils.c).
 fn is_ident(s: &str) -> bool {
     if s.is_empty() { return false; }
@@ -321,12 +323,16 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
 mod tests {
     use super::*;
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/datetime.c`.
     #[test]
     fn test_epoch_seconds() {
         let secs = getcurrentsecs();
         assert!(secs > 1700000000);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/datetime.c`.
     #[test]
     fn test_epoch_realtime() {
         let rt = getcurrentrealtime();
@@ -335,6 +341,8 @@ mod tests {
         assert!((rt - secs as f64).abs() < 1.0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/datetime.c`.
     #[test]
     fn test_epoch_time() {
         let (secs, nanos) = getcurrenttime();
@@ -342,6 +350,8 @@ mod tests {
         assert!((0..1_000_000_000).contains(&nanos));
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/datetime.c`.
     /// Build an `Options` struct populated for the canonical
     /// `output_strftime(name, argv, ops, func)` signature, with
     /// flag `flag` set and (optionally) -s SCALAR slot encoded.
@@ -359,13 +369,17 @@ mod tests {
         ops
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/datetime.c`.
     /// Reads a scalar from the canonical paramtab — used by tests
     /// to assert side-effects of params::setsparam writes.
     fn pt_get(name: &str) -> Option<String> {
-        crate::ported::params::paramtab().lock().ok()
+        crate::ported::params::paramtab().read().ok()
             .and_then(|t| t.get(name).and_then(|p| p.u_str.clone()))
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/datetime.c`.
     #[test]
     fn test_output_strftime_nanoseconds() {
         let ops = ops_for(&[b'n'], Some("OUT"));
@@ -379,6 +393,8 @@ mod tests {
         assert_eq!(pt_get("OUT").as_deref(), Some("123"));
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/datetime.c`.
     #[test]
     fn test_output_strftime_to_scalar() {
         let ops = ops_for(&[b'n'], Some("OUT2"));
@@ -387,6 +403,8 @@ mod tests {
         assert_eq!(pt_get("OUT2").as_deref(), Some("1700000000"));
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/datetime.c`.
     #[test]
     fn test_output_strftime_format_required() {
         let ops = ops_for(&[], None);
@@ -400,6 +418,8 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/datetime.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -419,10 +439,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/datetime.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:strftime".to_string(), "p:EPOCHSECONDS".to_string(), "p:EPOCHREALTIME".to_string(), "p:epochtime".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/datetime.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -434,6 +458,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/datetime.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

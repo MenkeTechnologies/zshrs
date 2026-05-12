@@ -115,8 +115,7 @@ pub(crate) mod prompt_tls {
         });
         // c:params.c PSVAR special — array read from paramtab.
         PSVAR.with(|c| {
-            *c.borrow_mut() = crate::ported::params::paramtab()
-                .lock()
+            *c.borrow_mut() = crate::ported::params::paramtab().read()
                 .ok()
                 .and_then(|t| t.get("psvar").and_then(|p| p.u_arr.clone()))
                 .unwrap_or_default();

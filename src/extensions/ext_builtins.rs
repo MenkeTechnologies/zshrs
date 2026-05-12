@@ -190,8 +190,8 @@ impl ShellExecutor {
         println!("  aliases:     {}", self.alias_entries().len());
         println!("  global:      {} aliases", self.global_alias_entries().len());
         println!("  suffix:      {} aliases", self.suffix_alias_entries().len());
-        println!("  variables:   {}", crate::ported::params::paramtab().lock().map(|t| t.iter().filter(|(_, p)| p.u_arr.is_none()).count()).unwrap_or(0));
-        println!("  arrays:      {}", crate::ported::params::paramtab().lock().map(|t| t.iter().filter(|(_, p)| p.u_arr.is_some()).count()).unwrap_or(0));
+        println!("  variables:   {}", crate::ported::params::paramtab().read().map(|t| t.iter().filter(|(_, p)| p.u_arr.is_none()).count()).unwrap_or(0));
+        println!("  arrays:      {}", crate::ported::params::paramtab().read().map(|t| t.iter().filter(|(_, p)| p.u_arr.is_some()).count()).unwrap_or(0));
         println!("  assoc:       {}", crate::ported::params::paramtab_hashed_storage().lock().map(|m| m.len()).unwrap_or(0));
         println!(
             "  options:     {} set",
@@ -949,7 +949,7 @@ impl ShellExecutor {
         use std::sync::atomic::Ordering;
         for item in items {
             let cmd = template.replace("{}", item);
-            // Phase 2 migration: ZshParser + ZshCompiler.
+            // Phase 2 migration: parse_init + parse + ZshCompiler.
             // Mirror Src/init.c errflag save/clear/check around parse.
             let saved_errflag = errflag.load(Ordering::Relaxed);
             errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
@@ -1011,7 +1011,7 @@ impl ShellExecutor {
         let template = &args[0];
         let items = &args[1..];
 
-        // Compile and run on VM — no forks. Phase 2: ZshParser+ZshCompiler.
+        // Compile and run on VM — no forks. parse_init+parse + ZshCompiler.
         use crate::ported::utils::{errflag, ERRFLAG_ERROR};
         use std::sync::atomic::Ordering;
         for item in items {
@@ -1061,7 +1061,7 @@ impl ShellExecutor {
         let items = &args[1..];
 
         // Compile and run on VM — no forks, fire-and-forget style.
-        // Phase 2: ZshParser+ZshCompiler.
+        // parse_init+parse + ZshCompiler.
         use crate::ported::utils::{errflag, ERRFLAG_ERROR};
         use std::sync::atomic::Ordering;
         let mut any_fail = false;
@@ -1351,7 +1351,7 @@ impl ShellExecutor {
                     // order (was HashMap iteration random, so
                     // \`compgen -v\` listings flickered).
                     let mut names: Vec<String> =
-                        if let Ok(tab) = crate::ported::params::paramtab().lock() {
+                        if let Ok(tab) = crate::ported::params::paramtab().read() {
                             tab.iter()
                                 .filter(|(_, pm)| pm.u_arr.is_none())
                                 .map(|(k, _)| k.clone())
@@ -1933,7 +1933,7 @@ pub(crate) fn prompt(args: &[String]) -> i32 {
     match args[0].as_str() {
         "-l" | "--list" => {
             println!("Available prompt themes:");
-            if let Ok(tab) = crate::ported::params::paramtab().lock() {
+            if let Ok(tab) = crate::ported::params::paramtab().read() {
                 if let Some(pm) = tab.get("prompt_themes") {
                     if let Some(themes) = &pm.u_arr {
                         for t in themes { println!("  {}", t); }

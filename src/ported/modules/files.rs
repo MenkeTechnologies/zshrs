@@ -890,6 +890,8 @@ use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/files.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -909,10 +911,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/files.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:chgrp".to_string(), "b:chmod".to_string(), "b:chown".to_string(), "b:ln".to_string(), "b:mkdir".to_string(), "b:mv".to_string(), "b:rm".to_string(), "b:rmdir".to_string(), "b:sync".to_string(), "b:zf_chgrp".to_string(), "b:zf_chmod".to_string(), "b:zf_chown".to_string(), "b:zf_ln".to_string(), "b:zf_mkdir".to_string(), "b:zf_mv".to_string(), "b:zf_rm".to_string(), "b:zf_rmdir".to_string(), "b:zf_sync".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/files.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -924,6 +930,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/files.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

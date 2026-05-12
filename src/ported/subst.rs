@@ -183,7 +183,7 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
         // c:Src/Modules/parameter.c:1990 scanpmraliases — aliastab.
         // Flag checks inline against `node.flags` matching C's
         // `(a->node.flags & ALIAS_GLOBAL)` etc. style.
-        "aliases" => crate::ported::hashtable::aliastab_lock().lock().ok()
+        "aliases" => crate::ported::hashtable::aliastab_lock().read().ok()
             .map(|t| join(
                 t.iter()
                     .filter(|(_, a)| {
@@ -195,7 +195,7 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
                     .map(|(_, a)| a.text.clone())
                     .collect()
             )),
-        "galiases" => crate::ported::hashtable::aliastab_lock().lock().ok()
+        "galiases" => crate::ported::hashtable::aliastab_lock().read().ok()
             .map(|t| join(
                 t.iter()
                     .filter(|(_, a)| {
@@ -206,7 +206,7 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
                     .map(|(_, a)| a.text.clone())
                     .collect()
             )),
-        "saliases" => crate::ported::hashtable::sufaliastab_lock().lock().ok()
+        "saliases" => crate::ported::hashtable::sufaliastab_lock().read().ok()
             .map(|t| join(
                 t.iter()
                     .filter(|(_, a)| {
@@ -215,7 +215,7 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
                     .map(|(_, a)| a.text.clone())
                     .collect()
             )),
-        "dis_aliases" => crate::ported::hashtable::aliastab_lock().lock().ok()
+        "dis_aliases" => crate::ported::hashtable::aliastab_lock().read().ok()
             .map(|t| join(
                 t.iter()
                     .filter(|(_, a)| {
@@ -227,7 +227,7 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
                     .map(|(_, a)| a.text.clone())
                     .collect()
             )),
-        "dis_galiases" => crate::ported::hashtable::aliastab_lock().lock().ok()
+        "dis_galiases" => crate::ported::hashtable::aliastab_lock().read().ok()
             .map(|t| join(
                 t.iter()
                     .filter(|(_, a)| {
@@ -238,7 +238,7 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
                     .map(|(_, a)| a.text.clone())
                     .collect()
             )),
-        "dis_saliases" => crate::ported::hashtable::sufaliastab_lock().lock().ok()
+        "dis_saliases" => crate::ported::hashtable::sufaliastab_lock().read().ok()
             .map(|t| join(
                 t.iter()
                     .filter(|(_, a)| {
@@ -251,7 +251,7 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
         // For each cmdnam: HASHED arm reads `cmd` (resolved path);
         // unhashed reads first path segment in `name` (Vec<String>)
         // joined with the command name.
-        "commands" => crate::ported::hashtable::cmdnamtab_lock().lock().ok()
+        "commands" => crate::ported::hashtable::cmdnamtab_lock().read().ok()
             .map(|t| join(
                 t.iter()
                     .filter_map(|(nm, c)| {
@@ -268,28 +268,28 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
                     .collect()
             )),
         // c:Src/Modules/parameter.c:519 scanpmfunctions — shfunctab.
-        "functions" => crate::ported::hashtable::shfunctab_lock().lock().ok()
+        "functions" => crate::ported::hashtable::shfunctab_lock().read().ok()
             .map(|t| join(
                 t.iter()
                     .filter(|(_, f)| (f.node.flags & crate::ported::hashtable::flags::DISABLED as i32) == 0)
                     .map(|(_, f)| f.body.clone().unwrap_or_default())
                     .collect()
             )),
-        "dis_functions" => crate::ported::hashtable::shfunctab_lock().lock().ok()
+        "dis_functions" => crate::ported::hashtable::shfunctab_lock().read().ok()
             .map(|t| join(
                 t.iter()
                     .filter(|(_, f)| (f.node.flags & crate::ported::hashtable::flags::DISABLED as i32) != 0)
                     .map(|(_, f)| f.body.clone().unwrap_or_default())
                     .collect()
             )),
-        "functions_source" => crate::ported::hashtable::shfunctab_lock().lock().ok()
+        "functions_source" => crate::ported::hashtable::shfunctab_lock().read().ok()
             .map(|t| join(
                 t.iter()
                     .filter(|(_, f)| (f.node.flags & crate::ported::hashtable::flags::DISABLED as i32) == 0)
                     .map(|(_, f)| f.filename.clone().unwrap_or_default())
                     .collect()
             )),
-        "dis_functions_source" => crate::ported::hashtable::shfunctab_lock().lock().ok()
+        "dis_functions_source" => crate::ported::hashtable::shfunctab_lock().read().ok()
             .map(|t| join(
                 t.iter()
                     .filter(|(_, f)| (f.node.flags & crate::ported::hashtable::flags::DISABLED as i32) != 0)
@@ -307,7 +307,7 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
                 .keys().cloned().collect()
         )),
         // c:Src/Modules/parameter.c:124 scanpmparameters — paramtab.
-        "parameters" => crate::ported::params::paramtab().lock().ok()
+        "parameters" => crate::ported::params::paramtab().read().ok()
             .map(|t| join(t.keys().cloned().collect())),
         // c:Src/Modules/parameter.c:1016 scanpmoptions — optiontab.
         "options" => Some(join(
@@ -324,15 +324,14 @@ fn splice_magic_assoc(name: &str) -> Option<String> {
 /// Read a scalar variable from `paramtab`. Equivalent to C's
 /// `getsparam(name)` (`Src/params.c:3194`) for the scalar case.
 fn vars_get(name: &str) -> Option<String> {
-    let tab = crate::ported::params::paramtab().lock().ok()?;
+    let tab = crate::ported::params::paramtab().read().ok()?;
     let pm = tab.get(name)?;
     pm.u_str.clone()
 }
 
 /// True if `name` exists in `paramtab` (any type).
 fn vars_contains(name: &str) -> bool {
-    crate::ported::params::paramtab()
-        .lock()
+    crate::ported::params::paramtab().read()
         .map_or(false, |tab| tab.contains_key(name))
 }
 
@@ -346,15 +345,14 @@ fn vars_insert(name: String, value: String) {
 /// Read an array parameter from `paramtab`. Equivalent to C's
 /// `getaparam(name)` (`Src/params.c:3245`).
 fn arrays_get(name: &str) -> Option<Vec<String>> {
-    let tab = crate::ported::params::paramtab().lock().ok()?;
+    let tab = crate::ported::params::paramtab().read().ok()?;
     let pm = tab.get(name)?;
     pm.u_arr.clone()
 }
 
 /// True if `name` is an array in `paramtab`.
 fn arrays_contains(name: &str) -> bool {
-    crate::ported::params::paramtab()
-        .lock()
+    crate::ported::params::paramtab().read()
         .map_or(false, |tab| {
             tab.get(name).map_or(false, |pm| pm.u_arr.is_some())
         })
@@ -364,7 +362,7 @@ fn arrays_contains(name: &str) -> bool {
 /// canonical paramtab as a `PM_ARRAY` entry.
 fn arrays_insert(name: String, value: Vec<String>) {
     use crate::ported::zsh_h::{hashnode, param, Param, PM_ARRAY};
-    let mut tab = match crate::ported::params::paramtab().lock() {
+    let mut tab = match crate::ported::params::paramtab().write() {
         Ok(t) => t,
         Err(_) => return,
     };
@@ -423,7 +421,7 @@ fn exec_sethparam(name: &str, parts: Vec<String>) {
     if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
         store.insert(name.to_string(), map);
     }
-    if let Ok(mut tab) = crate::ported::params::paramtab().lock() {
+    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
         if let Some(pm) = tab.get_mut(name) {
             pm.node.flags |= PM_HASHED as i32;
         } else {
@@ -2870,7 +2868,7 @@ pub fn paramsubst(
                     match var_name.as_str() {
                         // c:2247
                         "aliases" => crate::ported::hashtable::aliastab_lock()
-                            .lock()
+                            .read()
                             .ok()
                             .map(|t| {
                                 let mut names: Vec<String> = t.iter()
@@ -2881,7 +2879,7 @@ pub fn paramsubst(
                             }),
                         "functions" | "dis_functions" =>
                             crate::ported::hashtable::shfunctab_lock()
-                                .lock()
+                                .read()
                                 .ok()
                                 .map(|t| {
                                     let mut names: Vec<String> = t.iter()
@@ -2892,7 +2890,7 @@ pub fn paramsubst(
                                 }),
                         "commands" =>
                             crate::ported::hashtable::cmdnamtab_lock()
-                                .lock()
+                                .read()
                                 .ok()
                                 .map(|t| {
                                     let mut names: Vec<String> = t.iter()
@@ -3826,8 +3824,7 @@ pub fn paramsubst(
             // c:2814 — read PM_* flags directly from paramtab and
             // synthesize the type tag. Mirrors C `pm->node.flags &
             // PM_TYPE` dispatch at subst.c:2814-2900.
-            value = crate::ported::params::paramtab()
-                .lock()
+            value = crate::ported::params::paramtab().read()
                 .ok()
                 .and_then(|tab| tab.get(&var_name).map(|pm| {
                     use crate::ported::zsh_h::{

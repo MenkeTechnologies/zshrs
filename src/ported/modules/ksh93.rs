@@ -77,8 +77,7 @@ pub fn edcharsetfn(_pm: *mut param, _x: *mut libc::c_char) {           // c:47
 /// ```
 pub fn matchgetfn(pm: *mut param) -> Vec<String> {                     // c:60
     // c:62 — `char **zsh_match = getaparam("match");`
-    let zsh_match: Vec<String> = crate::ported::params::paramtab()
-        .lock().ok()
+    let zsh_match: Vec<String> = crate::ported::params::paramtab().read().ok()
         .and_then(|t| t.get("match").and_then(|p| p.u_arr.clone()))
         .unwrap_or_default();
     /*
@@ -97,8 +96,7 @@ pub fn matchgetfn(pm: *mut param) -> Vec<String> {                     // c:60
             // c:75-80 — char **ap = zalloc(...); pm->u.arr = ap;
             //           *ap++ = ztrdup(getsparam("MATCH"));
             //           while (*zsh_match) *ap = ztrdup(*zsh_match++);
-            let match_str: String = crate::ported::params::paramtab()
-                .lock().ok()
+            let match_str: String = crate::ported::params::paramtab().read().ok()
                 .and_then(|t| t.get("MATCH").and_then(|p| p.u_str.clone()))
                 .unwrap_or_default();
             let mut ap: Vec<String> = Vec::with_capacity(zsh_match.len() + 1);
@@ -124,8 +122,7 @@ pub fn matchgetfn(pm: *mut param) -> Vec<String> {                     // c:60
         }
     } else if isset(KSHARRAYS) {                                        // c:83
         // c:84 — pm->u.arr = mkarray(ztrdup(getsparam("MATCH")));
-        let match_str: String = crate::ported::params::paramtab()
-            .lock().ok()
+        let match_str: String = crate::ported::params::paramtab().read().ok()
             .and_then(|t| t.get("MATCH").and_then(|p| p.u_str.clone()))
             .unwrap_or_default();
         let one = vec![crate::ported::utils::ztrdup(&match_str)];
@@ -216,7 +213,7 @@ pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::
     // funcstack is the global from Src/exec.c:340; stub holds NULL so
     // funcstack->prev is always NULL → branch picks 0.
     let mut num: i64 = if (*funcstack.lock().unwrap()) != 0 {
-        crate::ported::params::paramtab().lock().ok()
+        crate::ported::params::paramtab().read().ok()
             .and_then(|t| t.get(".sh.level")
                 .and_then(|p| p.u_str.as_ref().and_then(|s| s.parse::<i64>().ok())))
             .unwrap_or(0)
@@ -314,8 +311,7 @@ pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::
         // c:197-198 — if (sh_edchar == sh_unsetval) sh_edchar = dupstring(getsparam("KEYS"));
         let edch_unset = sh_edchar.lock().unwrap().is_empty();
         if edch_unset {
-            let keys: String = crate::ported::params::paramtab()
-                .lock().ok()
+            let keys: String = crate::ported::params::paramtab().read().ok()
                 .and_then(|t| t.get("KEYS").and_then(|p| p.u_str.clone()))
                 .unwrap_or_default();
             *sh_edchar.lock().unwrap() = dupstring(&keys);
@@ -487,6 +483,7 @@ use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// Port of `ksh93_wrapper()` from `Src/Modules/ksh93.c:143`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -502,6 +499,8 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 // Local descriptor stub mirroring the C bintab + partab.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/ksh93.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec![
         "b:nameref".to_string(),
@@ -517,6 +516,8 @@ fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     ]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/ksh93.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -528,6 +529,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/ksh93.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -549,6 +552,8 @@ static paramtab: AtomicI32 = AtomicI32::new(0);
 //   HashNode gethashnode2(HashTable ht, const char *nam);
 // Stub uses the param-shaped overload — returns NULL since paramtab
 // is empty in static-link path.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/ksh93.c`.
 fn gethashnode2(_ht: &AtomicI32, _name: &str) -> *mut param {
     std::ptr::null_mut()
 }
@@ -597,6 +602,8 @@ static funcstack: Mutex<usize> = Mutex::new(0);
 // global table is wired through.
 const KSHARRAYS: i32 = crate::ported::zsh_h::KSHARRAYS;
 const VIMODE:    i32 = crate::ported::zsh_h::VIMODE;
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/ksh93.c`.
 fn isset(_opt: i32) -> bool { false }
 
 // `param.u.arr` field — the C `union u` has `char **arr` at c:1835.
@@ -607,6 +614,8 @@ fn isset(_opt: i32) -> bool { false }
 mod tests {
     use super::*;
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/ksh93.c`.
     /// Verifies `ksh93_wrapper` returns 1 in the !EMULATE_KSH branch
     /// (c:149-150) when `emulation` global is 0 (default).
     #[test]
@@ -620,6 +629,8 @@ mod tests {
         assert_eq!(rc, 1);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/ksh93.c`.
     /// Verifies `ksh93_wrapper` runs the full body (and still returns 1
     /// per c:227) when EMULATE_KSH is set on the `emulation` global.
     /// Body relies on stubbed externals so it can't validate the
@@ -640,6 +651,8 @@ mod tests {
         emulation.store(saved, Ordering::SeqCst);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/ksh93.c`.
     /// Verifies `matchgetfn` returns empty Vec when `match` array is
     /// unset and KSHARRAYS is off (c:86 NULL branch).
     #[test]
@@ -648,12 +661,16 @@ mod tests {
         assert!(v.is_empty());
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/ksh93.c`.
     /// Verifies `edcharsetfn` is a no-op (c:56 `;`).
     #[test]
     fn edcharsetfn_noop() {
         edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/ksh93.c`.
     /// Verifies all module loaders return 0.
     #[test]
     fn module_loaders_return_zero() {
@@ -668,6 +685,7 @@ mod tests {
         assert_eq!(finish_(m), 0);
     }
 
+    /// Port of `ksh93_wrapper()` from `Src/Modules/ksh93.c:143`.
     /// Verifies the C-faithful static globals are initialized empty
     /// (sh_unsetval-equivalent) at module-load.
     #[test]
@@ -683,6 +701,7 @@ mod tests {
         assert_eq!(sh_unsetval, [0u8, 0u8]);
     }
 
+    /// Port of `ksh93_wrapper()` from `Src/Modules/ksh93.c:143`.
     /// Verifies `LOCAL_NAMEREF` matches the C `#define` at c:158.
     #[test]
     fn local_nameref_matches_c_define() {

@@ -425,7 +425,7 @@ pub fn init_builtins() {                                                     // 
     if !crate::ported::zsh_h::EMULATION(EMULATE_ZSH) {                       // c:214
         // c:215-217 — `hn = reswdtab->getnode2(reswdtab,"repeat");
         //              if (hn) reswdtab->disablenode(hn, 0);`
-        if let Ok(mut tab) = crate::ported::hashtable::reswdtab_lock().lock() {
+        if let Ok(mut tab) = crate::ported::hashtable::reswdtab_lock().write() {
             tab.disable("repeat");
         }
     }
@@ -1312,7 +1312,7 @@ fn loadautofn(shf: *mut crate::ported::zsh_h::shfunc,                        // 
     }
     // Sync the body string into the Rust-side ShFunc table so the
     // lazy-parse path can find it later.
-    if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().lock() {
+    if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
         if let Some(existing) = tab.get_mut(&name) {
             existing.body = Some(body);
             existing.filename = dir_path;
@@ -4054,7 +4054,7 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
                 let to_set = (on & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT
                     | PM_LOWER | PM_UPPER | PM_READONLY)) as i32;
                 if to_set != 0 {
-                    if let Ok(mut tab) = crate::ported::params::paramtab().lock() {
+                    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
                         if let Some(pm) = tab.get_mut(n) {
                             pm.node.flags = (pm.node.flags & !type_mask) | to_set;
                         }
@@ -4180,7 +4180,7 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
                 Some(prog) => {
                     if !OPT_ISSET(ops, b'p') {                               // c:4042
                         // c:4044-4047 — aliases scan.
-                        if let Ok(t) = crate::ported::hashtable::aliastab_lock().lock() {
+                        if let Ok(t) = crate::ported::hashtable::aliastab_lock().read() {
                             for (n, _a) in t.iter() {
                                 if crate::ported::pattern::pattry(&prog, n) {
                                     println!("{}", n);
@@ -4272,7 +4272,7 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
         // c:4124-4130 — `-p` path-only path.
         if !OPT_ISSET(ops, b'p') {
             // c:4128-4134 — alias check.
-            if let Ok(t) = crate::ported::hashtable::aliastab_lock().lock() {
+            if let Ok(t) = crate::ported::hashtable::aliastab_lock().read() {
                 if let Some(a) = t.get(arg) {                                // c:4128
                     if (printflags & PRINT_WHENCE_WORD as i32) != 0 {        // c:4129
                         println!("{}: alias", a.node.nam);
@@ -4293,7 +4293,7 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
             if let Some(idx) = arg.rfind('.') {                              // c:4137
                 if idx > 0 && idx + 1 < arg.len() {
                     let suf = &arg[idx + 1..];
-                    if let Ok(t) = crate::ported::hashtable::sufaliastab_lock().lock() {
+                    if let Ok(t) = crate::ported::hashtable::sufaliastab_lock().read() {
                         if let Some(a) = t.get(suf) {                        // c:4140
                             println!("{}={}", a.node.nam, a.text);               // c:4141
                             informed = 1;                                    // c:4142
@@ -4792,8 +4792,7 @@ pub fn bin_unset(name: &str, argv: &[String],                                // 
                     exec.unset_array(&nm_owned);
                     exec.unset_assoc(&nm_owned);
                 });
-                let _ = crate::ported::params::paramtab()
-                    .lock().ok().as_deref_mut()
+                let _ = crate::ported::params::paramtab().write().ok().as_deref_mut()
                     .map(|t| t.remove(nm));                                  // c:3900 paramtab removenode
                 std::env::remove_var(nm);                                    // c:3905 delenv
             }
@@ -4970,21 +4969,21 @@ pub fn bin_enable(name: &str, argv: &[String],                               // 
     // Helper closures over the chosen table.
     let toggle_one = |tab: &Tab, nm: &str, on: bool| -> bool {
         match tab {
-            Tab::Alias => crate::ported::hashtable::aliastab_lock().lock()
+            Tab::Alias => crate::ported::hashtable::aliastab_lock().write()
                 .map(|mut t| if on { t.enable(nm) } else { t.disable(nm) })
                 .unwrap_or(false),
-            Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().lock()
+            Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().write()
                 .map(|mut t| if on { t.enable(nm) } else { t.disable(nm) })
                 .unwrap_or(false),
             // c:541-547 — `enable`/`disable -r` toggles DISABLED on the
             // reswdtab entry; reswords resolve through getreswdnode in
             // the lexer so toggling here is enough to mask/unmask.
             Tab::Reswd => {
-                let exists = crate::ported::hashtable::reswdtab_lock().lock()
+                let exists = crate::ported::hashtable::reswdtab_lock().read()
                     .map(|t| t.get_including_disabled(nm).is_some())
                     .unwrap_or(false);
                 if !exists { return false; }
-                crate::ported::hashtable::reswdtab_lock().lock()
+                crate::ported::hashtable::reswdtab_lock().write()
                     .map(|mut t| if on { t.enable(nm) } else { t.disable(nm) })
                     .unwrap_or(false)
             }
@@ -4992,7 +4991,7 @@ pub fn bin_enable(name: &str, argv: &[String],                               // 
             // shfunctab entry; ports to disableshfuncnode/enableshfuncnode
             // which also unsettrap/settrap TRAP* fns.
             Tab::Shfunc => {
-                let exists = crate::ported::hashtable::shfunctab_lock().lock()
+                let exists = crate::ported::hashtable::shfunctab_lock().read()
                     .map(|t| t.get_including_disabled(nm).is_some())
                     .unwrap_or(false);
                 if !exists { return false; }
@@ -5020,13 +5019,13 @@ pub fn bin_enable(name: &str, argv: &[String],                               // 
     };
     let collect_names = |tab: &Tab| -> Vec<String> {
         match tab {
-            Tab::Alias => crate::ported::hashtable::aliastab_lock().lock()
+            Tab::Alias => crate::ported::hashtable::aliastab_lock().read()
                 .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
-            Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().lock()
+            Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().read()
                 .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
-            Tab::Reswd => crate::ported::hashtable::reswdtab_lock().lock()
+            Tab::Reswd => crate::ported::hashtable::reswdtab_lock().read()
                 .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
-            Tab::Shfunc => crate::ported::hashtable::shfunctab_lock().lock()
+            Tab::Shfunc => crate::ported::hashtable::shfunctab_lock().read()
                 .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
             Tab::Builtin => createbuiltintable().keys().cloned().collect(),
         }
@@ -5313,17 +5312,17 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
 
     // Helper: clear entire table.
     let clear_all = |t: &Tab| match t {
-        Tab::Alias => { let _ = crate::ported::hashtable::aliastab_lock().lock().map(|mut g| g.clear()); }
-        Tab::SufAlias => { let _ = crate::ported::hashtable::sufaliastab_lock().lock().map(|mut g| g.clear()); }
+        Tab::Alias => { let _ = crate::ported::hashtable::aliastab_lock().write().map(|mut g| g.clear()); }
+        Tab::SufAlias => { let _ = crate::ported::hashtable::sufaliastab_lock().write().map(|mut g| g.clear()); }
         Tab::NamedDir => { crate::ported::hashnameddir::emptynameddirtable(); }
         Tab::Shfunc => { let _ = SHFUNCTAB.lock().map(|mut g| g.clear()); }
         Tab::CmdNam => { crate::ported::hashtable::emptycmdnamtable(); }     // c:4389
     };
     let remove_one = |t: &Tab, nm: &str| -> bool {
         match t {
-            Tab::Alias => crate::ported::hashtable::aliastab_lock().lock()
+            Tab::Alias => crate::ported::hashtable::aliastab_lock().write()
                 .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
-            Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().lock()
+            Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().write()
                 .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
             Tab::NamedDir => crate::ported::hashnameddir::removenameddirnode(nm).is_some(),
             Tab::Shfunc => SHFUNCTAB.lock()
@@ -5352,9 +5351,9 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
             if let Some(prog) = pprog {
                 // Collect names then remove (avoid iterator/mutation conflict).
                 let names: Vec<String> = match &tab {
-                    Tab::Alias => crate::ported::hashtable::aliastab_lock().lock()
+                    Tab::Alias => crate::ported::hashtable::aliastab_lock().read()
                         .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
-                    Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().lock()
+                    Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().read()
                         .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
                     Tab::NamedDir => crate::ported::hashnameddir::nameddirtab().lock()
                         .map(|t| t.keys().cloned().collect()).unwrap_or_default(),
@@ -5467,7 +5466,7 @@ pub fn bin_alias(name: &str, argv: &[String],                                // 
     if argv.is_empty() {                                                     // c:4495
         crate::ported::mem::queue_signals();                                 // c:4496
         let lock = if use_suffix { sufaliastab_lock() } else { aliastab_lock() };
-        if let Ok(t) = lock.lock() {
+        if let Ok(t) = lock.read() {
             for (_n, a) in t.iter() {                                        // c:4497
                 if (a.node.flags & flags1 as i32) == flags1 as i32
                     && (a.node.flags & flags2 as i32) == 0 {
@@ -5488,7 +5487,7 @@ pub fn bin_alias(name: &str, argv: &[String],                                // 
                 crate::ported::zsh_h::PAT_HEAPDUP, None);
             if let Some(prog) = pprog {
                 let lock = if use_suffix { sufaliastab_lock() } else { aliastab_lock() };
-                if let Ok(t) = lock.lock() {
+                if let Ok(t) = lock.read() {
                     for (_n, a) in t.iter() {                                // c:4509
                         if (a.node.flags & flags1 as i32) == flags1 as i32
                             && (a.node.flags & flags2 as i32) == 0
@@ -5519,7 +5518,7 @@ pub fn bin_alias(name: &str, argv: &[String],                                // 
                 let n = &arg[..eq];
                 let v = &arg[eq + 1..];
                 let lock = if use_suffix { sufaliastab_lock() } else { aliastab_lock() };
-                if let Ok(mut t) = lock.lock() {
+                if let Ok(mut t) = lock.write() {
                     let a = crate::ported::hashtable::createaliasnode(n, v, flags1); // c:4527
                     t.add(a);
                 }
@@ -5528,7 +5527,7 @@ pub fn bin_alias(name: &str, argv: &[String],                                // 
         }
         let n = if let Some(eq) = arg.find('=') { &arg[..eq] } else { arg.as_str() };
         let lock = if use_suffix { sufaliastab_lock() } else { aliastab_lock() };
-        let found = lock.lock().ok().and_then(|t|
+        let found = lock.read().ok().and_then(|t|
             t.get_including_disabled(n).map(|a| (a.node.nam.clone(), a.node.flags as u32, a.text.clone()))
         );
         match found {

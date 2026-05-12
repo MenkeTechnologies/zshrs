@@ -775,8 +775,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 // ttyidlegetfn port) and proceed to the timeout exit.
                 // c:477 — `getiparam("TMOUT")`. Read straight from
                 // paramtab (the global) so this matches C's bare call.
-                let tmout: i64 = crate::ported::params::paramtab()
-                    .lock()
+                let tmout: i64 = crate::ported::params::paramtab().read()
                     .ok()
                     .and_then(|t| {
                         t.get("TMOUT").and_then(|pm| {

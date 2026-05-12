@@ -85,7 +85,7 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
         // their respective stores. Iterate paramtab once for scalars
         // (entries with no u_arr — array entries set u_arr).
         let scalar_entries: Vec<(String, String)> =
-            if let Ok(tab) = crate::ported::params::paramtab().lock() {
+            if let Ok(tab) = crate::ported::params::paramtab().read() {
                 tab.iter()
                     .filter(|(_, pm)| pm.u_arr.is_none())
                     .map(|(k, pm)| (k.clone(), pm.u_str.clone().unwrap_or_default()))
@@ -94,7 +94,7 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
                 Vec::new()
             };
         let array_entries: Vec<(String, Vec<String>)> =
-            if let Ok(tab) = crate::ported::params::paramtab().lock() {
+            if let Ok(tab) = crate::ported::params::paramtab().read() {
                 tab.iter()
                     .filter_map(|(k, pm)| pm.u_arr.clone().map(|a| (k.clone(), a)))
                     .collect()

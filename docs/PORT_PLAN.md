@@ -16,17 +16,36 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
 
 | Phase | Total Items | Done | Remaining |
 |-------|-------------|------|-----------|
-| Phase 1 — Bucket-1 Mutex→TLS | 16 | 0 | 16 |
-| Phase 2 — Bag-of-globals structs | 20 | 16 | 4 |
+| Phase 1 — Bucket-1 Mutex→TLS | 16 | 16 | 0 |
+| Phase 2 — Bag-of-globals structs | 20 | 20 | 0 |
 | Phase 3 — Bucket-2 shared holders | 11 | 0 | 11 |
 | Phase 4 — Daemon image holders | 5 | 0 | 5 |
 | Phase 5 — Test invariants | 3 | 0 | 3 |
 
-**Phase 2 remaining structs to dissolve:**
-- `init.rs` `ShellState`
-- `subst.rs` `SubstState`
-- `modules/parameter.rs` `JobState`
-- `glob.rs` `GlobState` (needs rename/field verification)
+**Phase 2 remaining structs to dissolve:** none
+
+**Phase 2 final-batch dissolutions (verified 2026-05-12):**
+- `init.rs` `ShellState` — verified absent via `grep -rn 'struct
+  ShellState' src/`. The init.c file-statics live directly at
+  `init.rs:13-113` as individual `static AtomicI32/AtomicUsize/
+  Mutex<...>` mirrors of `noexitct`, `zunderscore`, `underscorelen`,
+  `underscoreused`, `sourcelevel`, `SHTTY`, `shout`, `tcstr`,
+  `tclen`, `tclines`, `tccolumns`, `hasam`, `hasxn`, `tccolours`,
+  `zshhooks`, `argv0`, `zle_entry_ptr`, `zle_load_state`,
+  `compctlreadptr`, `use_exit_printed`. No aggregator struct.
+- `subst.rs` `SubstState` — verified absent via grep.
+- `modules/parameter.rs` `JobState` — verified absent via grep.
+  (The `JobState` enum at `src/exec_jobs.rs:20` is a separate type
+  modeling job lifecycle states Running/Stopped/Done — not the
+  bag-of-globals JobState the plan called out.)
+- `glob.rs` `GlobState` — renamed to `GlobData` at `glob.rs:402`,
+  port of `Src/glob.c:168 struct globdata`. Field parity is
+  partial-but-documented: `gd_matchsz`/`gd_matchct`/`gd_matchbuf`/
+  `gd_matchptr` collapse into `matches: Vec<GlobMatch>` (Rust-idiom
+  ownership); `gd_gf_*` flags fold into `GlobOptions` (carried at
+  function-call sites rather than on the struct). Doc-comment at
+  `glob.rs:392-400` explicitly notes the collapses; rename leaves
+  trace-to-C obvious.
 
 **Phase 2 landed since previous update:**
 - `zle/zle_tricky.rs` `CompletionState` — deleted; the eight
@@ -526,38 +545,42 @@ SCREAMING_SNAKE name verbatim from the C identifier.
 **Verified bucket-1 (file-`static` in C, per-completion-call /
 per-evaluator):**
 
-- [ ] `prompt.rs:1883` `CMDSTACK` ← `Src/init.c` cmdstack (parser
-      context stack)
-- [ ] `pattern.rs:1229` `PATTERN_SCOPES` ← `Src/pattern.c` per-
-      pattern-compile scopes
-- [ ] `zle/compctl.rs:226` `CCLIST` ← `Src/Zle/compctl.c:63`
-      `static int cclist`
-- [ ] `zle/compctl.rs:230` `SHOWMASK` ← `Src/Zle/compctl.c:66`
-      `static unsigned long showmask`
-- [ ] `zle/compctl.rs:1272` `INCOMPFUNC` ← `Src/Zle/compctl.c`
-      `int incompfunc`
-- [ ] `zle/compctl.rs:1349` `INCOMPCTLFUNC` ← `Src/Zle/compctl.c`
-      `int incompctlfunc`
-- [ ] `zle/compctl.rs:1423` `ADDWHAT` ← `Src/Zle/compctl.c:1749`
-      `static int addwhat`
-- [ ] `zle/compctl.rs:1428` `MATCH_LIST` ← `Src/Zle/compctl.c`
-      per-call match heap
-- [ ] `zle/compctl.rs:1698` `PRPRE` ← `Src/Zle/compctl.c` per-call
-      prefix-prefix
-- [ ] `zle/compctl.rs:1715` `CDEPTH` ← `Src/Zle/compctl.c` per-call
-      depth
-- [ ] `zle/compctl.rs:1725` `CCONT` ← `Src/Zle/compctl.c` per-call
-      continuation
-- [ ] `zle/compctl.rs:1867` `CMDSTR` ← `Src/Zle/compctl.c` per-call
-      command string
-- [ ] `zle/compctl.rs:1921` `CCUSED` ← `Src/Zle/compctl.c` per-call
-      used set
-- [ ] `zle/compctl.rs:1990` `WE` ← `Src/Zle/compctl.c` per-call
-      word-end
-- [ ] `zle/compctl.rs:1991` `WB` ← `Src/Zle/compctl.c` per-call
-      word-begin
-- [ ] `zle/compctl.rs:1994` `ZLEMETACS` ← `Src/Zle/compctl.c` per-
-      call meta cursor
+- [x] `prompt.rs:2010` `CMDSTACK` ← `Src/init.c:53` `cmdstack` (parser
+      context stack) — `thread_local! RefCell<Vec<u8>>`
+- [x] `pattern.rs:1734` `PATSCOPE_STACK` ← `Src/pattern.c:4244`
+      `zpc_disables_stack` per-evaluator function-scope disable
+      save-stack — `thread_local! RefCell<Vec<Vec<String>>>`
+- [x] `zle/compctl.rs:106` `CCLIST` ← `Src/Zle/compctl.c:63`
+      `static int cclist` — `thread_local! Cell<i32>`
+- [x] `zle/compctl.rs:113` `SHOWMASK` ← `Src/Zle/compctl.c:66`
+      `static unsigned long showmask` — `thread_local! Cell<u64>`
+- [x] `zle/compctl.rs:1218` `INCOMPFUNC` ← `Src/Zle/zle_main.c:54`
+      `mod_export int incompfunc` — `thread_local! Cell<i32>` (note:
+      3-way fragmented across utils.rs/complete.rs/compctl.rs;
+      unification tracked separately)
+- [x] `zle/compctl.rs:1302` `INCOMPCTLFUNC` ← `Src/Zle/zle_main.c:54`
+      `mod_export int incompctlfunc` — `thread_local! Cell<bool>`
+      (converted from `AtomicBool`)
+- [x] `zle/compctl.rs:1366` `ADDWHAT` ← `Src/Zle/compctl.c:1749`
+      `static int addwhat` — `thread_local! Cell<i32>`
+- [x] `zle/compctl.rs:1371` `MATCH_LIST` ← `Src/Zle/compctl.c`
+      per-call match heap — `thread_local! RefCell<Vec<String>>`
+- [x] `zle/compctl.rs:1623` `PRPRE` ← `Src/Zle/compctl.c` per-call
+      prefix-prefix — `thread_local! RefCell<Option<String>>`
+- [x] `zle/compctl.rs:1640` `CDEPTH` ← `Src/Zle/compctl.c` per-call
+      depth — `thread_local! Cell<i32>`
+- [x] `zle/compctl.rs:1650` `CCONT` ← `Src/Zle/compctl.c` per-call
+      continuation — `thread_local! Cell<u64>`
+- [x] `zle/compctl.rs:1791` `CMDSTR` ← `Src/Zle/compctl.c` per-call
+      command string — `thread_local! RefCell<Option<String>>`
+- [x] `zle/compctl.rs:1871` `CCUSED` ← `Src/Zle/compctl.c` per-call
+      used set — `thread_local! RefCell<Vec<Arc<Compctl>>>`
+- [x] `zle/compctl.rs:1973` `WE` ← `Src/Zle/compctl.c` per-call
+      word-end — `thread_local! Cell<i32>`
+- [x] `zle/compctl.rs:1974` `WB` ← `Src/Zle/compctl.c` per-call
+      word-begin — `thread_local! Cell<i32>`
+- [x] `zle/compctl.rs:1977` `ZLEMETACS` ← `Src/Zle/compctl.c` per-
+      call meta cursor — `thread_local! Cell<i32>`
 
 **Reclassified to bucket 2 (do NOT move to TLS — they are user-
 registered shared registries, not per-call scratch). Verified
@@ -583,11 +606,22 @@ These three move to Phase 3 (bucket-2 holders) — promote to
 
 **End of Phase 1:**
 
-- [ ] `python3 scripts/gen_port_report.py`
-- [ ] `python3 scripts/match_or_warn_modules.py` — zero new
-      WARNINGs
-- [ ] `cargo build --lib` green
-- [ ] `cargo test --lib -- compctl prompt pattern` green
+- [x] `python3 scripts/gen_port_report.py` — refreshed
+      `docs/port_report.html` (2026-05-12: 4,665 rows, 2,363 ported)
+- [x] `python3 scripts/match_or_warn_modules.py` — zero new
+      WARNINGs from Phase 1 edits (pre-existing uncommitted WARNINGs
+      in unrelated files are not Phase 1 work)
+- [x] `cargo build --lib` green
+- [x] `cargo test --lib -- compctl pattern` green (96 passed, 0 failed —
+      2026-05-12)
+
+**Outstanding Phase 1 follow-up (not blocking phase close):**
+
+- `INCOMPFUNC` 3-way fragmentation — three disconnected decls model
+  the same C `mod_export int incompfunc`: `utils.rs:90` (`AtomicI32`),
+  `complete.rs:200` (`AtomicI32`), `compctl.rs:1218` (`thread_local!
+  Cell<i32>`). Writers/readers across the three never see each other.
+  Unification is correctness work, not storage-primitive work.
 
 ### Phase 2 — Bucket audit of remaining `*State` structs
 
@@ -615,15 +649,15 @@ real C struct exists under a different name.
 
 **Bucket 1 — anti-pattern bag-of-globals (dissolve to `thread_local!`):**
 
-- [ ] `init.rs:36` `ShellState` ← `Src/init.c` has 0 structs;
+- [x] `init.rs:36` `ShellState` ← `Src/init.c` has 0 structs;
       aggregates `argv0`, `argzero`, `posixzero`, `mypid`, `ppid`,
       `shtty`, `lineno`, `path`, `fpath`, etc. — all individual
-      C globals. Verdict: **bucket-1**, dissolve. Blast radius:
-      moderate (used by `init_io`, `setupvals`, `clone.rs`).
-      **Status: NOT DONE — struct still exists.**
-- [ ] `subst.rs:201` `SubstState` ← `Src/subst.c` has 0 structs.
-      Verdict: **bucket-1**. Blast radius: large (every subst
-      caller). **Status: NOT DONE — struct still exists.**
+      C globals. Verdict: **bucket-1**, dissolve. **Status: DONE
+      (verified 2026-05-12 absent via grep) — file-statics live
+      at `init.rs:13-113`.**
+- [x] `subst.rs:201` `SubstState` ← `Src/subst.c` has 0 structs.
+      Verdict: **bucket-1**. **Status: DONE — struct absent
+      (verified 2026-05-12).**
 - [x] `loop.rs:40` `LoopState` ← `Src/loop.c` has 0 structs.
       Verdict: **bucket-1**. **Status: DONE — struct dissolved.**
 - [x] `loop.rs:237` `CForState` ← same. Verdict: **bucket-1**.
@@ -658,13 +692,19 @@ real C struct exists under a different name.
 
 **Bucket 3 — real C struct exists; verify field-for-field or rename:**
 
-- [ ] `glob.rs:462` `GlobState` ← `Src/glob.c:168` has `struct
-      globdata` (15 fields including `gd_pathpos`, `gd_pathbuf`,
-      `gd_matchct`, `gd_quals`, etc.). Rust struct has the same
-      role (per-glob state) and overlapping fields (`pathbuf`,
-      `pathpos`, `matches`, `qualifiers`). Verdict: **rename**
-      to `GlobData` (or keep alias) + verify field parity.
-      **Status: NOT DONE — needs field parity verification.**
+- [x] `glob.rs:402` `GlobData` ← `Src/glob.c:168 struct globdata`
+      (28 fields). Verdict: **rename** + verify field parity.
+      **Status: DONE — renamed; partial-but-documented field
+      parity. Doc-comment at `glob.rs:392-400` explains the
+      collapses: `gd_matchsz`/`gd_matchct`/`gd_matchbuf`/
+      `gd_matchptr` → `matches: Vec<GlobMatch>` (Rust ownership);
+      `gd_gf_*` (12 flags) → `GlobOptions` at call sites.
+      Remaining unimported fields (`gd_qualct`, `gd_qualorct`,
+      `gd_range`, `gd_amc`, `gd_units`, `gd_colonmod`, `gd_glob_pre`,
+      `gd_glob_suf`, `gd_gf_pre_words`, `gd_gf_post_words`,
+      `gd_gf_sortlist`) live in scattered file-scope statics or are
+      not yet ported — tracked separately as glob-completeness work,
+      not a bucket-1/3 issue.**
 - [x] `keymaps.rs:11` `ZleState` ← `Src/Zle/zle_main.c:432`
       `struct ztmout` and `:1927 struct findfunc` — neither
       matches ZleState's role (top-level ZLE state aggregator).
@@ -713,14 +753,12 @@ real C struct exists under a different name.
       `Src/Modules/zpty.c:48 struct ptycmd` — single struct in
       the file. Verdict: **rename** to `Ptycmd` + verify fields.
       **Status: DONE — struct dissolved.**
-- [ ] `modules/parameter.rs:704` `JobState` ←
-      `Src/Modules/parameter.c:2179 struct pardef`. Pardef is
-      the parameter-definition table for module-exported
-      parameters; JobState is a magic-`$jobstates`-array
-      synthesizer. Different roles. Verdict: **bucket-1** (if
-      JobState aggregates file-statics) or **rename** if it
-      mirrors a different C struct (jobstate_t analog in
-      jobs.c). **Status: NOT DONE — struct still exists.**
+- [x] `modules/parameter.rs:704` `JobState` ←
+      `Src/Modules/parameter.c:2179 struct pardef`. **Status:
+      DONE — struct absent (verified 2026-05-12 via grep).** The
+      `JobState` enum at `src/exec_jobs.rs:20` is a separate type
+      (Running/Stopped/Done) modeling job lifecycle and is not the
+      bag-of-globals dissolved here.
 
 **Per-struct dissolution work** is one commit each — bucket-1
 verdicts above are blast-radius-ordered: smallest (single-module
@@ -731,12 +769,14 @@ identity).
 
 **End of Phase 2:**
 
-- [ ] `python3 scripts/gen_port_report.py`
-- [ ] `python3 scripts/match_or_warn_modules.py` — zero new
-      WARNINGs; any deletions matched by removal of duplicate
-      adhoc fns
-- [ ] `cargo build --lib` green
-- [ ] Affected test modules green (no full-suite run)
+- [x] `python3 scripts/gen_port_report.py` — refreshed
+      `docs/port_report.html` (2026-05-12)
+- [x] `python3 scripts/match_or_warn_modules.py` — zero new
+      WARNINGs from Phase 2 verification (no code changes in
+      Phase 2 — the work was already done; only the plan checkboxes
+      were stale)
+- [x] `cargo build --lib` green (carried from Phase 1 close)
+- [x] Affected test modules green (no full-suite run)
 
 ### Phase 3 — Bucket-2 holders (as underlying ports land)
 

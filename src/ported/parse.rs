@@ -1,8 +1,10 @@
-//! Zsh parser - Direct port from zsh/Src/parse.c
+//! Zsh parser — direct port from zsh/Src/parse.c.
 //!
-//! This parser takes tokens from the ZshLexer and builds an AST.
-//! It follows the zsh grammar closely, producing structures that
-//! can be executed by the shell executor.
+//! Pulls tokens via the lex.rs free fns (zshlex/tok/tokstr) and
+//! builds an AST tree (relocated to src/extensions/zsh_ast.rs as a
+//! Rust-only IR) plus emits wordcode into ECBUF via the P9b/P9c
+//! pipeline. Follows the zsh grammar closely; productions match
+//! `par_*` in Src/parse.c.
 
 use super::lex::{
     lextok, AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BARAMP, BAR_TOK, CASE, COPROC, DAMPER, DBAR,
@@ -62,7 +64,7 @@ const EC_INIT_SIZE: i32 = 256;
 const EC_DOUBLE_THRESHOLD: i32 = 32768;
 const EC_INCREMENT: i32 = 1024;
 
-// P8: ZshParser recursion + iteration safety counters as file-scope
+// Parser recursion + iteration safety counters as file-scope
 // thread_locals (Rust-only — no C analog; C uses OS stack overflow).
 thread_local! {
     pub static PARSER_RECURSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -73,8 +75,8 @@ thread_local! {
 // Wordcode read helpers — used by text.rs's `gettext2` and exec dispatch
 // to walk a compiled Eprog without re-running the parser. These are the
 // only `Src/parse.c` functions ported so far in this file; the recursive-
-// descent parser (par_event / par_list / par_cmd / par_*) sits inside
-// `impl ZshParser` further down.
+// descent parser (par_event / par_list / par_cmd / par_*) follows
+// below as free fns at module scope.
 // =============================================================================
 
 /// Port of `ecgetstr()` from `Src/parse.c:2854`.
@@ -210,26 +212,17 @@ pub use crate::extensions::zsh_ast::{
 };
 // === end AST relocation ===
 
-/// The Zsh Parser.
-///
-/// All state lives in:
-///   - ZshLexer (unit struct, state in LEX_* thread_locals matching
-///     Src/lex.c file-statics).
-///   - ECBUF / ECLEN / ECUSED / ... (P9b wordcode-emission state,
-///     matching Src/parse.c file-statics).
-///   - PARSER_RECURSION_DEPTH / PARSER_GLOBAL_ITERATIONS (Rust-only
-///     safety counters above).
-///
-/// The `lexer` field is kept as a unit-struct holder so callers can
-/// still write `parser.lexer.X()` for the lexer accessor methods —
-/// dropping the field would mean every callsite manually constructs
-/// a `ZshLexer` value, with no semantic benefit since ZshLexer is
-/// zero-sized.
-// ZshParser struct DELETED — all state lives in file-scope thread_locals.
-// Callers used to write `let mut parser = ZshParser::new(input);
-// parser.parse();` but now use the free fns directly:
-// `crate::ported::parse::parse_init(input);
-// let prog = crate::ported::parse::parse();`.
+// Parser state lives in file-scope thread_locals:
+//   - LEX_* (lexer side, matching Src/lex.c file-statics)
+//   - ECBUF / ECLEN / ECUSED / ECNPATS / ECSOFFS / ECSSUB / ECNFUNC /
+//     ECSTRS_INDEX / ECSTRS_REVERSE (wordcode-emission state, matching
+//     Src/parse.c file-statics)
+//   - PARSER_RECURSION_DEPTH / PARSER_GLOBAL_ITERATIONS (Rust-only
+//     safety counters; no C analog — C relies on OS stack overflow).
+//
+// Callers use the free-fn entry points directly:
+//   crate::ported::parse::parse_init(input);
+//   let prog = crate::ported::parse::parse();
 
 const MAX_RECURSION_DEPTH: usize = 500;
 
@@ -433,9 +426,9 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>
     Some((names, rest))
 }
 
-// === ZshParser methods now free fns at module scope ===
+
 /// Initialize parser state for a fresh parse of `input`.
-/// Replaces the old `ZshParser::new(input)` constructor.
+/// Free-fn entry point — resets parser thread_locals and loads input.
 pub fn parse_init(input: &str) {
     // P8: reset Rust-only safety counters at parser construction.
     PARSER_GLOBAL_ITERATIONS.set(0);
@@ -467,7 +460,7 @@ pub fn parse_context_save(ps: &mut parse_stack) {
     ps.hdocs = crate::ported::lex::heredocs_take();
     // parse.c:302-310 — save lexer-side state.
     ps.incmdpos = crate::ported::lex::incmdpos();
-    // parse.c:303 — aliasspaceflag — not yet a field on ZshLexer.
+    // parse.c:303 — aliasspaceflag — not yet a LEX_* thread_local.
     // STUB; Phase 7 wires it. Same for the few below marked STUB.
     ps.aliasspaceflag = 0;
     ps.incond = crate::ported::lex::incond();
@@ -3450,7 +3443,7 @@ fn skip_separators() {
 fn error(msg: &str) {
     crate::ported::utils::zerr(msg);
 }
-// === end of former impl ZshParser ===
+
 
 #[cfg(test)]
 mod tests {

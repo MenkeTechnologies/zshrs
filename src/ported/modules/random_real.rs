@@ -197,6 +197,8 @@ pub fn random_real() -> f64 {
 mod tests {
     use super::*;
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/random_real.c`.
     /// Verifies `clz64` matches `_zclz64` across boundary inputs —
     /// both should agree per the C `#define` dispatch (c:43-46).
     #[test]
@@ -206,18 +208,24 @@ mod tests {
         }
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/random_real.c`.
     /// Verifies `_zclz64(0)` returns 64 (c:53).
     #[test]
     fn zclz64_zero_is_64() {
         assert_eq!(_zclz64(0), 64);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/random_real.c`.
     /// Verifies `_zclz64(MSB-set)` returns 0.
     #[test]
     fn zclz64_msb_is_zero() {
         assert_eq!(_zclz64(0x8000_0000_0000_0000), 0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/random_real.c`.
     /// Verifies `random_real` lies in [0, 1) over many draws.
     #[test]
     fn random_real_in_range() {
@@ -227,6 +235,8 @@ mod tests {
         }
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/random_real.c`.
     /// Verifies `random_64bit` returns SOMETHING (entropy-pool calls
     /// almost never fail; sentinel return is 1).
     #[test]

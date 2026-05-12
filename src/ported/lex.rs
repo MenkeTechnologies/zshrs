@@ -122,7 +122,7 @@ mod tokens_tests {
     fn test_reserved_words() {
         // Reserved-word lookup goes through the canonical `reswdtab`
         // (port of `Src/hashtable.c:1076 reswds[]`).
-        let tab = reswdtab_lock().lock().unwrap();
+        let tab = reswdtab_lock().read().unwrap();
         assert_eq!(tab.get("if").map(|r| r.token), Some(IF));
         assert_eq!(tab.get("then").map(|r| r.token), Some(THEN));
         assert!(tab.get("notakeyword").is_none());
@@ -154,8 +154,9 @@ pub use super::zsh_h::{
 // `struct LexBuf` (fake Rust-only paraphrase) DELETED. The canonical
 // port of `struct lexbufstate` (zsh.h:3069-3079) lives at
 // `crate::ported::zsh_h::lexbufstate` with fields `{ptr: Option<String>,
-// siz: i32, len: i32}` — same shape as C. ZshLexer now uses the
-// canonical type directly. The convenience methods below are Rust-only
+// siz: i32, len: i32}` — same shape as C. The LEX_LEXBUF /
+// LEX_LEXBUF_RAW thread_locals use this canonical type directly.
+// The convenience methods below are Rust-only
 // helpers wrapping the flat operations C inlines at lex.c:451+ (`add`,
 // etc.) — they're carried here as helpers rather than re-inlining
 // ~50 lines of ptr/len/siz arithmetic across 24 call sites.
@@ -242,7 +243,7 @@ impl lexbufstate {
 pub use crate::extensions::heredoc_ast::HereDoc;
 
 // =============================================================================
-// ZshLexer state — thread-local file-statics matching zsh's lex.c file-statics.
+// Lexer state — thread-local file-statics matching zsh's lex.c file-statics.
 // Each field maps to a `static` in `Src/lex.c` (or `Src/zsh.h` for the few
 // `extern`-declared ones). Per-evaluator: each worker thread tokenizing its
 // own input needs its own state (bucket-1 per PORT_PLAN.md).
@@ -327,46 +328,20 @@ thread_local! {
 
 /// The Zsh Lexer.
 ///
-/// Migration in progress (Phase 7 of PORT_PLAN.md): the file-scope
-/// `LEX_*` thread-local statics above are the eventual home for every
-/// field below — each one maps to a `static` in `Src/lex.c`. Methods
-/// on `impl ZshLexer` currently read/write the struct fields; future
-/// commits migrate them to read/write the thread-locals so the struct
-/// can collapse to a unit type and external `lexer.X` accesses become
-/// `crate::ported::lex::X()` method calls or free-fn calls.
-// All state lives in file-scope LEX_* thread_locals (above) matching
-// C's lex.c file-statics. ZshLexer is now a unit struct — kept so call
-// sites `let lexer = ZshLexer::new(input); crate::ported::lex::zshlex(); ...` retain
-// their familiar shape without leaking implementation. Methods on
-// impl ZshLexer below are thin shims over the thread_local accesses.
+// All lexer state lives in the file-scope `LEX_*` thread_local statics
+// above, each one matching a `static` in `Src/lex.c`. There's no
+// holder struct — callers use the free fns directly:
 //
-// P7 migration history (PORT_PLAN.md Phase 7 batches):
-//   isfirstch DELETED (was dead code).
-//   batch-1: unget_buf, heredoc_pending, global_iterations,
-//             recursion_depth → LEX_*.
-//   batch-2: lexbuf, lexbuf_raw → LEX_LEXBUF, LEX_LEXBUF_RAW.
-//   batch-3: lexstop, incondpat, oldpos, dbparens, noaliases,
-//             nocorrect, nocomments, lexflags, isfirstln,
-//             lex_add_raw → LEX_*.
-//   batch-4: error, toklineno, tokfd, isnewlin, inrepeat, infor,
-//             inredir, intypeset → LEX_* + accessor methods.
-//   batch-5: lineno, incmdpos, incond, incasepat → LEX_*.
-//   batch-6: heredocs Vec → LEX_HEREDOCS.
-//   batch-7: tokstr, tok → LEX_TOKSTR, LEX_TOK.
-//   batch-8: input, pos → LEX_INPUT (owned String) + LEX_POS;
-//             ZshLexer becomes lifetime-free.
-// ZshLexer struct DELETED — all state now lives in file-scope LEX_*
-// thread_locals matching Src/lex.c file-statics. Callers used to write
-// `let lexer = ZshLexer::new(input); crate::ported::lex::zshlex();` but now use the
-// free fns directly: `crate::ported::lex::lex_init(input);
-// crate::ported::lex::zshlex();`.
+//   crate::ported::lex::lex_init(input);
+//   crate::ported::lex::zshlex();
+//   let tok = crate::ported::lex::tok();
+//
+// Accessor fns named after the former field identifiers (`tok()`,
+// `tokstr()`, `set_tok(v)`, etc.) provide read/write into LEX_*.
 
 const MAX_LEXER_RECURSION: usize = 200;
 
-// === ZshLexer methods now free fns at module scope ===
-// ─── Accessor methods for migrated thread_local fields ───
-// These bridge external callers (parser/context) that read or
-// write the lexer state. Names match the former field identifiers.
+// ─── Accessor fns for the LEX_* thread_locals (Src/lex.c file-statics) ───
 pub fn error() -> Option<String> {
     LEX_ERROR.with_borrow(|e| e.clone())
 }
@@ -650,7 +625,7 @@ pub fn exalias() -> bool {
             // lex.c:2002 — `(rw = (Reswd) reswdtab->getnode(reswdtab, tokstr))`
             let rw_tok: Option<lextok> = {
                 let guard = crate::ported::hashtable::reswdtab_lock()
-                    .lock()
+                    .read()
                     .expect("reswdtab poisoned");
                 guard.get(&lextext).map(|r| r.token)
             };
@@ -707,7 +682,7 @@ fn check_alias(lextext: &str) -> bool {
     // aliastab->getnode(aliastab, zshlextext);`
     let alias_clone: Option<crate::ported::zsh_h::alias> = {
         let guard = crate::ported::hashtable::aliastab_lock()
-            .lock()
+            .read()
             .expect("aliastab poisoned");
         guard.get(lextext).cloned()
     };
@@ -728,7 +703,7 @@ fn check_alias(lextext: &str) -> bool {
             inject_alias_text(&alias.text);
             // lex.c:1929 — `an->inuse = 1;` (set on the live node).
             let mut guard = crate::ported::hashtable::aliastab_lock()
-                .lock()
+                .read()
                 .expect("aliastab poisoned");
             if let Some(a) = guard.get_mut(lextext) {
                 a.inuse = 1;
@@ -748,7 +723,7 @@ fn check_alias(lextext: &str) -> bool {
                 let suffix = &lextext[dot_pos + 1..];
                 let alias_clone: Option<crate::ported::zsh_h::alias> = {
                     let guard = crate::ported::hashtable::sufaliastab_lock()
-                        .lock()
+                        .read()
                         .expect("sufaliastab poisoned");
                     guard.get(suffix).cloned()
                 };
@@ -763,7 +738,7 @@ fn check_alias(lextext: &str) -> bool {
                         // lex.c:1941 — `an->inuse = 1;` on the
                         // suffix-alias node.
                         let mut guard = crate::ported::hashtable::sufaliastab_lock()
-                            .lock()
+                            .read()
                             .expect("sufaliastab poisoned");
                         if let Some(a) = guard.get_mut(suffix) {
                             a.inuse = 1;
@@ -857,10 +832,10 @@ pub fn take_raw_buf() -> String {
 /// is in a clean state suitable for parsing a nested input (command
 /// substitution body, here-doc terminator, eval'd string).
 pub fn lex_context_save(ls: &mut lex_stack) {
-    // lex.c:220-233 — copy live state into the stack. ZshLexer
-    // mirrors the C fields with idiomatic Rust types (bool / u64);
-    // canonical `lex_stack` (zsh_h.rs:1045, port of zsh.h:3082) is
-    // i32 / i64 / lexbufstate — convert at the boundary.
+    // lex.c:220-233 — copy live state into the stack. The LEX_*
+    // thread_locals use idiomatic Rust types (bool / u64); canonical
+    // `lex_stack` (zsh_h.rs:1045, port of zsh.h:3082) is i32 / i64 /
+    // lexbufstate — convert at the boundary.
     ls.dbparens = LEX_DBPARENS.get() as i32;
     ls.isfirstln = LEX_ISFIRSTLN.get() as i32;
     // isfirstch — field deleted (was unused). Stash 0; canonical
@@ -878,9 +853,8 @@ pub fn lex_context_save(ls: &mut lex_stack) {
     ls.toklineno = LEX_TOKLINENO.get() as i64;
     // zshlextext / lex_add_raw / tokstr_raw / lexbuf_raw — these
     // are real `struct lex_stack` fields (zsh.h:3089-3093) but the
-    // current ZshLexer doesn't track those globals yet; they stay
-    // at their `Default` (None / 0) until the raw-token capture
-    // path is ported.
+    // lex.rs ports don't track those globals yet; they stay at their
+    // `Default` (None / 0) until the raw-token capture path is ported.
 
     // lex.c:235-238 — reset live state to defaults so a nested
     // parse starts from a clean slate. tokstr/lexbuf are zeroed,
@@ -916,9 +890,9 @@ pub fn lex_context_restore(ls: &mut lex_stack) {
 /// Initialize lexical state. Direct port of zsh/Src/lex.c:440-445
 /// `lexinit`. Resets dbparens / nocorrect / lexstop and sets `tok`
 /// to ENDINPUT so the next gettok starts from a known baseline.
-/// Note: the constructor `Self::new` already sets equivalent
-/// defaults; this method exists for the rare case a caller wants
-/// to recycle a `ZshLexer` across multiple input strings.
+/// Note: `lex_init(input)` already sets equivalent defaults; this
+/// function exists for the rare case a caller wants to reset the
+/// lexer state mid-parse without re-loading input.
 pub fn lexinit() {
     // lex.c:443 — `nocorrect = dbparens = lexstop = 0;`
     LEX_NOCORRECT.set(0);
@@ -3214,7 +3188,7 @@ pub fn check_reserved_word() -> bool {
             // promoting to NOCORRECT silently erased `nocorrect CMD ARGS`
             // because the downstream parser has no consumer for NOCORRECT.
             let lookup = {
-                let guard = crate::ported::hashtable::reswdtab_lock().lock().unwrap();
+                let guard = crate::ported::hashtable::reswdtab_lock().read().unwrap();
                 guard.get(tokstr).map(|rw| rw.token)
             };
             if let Some(tok) = lookup.filter(|&t| t != NOCORRECT) {
@@ -3247,7 +3221,7 @@ pub fn check_reserved_word() -> bool {
     }
     false
 }
-// === end of former impl ZshLexer ===
+
 
 // Direct port of the anonymous enum at `Src/lex.c:483-487`:
 //   enum { CMD_OR_MATH_CMD, CMD_OR_MATH_MATH, CMD_OR_MATH_ERR };

@@ -1194,7 +1194,7 @@ mod tests {
     static SHFUNCTAB_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn fresh_shfunctab() {
-        let mut tab = shfunctab_lock().lock().expect("shfunctab poisoned");
+        let mut tab = shfunctab_lock().write().expect("shfunctab poisoned");
         tab.clear();
     }
 
@@ -1214,11 +1214,11 @@ mod tests {
         let _g = SHFUNCTAB_TEST_LOCK.lock();
         fresh_shfunctab();
         {
-            let mut tab = shfunctab_lock().lock().unwrap();
+            let mut tab = shfunctab_lock().write().unwrap();
             tab.add(shfunc_with_body("greet", "echo hello"));
         }
         {
-            let tab = shfunctab_lock().lock().unwrap();
+            let tab = shfunctab_lock().read().unwrap();
             assert!(tab.get("greet").is_some());
             assert_eq!(
                 tab.get("greet").unwrap().body.as_deref(),
@@ -1227,7 +1227,7 @@ mod tests {
         }
         let removed = removeshfuncnode("greet");
         assert!(removed.is_some());
-        assert!(shfunctab_lock().lock().unwrap().get("greet").is_none());
+        assert!(shfunctab_lock().read().unwrap().get("greet").is_none());
     }
 
     #[test]
@@ -1235,18 +1235,18 @@ mod tests {
         let _g = SHFUNCTAB_TEST_LOCK.lock();
         fresh_shfunctab();
         {
-            let mut tab = shfunctab_lock().lock().unwrap();
+            let mut tab = shfunctab_lock().write().unwrap();
             tab.add(shfunc_with_body("f", "true"));
         }
         disableshfuncnode("f");
         // get() filters disabled; get_including_disabled doesn't.
         {
-            let tab = shfunctab_lock().lock().unwrap();
+            let tab = shfunctab_lock().read().unwrap();
             assert!(tab.get("f").is_none());
             assert!(tab.get_including_disabled("f").is_some());
         }
         enableshfuncnode("f");
-        assert!(shfunctab_lock().lock().unwrap().get("f").is_some());
+        assert!(shfunctab_lock().read().unwrap().get("f").is_some());
         removeshfuncnode("f");
     }
 
@@ -1268,7 +1268,7 @@ mod tests {
         let _g = SHFUNCTAB_TEST_LOCK.lock();
         fresh_shfunctab();
         {
-            let mut tab = shfunctab_lock().lock().unwrap();
+            let mut tab = shfunctab_lock().write().unwrap();
             tab.add(shfunc_with_body("foo", "echo a"));
             tab.add(shfunc_with_body("foobar", "echo b"));
             tab.add(shfunc_with_body("baz", "echo c"));
@@ -1289,7 +1289,7 @@ mod tests {
         let _g = SHFUNCTAB_TEST_LOCK.lock();
         fresh_shfunctab();
         {
-            let mut tab = shfunctab_lock().lock().unwrap();
+            let mut tab = shfunctab_lock().write().unwrap();
             let mut f = shfunc_with_body("f", "true");
             f.filename = Some("/tmp/zshrs-fns/f".to_string());
             tab.add(f);
@@ -1362,7 +1362,7 @@ mod tests {
 
     #[test]
     fn test_aliastab_singleton_has_defaults() {
-        let tab = aliastab_lock().lock().unwrap();
+        let tab = aliastab_lock().read().unwrap();
         // createaliastables seeds run-help and which-command.
         assert!(tab.get_including_disabled("run-help").is_some());
         assert!(tab.get_including_disabled("which-command").is_some());
@@ -1407,12 +1407,12 @@ mod tests {
     fn test_freecmdnamnode_removes() {
         emptycmdnamtable();
         {
-            let mut tab = cmdnamtab_lock().lock().unwrap();
+            let mut tab = cmdnamtab_lock().write().unwrap();
             tab.add(cmdnam_unhashed("ls", vec!["/bin".to_string()]));
         }
-        assert!(cmdnamtab_lock().lock().unwrap().get("ls").is_some());
+        assert!(cmdnamtab_lock().read().unwrap().get("ls").is_some());
         freecmdnamnode("ls");
-        assert!(cmdnamtab_lock().lock().unwrap().get("ls").is_none());
+        assert!(cmdnamtab_lock().read().unwrap().get("ls").is_none());
     }
 
     #[test]
@@ -1666,19 +1666,19 @@ pub fn bin_hashinfo() -> i32 {
     let banner = "----------------------------------------------------";
     println!("{}", banner);
     {
-        let tab = cmdnamtab_lock().lock().expect("cmdnamtab poisoned");
+        let tab = cmdnamtab_lock().read().expect("cmdnamtab poisoned");
         println!("name of table   : cmdnamtab");
         println!("number of nodes : {}", tab.len());
     }
     println!("{}", banner);
     {
-        let tab = shfunctab_lock().lock().expect("shfunctab poisoned");
+        let tab = shfunctab_lock().read().expect("shfunctab poisoned");
         println!("name of table   : shfunctab");
         println!("number of nodes : {}", tab.len());
     }
     println!("{}", banner);
     {
-        let tab = aliastab_lock().lock().expect("aliastab poisoned");
+        let tab = aliastab_lock().read().expect("aliastab poisoned");
         println!("name of table   : aliastab");
         println!("number of nodes : {}", tab.len());
     }
@@ -1763,44 +1763,56 @@ impl HashNodeFlags for Reswd {
 // hash table containing external commands                                  // c:587
 /// Singleton accessor for the global `cmdnamtab`.
 /// Mirrors C's `mod_export HashTable cmdnamtab` (hashtable.c:594).
-pub fn cmdnamtab_lock() -> &'static std::sync::Mutex<CmdNameTable> {        // c:594
-    static CMDNAMTAB: std::sync::OnceLock<std::sync::Mutex<CmdNameTable>> =
+/// Per PORT_PLAN.md Phase 3 (bucket-2, read-mostly): the PATH cache
+/// is read on every command resolution but mutated only by `hash`,
+/// `rehash`, or `path` reassignment. `RwLock` lets parallel command
+/// lookups proceed without serialising on a single mutex. Holder
+/// accessor keeps the `_lock` suffix for source-stability (call
+/// sites use `.read()`/`.write()` directly).
+pub fn cmdnamtab_lock() -> &'static std::sync::RwLock<CmdNameTable> {       // c:594
+    static CMDNAMTAB: std::sync::OnceLock<std::sync::RwLock<CmdNameTable>> =
         std::sync::OnceLock::new();
-    CMDNAMTAB.get_or_init(|| std::sync::Mutex::new(CmdNameTable::new()))
+    CMDNAMTAB.get_or_init(|| std::sync::RwLock::new(CmdNameTable::new()))
 }
 
 // hash table containing the aliases                                        // c:1174
 /// Singleton accessor for the global `aliastab`.
 /// Mirrors C's `mod_export HashTable aliastab` (hashtable.c:1186).
-pub fn aliastab_lock() -> &'static std::sync::Mutex<AliasTable> {           // c:1186
-    static ALIASTAB: std::sync::OnceLock<std::sync::Mutex<AliasTable>> =
+/// Bucket-2 read-mostly: aliases are looked up on every command word,
+/// mutated only by `alias`/`unalias`. `RwLock` per PORT_PLAN.md.
+pub fn aliastab_lock() -> &'static std::sync::RwLock<AliasTable> {          // c:1186
+    static ALIASTAB: std::sync::OnceLock<std::sync::RwLock<AliasTable>> =
         std::sync::OnceLock::new();
-    ALIASTAB.get_or_init(|| std::sync::Mutex::new(AliasTable::with_defaults()))
+    ALIASTAB.get_or_init(|| std::sync::RwLock::new(AliasTable::with_defaults()))
 }
 
 /// Singleton accessor for the global `sufaliastab`.
 /// Mirrors C's `mod_export HashTable sufaliastab` (hashtable.c:1187).
-pub fn sufaliastab_lock() -> &'static std::sync::Mutex<AliasTable> {
-    static SUFALIASTAB: std::sync::OnceLock<std::sync::Mutex<AliasTable>> =
+/// Bucket-2 read-mostly: same rationale as `aliastab`.
+pub fn sufaliastab_lock() -> &'static std::sync::RwLock<AliasTable> {
+    static SUFALIASTAB: std::sync::OnceLock<std::sync::RwLock<AliasTable>> =
         std::sync::OnceLock::new();
-    SUFALIASTAB.get_or_init(|| std::sync::Mutex::new(AliasTable::new()))
+    SUFALIASTAB.get_or_init(|| std::sync::RwLock::new(AliasTable::new()))
 }
 
 // hash table containing the reserved words                                 // c:1111
 /// Singleton accessor for the global `reswdtab`.
 /// Mirrors C's `HashTable reswdtab` (hashtable.c, file-scope).
-pub fn reswdtab_lock() -> &'static std::sync::Mutex<ReswdTable> {           // c:1115
-    static RESWDTAB: std::sync::OnceLock<std::sync::Mutex<ReswdTable>> =
+/// Bucket-2 read-mostly (effectively read-only post-init): every
+/// command word is checked against reserved words; the table is
+/// populated once at startup. `RwLock` per PORT_PLAN.md.
+pub fn reswdtab_lock() -> &'static std::sync::RwLock<ReswdTable> {          // c:1115
+    static RESWDTAB: std::sync::OnceLock<std::sync::RwLock<ReswdTable>> =
         std::sync::OnceLock::new();
-    RESWDTAB.get_or_init(|| std::sync::Mutex::new(ReswdTable::new()))
+    RESWDTAB.get_or_init(|| std::sync::RwLock::new(ReswdTable::new()))
 }
 
 /// Singleton accessor for the global `histtab` (history events).
 /// Mirrors C's `HashTable histtab` (hashtable.c:1340).
-pub fn histtab_lock() -> &'static std::sync::Mutex<HashMap<String, i32>> {
-    static HISTTAB: std::sync::OnceLock<std::sync::Mutex<HashMap<String, i32>>> =
+pub fn histtab_lock() -> &'static std::sync::RwLock<HashMap<String, i32>> {
+    static HISTTAB: std::sync::OnceLock<std::sync::RwLock<HashMap<String, i32>>> =
         std::sync::OnceLock::new();
-    HISTTAB.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+    HISTTAB.get_or_init(|| std::sync::RwLock::new(HashMap::new()))
 }
 
 // Old fake `dircache_lock(Mutex<HashMap<String, i32>>)` deleted —
@@ -1830,7 +1842,7 @@ pub fn createcmdnamtable() {
 /// the per-PATH-entry "checked" cursor so subsequent lookups
 /// re-scan from the start.
 pub fn emptycmdnamtable() {
-    cmdnamtab_lock().lock().expect("cmdnamtab poisoned").clear();
+    cmdnamtab_lock().write().expect("cmdnamtab poisoned").clear();
 }
 
 /// Port of `hashdir()` from `Src/hashtable.c:634`.
@@ -1841,7 +1853,7 @@ pub fn emptycmdnamtable() {
 /// `CmdNameTable::hash_dir`.
 pub fn hashdir(dir: &str, dir_index: usize) {
     cmdnamtab_lock()
-        .lock()
+        .read()
         .expect("cmdnamtab poisoned")
         .hash_dir(dir, dir_index);
 }
@@ -1858,7 +1870,7 @@ pub fn hashdir(dir: &str, dir_index: usize) {
 /// `pathchecked` cursor is updated so subsequent calls don't
 /// re-walk PATH entries that were already scanned.
 pub fn fillcmdnamtable(path: &[String]) {
-    let mut tab = cmdnamtab_lock().lock().expect("cmdnamtab poisoned");
+    let mut tab = cmdnamtab_lock().write().expect("cmdnamtab poisoned");
     for (idx, dir) in path.iter().enumerate() {
         tab.hash_dir(dir, idx);
     }
@@ -1871,7 +1883,7 @@ pub fn fillcmdnamtable(path: &[String]) {
 /// This helper performs the removal to trigger Drop.
 pub fn freecmdnamnode(nam: &str) {
     cmdnamtab_lock()
-        .lock()
+        .read()
         .expect("cmdnamtab poisoned")
         .remove(nam);
 }
@@ -1894,11 +1906,14 @@ pub fn freecmdnamnode(nam: &str) {
 
 /// Singleton accessor for the global `shfunctab`.
 /// Mirrors C's `mod_export HashTable shfunctab` (hashtable.c:808).
-/// Lazily initialised on first access.
-pub fn shfunctab_lock() -> &'static std::sync::Mutex<ShFuncTable> {         // c:808
-    static SHFUNCTAB: std::sync::OnceLock<std::sync::Mutex<ShFuncTable>> =
+/// Lazily initialised on first access. Bucket-2 read-mostly: shell
+/// functions are looked up on every function-call dispatch, mutated
+/// only by `function f()` / `unfunction` / `autoload`. `RwLock`
+/// per PORT_PLAN.md.
+pub fn shfunctab_lock() -> &'static std::sync::RwLock<ShFuncTable> {        // c:808
+    static SHFUNCTAB: std::sync::OnceLock<std::sync::RwLock<ShFuncTable>> =
         std::sync::OnceLock::new();
-    SHFUNCTAB.get_or_init(|| std::sync::Mutex::new(ShFuncTable::new()))
+    SHFUNCTAB.get_or_init(|| std::sync::RwLock::new(ShFuncTable::new()))
 }
 
 /// Port of `createshfunctable()` from `Src/hashtable.c:812`.
@@ -1947,7 +1962,7 @@ pub fn removeshfuncnode(nam: &str) -> Option<ShFunc> {
         }
     }
     shfunctab_lock()
-        .lock()
+        .read()
         .expect("shfunctab poisoned")
         .remove(nam)
 }
@@ -1971,7 +1986,7 @@ pub fn removeshfuncnode(nam: &str) -> Option<ShFunc> {
 /// shell stops invoking the (now-disabled) trap.
 pub fn disableshfuncnode(nam: &str) {
     {
-        let mut tab = shfunctab_lock().lock().expect("shfunctab poisoned");
+        let mut tab = shfunctab_lock().write().expect("shfunctab poisoned");
         tab.disable(nam);
     }
     if let Some(sig_part) = nam.strip_prefix("TRAP") {
@@ -1997,7 +2012,7 @@ pub fn disableshfuncnode(nam: &str) {
 /// dispatches the trap function on the next signal delivery.
 pub fn enableshfuncnode(nam: &str) {
     {
-        let mut tab = shfunctab_lock().lock().expect("shfunctab poisoned");
+        let mut tab = shfunctab_lock().write().expect("shfunctab poisoned");
         tab.enable(nam);
     }
     if let Some(sig_part) = nam.strip_prefix("TRAP") {
@@ -2022,7 +2037,7 @@ pub fn enableshfuncnode(nam: &str) {
 /// removes from the table to trigger the drop chain.
 pub fn freeshfuncnode(nam: &str) {
     shfunctab_lock()
-        .lock()
+        .read()
         .expect("shfunctab poisoned")
         .remove(nam);
 }
@@ -2038,7 +2053,7 @@ pub fn scanmatchshfunc<F>(pattern: Option<&str>, mut func: F) -> i32
 where
     F: FnMut(&str, &ShFunc),
 {
-    let tab = shfunctab_lock().lock().expect("shfunctab poisoned");
+    let tab = shfunctab_lock().read().expect("shfunctab poisoned");
     let mut count = 0;
     for (name, entry) in tab.iter() {
         let matches = match pattern {
@@ -2070,7 +2085,7 @@ where
 /// body for prompt-display purposes (`functions -e`). Rust port
 /// returns the formatted entry as a string.
 pub fn printshfuncexpand(nam: &str, _flags: i32) -> Option<String> {
-    let tab = shfunctab_lock().lock().expect("shfunctab poisoned");
+    let tab = shfunctab_lock().read().expect("shfunctab poisoned");
     let func = tab.get_including_disabled(nam)?;
     let body = func.body.clone().unwrap_or_default();
     Some(format!(
@@ -2086,7 +2101,7 @@ pub fn printshfuncexpand(nam: &str, _flags: i32) -> Option<String> {
 /// defined the function (used by `functions -T` and `whence -v`
 /// to show the source location).
 pub fn getshfuncfile(nam: &str) -> Option<String> {
-    let tab = shfunctab_lock().lock().expect("shfunctab poisoned");
+    let tab = shfunctab_lock().read().expect("shfunctab poisoned");
     tab.get_including_disabled(nam)
         .and_then(|f| f.filename.clone())
 }
@@ -2180,7 +2195,7 @@ pub fn createaliastable(_ht: *mut crate::ported::zsh_h::hashtable) {         // 
 pub fn createaliastables() {
     // c:1210 — newhashtable(23, "aliastab", NULL)
     // c:1212 — createaliastable(aliastab)
-    let mut tab = aliastab_lock().lock().expect("aliastab poisoned");
+    let mut tab = aliastab_lock().write().expect("aliastab poisoned");
     // c:1215 — `aliastab->addnode(aliastab, ztrdup("run-help"),
     //                              createaliasnode(ztrdup("man"), 0));`
     tab.add(createaliasnode("run-help", "man", 0));                          // c:1215
@@ -2212,7 +2227,7 @@ pub fn createaliastables() {
 /// port: drop runs the same when the Alias is removed from its
 /// table. This helper triggers the drop.
 pub fn freealiasnode(nam: &str) {
-    let mut tab = aliastab_lock().lock().expect("aliastab poisoned");
+    let mut tab = aliastab_lock().write().expect("aliastab poisoned");
     tab.remove(nam);
 }
 
@@ -2286,7 +2301,7 @@ pub fn createhisttable() {
 /// Clears the lookup table; the dup-removal pass on `hist_ring`
 /// is a separate hist.c entry point pending its port.
 pub fn emptyhisttable() {
-    histtab_lock().lock().expect("histtab poisoned").clear();
+    histtab_lock().write().expect("histtab poisoned").clear();
 }
 
 /// Port of `addhistnode()` from `Src/hashtable.c:1427`.
@@ -2303,7 +2318,7 @@ pub fn emptyhisttable() {
 /// (Some) if a duplicate command-text was already present.
 pub fn addhistnode(nam: &str, event_id: i32) -> Option<i32> {
     histtab_lock()
-        .lock()
+        .read()
         .expect("histtab poisoned")
         .insert(nam.to_string(), event_id)
 }
@@ -2315,7 +2330,7 @@ pub fn addhistnode(nam: &str, event_id: i32) -> Option<i32> {
 /// equivalent of zfree.
 pub fn freehistnode(nam: &str) {
     histtab_lock()
-        .lock()
+        .read()
         .expect("histtab poisoned")
         .remove(nam);
 }

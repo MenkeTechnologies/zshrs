@@ -171,7 +171,7 @@ impl ZshCompiler {
 
     fn compile_program(&mut self, program: &ZshProgram) {
         // The parser synthesizes a FuncDef for the `name() { body }` shape
-        // at parse time (ZshParser::parse_program_until detects the
+        // at parse time (the parser detects the
         // Simple<INPAR><OUTPAR> + Inbrace pattern and emits a FuncDef with
         // body_source captured). No compile-side workaround is needed.
         for list in &program.lists {
@@ -1564,7 +1564,7 @@ impl ZshCompiler {
             }
         }
 
-        // ZshLexer marks shell-special chars with zsh's META-range tokens
+        // The lexer marks shell-special chars with zsh's META-range tokens
         // (0x83-0x9f) so the parser can distinguish syntax from literal.
         // For runtime values we want the original char back. `untokenize`
         // does this mapping. We then check for unquoted triggers on the
@@ -3406,7 +3406,7 @@ impl ZshCompiler {
             let mut match_jumps = Vec::new();
             for pattern in &arm.patterns {
                 self.builder.emit(Op::GetSlot(word_slot), 0);
-                // Patterns are RAW glob strings. ZshLexer encodes glob
+                // Patterns are RAW glob strings. The lexer encodes glob
                 // chars (`*`, `?`, `[`, `]`) in the META range so the
                 // grammar can distinguish syntax from literal. For the
                 // matcher we want the original glob char back —
@@ -3727,7 +3727,7 @@ impl ZshCompiler {
                 self.builder.patch_jump(skip, self.builder.current_pos());
             }
             ZshCond::Unary(op, arg) => {
-                // ZshLexer encodes operator chars in the META range
+                // The lexer encodes operator chars in the META range
                 // (0x83-0x9f). Un-tokenize before matching.
                 let op_clean = crate::lex::untokenize(op);
                 // `-v` takes a parameter NAME (with optional subscript)
@@ -4188,7 +4188,7 @@ impl ZshCompiler {
     /// ArithCompiler against this compiler's builder + slot table,
     /// then post-syncs slots back to vars.
     fn compile_arith_str(&mut self, expr: &str) {
-        // ZshLexer tokenizes operator chars (`<`, `>`, `=`, `&`, `|`,
+        // The lexer tokenizes operator chars (`<`, `>`, `=`, `&`, `|`,
         // `*`, `?`, etc.) into the META range. ArithCompiler can't parse
         // those — un-tokenize first to recover the original ASCII form.
         let expr_clean = crate::lex::untokenize(expr);

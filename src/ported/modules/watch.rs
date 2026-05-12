@@ -71,6 +71,8 @@ pub enum SessionType {
 }
 
 impl UtmpEntry {
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/watch.c`.
     /// Inline equivalent of C `entry.ut_type == USER_PROCESS && entry.ut_user[0] != 0`.
     pub fn is_active(&self) -> bool {
         matches!(self.session_type, SessionType::UserProcess) && !self.user.is_empty()
@@ -131,6 +133,8 @@ thread_local! {
 // wiring has a single update site (and tests can drive them
 // directly without going through the param table).
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/watch.c`.
 /// Replace the `$watch` array contents.
 pub fn set_watch_list(list: Vec<String>) {
     WATCH.with(|w| *w.borrow_mut() = list);
@@ -531,6 +535,7 @@ pub fn bin_log(current_user: &str, fmt: Option<&str>) -> String {            // 
 mod tests {
     use super::*;
 
+    /// Port of `boot_()` from `Src/Modules/watch.c:738`.
     #[test]
     fn test_watch_initial_empty() {
         // Fresh thread → thread_locals are zero-initialised; the `$watch`
@@ -538,6 +543,8 @@ mod tests {
         WATCH.with(|w| assert!(w.borrow().is_empty()));
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/watch.c`.
     #[test]
     fn test_glob_match() {
         use crate::glob::matchpat;
@@ -548,6 +555,8 @@ mod tests {
         assert!(!matchpat("user", "username", false, true));
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/watch.c`.
     #[test]
     fn test_watch_match() {
         assert!(watchlog_match("root", "root"));
@@ -555,6 +564,8 @@ mod tests {
         assert!(!watchlog_match("root", "admin"));
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/watch.c`.
     #[test]
     fn test_format_watch_basic() {
         let entry = UtmpEntry {
@@ -575,6 +586,8 @@ mod tests {
         assert!(result.contains("logged off"));
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/watch.c`.
     #[test]
     fn test_format_watch_host() {
         let entry = UtmpEntry {
@@ -593,6 +606,8 @@ mod tests {
         assert_eq!(result, "host.example.com");
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/watch.c`.
     #[test]
     fn test_check_watch_entry_all() {
         let entry = UtmpEntry {
@@ -608,6 +623,8 @@ mod tests {
         assert!(check_entry(&entry, "me"));
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/watch.c`.
     #[test]
     fn test_check_watch_entry_notme() {
         let entry = UtmpEntry {
@@ -629,6 +646,8 @@ mod tests {
         assert!(check_entry(&other, "me"));
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/watch.c`.
     #[test]
     fn test_matches_watch_pattern() {
         let entry = UtmpEntry {
@@ -650,6 +669,8 @@ mod tests {
         assert!(!check_entry(&entry, "me"));
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/watch.c`.
     #[test]
     fn test_session_type() {
         let entry = UtmpEntry {
@@ -919,6 +940,8 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/watch.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -938,10 +961,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/watch.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:log".to_string(), "p:WATCH".to_string(), "p:watch".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/watch.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -953,6 +980,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/watch.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

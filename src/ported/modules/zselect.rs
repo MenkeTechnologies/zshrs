@@ -241,6 +241,8 @@ pub fn bin_zselect(nam: &str, args: &[String],                               // 
     0                                                                    // c:246
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zselect.c`.
 /// `isident(s)` predicate — identifier validity check matching
 /// zsh's `isident()` (Src/utils.c). True iff `s` is non-empty,
 /// every char is alnum or `_`, and the first char is not a digit.
@@ -311,15 +313,20 @@ pub fn finish_(_m: *const module) -> i32 {                               // c:32
 mod tests {
     use super::*;
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zselect.c`.
     fn empty_ops_zs() -> crate::ported::zsh_h::options {
         use crate::ported::zsh_h::{options, MAX_OPS};
         options { ind: [0u8; MAX_OPS], args: Vec::new(),
                   argscount: 0, argsalloc: 0 }
     }
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zselect.c`.
     fn s(args: &[&str]) -> Vec<String> {
         args.iter().map(|a| a.to_string()).collect()
     }
 
+    /// Port of `bin_zselect()` from `Src/Modules/zselect.c:65`.
     #[test]
     fn empty_args_with_zero_timeout_returns_one() {
         // C zsh body: with `-t 0` and no fds, select() returns 0
@@ -332,6 +339,8 @@ mod tests {
         assert_eq!(r, 1);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zselect.c`.
     #[test]
     fn invalid_array_name_returns_one() {
         let ops = empty_ops_zs();
@@ -339,6 +348,8 @@ mod tests {
         assert_eq!(r, 1);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zselect.c`.
     #[test]
     fn timeout_garbage_returns_one() {
         let ops = empty_ops_zs();
@@ -346,6 +357,8 @@ mod tests {
         assert_eq!(r, 1);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zselect.c`.
     #[test]
     fn no_arg_after_a_returns_one() {
         let ops = empty_ops_zs();
@@ -353,6 +366,7 @@ mod tests {
         assert_eq!(r, 1);
     }
 
+    /// Port of `bin_zselect()` from `Src/Modules/zselect.c:65`.
     #[test]
     fn handle_digits_invalid_input() {
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
@@ -362,6 +376,7 @@ mod tests {
         assert_eq!(handle_digits("zselect", "12abc", &mut fdset, &mut fdmax), 1);
     }
 
+    /// Port of `bin_zselect()` from `Src/Modules/zselect.c:65`.
     #[test]
     fn handle_digits_sets_fd_and_fdmax() {
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
@@ -378,6 +393,8 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zselect.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -397,10 +414,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zselect.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:zselect".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zselect.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -412,6 +433,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zselect.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

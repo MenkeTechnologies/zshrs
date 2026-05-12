@@ -192,6 +192,7 @@ pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {            // c
     }
 }
 
+/// Port of `bin_zpty()` from `Src/Modules/zpty.c:773`.
 /// `zpty` builtin entry point — C-faithful signature matching
 /// `static int bin_zpty(char *nam, char **args, Options ops, int func)`
 /// from Src/Modules/zpty.c:773. Reads `-d/-L/-w/-r/-t/-b/-e/-T/-m`
@@ -414,6 +415,8 @@ pub fn bin_zpty(_nam: &str, args: &[String],                                 // 
 mod tests {
     use super::*;
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zpty.c`.
     #[test]
     fn test_pty_cmds_manager() {
         let mut cmds = HashMap::<String, PtyCmd>::new();
@@ -433,6 +436,8 @@ mod tests {
         assert!(cmds.is_empty());
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zpty.c`.
     #[test]
     fn test_pty_cmd_fields() {
         let cmd = PtyCmd::new(
@@ -453,6 +458,8 @@ mod tests {
         assert!(!cmd.finished);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zpty.c`.
     fn ops_with_flag(c: u8) -> crate::ported::zsh_h::options {
         use crate::ported::zsh_h::{options, MAX_OPS};
         let mut o = options { ind: [0u8; MAX_OPS], args: Vec::new(),
@@ -461,6 +468,8 @@ mod tests {
         o
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zpty.c`.
     /// Verifies `-L` (list) on an empty pty table returns 0.
     /// Mirrors Src/Modules/zpty.c:773 -L arm.
     #[test]
@@ -471,6 +480,8 @@ mod tests {
         assert_eq!(status, 0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zpty.c`.
     /// Verifies `-d` with no positional args clears all sessions.
     /// Mirrors Src/Modules/zpty.c:773 -d arm.
     #[test]
@@ -480,6 +491,8 @@ mod tests {
         assert_eq!(status, 0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zpty.c`.
     /// Verifies `-w` with no positional args returns 1 (needs name + data).
     #[test]
     fn test_builtin_zpty_write_no_args() {
@@ -488,6 +501,8 @@ mod tests {
         assert_eq!(status, 1);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zpty.c`.
     /// Verifies `-t` with no positional args returns 1 (needs name).
     #[test]
     fn test_builtin_zpty_test_no_args() {
@@ -558,6 +573,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 /// whole module. Rust uses OnceLock<Mutex<>> for thread-safe access.
 pub static PTYCMDS: std::sync::OnceLock<Mutex<HashMap<String, PtyCmd>>> = std::sync::OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zpty.c`.
 fn ptycmds() -> &'static Mutex<HashMap<String, PtyCmd>> {
     PTYCMDS.get_or_init(|| Mutex::new(HashMap::<String, PtyCmd>::new()))
 }
@@ -780,6 +797,8 @@ use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zpty.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -799,10 +818,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zpty.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:zpty".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zpty.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -814,6 +837,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zpty.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

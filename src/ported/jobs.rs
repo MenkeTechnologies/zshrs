@@ -1948,7 +1948,7 @@ pub fn getbgstatus(pid: i32) -> Option<i32> {                                // 
 pub fn gettrapnode(sig: i32) -> Option<String> {
     let name = format!("TRAP{}", getsigname(sig));
     let tab = crate::ported::hashtable::shfunctab_lock()
-        .lock()
+        .read()
         .expect("shfunctab poisoned");
     tab.get_including_disabled(&name)
         .and_then(|f| f.body.clone())

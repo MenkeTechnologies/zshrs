@@ -614,8 +614,7 @@ impl ShellExecutor {
     /// the name isn't in paramtab. Mirrors the C source's direct
     /// `pm->node.flags & PM_INTEGER` checks.
     pub fn param_flags(&self, name: &str) -> i32 {
-        crate::ported::params::paramtab()
-            .lock()
+        crate::ported::params::paramtab().read()
             .ok()
             .and_then(|t| t.get(name).map(|p| p.node.flags))
             .unwrap_or(0)
@@ -691,8 +690,7 @@ impl ShellExecutor {
     /// `getaparam` at `Src/params.c:3100` — `paramtab->getnode(s)`
     /// then `pm->u.arr.clone()`. Returns an owned `Vec<String>`.
     pub fn array(&self, name: &str) -> Option<Vec<String>> {
-        crate::ported::params::paramtab()
-            .lock()
+        crate::ported::params::paramtab().read()
             .ok()
             .and_then(|t| t.get(name).and_then(|pm| pm.u_arr.clone()))
     }
@@ -714,8 +712,7 @@ impl ShellExecutor {
 
     /// Test whether an array parameter exists in paramtab.
     pub fn has_array(&self, name: &str) -> bool {
-        crate::ported::params::paramtab()
-            .lock()
+        crate::ported::params::paramtab().read()
             .ok()
             .and_then(|t| t.get(name).map(|pm| pm.u_arr.is_some()))
             .unwrap_or(false)
@@ -736,7 +733,7 @@ impl ShellExecutor {
     /// + paramtab_hashed_storage. Direct port of `unsetparam_pm`
     /// for a PM_HASHED Param.
     pub fn unset_assoc(&mut self, name: &str) {
-        if let Some(tab) = crate::ported::params::paramtab().lock().ok().as_deref_mut() {
+        if let Some(tab) = crate::ported::params::paramtab().write().ok().as_deref_mut() {
             tab.remove(name);
         }
         let _ = crate::ported::params::paramtab_hashed_storage()
@@ -750,7 +747,7 @@ impl ShellExecutor {
     /// distinct from the global-alias slot, mirroring C's two
     /// separate dispatch paths via `aliasflags` checks.
     pub fn alias(&self, name: &str) -> Option<String> {
-        let tab = crate::ported::hashtable::aliastab_lock().lock().ok()?;
+        let tab = crate::ported::hashtable::aliastab_lock().read().ok()?;
         let a = tab.get(name)?;
         if (a.node.flags & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) != 0 {
             None
@@ -762,7 +759,7 @@ impl ShellExecutor {
     /// Read a global alias value (`alias -g`). Reads canonical
     /// `aliastab` and filters to entries with the ALIAS_GLOBAL flag.
     pub fn global_alias(&self, name: &str) -> Option<String> {
-        let tab = crate::ported::hashtable::aliastab_lock().lock().ok()?;
+        let tab = crate::ported::hashtable::aliastab_lock().read().ok()?;
         let a = tab.get(name)?;
         if (a.node.flags & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) != 0 {
             Some(a.text.clone())
@@ -774,14 +771,14 @@ impl ShellExecutor {
     /// Read a suffix alias value (`alias -s`). Reads canonical
     /// `sufaliastab` (Src/hashtable.c:1187).
     pub fn suffix_alias(&self, name: &str) -> Option<String> {
-        let tab = crate::ported::hashtable::sufaliastab_lock().lock().ok()?;
+        let tab = crate::ported::hashtable::sufaliastab_lock().read().ok()?;
         Some(tab.get(name)?.text.clone())
     }
 
     /// Set a regular alias. Writes canonical aliastab with
     /// ALIAS_GLOBAL bit cleared.
     pub fn set_alias(&mut self, name: String, value: String) {
-        if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().lock() {
+        if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
             tab.add(crate::ported::hashtable::createaliasnode(&name, &value, 0));
         }
     }
@@ -789,7 +786,7 @@ impl ShellExecutor {
     /// Set a global alias (`alias -g`). Writes canonical aliastab
     /// with ALIAS_GLOBAL bit set.
     pub fn set_global_alias(&mut self, name: String, value: String) {
-        if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().lock() {
+        if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
             tab.add(crate::ported::hashtable::createaliasnode(
                 &name, &value, crate::ported::hashtable::flags::ALIAS_GLOBAL,
             ));
@@ -799,7 +796,7 @@ impl ShellExecutor {
     /// Set a suffix alias (`alias -s ext=cmd`). Writes canonical
     /// sufaliastab.
     pub fn set_suffix_alias(&mut self, name: String, value: String) {
-        if let Ok(mut tab) = crate::ported::hashtable::sufaliastab_lock().lock() {
+        if let Ok(mut tab) = crate::ported::hashtable::sufaliastab_lock().write() {
             tab.add(crate::ported::hashtable::createaliasnode(&name, &value, 0));
         }
     }
@@ -807,14 +804,14 @@ impl ShellExecutor {
     /// Unset an alias from canonical aliastab (any flag). Mirrors
     /// C's `unalias` lookup.
     pub fn unset_alias(&mut self, name: &str) {
-        if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().lock() {
+        if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
             tab.remove(name);
         }
     }
 
     /// Unset a suffix alias.
     pub fn unset_suffix_alias(&mut self, name: &str) {
-        if let Ok(mut tab) = crate::ported::hashtable::sufaliastab_lock().lock() {
+        if let Ok(mut tab) = crate::ported::hashtable::sufaliastab_lock().write() {
             tab.remove(name);
         }
     }
@@ -822,7 +819,7 @@ impl ShellExecutor {
     /// Snapshot the alias map as a sorted `Vec<(name, value)>`,
     /// only entries WITHOUT the ALIAS_GLOBAL flag (regular aliases).
     pub fn alias_entries(&self) -> Vec<(String, String)> {
-        if let Ok(tab) = crate::ported::hashtable::aliastab_lock().lock() {
+        if let Ok(tab) = crate::ported::hashtable::aliastab_lock().read() {
             tab.iter_sorted()
                 .into_iter()
                 .filter(|(_, a)| (a.node.flags
@@ -836,7 +833,7 @@ impl ShellExecutor {
 
     /// Snapshot the global-alias entries (ALIAS_GLOBAL flag set).
     pub fn global_alias_entries(&self) -> Vec<(String, String)> {
-        if let Ok(tab) = crate::ported::hashtable::aliastab_lock().lock() {
+        if let Ok(tab) = crate::ported::hashtable::aliastab_lock().read() {
             tab.iter_sorted()
                 .into_iter()
                 .filter(|(_, a)| (a.node.flags
@@ -850,7 +847,7 @@ impl ShellExecutor {
 
     /// Snapshot the suffix-alias entries.
     pub fn suffix_alias_entries(&self) -> Vec<(String, String)> {
-        if let Ok(tab) = crate::ported::hashtable::sufaliastab_lock().lock() {
+        if let Ok(tab) = crate::ported::hashtable::sufaliastab_lock().read() {
             tab.iter_sorted()
                 .into_iter()
                 .map(|(k, a)| (k.clone(), a.text.clone()))
@@ -864,7 +861,7 @@ impl ShellExecutor {
     /// a PM_ARRAY Param. Mirrors are kept for now while the field
     /// transitions.
     pub fn unset_array(&mut self, name: &str) {
-        if let Some(tab) = crate::ported::params::paramtab().lock().ok().as_deref_mut() {
+        if let Some(tab) = crate::ported::params::paramtab().write().ok().as_deref_mut() {
             tab.remove(name);
         }
     }
@@ -873,7 +870,7 @@ impl ShellExecutor {
     /// than `unset_var` which clears arrays + assocs too. Direct
     /// port of `Src/params.c:unsetparam_pm` for a scalar PM_TYPE.
     pub fn unset_scalar(&mut self, name: &str) {
-        if let Some(tab) = crate::ported::params::paramtab().lock().ok().as_deref_mut() {
+        if let Some(tab) = crate::ported::params::paramtab().write().ok().as_deref_mut() {
             tab.remove(name);
         }
     }
@@ -885,7 +882,7 @@ impl ShellExecutor {
     /// just one type pass through this single entry so paramtab and
     /// the HashMaps don't drift apart.
     pub(crate) fn unset_var(&mut self, name: &str) {
-        if let Some(tab) = crate::ported::params::paramtab().lock().ok().as_deref_mut() {
+        if let Some(tab) = crate::ported::params::paramtab().write().ok().as_deref_mut() {
             tab.remove(name);                                                // c:params.c:3900 paramtab removenode
         }
         let _ = crate::ported::params::paramtab_hashed_storage()
@@ -1834,7 +1831,7 @@ impl ShellExecutor {
         self.execute_script_zsh_pipeline(&script).unwrap_or(1)
     }
 
-    /// Execute via the ZshLexer + ZshParser + ZshCompiler pipeline.
+    /// Execute via the lex+parse free fns + ZshCompiler pipeline.
     /// This is the only execution path; `execute_script` delegates here.
     pub fn execute_script_zsh_pipeline(&mut self, script: &str) -> Result<i32, String> {
         // Skip history expansion for non-interactive script execution
@@ -1889,7 +1886,7 @@ impl ShellExecutor {
 
     #[tracing::instrument(skip(self, script), fields(len = script.len()))]
     pub fn execute_script(&mut self, script: &str) -> Result<i32, String> {
-        // ZshLexer + ZshParser + ZshCompiler is the only execution path.
+        // lex+parse free fns + ZshCompiler is the only execution path.
         self.execute_script_zsh_pipeline(script)
     }
 
@@ -2179,7 +2176,7 @@ impl ShellExecutor {
         result
     }
 
-    /// Parse `cmd_str` via ZshParser and pull out the first Simple
+    /// Parse `cmd_str` via parse_init+parse and pull out the first Simple
     /// command's words, untokenized + variable-expanded, ready to spawn
     /// as argv. Used by process-substitution where we need raw argv to
     /// hand to `Command::new`. Returns empty vec if the cmd isn't a
@@ -2226,7 +2223,7 @@ impl ShellExecutor {
         use std::fs;
         use std::process::Stdio;
 
-        // Phase 2: parse via ZshParser. Extract the first Simple cmd's
+        // Phase 2: parse via parse_init+parse. Extract the first Simple cmd's
         // words (untokenized), pre-expand to argv strings, spawn.
         let words = self.simple_cmd_words(cmd_str);
 
@@ -2339,7 +2336,7 @@ impl ShellExecutor {
         }
 
         // Port of getoutput() from Src/exec.c. Parse and compile via
-        // the ZshLexer + ZshParser + ZshCompiler pipeline, run on a
+        // the lex+parse free fns + ZshCompiler pipeline, run on a
         // sub-VM with the host wired up. Stdout is captured through
         // an in-process pipe via dup2 — no fork.
         //
@@ -3387,7 +3384,7 @@ impl crate::ported::exec::ShellExecutor {
                 // ported at `src/ported/hashtable.rs::aliastab_lock`).
                 // bin_alias writes through `aliastab.add()` — the local
                 // `exec.aliases` HashMap is a stale init-time snapshot.
-                if let Ok(tab) = crate::ported::hashtable::aliastab_lock().lock() {
+                if let Ok(tab) = crate::ported::hashtable::aliastab_lock().read() {
                     if key == "@" || key == "*" {
                         let mut names: Vec<&String> = tab.iter().map(|(n, _)| n).collect();
                         names.sort();
@@ -3534,7 +3531,7 @@ impl crate::ported::exec::ShellExecutor {
             "parameters" => {
                 if key == "@" || key == "*" {
                     let mut names: std::collections::BTreeSet<String> =
-                        if let Ok(tab) = crate::ported::params::paramtab().lock() {
+                        if let Ok(tab) = crate::ported::params::paramtab().read() {
                             tab.keys().cloned().collect()
                         } else {
                             std::collections::BTreeSet::new()

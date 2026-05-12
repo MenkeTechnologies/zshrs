@@ -120,6 +120,8 @@ mod paramtypestr_tests {
         hashnode, param, PM_ARRAY, PM_EXPORTED, PM_SCALAR, PM_UNSET,
     };
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/parameter.c`.
     fn make_pm(flags: u32, level: i32) -> param {
         param {
             node: hashnode { next: None, nam: String::new(), flags: flags as i32 },
@@ -130,6 +132,8 @@ mod paramtypestr_tests {
         }
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/parameter.c`.
     /// Mirrors Src/Modules/parameter.c:43-95 — switch on
     /// `PM_TYPE(pm->node.flags)` then dyncat'd modifier chain.
     #[test]
@@ -418,7 +422,7 @@ fn getpatchars(dis: i32) -> Vec<String> {                                    // 
 /// *p = NULL; return ret;
 /// ```
 fn getreswords(dis: i32) -> Vec<String> {                                    // c:858
-    let g = match crate::ported::hashtable::reswdtab_lock().lock() {
+    let g = match crate::ported::hashtable::reswdtab_lock().read() {
         Ok(g) => g,
         Err(_) => return Vec::new(),
     };
@@ -459,7 +463,7 @@ pub fn getalias(_alht: *mut HashTable, _ht: *mut HashTable,                  // 
     } else {
         crate::ported::hashtable::aliastab_lock()
     };
-    let g = table.lock().ok()?;
+    let g = table.read().ok()?;
     let entry = g.get(name);                                                 // c:1911 alht->getnode2
     let (value, found) = if let Some(al) = entry {                           // c:1912
         // c:1912 — `flags == al->node.flags` strict equality match.
@@ -551,7 +555,7 @@ pub fn getbuiltin(_ht: *mut HashTable, name: &str, _dis: i32)                // 
 pub fn getfunction(_ht: *mut HashTable, name: &str, _dis: i32)               // c:389
                    -> Option<Param> {
     use crate::ported::zsh_h::{PM_SCALAR, PM_UNSET, PM_SPECIAL};
-    let g = crate::ported::hashtable::shfunctab_lock().lock().ok()?;
+    let g = crate::ported::hashtable::shfunctab_lock().read().ok()?;
     let entry = g.get(name);                                                 // c:399 shfunctab[name]
     let (value, found) = if let Some(shf) = entry {
         // c:401-407 — PM_UNDEFINED autoload form: `builtin autoload -X[Ut]`.
@@ -589,7 +593,7 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, _dis: i32)               // 
 pub fn getfunction_source(_ht: *mut HashTable, name: &str, _dis: i32)        // c:537
                           -> Option<Param> {
     use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
-    let g = crate::ported::hashtable::shfunctab_lock().lock().ok()?;
+    let g = crate::ported::hashtable::shfunctab_lock().read().ok()?;
     let entry = g.get(name);
     let (value, found) = if let Some(shf) = entry {                          // c:545
         // c:548-555 — `pm.u.str = dyncat(shf->filename ?: "", ":lineno")`.
@@ -644,7 +648,7 @@ pub fn getpmbuiltin(ht: *mut HashTable, name: &str) -> Option<Param> {       // 
 #[allow(non_snake_case)]
 pub fn getpmcommand(_ht: *mut HashTable, name: &str) -> Option<Param> {      // c:213
     use crate::ported::zsh_h::{PM_SCALAR, PM_UNSET, PM_SPECIAL};
-    let g = crate::ported::hashtable::cmdnamtab_lock().lock().ok()?;
+    let g = crate::ported::hashtable::cmdnamtab_lock().read().ok()?;
     let entry = g.get(name);                                                 // c:218 cmdnamtab->getnode
     let (value, found) = if let Some(cmd) = entry {                          // c:227
         use crate::ported::hashtable::flags::HASHED;
@@ -861,6 +865,8 @@ pub fn getpmnameddir(_ht: *mut HashTable, name: &str) -> Option<Param> {     // 
 // nameddirtab via passwd) — those compose their value inline. !!!
 // =====================================================================
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/parameter.c`.
 /// !!! RUST-ONLY HELPER — see WARNING block above. Synthesises a
 /// PM_SCALAR | PM_READONLY | PM_UNSET | PM_SPECIAL Param with empty
 /// `u.str`.
@@ -1143,7 +1149,7 @@ pub fn scanaliases(_alht: *mut HashTable, _ht: *mut HashTable,               // 
         } else {
             crate::ported::hashtable::aliastab_lock()
         };
-        if let Ok(tab) = lock.lock() {
+        if let Ok(tab) = lock.read() {
             for (_, alias) in tab.iter() {                                   // c:1970
                 // c:1972 — `if (al->node.flags & alflags) continue;`
                 if alflags != 0 && alflags != crate::ported::zsh_h::ALIAS_SUFFIX
@@ -1195,7 +1201,7 @@ pub fn scanfunctions(_ht: *mut HashTable, func: Option<ScanFunc>,            // 
     // Static-link path: walk SHFUNCTAB via shfunctab_lock; the
     // body-string assembly is the same as getfunction() above.
     let names: Vec<String> = if let Ok(g) =
-        crate::ported::hashtable::shfunctab_lock().lock() {
+        crate::ported::hashtable::shfunctab_lock().read() {
         g.iter().map(|(n, _)| n.clone()).collect()                           // c:469-470
     } else { Vec::new() };
     if let Some(f) = func {
@@ -1219,7 +1225,7 @@ pub fn scanfunctions_source(_ht: *mut HashTable, func: Option<ScanFunc>,     // 
     // via getpmhashtable. Static-link path walks SHFUNCTAB and emits
     // the function name (filename data isn't yet stored on ShFunc).
     let names: Vec<String> = if let Ok(g) =
-        crate::ported::hashtable::shfunctab_lock().lock() {
+        crate::ported::hashtable::shfunctab_lock().read() {
         g.iter().map(|(n, _)| n.clone()).collect()                           // c:570
     } else { Vec::new() };
     if let Some(f) = func {
@@ -1263,7 +1269,7 @@ pub fn scanpmcommands(_ht: *mut HashTable, func: Option<ScanFunc>,           // 
     // appear. Static-link path defers the filltable side-effect until
     // the option-state plumbing lands.
     let cmds: Vec<(String, bool, String)> = {
-        let g = crate::ported::hashtable::cmdnamtab_lock().lock().unwrap();
+        let g = crate::ported::hashtable::cmdnamtab_lock().read().unwrap();
         g.iter().map(|(name, cmd)| {                                        // c:259-260
             use crate::ported::hashtable::flags::HASHED;
             let hashed = (cmd.node.flags & HASHED as i32) != 0;
@@ -1591,7 +1597,7 @@ pub fn setfunction(name: &str, mut val: String, dis: i32) {                  // 
     }
 
     // c:314 — shfunctab->addnode(shfunctab, ztrdup(name), shf);
-    if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().lock() {
+    if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
         tab.add(shf);
     }
     // c:315 — zsfree(val); — Rust drops on scope exit.
@@ -1649,7 +1655,7 @@ pub fn setpmcommand(pm: Param, value: String) {                              // 
     //   helper bundles the hashnode literal so the call-site stays
     //   one line.
     let cn = crate::ported::hashtable::cmdnam_hashed(&pm.node.nam, &value);  // c:155-156
-    if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().lock() {
+    if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().write() {
         tab.add(cn);                                                         // c:158 addnode
     }
 }
@@ -1685,7 +1691,7 @@ pub fn setpmcommands(_pm: Param, ht: *mut HashTable) {                       // 
             let path = crate::ported::params::getstrvalue(Some(&mut v));
             let cn = crate::ported::hashtable::cmdnam_hashed(&node.nam, &path);
             // c:194 — cmdnamtab->addnode(cmdnamtab, ztrdup(hn->nam), &cn->node);
-            if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().lock() {
+            if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().write() {
                 tab.add(cn);
             }
             hn = node.next;                                                  // c:182 hn = hn->next
@@ -1992,7 +1998,7 @@ pub fn setpmsaliases(pm: Param, ht: *mut HashTable) {                        // 
 /// named alias from `aliastab`.
 #[allow(non_snake_case)]
 pub fn unsetpmalias(pm: Param, _exp: i32) {                                  // c:1749
-    if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().lock() {
+    if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
         // c:1751 — HashNode hd = aliastab->removenode(aliastab, pm->node.nam);
         let _hd = tab.remove(&pm.node.nam);
         // c:1753-1754 — if (hd) aliastab->freenode(hd); — Rust Drop on scope exit.
@@ -2004,7 +2010,7 @@ pub fn unsetpmalias(pm: Param, _exp: i32) {                                  // 
 /// named entry from `cmdnamtab`.
 #[allow(non_snake_case)]
 pub fn unsetpmcommand(pm: Param, _exp: i32) {                                // c:163
-    if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().lock() {
+    if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().write() {
         // c:165 — HashNode hn = cmdnamtab->removenode(cmdnamtab, pm->node.nam);
         let _hn = tab.remove(&pm.node.nam);
         // c:167-168 — if (hn) cmdnamtab->freenode(hn); — Rust Drop on scope exit.
@@ -2016,7 +2022,7 @@ pub fn unsetpmcommand(pm: Param, _exp: i32) {                                // 
 /// named function from `shfunctab`.
 #[allow(non_snake_case)]
 pub fn unsetpmfunction(pm: Param, _exp: i32) {                               // c:334
-    if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().lock() {
+    if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
         // c:336 — HashNode hn = shfunctab->removenode(shfunctab, pm->node.nam);
         let _hn = tab.remove(&pm.node.nam);
         // c:338-339 — if (hn) shfunctab->freenode(hn); — Rust Drop on scope exit.
@@ -2050,7 +2056,7 @@ pub fn unsetpmoption(pm: Param, _exp: i32) {                                 // 
 /// named suffix alias from `sufaliastab`.
 #[allow(non_snake_case)]
 pub fn unsetpmsalias(pm: Param, _exp: i32) {                                 // c:1759
-    if let Ok(mut tab) = crate::ported::hashtable::sufaliastab_lock().lock() {
+    if let Ok(mut tab) = crate::ported::hashtable::sufaliastab_lock().write() {
         // c:1761 — HashNode hd = sufaliastab->removenode(sufaliastab, pm->node.nam);
         let _hd = tab.remove(&pm.node.nam);
         // c:1763-1764 — if (hd) sufaliastab->freenode(hd); — Rust Drop on scope exit.
@@ -2062,6 +2068,8 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/parameter.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -2081,10 +2089,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/parameter.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["p:aliases".to_string(), "p:builtins".to_string(), "p:commands".to_string(), "p:dirstack".to_string(), "p:dis_aliases".to_string(), "p:dis_builtins".to_string(), "p:dis_functions".to_string(), "p:dis_functions_source".to_string(), "p:dis_galiases".to_string(), "p:dis_patchars".to_string(), "p:dis_reswords".to_string(), "p:dis_saliases".to_string(), "p:funcfiletrace".to_string(), "p:funcsourcetrace".to_string(), "p:funcstack".to_string(), "p:functions".to_string(), "p:functions_source".to_string(), "p:functrace".to_string(), "p:galiases".to_string(), "p:history".to_string(), "p:historywords".to_string(), "p:jobdirs".to_string(), "p:jobstates".to_string(), "p:jobtexts".to_string(), "p:modules".to_string(), "p:nameddirs".to_string(), "p:options".to_string(), "p:parameters".to_string(), "p:patchars".to_string(), "p:reswords".to_string(), "p:saliases".to_string(), "p:userdirs".to_string(), "p:usergroups".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/parameter.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -2096,6 +2108,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/parameter.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

@@ -169,6 +169,7 @@ pub fn zregex_regerrwarn(prefix: &str, err_msg: &str) {                  // c:40
 mod tests {
     use super::*;
 
+    /// Port of `zcond_regex_match()` from `Src/Modules/regex.c:54`.
     #[test]
     fn match_returns_one() {
         let r = zcond_regex_match(&["hello world", "wor.d"], ZREGEX_EXTENDED);
@@ -179,18 +180,24 @@ mod tests {
         // than here against an in-memory executor map.
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/regex.c`.
     #[test]
     fn captures_returns_one() {
         let r = zcond_regex_match(&["foo=42", "([a-z]+)=([0-9]+)"], ZREGEX_EXTENDED);
         assert_eq!(r, 1);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/regex.c`.
     #[test]
     fn no_match_returns_zero() {
         let r = zcond_regex_match(&["abc", "xyz"], ZREGEX_EXTENDED);
         assert_eq!(r, 0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/regex.c`.
     #[test]
     fn invalid_pattern_returns_zero() {
         assert_eq!(
@@ -199,12 +206,16 @@ mod tests {
         );
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/regex.c`.
     #[test]
     fn missing_args_returns_zero() {
         assert_eq!(zcond_regex_match(&[], ZREGEX_EXTENDED), 0);
         assert_eq!(zcond_regex_match(&["only_lhs"], ZREGEX_EXTENDED), 0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/regex.c`.
     #[test]
     fn casematch_off_is_case_insensitive() {
         // casematch flag now consults the global options table via
@@ -269,6 +280,8 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/regex.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -288,10 +301,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/regex.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["c:regex-match".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/regex.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -303,6 +320,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/regex.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

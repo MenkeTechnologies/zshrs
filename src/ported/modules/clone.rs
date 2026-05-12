@@ -166,6 +166,7 @@ pub fn bin_clone(nam: &str, args: &[String], _ops: &options, _func: i32) -> i32 
     0                                                                    // c:106
 }
 
+/// Port of `bin_clone()` from `Src/Modules/clone.c:44`.
 #[cfg(not(unix))]
 pub fn bin_clone(nam: &str, _args: &[String], _ops: &options, _func: i32) -> i32 {
     zwarnnam(nam, "not available on this host");
@@ -239,6 +240,8 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
 // `clearjobtab` lives in `Src/jobs.c:1780`. Clears the global JOBTAB
 // so the cloned child starts with no inherited jobs (mirrors C's
 // `clearjobtab(0)` in clone.c c:78).
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/clone.c`.
 fn clearjobtab(_monitor: i32) {                                              // c:1780
     if let Some(tab) = crate::ported::jobs::JOBTAB.get() {
         if let Ok(mut jobs) = tab.lock() {
@@ -249,10 +252,14 @@ fn clearjobtab(_monitor: i32) {                                              // 
 
 // `closem` lives in `Src/utils.c:1310`. `FDT_UNUSED` from zsh.h:1115.
 const FDT_UNUSED: i32 = 0;
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/clone.c`.
 fn closem(_typ: i32, _all: i32) {}
 
 // `init_io` lives in `Src/init.c:577`. Wires through the canonical
 // port at init.rs:295.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/clone.c`.
 fn init_io(cmd: *mut libc::c_char) {                                         // c:577
     let s: Option<String> = if cmd.is_null() {
         None
@@ -265,12 +272,16 @@ fn init_io(cmd: *mut libc::c_char) {                                         // 
 // `setsparam` lives in `Src/params.c:3380`. Routes through the
 // canonical ksh93::setsparam free-fn (which writes to env-as-param-
 // table on the static-link path).
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/clone.c`.
 fn setsparam(name: &str, value: &str) {                                      // c:3380
     crate::ported::params::setsparam(name, value);
 }
 
 // `ztrdup` lives in `Src/string.c:18` — `strdup` clone using zsh's
 // allocator. Pass-through here; the `setsparam` stub copies anyway.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/clone.c`.
 fn ztrdup(s: &str) -> &str { s }
 
 // =====================================================================
@@ -282,10 +293,14 @@ mod tests {
     use super::*;
     use crate::ported::zsh_h::MAX_OPS;
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/clone.c`.
     fn empty_ops() -> options {
         options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/clone.c`.
     #[test]
     #[cfg(unix)]
     fn bin_clone_no_args_returns_one() {
@@ -293,6 +308,8 @@ mod tests {
         assert_eq!(bin_clone("clone", &[], &ops, 0), 1);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/clone.c`.
     #[test]
     #[cfg(unix)]
     fn bin_clone_invalid_tty_returns_one() {
@@ -302,6 +319,8 @@ mod tests {
         assert_eq!(rc, 1);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/clone.c`.
     #[test]
     fn module_loaders_return_zero() {
         let mut features: Vec<String> = Vec::new();
@@ -322,6 +341,8 @@ use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/clone.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -341,10 +362,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/clone.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:clone".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/clone.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -356,6 +381,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/clone.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,
