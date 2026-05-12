@@ -5,7 +5,7 @@
 //! can be executed by the shell executor.
 
 use super::lex::{
-    lextok, ZshLexer, AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BAR_TOK, BARAMP, CASE, COPROC, DAMPER,
+    lextok, AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BAR_TOK, BARAMP, CASE, COPROC, DAMPER,
     DBAR, DINANG, DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG,
     DOUTANGBANG, DOUTBRACK, DOUTPAR, DSEMI, ELIF, ELSE, ENDINPUT, ENVARRAY, ENVSTRING, ESAC, FI,
     FOR, FOREACH, FUNC, IF, INANG_TOK, INANGAMP, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK,
@@ -640,9 +640,11 @@ pub enum CaseTerminator {
 /// dropping the field would mean every callsite manually constructs
 /// a `ZshLexer` value, with no semantic benefit since ZshLexer is
 /// zero-sized.
-pub struct ZshParser {
-    lexer: ZshLexer,
-}
+// ZshParser struct DELETED — all state lives in file-scope thread_locals.
+// Callers used to write `let mut parser = ZshParser::new(input);
+// parser.parse();` but now use the free fns directly:
+// `crate::ported::parse::parse_init(input);
+// let prog = crate::ported::parse::parse();`.
 
 const MAX_RECURSION_DEPTH: usize = 500;
 
@@ -846,51 +848,50 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>
     Some((names, rest))
 }
 
-impl ZshParser {
-    /// Create a new parser
-    pub fn new(input: &str) -> Self {
+// === ZshParser methods now free fns at module scope ===
+    /// Initialize parser state for a fresh parse of `input`.
+    /// Replaces the old `ZshParser::new(input)` constructor.
+    pub fn parse_init(input: &str) {
         // P8: reset Rust-only safety counters at parser construction.
         PARSER_GLOBAL_ITERATIONS.set(0);
         PARSER_RECURSION_DEPTH.set(0);
-        ZshParser {
-            lexer: ZshLexer::new(input),
-        }
+        crate::ported::lex::lex_init(input);
     }
 
     /// Check iteration limit; returns true if exceeded
     #[inline]
-    fn check_limit(&mut self) -> bool {
+    fn check_limit() -> bool {
         PARSER_GLOBAL_ITERATIONS.set(PARSER_GLOBAL_ITERATIONS.get() + 1);
         PARSER_GLOBAL_ITERATIONS.get() > 10_000
     }
 
     /// Check recursion depth; returns true if exceeded
     #[inline]
-    fn check_recursion(&mut self) -> bool {
+    fn check_recursion() -> bool {
         PARSER_RECURSION_DEPTH.get() > MAX_RECURSION_DEPTH
     }
 
     /// Direct port of `parse_context_save` at `Src/parse.c:295-320`.
     /// Snapshots the lexer-side file-statics (which currently live on
-    /// `self.lexer` until Phase 7 dissolution makes them file-scope
+    /// `lexer` until Phase 7 dissolution makes them file-scope
     /// thread_local!s) plus the pending heredoc list, plus the
     /// wordcode-buffer state (STUB until Phase 9b). Saves Rust-only
     /// recursion counters too so nested parses get fresh limits.
-    pub fn parse_context_save(&mut self, ps: &mut parse_stack) {
+    pub fn parse_context_save(ps: &mut parse_stack) {
         // parse.c:299 — `ps->hdocs = hdocs; hdocs = NULL;`
-        ps.hdocs = self.lexer.heredocs_take();
+        ps.hdocs = crate::ported::lex::heredocs_take();
         // parse.c:302-310 — save lexer-side state.
-        ps.incmdpos = self.lexer.incmdpos();
+        ps.incmdpos = crate::ported::lex::incmdpos();
         // parse.c:303 — aliasspaceflag — not yet a field on ZshLexer.
         // STUB; Phase 7 wires it. Same for the few below marked STUB.
         ps.aliasspaceflag = 0;
-        ps.incond = self.lexer.incond();
-        ps.inredir = self.lexer.inredir();
-        ps.incasepat = self.lexer.incasepat();
-        ps.isnewlin = self.lexer.isnewlin();
-        ps.infor = self.lexer.infor();
-        ps.inrepeat_ = self.lexer.inrepeat();
-        ps.intypeset = self.lexer.intypeset();
+        ps.incond = crate::ported::lex::incond();
+        ps.inredir = crate::ported::lex::inredir();
+        ps.incasepat = crate::ported::lex::incasepat();
+        ps.isnewlin = crate::ported::lex::isnewlin();
+        ps.infor = crate::ported::lex::infor();
+        ps.inrepeat_ = crate::ported::lex::inrepeat();
+        ps.intypeset = crate::ported::lex::intypeset();
         // parse.c:312-317 — wordcode buffer state. STUB until Phase 9b
         // (zshrs has no ecbuf yet).
         ps.eclen = 0;
@@ -907,36 +908,36 @@ impl ZshParser {
         // — acceptable since the counters are safety nets, not state.
         PARSER_RECURSION_DEPTH.set(0);
         PARSER_GLOBAL_ITERATIONS.set(0);
-        self.lexer.set_incmdpos(true);
-        self.lexer.set_incond(0);
-        self.lexer.set_inredir(false);
-        self.lexer.set_incasepat(0);
-        self.lexer.set_infor(0);
-        self.lexer.set_inrepeat(0);
-        self.lexer.set_intypeset(false);
+        crate::ported::lex::set_incmdpos(true);
+        crate::ported::lex::set_incond(0);
+        crate::ported::lex::set_inredir(false);
+        crate::ported::lex::set_incasepat(0);
+        crate::ported::lex::set_infor(0);
+        crate::ported::lex::set_inrepeat(0);
+        crate::ported::lex::set_intypeset(false);
     }
 
     /// Direct port of `parse_context_restore` at `Src/parse.c:326-355`.
     /// Inverse of `parse_context_save`. Restores lexer-side state +
     /// pending heredocs + Rust-only counters from `ps`, then clears
     /// `errflag & ERRFLAG_ERROR` per parse.c:354.
-    pub fn parse_context_restore(&mut self, ps: &parse_stack) {
+    pub fn parse_context_restore(ps: &parse_stack) {
         // parse.c:330-331 — free any in-progress wordcode buffer.
         // zshrs has no wordcode yet (STUB until Phase 9b); the AST
         // nodes are owned by their parent so dropping the parser
         // frees them.
 
         // parse.c:333-352 — restore saved state.
-        self.lexer.heredocs_set(ps.hdocs.clone());
-        self.lexer.set_incmdpos(ps.incmdpos);
+        crate::ported::lex::heredocs_set(ps.hdocs.clone());
+        crate::ported::lex::set_incmdpos(ps.incmdpos);
         // aliasspaceflag STUB until Phase 7.
-        self.lexer.set_incond(ps.incond);
-        self.lexer.set_inredir(ps.inredir);
-        self.lexer.set_incasepat(ps.incasepat);
-        self.lexer.set_isnewlin(ps.isnewlin);
-        self.lexer.set_infor(ps.infor);
-        self.lexer.set_inrepeat(ps.inrepeat_);
-        self.lexer.set_intypeset(ps.intypeset);
+        crate::ported::lex::set_incond(ps.incond);
+        crate::ported::lex::set_inredir(ps.inredir);
+        crate::ported::lex::set_incasepat(ps.incasepat);
+        crate::ported::lex::set_isnewlin(ps.isnewlin);
+        crate::ported::lex::set_infor(ps.infor);
+        crate::ported::lex::set_inrepeat(ps.inrepeat_);
+        crate::ported::lex::set_intypeset(ps.intypeset);
         // ecbuf/eclen/ecused/ecnpats/ecstrs/ecsoffs/ecssub/ecnfunc
         // STUB until Phase 9b.
         // P8: counters not restored — see parse_context_save comment.
@@ -953,15 +954,15 @@ impl ZshParser {
     /// `init_parse_status`. Clears the per-parse-call lexer flags
     /// so a fresh parse starts from cmd-position with no nesting
     /// state inherited from a prior parse.
-    pub fn init_parse_status(&mut self) {
+    pub fn init_parse_status() {
         // parse.c:500-502 — `incasepat = incond = inredir = infor =
         // intypeset = 0; inrepeat_ = 0; incmdpos = 1;`
-        self.lexer.set_incasepat(0);
-        self.lexer.set_incond(0);
-        self.lexer.set_inredir(false);
-        self.lexer.set_infor(0);
-        self.lexer.set_intypeset(false);
-        self.lexer.set_incmdpos(true);
+        crate::ported::lex::set_incasepat(0);
+        crate::ported::lex::set_incond(0);
+        crate::ported::lex::set_inredir(false);
+        crate::ported::lex::set_infor(0);
+        crate::ported::lex::set_intypeset(false);
+        crate::ported::lex::set_incmdpos(true);
     }
 
     /// Initialize parser for a fresh parse. Direct port of
@@ -971,7 +972,7 @@ impl ZshParser {
     /// has no flat wordcode buffer (AST is built inline) so this
     /// function reduces to init_parse_status + recursion_depth/
     /// global_iterations clear.
-    pub fn init_parse(&mut self) {
+    pub fn init_parse() {
         // parse.c:513-520 — `ecbuf = (Wordcode) zalloc(EC_INIT_SIZE *
         // sizeof(wordcode)); eclen = EC_INIT_SIZE; ecused = 0;
         // ecnpats = 0; ecstrs = NULL; ecsoffs = ecnfunc = 0;
@@ -993,7 +994,7 @@ impl ZshParser {
         PARSER_RECURSION_DEPTH.set(0);
         PARSER_GLOBAL_ITERATIONS.set(0);
         // parse.c:522 — `init_parse_status();`
-        self.init_parse_status();
+        init_parse_status();
     }
 
     /// Check whether the parsed program is empty. Direct port of
@@ -1009,8 +1010,8 @@ impl ZshParser {
     /// the global `hdocs` linked list and frees each node. zshrs
     /// stores pending heredocs on the lexer's `heredocs` Vec —
     /// truncating it has the same effect.
-    pub fn clear_hdocs(&mut self) {
-        self.lexer.heredocs_clear();
+    pub fn clear_hdocs() {
+        crate::ported::lex::heredocs_clear();
     }
 
     /// Top-level parse-event entry. Direct port of zsh/Src/parse.c:
@@ -1025,17 +1026,17 @@ impl ZshParser {
     /// zshrs port note: zsh's parse_event returns an `Eprog` (heap-
     /// allocated wordcode program). zshrs returns a `ZshProgram`
     /// (AST root). Same role at the parse-output boundary.
-    pub fn parse_event(&mut self, endtok: lextok) -> Option<ZshProgram> {
+    pub fn parse_event(endtok: lextok) -> Option<ZshProgram> {
         // parse.c:616-619 — reset state and prime the lexer.
-        self.lexer.set_tok(ENDINPUT);
-        self.lexer.set_incmdpos(true);
-        self.lexer.zshlex();
+        crate::ported::lex::set_tok(ENDINPUT);
+        crate::ported::lex::set_incmdpos(true);
+        crate::ported::lex::zshlex();
         // parse.c:620 — `init_parse();`
-        self.init_parse();
+        init_parse();
 
         // parse.c:622-625 — drive par_event; on failure clear hdocs.
-        if !self.par_event(endtok) {
-            self.clear_hdocs();
+        if !par_event(endtok) {
+            clear_hdocs();
             return None;
         }
         // parse.c:626-628 — if endtok != ENDINPUT, this is a sub-
@@ -1049,7 +1050,7 @@ impl ZshParser {
         // zshrs has already built the AST via parse_program_until,
         // but parse_event uses par_event directly so we need to
         // collect what par_event accumulated.
-        Some(self.parse_program_until(None))
+        Some(parse_program_until(None))
     }
 
     /// Parse one event (sublist with optional separator). Direct
@@ -1059,26 +1060,26 @@ impl ZshParser {
     /// zshrs port note: the C version emits wordcodes via ecadd/
     /// set_list_code; zshrs's parser builds AST nodes via
     /// parse_sublist + parse_list. Same flow, different output.
-    pub fn par_event(&mut self, endtok: lextok) -> bool {
+    pub fn par_event(endtok: lextok) -> bool {
         // parse.c:639-643 — skip leading SEPERs.
-        while self.lexer.tok() == SEPER {
+        while crate::ported::lex::tok() == SEPER {
             // parse.c:640-641 — at top-level (endtok == ENDINPUT),
             // a SEPER on a fresh line ends the event.
-            if self.lexer.isnewlin() > 0 && endtok == ENDINPUT {
+            if crate::ported::lex::isnewlin() > 0 && endtok == ENDINPUT {
                 return false;
             }
-            self.lexer.zshlex();
+            crate::ported::lex::zshlex();
         }
         // parse.c:644-647 — terminate on EOF or matching close-token.
-        if self.lexer.tok() == ENDINPUT {
+        if crate::ported::lex::tok() == ENDINPUT {
             return false;
         }
-        if self.lexer.tok() == endtok {
+        if crate::ported::lex::tok() == endtok {
             return true;
         }
         // parse.c:649-... — drive parse_sublist + handle terminator.
         // zshrs's parse_sublist already builds the AST node directly.
-        match self.parse_sublist() {
+        match parse_sublist() {
             Some(_) => {
                 // parse.c:651-693 — terminator handling. zshrs's
                 // parse_list wraps this; for parse_event we just
@@ -1094,11 +1095,11 @@ impl ZshParser {
     /// doesn't recurse on the trailing-separator path; used by
     /// callers that only want one statement (e.g. each arm of a
     /// case body).
-    pub fn par_list1(&mut self) -> Option<ZshSublist> {
+    pub fn par_list1() -> Option<ZshSublist> {
         // parse.c:810-816 — body is a single par_sublist call wrapped
         // in the eu/ecused tracking that zshrs doesn't need (no
         // wordcode buffer).
-        self.parse_sublist()
+        parse_sublist()
     }
 
     /// Wire a here-document body onto the redirection token that
@@ -1113,7 +1114,6 @@ impl ZshParser {
     /// This method is the AST-side equivalent: writes back to the
     /// matching redir node by index.
     pub fn setheredoc(
-        &mut self,
         _pc: usize,
         _redir_type: i32,
         _doc: &str,
@@ -1123,20 +1123,20 @@ impl ZshParser {
         // zshrs's heredoc resolution happens in fill_in_command /
         // resolve_redir at parse top. This stub exists for API
         // parity with the C signature; live wiring happens via
-        // self.lexer.heredocs which the post-parse pass consumes.
+        // heredocs which the post-parse pass consumes.
     }
 
     /// Parse a wordlist for `for ... in WORDS;`. Direct port of
     /// zsh/Src/parse.c:2362-2378 `par_wordlist`. Reads STRING tokens
     /// until the next SEPER / SEMI / NEWLIN.
-    pub fn par_wordlist(&mut self) -> Vec<String> {
+    pub fn par_wordlist() -> Vec<String> {
         let mut out = Vec::new();
         // parse.c:2362-2378 — collect STRINGs into the wordlist.
-        while self.lexer.tok() == STRING_LEX {
-            if let Some(text) = self.lexer.tokstr() {
+        while crate::ported::lex::tok() == STRING_LEX {
+            if let Some(text) = crate::ported::lex::tokstr() {
                 out.push(text);
             }
-            self.lexer.zshlex();
+            crate::ported::lex::zshlex();
         }
         out
     }
@@ -1144,15 +1144,15 @@ impl ZshParser {
     /// Parse a newline-separated wordlist. Direct port of
     /// zsh/Src/parse.c:2379-2398 `par_nl_wordlist`. Like
     /// par_wordlist but tolerates leading/trailing newlines.
-    pub fn par_nl_wordlist(&mut self) -> Vec<String> {
+    pub fn par_nl_wordlist() -> Vec<String> {
         // parse.c:2380-2381 — skip leading newlines.
-        while self.lexer.tok() == NEWLIN {
-            self.lexer.zshlex();
+        while crate::ported::lex::tok() == NEWLIN {
+            crate::ported::lex::zshlex();
         }
-        let out = self.par_wordlist();
+        let out = par_wordlist();
         // parse.c:2395-2397 — skip trailing newlines.
-        while self.lexer.tok() == NEWLIN {
-            self.lexer.zshlex();
+        while crate::ported::lex::tok() == NEWLIN {
+            crate::ported::lex::zshlex();
         }
         out
     }
@@ -1161,26 +1161,26 @@ impl ZshParser {
     /// Direct port of zsh/Src/parse.c:2643-2658 `get_cond_num`.
     /// Used for `[[ N OP M ]]` numeric tests where N/M are integer
     /// literals or variable references.
-    pub fn get_cond_num(&mut self) -> Option<i64> {
-        if self.lexer.tok() != STRING_LEX {
+    pub fn get_cond_num() -> Option<i64> {
+        if crate::ported::lex::tok() != STRING_LEX {
             return None;
         }
-        let text = self.lexer.tokstr()?;
+        let text = crate::ported::lex::tokstr()?;
         // parse.c:2647-2655 — parse as integer with optional sign.
         let parsed = text.parse::<i64>().ok()?;
-        self.lexer.zshlex();
+        crate::ported::lex::zshlex();
         Some(parsed)
     }
 
     /// Emit a parser-level error. Direct port of zsh/Src/parse.c
     /// 2733-2766 `yyerror`. C version fills a per-event error buffer
-    /// and sets errflag. zshrs pushes onto self.errors which the
+    /// and sets errflag. zshrs pushes onto errors which the
     /// caller drains via parse()'s Result return.
-    pub fn yyerror(&mut self, msg: &str) {
+    pub fn yyerror(msg: &str) {
         // parse.c:2735-2765 — zsh's yyerror collects the offending
         // token's literal text + line number. zshrs already does
-        // this via self.error() with the lexer's toklineno.
-        self.error(msg);
+        // this via error() with the lexer's toklineno.
+        error(msg);
     }
 
     // ============================================================
@@ -1274,7 +1274,7 @@ impl ZshParser {
         }
         ECUSED.set(ECUSED.get() - 1);
         // parse.c:420 — `ecadjusthere(p, -1)`.
-        Self::ecadjusthere(p, -1);
+        ecadjusthere(p, -1);
     }
 
     /// Direct port of `ecstrcode` at `Src/parse.c:425-471`. Encode a
@@ -1370,7 +1370,7 @@ impl ZshParser {
         // parse.c:386 — bump ecused by n.
         ECUSED.set(ECUSED.get() + need);
         // parse.c:387 — `ecadjusthere(p, n)`.
-        Self::ecadjusthere(p, need);
+        ecadjusthere(p, need);
     }
 
     /// Direct port of `ecadjusthere` at `Src/parse.c:359-367`. Walk
@@ -1467,23 +1467,21 @@ impl ZshParser {
     /// sets `errflag |= ERRFLAG_ERROR` (via `zerr`) and returns the
     /// partial program — callers check `errflag` to detect failure,
     /// matching C's `Eprog parse_event(...)` + `if (errflag) {...}`.
-    pub fn parse(&mut self) -> ZshProgram {
-        self.lexer.zshlex();
+    pub fn parse() -> ZshProgram {
+        crate::ported::lex::zshlex();
 
-        let mut program = self.parse_program_until(None);
+        let mut program = parse_program_until(None);
 
         // Surface lexer-level errors (unmatched quote/heredoc/etc.)
         // that the parser silently rolls past. zsh aborts with a
         // diagnostic via `zerr` which sets `errflag |= ERRFLAG_ERROR`.
-        if let Some(msg) = self.lexer.error() {
+        if let Some(msg) = crate::ported::lex::error() {
             crate::ported::utils::zerr(&msg);
         }
 
         // Post-pass: wire heredoc bodies (collected by lexer.process_heredocs)
         // back into ZshRedir.heredoc fields via heredoc_idx.
-        let bodies: Vec<HereDocInfo> = self
-            .lexer
-            .heredocs_clone()
+        let bodies: Vec<HereDocInfo> = crate::ported::lex::heredocs_clone()
             .into_iter()
             .map(|h| HereDocInfo {
                 content: h.content,
@@ -1505,39 +1503,39 @@ impl ZshParser {
     /// `par_event` flow. C distinguishes COND_EVENT (single command
     /// for here-string) from full event parse; zshrs's parse_program
     /// is the full-event entry.
-    fn parse_program(&mut self) -> ZshProgram {
-        self.parse_program_until(None)
+    fn parse_program() -> ZshProgram {
+        parse_program_until(None)
     }
 
     /// Parse a program until we hit an end token
     /// Parse a program until one of `end_tokens` is seen (or EOF).
     /// Drives parse_list in a loop. C equivalent: the body of par_event
     /// (parse.c:635-695) iterating par_list against the lexer.
-    fn parse_program_until(&mut self, end_tokens: Option<&[lextok]>) -> ZshProgram {
+    fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
         let mut lists = Vec::new();
 
         loop {
-            if self.check_limit() {
-                self.error("parser exceeded global iteration limit");
+            if check_limit() {
+                error("parser exceeded global iteration limit");
                 break;
             }
 
             // Skip separators
-            while self.lexer.tok() == SEPER || self.lexer.tok() == NEWLIN {
-                if self.check_limit() {
-                    self.error("parser exceeded global iteration limit");
+            while crate::ported::lex::tok() == SEPER || crate::ported::lex::tok() == NEWLIN {
+                if check_limit() {
+                    error("parser exceeded global iteration limit");
                     return ZshProgram { lists };
                 }
-                self.lexer.zshlex();
+                crate::ported::lex::zshlex();
             }
 
-            if self.lexer.tok() == ENDINPUT || self.lexer.tok() == LEXERR {
+            if crate::ported::lex::tok() == ENDINPUT || crate::ported::lex::tok() == LEXERR {
                 break;
             }
 
             // Check for end tokens
             if let Some(end_toks) = end_tokens {
-                if end_toks.contains(&self.lexer.tok()) {
+                if end_toks.contains(&crate::ported::lex::tok()) {
                     break;
                 }
             }
@@ -1545,7 +1543,7 @@ impl ZshParser {
             // Also stop at these tokens when not explicitly looking for them
             // Note: Else/Elif/Then are NOT here - they're handled by parse_if
             // to allow nested if statements inside case arms, loops, etc.
-            match self.lexer.tok() {
+            match crate::ported::lex::tok() {
                 OUTBRACE_TOK
                 | DSEMI
                 | SEMIAMP
@@ -1557,7 +1555,7 @@ impl ZshParser {
                 _ => {}
             }
 
-            match self.parse_list() {
+            match parse_list() {
                 Some(list) => {
                     let detected = simple_name_with_inoutpar(&list);
                     lists.push(list);
@@ -1584,7 +1582,7 @@ impl ZshParser {
                                     pipe: ZshPipe {
                                         cmd: body_simple,
                                         next: None,
-                                        lineno: self.lexer.lineno(),
+                                        lineno: crate::ported::lex::lineno(),
                                         merge_stderr: false,
                                     },
                                     next: None,
@@ -1606,7 +1604,7 @@ impl ZshParser {
                                     pipe: ZshPipe {
                                         cmd: funcdef,
                                         next: None,
-                                        lineno: self.lexer.lineno(),
+                                        lineno: crate::ported::lex::lineno(),
                                         merge_stderr: false,
                                     },
                                     next: None,
@@ -1624,10 +1622,10 @@ impl ZshParser {
                         // src/zsh/Src/parse.c:1666 par_funcdef wordlist.
                         // Skip separators on the real lexer; safe because
                         // parse_program's next iteration would also skip them.
-                        while self.lexer.tok() == SEPER || self.lexer.tok() == NEWLIN {
-                            self.lexer.zshlex();
+                        while crate::ported::lex::tok() == SEPER || crate::ported::lex::tok() == NEWLIN {
+                            crate::ported::lex::zshlex();
                         }
-                        if self.lexer.tok() == INBRACE_TOK {
+                        if crate::ported::lex::tok() == INBRACE_TOK {
                             // Capture body_start BEFORE the lexer
                             // advances past the first body token. The
                             // outer zshlex() consumed `{`; lexer.pos
@@ -1638,21 +1636,19 @@ impl ZshParser {
                             // printed `a; echo b` instead of
                             // `echo a; echo b` for `f() { echo a;
                             // echo b }`.
-                            let body_start = self.lexer.pos();
-                            self.lexer.zshlex();
-                            let body = self.parse_program();
-                            let body_end = if self.lexer.tok() == OUTBRACE_TOK {
-                                self.lexer.pos().saturating_sub(1)
+                            let body_start = crate::ported::lex::pos();
+                            crate::ported::lex::zshlex();
+                            let body = parse_program();
+                            let body_end = if crate::ported::lex::tok() == OUTBRACE_TOK {
+                                crate::ported::lex::pos().saturating_sub(1)
                             } else {
-                                self.lexer.pos()
+                                crate::ported::lex::pos()
                             };
-                            let body_source = self
-                                .lexer
-                                .input_slice(body_start, body_end)
+                            let body_source = crate::ported::lex::input_slice(body_start, body_end)
                                 .map(|s| s.trim().to_string())
                                 .filter(|s| !s.is_empty());
-                            if self.lexer.tok() == OUTBRACE_TOK {
-                                self.lexer.zshlex();
+                            if crate::ported::lex::tok() == OUTBRACE_TOK {
+                                crate::ported::lex::zshlex();
                             }
                             // Replace the Simple list with a FuncDef list.
                             lists.pop();
@@ -1668,7 +1664,7 @@ impl ZshParser {
                                     pipe: ZshPipe {
                                         cmd: funcdef,
                                         next: None,
-                                        lineno: self.lexer.lineno(),
+                                        lineno: crate::ported::lex::lineno(),
                                         merge_stderr: false,
                                     },
                                     next: None,
@@ -1678,19 +1674,19 @@ impl ZshParser {
                             };
                             lists.push(synthetic);
                         } else if !matches!(
-                            self.lexer.tok(),
+                            crate::ported::lex::tok(),
                             ENDINPUT | OUTBRACE_TOK | SEPER | NEWLIN
                         ) {
                             // No-brace one-line body: `foo() echo hello`.
                             // Parse a single command for the body.
-                            let body_cmd = self.parse_cmd();
+                            let body_cmd = parse_cmd();
                             if let Some(cmd) = body_cmd {
                                 let body_list = ZshList {
                                     sublist: ZshSublist {
                                         pipe: ZshPipe {
                                             cmd,
                                             next: None,
-                                            lineno: self.lexer.lineno(),
+                                            lineno: crate::ported::lex::lineno(),
                                             merge_stderr: false,
                                         },
                                         next: None,
@@ -1713,7 +1709,7 @@ impl ZshParser {
                                         pipe: ZshPipe {
                                             cmd: funcdef,
                                             next: None,
-                                            lineno: self.lexer.lineno(),
+                                            lineno: crate::ported::lex::lineno(),
                                             merge_stderr: false,
                                         },
                                         next: None,
@@ -1751,26 +1747,26 @@ impl ZshParser {
     /// AST in Rust. The compile_zsh module then traverses the AST to
     /// emit fusevm bytecode, which serves the same role as zsh's
     /// wordcode but with a different opcode set and execution model.
-    fn parse_list(&mut self) -> Option<ZshList> {
-        let sublist = self.parse_sublist()?;
+    fn parse_list() -> Option<ZshList> {
+        let sublist = parse_sublist()?;
 
-        let flags = match self.lexer.tok() {
+        let flags = match crate::ported::lex::tok() {
             AMPER => {
-                self.lexer.zshlex();
+                crate::ported::lex::zshlex();
                 ListFlags {
                     async_: true,
                     disown: false,
                 }
             }
             AMPERBANG => {
-                self.lexer.zshlex();
+                crate::ported::lex::zshlex();
                 ListFlags {
                     async_: true,
                     disown: true,
                 }
             }
             SEPER | SEMI | NEWLIN => {
-                self.lexer.zshlex();
+                crate::ported::lex::zshlex();
                 ListFlags::default()
             }
             _ => ListFlags::default(),
@@ -1789,10 +1785,10 @@ impl ZshParser {
     /// AST mapping: ZshSublist { pipe, conj_chain }, where `conj_chain`
     /// is a Vec<(ConjOp, ZshSublist)> for chained && / ||. C uses
     /// flat wordcode with WC_SUBLIST_AND / WC_SUBLIST_OR markers.
-    fn parse_sublist(&mut self) -> Option<ZshSublist> {
+    fn parse_sublist() -> Option<ZshSublist> {
         PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
-        if self.check_recursion() {
-            self.error("parse_sublist: max recursion depth exceeded");
+        if check_recursion() {
+            error("parse_sublist: max recursion depth exceeded");
             PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
             return None;
         }
@@ -1800,15 +1796,15 @@ impl ZshParser {
         let mut flags = SublistFlags::default();
 
         // Handle coproc and !
-        if self.lexer.tok() == COPROC {
+        if crate::ported::lex::tok() == COPROC {
             flags.coproc = true;
-            self.lexer.zshlex();
-        } else if self.lexer.tok() == BANG_TOK {
+            crate::ported::lex::zshlex();
+        } else if crate::ported::lex::tok() == BANG_TOK {
             flags.not = true;
-            self.lexer.zshlex();
+            crate::ported::lex::zshlex();
         }
 
-        let pipe = match self.parse_pipe() {
+        let pipe = match parse_pipe() {
             Some(p) => p,
             None => {
                 PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
@@ -1817,16 +1813,16 @@ impl ZshParser {
         };
 
         // Check for && or ||
-        let next = match self.lexer.tok() {
+        let next = match crate::ported::lex::tok() {
             DAMPER => {
-                self.lexer.zshlex();
-                self.skip_separators();
-                self.parse_sublist().map(|s| (SublistOp::And, Box::new(s)))
+                crate::ported::lex::zshlex();
+                skip_separators();
+                parse_sublist().map(|s| (SublistOp::And, Box::new(s)))
             }
             DBAR => {
-                self.lexer.zshlex();
-                self.skip_separators();
-                self.parse_sublist().map(|s| (SublistOp::Or, Box::new(s)))
+                crate::ported::lex::zshlex();
+                skip_separators();
+                parse_sublist().map(|s| (SublistOp::Or, Box::new(s)))
             }
             _ => None,
         };
@@ -1839,16 +1835,16 @@ impl ZshParser {
     /// Parse a pipeline (cmds joined by `|` / `|&`). Direct port of
     /// zsh/Src/parse.c:894-956 `par_pline`. AST: ZshPipe { cmds: Vec<ZshCommand> }.
     /// C emits WC_PIPE wordcodes per command; same flow.
-    fn parse_pipe(&mut self) -> Option<ZshPipe> {
+    fn parse_pipe() -> Option<ZshPipe> {
         PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
-        if self.check_recursion() {
-            self.error("parse_pipe: max recursion depth exceeded");
+        if check_recursion() {
+            error("parse_pipe: max recursion depth exceeded");
             PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
             return None;
         }
 
-        let lineno = self.lexer.toklineno();
-        let cmd = match self.parse_cmd() {
+        let lineno = crate::ported::lex::toklineno();
+        let cmd = match parse_cmd() {
             Some(c) => c,
             None => {
                 PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
@@ -1858,12 +1854,12 @@ impl ZshParser {
 
         // Check for | or |&
         let mut merge_stderr = false;
-        let next = match self.lexer.tok() {
+        let next = match crate::ported::lex::tok() {
             BAR_TOK | BARAMP => {
-                merge_stderr = self.lexer.tok() == BARAMP;
-                self.lexer.zshlex();
-                self.skip_separators();
-                self.parse_pipe().map(Box::new)
+                merge_stderr = crate::ported::lex::tok() == BARAMP;
+                crate::ported::lex::zshlex();
+                skip_separators();
+                parse_pipe().map(Box::new)
             }
             _ => None,
         };
@@ -1882,31 +1878,31 @@ impl ZshParser {
     /// IF / WHILE / UNTIL / REPEAT / FUNC / DINBRACK / DINPAR /
     /// INPAR subshell / INBRACE current-shell / TIME / NOCORRECT,
     /// else simple). Direct port of zsh/Src/parse.c:958-1085 `par_cmd`.
-    fn parse_cmd(&mut self) -> Option<ZshCommand> {
+    fn parse_cmd() -> Option<ZshCommand> {
         // Parse leading redirections
         let mut redirs = Vec::new();
-        while IS_REDIROP(self.lexer.tok()) {
-            if let Some(redir) = self.parse_redir() {
+        while IS_REDIROP(crate::ported::lex::tok()) {
+            if let Some(redir) = parse_redir() {
                 redirs.push(redir);
             }
         }
 
-        let cmd = match self.lexer.tok() {
-            FOR | FOREACH => self.parse_for(),
-            SELECT => self.parse_select(),
-            CASE => self.parse_case(),
-            IF => self.parse_if(),
-            WHILE => self.parse_while(false),
-            UNTIL => self.parse_while(true),
-            REPEAT => self.parse_repeat(),
-            INPAR_TOK => self.parse_subsh(),
-            INOUTPAR => self.parse_anon_funcdef(),
-            INBRACE_TOK => self.parse_cursh(),
-            FUNC => self.parse_funcdef(),
-            DINBRACK => self.parse_cond(),
-            DINPAR => self.parse_arith(),
-            TIME => self.parse_time(),
-            _ => self.parse_simple(redirs),
+        let cmd = match crate::ported::lex::tok() {
+            FOR | FOREACH => parse_for(),
+            SELECT => parse_select(),
+            CASE => parse_case(),
+            IF => parse_if(),
+            WHILE => parse_while(false),
+            UNTIL => parse_while(true),
+            REPEAT => parse_repeat(),
+            INPAR_TOK => parse_subsh(),
+            INOUTPAR => parse_anon_funcdef(),
+            INBRACE_TOK => parse_cursh(),
+            FUNC => parse_funcdef(),
+            DINBRACK => parse_cond(),
+            DINPAR => parse_arith(),
+            TIME => parse_time(),
+            _ => parse_simple(redirs),
         };
 
         // Parse trailing redirections. For Simple commands the redirs were
@@ -1915,8 +1911,8 @@ impl ZshParser {
         // ZshCommand::Redirected so compile_zsh can scope-bracket them.
         if let Some(inner) = cmd {
             let mut trailing: Vec<ZshRedir> = Vec::new();
-            while IS_REDIROP(self.lexer.tok()) {
-                if let Some(redir) = self.parse_redir() {
+            while IS_REDIROP(crate::ported::lex::tok()) {
+                if let Some(redir) = parse_redir() {
                     trailing.push(redir);
                 }
             }
@@ -1946,33 +1942,33 @@ impl ZshParser {
     /// typeset-style multi-assignment commands, and the trailing
     /// inout-par `()` that converts a simple command into an inline
     /// function definition.
-    fn parse_simple(&mut self, mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
+    fn parse_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
         let mut assigns = Vec::new();
         let mut words = Vec::new();
         const MAX_ITERATIONS: usize = 10_000;
         let mut iterations = 0;
 
         // Parse leading assignments
-        while self.lexer.tok() == ENVSTRING || self.lexer.tok() == ENVARRAY {
+        while crate::ported::lex::tok() == ENVSTRING || crate::ported::lex::tok() == ENVARRAY {
             iterations += 1;
             if iterations > MAX_ITERATIONS {
-                self.error("parse_simple: exceeded max iterations in assignments");
+                error("parse_simple: exceeded max iterations in assignments");
                 return None;
             }
-            if let Some(assign) = self.parse_assign() {
+            if let Some(assign) = parse_assign() {
                 assigns.push(assign);
             }
-            self.lexer.zshlex();
+            crate::ported::lex::zshlex();
         }
 
         // Parse words and redirections
         loop {
             iterations += 1;
             if iterations > MAX_ITERATIONS {
-                self.error("parse_simple: exceeded max iterations");
+                error("parse_simple: exceeded max iterations");
                 return None;
             }
-            match self.lexer.tok() {
+            match crate::ported::lex::tok() {
                 ENVSTRING | ENVARRAY => {
                     // Mid-command assignment-shape arg under typeset
                     // / declare / local / etc. (intypeset gates the
@@ -1984,7 +1980,7 @@ impl ZshParser {
                     // assignment-shape arg. Avoids the inline-env
                     // scope path that mistakenly treats it like a
                     // pre-cmd `X=Y cmd` assignment.
-                    if let Some(assign) = self.parse_assign() {
+                    if let Some(assign) = parse_assign() {
                         let synthetic = match &assign.value {
                             ZshAssignValue::Scalar(v) => format!("{}={}", assign.name, v),
                             ZshAssignValue::Array(elems) => {
@@ -1993,24 +1989,24 @@ impl ZshParser {
                         };
                         words.push(synthetic);
                     }
-                    self.lexer.zshlex();
+                    crate::ported::lex::zshlex();
                 }
                 STRING_LEX | TYPESET => {
-                    let s = self.lexer.tokstr();
+                    let s = crate::ported::lex::tokstr();
                     if let Some(s) = s {
                         words.push(s);
                     }
-                    self.lexer.zshlex();
+                    crate::ported::lex::zshlex();
                     // Check for function definition foo() { ... }
-                    if words.len() == 1 && self.peek_inoutpar() {
-                        return self.parse_inline_funcdef(words.pop().unwrap());
+                    if words.len() == 1 && peek_inoutpar() {
+                        return parse_inline_funcdef(words.pop().unwrap());
                     }
                     // `{name}>file` named-fd redirect: the lexer doesn't
                     // recognize this shape, so the bare word `{name}`
                     // arrives as a String. If it matches `{IDENT}` and
                     // the NEXT token is a redirop, pop it off as the
                     // varid for that redir.
-                    if !words.is_empty() && IS_REDIROP(self.lexer.tok()) {
+                    if !words.is_empty() && IS_REDIROP(crate::ported::lex::tok()) {
                         let last = words.last().unwrap();
                         let untoked = super::lex::untokenize(last);
                         if untoked.starts_with('{') && untoked.ends_with('}') && untoked.len() > 2 {
@@ -2025,7 +2021,7 @@ impl ZshParser {
                             {
                                 let varid = name.to_string();
                                 words.pop();
-                                if let Some(mut redir) = self.parse_redir() {
+                                if let Some(mut redir) = parse_redir() {
                                     redir.varid = Some(varid);
                                     redirs.push(redir);
                                 }
@@ -2034,15 +2030,15 @@ impl ZshParser {
                         }
                     }
                 }
-                _ if IS_REDIROP(self.lexer.tok()) => {
-                    match self.parse_redir() {
+                _ if IS_REDIROP(crate::ported::lex::tok()) => {
+                    match parse_redir() {
                         Some(redir) => redirs.push(redir),
                         None => break, // Error in redir parsing, stop
                     }
                 }
                 INOUTPAR if !words.is_empty() => {
                     // foo() { ... } style function
-                    return self.parse_inline_funcdef(words.pop().unwrap());
+                    return parse_inline_funcdef(words.pop().unwrap());
                 }
                 _ => break,
             }
@@ -2065,7 +2061,7 @@ impl ZshParser {
     /// inline in par_simple via the ENVSTRING/ENVARRAY token paths
     /// (parse.c:1842-2000ish); zshrs splits it out to a dedicated
     /// helper for clarity.
-    fn parse_assign(&mut self) -> Option<ZshAssign> {
+    fn parse_assign() -> Option<ZshAssign> {
         // Helper: locate the EQUALS-marker that delimits NAME from
         // VALUE in an assignment-shaped tokstr. The lexer META-encodes
         // EVERY `=` (including those inside `${var%%=foo}` strip
@@ -2109,11 +2105,11 @@ impl ZshParser {
             None
         }
 
-        let _ts_tokstr = self.lexer.tokstr()?;
+        let _ts_tokstr = crate::ported::lex::tokstr()?;
         let tokstr = _ts_tokstr.as_str();
 
         // Parse name=value or name+=value.
-        let (name, value_str, append) = if self.lexer.tok() == ENVARRAY {
+        let (name, value_str, append) = if crate::ported::lex::tok() == ENVARRAY {
             let (name, append) = if let Some(stripped) = tokstr.strip_suffix('+') {
                 (stripped, true)
             } else {
@@ -2145,29 +2141,29 @@ impl ZshParser {
             return None;
         };
 
-        let value = if self.lexer.tok() == ENVARRAY {
+        let value = if crate::ported::lex::tok() == ENVARRAY {
             // Array assignment: name=(...)
             let mut elements = Vec::new();
-            self.lexer.zshlex(); // skip past token
+            crate::ported::lex::zshlex(); // skip past token
 
             let mut arr_iters = 0;
             const MAX_ARRAY_ELEMENTS: usize = 10_000;
             while matches!(
-                self.lexer.tok(),
+                crate::ported::lex::tok(),
                 STRING_LEX | SEPER | NEWLIN
             ) {
                 arr_iters += 1;
                 if arr_iters > MAX_ARRAY_ELEMENTS {
-                    self.error("array assignment exceeded maximum elements");
+                    error("array assignment exceeded maximum elements");
                     break;
                 }
-                if self.lexer.tok() == STRING_LEX {
-                    let _ts_s = self.lexer.tokstr();
+                if crate::ported::lex::tok() == STRING_LEX {
+                    let _ts_s = crate::ported::lex::tokstr();
                     if let Some(s) = _ts_s.as_deref() {
                         elements.push(s.to_string());
                     }
                 }
-                self.lexer.zshlex();
+                crate::ported::lex::zshlex();
             }
 
             // The closing OUTPAR is consumed here. The outer parse_simple
@@ -2178,8 +2174,8 @@ impl ZshParser {
             // We only consume Outpar; let the caller handle the rest.
             // Without this guard `g=(o1); f() { :; }` parsed as one
             // Simple with assigns=[g] and words=["f()"] (one token).
-            if self.lexer.tok() == OUTPAR_TOK {
-                // Note: do NOT zshlex() here. parse_simple's `self.lexer
+            if crate::ported::lex::tok() == OUTPAR_TOK {
+                // Note: do NOT zshlex() here. parse_simple's `lexer
                 // .zshlex()` after `parse_assign` returns advances past
                 // the Outpar onto the next significant token.
                 //
@@ -2188,7 +2184,7 @@ impl ZshParser {
                 // The lexer flips incmdpos to false on bare Outpar (which
                 // is correct for subshell-close context), but for an
                 // array-assignment close more assigns/words may follow.
-                self.lexer.set_incmdpos(true);
+                crate::ported::lex::set_incmdpos(true);
             }
 
             ZshAssignValue::Array(elements)
@@ -2209,8 +2205,8 @@ impl ZshParser {
     /// a ZshRedir node carrying the operator type, fd, target word
     /// (or here-doc body / pipe-redir command), and any `{var}` style
     /// fd-binding parameter.
-    fn parse_redir(&mut self) -> Option<ZshRedir> {
-        let rtype = match self.lexer.tok() {
+    fn parse_redir() -> Option<ZshRedir> {
+        let rtype = match crate::ported::lex::tok() {
             OUTANG_TOK => REDIR_WRITE,
             OUTANGBANG => REDIR_WRITENOW,
             DOUTANG => REDIR_APP,
@@ -2229,8 +2225,8 @@ impl ZshParser {
             _ => return None,
         };
 
-        let fd = if self.lexer.tokfd() >= 0 {
-            self.lexer.tokfd()
+        let fd = if crate::ported::lex::tokfd() >= 0 {
+            crate::ported::lex::tokfd()
         } else if matches!(
             rtype,
             REDIR_READ
@@ -2245,27 +2241,27 @@ impl ZshParser {
             1
         };
 
-        self.lexer.zshlex();
+        crate::ported::lex::zshlex();
 
-        let name = match self.lexer.tok() {
+        let name = match crate::ported::lex::tok() {
             STRING_LEX | ENVSTRING => {
-                let n = self.lexer.tokstr().unwrap_or_default();
-                self.lexer.zshlex();
+                let n = crate::ported::lex::tokstr().unwrap_or_default();
+                crate::ported::lex::zshlex();
                 n
             }
             _ => {
-                self.error("expected word after redirection");
+                error("expected word after redirection");
                 return None;
             }
         };
 
         // Heredoc body capture: when reading the terminator above, the
-        // lexer pushed a HereDoc to self.lexer.heredocs[]. Record the
+        // lexer pushed a HereDoc to heredocs[]. Record the
         // index so fill_heredoc_bodies() can wire content back after
         // process_heredocs() has run.
         let heredoc_idx = if matches!(rtype, REDIR_HEREDOC | REDIR_HEREDOCDASH) {
-            if !self.lexer.heredocs_is_empty() {
-                Some(self.lexer.heredocs_len() - 1)
+            if !crate::ported::lex::heredocs_is_empty() {
+                Some(crate::ported::lex::heredocs_len() - 1)
             } else {
                 None
             }
@@ -2289,13 +2285,13 @@ impl ZshParser {
     /// of zsh/Src/parse.c:1087-1207 `par_for`. parse_for_cstyle is the
     /// inner branch for the `((...))` arithmetic-header variant
     /// (parse.c:1100-1140 inside par_for).
-    fn parse_for(&mut self) -> Option<ZshCommand> {
-        let is_foreach = self.lexer.tok() == FOREACH;
-        self.lexer.zshlex();
+    fn parse_for() -> Option<ZshCommand> {
+        let is_foreach = crate::ported::lex::tok() == FOREACH;
+        crate::ported::lex::zshlex();
 
         // Check for C-style: for (( init; cond; step ))
-        if self.lexer.tok() == DINPAR {
-            return self.parse_for_cstyle();
+        if crate::ported::lex::tok() == DINPAR {
+            return parse_for_cstyle();
         }
 
         // Get variable name(s). zsh parse.c par_for accepts multiple
@@ -2304,35 +2300,33 @@ impl ZshParser {
         // We store the names space-joined since variable identifiers
         // can't contain whitespace.
         let mut names: Vec<String> = Vec::new();
-        while self.lexer.tok() == STRING_LEX {
-            let v = self.lexer.tokstr().unwrap_or_default();
+        while crate::ported::lex::tok() == STRING_LEX {
+            let v = crate::ported::lex::tokstr().unwrap_or_default();
             if v == "in" {
                 break;
             }
             names.push(v);
-            self.lexer.zshlex();
+            crate::ported::lex::zshlex();
         }
         if names.is_empty() {
-            self.error("expected variable name in for");
+            error("expected variable name in for");
             return None;
         }
         let var = names.join(" ");
 
         // Skip newlines
-        self.skip_separators();
+        skip_separators();
 
         // Get list. The lexer-port quirk: `for x (a b c)` arrives as a
         // single String token with the parens lexed-as-content
         // (`<INPAR>a b c<OUTPAR>`) instead of as separate Inpar/String/
         // Outpar tokens. Detect that shape and split it manually.
-        let list = if self.lexer.tok() == STRING_LEX
-            && self
-                .lexer
-                .tokstr()
+        let list = if crate::ported::lex::tok() == STRING_LEX
+            && crate::ported::lex::tokstr()
                 .map(|s| s.starts_with('\u{88}') && s.ends_with('\u{8a}'))
                 .unwrap_or(false)
         {
-            let raw = self.lexer.tokstr().unwrap_or_default();
+            let raw = crate::ported::lex::tokstr().unwrap_or_default();
             // Strip leading INPAR + trailing OUTPAR, then untokenize the
             // inner content and split on whitespace for the word list.
             let inner = &raw[raw.char_indices().nth(1).map(|(i, _)| i).unwrap_or(0)
@@ -2343,57 +2337,57 @@ impl ZshParser {
                     .unwrap_or(raw.len())];
             let cleaned = super::lex::untokenize(inner);
             let words: Vec<String> = cleaned.split_whitespace().map(|s| s.to_string()).collect();
-            self.lexer.zshlex();
+            crate::ported::lex::zshlex();
             ForList::Words(words)
-        } else if self.lexer.tok() == STRING_LEX {
-            let s = self.lexer.tokstr();
+        } else if crate::ported::lex::tok() == STRING_LEX {
+            let s = crate::ported::lex::tokstr();
             if s.map(|s| s == "in").unwrap_or(false) {
-                self.lexer.zshlex();
+                crate::ported::lex::zshlex();
                 let mut words = Vec::new();
                 let mut word_count = 0;
-                while self.lexer.tok() == STRING_LEX {
+                while crate::ported::lex::tok() == STRING_LEX {
                     word_count += 1;
-                    if word_count > 500 || self.check_limit() {
-                        self.error("for: too many words");
+                    if word_count > 500 || check_limit() {
+                        error("for: too many words");
                         return None;
                     }
-                    let _ts_s = self.lexer.tokstr();
+                    let _ts_s = crate::ported::lex::tokstr();
                     if let Some(s) = _ts_s.as_deref() {
                         words.push(s.to_string());
                     }
-                    self.lexer.zshlex();
+                    crate::ported::lex::zshlex();
                 }
                 ForList::Words(words)
             } else {
                 ForList::Positional
             }
-        } else if self.lexer.tok() == INPAR_TOK {
+        } else if crate::ported::lex::tok() == INPAR_TOK {
             // for var (...)
-            self.lexer.zshlex();
+            crate::ported::lex::zshlex();
             let mut words = Vec::new();
             let mut word_count = 0;
-            while self.lexer.tok() == STRING_LEX || self.lexer.tok() == SEPER {
+            while crate::ported::lex::tok() == STRING_LEX || crate::ported::lex::tok() == SEPER {
                 word_count += 1;
-                if word_count > 500 || self.check_limit() {
-                    self.error("for: too many words in parens");
+                if word_count > 500 || check_limit() {
+                    error("for: too many words in parens");
                     return None;
                 }
-                if self.lexer.tok() == STRING_LEX {
-                    let _ts_s = self.lexer.tokstr();
+                if crate::ported::lex::tok() == STRING_LEX {
+                    let _ts_s = crate::ported::lex::tokstr();
                     if let Some(s) = _ts_s.as_deref() {
                         words.push(s.to_string());
                     }
                 }
-                self.lexer.zshlex();
+                crate::ported::lex::zshlex();
             }
-            if self.lexer.tok() == OUTPAR_TOK {
+            if crate::ported::lex::tok() == OUTPAR_TOK {
                 // After the `)` of a for-list, the next token is the
                 // body opener — `do`/`{`. zsh's lexer needs incmdpos
                 // set so `{` lexes as Inbrace (not as a literal). C
                 // analogue: parse.c::par_for sets `incmdpos = 1`
                 // after consuming the OUTPAR before the body parse.
-                self.lexer.set_incmdpos(true);
-                self.lexer.zshlex();
+                crate::ported::lex::set_incmdpos(true);
+                crate::ported::lex::zshlex();
             }
             ForList::Words(words)
         } else {
@@ -2401,10 +2395,10 @@ impl ZshParser {
         };
 
         // Skip to body
-        self.skip_separators();
+        skip_separators();
 
         // Parse body
-        let body = self.parse_loop_body(is_foreach)?;
+        let body = parse_loop_body(is_foreach)?;
 
         Some(ZshCommand::For(ZshFor {
             var,
@@ -2419,7 +2413,7 @@ impl ZshParser {
     /// Inner branch of zsh/Src/parse.c:1100-1140 inside par_for.
     /// Recognized when the token after FOR is DINPAR (the `((`
     /// detected by gettok via dbparens setup).
-    fn parse_for_cstyle(&mut self) -> Option<ZshCommand> {
+    fn parse_for_cstyle() -> Option<ZshCommand> {
         // We're at (( (Dinpar None) - the opening ((
         // Lexer returns:
         //   Dinpar None     - opening ((
@@ -2427,34 +2421,34 @@ impl ZshParser {
         //   Dinpar "cond"   - cond expression, semicolon consumed
         //   Doutpar "step"  - step expression, closing )) consumed
 
-        self.lexer.zshlex(); // Get init: Dinpar "i=0"
+        crate::ported::lex::zshlex(); // Get init: Dinpar "i=0"
 
-        if self.lexer.tok() != DINPAR {
-            self.error("expected init expression in for ((");
+        if crate::ported::lex::tok() != DINPAR {
+            error("expected init expression in for ((");
             return None;
         }
-        let init = self.lexer.tokstr().unwrap_or_default();
+        let init = crate::ported::lex::tokstr().unwrap_or_default();
 
-        self.lexer.zshlex(); // Get cond: Dinpar "i<10"
+        crate::ported::lex::zshlex(); // Get cond: Dinpar "i<10"
 
-        if self.lexer.tok() != DINPAR {
-            self.error("expected condition in for ((");
+        if crate::ported::lex::tok() != DINPAR {
+            error("expected condition in for ((");
             return None;
         }
-        let cond = self.lexer.tokstr().unwrap_or_default();
+        let cond = crate::ported::lex::tokstr().unwrap_or_default();
 
-        self.lexer.zshlex(); // Get step: Doutpar "i++"
+        crate::ported::lex::zshlex(); // Get step: Doutpar "i++"
 
-        if self.lexer.tok() != DOUTPAR {
-            self.error("expected )) in for");
+        if crate::ported::lex::tok() != DOUTPAR {
+            error("expected )) in for");
             return None;
         }
-        let step = self.lexer.tokstr().unwrap_or_default();
+        let step = crate::ported::lex::tokstr().unwrap_or_default();
 
-        self.lexer.zshlex(); // Move past ))
+        crate::ported::lex::zshlex(); // Move past ))
 
-        self.skip_separators();
-        let body = self.parse_loop_body(false)?;
+        skip_separators();
+        let body = parse_loop_body(false)?;
 
         Some(ZshCommand::For(ZshFor {
             var: String::new(),
@@ -2469,10 +2463,10 @@ impl ZshParser {
     /// `for NAME in WORDS; do ...` but with menu-prompt semantics in
     /// the executor. C equivalent: the SELECT case in par_for at
     /// parse.c:1087-1207 (selects share parser flow with foreach).
-    fn parse_select(&mut self) -> Option<ZshCommand> {
+    fn parse_select() -> Option<ZshCommand> {
         // `select` shares parse_for's grammar (var, words, body) but the
         // compile path is different (interactive prompt loop).
-        match self.parse_for()? {
+        match parse_for()? {
             ZshCommand::For(mut f) => {
                 f.is_select = true;
                 Some(ZshCommand::For(f))
@@ -2486,33 +2480,33 @@ impl ZshParser {
     /// of zsh/Src/parse.c:1209-1409 `par_case`. Each case arm is a
     /// (pattern_list, body, terminator) tuple where terminator is
     /// `;;` (default), `;&` (fallthrough), or `;|` (continue testing).
-    fn parse_case(&mut self) -> Option<ZshCommand> {
-        self.lexer.zshlex(); // skip 'case'
+    fn parse_case() -> Option<ZshCommand> {
+        crate::ported::lex::zshlex(); // skip 'case'
 
-        let word = match self.lexer.tok() {
+        let word = match crate::ported::lex::tok() {
             STRING_LEX => {
-                let w = self.lexer.tokstr().unwrap_or_default();
-                self.lexer.zshlex();
+                let w = crate::ported::lex::tokstr().unwrap_or_default();
+                crate::ported::lex::zshlex();
                 w
             }
             _ => {
-                self.error("expected word after case");
+                error("expected word after case");
                 return None;
             }
         };
 
-        self.skip_separators();
+        skip_separators();
 
         // Expect 'in' or {
-        let use_brace = self.lexer.tok() == INBRACE_TOK;
-        if self.lexer.tok() == STRING_LEX {
-            let s = self.lexer.tokstr();
+        let use_brace = crate::ported::lex::tok() == INBRACE_TOK;
+        if crate::ported::lex::tok() == STRING_LEX {
+            let s = crate::ported::lex::tokstr();
             if s.map(|s| s != "in").unwrap_or(true) {
-                self.error("expected 'in' in case");
+                error("expected 'in' in case");
                 return None;
             }
         } else if !use_brace {
-            self.error("expected 'in' or '{' in case");
+            error("expected 'in' or '{' in case");
             return None;
         }
         // Set incasepat=1 BEFORE consuming "in" so the next token (which
@@ -2521,42 +2515,40 @@ impl ZshParser {
         // Without this the `(` got swallowed into a gettokstr('(', false)
         // call and produced a String like "(foo)" — the parser then saw
         // the `)` inside a string instead of as a separate Outpar.
-        self.lexer.set_incasepat(1);
-        self.lexer.zshlex();
+        crate::ported::lex::set_incasepat(1);
+        crate::ported::lex::zshlex();
 
         let mut arms = Vec::new();
         const MAX_ARMS: usize = 10_000;
 
         loop {
             if arms.len() > MAX_ARMS {
-                self.error("parse_case: too many arms");
+                error("parse_case: too many arms");
                 break;
             }
 
             // Set incasepat BEFORE skipping separators so lexer knows we're in case pattern context
             // This affects how [ and | are lexed
-            self.lexer.set_incasepat(1);
+            crate::ported::lex::set_incasepat(1);
 
-            self.skip_separators();
+            skip_separators();
 
             // Check for end
             // Note: 'esac' might be String "esac" if incasepat > 0 prevents reserved word recognition
-            let is_esac = self.lexer.tok() == ESAC
-                || (self.lexer.tok() == STRING_LEX
-                    && self
-                        .lexer
-                        .tokstr()
+            let is_esac = crate::ported::lex::tok() == ESAC
+                || (crate::ported::lex::tok() == STRING_LEX
+                    && crate::ported::lex::tokstr()
                         .map(|s| s == "esac")
                         .unwrap_or(false));
-            if (use_brace && self.lexer.tok() == OUTBRACE_TOK) || (!use_brace && is_esac) {
-                self.lexer.set_incasepat(0);
-                self.lexer.zshlex();
+            if (use_brace && crate::ported::lex::tok() == OUTBRACE_TOK) || (!use_brace && is_esac) {
+                crate::ported::lex::set_incasepat(0);
+                crate::ported::lex::zshlex();
                 break;
             }
 
             // Also break on EOF
-            if self.lexer.tok() == ENDINPUT || self.lexer.tok() == LEXERR {
-                self.lexer.set_incasepat(0);
+            if crate::ported::lex::tok() == ENDINPUT || crate::ported::lex::tok() == LEXERR {
+                crate::ported::lex::set_incasepat(0);
                 break;
             }
 
@@ -2567,9 +2559,9 @@ impl ZshParser {
             // `)` after pattern parsing — otherwise the arm-close would
             // be interpreted as the pattern-close and the actual body
             // would get the leftover `)`.
-            let had_leading_paren = self.lexer.tok() == INPAR_TOK;
+            let had_leading_paren = crate::ported::lex::tok() == INPAR_TOK;
             if had_leading_paren {
-                self.lexer.zshlex();
+                crate::ported::lex::zshlex();
             }
 
             // incasepat is already set above
@@ -2578,33 +2570,33 @@ impl ZshParser {
             loop {
                 pattern_iterations += 1;
                 if pattern_iterations > 1000 {
-                    self.error("parse_case: too many pattern iterations");
-                    self.lexer.set_incasepat(0);
+                    error("parse_case: too many pattern iterations");
+                    crate::ported::lex::set_incasepat(0);
                     return None;
                 }
 
-                if self.lexer.tok() == STRING_LEX {
-                    let s = self.lexer.tokstr();
+                if crate::ported::lex::tok() == STRING_LEX {
+                    let s = crate::ported::lex::tokstr();
                     if s.map(|s| s == "esac").unwrap_or(false) {
                         break;
                     }
-                    patterns.push(self.lexer.tokstr().unwrap_or_default());
+                    patterns.push(crate::ported::lex::tokstr().unwrap_or_default());
                     // After first pattern token, set incasepat=2 so ( is treated as part of pattern
-                    self.lexer.set_incasepat(2);
-                    self.lexer.zshlex();
-                } else if self.lexer.tok() != BAR_TOK {
+                    crate::ported::lex::set_incasepat(2);
+                    crate::ported::lex::zshlex();
+                } else if crate::ported::lex::tok() != BAR_TOK {
                     break;
                 }
 
-                if self.lexer.tok() == BAR_TOK {
+                if crate::ported::lex::tok() == BAR_TOK {
                     // Reset to 1 (start of next alternative pattern)
-                    self.lexer.set_incasepat(1);
-                    self.lexer.zshlex();
+                    crate::ported::lex::set_incasepat(1);
+                    crate::ported::lex::zshlex();
                 } else {
                     break;
                 }
             }
-            self.lexer.set_incasepat(0);
+            crate::ported::lex::set_incasepat(0);
 
             // zsh's `(P)` form (parse.c:1320-1360 hack) treats the entire
             // parenthesized contents as ONE zsh pattern with internal `|`
@@ -2627,8 +2619,8 @@ impl ZshParser {
             // pattern, then arm-close). The first form is unambiguous
             // when the bare pattern was simple; the second is needed
             // when the body starts with `(`.
-            if self.lexer.tok() != OUTPAR_TOK {
-                self.error("expected ')' in case pattern");
+            if crate::ported::lex::tok() != OUTPAR_TOK {
+                error("expected ')' in case pattern");
                 return None;
             }
             // Port of Src/parse.c:1310-1313 — when the case pattern
@@ -2640,15 +2632,15 @@ impl ZshParser {
             // "command not found: c1=v"). Subsequent statements after
             // `;` parse correctly because the `;` separator restores
             // command position; only the FIRST body word was broken.
-            self.lexer.set_incmdpos(true);
-            self.lexer.zshlex();
-            if had_leading_paren && self.lexer.tok() == OUTPAR_TOK {
-                self.lexer.set_incmdpos(true);
-                self.lexer.zshlex();
+            crate::ported::lex::set_incmdpos(true);
+            crate::ported::lex::zshlex();
+            if had_leading_paren && crate::ported::lex::tok() == OUTPAR_TOK {
+                crate::ported::lex::set_incmdpos(true);
+                crate::ported::lex::zshlex();
             }
 
             // Parse body
-            let body = self.parse_program();
+            let body = parse_program();
 
             // Get terminator. Set incasepat=1 BEFORE the zshlex
             // advance so the next token (the next arm's pattern, like
@@ -2656,20 +2648,20 @@ impl ZshParser {
             // this, a `[`-prefixed pattern after the FIRST arm became
             // Inbrack instead of String and the pattern-loop bailed
             // out with "expected ')' in case pattern".
-            let terminator = match self.lexer.tok() {
+            let terminator = match crate::ported::lex::tok() {
                 DSEMI => {
-                    self.lexer.set_incasepat(1);
-                    self.lexer.zshlex();
+                    crate::ported::lex::set_incasepat(1);
+                    crate::ported::lex::zshlex();
                     CaseTerm::Break
                 }
                 SEMIAMP => {
-                    self.lexer.set_incasepat(1);
-                    self.lexer.zshlex();
+                    crate::ported::lex::set_incasepat(1);
+                    crate::ported::lex::zshlex();
                     CaseTerm::Continue
                 }
                 SEMIBAR => {
-                    self.lexer.set_incasepat(1);
-                    self.lexer.zshlex();
+                    crate::ported::lex::set_incasepat(1);
+                    crate::ported::lex::zshlex();
                     CaseTerm::TestNext
                 }
                 _ => CaseTerm::Break,
@@ -2692,31 +2684,31 @@ impl ZshParser {
     /// Direct port of zsh/Src/parse.c:1411-1519 `par_if`. The C source
     /// emits WC_IF wordcodes per arm; zshrs builds an AST chain of
     /// (cond, then_body) tuples plus an optional else_body.
-    fn parse_if(&mut self) -> Option<ZshCommand> {
-        self.lexer.zshlex(); // skip 'if'
+    fn parse_if() -> Option<ZshCommand> {
+        crate::ported::lex::zshlex(); // skip 'if'
 
         // Parse condition - stops at 'then' or '{' (zsh allows { instead of then)
-        let cond = Box::new(self.parse_program_until(Some(&[THEN, INBRACE_TOK])));
+        let cond = Box::new(parse_program_until(Some(&[THEN, INBRACE_TOK])));
 
-        self.skip_separators();
+        skip_separators();
 
         // Expect 'then' or {
-        let use_brace = self.lexer.tok() == INBRACE_TOK;
-        if self.lexer.tok() != THEN && !use_brace {
-            self.error("expected 'then' or '{' after if condition");
+        let use_brace = crate::ported::lex::tok() == INBRACE_TOK;
+        if crate::ported::lex::tok() != THEN && !use_brace {
+            error("expected 'then' or '{' after if condition");
             return None;
         }
-        self.lexer.zshlex();
+        crate::ported::lex::zshlex();
 
         // Parse then-body - stops at else/elif/fi, or } if using brace syntax
         let then = if use_brace {
-            let body = self.parse_program_until(Some(&[OUTBRACE_TOK]));
-            if self.lexer.tok() == OUTBRACE_TOK {
-                self.lexer.zshlex();
+            let body = parse_program_until(Some(&[OUTBRACE_TOK]));
+            if crate::ported::lex::tok() == OUTBRACE_TOK {
+                crate::ported::lex::zshlex();
             }
             Box::new(body)
         } else {
-            Box::new(self.parse_program_until(Some(&[ELSE, ELIF, FI])))
+            Box::new(parse_program_until(Some(&[ELSE, ELIF, FI])))
         };
 
         // Parse elif and else. zsh accepts the SAME elif/else
@@ -2739,32 +2731,32 @@ impl ZshParser {
 
         {
             loop {
-                self.skip_separators();
+                skip_separators();
 
-                match self.lexer.tok() {
+                match crate::ported::lex::tok() {
                     ELIF => {
-                        self.lexer.zshlex();
+                        crate::ported::lex::zshlex();
                         // elif condition stops at 'then' or '{'
                         let econd =
-                            self.parse_program_until(Some(&[THEN, INBRACE_TOK]));
-                        self.skip_separators();
+                            parse_program_until(Some(&[THEN, INBRACE_TOK]));
+                        skip_separators();
 
-                        let elif_use_brace = self.lexer.tok() == INBRACE_TOK;
-                        if self.lexer.tok() != THEN && !elif_use_brace {
-                            self.error("expected 'then' after elif");
+                        let elif_use_brace = crate::ported::lex::tok() == INBRACE_TOK;
+                        if crate::ported::lex::tok() != THEN && !elif_use_brace {
+                            error("expected 'then' after elif");
                             return None;
                         }
-                        self.lexer.zshlex();
+                        crate::ported::lex::zshlex();
 
                         // elif body stops at else/elif/fi or } if using braces
                         let ebody = if elif_use_brace {
-                            let body = self.parse_program_until(Some(&[OUTBRACE_TOK]));
-                            if self.lexer.tok() == OUTBRACE_TOK {
-                                self.lexer.zshlex();
+                            let body = parse_program_until(Some(&[OUTBRACE_TOK]));
+                            if crate::ported::lex::tok() == OUTBRACE_TOK {
+                                crate::ported::lex::zshlex();
                             }
                             body
                         } else {
-                            self.parse_program_until(Some(&[
+                            parse_program_until(Some(&[
                                 ELSE,
                                 ELIF,
                                 FI,
@@ -2774,33 +2766,33 @@ impl ZshParser {
                         elif.push((econd, ebody));
                     }
                     ELSE => {
-                        self.lexer.zshlex();
-                        self.skip_separators();
+                        crate::ported::lex::zshlex();
+                        skip_separators();
 
-                        let else_use_brace = self.lexer.tok() == INBRACE_TOK;
+                        let else_use_brace = crate::ported::lex::tok() == INBRACE_TOK;
                         if else_use_brace {
-                            self.lexer.zshlex();
+                            crate::ported::lex::zshlex();
                         }
 
                         // else body stops at 'fi' or '}'
                         else_ = Some(Box::new(if else_use_brace {
-                            let body = self.parse_program_until(Some(&[OUTBRACE_TOK]));
-                            if self.lexer.tok() == OUTBRACE_TOK {
-                                self.lexer.zshlex();
+                            let body = parse_program_until(Some(&[OUTBRACE_TOK]));
+                            if crate::ported::lex::tok() == OUTBRACE_TOK {
+                                crate::ported::lex::zshlex();
                             }
                             body
                         } else {
-                            self.parse_program_until(Some(&[FI]))
+                            parse_program_until(Some(&[FI]))
                         }));
 
                         // Consume the 'fi' if present (not for brace syntax)
-                        if !else_use_brace && self.lexer.tok() == FI {
-                            self.lexer.zshlex();
+                        if !else_use_brace && crate::ported::lex::tok() == FI {
+                            crate::ported::lex::zshlex();
                         }
                         break;
                     }
                     FI => {
-                        self.lexer.zshlex();
+                        crate::ported::lex::zshlex();
                         break;
                     }
                     _ => break,
@@ -2820,13 +2812,13 @@ impl ZshParser {
     /// Parse `while COND; do BODY; done` and `until COND; do BODY; done`.
     /// Direct port of zsh/Src/parse.c:1521-1563 `par_while`. The
     /// `until` variant is the same loop with the condition negated.
-    fn parse_while(&mut self, until: bool) -> Option<ZshCommand> {
-        self.lexer.zshlex(); // skip while/until
+    fn parse_while(until: bool) -> Option<ZshCommand> {
+        crate::ported::lex::zshlex(); // skip while/until
 
-        let cond = Box::new(self.parse_program());
+        let cond = Box::new(parse_program());
 
-        self.skip_separators();
-        let body = self.parse_loop_body(false)?;
+        skip_separators();
+        let body = parse_loop_body(false)?;
 
         Some(ZshCommand::While(ZshWhile {
             cond,
@@ -2840,23 +2832,23 @@ impl ZshParser {
     /// zsh/Src/parse.c:1565-1617 `par_repeat`. The C source supports
     /// the SHORTLOOPS short-form `repeat N CMD` (no do/done) — zshrs's
     /// parser doesn't yet special-case that variant.
-    fn parse_repeat(&mut self) -> Option<ZshCommand> {
-        self.lexer.zshlex(); // skip 'repeat'
+    fn parse_repeat() -> Option<ZshCommand> {
+        crate::ported::lex::zshlex(); // skip 'repeat'
 
-        let count = match self.lexer.tok() {
+        let count = match crate::ported::lex::tok() {
             STRING_LEX => {
-                let c = self.lexer.tokstr().unwrap_or_default();
-                self.lexer.zshlex();
+                let c = crate::ported::lex::tokstr().unwrap_or_default();
+                crate::ported::lex::zshlex();
                 c
             }
             _ => {
-                self.error("expected count after repeat");
+                error("expected count after repeat");
                 return None;
             }
         };
 
-        self.skip_separators();
-        let body = self.parse_loop_body(false)?;
+        skip_separators();
+        let body = parse_loop_body(false)?;
 
         Some(ZshCommand::Repeat(ZshRepeat {
             count,
@@ -2872,31 +2864,31 @@ impl ZshParser {
     /// flag signals foreach (where short-form `for NAME in WORDS;
     /// CMD` may skip do/done) vs c-style (which always requires
     /// do/done).
-    fn parse_loop_body(&mut self, foreach_style: bool) -> Option<ZshProgram> {
-        if self.lexer.tok() == DOLOOP {
-            self.lexer.zshlex();
-            let body = self.parse_program();
-            if self.lexer.tok() == DONE {
-                self.lexer.zshlex();
+    fn parse_loop_body(foreach_style: bool) -> Option<ZshProgram> {
+        if crate::ported::lex::tok() == DOLOOP {
+            crate::ported::lex::zshlex();
+            let body = parse_program();
+            if crate::ported::lex::tok() == DONE {
+                crate::ported::lex::zshlex();
             }
             Some(body)
-        } else if self.lexer.tok() == INBRACE_TOK {
-            self.lexer.zshlex();
-            let body = self.parse_program();
-            if self.lexer.tok() == OUTBRACE_TOK {
-                self.lexer.zshlex();
+        } else if crate::ported::lex::tok() == INBRACE_TOK {
+            crate::ported::lex::zshlex();
+            let body = parse_program();
+            if crate::ported::lex::tok() == OUTBRACE_TOK {
+                crate::ported::lex::zshlex();
             }
             Some(body)
         } else if foreach_style {
             // foreach allows 'end' terminator
-            let body = self.parse_program();
-            if self.lexer.tok() == ZEND {
-                self.lexer.zshlex();
+            let body = parse_program();
+            if crate::ported::lex::tok() == ZEND {
+                crate::ported::lex::zshlex();
             }
             Some(body)
         } else {
             // Short loop - single command
-            self.parse_list()
+            parse_list()
                 .map(|list| ZshProgram { lists: vec![list] })
         }
     }
@@ -2905,11 +2897,11 @@ impl ZshParser {
     /// Parse a subshell `( ... )`. Direct port of zsh/Src/parse.c:1619-1670
     /// `par_subsh`. Body parses as a normal list; the subshell wrapper
     /// fork-isolates execution in the executor.
-    fn parse_subsh(&mut self) -> Option<ZshCommand> {
-        self.lexer.zshlex(); // skip (
-        let prog = self.parse_program();
-        if self.lexer.tok() == OUTPAR_TOK {
-            self.lexer.zshlex();
+    fn parse_subsh() -> Option<ZshCommand> {
+        crate::ported::lex::zshlex(); // skip (
+        let prog = parse_program();
+        if crate::ported::lex::tok() == OUTPAR_TOK {
+            crate::ported::lex::zshlex();
         }
         Some(ZshCommand::Subsh(Box::new(prog)))
     }
@@ -2924,30 +2916,30 @@ impl ZshParser {
     /// and immediately calling an anon fn with args a/b/c. C
     /// equivalent: the INOUTPAR shape in par_simple at parse.c:1836+
     /// triggers an anon-funcdef path.
-    fn parse_anon_funcdef(&mut self) -> Option<ZshCommand> {
-        self.lexer.zshlex(); // skip ()
-        self.skip_separators();
+    fn parse_anon_funcdef() -> Option<ZshCommand> {
+        crate::ported::lex::zshlex(); // skip ()
+        skip_separators();
         // No `{` after `()` → bare empty subshell shape `()`. Fall back
         // to a Subsh with an empty program so the status is 0 (matches
         // zsh's `()` no-op behavior).
-        if self.lexer.tok() != INBRACE_TOK {
+        if crate::ported::lex::tok() != INBRACE_TOK {
             return Some(ZshCommand::Subsh(Box::new(ZshProgram {
                 lists: Vec::new(),
             })));
         }
-        self.lexer.zshlex(); // skip {
-        let body = self.parse_program();
-        if self.lexer.tok() == OUTBRACE_TOK {
-            self.lexer.zshlex();
+        crate::ported::lex::zshlex(); // skip {
+        let body = parse_program();
+        if crate::ported::lex::tok() == OUTBRACE_TOK {
+            crate::ported::lex::zshlex();
         }
         // Collect any trailing args until a separator. zsh's anon-fn form
         // `() { body } a b c` runs body with $1=a, $2=b, $3=c.
         let mut args = Vec::new();
-        while self.lexer.tok() == STRING_LEX {
-            if let Some(s) = self.lexer.tokstr() {
+        while crate::ported::lex::tok() == STRING_LEX {
+            if let Some(s) = crate::ported::lex::tokstr() {
                 args.push(s);
             }
-            self.lexer.zshlex();
+            crate::ported::lex::zshlex();
         }
 
         // Generate a unique name. Module-level static would be cleaner but
@@ -2971,9 +2963,9 @@ impl ZshParser {
     /// par_cmd at parse.c:958-1085 handles INBRACE → emit WC_CURSH
     /// and recurses into the list. zshrs's parse_cursh extracts that
     /// arm into a dedicated method.
-    fn parse_cursh(&mut self) -> Option<ZshCommand> {
-        self.lexer.zshlex(); // skip {
-        let prog = self.parse_program();
+    fn parse_cursh() -> Option<ZshCommand> {
+        crate::ported::lex::zshlex(); // skip {
+        let prog = parse_program();
 
         // Check for { ... } always { ... }. Direct port of zsh's
         // par_subsh at parse.c:1612-1660 — note the two `incmdpos = 1`
@@ -2984,23 +2976,23 @@ impl ZshParser {
         // rule (lex.rs:976-983) leaves the second `{` in word position,
         // turning `always { ... }` into a Simple `{` `echo` … and the
         // try/always pairing is silently lost.
-        if self.lexer.tok() == OUTBRACE_TOK {
-            self.lexer.set_incmdpos(true); // parse.c:1632 incmdpos = !zsh_construct
-            self.lexer.zshlex();
+        if crate::ported::lex::tok() == OUTBRACE_TOK {
+            crate::ported::lex::set_incmdpos(true); // parse.c:1632 incmdpos = !zsh_construct
+            crate::ported::lex::zshlex();
 
             // Check for 'always'
-            if self.lexer.tok() == STRING_LEX {
-                let s = self.lexer.tokstr();
+            if crate::ported::lex::tok() == STRING_LEX {
+                let s = crate::ported::lex::tokstr();
                 if s.map(|s| s == "always").unwrap_or(false) {
-                    self.lexer.set_incmdpos(true); // parse.c:1637 incmdpos = 1
-                    self.lexer.zshlex();
-                    self.skip_separators();
+                    crate::ported::lex::set_incmdpos(true); // parse.c:1637 incmdpos = 1
+                    crate::ported::lex::zshlex();
+                    skip_separators();
 
-                    if self.lexer.tok() == INBRACE_TOK {
-                        self.lexer.zshlex();
-                        let always = self.parse_program();
-                        if self.lexer.tok() == OUTBRACE_TOK {
-                            self.lexer.zshlex();
+                    if crate::ported::lex::tok() == INBRACE_TOK {
+                        crate::ported::lex::zshlex();
+                        let always = parse_program();
+                        if crate::ported::lex::tok() == OUTBRACE_TOK {
+                            crate::ported::lex::zshlex();
                         }
                         return Some(ZshCommand::Try(ZshTry {
                             try_block: Box::new(prog),
@@ -3020,8 +3012,8 @@ impl ZshParser {
     /// the multiple keyword shapes (function FOO, FOO (), function FOO ()),
     /// the optional `[fname1 fname2 ...]` for multi-name function defs,
     /// and the `function FOO () { ... }` traditional/POSIX hybrid form.
-    fn parse_funcdef(&mut self) -> Option<ZshCommand> {
-        self.lexer.zshlex(); // skip 'function'
+    fn parse_funcdef() -> Option<ZshCommand> {
+        crate::ported::lex::zshlex(); // skip 'function'
 
         let mut names = Vec::new();
         let mut tracing = false;
@@ -3047,9 +3039,9 @@ impl ZshParser {
         //      par_funcdef which knows it's in funcdef-header context
         //      and accepts the brace either way.
         loop {
-            match self.lexer.tok() {
+            match crate::ported::lex::tok() {
                 STRING_LEX => {
-                    let _ts_s = self.lexer.tokstr()?;
+                    let _ts_s = crate::ported::lex::tokstr()?;
                     let s = _ts_s.as_str();
                     if s == "{" {
                         // Funcdef body opener — break, body-parser branch handles it.
@@ -3062,11 +3054,11 @@ impl ZshParser {
                         if s.contains('T') {
                             tracing = true;
                         }
-                        self.lexer.zshlex();
+                        crate::ported::lex::zshlex();
                         continue;
                     }
                     names.push(s.to_string());
-                    self.lexer.zshlex();
+                    crate::ported::lex::zshlex();
                 }
                 INBRACE_TOK | INOUTPAR | SEPER | NEWLIN => break,
                 _ => break,
@@ -3074,18 +3066,18 @@ impl ZshParser {
         }
 
         // Optional ()
-        let saw_paren = self.lexer.tok() == INOUTPAR;
+        let saw_paren = crate::ported::lex::tok() == INOUTPAR;
         if saw_paren {
-            self.lexer.zshlex();
+            crate::ported::lex::zshlex();
         }
 
-        self.skip_separators();
+        skip_separators();
 
         // Body opener: real Inbrace OR a String("{") (the lexer emits
         // the latter after a String NAME — see comment above).
-        let body_opener_is_string_brace = self.lexer.tok() == STRING_LEX
-            && self.lexer.tokstr_eq("{");
-        if self.lexer.tok() == INBRACE_TOK || body_opener_is_string_brace {
+        let body_opener_is_string_brace = crate::ported::lex::tok() == STRING_LEX
+            && crate::ported::lex::tokstr_eq("{");
+        if crate::ported::lex::tok() == INBRACE_TOK || body_opener_is_string_brace {
             // Capture body_start BEFORE the lexer advances past the
             // first body token. After the previous zshlex consumed
             // `{`, lexer.pos points just past `{` (which is where the
@@ -3093,19 +3085,19 @@ impl ZshParser {
             // past the first token (`echo`), making body_start land
             // mid-body and lose the first word — `typeset -f f` would
             // print `a; echo b` for `{ echo a; echo b }`.
-            let body_start = self.lexer.pos();
-            self.lexer.zshlex();
-            let body = self.parse_program();
-            let body_end = if self.lexer.tok() == OUTBRACE_TOK {
+            let body_start = crate::ported::lex::pos();
+            crate::ported::lex::zshlex();
+            let body = parse_program();
+            let body_end = if crate::ported::lex::tok() == OUTBRACE_TOK {
                 // Lexer has just consumed `}`; pos is past it. Body content
                 // ends one byte before pos.
-                self.lexer.pos().saturating_sub(1)
+                crate::ported::lex::pos().saturating_sub(1)
             } else {
-                self.lexer.pos()
+                crate::ported::lex::pos()
             };
-            let body_source = self.lexer.input_slice(body_start, body_end).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-            if self.lexer.tok() == OUTBRACE_TOK {
-                self.lexer.zshlex();
+            let body_source = crate::ported::lex::input_slice(body_start, body_end).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+            if crate::ported::lex::tok() == OUTBRACE_TOK {
+                crate::ported::lex::zshlex();
             }
 
             // Anonymous form `function () { body } a b c` (with `()`) or
@@ -3116,11 +3108,11 @@ impl ZshParser {
             // function with the args as positional params.
             if names.is_empty() {
                 let mut args = Vec::new();
-                while self.lexer.tok() == STRING_LEX {
-                    if let Some(s) = self.lexer.tokstr() {
+                while crate::ported::lex::tok() == STRING_LEX {
+                    if let Some(s) = crate::ported::lex::tokstr() {
                         args.push(s);
                     }
-                    self.lexer.zshlex();
+                    crate::ported::lex::zshlex();
                 }
                 use std::sync::atomic::{AtomicUsize, Ordering};
                 static ANON_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -3144,7 +3136,7 @@ impl ZshParser {
             }))
         } else {
             // Short form
-            self.parse_list().map(|list| {
+            parse_list().map(|list| {
                 ZshCommand::FuncDef(ZshFuncDef {
                     names,
                     body: Box::new(ZshProgram { lists: vec![list] }),
@@ -3162,28 +3154,28 @@ impl ZshParser {
     /// consumed and pushed by parse_simple before this method fires.
     /// C source: handled inline in par_simple's INOUTPAR-after-name
     /// arm (parse.c:1836-2228).
-    fn parse_inline_funcdef(&mut self, name: String) -> Option<ZshCommand> {
+    fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
         // Skip ()
-        if self.lexer.tok() == INOUTPAR {
-            self.lexer.zshlex();
+        if crate::ported::lex::tok() == INOUTPAR {
+            crate::ported::lex::zshlex();
         }
 
-        self.skip_separators();
+        skip_separators();
 
         // Parse body
-        if self.lexer.tok() == INBRACE_TOK {
+        if crate::ported::lex::tok() == INBRACE_TOK {
             // Same body_start-before-zshlex fix as parse_funcdef.
-            let body_start = self.lexer.pos();
-            self.lexer.zshlex();
-            let body = self.parse_program();
-            let body_end = if self.lexer.tok() == OUTBRACE_TOK {
-                self.lexer.pos().saturating_sub(1)
+            let body_start = crate::ported::lex::pos();
+            crate::ported::lex::zshlex();
+            let body = parse_program();
+            let body_end = if crate::ported::lex::tok() == OUTBRACE_TOK {
+                crate::ported::lex::pos().saturating_sub(1)
             } else {
-                self.lexer.pos()
+                crate::ported::lex::pos()
             };
-            let body_source = self.lexer.input_slice(body_start, body_end).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-            if self.lexer.tok() == OUTBRACE_TOK {
-                self.lexer.zshlex();
+            let body_source = crate::ported::lex::input_slice(body_start, body_end).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+            if crate::ported::lex::tok() == OUTBRACE_TOK {
+                crate::ported::lex::zshlex();
             }
             Some(ZshCommand::FuncDef(ZshFuncDef {
                 names: vec![name],
@@ -3193,14 +3185,14 @@ impl ZshParser {
                 body_source,
             }))
         } else {
-            match self.parse_cmd() {
+            match parse_cmd() {
                 Some(cmd) => {
                     let list = ZshList {
                         sublist: ZshSublist {
                             pipe: ZshPipe {
                                 cmd,
                                 next: None,
-                                lineno: self.lexer.lineno(),
+                                lineno: crate::ported::lex::lineno(),
                                 merge_stderr: false,
                             },
                             next: None,
@@ -3228,21 +3220,21 @@ impl ZshParser {
     /// at parse.c:2434-2731). Expression operators: `||` `&&` `!`
     /// + unary tests (-f, -d, -n, -z, etc.) + binary tests (=, !=,
     ///   <, >, ==, =~, -eq, -ne, -lt, -le, -gt, -ge, -nt, -ot, -ef).
-    fn parse_cond(&mut self) -> Option<ZshCommand> {
-        self.lexer.zshlex(); // skip [[
+    fn parse_cond() -> Option<ZshCommand> {
+        crate::ported::lex::zshlex(); // skip [[
                              // Empty cond `[[ ]]` is a parse error in zsh — emit the
                              // diagnostic and return None so the caller produces a
                              // non-zero exit. Without this, `[[ ]]` silently passed and
                              // returned exit 0.
-        if self.lexer.tok() == DOUTBRACK {
-            self.error("parse error near `]]'");
-            self.lexer.zshlex();
+        if crate::ported::lex::tok() == DOUTBRACK {
+            error("parse error near `]]'");
+            crate::ported::lex::zshlex();
             return None;
         }
-        let cond = self.parse_cond_expr();
+        let cond = parse_cond_expr();
 
-        if self.lexer.tok() == DOUTBRACK {
-            self.lexer.zshlex();
+        if crate::ported::lex::tok() == DOUTBRACK {
+            crate::ported::lex::zshlex();
         }
 
         cond.map(ZshCommand::Cond)
@@ -3252,21 +3244,21 @@ impl ZshParser {
     /// Top of `[[ ]]` cond-expression parsing — entry to recursive
     /// descent (or → and → not → primary). Direct port of zsh's
     /// par_cond_1 at parse.c:2434-2475.
-    fn parse_cond_expr(&mut self) -> Option<ZshCond> {
-        self.parse_cond_or()
+    fn parse_cond_expr() -> Option<ZshCond> {
+        parse_cond_or()
     }
 
     /// Cond-expression `||` level. C: inside par_cond_1 at
     /// parse.c:2434-2475 (the `cond_or` ladder).
-    fn parse_cond_or(&mut self) -> Option<ZshCond> {
+    fn parse_cond_or() -> Option<ZshCond> {
         PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
-        if self.check_recursion() {
-            self.error("parse_cond_or: max recursion depth exceeded");
+        if check_recursion() {
+            error("parse_cond_or: max recursion depth exceeded");
             PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
             return None;
         }
 
-        let left = match self.parse_cond_and() {
+        let left = match parse_cond_and() {
             Some(l) => l,
             None => {
                 PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
@@ -3274,12 +3266,12 @@ impl ZshParser {
             }
         };
 
-        self.skip_cond_separators();
+        skip_cond_separators();
 
-        let result = if self.lexer.tok() == DBAR {
-            self.lexer.zshlex();
-            self.skip_cond_separators();
-            self.parse_cond_or()
+        let result = if crate::ported::lex::tok() == DBAR {
+            crate::ported::lex::zshlex();
+            skip_cond_separators();
+            parse_cond_or()
                 .map(|right| ZshCond::Or(Box::new(left), Box::new(right)))
         } else {
             Some(left)
@@ -3290,15 +3282,15 @@ impl ZshParser {
     }
 
     /// Cond-expression `&&` level. C: par_cond_2 at parse.c:2476-2625.
-    fn parse_cond_and(&mut self) -> Option<ZshCond> {
+    fn parse_cond_and() -> Option<ZshCond> {
         PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
-        if self.check_recursion() {
-            self.error("parse_cond_and: max recursion depth exceeded");
+        if check_recursion() {
+            error("parse_cond_and: max recursion depth exceeded");
             PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
             return None;
         }
 
-        let left = match self.parse_cond_not() {
+        let left = match parse_cond_not() {
             Some(l) => l,
             None => {
                 PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
@@ -3306,12 +3298,12 @@ impl ZshParser {
             }
         };
 
-        self.skip_cond_separators();
+        skip_cond_separators();
 
-        let result = if self.lexer.tok() == DAMPER {
-            self.lexer.zshlex();
-            self.skip_cond_separators();
-            self.parse_cond_and()
+        let result = if crate::ported::lex::tok() == DAMPER {
+            crate::ported::lex::zshlex();
+            skip_cond_separators();
+            parse_cond_and()
                 .map(|right| ZshCond::And(Box::new(left), Box::new(right)))
         } else {
             Some(left)
@@ -3323,27 +3315,25 @@ impl ZshParser {
 
     /// Cond-expression `!` negation level. C: handled inside
     /// par_cond_2 at parse.c:2476-2625 via the BANG token check.
-    fn parse_cond_not(&mut self) -> Option<ZshCond> {
+    fn parse_cond_not() -> Option<ZshCond> {
         PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
-        if self.check_recursion() {
-            self.error("parse_cond_not: max recursion depth exceeded");
+        if check_recursion() {
+            error("parse_cond_not: max recursion depth exceeded");
             PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
             return None;
         }
 
-        self.skip_cond_separators();
+        skip_cond_separators();
 
         // ! can be either BANG_TOK or String "!"
-        let is_not = self.lexer.tok() == BANG_TOK
-            || (self.lexer.tok() == STRING_LEX
-                && self
-                    .lexer
-                    .tokstr()
+        let is_not = crate::ported::lex::tok() == BANG_TOK
+            || (crate::ported::lex::tok() == STRING_LEX
+                && crate::ported::lex::tokstr()
                     .map(|s| s == "!")
                     .unwrap_or(false));
         if is_not {
-            self.lexer.zshlex();
-            let inner = match self.parse_cond_not() {
+            crate::ported::lex::zshlex();
+            let inner = match parse_cond_not() {
                 Some(i) => i,
                 None => {
                     PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
@@ -3354,25 +3344,25 @@ impl ZshParser {
             return Some(ZshCond::Not(Box::new(inner)));
         }
 
-        if self.lexer.tok() == INPAR_TOK {
-            self.lexer.zshlex();
-            self.skip_cond_separators();
-            let inner = match self.parse_cond_expr() {
+        if crate::ported::lex::tok() == INPAR_TOK {
+            crate::ported::lex::zshlex();
+            skip_cond_separators();
+            let inner = match parse_cond_expr() {
                 Some(i) => i,
                 None => {
                     PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
                     return None;
                 }
             };
-            self.skip_cond_separators();
-            if self.lexer.tok() == OUTPAR_TOK {
-                self.lexer.zshlex();
+            skip_cond_separators();
+            if crate::ported::lex::tok() == OUTPAR_TOK {
+                crate::ported::lex::zshlex();
             }
             PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
             return Some(inner);
         }
 
-        let result = self.parse_cond_primary();
+        let result = parse_cond_primary();
         PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
         result
     }
@@ -3381,17 +3371,17 @@ impl ZshParser {
     /// tests (=, !=, <, >, ==, =~, -eq, -ne, ...), and parenthesized
     /// sub-expressions. Direct port of par_cond_double / par_cond_triple
     /// / par_cond_multi at parse.c:2626-2731 (chosen by arg count).
-    fn parse_cond_primary(&mut self) -> Option<ZshCond> {
-        let s1 = match self.lexer.tok() {
+    fn parse_cond_primary() -> Option<ZshCond> {
+        let s1 = match crate::ported::lex::tok() {
             STRING_LEX => {
-                let s = self.lexer.tokstr().unwrap_or_default();
-                self.lexer.zshlex();
+                let s = crate::ported::lex::tokstr().unwrap_or_default();
+                crate::ported::lex::zshlex();
                 s
             }
             _ => return None,
         };
 
-        self.skip_cond_separators();
+        skip_cond_separators();
 
         // Check for unary operator. zsh's lexer tokenizes leading `-` as
         // `zsh_h::DASH` (`\u{9b}`, `Src/zsh.h:182`) inside gettokstr (lex.c:1390-1400
@@ -3400,10 +3390,10 @@ impl ZshParser {
         // is 2 UTF-8 bytes (`\xc2\x9b`).
         let s1_chars: Vec<char> = s1.chars().collect();
         if s1_chars.len() == 2 && IS_DASH(s1_chars[0]) {
-            let s2 = match self.lexer.tok() {
+            let s2 = match crate::ported::lex::tok() {
                 STRING_LEX => {
-                    let s = self.lexer.tokstr().unwrap_or_default();
-                    self.lexer.zshlex();
+                    let s = crate::ported::lex::tokstr().unwrap_or_default();
+                    crate::ported::lex::zshlex();
                     s
                 }
                 _ => return Some(ZshCond::Unary("-n".to_string(), s1)),
@@ -3418,35 +3408,35 @@ impl ZshParser {
         // The bump makes the lexer treat `(` as a literal character inside
         // the RHS word (e.g. `[[ x =~ (foo) ]]`) instead of returning INPAR
         // and splitting the regex into multiple tokens.
-        let op = match self.lexer.tok() {
+        let op = match crate::ported::lex::tok() {
             STRING_LEX => {
-                let s = self.lexer.tokstr().unwrap_or_default();
-                self.lexer.set_incond(self.lexer.incond() + 1);
-                self.lexer.zshlex();
-                self.lexer.set_incond(self.lexer.incond() - 1);
+                let s = crate::ported::lex::tokstr().unwrap_or_default();
+                crate::ported::lex::set_incond(crate::ported::lex::incond() + 1);
+                crate::ported::lex::zshlex();
+                crate::ported::lex::set_incond(crate::ported::lex::incond() - 1);
                 s
             }
             INANG_TOK => {
-                self.lexer.set_incond(self.lexer.incond() + 1);
-                self.lexer.zshlex();
-                self.lexer.set_incond(self.lexer.incond() - 1);
+                crate::ported::lex::set_incond(crate::ported::lex::incond() + 1);
+                crate::ported::lex::zshlex();
+                crate::ported::lex::set_incond(crate::ported::lex::incond() - 1);
                 "<".to_string()
             }
             OUTANG_TOK => {
-                self.lexer.set_incond(self.lexer.incond() + 1);
-                self.lexer.zshlex();
-                self.lexer.set_incond(self.lexer.incond() - 1);
+                crate::ported::lex::set_incond(crate::ported::lex::incond() + 1);
+                crate::ported::lex::zshlex();
+                crate::ported::lex::set_incond(crate::ported::lex::incond() - 1);
                 ">".to_string()
             }
             _ => return Some(ZshCond::Unary("-n".to_string(), s1)),
         };
 
-        self.skip_cond_separators();
+        skip_cond_separators();
 
-        let s2 = match self.lexer.tok() {
+        let s2 = match crate::ported::lex::tok() {
             STRING_LEX => {
-                let s = self.lexer.tokstr().unwrap_or_default();
-                self.lexer.zshlex();
+                let s = crate::ported::lex::tokstr().unwrap_or_default();
+                crate::ported::lex::zshlex();
                 s
             }
             _ => return Some(ZshCond::Binary(s1, op, String::new())),
@@ -3459,12 +3449,12 @@ impl ZshParser {
         }
     }
 
-    fn skip_cond_separators(&mut self) {
-        while self.lexer.tok() == SEPER && {
-            let s = self.lexer.tokstr();
+    fn skip_cond_separators() {
+        while crate::ported::lex::tok() == SEPER && {
+            let s = crate::ported::lex::tokstr();
             s.map(|s| !s.contains(';')).unwrap_or(true)
         } {
-            self.lexer.zshlex();
+            crate::ported::lex::zshlex();
         }
     }
 
@@ -3472,9 +3462,9 @@ impl ZshParser {
     /// Parse `(( EXPR ))` arithmetic command. C source: parse.c:1810-1834
     /// `par_dinbrack` (despite the name; the function actually handles
     /// DINPAR `(( ))` blocks too).
-    fn parse_arith(&mut self) -> Option<ZshCommand> {
-        let expr = self.lexer.tokstr().unwrap_or_default();
-        self.lexer.zshlex();
+    fn parse_arith() -> Option<ZshCommand> {
+        let expr = crate::ported::lex::tokstr().unwrap_or_default();
+        crate::ported::lex::zshlex();
         Some(ZshCommand::Arith(expr))
     }
 
@@ -3482,36 +3472,36 @@ impl ZshParser {
     /// Parse `time CMD` (POSIX time keyword). Direct port of
     /// zsh/Src/parse.c:1787-1808 `par_time`. The `time` keyword
     /// times the execution of the following pipeline / cmd.
-    fn parse_time(&mut self) -> Option<ZshCommand> {
-        self.lexer.zshlex(); // skip 'time'
+    fn parse_time() -> Option<ZshCommand> {
+        crate::ported::lex::zshlex(); // skip 'time'
 
         // Check if there's a pipeline to time
-        if self.lexer.tok() == SEPER
-            || self.lexer.tok() == NEWLIN
-            || self.lexer.tok() == ENDINPUT
+        if crate::ported::lex::tok() == SEPER
+            || crate::ported::lex::tok() == NEWLIN
+            || crate::ported::lex::tok() == ENDINPUT
         {
             Some(ZshCommand::Time(None))
         } else {
-            let sublist = self.parse_sublist();
+            let sublist = parse_sublist();
             Some(ZshCommand::Time(sublist.map(Box::new)))
         }
     }
 
     /// Check if next token is ()
-    fn peek_inoutpar(&mut self) -> bool {
-        self.lexer.tok() == INOUTPAR
+    fn peek_inoutpar() -> bool {
+        crate::ported::lex::tok() == INOUTPAR
     }
 
     /// Skip separator tokens
-    fn skip_separators(&mut self) {
+    fn skip_separators() {
         let mut iterations = 0;
-        while self.lexer.tok() == SEPER || self.lexer.tok() == NEWLIN {
+        while crate::ported::lex::tok() == SEPER || crate::ported::lex::tok() == NEWLIN {
             iterations += 1;
             if iterations > 100_000 {
-                self.error("skip_separators: too many iterations");
+                error("skip_separators: too many iterations");
                 return;
             }
-            self.lexer.zshlex();
+            crate::ported::lex::zshlex();
         }
     }
 
@@ -3519,10 +3509,10 @@ impl ZshParser {
     /// from `Src/parse.c:625-633 yyerror`. Sets `errflag |=
     /// ERRFLAG_ERROR` (when `noerrs == 0`) and emits a diagnostic on
     /// stderr via `zwarning`.
-    fn error(&mut self, msg: &str) {
+    fn error(msg: &str) {
         crate::ported::utils::zerr(msg);
     }
-}
+// === end of former impl ZshParser ===
 
 #[cfg(test)]
 mod tests {
@@ -3537,8 +3527,8 @@ mod tests {
         use std::sync::atomic::Ordering;
         let saved = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        let mut parser = ZshParser::new(input);
-        let prog = parser.parse();
+        crate::ported::parse::parse_init(input);
+        let prog = crate::ported::parse::parse();
         let had_err = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         // Restore prior error bits; don't carry our new error into the
         // outer test runner.

@@ -1165,7 +1165,8 @@ impl crate::ported::exec::ShellExecutor {
             // Mirror Src/init.c errflag save/clear/check around parse.
             let saved_errflag = errflag.load(Ordering::Relaxed);
             errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-            let program = crate::parse::ZshParser::new(source).parse();
+            crate::ported::parse::parse_init(source);
+            let program = crate::ported::parse::parse();
             let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
             errflag.store(saved_errflag, Ordering::Relaxed);
             if parse_failed || program.lists.is_empty() {

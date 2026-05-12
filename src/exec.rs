@@ -1313,8 +1313,8 @@ impl ShellExecutor {
         use std::sync::atomic::Ordering;
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        let mut parser = crate::parse::ZshParser::new(&content);
-        let program = parser.parse();
+        crate::ported::parse::parse_init(&content);
+        let program = crate::ported::parse::parse();
         let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved_errflag, Ordering::Relaxed);
         if parse_failed {
@@ -1369,8 +1369,8 @@ impl ShellExecutor {
         use std::sync::atomic::Ordering;
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        let mut parser = crate::parse::ZshParser::new(script);
-        let program = parser.parse();
+        crate::ported::parse::parse_init(script);
+        let program = crate::ported::parse::parse();
         let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved_errflag, Ordering::Relaxed);
         if parse_failed {
@@ -1713,8 +1713,8 @@ impl ShellExecutor {
         use std::sync::atomic::Ordering;
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        let mut parser = crate::parse::ZshParser::new(cmd_str);
-        let prog = parser.parse();
+        crate::ported::parse::parse_init(cmd_str);
+        let prog = crate::ported::parse::parse();
         let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved_errflag, Ordering::Relaxed);
         if parse_failed {
@@ -1920,8 +1920,8 @@ impl ShellExecutor {
         use std::sync::atomic::Ordering;
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        let mut parser = crate::parse::ZshParser::new(cmd_str);
-        let parsed = parser.parse();
+        crate::ported::parse::parse_init(cmd_str);
+        let parsed = crate::ported::parse::parse();
         let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved_errflag, Ordering::Relaxed);
         let prog = if parse_failed { None } else { Some(parsed) };

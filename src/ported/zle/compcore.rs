@@ -1809,7 +1809,7 @@ pub fn set_comp_sep() -> i32 {                                               // 
 /// frame. Returns a token (current stack depth) for symmetry with
 /// the C `int` save token used by `set_comp_sep` for invariant check.
 fn lexsave() -> usize {                                                  // lex.c via context.c:80
-    crate::ported::context::zcontext_save(None, None);
+    crate::ported::context::zcontext_save();
     (LEXSAVE_DEPTH.fetch_add(1, Ordering::SeqCst) + 1) as usize
 }
 
@@ -1820,7 +1820,7 @@ fn lexrestore(_token: usize) {                                           // lex.
     let parts = crate::ported::zsh_h::ZCONTEXT_HIST
               | crate::ported::zsh_h::ZCONTEXT_LEX
               | crate::ported::zsh_h::ZCONTEXT_PARSE;
-    crate::ported::context::zcontext_restore_partial(parts, None, None);
+    crate::ported::context::zcontext_restore_partial(parts);
     LEXSAVE_DEPTH.fetch_sub(1, Ordering::SeqCst);
 }
 
