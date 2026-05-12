@@ -250,6 +250,15 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
     BUILTIN("compadd", 0, Some(crate::ported::zle::complete::bin_compadd as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("J:V:1X:fnqQF:Wsi"), None),
     BUILTIN("compset", 0, Some(crate::ported::zle::complete::bin_compset as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("npqPS:"), None),
     BUILTIN("zle", 0, Some(crate::ported::zle::zle_thingy::bin_zle as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("aAcCDfFIKlLmMNRTU"), None),
+    // zsh/files module — file-manipulation builtins. All have
+    // HandlerFunc-compatible signatures already.
+    BUILTIN("mkdir", 0, Some(crate::ported::modules::files::bin_mkdir as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("pm:"), None),
+    BUILTIN("rmdir", 0, Some(crate::ported::modules::files::bin_rmdir as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
+    BUILTIN("ln", 0, Some(crate::ported::modules::files::bin_ln as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("dfins"), None),
+    BUILTIN("rm", 0, Some(crate::ported::modules::files::bin_rm as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("dfiRrs"), None),
+    BUILTIN("chmod", 0, Some(crate::ported::modules::files::bin_chmod as crate::ported::zsh_h::HandlerFunc), 2, -1, 0, Some("Rs"), None),
+    BUILTIN("chown", 0, Some(crate::ported::modules::files::bin_chown as crate::ported::zsh_h::HandlerFunc), 2, -1, 0, Some("Rs"), None),
+    BUILTIN("sync", 0, Some(crate::ported::modules::files::bin_sync as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, None, None),
 ]);
 // hash table containing builtin commands                                   // c:143
 /// Process-wide builtin lookup table. Filled lazily the first time
