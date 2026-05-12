@@ -206,21 +206,13 @@ impl LexBuf {
     }
 }
 
-/// Here-document state
-#[derive(Debug, Clone)]
-pub struct HereDoc {
-    pub terminator: String,
-    pub strip_tabs: bool,
-    pub content: String,
-    /// True if the terminator was originally quoted (`<<'EOF'`,
-    /// `<<"EOF"`, or `<<\EOF`). Disables variable expansion / command
-    /// substitution / arithmetic in the body.
-    pub quoted: bool,
-    /// True once `process_heredocs` has read the body. Distinct from
-    /// "content is empty" because an empty heredoc legitimately has
-    /// empty content.
-    pub processed: bool,
-}
+// Per-heredoc state — Rust-only AST-glue, NOT in lex.c. Canonical home
+// is `src/extensions/heredoc_ast.rs`; re-exported here so existing
+// `crate::lex::HereDoc` / `crate::parse::HereDocInfo` call sites keep
+// resolving. Both die in Phase 9e (PORT_PLAN.md) when the wordcode
+// port reinstates C's `struct heredocs` shape (zsh.h:1152) +
+// `gethere()` deferred body collection.
+pub use crate::extensions::heredoc_ast::HereDoc;
 
 /// The Zsh Lexer
 pub struct ZshLexer<'a> {
