@@ -4178,7 +4178,11 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
 
     // c:4121-4205 — literal-name dispatch per arg.
     crate::ported::mem::queue_signals();
-    let argv_vec: Vec<String> = if all {
+    // C source uses MATCHEDNODES only when `-m` (glob-args) is set;
+    // plain `-a` keeps the literal argv. Without this gate, `whence
+    // -a true` consulted an empty MATCHEDNODES and skipped every
+    // print.
+    let argv_vec: Vec<String> = if OPT_ISSET(ops, b'm') {
         crate::ported::builtin::MATCHEDNODES.lock()
             .map(|m| m.clone()).unwrap_or_default()
     } else { argv.to_vec() };
@@ -4192,7 +4196,13 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
             // c:4128-4134 — alias check.
             if let Ok(t) = crate::ported::hashtable::aliastab_lock().lock() {
                 if let Some(a) = t.get(arg) {                                // c:4128
-                    if (printflags & PRINT_LIST) != 0 {
+                    if (printflags & PRINT_WHENCE_WORD as i32) != 0 {        // c:4129
+                        println!("{}: alias", a.node.nam);
+                    } else if (printflags & PRINT_WHENCE_CSH as i32) != 0 {
+                        println!("{}: aliased to {}", a.node.nam, a.text);
+                    } else if (printflags & PRINT_WHENCE_VERBOSE as i32) != 0 {
+                        println!("{} is an alias for {}", a.node.nam, a.text);
+                    } else if (printflags & PRINT_LIST as i32) != 0 {
                         println!("alias {}={}", a.node.nam, a.text);
                     } else {
                         println!("{}={}", a.node.nam, a.text);
@@ -4222,21 +4232,31 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
                             "declare","export","float","integer","local",
                             "private","readonly","typeset"];
             if reswords.contains(&arg.as_str()) {                            // c:4146
-                println!("{}: reserved", arg);                               // c:4148
+                if (printflags & PRINT_WHENCE_WORD as i32) != 0 {
+                    println!("{}: reserved", arg);
+                } else if (printflags & PRINT_WHENCE_CSH as i32) != 0 {
+                    println!("{}: shell reserved word", arg);
+                } else if (printflags & PRINT_WHENCE_VERBOSE as i32) != 0 {
+                    println!("{} is a reserved word", arg);
+                } else {
+                    println!("{}", arg);                                     // c:4148
+                }
                 informed = 1;                                                // c:4149
                 if !all { continue; }                                        // c:4150
             }
             // c:4153-4158 — shell function check.
             if let Ok(t) = crate::ported::builtin::SHFUNCTAB.lock() {
                 if t.contains_key(arg) {                                     // c:4153
-                    if (printflags & PRINT_WHENCE_FUNCDEF) != 0 {
-                        // c:4154 — full `whichfn(pm, printflags)` walk:
-                        // emit `name () { body }` per the
-                        // PRINT_WHENCE_FUNCDEF format. Pull the body from
-                        // the actual shfunctab entry via getshfunc.
+                    if (printflags & PRINT_WHENCE_FUNCDEF as i32) != 0 {
                         let body = crate::ported::utils::getshfunc(arg)
                             .unwrap_or_else(|| String::from("# body undefined"));
                         println!("{} () {{\n{}\n}}", arg, body);
+                    } else if (printflags & PRINT_WHENCE_WORD as i32) != 0 {
+                        println!("{}: function", arg);
+                    } else if (printflags & PRINT_WHENCE_CSH as i32) != 0 {
+                        println!("{}: shell function", arg);
+                    } else if (printflags & PRINT_WHENCE_VERBOSE as i32) != 0 {
+                        println!("{} is a shell function", arg);
                     } else {
                         println!("{}", arg);                                 // c:4155
                     }
