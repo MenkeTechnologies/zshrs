@@ -21,19 +21,20 @@ use std::time::{Duration, Instant};
 
 use crate::ported::utils::zwarnnam;
 
-/// Job status flags
+/// Job status flags. `i32` to match C's `int stat` field on
+/// `struct job` (`Src/zsh.h:1062`).
 pub mod stat {
-    pub const STOPPED: u32 = 1 << 0; // Job is stopped
-    pub const DONE: u32 = 1 << 1; // Job is finished
-    pub const SUBJOB: u32 = 1 << 2; // Job is a subjob
-    pub const CURSH: u32 = 1 << 3; // Last pipeline elem in current shell
-    pub const SUPERJOB: u32 = 1 << 4; // Job is a superjob
-    pub const WASSUPER: u32 = 1 << 5; // Was a superjob
-    pub const INUSE: u32 = 1 << 6; // Entry in use
-    pub const BUILTIN: u32 = 1 << 7; // Job has builtin
-    pub const DISOWN: u32 = 1 << 8; // Disowned
-    pub const NOTIFY: u32 = 1 << 9; // Notify when done
-    pub const ATTACH: u32 = 1 << 10; // Attached to tty
+    pub const STOPPED:  i32 = 1 << 0;  // Job is stopped
+    pub const DONE:     i32 = 1 << 1;  // Job is finished
+    pub const SUBJOB:   i32 = 1 << 2;  // Job is a subjob
+    pub const CURSH:    i32 = 1 << 3;  // Last pipeline elem in current shell
+    pub const SUPERJOB: i32 = 1 << 4;  // Job is a superjob
+    pub const WASSUPER: i32 = 1 << 5;  // Was a superjob
+    pub const INUSE:    i32 = 1 << 6;  // Entry in use
+    pub const BUILTIN:  i32 = 1 << 7;  // Job has builtin
+    pub const DISOWN:   i32 = 1 << 8;  // Disowned
+    pub const NOTIFY:   i32 = 1 << 9;  // Notify when done
+    pub const ATTACH:   i32 = 1 << 10; // Attached to tty
 }
 
 /// Special process status values
@@ -55,132 +56,93 @@ pub const MAX_MAXJOBS: usize = 1000;
 // from `Src/zsh.h:1099`).
 pub use crate::ported::zsh_h::timeinfo;
 
-/// A single process in a pipeline
-#[derive(Clone, Debug)]
-/// One process within a pipeline.
-/// Port of `struct process` from Src/zsh.h — `update_process()`
-/// (Src/jobs.c:363) and `findproc()` (line 191) walk these.
-pub struct Process {
-    pub pid: i32,
-    pub status: i32,
-    pub start_time: Option<Instant>,
-    pub end_time: Option<Instant>,
-    pub ti: timeinfo,
-    pub text: String,
-}
+// Canonical `process` / `job` live in `zsh_h.rs:1166,1180` — direct
+// ports of `struct process` / `struct job` from `Src/zsh.h:1117,1058`.
+// jobs.rs uses them via `Process` / `Job` aliases to keep call sites
+// readable (Rust convention favors CamelCase at use-sites; the
+// underlying type is the lowercase C-faithful canonical).
+pub use crate::ported::zsh_h::process as Process;
+pub use crate::ported::zsh_h::job as Job;
 
 impl Process {
+    /// Build a fresh entry. Matches C's `update_process()` init shape
+    /// (`Src/jobs.c:363` — `pn->pid = pid; pn->status = SP_RUNNING;`
+    /// before the first wait).
     pub fn new(pid: i32) -> Self {
         Process {
             pid,
             status: SP_RUNNING,
-            start_time: Some(Instant::now()),
-            end_time: None,
-            ti: timeinfo::default(),
             text: String::new(),
+            ti: timeinfo::default(),
+            bgtime: Some(std::time::Instant::now()),
+            endtime: None,
         }
     }
 
-    pub fn is_running(&self) -> bool {
-        self.status == SP_RUNNING
-    }
+    /// `SP_RUNNING` sentinel check — equivalent to C's `pn->status ==
+    /// SP_RUNNING` test at e.g. `Src/jobs.c:1242`.
+    pub fn is_running(&self) -> bool { self.status == SP_RUNNING }
 
-    pub fn is_stopped(&self) -> bool {
-        // WIFSTOPPED equivalent
-        self.status & 0xff == 0x7f
-    }
+    /// Mirrors C's `WIFSTOPPED(status)` macro.
+    pub fn is_stopped(&self) -> bool { self.status & 0xff == 0x7f }
 
+    /// Mirrors C's `WIFSIGNALED(status)` macro.
     pub fn is_signaled(&self) -> bool {
-        // WIFSIGNALED equivalent
         (self.status & 0x7f) > 0 && (self.status & 0x7f) < 0x7f
     }
 
-    pub fn exit_status(&self) -> i32 {
-        // WEXITSTATUS equivalent
-        (self.status >> 8) & 0xff
-    }
+    /// Mirrors C's `WEXITSTATUS(status)` macro.
+    pub fn exit_status(&self) -> i32 { (self.status >> 8) & 0xff }
 
-    pub fn term_sig(&self) -> i32 {
-        // WTERMSIG equivalent
-        self.status & 0x7f
-    }
+    /// Mirrors C's `WTERMSIG(status)` macro.
+    pub fn term_sig(&self) -> i32 { self.status & 0x7f }
 
-    pub fn stop_sig(&self) -> i32 {
-        // WSTOPSIG equivalent
-        (self.status >> 8) & 0xff
-    }
-}
-
-/// A job (pipeline)
-#[derive(Clone, Debug)]
-/// A job (one or more processes in a pipeline).
-/// Port of `struct job` from Src/zsh.h — Src/jobs.c keeps the
-/// `jobtab[]` array of these and dispatches every `bg`/`fg`/
-/// `wait`/`disown` builtin through them.
-pub struct Job {
-    pub stat: u32,
-    pub gleader: i32,           // Process group leader
-    pub procs: Vec<Process>,    // Processes in job
-    pub auxprocs: Vec<Process>, // Auxiliary processes
-    pub other: usize,           // For superjobs: subjob index
-    pub filelist: Vec<String>,  // Temp files to delete
-    pub text: String,           // Job text for display
+    /// Mirrors C's `WSTOPSIG(status)` macro.
+    pub fn stop_sig(&self) -> i32 { (self.status >> 8) & 0xff }
 }
 
 impl Job {
-    pub fn new() -> Self {
-        Job {
-            stat: 0,
-            gleader: 0,
-            procs: Vec::new(),
-            auxprocs: Vec::new(),
-            other: 0,
-            filelist: Vec::new(),
-            text: String::new(),
-        }
-    }
+    /// Empty job slot — mirrors C's `memset(jn, 0, sizeof(*jn))`
+    /// done in `initjob_reuse()` (`Src/jobs.c:574`).
+    pub fn new() -> Self { Self::default() }
 
-    pub fn is_done(&self) -> bool {
-        (self.stat & stat::DONE) != 0
-    }
-
-    pub fn is_stopped(&self) -> bool {
-        (self.stat & stat::STOPPED) != 0
-    }
-
-    pub fn is_superjob(&self) -> bool {
-        (self.stat & stat::SUPERJOB) != 0
-    }
-
-    pub fn is_subjob(&self) -> bool {
-        (self.stat & stat::SUBJOB) != 0
-    }
-
-    pub fn is_inuse(&self) -> bool {
-        (self.stat & stat::INUSE) != 0
-    }
-
+    /// True if any procs/auxprocs registered. Equivalent to C's
+    /// `jn->procs || jn->auxprocs` null check at `Src/jobs.c` various.
     pub fn has_procs(&self) -> bool {
         !self.procs.is_empty() || !self.auxprocs.is_empty()
     }
 
+    /// True if any proc is in the C `SP_RUNNING` state.
+    pub fn is_running(&self) -> bool {
+        self.procs.iter().any(|p| p.is_running())
+    }
+
+    /// True if every proc has finished (none `SP_RUNNING`, none stopped).
+    pub fn is_done(&self) -> bool {
+        !self.procs.is_empty()
+            && self.procs.iter().all(|p| !p.is_running() && !p.is_stopped())
+    }
+
+    /// True if any proc is stopped via `WIFSTOPPED`.
+    pub fn is_stopped(&self) -> bool {
+        self.procs.iter().any(|p| p.is_stopped())
+    }
+
+    /// True if the slot is marked `INUSE` — equivalent to C's
+    /// `(jn->stat & STAT_INUSE) != 0` check.
+    pub fn is_inuse(&self) -> bool { (self.stat & stat::INUSE) != 0 }
+
+    /// Walk procs and reset their `status` back to `SP_RUNNING` —
+    /// mirrors C's `makerunning()` body (`Src/jobs.c:1573`).
     pub fn make_running(&mut self) {
-        self.stat &= !stat::STOPPED;
-        for proc in &mut self.procs {
-            if proc.is_stopped() {
-                proc.status = SP_RUNNING;
+        for p in &mut self.procs {
+            if p.is_stopped() {
+                p.status = SP_RUNNING;
             }
         }
+        self.stat &= !stat::STOPPED;
     }
 }
-
-impl Default for Job {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-
 
 #[cfg(test)]
 mod tests {
@@ -716,7 +678,7 @@ pub fn addproc(job: &mut Job, pid: i32, text: &str, aux: bool) {            // c
 /// Port of `super_job(int sub)` from `Src/jobs.c:260` — find the super-job of a sub-job.
 pub fn super_job(jobtab: &[Job], job_idx: usize) -> Option<usize> {          // c:260
     for (i, job) in jobtab.iter().enumerate() {
-        if (job.stat & stat::SUPERJOB) != 0 && job.other == job_idx {
+        if (job.stat & stat::SUPERJOB) != 0 && job.other as usize == job_idx {
             return Some(i);
         }
     }
@@ -1189,7 +1151,7 @@ pub fn get_usage() -> timeinfo {
 pub fn update_process(pn: &mut Process, status: i32) {
     let prev = get_usage();
     let now = get_usage();
-    pn.end_time = Some(Instant::now());
+    pn.endtime = Some(Instant::now());
     pn.status = status;
     pn.ti.ut = (now.ut - prev.ut).max(0);
     pn.ti.st = (now.st - prev.st).max(0);
@@ -1266,10 +1228,10 @@ pub fn update_bg_job(jn: &mut [Job], pid: i32, status: i32) -> bool {
     if let Some((ji, pi, is_aux)) = findproc(jn, pid) {
         if is_aux {
             jn[ji].auxprocs[pi].status = status;
-            jn[ji].auxprocs[pi].end_time = Some(Instant::now());
+            jn[ji].auxprocs[pi].endtime = Some(Instant::now());
         } else {
             jn[ji].procs[pi].status = status;
-            jn[ji].procs[pi].end_time = Some(Instant::now());
+            jn[ji].procs[pi].endtime = Some(Instant::now());
         }
         update_job(&mut jn[ji]);
         return true;
@@ -1281,7 +1243,7 @@ pub fn update_bg_job(jn: &mut [Job], pid: i32, status: i32) -> bool {
 /// Port of `handle_sub(int job, int fg)` from `Src/jobs.c:274`.
 /// WARNING: param names don't match C — Rust=(jobtab, super_idx, fg) vs C=(job, fg)
 pub fn handle_sub(jobtab: &mut [Job], super_idx: usize, fg: bool) {
-    let sub_idx = jobtab[super_idx].other;
+    let sub_idx = jobtab[super_idx].other as usize;
     if sub_idx >= jobtab.len() {
         return;
     }
@@ -1379,7 +1341,7 @@ pub fn should_report_time(job: &Job, reporttime: f64) -> bool {
     }
     if let Some(first) = job.procs.first() {
         if let (Some(start), Some(end)) =
-            (first.start_time, job.procs.last().and_then(|p| p.end_time))
+            (first.bgtime, job.procs.last().and_then(|p| p.endtime))
         {
             let elapsed = end.duration_since(start).as_secs_f64();
             return elapsed >= reporttime;
@@ -1392,8 +1354,8 @@ pub fn should_report_time(job: &Job, reporttime: f64) -> bool {
 /// Port of `dumptime(Job jn)` from `Src/jobs.c:1020`.
 /// WARNING: param names don't match C — Rust=(job, format) vs C=(jn)
 pub fn dumptime(job: &Job, format: &str) -> Option<String> {
-    let first_start = job.procs.first()?.start_time?;
-    let last_end = job.procs.last()?.end_time?;
+    let first_start = job.procs.first()?.bgtime?;
+    let last_end = job.procs.last()?.endtime?;
     let elapsed = last_end.duration_since(first_start).as_secs_f64();
 
     let mut total_user = 0.0;
@@ -1805,8 +1767,8 @@ pub fn makerunning(jobtab: &mut [Job], idx: usize) {
     if idx >= jobtab.len() {
         return;
     }
-    let other = jobtab[idx].other;
-    let is_super = jobtab[idx].is_superjob();
+    let other = jobtab[idx].other as usize;
+    let is_super = (jobtab[idx].stat & stat::SUPERJOB) != 0;
     {
         let job = &mut jobtab[idx];
         job.stat &= !stat::STOPPED;
