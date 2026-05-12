@@ -7652,7 +7652,7 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         "TERMINFO" => Some(terminfogetfn()),
         "TERMINFO_DIRS" => Some(terminfodirsgetfn()),
         "KEYBOARD_HACK" => Some(keyboardhackgetfn()),
-        "histchars" => Some(histcharsgetfn()),
+        "histchars" | "HISTCHARS" => Some(histcharsgetfn()),
         "_" => Some(underscoregetfn()),
         // Counters with int return.
         "HISTSIZE" => Some(histsizegetfn().to_string()),
