@@ -55,7 +55,6 @@ use crate::ported::zsh_h::{
 /// **WARNING — NOT IN C.** zsh's parser emits wordcode bytecode,
 /// not a typed AST. Will be deleted when the wordcode path lands.
 #[derive(Debug, Clone)]
-// WARNING: FAKE IMPL RUST INVENTION — not in cond.c
 pub enum CondExpr {
     Not(Box<CondExpr>),
     And(Box<CondExpr>, Box<CondExpr>),
@@ -73,7 +72,6 @@ pub enum CondExpr {
 ///
 /// **WARNING — NOT IN C.** Real port goes via `par_cond_*` in parse.c
 /// emitting wordcode. Will be deleted when the wordcode path lands.
-// WARNING: FAKE IMPL RUST INVENTION — not in cond.c
 pub struct CondParser<'a> {
     tokens: Vec<&'a str>,
     pos: usize,

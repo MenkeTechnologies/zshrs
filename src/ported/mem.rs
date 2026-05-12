@@ -17,13 +17,11 @@ use std::cell::RefCell;
 /// `popheap` semantics for shell-lifetime allocations; in Rust we
 /// stack `Vec<String>`/`Vec<Vec<u8>>` per generation and let normal
 /// drop semantics handle the actual frees.
-// WARNING: FAKE IMPL RUST INVENTION — not in mem.c
 pub struct HeapArena {
     /// Stack of arena generations
     generations: Vec<Generation>,
 }
 
-// WARNING: FAKE IMPL RUST INVENTION — not in mem.c
 struct Generation {
     /// Strings allocated in this generation
     strings: Vec<String>,

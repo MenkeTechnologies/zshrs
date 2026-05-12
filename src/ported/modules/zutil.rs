@@ -55,7 +55,6 @@ pub const ZOF_GNUL: i32 = 128;                                               // 
 /// `MatchData` struct, runs the inner match, then either
 /// restores or frees. The Rust port stores `Option<Vec<String>>`
 /// — `None` means the var was unset.
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub struct MatchData {
     pub r#match: Option<Vec<String>>,
     pub mbegin: Option<Vec<String>>,
@@ -69,7 +68,6 @@ pub struct MatchData {
 /// (port of C `struct stypat`, zutil.c:95) per style name,
 /// weight-sorted so the most specific pattern wins.
 #[derive(Default)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub struct StyleTable {
     styles: HashMap<String, Vec<stypat>>,
 }
@@ -338,7 +336,6 @@ pub fn zformat_substring(format: &str, specs: &HashMap<char, String>, presence: 
 /// Namespace for the recursive zformat walker — distinct from
 /// the public zformat_substring entry point above so the inner
 /// recursion doesn't collide with the outer wrapper's name.
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 struct ZFormat;
 
 impl ZFormat {
@@ -1521,7 +1518,6 @@ pub fn bin_zformat(nam: &str, args: &[String],                                //
 /// One `zstyle` entry.
 /// Mirrors `struct stypat` from Src/Modules/zutil.c —
 /// `addstyle()` (zutil.c:403) inserts these.
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub struct ZStyle {
     pub pattern: String,
     pub style: String,
@@ -1590,7 +1586,6 @@ use crate::zsh_h::isset;
 
 /// `Stypat` mirroring Src/Modules/zutil.c:97-104.
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub struct stypat {
     pub next: Option<Box<stypat>>,                            // c:98 Stypat next
     pub pat: String,                                          // c:99 char *pat
@@ -1599,22 +1594,18 @@ pub struct stypat {
     pub eval: Option<crate::ported::zsh_h::Eprog>,            // c:102 Eprog eval
     pub vals: Vec<String>,                                    // c:103 char **vals
 }
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub type Stypat = Box<stypat>;
 
 /// `Style` mirroring Src/Modules/zutil.c:91-94.
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub struct style {
     pub node: crate::ported::zsh_h::hashnode, // c:92 struct hashnode node
     pub pats: Option<Stypat>,                 // c:93 Stypat pats (sorted by weight)
 }
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub type Style = Box<style>;
 
 /// `Zoptdesc` family mirroring Src/Modules/zutil.c:1519-1538.
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub struct zoptdesc {
     pub name: String,
     pub flags: i32,
@@ -1622,29 +1613,23 @@ pub struct zoptdesc {
     pub vals: Vec<String>,
     pub next: Option<Box<zoptdesc>>,
 }
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub type Zoptdesc = Box<zoptdesc>;
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub struct zoptarr {
     pub name: String,
     pub vals: Vec<String>,
 }
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub type Zoptarr = Box<zoptarr>;
 
 #[allow(non_camel_case_types)]
 
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub struct zoptval {
     pub name: String,
     pub arg: String,
 }
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub type Zoptval = Box<zoptval>;
 
 /// `RParseResult` (used by zregexparse) — Src/Modules/zutil.c:1099-1115.
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zutil.c
 pub struct RParseResult {
     pub nullacts: Vec<String>,
     pub args: Vec<String>,

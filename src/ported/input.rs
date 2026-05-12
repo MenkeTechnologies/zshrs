@@ -43,7 +43,6 @@ use crate::ported::zsh_h::{
 /// continuations over the active input.
 #[derive(Clone, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in input.c
 struct instacks {                                                            // c:109
     buf: String,                                                             // c:110 char *buf
     bufpos: usize,                                                           // c:110 char *bufptr offset
@@ -463,7 +462,6 @@ pub fn stuff(filename: &str) -> i32 {                                        // 
 pub const META: char = '\u{83}';
 
 /// Check if a character needs meta encoding
-// WARNING: FAKE IMPL RUST INVENTION — not in input.c
 fn imeta(c: char) -> bool {
     let b = c as u32;
     b < 32 || (0x83..=0x9b).contains(&b)

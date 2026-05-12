@@ -812,7 +812,6 @@ pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {              // 
 // =====================================================================
 
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn matchstreq(a: Option<&String>, b: Option<&String>) -> bool {              // c:3203
     match (a, b) {
         (None, None) => true,
@@ -1093,7 +1092,6 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
 
 /// First-match shortcut path from compcore.c:398-411. `Cmgroup m = amatches;
 /// while (!m->mcount) m = m->next; do_single(m->matches[0])`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn do_single_first_match() {                                                  // c:398
     let groups = amatches.get_or_init(|| Mutex::new(Vec::new()))
         .lock().ok().map(|g| g.clone()).unwrap_or_default();
@@ -1112,7 +1110,6 @@ fn do_single_first_match() {                                                  //
 }
 
 /// compcore.c:444 `compend:` epilogue — free matchers, snap zlemetacs.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn goto_compend(ret: i32) -> i32 {                                            // c:444
     if let Ok(mut g) = matchers.get_or_init(|| Mutex::new(Vec::new())).lock() {
         g.clear();                                                            // c:445-446 freecmatcher loop
@@ -1167,7 +1164,6 @@ fn foredel(ct: i32) {                                                    // zle_
 /// Direct port of `#define inststr(X) inststrlen((X),1,-1)` from
 /// `Src/Zle/zle_tricky.c:57`. Inserts `s` at `ZLEMETACS` in the
 /// global metafied line; cursor advances by `s.len()`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn inststr(s: &str) {                                                    // c:57
     if s.is_empty() { return; }
     let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
@@ -1272,18 +1268,15 @@ pub static MINFO: OnceLock<Mutex<crate::ported::zle::comp_h::Menuinfo>> = OnceLo
 // invalidatelist_stub deleted — Rust-only glue wrappers, all
 // inlined at their (single) call sites in do_completion / dupmatch.
 // The real C names live as `pub fn` in compresult.rs / zle_h.rs.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn opt_isset(name: &str) -> i32 {                                        // options.c
     if crate::ported::options::opt_state_get(name).unwrap_or(false) { 1 } else { 0 }
 }
 /// Real call into `getiparam(name)` — the canonical paramtab read.
 /// Mirrors C's `getiparam` at params.c:3044 which reads the global
 /// `paramtab` directly via `gethashnode2`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn env_iparam(name: &str) -> i32 {                                            // params.c:3044
     crate::ported::params::getiparam(name) as i32
 }
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn lastprebr_set(s: &str) {                                                   // zle_tricky.c lastprebr
     if let Ok(mut g) = crate::ported::zle::zle_tricky::LASTPREBR
         .get_or_init(|| Mutex::new(String::new())).lock()
@@ -1291,7 +1284,6 @@ fn lastprebr_set(s: &str) {                                                   //
         *g = s.to_string();
     }
 }
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn lastpostbr_set(s: &str) {                                                  // zle_tricky.c lastpostbr
     if let Ok(mut g) = crate::ported::zle::zle_tricky::LASTPOSTBR
         .get_or_init(|| Mutex::new(String::new())).lock()
@@ -1387,7 +1379,6 @@ pub fn callcompfunc(s: &str, fn_name: &str) {                                // 
 
 /// Choose `$compstate[context]` per the lex classification in `inwhat`
 /// (and the `ispar` modifier). Direct lift of compcore.c:591-617.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn compcontext_for(_s: &str) -> String {                                     // c:591
     let ip = ispar.load(Ordering::Relaxed);                                  // c:599
     if ip == 2 { return "brace_parameter".into(); }                          // c:600
@@ -1416,7 +1407,6 @@ pub const IN_ENV_LW:     i32 = 5;                                            // 
 /// in the global shfunctab (`getshfunc`) and dispatches via the VM's
 /// `functions_compiled` map. Returns the function's exit status
 /// (LASTVAL after the call), matching C's `doshfunc` return value.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn shfunc_call(name: &str) -> i32 {                                      // exec.c
     if crate::ported::utils::getshfunc(name).is_none() {                     // c:exec.c:5800
         return 1;                                                            // missing fn → status 1
@@ -1430,7 +1420,6 @@ fn shfunc_call(name: &str) -> i32 {                                      // exec
 }
 /// Real call into `setsparam(&format!("compstate[{key}]"), val)` — the
 /// canonical paramtab write. Mirrors C's `setsparam` at params.c:3350.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn set_compstate_str(key: &str, val: &str) {                                  // params.c:3350
     let pname = format!("compstate[{}]", key);
     let _ = crate::ported::params::setsparam(&pname, val);
@@ -1706,7 +1695,6 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
 
 /// Local helper: position before-the-current char (handles UTF-8).
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn prev_char_index(bytes: &[u8], pos: usize) -> usize {                      // local
     if pos == 0 { return 0; }
     let mut i = pos - 1;
@@ -1715,7 +1703,6 @@ fn prev_char_index(bytes: &[u8], pos: usize) -> usize {                      // 
 }
 
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn char_at(bytes: &[u8], pos: usize) -> char {                               // local
     if pos >= bytes.len() { return '\0'; }
     let s = match std::str::from_utf8(&bytes[pos..]) { Ok(s) => s, Err(_) => return '\0' };
@@ -1726,7 +1713,6 @@ fn char_at(bytes: &[u8], pos: usize) -> char {                               // 
 /// returning the index just after the closing token, or None if
 /// unbalanced. C `skipparens` returns the position; this version
 /// returns the same semantic.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn skip_token_parens(bytes: &[u8], start: usize, open: char, close: char)    // local
     -> Option<usize>
 {
@@ -1746,7 +1732,6 @@ fn skip_token_parens(bytes: &[u8], start: usize, open: char, close: char)    // 
 
 /// Walk the INAMESPC name-character class — equivalent to C's
 /// `itype_end(e, INAMESPC, 0)` loop. Stops at first non-name char.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn walk_namespace(bytes: &[u8]) -> usize {                                    // local
     let s = match std::str::from_utf8(bytes) { Ok(s) => s, Err(_) => return 0 };
     let mut len = 0usize;
@@ -1760,7 +1745,6 @@ fn walk_namespace(bytes: &[u8]) -> usize {                                    //
 /// Strip Inbrace/Outbrace/STRING_TOK/etc. token bytes back to literal
 /// characters — substitute for C `untokenize()` over the slice. The
 /// canonical Rust untokenize lives in `crate::lex::untokenize`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn strip_tokens(s: &str) -> String {                                          // local
     crate::lex::untokenize(s).to_string()
 }
@@ -1775,7 +1759,6 @@ pub static OFFS: AtomicI32 = AtomicI32::new(0);                              // 
 pub static freecl: OnceLock<Mutex<Option<i32>>> = OnceLock::new();           // c:255
 
 /// File-scope `int hcompcall` accessor — `compfunc` active iff non-empty.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn compfunc_active() -> bool {
     compfunc.get_or_init(|| Mutex::new(None))
         .lock().ok()
@@ -1825,7 +1808,6 @@ pub fn set_comp_sep() -> i32 {                                               // 
 /// to `zcontext_save` which pushes the lex/parse/hist context stack
 /// frame. Returns a token (current stack depth) for symmetry with
 /// the C `int` save token used by `set_comp_sep` for invariant check.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn lexsave() -> usize {                                                  // lex.c via context.c:80
     crate::ported::context::zcontext_save();
     (LEXSAVE_DEPTH.fetch_add(1, Ordering::SeqCst) + 1) as usize
@@ -1834,7 +1816,6 @@ fn lexsave() -> usize {                                                  // lex.
 /// Direct port of `void lexrestore(void)` from `Src/lex.c`. Pops the
 /// last `zcontext_save` frame. C body restores hist/lex/parse via
 /// `zcontext_restore_partial(ZCONTEXT_HIST|ZCONTEXT_LEX|ZCONTEXT_PARSE)`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn lexrestore(_token: usize) {                                           // lex.c via context.c:117
     let parts = crate::ported::zsh_h::ZCONTEXT_HIST
               | crate::ported::zsh_h::ZCONTEXT_LEX
@@ -1961,22 +1942,18 @@ pub fn addmatches(dat: &mut crate::ported::zle::comp_h::Cadata,              // 
 
 // ---- Extern stubs for addmatches's bucket-3 dependencies ----
 
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn compquote_first() -> Option<char> {                                        // zle_tricky.c compquote
     crate::ported::zle::zle_tricky::COMPQUOTE
         .get_or_init(|| Mutex::new(String::new()))
         .lock().ok()
         .and_then(|g| g.chars().next())
 }
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn instring_set(v: i32) {                                                     // zle_tricky.c:419
     crate::ported::zle::zle_tricky::INSTRING.store(v, Ordering::Relaxed);
 }
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn inbackt_set(v: i32) {                                                      // zle_tricky.c:419
     crate::ported::zle::zle_tricky::INBACKT.store(v, Ordering::Relaxed);
 }
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn autoq_set(s: &str) {                                                       // zle_tricky.c autoq
     if let Ok(mut g) = crate::ported::zle::zle_tricky::AUTOQ
         .get_or_init(|| Mutex::new(String::new())).lock()
@@ -2087,7 +2064,6 @@ pub fn add_match_data(                                                       // 
 /// marking each node CLF_MATCHED. With only a string slice here we
 /// build a one-node Cline shim and route the call through it so the
 /// CLF_MATCHED state-machine update fires the same way as in C.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn cline_matched_compcore(line: Option<&str>) {                                   // compmatch.c:253
     let Some(s) = line else { return; };
     if s.is_empty() { return; }
@@ -2100,11 +2076,9 @@ fn cline_matched_compcore(line: Option<&str>) {                                 
 }
 /// Real read of `char *qisuf` via the paramtab. Mirrors C's direct
 /// global read at `Src/Zle/zle_tricky.c qisuf`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn qisuf_get() -> String {                                                   // zle_tricky.c qisuf
     crate::ported::params::getsparam("qisuf").unwrap_or_default()
 }
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn qipre_get() -> String {                                                   // zle_tricky.c qipre
     crate::ported::params::getsparam("qipre").unwrap_or_default()
 }
@@ -2289,7 +2263,6 @@ fn movefd(fd: i32) -> i32 { fd }                                        // utils
 fn redup(_new: i32) {}                                                  // utils.c
 
 /// Extern stub for `errflag` lookup — global from `Src/init.c`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn errflag_get() -> bool {
     crate::ported::utils::errflag.load(Ordering::Relaxed) != 0               // init.c
 }
@@ -2297,7 +2270,6 @@ fn errflag_get() -> bool {
 /// Direct port of `void runhookdef(Hookdef h, void *arg)` from
 /// `Src/init.c:990` — dispatches each registered shell function for
 /// the named hook by walking the global `hooktab` (module.c:843).
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn runhookdef_compcore(hook: &str) {                                              // init.c:990
     let fns: Vec<String> = crate::ported::module::HOOKTAB.lock()
         .ok()
@@ -2312,7 +2284,6 @@ fn runhookdef_compcore(hook: &str) {                                            
 /// `Src/Zle/compctl.c`. The compctl module registers this hook so
 /// `Src/Zle/compcore.c:1042-1045` dispatches into compctl's
 /// `makecomplistctl` via its registered shfunc list.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 fn runhookdef_compctlmake(                                               // init.c:990 (COMPCTLMAKEHOOK)
     dat: &mut crate::ported::zle::comp_h::Ccmakedat,
 ) {
@@ -2467,7 +2438,6 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
 
 /// Port of the `type==0` string-sort branch of `makearray()` from
 /// compcore.c:3239-3257. Sorts strings via `strmetasort` + dedup.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compcore.c
 pub fn makearray_strings(mut rp: Vec<String>, flags: i32) -> (Vec<String>, i32) { // c:3239
     let mut n: i32 = rp.len() as i32;
     if flags != 0 && n > 0 {                                                 // c:3240

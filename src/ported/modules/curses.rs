@@ -96,7 +96,6 @@ pub const ZCURSES_ATTROFF: i32 = 2;
 
 /// Per-window state. Port of `struct zc_win`.
 #[derive(Debug)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/curses.c
 pub struct zc_win {
     pub name: String,
     pub flags: u32,
@@ -190,7 +189,6 @@ impl zc_win {
 /// typedef struct colorpairnode *Colorpairnode;
 /// ```
 #[derive(Debug, Clone, Copy)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/curses.c
 pub struct ColorPairNode {                                                   // c:76
     /// Color pair index (libncurses `init_pair` slot).
     pub colorpair: i16,                                                      // c:78
@@ -217,7 +215,6 @@ pub const ZCME_TRIPLE_CLICKED:  i32 = 4;                                     // 
 /// };
 /// ```
 #[derive(Debug, Clone, Copy)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/curses.c
 pub struct ZcursesMouseEvent {                                               // c:163
     /// Mouse button number (1..=5).
     pub button: i32,                                                         // c:164
@@ -234,7 +231,6 @@ pub struct ZcursesMouseEvent {                                               // 
 /// Name → number pair entry. Used by attributes and colors lookup
 /// tables.
 #[derive(Debug, Clone, Copy)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/curses.c
 pub struct zcurses_namenumberpair {
     pub name: &'static str,
     pub number: i32,
@@ -1315,7 +1311,6 @@ pub(crate) fn zccmd_resize(nam: &str, args: &[String]) -> i32 {
 
 /// Subcommand table entry. Port of `struct zcurses_subcommand`
 /// from `Src/Modules/curses.c:83`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/curses.c
 struct zcurses_subcommand {
     name: &'static str,
     cmd: fn(&str, &[String]) -> i32,                                         // c:84-85

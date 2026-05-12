@@ -238,13 +238,11 @@ pub fn signal_unblock(set: &libc::sigset_t) -> libc::sigset_t {              // 
 
 /// Port of `killpg()` libc passthrough — used by jobs.c / signals.c
 /// callers; not in zsh source itself but referenced via libc.
-// WARNING: FAKE IMPL RUST INVENTION — not in signals.c
 pub fn killpg(pgrp: i32, sig: i32) -> i32 {
     unsafe { libc::killpg(pgrp, sig) }
 }
 
 /// Port of `kill()` libc passthrough.
-// WARNING: FAKE IMPL RUST INVENTION — not in signals.c
 pub fn kill(pid: i32, sig: i32) -> i32 {
     unsafe { libc::kill(pid, sig) }
 }
@@ -558,7 +556,6 @@ pub fn starttrapscope() {                                                    // 
 /// Disables SIGINT delivery in interactive mode (sets the
 /// disposition to SIG_IGN). The `if (interact)` gate matches C.
 #[cfg(unix)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals.c
 pub fn nointr() {                                                            // c:128
     if is_interact() {
         unsafe {
@@ -837,7 +834,6 @@ pub fn killjb(pgrp: i32, sig: i32) -> i32 {                                 // c
 /// One stacked trap-state entry captured by `dosavetrap` so the
 /// outer-scope trap can be restored when an inner scope exits.
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals.c
 pub struct savetrap {                                                        // c:611
     pub sig:   i32,                                                          // c:613
     pub flags: i32,                                                          // c:614

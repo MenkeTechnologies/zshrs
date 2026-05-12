@@ -222,7 +222,6 @@ pub fn cmdnam_unhashed(name: &str, path_segments: Vec<String>) -> CmdName {  // 
 /// callbacks wired. When the generic-HashTable substrate lands,
 /// CmdNameTable/ShFuncTable/ReswdTable/AliasTable get deleted
 /// in favor of typed views over the shared `HashTable` storage.
-// WARNING: FAKE IMPL RUST INVENTION — not in hashtable.c
 pub struct CmdNameTable {
     table: HashMap<String, CmdName>,
     path_checked_index: usize,
@@ -449,7 +448,6 @@ pub fn shfunc_autoload(name: &str) -> ShFunc {                               // 
 /// the same shape.
 /// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
 /// `CmdNameTable` for the canonical-port direction.
-// WARNING: FAKE IMPL RUST INVENTION — not in hashtable.c
 pub struct ShFuncTable {
     table: HashMap<String, ShFunc>,
 }
@@ -556,7 +554,6 @@ pub use crate::ported::zsh_h::reswd as Reswd;                                // 
 /// by Src/lex.c to recognize keywords like `if`/`while`/`do`.
 /// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
 /// `CmdNameTable` for the canonical-port direction.
-// WARNING: FAKE IMPL RUST INVENTION — not in hashtable.c
 pub struct ReswdTable {
     table: HashMap<String, Reswd>,
 }
@@ -704,7 +701,6 @@ pub fn createaliasnode(name: &str, text: &str, flags: u32) -> Alias {        // 
 /// aliases live in a separate `sufaliastab` instance.
 /// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
 /// `CmdNameTable` for the canonical-port direction.
-// WARNING: FAKE IMPL RUST INVENTION — not in hashtable.c
 pub struct AliasTable {
     table: HashMap<String, Alias>,
 }
@@ -812,7 +808,6 @@ impl Default for AliasTable {
 /// ```
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone)]
-// WARNING: FAKE IMPL RUST INVENTION — not in hashtable.c
 pub struct dircache_entry {                                                  // c:1503
     pub name: String,                                                        // c:1506
     pub refs: i32,                                                           // c:1508
@@ -960,7 +955,6 @@ pub fn printshfuncnode(func: &ShFunc, print_flags: u32) -> String {
 /// Format a reserved-word entry.
 /// Port of `printreswdnode()` from Src/lex.c (the C source's
 /// formatter for the `reswdtab` HashTable).
-// WARNING: FAKE IMPL RUST INVENTION — not in hashtable.c
 pub fn format_reswd(rw: &Reswd, print_flags: u32) -> String {
     let name = &rw.node.nam;
 
@@ -980,7 +974,6 @@ pub fn format_reswd(rw: &Reswd, print_flags: u32) -> String {
 }
 
 /// Format an alias for output
-// WARNING: FAKE IMPL RUST INVENTION — not in hashtable.c
 pub fn format_alias(alias: &Alias, print_flags: u32) -> String {
     let name = &alias.node.nam;
     let text = &alias.text;

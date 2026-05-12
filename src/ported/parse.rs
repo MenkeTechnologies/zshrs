@@ -288,21 +288,18 @@ pub struct parse_stack {
 // existing call sites (context.rs) keep resolving until the
 // rename ripples through.
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub type ParseStack = parse_stack;
 
 /// Walk every ZshRedir in the program and, for any with a `heredoc_idx`,
 /// pull the body+terminator out of `bodies` and stuff into `heredoc`.
 /// `bodies[i]` corresponds to the i-th heredoc registered by the lexer
 /// during scanning (in source order).
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn fill_heredoc_bodies(prog: &mut ZshProgram, bodies: &[HereDocInfo]) {
     for list in &mut prog.lists {
         fill_in_sublist(&mut list.sublist, bodies);
     }
 }
 
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn fill_in_sublist(sub: &mut ZshSublist, bodies: &[HereDocInfo]) {
     fill_in_pipe(&mut sub.pipe, bodies);
     if let Some(next) = &mut sub.next {
@@ -310,7 +307,6 @@ fn fill_in_sublist(sub: &mut ZshSublist, bodies: &[HereDocInfo]) {
     }
 }
 
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn fill_in_pipe(pipe: &mut ZshPipe, bodies: &[HereDocInfo]) {
     fill_in_command(&mut pipe.cmd, bodies);
     if let Some(next) = &mut pipe.next {
@@ -318,7 +314,6 @@ fn fill_in_pipe(pipe: &mut ZshPipe, bodies: &[HereDocInfo]) {
     }
 }
 
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn fill_in_command(cmd: &mut ZshCommand, bodies: &[HereDocInfo]) {
     match cmd {
         ZshCommand::Simple(s) => {
@@ -365,7 +360,6 @@ fn fill_in_command(cmd: &mut ZshCommand, bodies: &[HereDocInfo]) {
     }
 }
 
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn resolve_redir(r: &mut ZshRedir, bodies: &[HereDocInfo]) {
     if let Some(idx) = r.heredoc_idx {
         if let Some(info) = bodies.get(idx) {
@@ -383,7 +377,6 @@ fn resolve_redir(r: &mut ZshRedir, bodies: &[HereDocInfo]) {
 /// name and (when the body was already inlined into the same Simple,
 /// e.g. `foo() echo hi`) the rest of the words as the body's argv.
 /// Returns None for non-funcdef shapes.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>)> {
     if list.flags.async_ || list.sublist.next.is_some() {
         return None;
@@ -436,7 +429,6 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>
 
 /// Initialize parser state for a fresh parse of `input`.
 /// Free-fn entry point — resets parser thread_locals and loads input.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn parse_init(input: &str) {
     // P8: reset Rust-only safety counters at parser construction.
     PARSER_GLOBAL_ITERATIONS.set(0);
@@ -446,7 +438,6 @@ pub fn parse_init(input: &str) {
 
 /// Check iteration limit; returns true if exceeded
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn check_limit() -> bool {
     PARSER_GLOBAL_ITERATIONS.set(PARSER_GLOBAL_ITERATIONS.get() + 1);
     PARSER_GLOBAL_ITERATIONS.get() > 10_000
@@ -454,7 +445,6 @@ fn check_limit() -> bool {
 
 /// Check recursion depth; returns true if exceeded
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn check_recursion() -> bool {
     PARSER_RECURSION_DEPTH.get() > MAX_RECURSION_DEPTH
 }
@@ -1089,7 +1079,6 @@ pub fn init_eprog() {
 /// sets `errflag |= ERRFLAG_ERROR` (via `zerr`) and returns the
 /// partial program — callers check `errflag` to detect failure,
 /// matching C's `Eprog parse_event(...)` + `if (errflag) {...}`.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn parse() -> ZshProgram {
     crate::ported::lex::zshlex();
 
@@ -1133,7 +1122,6 @@ pub fn parse() -> ZshProgram {
 /// out in PORT_PLAN.md. This stub establishes the entry point and
 /// drives the live ECBUF emission so downstream consumers (P9d
 /// exec_wordcode) have a real wordcode buffer to walk.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_event_wordcode() -> usize {
     let start = ECUSED.get() as usize;
     // parse.c:691-710 — par_list loop. Each iteration emits one WC_LIST
@@ -1160,7 +1148,6 @@ pub fn par_event_wordcode() -> usize {
 /// implementation tracks Z_SYNC/Z_ASYNC/Z_END flags and emits per-list
 /// `WCB_LIST(flags, skip)` headers; this stub emits Z_SYNC + skip
 /// patched after the sublist payload size is known.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_list_wordcode() {
     let p = ecadd(0); // reserve WCB_LIST patch slot
     par_sublist_wordcode();
@@ -1179,7 +1166,6 @@ pub fn par_list_wordcode() {
 /// `Src/parse.c:880-980`. Emits WC_SUBLIST + pipeline. Real
 /// implementation handles `!`/`&&`/`||`/coproc; this stub emits a
 /// single sublist + pipeline.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_sublist_wordcode() {
     let p = ecadd(0);
     par_pipe_wordcode();
@@ -1196,7 +1182,6 @@ pub fn par_sublist_wordcode() {
 /// P9c stub: direct port of `par_pline(int *complex)` from
 /// `Src/parse.c:982-1020`. Emits WC_PIPE + cmd. Real implementation
 /// handles `|`/`|&` pipeline chains.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_pipe_wordcode() {
     let p = ecadd(0);
     par_cmd_wordcode();
@@ -1215,7 +1200,6 @@ pub fn par_pipe_wordcode() {
 /// `Src/parse.c:1022-1320`. Dispatches on the current token to the
 /// appropriate par_* subroutine. Each form emits its WC_* opcode +
 /// payload; default falls through to par_simple_wordcode.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_cmd_wordcode() {
     match crate::ported::lex::tok() {
         FOR | FOREACH => par_for_wordcode(),
@@ -1240,7 +1224,6 @@ pub fn par_cmd_wordcode() {
 /// list-words + body wordcode. Stub form: emit WC_FOR header with
 /// zero skip + zero param-name slot; real implementation parses
 /// `for VAR in WORDS; do BODY; done`.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_for_wordcode() {
     crate::ported::lex::zshlex(); // consume FOR
     let p = ecadd(0);
@@ -1256,7 +1239,6 @@ pub fn par_for_wordcode() {
 }
 
 /// P9c stub: `par_select`. Direct port shape of Src/parse.c:1822-1860.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_select_wordcode() {
     crate::ported::lex::zshlex();
     let p = ecadd(0);
@@ -1273,7 +1255,6 @@ pub fn par_select_wordcode() {
 
 /// P9c stub: direct port of `par_case` from
 /// `Src/parse.c:1862-1990`. Emits WC_CASE + word + arms.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_case_wordcode() {
     crate::ported::lex::zshlex();
     let p = ecadd(0);
@@ -1289,7 +1270,6 @@ pub fn par_case_wordcode() {
 
 /// P9c stub: direct port of `par_if` from
 /// `Src/parse.c:1992-2090`. Emits WC_IF + cond + then + elif chain.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_if_wordcode() {
     crate::ported::lex::zshlex();
     let p = ecadd(0);
@@ -1305,7 +1285,6 @@ pub fn par_if_wordcode() {
 
 /// P9c stub: direct port of `par_while` from
 /// `Src/parse.c:2092-2150`. Emits WC_WHILE + cond + body.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_while_wordcode() {
     crate::ported::lex::zshlex();
     let p = ecadd(0);
@@ -1320,7 +1299,6 @@ pub fn par_while_wordcode() {
 }
 
 /// P9c stub: WC_WHILE with the until flag set on the header.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_until_wordcode() {
     crate::ported::lex::zshlex();
     let p = ecadd(0);
@@ -1339,7 +1317,6 @@ pub fn par_until_wordcode() {
 
 /// P9c stub: direct port of `par_repeat` from
 /// `Src/parse.c:2152-2200`. Emits WC_REPEAT + count strcode + body.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_repeat_wordcode() {
     crate::ported::lex::zshlex();
     let p = ecadd(0);
@@ -1357,7 +1334,6 @@ pub fn par_repeat_wordcode() {
 /// `Src/parse.c:2202-2310`. Emits WC_FUNCDEF + name-list strcodes +
 /// body. Real implementation parses multi-name funcdefs; stub emits
 /// a header for a single-name body.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_funcdef_wordcode() {
     crate::ported::lex::zshlex();
     let p = ecadd(0);
@@ -1372,7 +1348,6 @@ pub fn par_funcdef_wordcode() {
 }
 
 /// P9c stub: direct port of `par_subsh` for `(...)` subshell.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_subsh_wordcode() {
     crate::ported::lex::zshlex();
     let p = ecadd(0);
@@ -1387,7 +1362,6 @@ pub fn par_subsh_wordcode() {
 }
 
 /// P9c stub: direct port of `par_cursh` for `{...}` brace group.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_cursh_wordcode() {
     crate::ported::lex::zshlex();
     let p = ecadd(0);
@@ -1402,7 +1376,6 @@ pub fn par_cursh_wordcode() {
 }
 
 /// P9c stub: direct port of `par_time` for `time` reserved-word.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_time_wordcode() {
     crate::ported::lex::zshlex();
     let p = ecadd(0);
@@ -1417,7 +1390,6 @@ pub fn par_time_wordcode() {
 }
 
 /// P9c stub: direct port of `par_cond` for `[[ ... ]]` cond expression.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_cond_wordcode() {
     crate::ported::lex::zshlex();
     let p = ecadd(0);
@@ -1432,7 +1404,6 @@ pub fn par_cond_wordcode() {
 }
 
 /// P9c stub: direct port of `par_arith` for `(( ... ))` arith block.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_arith_wordcode() {
     crate::ported::lex::zshlex();
     let p = ecadd(0);
@@ -1453,7 +1424,6 @@ pub fn par_arith_wordcode() {
 /// string offsets. Real implementation walks assignments + redirections
 /// inline; this stub emits a WC_SIMPLE header with `nwords` plus one
 /// ecstrcode'd string per STRING_LEX token consumed.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 pub fn par_simple_wordcode() {
     let p = ecadd(0);
     let mut nwords: u32 = 0;
@@ -1479,7 +1449,6 @@ pub fn par_simple_wordcode() {
 /// `par_event` flow. C distinguishes COND_EVENT (single command
 /// for here-string) from full event parse; zshrs's parse_program
 /// is the full-event entry.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_program() -> ZshProgram {
     parse_program_until(None)
 }
@@ -1488,7 +1457,6 @@ fn parse_program() -> ZshProgram {
 /// Parse a program until one of `end_tokens` is seen (or EOF).
 /// Drives parse_list in a loop. C equivalent: the body of par_event
 /// (parse.c:635-695) iterating par_list against the lexer.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
     let mut lists = Vec::new();
 
@@ -1757,7 +1725,6 @@ fn parse_list() -> Option<ZshList> {
 /// AST mapping: ZshSublist { pipe, conj_chain }, where `conj_chain`
 /// is a Vec<(ConjOp, ZshSublist)> for chained && / ||. C uses
 /// flat wordcode with WC_SUBLIST_AND / WC_SUBLIST_OR markers.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_sublist() -> Option<ZshSublist> {
     PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
     if check_recursion() {
@@ -1808,7 +1775,6 @@ fn parse_sublist() -> Option<ZshSublist> {
 /// Parse a pipeline (cmds joined by `|` / `|&`). Direct port of
 /// zsh/Src/parse.c:894-956 `par_pline`. AST: ZshPipe { cmds: Vec<ZshCommand> }.
 /// C emits WC_PIPE wordcodes per command; same flow.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_pipe() -> Option<ZshPipe> {
     PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
     if check_recursion() {
@@ -1852,7 +1818,6 @@ fn parse_pipe() -> Option<ZshPipe> {
 /// IF / WHILE / UNTIL / REPEAT / FUNC / DINBRACK / DINPAR /
 /// INPAR subshell / INBRACE current-shell / TIME / NOCORRECT,
 /// else simple). Direct port of zsh/Src/parse.c:958-1085 `par_cmd`.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_cmd() -> Option<ZshCommand> {
     // Parse leading redirections
     let mut redirs = Vec::new();
@@ -1917,7 +1882,6 @@ fn parse_cmd() -> Option<ZshCommand> {
 /// typeset-style multi-assignment commands, and the trailing
 /// inout-par `()` that converts a simple command into an inline
 /// function definition.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     let mut assigns = Vec::new();
     let mut words = Vec::new();
@@ -2037,7 +2001,6 @@ fn parse_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
 /// inline in par_simple via the ENVSTRING/ENVARRAY token paths
 /// (parse.c:1842-2000ish); zshrs splits it out to a dedicated
 /// helper for clarity.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_assign() -> Option<ZshAssign> {
     // Helper: locate the EQUALS-marker that delimits NAME from
     // VALUE in an assignment-shaped tokstr. The lexer META-encodes
@@ -2179,7 +2142,6 @@ fn parse_assign() -> Option<ZshAssign> {
 /// a ZshRedir node carrying the operator type, fd, target word
 /// (or here-doc body / pipe-redir command), and any `{var}` style
 /// fd-binding parameter.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_redir() -> Option<ZshRedir> {
     let rtype = match crate::ported::lex::tok() {
         OUTANG_TOK => REDIR_WRITE,
@@ -2260,7 +2222,6 @@ fn parse_redir() -> Option<ZshRedir> {
 /// of zsh/Src/parse.c:1087-1207 `par_for`. parse_for_cstyle is the
 /// inner branch for the `((...))` arithmetic-header variant
 /// (parse.c:1100-1140 inside par_for).
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_for() -> Option<ZshCommand> {
     let is_foreach = crate::ported::lex::tok() == FOREACH;
     crate::ported::lex::zshlex();
@@ -2389,7 +2350,6 @@ fn parse_for() -> Option<ZshCommand> {
 /// Inner branch of zsh/Src/parse.c:1100-1140 inside par_for.
 /// Recognized when the token after FOR is DINPAR (the `((`
 /// detected by gettok via dbparens setup).
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_for_cstyle() -> Option<ZshCommand> {
     // We're at (( (Dinpar None) - the opening ((
     // Lexer returns:
@@ -2440,7 +2400,6 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
 /// `for NAME in WORDS; do ...` but with menu-prompt semantics in
 /// the executor. C equivalent: the SELECT case in par_for at
 /// parse.c:1087-1207 (selects share parser flow with foreach).
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_select() -> Option<ZshCommand> {
     // `select` shares parse_for's grammar (var, words, body) but the
     // compile path is different (interactive prompt loop).
@@ -2458,7 +2417,6 @@ fn parse_select() -> Option<ZshCommand> {
 /// of zsh/Src/parse.c:1209-1409 `par_case`. Each case arm is a
 /// (pattern_list, body, terminator) tuple where terminator is
 /// `;;` (default), `;&` (fallthrough), or `;|` (continue testing).
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_case() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip 'case'
 
@@ -2663,7 +2621,6 @@ fn parse_case() -> Option<ZshCommand> {
 /// Direct port of zsh/Src/parse.c:1411-1519 `par_if`. The C source
 /// emits WC_IF wordcodes per arm; zshrs builds an AST chain of
 /// (cond, then_body) tuples plus an optional else_body.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_if() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip 'if'
 
@@ -2787,7 +2744,6 @@ fn parse_if() -> Option<ZshCommand> {
 /// Parse `while COND; do BODY; done` and `until COND; do BODY; done`.
 /// Direct port of zsh/Src/parse.c:1521-1563 `par_while`. The
 /// `until` variant is the same loop with the condition negated.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_while(until: bool) -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip while/until
 
@@ -2808,7 +2764,6 @@ fn parse_while(until: bool) -> Option<ZshCommand> {
 /// zsh/Src/parse.c:1565-1617 `par_repeat`. The C source supports
 /// the SHORTLOOPS short-form `repeat N CMD` (no do/done) — zshrs's
 /// parser doesn't yet special-case that variant.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_repeat() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip 'repeat'
 
@@ -2841,7 +2796,6 @@ fn parse_repeat() -> Option<ZshCommand> {
 /// flag signals foreach (where short-form `for NAME in WORDS;
 /// CMD` may skip do/done) vs c-style (which always requires
 /// do/done).
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_loop_body(foreach_style: bool) -> Option<ZshProgram> {
     if crate::ported::lex::tok() == DOLOOP {
         crate::ported::lex::zshlex();
@@ -2874,7 +2828,6 @@ fn parse_loop_body(foreach_style: bool) -> Option<ZshProgram> {
 /// Parse a subshell `( ... )`. Direct port of zsh/Src/parse.c:1619-1670
 /// `par_subsh`. Body parses as a normal list; the subshell wrapper
 /// fork-isolates execution in the executor.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_subsh() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip (
     let prog = parse_program();
@@ -2894,7 +2847,6 @@ fn parse_subsh() -> Option<ZshCommand> {
 /// and immediately calling an anon fn with args a/b/c. C
 /// equivalent: the INOUTPAR shape in par_simple at parse.c:1836+
 /// triggers an anon-funcdef path.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_anon_funcdef() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip ()
     skip_separators();
@@ -2942,7 +2894,6 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
 /// par_cmd at parse.c:958-1085 handles INBRACE → emit WC_CURSH
 /// and recurses into the list. zshrs's parse_cursh extracts that
 /// arm into a dedicated method.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_cursh() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip {
     let prog = parse_program();
@@ -2992,7 +2943,6 @@ fn parse_cursh() -> Option<ZshCommand> {
 /// the multiple keyword shapes (function FOO, FOO (), function FOO ()),
 /// the optional `[fname1 fname2 ...]` for multi-name function defs,
 /// and the `function FOO () { ... }` traditional/POSIX hybrid form.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_funcdef() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip 'function'
 
@@ -3135,7 +3085,6 @@ fn parse_funcdef() -> Option<ZshCommand> {
 /// consumed and pushed by parse_simple before this method fires.
 /// C source: handled inline in par_simple's INOUTPAR-after-name
 /// arm (parse.c:1836-2228).
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
     // Skip ()
     if crate::ported::lex::tok() == INOUTPAR {
@@ -3228,14 +3177,12 @@ fn parse_cond() -> Option<ZshCommand> {
 /// Top of `[[ ]]` cond-expression parsing — entry to recursive
 /// descent (or → and → not → primary). Direct port of zsh's
 /// par_cond_1 at parse.c:2434-2475.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_cond_expr() -> Option<ZshCond> {
     parse_cond_or()
 }
 
 /// Cond-expression `||` level. C: inside par_cond_1 at
 /// parse.c:2434-2475 (the `cond_or` ladder).
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_cond_or() -> Option<ZshCond> {
     PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
     if check_recursion() {
@@ -3267,7 +3214,6 @@ fn parse_cond_or() -> Option<ZshCond> {
 }
 
 /// Cond-expression `&&` level. C: par_cond_2 at parse.c:2476-2625.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_cond_and() -> Option<ZshCond> {
     PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
     if check_recursion() {
@@ -3300,7 +3246,6 @@ fn parse_cond_and() -> Option<ZshCond> {
 
 /// Cond-expression `!` negation level. C: handled inside
 /// par_cond_2 at parse.c:2476-2625 via the BANG token check.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_cond_not() -> Option<ZshCond> {
     PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
     if check_recursion() {
@@ -3357,7 +3302,6 @@ fn parse_cond_not() -> Option<ZshCond> {
 /// tests (=, !=, <, >, ==, =~, -eq, -ne, ...), and parenthesized
 /// sub-expressions. Direct port of par_cond_double / par_cond_triple
 /// / par_cond_multi at parse.c:2626-2731 (chosen by arg count).
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_cond_primary() -> Option<ZshCond> {
     let s1 = match crate::ported::lex::tok() {
         STRING_LEX => {
@@ -3436,7 +3380,6 @@ fn parse_cond_primary() -> Option<ZshCond> {
     }
 }
 
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn skip_cond_separators() {
     while crate::ported::lex::tok() == SEPER && {
         let s = crate::ported::lex::tokstr();
@@ -3450,7 +3393,6 @@ fn skip_cond_separators() {
 /// Parse `(( EXPR ))` arithmetic command. C source: parse.c:1810-1834
 /// `par_dinbrack` (despite the name; the function actually handles
 /// DINPAR `(( ))` blocks too).
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_arith() -> Option<ZshCommand> {
     let expr = crate::ported::lex::tokstr().unwrap_or_default();
     crate::ported::lex::zshlex();
@@ -3461,7 +3403,6 @@ fn parse_arith() -> Option<ZshCommand> {
 /// Parse `time CMD` (POSIX time keyword). Direct port of
 /// zsh/Src/parse.c:1787-1808 `par_time`. The `time` keyword
 /// times the execution of the following pipeline / cmd.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn parse_time() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip 'time'
 
@@ -3478,13 +3419,11 @@ fn parse_time() -> Option<ZshCommand> {
 }
 
 /// Check if next token is ()
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn peek_inoutpar() -> bool {
     crate::ported::lex::tok() == INOUTPAR
 }
 
 /// Skip separator tokens
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn skip_separators() {
     let mut iterations = 0;
     while crate::ported::lex::tok() == SEPER || crate::ported::lex::tok() == NEWLIN {
@@ -3501,7 +3440,6 @@ fn skip_separators() {
 /// from `Src/parse.c:625-633 yyerror`. Sets `errflag |=
 /// ERRFLAG_ERROR` (when `noerrs == 0`) and emits a diagnostic on
 /// stderr via `zwarning`.
-// WARNING: FAKE IMPL RUST INVENTION — not in parse.c
 fn error(msg: &str) {
     crate::ported::utils::zerr(msg);
 }

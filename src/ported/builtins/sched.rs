@@ -47,7 +47,6 @@ use crate::ported::zsh_h::options;
 /// Port of `typedef struct schedcmd *Schedcmd;` from `Src/Builtins/sched.c:35`.
 /// C uses the typedef as a forward declaration; Rust port aliases to the
 /// real struct type defined below.
-// WARNING: FAKE IMPL RUST INVENTION — not in builtins/sched.c
 pub type Schedcmd = Option<Box<schedcmd>>;
 
 // =====================================================================
@@ -75,7 +74,6 @@ pub const SCHEDFLAG_TRASH_ZLE: i32 = 1;                              // c:40
 /// };
 /// ```
 #[derive(Debug)]
-// WARNING: FAKE IMPL RUST INVENTION — not in builtins/sched.c
 pub struct schedcmd {
     pub next: Option<Box<schedcmd>>,                                 // c:44
     pub cmd: String,                                                  // c:45

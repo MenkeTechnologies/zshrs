@@ -521,7 +521,6 @@ pub fn adjustlines() -> usize {                                             // c
 /// Mirrors the `quotetype_t` enum in Src/utils.c —
 /// `quotestring()` (line ~6500) takes one of these to choose
 /// `\`-escape, `'…'`, `"…"`, or POSIX `$'…'` quoting.
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub enum QuoteType {
     None = 0,
     Backslash = 1,
@@ -556,7 +555,6 @@ impl QuoteType {
 /// optionally augmented with `,` (ZTF_SP_COMMA) and `bangchar`
 /// (BANGHIST). zshrs hard-codes the static set; the `,`/`!`
 /// augmentation flags aren't yet wired through.
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 fn ispecial(c: char) -> bool {
     matches!(
         c,
@@ -1386,7 +1384,6 @@ pub fn skipwsep(s: &str) -> (&str, usize) {
 /// space, tab, or newline. The original Rust port omitted `\n`
 /// which is wrong: `wordcount`/`skipwsep`/`spacesplit` all rely on
 /// `\n` being a separator for lines.
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn iwsep(c: char) -> bool {
     c == ' ' || c == '\t' || c == '\n'
 }
@@ -1404,7 +1401,6 @@ pub fn iwsep_byte(b: u8) -> bool {
 /// metafy/unmetafy machinery treats as needing the Meta-escape.
 /// The previous Rust port had a wrong predicate (control bytes +
 /// 0x7f + Meta itself); the C macro is just `>= Meta`.
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn imeta(c: char) -> bool {
     (c as u32) >= Meta as u32
 }
@@ -1533,13 +1529,11 @@ pub fn xsymlinks(s: &str) -> std::io::Result<String> {                      // c
 }
 
 /// Create directory
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn mkdir(path: &str) -> bool {
     std::fs::create_dir(path).is_ok()
 }
 
 /// Create symlink
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn symlink(src: &str, dst: &str) -> bool {
     #[cfg(unix)]
     {
@@ -1553,7 +1547,6 @@ pub fn symlink(src: &str, dst: &str) -> bool {
 }
 
 /// Read symlink target
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn readlink(path: &str) -> Option<String> {
     std::fs::read_link(path)
         .ok()
@@ -1561,25 +1554,21 @@ pub fn readlink(path: &str) -> Option<String> {
 }
 
 /// Get environment variable
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn getenv(name: &str) -> Option<String> {
     std::env::var(name).ok()
 }
 
 /// Set environment variable
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn setenv(name: &str, value: &str) {
     std::env::set_var(name, value);
 }
 
 /// Unset environment variable
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn unsetenv(name: &str) {
     std::env::remove_var(name);
 }
 
 /// Get current user ID
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn getuid() -> u32 {
     #[cfg(unix)]
     unsafe {
@@ -1590,7 +1579,6 @@ pub fn getuid() -> u32 {
 }
 
 /// Get effective user ID
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn geteuid() -> u32 {
     #[cfg(unix)]
     unsafe {
@@ -1601,7 +1589,6 @@ pub fn geteuid() -> u32 {
 }
 
 /// Get current group ID
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn getgid() -> u32 {
     #[cfg(unix)]
     unsafe {
@@ -1612,7 +1599,6 @@ pub fn getgid() -> u32 {
 }
 
 /// Get effective group ID
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn getegid() -> u32 {
     #[cfg(unix)]
     unsafe {
@@ -1623,13 +1609,11 @@ pub fn getegid() -> u32 {
 }
 
 /// Get process ID
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn getpid() -> i32 {
     std::process::id() as i32
 }
 
 /// Get parent process ID
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn getppid() -> i32 {
     #[cfg(unix)]
     unsafe {
@@ -4637,7 +4621,6 @@ pub fn addunprintable(c: char) -> String {
 }
 
 /// Double-bslashquote and print string (from utils.c dquotedzputs)
-// WARNING: FAKE IMPL RUST INVENTION — not in utils.c
 pub fn dquotedzputs(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 2);
     result.push('"');

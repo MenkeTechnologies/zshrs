@@ -110,7 +110,6 @@ pub const CC_UNIQALL: u64 = 1 << 6;                                      // c:15
 /// keeps the semantic payload — a pointer to the compctl descriptor.
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compctl_h.c
 pub struct Compctlp {                                                    // c:39
     pub cc: std::sync::Arc<Compctl>,                                                // c:41
 }
@@ -129,7 +128,6 @@ pub struct Compctlp {                                                    // c:39
 /// ```
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compctl_h.c
 pub struct Patcomp {                                                     // c:46
     pub next: Option<Box<Patcomp>>,                                      // c:47
     pub pat: String,                                                     // c:48
@@ -158,7 +156,6 @@ pub struct Patcomp {                                                     // c:46
 /// is by `typ` per the C convention.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compctl_h.c
 pub struct Compcond {                                                    // c:54
     pub and: Option<Box<Compcond>>,                                      // c:55
     pub or:  Option<Box<Compcond>>,                                      // c:55
@@ -172,7 +169,6 @@ pub struct Compcond {                                                    // c:54
 /// `typ` (one of the `CCT_*` constants).
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compctl_h.c
 pub enum CompcondData {                                                  // c:58
     /// Port of `struct { int *a, *b; } r` (c:59-62) — used by
     /// `CCT_POS`, `CCT_NUMWORDS`.
@@ -199,7 +195,6 @@ pub enum CompcondData {                                                  // c:58
 /// `Option<std::sync::Arc<Compctl>>` etc. as appropriate.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compctl_h.c
 pub struct Compctl {                                                     // c:93
     /// Reference count.
     pub refc: i32,                                                       // c:94

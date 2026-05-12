@@ -36,7 +36,6 @@ use std::sync::{Mutex, OnceLock};
 /// };
 /// ```
 #[derive(Debug, Clone, Default)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zprof.c
 pub struct Pfunc {                                                       // c:38
     pub name: String,                                                    // c:40
     pub calls: i64,                                                      // c:41
@@ -59,7 +58,6 @@ pub struct Pfunc {                                                       // c:38
 /// };
 /// ```
 #[derive(Debug, Clone, Copy)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zprof.c
 pub struct Sfunc {                                                       // c:49
     pub p: usize,                                                        // c:50 — index into CALLS
     pub beg: f64,                                                        // c:52
@@ -80,7 +78,6 @@ pub struct Sfunc {                                                       // c:49
 /// };
 /// ```
 #[derive(Debug, Clone, Default)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zprof.c
 pub struct Parc {                                                        // c:57
     pub from: usize,                                                     // c:59 — index into CALLS
     pub to: usize,                                                       // c:60 — index into CALLS

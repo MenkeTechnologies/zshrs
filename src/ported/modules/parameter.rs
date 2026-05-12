@@ -42,7 +42,6 @@ use std::path::PathBuf;
 /// dispatch time.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/parameter.c
 pub struct pardef {                                                          // c:2179
     /// Parameter name (e.g. "commands", "functions", "options").
     pub name: &'static str,                                                  // c:2180

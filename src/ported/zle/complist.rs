@@ -405,7 +405,6 @@ pub struct filecol {                                                         // 
 /// strings (one per submatch position).
 #[derive(Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/complist.c
 pub struct patcol {                                                          // c:225
     /// Group pattern (NULL → all groups).
     pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:226
@@ -421,7 +420,6 @@ pub struct patcol {                                                          // 
 /// terminal-color spec.
 #[derive(Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/complist.c
 pub struct extcol {                                                          // c:236
     /// Group pattern (NULL → all groups).
     pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:237
@@ -441,7 +439,6 @@ pub const LC_FOLLOW_SYMLINKS: i32 = 0x0001;                                  // 
 /// every terminal-color string a completion-listing run might emit.
 #[derive(Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/complist.c
 pub struct listcols {                                                        // c:253
     /// Strings for file types (indexed by `col::*` constants).
     pub files: Vec<filecol>,                                                 // c:254 [NUM_COLS]
@@ -459,7 +456,6 @@ pub struct listcols {                                                        // 
 /// previous state.
 #[derive(Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/complist.c
 pub struct menustack {                                                       // c:2159
     /// Saved zleline contents.
     pub line: String,                                                        // c:2161
@@ -492,7 +488,6 @@ pub struct menustack {                                                       // 
 /// backspace can undo one step.
 #[derive(Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/complist.c
 pub struct menusearch {                                                      // c:2186
     /// The search string accumulator.
     pub str: String,                                                         // c:2188

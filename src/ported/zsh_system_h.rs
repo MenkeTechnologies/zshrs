@@ -106,7 +106,6 @@ pub const VDISABLEVAL: u8 = 0;
 // ---------------------------------------------------------------------------
 
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in zsh_system_h.c
 pub type timespec = libc::timespec;                                          // c:245
 
 /// Port of `#define DEFAULT_WORDCHARS` from `Src/zsh_system.h:427`.
@@ -390,7 +389,6 @@ pub const fn IS_DIRSEP(c: char) -> bool {                                // c:81
 /// Port of `#define GET_ST_ATIME_NSEC(st)` from `Src/zsh_system.h:878`.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in zsh_system_h.c
 pub fn GET_ST_ATIME_NSEC(st: &std::fs::Metadata) -> u32 {                // c:878
     st.accessed()
         .ok()
@@ -402,7 +400,6 @@ pub fn GET_ST_ATIME_NSEC(st: &std::fs::Metadata) -> u32 {                // c:87
 /// Port of `#define GET_ST_MTIME_NSEC(st)` from `Src/zsh_system.h:885`.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in zsh_system_h.c
 pub fn GET_ST_MTIME_NSEC(st: &std::fs::Metadata) -> u32 {                // c:885
     st.modified()
         .ok()
@@ -416,7 +413,6 @@ pub fn GET_ST_MTIME_NSEC(st: &std::fs::Metadata) -> u32 {                // c:88
 /// pull it from `MetadataExt::ctime_nsec()`.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in zsh_system_h.c
 pub fn GET_ST_CTIME_NSEC(st: &std::fs::Metadata) -> u32 {                // c:892
     #[cfg(unix)]
     {

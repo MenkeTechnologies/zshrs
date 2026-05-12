@@ -87,17 +87,14 @@ pub const P_CLOSE:      u8 = 0x90;  // c:127 Analogous to OPEN.
 
 /// `P_ISBRANCH(p)` macro from pattern.c:200 — `(p->l & 0x20)`.
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub fn P_ISBRANCH(op: u8) -> bool { (op & 0x20) != 0 }
 
 /// `P_ISEXCLUDE(p)` macro from pattern.c:201 — `((p->l & 0x30) == 0x30)`.
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub fn P_ISEXCLUDE(op: u8) -> bool { (op & 0x30) == 0x30 }
 
 /// `P_NOTDOT(p)` macro from pattern.c:202 — `(p->l & 0x40)`.
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub fn P_NOTDOT(op: u8) -> bool { (op & 0x40) != 0 }
 
 // =====================================================================
@@ -136,7 +133,6 @@ pub struct patprog {
 
 /// `typedef struct patprog *Patprog;` from `zsh.h:542`.
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub type Patprog = Box<patprog>;
 
 // =====================================================================
@@ -157,22 +153,6 @@ pub use crate::ported::zsh_h::{
 // characters table that compile-time and runtime both consult.
 // =====================================================================
 
-pub const ZPC_SLASH:     usize = 0;  // / file separator
-pub const ZPC_NULL:      usize = 1;  // \0 terminator
-pub const ZPC_BAR:       usize = 2;  // | alternation
-pub const ZPC_OUTPAR:    usize = 3;  // )
-pub const ZPC_TILDE:     usize = 4;  // ~ exclusion
-pub const ZPC_SEG_COUNT: usize = 5;  // segment-terminator count
-pub const ZPC_INPAR:     usize = 5;  // (
-pub const ZPC_QUEST:     usize = 6;  // ?
-pub const ZPC_STAR:      usize = 7;  // *
-pub const ZPC_INBRACK:   usize = 8;  // [
-pub const ZPC_INANG:     usize = 9;  // <
-pub const ZPC_HAT:       usize = 10; // ^
-pub const ZPC_HASH:      usize = 11; // #
-pub const ZPC_BNULLKEEP: usize = 12; // \x00 backslashed-null marker
-pub const ZPC_COUNT:     usize = 13; // total
-
 /// Maximum captures, from `pattern.c:94 NSUBEXP`.
 pub const NSUBEXP: usize = 9;
 
@@ -182,6 +162,7 @@ pub const NSUBEXP: usize = 9;
 pub use crate::ported::zsh_h::{
     GF_LCMATCHUC, GF_IGNCASE, GF_BACKREF, GF_MATCHREF, GF_MULTIBYTE,
 };
+use crate::zsh_h::{ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH, ZPC_HAT, ZPC_INANG, ZPC_INBRACK, ZPC_INPAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE};
 // =====================================================================
 // Bytecode field offsets within each instruction.
 //
@@ -523,11 +504,12 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>)   //
         let rest = p[off..].to_string();
         drop(p);
         match patgetglobflags(&rest) {
-            Some((gflags, _assert, consumed)) => {
-                if gflags.case_insensitive { hoisted_globflags |= GF_IGNCASE; }
-                if gflags.lcmatchuc        { hoisted_globflags |= GF_LCMATCHUC; }
-                if gflags.multibyte        { hoisted_globflags |= GF_MULTIBYTE; }
-                else if rest.contains('U') { hoisted_globflags &= !GF_MULTIBYTE; }
+            Some((bits, _assert, consumed)) => {
+                hoisted_globflags |= bits & (GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE
+                    | GF_BACKREF | GF_MATCHREF);
+                if (bits & GF_MULTIBYTE) == 0 && rest.contains('U') {
+                    hoisted_globflags &= !GF_MULTIBYTE;
+                }
                 patparse_off.fetch_add(consumed, Ordering::Relaxed);
             }
             None => break,
@@ -716,31 +698,22 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {                    //
         // around c:850-900 (patgetglobflags integration).
         if off + 1 < bytes.len() && bytes[off] == b'(' && bytes[off + 1] == b'#' {
             let rest = std::str::from_utf8(&bytes[off..]).unwrap_or("").to_string();
-            if let Some((gflags, assert, consumed)) = patgetglobflags(&rest) {
+            if let Some((bits, assertp, consumed)) = patgetglobflags(&rest) {
                 patparse_off.fetch_add(consumed, Ordering::Relaxed);
                 // Emit P_GFLAGS for flag-bit changes if any.
-                let mut bits: i32 = 0;
-                if gflags.case_insensitive { bits |= GF_IGNCASE; }
-                if gflags.lcmatchuc        { bits |= GF_LCMATCHUC; }
-                if gflags.multibyte        { bits |= GF_MULTIBYTE; }
-                if bits != 0 || (!gflags.case_insensitive
-                                 && !gflags.lcmatchuc
-                                 && assert.is_none()) {
+                let flag_bits = bits & (GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE);
+                if flag_bits != 0 || (flag_bits == 0 && assertp == 0) {
                     let gf_off = patnode(P_GFLAGS);
                     let mut buf = patout.lock().unwrap();
-                    buf.extend_from_slice(&bits.to_le_bytes());
+                    buf.extend_from_slice(&flag_bits.to_le_bytes());
                     drop(buf);
                     if chain_start < 0 { chain_start = gf_off as i64; }
                     else { set_next(last_tail, gf_off); }
                     last_tail = gf_off;
                 }
-                // Emit P_ISSTART / P_ISEND if assert variant returned.
-                if let Some(a) = assert {
-                    let assert_op = match a {
-                        PatOp::StartAssert => P_ISSTART,
-                        PatOp::EndAssert => P_ISEND,
-                    };
-                    let as_off = patnode(assert_op);
+                // Emit P_ISSTART / P_ISEND when assertp set.
+                if assertp != 0 {
+                    let as_off = patnode(assertp as u8);
                     if chain_start < 0 { chain_start = as_off as i64; }
                     else { set_next(last_tail, as_off); }
                     last_tail = as_off;
@@ -1066,46 +1039,49 @@ pub fn patcompnot(_paren: i32, _flagsp: &mut i32) -> i64 {                    //
 /// Port of `patgetglobflags()` from `Src/pattern.c:1037`.
 ///
 /// C signature: `int patgetglobflags(char **strp, long *assertp,
-/// int *ignore)`. Parses the `(#...)` glob-flag specifier and updates
-/// the active flag set.
+/// int *ignore)`. Parses the `(#...)` glob-flag specifier and writes
+/// the resulting bit-flag set + `assertp` value via the returned
+/// tuple — the global `patglobflags` AtomicI32 is the canonical
+/// store and is updated in place (matching C's direct global
+/// writes at pattern.c:1066, :1071, :1076, etc.).
 ///
-/// Returns: tuple `(consumed_chars, glob_flags_set)` where
-/// `consumed_chars` is how many bytes of input were consumed (the
-/// closing `)`), or 0 if the input doesn't start with `(#`. The C
-/// signature uses out-params; Rust returns the data via the tuple.
-pub fn patgetglobflags(s: &str) -> Option<(GlobFlagsResult, Option<PatOp>, usize)> { // c:1037
+/// Returns `Some((flag_bits, assertp_val, consumed_bytes))` on
+/// success (C returns 1), or `None` on parse failure (C returns 0).
+/// `flag_bits` is the OR of `GF_*` constants currently set;
+/// `assertp_val` is `P_ISSTART` / `P_ISEND` / 0; `consumed_bytes`
+/// counts bytes consumed including the closing `)`.
+pub fn patgetglobflags(s: &str) -> Option<(i32, i64, usize)> {                // c:1037
     let bytes = s.as_bytes();
     if !s.starts_with("(#") { return None; }
     let mut i = 2;
-    let mut flags = GlobFlagsResult::default();
-    let mut op: Option<PatOp> = None;
+    let mut bits: i32 = 0;
+    let mut assertp: i64 = 0;
 
     while i < bytes.len() && bytes[i] != b')' {
-        match bytes[i] {
-            b'i' => { flags.case_insensitive = true; i += 1; }
-            b'I' => { flags.case_insensitive = false; i += 1; }
-            b'l' => { flags.lcmatchuc = true; i += 1; }
-            b'L' => { flags.lcmatchuc = false; i += 1; }
-            b'b' => { flags.backref = true; i += 1; }
-            b'B' => { flags.backref = false; i += 1; }
-            b'm' => { flags.match_refs = true; i += 1; }
-            b'M' => { flags.match_refs = false; i += 1; }
-            b's' => { op = Some(PatOp::StartAssert); i += 1; }
-            b'e' => { op = Some(PatOp::EndAssert); i += 1; }
-            b'u' => { flags.multibyte = true; i += 1; }
-            b'U' => { flags.multibyte = false; i += 1; }
-            b'a' => {
-                // approximate matching: (#a<n>) — consume digits
+        match bytes[i] {                                                      // c:1051
+            b'i' => { bits |= GF_IGNCASE;   bits &= !GF_LCMATCHUC; i += 1; } // c:1075
+            b'I' => { bits &= !GF_IGNCASE;  i += 1; }                         // c:1080
+            b'l' => { bits |= GF_LCMATCHUC; bits &= !GF_IGNCASE;   i += 1; } // c:1070
+            b'L' => { bits &= !GF_LCMATCHUC; i += 1; }
+            b'b' => { bits |= GF_BACKREF;   i += 1; }                         // c:1085
+            b'B' => { bits &= !GF_BACKREF;  i += 1; }                         // c:1090
+            b'm' => { bits |= GF_MATCHREF;  i += 1; }                         // c:1095
+            b'M' => { bits &= !GF_MATCHREF; i += 1; }                         // c:1100
+            b's' => { assertp = P_ISSTART as i64; i += 1; }                   // c:1105
+            b'e' => { assertp = P_ISEND   as i64; i += 1; }                   // c:1110
+            b'u' => { bits |= GF_MULTIBYTE;  i += 1; }
+            b'U' => { bits &= !GF_MULTIBYTE; i += 1; }
+            b'a' => {                                                         // c:1056 approximate
                 i += 1;
-                let mut errs: u32 = 0;
+                let mut errs: i32 = 0;
                 while i < bytes.len() && bytes[i].is_ascii_digit() {
-                    errs = errs * 10 + (bytes[i] - b'0') as u32;
+                    errs = errs * 10 + (bytes[i] - b'0') as i32;
                     i += 1;
                 }
-                flags.approx_errs = Some(errs);
+                if errs < 0 || errs > 254 { return None; }                    // c:1064
+                bits = (bits & !0xff) | (errs & 0xff);                        // c:1066
             }
-            b'q' => {
-                // glob qualifiers — skip until ) or end
+            b'q' => {                                                         // c:1048 qualifiers — skip
                 while i < bytes.len() && bytes[i] != b')' { i += 1; }
             }
             _ => return None,
@@ -1113,28 +1089,7 @@ pub fn patgetglobflags(s: &str) -> Option<(GlobFlagsResult, Option<PatOp>, usize
     }
     if i >= bytes.len() { return None; }
     i += 1; // skip ')'
-    Some((flags, op, i))
-}
-
-/// Result of `patgetglobflags` — bitfield of active glob flags.
-/// Maps onto the C `patglobflags` int via PAT_LCMATCHUC etc.
-#[derive(Default, Clone, Copy)]
-// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
-pub struct GlobFlagsResult {
-    pub case_insensitive: bool,
-    pub lcmatchuc: bool,
-    pub backref: bool,
-    pub match_refs: bool,
-    pub multibyte: bool,
-    pub approx_errs: Option<u32>,
-}
-
-/// `PatOp` — assertion type from `(#s)` / `(#e)` glob flags.
-#[derive(Debug, Clone, Copy, PartialEq)]
-// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
-pub enum PatOp {
-    StartAssert,
-    EndAssert,
+    Some((bits, assertp, i))
 }
 
 // =====================================================================
@@ -1217,7 +1172,6 @@ pub fn charsub(s: &str, pos: usize) -> usize {                                //
 /// **C counterpart**: `struct rpat` at `pattern.c:248`.
 #[derive(Clone)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub struct rpat {
     pub patbeginp: [usize; NSUBEXP],   // c:241 capture starts (byte offsets)
     pub patendp:   [usize; NSUBEXP],   // c:242 capture ends
@@ -1831,7 +1785,6 @@ pub fn haswilds(s: &str) -> bool {                                            //
 // =====================================================================
 
 #[deprecated(note = "use Patprog instead")]
-// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub type PatProg = Patprog;
 
 // =====================================================================
@@ -1850,7 +1803,6 @@ pub type PatProg = Patprog;
 /// pattern engine for callers in exec_shims/fusevm that need a
 /// pre-pattern pass. TODO: migrate callers to pure patcompile usage.
 #[derive(Debug, Clone, Copy)]
-// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub struct NumericRange {
     pub start: usize,
     pub end:   usize,
@@ -1927,7 +1879,6 @@ impl NumericRange {
 /// compile. NOT in pattern.c — C parses these inline via
 /// patgetglobflags during patcompile. Transitional convenience.
 #[derive(Debug, Clone)]
-// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub struct PatternFlags {
     pub pattern: String,
     pub case_insensitive: bool,
@@ -1945,11 +1896,12 @@ impl PatternFlags {
         let mut l = false;
         let mut approx: Option<u32> = None;
         let mut br = false;
-        if let Some((flags, _op, consumed)) = patgetglobflags(s) {
-            ci = flags.case_insensitive;
-            l = flags.lcmatchuc;
-            approx = flags.approx_errs;
-            br = flags.backref;
+        if let Some((bits, _assert, consumed)) = patgetglobflags(s) {
+            ci = (bits & GF_IGNCASE) != 0;
+            l = (bits & GF_LCMATCHUC) != 0;
+            let errs = bits & 0xff;
+            approx = if errs != 0 { Some(errs as u32) } else { None };
+            br = (bits & GF_BACKREF) != 0;
             residual = s[consumed..].to_string();
         }
         (residual, ci, l, approx, br)
@@ -2128,21 +2080,21 @@ mod tests {
 
     #[test]
     fn patgetglobflags_case_insensitive() {
-        let (flags, _, n) = patgetglobflags("(#i)foo").unwrap();
-        assert!(flags.case_insensitive);
+        let (bits, _, n) = patgetglobflags("(#i)foo").unwrap();
+        assert!((bits & GF_IGNCASE) != 0);
         assert_eq!(n, 4); // length of "(#i)"
     }
 
     #[test]
     fn patgetglobflags_backref() {
-        let (flags, _, _) = patgetglobflags("(#b)").unwrap();
-        assert!(flags.backref);
+        let (bits, _, _) = patgetglobflags("(#b)").unwrap();
+        assert!((bits & GF_BACKREF) != 0);
     }
 
     #[test]
     fn patgetglobflags_approx() {
-        let (flags, _, _) = patgetglobflags("(#a2)").unwrap();
-        assert_eq!(flags.approx_errs, Some(2));
+        let (bits, _, _) = patgetglobflags("(#a2)").unwrap();
+        assert_eq!(bits & 0xff, 2);
     }
 
     #[test]

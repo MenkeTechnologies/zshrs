@@ -2083,7 +2083,6 @@ pub const QSTRING_TOK: char = '\u{84}';  // QSTRING (for $'...')
 /// `Src/ztype.h:62`. Tests whether `c` is one of the parser's
 /// "inull" token chars (the high-bit token bytes the lexer
 /// produces).
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compctl.c
 fn inull(c: char) -> bool {                                                  // c:62
     matches!(c, SNULL | DNULL | BNULL | STRING_TOK | QSTRING_TOK)
 }

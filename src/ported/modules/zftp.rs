@@ -78,7 +78,6 @@ pub static lastcode: std::sync::atomic::AtomicI32
 // For ergonomic call sites the type alias below carries both halves
 // without inventing a new struct shape:
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zftp.c
 pub type FtpResponse = (i32, String);
 
 // =====================================================================
@@ -93,7 +92,6 @@ pub type FtpResponse = (i32, String);
 /// };
 /// ```
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zftp.c
 pub struct zfheader {
     pub flags: i8,                                                       // c:115
     pub bytes: [u8; 2],                                                   // c:116
@@ -115,7 +113,6 @@ pub const ZFHD_EORB: i32 = 128;                                           // c:1
 /// `readwrite_t` — function pointer typedef from
 /// `Src/Modules/zftp.c:126`: `typedef int (*readwrite_t)(int, char *, off_t, int);`
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zftp.c
 pub type readwrite_t = fn(i32, &mut [u8], libc::off_t, i32) -> i32;
 
 // =====================================================================
@@ -131,7 +128,6 @@ pub type readwrite_t = fn(i32, &mut [u8], libc::off_t, i32) -> i32;
 /// };
 /// ```
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zftp.c
 pub struct zftpcmd {
     pub nam: &'static str,                                               // c:129
     pub fun: fn(&str, &[&str], i32) -> i32,                              // c:130
@@ -142,7 +138,6 @@ pub struct zftpcmd {
 
 /// Port of `typedef struct zftpcmd *Zftpcmd` from `Src/Modules/zftp.c:151`.
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zftp.c
 pub type Zftpcmd = Box<zftpcmd>;
 
 // =====================================================================
@@ -291,7 +286,6 @@ pub static zfprefs: std::sync::atomic::AtomicI32 =
 /// `Src/Modules/zftp.c`.
 #[allow(non_snake_case)]
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zftp.c
 pub fn ZFST_TYPE(x: i32) -> i32 { x & ZFST_TMSK }
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
@@ -301,7 +295,6 @@ pub fn ZFST_TYPE(x: i32) -> i32 { x & ZFST_TMSK }
 /// `Src/Modules/zftp.c`.
 #[allow(non_snake_case)]
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zftp.c
 pub fn ZFST_MODE(x: i32) -> i32 { x & ZFST_MMSK }
 
 /// Port of `struct zftp_session` from `Src/Modules/zftp.c:299`.
@@ -361,7 +354,6 @@ pub struct zftp_session {
 /// `Src/Modules/zftp.c:50`. Pointer-style typedef alias used by every
 /// `zftp_*` callsite that takes a session arg.
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zftp.c
 pub type Zftp_session = Box<zftp_session>;
 
 impl zftp_session {
@@ -958,7 +950,6 @@ pub fn zfopendata(name: &str) -> (i32, bool) {                                  
 /// `zftp_session()` (line 2889) drives the switch,
 /// `zftp_rmsession()` (line 2915) the removal.
 #[derive(Debug, Default)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zftp.c
 pub struct Zftp {
     sessions: HashMap<String, zftp_session>,
     current: Option<String>,
@@ -4060,7 +4051,6 @@ pub fn zftp_cleanup() -> i32 {                                              // c
 /// through this so subcommand dispatch matches C behaviour.
 static ZFTP_STATE_INNER: std::sync::OnceLock<std::sync::Mutex<Zftp>> = std::sync::OnceLock::new();
 
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zftp.c
 pub struct ZftpStateAccessor;
 impl ZftpStateAccessor {
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT

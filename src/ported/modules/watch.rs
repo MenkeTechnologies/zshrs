@@ -28,7 +28,6 @@ pub const DEFAULT_WATCHFMT_NOHOST: &str = "%n has %a %l.";
 /// (Linux/macOS), `libc::utmp` otherwise. The C source uses this
 /// alias name everywhere so the Rust port keeps it.
 #[cfg(unix)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/watch.c
 pub type WATCH_STRUCT_UTMP = libc::utmpx;
 
 // WARNING: NOT IN WATCH.C — Rust-only safe-projection adapter for
@@ -45,7 +44,6 @@ pub type WATCH_STRUCT_UTMP = libc::utmpx;
 // Field correspondence: user↔ut_user, line↔ut_line, host↔ut_host,
 // time↔ut_tv.tv_sec, pid↔ut_pid, session_type↔ut_type.
 #[derive(Debug, Clone)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/watch.c
 pub struct UtmpEntry {
     pub user: String,
     pub line: String,
@@ -63,7 +61,6 @@ pub struct UtmpEntry {
 // variant maps 1:1 to a libc::* constant. Remove once UtmpEntry is
 // dissolved and ut_type comparisons inline against libc::USER_PROCESS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/watch.c
 pub enum SessionType {
     UserProcess,    // libc::USER_PROCESS
     DeadProcess,    // libc::DEAD_PROCESS

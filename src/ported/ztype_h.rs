@@ -82,7 +82,6 @@ pub const ZTF_BANGCHAR: u32 = 0x0008;                                    // c:72
 /// type-bits for byte `x` and mask with `bits`. Returns true iff any
 /// of the requested bits are set.
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in ztype_h.c
 pub fn zistype(x: u8, bits: u32) -> bool {                               // c:47
     (TYPTAB.lock().unwrap()[x as usize] & bits) != 0
 }

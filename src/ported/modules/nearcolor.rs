@@ -35,7 +35,6 @@ use crate::ported::zsh_h::{color_rgb, hookdef, module};
 /// };
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/nearcolor.c
 pub struct cielab {                                                  // c:35
     pub L: f64,                                                      // c:36
     pub a: f64,                                                      // c:36
@@ -43,7 +42,6 @@ pub struct cielab {                                                  // c:35
 }
 
 /// Port of `typedef struct cielab *Cielab;` from `Src/Modules/nearcolor.c:38`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/nearcolor.c
 pub type Cielab = Box<cielab>;                                       // c:38
 
 // =====================================================================
