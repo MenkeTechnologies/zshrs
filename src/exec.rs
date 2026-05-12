@@ -1002,7 +1002,7 @@ impl ShellExecutor {
             crate::ported::params::histcharsgetfn());                                       // c:params.c:5064
 
         // c:Src/params.c:858-860 standard non-special param defaults.
-        // The full createparamtable() body installs SpecialParamDef
+        // The full createparamtable() body installs special_paramdef
         // entries (LINENO/PPID/EUID/etc) as PM_READONLY which would
         // block subsequent BUILTIN_SET_LINENO writes; the readonly-
         // special bypass at setsparam isn't ported yet. Inline these
@@ -4551,7 +4551,7 @@ impl crate::ported::exec::ShellExecutor {
                             None
                         };
                         match result {
-                            Some(GetargOut::Value(v)) => v.to_str(),
+                            Some(getarg_out::Value(v)) => v.to_str(),
                             _ => "0".to_string(),
                         }
                     } else if let Some(assoc) = self.assoc(&name) {

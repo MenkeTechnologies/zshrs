@@ -154,11 +154,15 @@ pub const MAX_SORTS: usize = 12;                                             // 
 // Alternative set of qualifiers to match                                   // c:140
 // Function to call to test match                                           // c:141
 #[derive(Debug, Clone)]
-/// One glob qualifier.
-/// Port of the `Qualifier` enum in Src/glob.c — drives the
-/// per-match filter inside `scanner()` (line 500). Each variant
-/// matches one of the C source's `q*` test functions.
-pub enum Qualifier {
+/// One glob qualifier — Rust-extension sum type. C uses a linked
+/// list of `struct qual` (`Src/zsh.h:140-152`) with function-pointer
+/// `func` per node; each variant here maps to one of C's `q*` test
+/// fns (`qisreg`, `qisdir`, `qowner`, `qtime`, ...) at
+/// `Src/glob.c:1080-1340`. The full `struct qual` port + per-test fn
+/// dispatch lives in a later phase; this enum keeps the parsed-form
+/// the per-match filter inside `scanner()` (line 500) needs.
+#[allow(non_camel_case_types)]
+pub enum qualifier {
     /// File type qualifiers
     IsRegular,
     IsDirectory,
@@ -344,9 +348,10 @@ pub fn gmatchcmp(                                                            // 
 /// Mirrors the `struct qual *` linked list `parsepat()`
 /// (Src/glob.c:791) builds — every `(qual)` after a glob pattern
 /// adds to it.
-pub struct QualifierSet {                                                   // c:138
-    pub qualifiers: Vec<Qualifier>,
-    pub alternatives: Vec<Vec<Qualifier>>,
+#[allow(non_camel_case_types)]
+pub struct qualifier_set {                                                   // c:138
+    pub qualifiers: Vec<qualifier>,
+    pub alternatives: Vec<Vec<qualifier>>,
     pub negated: bool,
     pub follow_links: bool,
     /// Packed sort-spec flags, one per `o`/`O` qualifier in the pattern.
@@ -402,7 +407,7 @@ pub struct complist {                                                        // 
 #[allow(non_camel_case_types)]
 pub struct globdata {                                                       // c:168
     pub matches: Vec<gmatch>,
-    pub qualifiers: Option<QualifierSet>,
+    pub qualifiers: Option<qualifier_set>,
     pub pathbuf: String,                                                     // c:170 gd_pathbuf
     pub pathpos: usize,                                                      // c:169 gd_pathpos
     pub matchct: i32,                                                        // c:173 gd_matchct
@@ -544,7 +549,7 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {   // 
 /// **RUST-ONLY** — C glob.c handles qualifier parsing inline in
 /// `parsepat` (c:791) as it builds the Complist. Move to that
 /// shape when porting parsepat for real.
-fn parse_qualifiers(pattern: &str) -> (String, Option<QualifierSet>) {       // RUST-ONLY
+fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {       // RUST-ONLY
         if !pattern.ends_with(')') {
             return (pattern.to_string(), None);
         }
@@ -593,10 +598,10 @@ fn parse_qualifiers(pattern: &str) -> (String, Option<QualifierSet>) {       // 
         (pattern[..start].to_string(), Some(qs))
 }
 
-/// Parse the body of a `(...)` qualifier block into a QualifierSet.
+/// Parse the body of a `(...)` qualifier block into a qualifier_set.
 /// **RUST-ONLY** — see header on `parse_qualifiers`.
-fn parse_qualifier_string(s: &str) -> QualifierSet {                         // RUST-ONLY
-        let mut qs = QualifierSet::default();
+fn parse_qualifier_string(s: &str) -> qualifier_set {                         // RUST-ONLY
+        let mut qs = qualifier_set::default();
         let mut chars = s.chars().peekable();
         let mut negated = false;
         let mut follow = false;
@@ -620,51 +625,51 @@ fn parse_qualifier_string(s: &str) -> QualifierSet {                         // 
                     break;
                 }
                 // File type qualifiers
-                '/' => qs.qualifiers.push(Qualifier::IsDirectory),
-                '.' => qs.qualifiers.push(Qualifier::IsRegular),
-                '@' => qs.qualifiers.push(Qualifier::IsSymlink),
-                '=' => qs.qualifiers.push(Qualifier::IsSocket),
-                'p' => qs.qualifiers.push(Qualifier::IsFifo),
+                '/' => qs.qualifiers.push(qualifier::IsDirectory),
+                '.' => qs.qualifiers.push(qualifier::IsRegular),
+                '@' => qs.qualifiers.push(qualifier::IsSymlink),
+                '=' => qs.qualifiers.push(qualifier::IsSocket),
+                'p' => qs.qualifiers.push(qualifier::IsFifo),
                 '%' => match chars.peek() {
                     Some('b') => {
                         chars.next();
-                        qs.qualifiers.push(Qualifier::IsBlockDev);
+                        qs.qualifiers.push(qualifier::IsBlockDev);
                     }
                     Some('c') => {
                         chars.next();
-                        qs.qualifiers.push(Qualifier::IsCharDev);
+                        qs.qualifiers.push(qualifier::IsCharDev);
                     }
-                    _ => qs.qualifiers.push(Qualifier::IsDevice),
+                    _ => qs.qualifiers.push(qualifier::IsDevice),
                 },
-                '*' => qs.qualifiers.push(Qualifier::IsExecutable),
+                '*' => qs.qualifiers.push(qualifier::IsExecutable),
                 // Permission qualifiers
-                'r' => qs.qualifiers.push(Qualifier::Readable),
-                'w' => qs.qualifiers.push(Qualifier::Writable),
-                'x' => qs.qualifiers.push(Qualifier::Executable),
-                'R' => qs.qualifiers.push(Qualifier::WorldReadable),
-                'W' => qs.qualifiers.push(Qualifier::WorldWritable),
-                'X' => qs.qualifiers.push(Qualifier::WorldExecutable),
-                'A' => qs.qualifiers.push(Qualifier::GroupReadable),
-                'I' => qs.qualifiers.push(Qualifier::GroupWritable),
-                'E' => qs.qualifiers.push(Qualifier::GroupExecutable),
-                's' => qs.qualifiers.push(Qualifier::Setuid),
-                'S' => qs.qualifiers.push(Qualifier::Setgid),
-                't' => qs.qualifiers.push(Qualifier::Sticky),
+                'r' => qs.qualifiers.push(qualifier::Readable),
+                'w' => qs.qualifiers.push(qualifier::Writable),
+                'x' => qs.qualifiers.push(qualifier::Executable),
+                'R' => qs.qualifiers.push(qualifier::WorldReadable),
+                'W' => qs.qualifiers.push(qualifier::WorldWritable),
+                'X' => qs.qualifiers.push(qualifier::WorldExecutable),
+                'A' => qs.qualifiers.push(qualifier::GroupReadable),
+                'I' => qs.qualifiers.push(qualifier::GroupWritable),
+                'E' => qs.qualifiers.push(qualifier::GroupExecutable),
+                's' => qs.qualifiers.push(qualifier::Setuid),
+                'S' => qs.qualifiers.push(qualifier::Setgid),
+                't' => qs.qualifiers.push(qualifier::Sticky),
                 // Ownership
-                'U' => qs.qualifiers.push(Qualifier::OwnedByEuid),
-                'G' => qs.qualifiers.push(Qualifier::OwnedByEgid),
+                'U' => qs.qualifiers.push(qualifier::OwnedByEuid),
+                'G' => qs.qualifiers.push(qualifier::OwnedByEgid),
                 'u' => {
                     let uid = parse_uid_gid(&mut chars);
-                    qs.qualifiers.push(Qualifier::OwnedByUid(uid));
+                    qs.qualifiers.push(qualifier::OwnedByUid(uid));
                 }
                 'g' => {
                     let gid = parse_uid_gid(&mut chars);
-                    qs.qualifiers.push(Qualifier::OwnedByGid(gid));
+                    qs.qualifiers.push(qualifier::OwnedByGid(gid));
                 }
                 // Size
                 'L' => {
                     let (unit, op, val) = parse_size_spec(&mut chars);
-                    qs.qualifiers.push(Qualifier::Size {
+                    qs.qualifiers.push(qualifier::Size {
                         value: val,
                         unit,
                         op,
@@ -673,12 +678,12 @@ fn parse_qualifier_string(s: &str) -> QualifierSet {                         // 
                 // Link count
                 'l' => {
                     let (op, val) = parse_range_spec(&mut chars);
-                    qs.qualifiers.push(Qualifier::Links { value: val, op });
+                    qs.qualifiers.push(qualifier::Links { value: val, op });
                 }
                 // Times
                 'a' => {
                     let (unit, op, val) = schedgetfn(&mut chars);
-                    qs.qualifiers.push(Qualifier::Atime {
+                    qs.qualifiers.push(qualifier::Atime {
                         value: val as i64,
                         unit,
                         op,
@@ -686,7 +691,7 @@ fn parse_qualifier_string(s: &str) -> QualifierSet {                         // 
                 }
                 'm' => {
                     let (unit, op, val) = schedgetfn(&mut chars);
-                    qs.qualifiers.push(Qualifier::Mtime {
+                    qs.qualifiers.push(qualifier::Mtime {
                         value: val as i64,
                         unit,
                         op,
@@ -694,7 +699,7 @@ fn parse_qualifier_string(s: &str) -> QualifierSet {                         // 
                 }
                 'c' => {
                     let (unit, op, val) = schedgetfn(&mut chars);
-                    qs.qualifiers.push(Qualifier::Ctime {
+                    qs.qualifiers.push(qualifier::Ctime {
                         value: val as i64,
                         unit,
                         op,
@@ -738,7 +743,7 @@ fn parse_qualifier_string(s: &str) -> QualifierSet {                         // 
                 // time to mark dirs / list types like coreutils ls -F.
                 'M' => qs.mark_dirs = !negated,
                 'T' => qs.list_types = !negated,
-                'F' => qs.qualifiers.push(Qualifier::NonEmptyDir),
+                'F' => qs.qualifiers.push(qualifier::NonEmptyDir),
                 // Subscript
                 '[' => {
                     let (first, last) = parse_subscript(&mut chars);
@@ -1226,7 +1231,7 @@ fn check_qualifiers(state: &globdata, path: &Path) -> bool {                 // 
 }
 
 /// AND-chain of qualifiers — all must match. **RUST-ONLY**.
-fn check_qualifier_list(quals: &[Qualifier], path: &Path, meta: &Metadata) -> bool { // RUST-ONLY
+fn check_qualifier_list(quals: &[qualifier], path: &Path, meta: &Metadata) -> bool { // RUST-ONLY
         for q in quals {
             if !check_single_qualifier(q, path, meta) {
                 return false;
@@ -1237,40 +1242,40 @@ fn check_qualifier_list(quals: &[Qualifier], path: &Path, meta: &Metadata) -> bo
 
 /// One qualifier check against (path, meta). **RUST-ONLY** — mirrors
 /// the inline qualifier dispatch C does in `insert()` (glob.c:381+).
-fn check_single_qualifier(qual: &Qualifier, path: &Path, meta: &Metadata) -> bool { // RUST-ONLY
+fn check_single_qualifier(qual: &qualifier, path: &Path, meta: &Metadata) -> bool { // RUST-ONLY
         let mode = meta.mode();
         let ft = meta.file_type();
 
         match qual {
-            Qualifier::IsRegular => ft.is_file(),
-            Qualifier::IsDirectory => ft.is_dir(),
-            Qualifier::IsSymlink => ft.is_symlink(),
-            Qualifier::IsSocket => mode & libc::S_IFMT as u32 == libc::S_IFSOCK as u32,
-            Qualifier::IsFifo => mode & libc::S_IFMT as u32 == libc::S_IFIFO as u32,
-            Qualifier::IsBlockDev => mode & libc::S_IFMT as u32 == libc::S_IFBLK as u32,
-            Qualifier::IsCharDev => mode & libc::S_IFMT as u32 == libc::S_IFCHR as u32,
-            Qualifier::IsDevice => {
+            qualifier::IsRegular => ft.is_file(),
+            qualifier::IsDirectory => ft.is_dir(),
+            qualifier::IsSymlink => ft.is_symlink(),
+            qualifier::IsSocket => mode & libc::S_IFMT as u32 == libc::S_IFSOCK as u32,
+            qualifier::IsFifo => mode & libc::S_IFMT as u32 == libc::S_IFIFO as u32,
+            qualifier::IsBlockDev => mode & libc::S_IFMT as u32 == libc::S_IFBLK as u32,
+            qualifier::IsCharDev => mode & libc::S_IFMT as u32 == libc::S_IFCHR as u32,
+            qualifier::IsDevice => {
                 let fmt = mode & libc::S_IFMT as u32;
                 fmt == libc::S_IFBLK as u32 || fmt == libc::S_IFCHR as u32
             }
-            Qualifier::IsExecutable => ft.is_file() && (mode & 0o111 != 0),
-            Qualifier::Readable => mode & 0o400 != 0,
-            Qualifier::Writable => mode & 0o200 != 0,
-            Qualifier::Executable => mode & 0o100 != 0,
-            Qualifier::WorldReadable => mode & 0o004 != 0,
-            Qualifier::WorldWritable => mode & 0o002 != 0,
-            Qualifier::WorldExecutable => mode & 0o001 != 0,
-            Qualifier::GroupReadable => mode & 0o040 != 0,
-            Qualifier::GroupWritable => mode & 0o020 != 0,
-            Qualifier::GroupExecutable => mode & 0o010 != 0,
-            Qualifier::Setuid => mode & libc::S_ISUID as u32 != 0,
-            Qualifier::Setgid => mode & libc::S_ISGID as u32 != 0,
-            Qualifier::Sticky => mode & libc::S_ISVTX as u32 != 0,
-            Qualifier::OwnedByEuid => meta.uid() == unsafe { libc::geteuid() },
-            Qualifier::OwnedByEgid => meta.gid() == unsafe { libc::getegid() },
-            Qualifier::OwnedByUid(uid) => meta.uid() == *uid,
-            Qualifier::OwnedByGid(gid) => meta.gid() == *gid,
-            Qualifier::Size { value, unit, op } => {
+            qualifier::IsExecutable => ft.is_file() && (mode & 0o111 != 0),
+            qualifier::Readable => mode & 0o400 != 0,
+            qualifier::Writable => mode & 0o200 != 0,
+            qualifier::Executable => mode & 0o100 != 0,
+            qualifier::WorldReadable => mode & 0o004 != 0,
+            qualifier::WorldWritable => mode & 0o002 != 0,
+            qualifier::WorldExecutable => mode & 0o001 != 0,
+            qualifier::GroupReadable => mode & 0o040 != 0,
+            qualifier::GroupWritable => mode & 0o020 != 0,
+            qualifier::GroupExecutable => mode & 0o010 != 0,
+            qualifier::Setuid => mode & libc::S_ISUID as u32 != 0,
+            qualifier::Setgid => mode & libc::S_ISGID as u32 != 0,
+            qualifier::Sticky => mode & libc::S_ISVTX as u32 != 0,
+            qualifier::OwnedByEuid => meta.uid() == unsafe { libc::geteuid() },
+            qualifier::OwnedByEgid => meta.gid() == unsafe { libc::getegid() },
+            qualifier::OwnedByUid(uid) => meta.uid() == *uid,
+            qualifier::OwnedByGid(gid) => meta.gid() == *gid,
+            qualifier::Size { value, unit, op } => {
                 // Inline cmp + scale — mirrors glob.c qualsize at c:1054.
                 let cmp = |a: u64, b: u64| match *op {
                     '<' => a <  b,
@@ -1289,7 +1294,7 @@ fn check_single_qualifier(qual: &Qualifier, path: &Path, meta: &Metadata) -> boo
                 };
                 cmp(scaled, *value)
             }
-            Qualifier::Links { value, op } => {
+            qualifier::Links { value, op } => {
                 let cmp = |a: u64, b: u64| match *op {
                     '<' => a <  b,
                     '>' => a >  b,
@@ -1297,7 +1302,7 @@ fn check_single_qualifier(qual: &Qualifier, path: &Path, meta: &Metadata) -> boo
                 };
                 cmp(meta.nlink(), *value)
             }
-            Qualifier::Atime { value, unit, op } => {
+            qualifier::Atime { value, unit, op } => {
                 // Inline time-unit scaling — Src/glob.c:872 qualtime.
                 let cmp = |a: i64, b: i64| match *op {
                     '<' => a <  b,
@@ -1318,7 +1323,7 @@ fn check_single_qualifier(qual: &Qualifier, path: &Path, meta: &Metadata) -> boo
                 };
                 cmp(scaled, *value)
             }
-            Qualifier::Mtime { value, unit, op } => {
+            qualifier::Mtime { value, unit, op } => {
                 let cmp = |a: i64, b: i64| match *op {
                     '<' => a <  b,
                     '>' => a >  b,
@@ -1338,7 +1343,7 @@ fn check_single_qualifier(qual: &Qualifier, path: &Path, meta: &Metadata) -> boo
                 };
                 cmp(scaled, *value)
             }
-            Qualifier::Ctime { value, unit, op } => {
+            qualifier::Ctime { value, unit, op } => {
                 let cmp = |a: i64, b: i64| match *op {
                     '<' => a <  b,
                     '>' => a >  b,
@@ -1358,12 +1363,12 @@ fn check_single_qualifier(qual: &Qualifier, path: &Path, meta: &Metadata) -> boo
                 };
                 cmp(scaled, *value)
             }
-            Qualifier::Mode { yes, no } => {
+            qualifier::Mode { yes, no } => {
                 let m = mode & 0o7777;
                 (m & yes) == *yes && (m & no) == 0
             }
-            Qualifier::Device(dev) => meta.dev() == *dev,
-            Qualifier::NonEmptyDir => {
+            qualifier::Device(dev) => meta.dev() == *dev,
+            qualifier::NonEmptyDir => {
                 if !ft.is_dir() {
                     return false;
                 }
@@ -1380,7 +1385,7 @@ fn check_single_qualifier(qual: &Qualifier, path: &Path, meta: &Metadata) -> boo
                     false
                 }
             }
-            Qualifier::Eval(_) => true, // Would need shell integration
+            qualifier::Eval(_) => true, // Would need shell integration
         }
 }
 
