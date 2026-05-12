@@ -2655,14 +2655,11 @@ pub fn bin_shift(name: &str, argv: &[String],                                // 
         } else {
             pp.drain(..num as usize);                                        // c:5646-5650
         }
-        // Mirror to exec.positional_params so `$1`/`$@`/`$#` readers
-        // in fusevm see the shift. Without this, `set -- a b c; shift;
-        // echo $1` still printed `a`.
-        let snapshot = pp.clone();
+        // PPARAMS is the single source of truth. fusevm-side reads
+        // route through exec.pparams() which reads PPARAMS, so the
+        // shift is immediately visible — no exec.positional_params
+        // mirror needed.
         drop(pp);
-        let _ = crate::fusevm_bridge::try_with_executor(|exec| {
-            exec.positional_params = snapshot;
-        });
     }
     crate::ported::mem::unqueue_signals();                                   // c:5658
     ret                                                                      // c:5659
@@ -6134,16 +6131,11 @@ pub fn bin_set(nam: &str, args: &[String],                                   // 
         crate::ported::params::setsparam(&aname, &new_arr.join(":"));
     } else {
         // c:711-712 — `freearray(pparams); pparams = zarrdup(args);`
+        // PPARAMS is the single source of truth; fusevm reads via
+        // `exec.pparams()`.
         if let Ok(mut pp) = PPARAMS.lock() {
-            *pp = sorted.clone();                                            // c:712
+            *pp = sorted;                                                    // c:712
         }
-        // Mirror to fusevm-side `exec.positional_params` so the VM's
-        // `$1`/`$@`/`$*` lookup sees the new values. Two-store
-        // architecture: PPARAMS is the C-port canonical store,
-        // `exec.positional_params` is the fusevm cache.
-        crate::fusevm_bridge::with_executor(|exec| {
-            exec.positional_params = sorted;
-        });
     }
     crate::ported::mem::unqueue_signals();                                   // c:714
     0                                                                        // c:715

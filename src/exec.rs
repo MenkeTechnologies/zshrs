@@ -200,15 +200,16 @@ pub(crate) fn slice_array_zero_based(arr: &[String], offset: i64, length: i64) -
 /// Internally `positional_params[0]` is `$1`, so we prepend `$0`
 /// then slice 0-based.
 pub(crate) fn slice_positionals(exec: &ShellExecutor, offset: i64, length: i64) -> Vec<String> {
-    let mut all: Vec<String> = Vec::with_capacity(exec.positional_params.len() + 1);
+    let pp = exec.pparams();
+    let mut all: Vec<String> = Vec::with_capacity(pp.len() + 1);
     all.push(
         exec.variables
             .get("0")
             .cloned()
             .unwrap_or_else(|| std::env::args().next().unwrap_or_default()),
     );
-    for p in &exec.positional_params {
-        all.push(p.clone());
+    for p in pp {
+        all.push(p);
     }
     slice_array_zero_based(&all, offset, length)
 }
@@ -627,6 +628,28 @@ impl ShellExecutor {
     pub(crate) fn set_scalar(&mut self, name: String, value: String) {
         crate::ported::params::setsparam(&name, &value);                     // c:params.c:3350
         self.variables.insert(name, value);
+    }
+
+    /// Read positional parameters from the canonical `PPARAMS`
+    /// Mutex<Vec<String>> (Src/init.c:pparams). The `exec.
+    /// positional_params` field is the legacy mirror; reads should
+    /// prefer this accessor so canonical writes (bin_shift, bin_set
+    /// via paramtab) are visible. Returns an owned clone.
+    pub fn pparams(&self) -> Vec<String> {
+        crate::ported::builtin::PPARAMS
+            .lock()
+            .map(|p| p.clone())
+            .unwrap_or_else(|_| self.positional_params.clone())
+    }
+
+    /// Write positional parameters through both stores. Canonical
+    /// `PPARAMS` is the source of truth; `exec.positional_params`
+    /// mirror stays for the field reads that haven't migrated yet.
+    pub fn set_pparams(&mut self, params: Vec<String>) {
+        if let Ok(mut p) = crate::ported::builtin::PPARAMS.lock() {
+            *p = params.clone();
+        }
+        self.positional_params = params;
     }
 
     /// Read PM_* type flags from the paramtab Param entry. Used by
@@ -3906,11 +3929,11 @@ impl crate::ported::exec::ShellExecutor {
                     .get("IFS")
                     .and_then(|s| s.chars().next())
                     .unwrap_or(' ');
-                self.positional_params.join(&sep.to_string())
+                self.pparams().join(&sep.to_string())
             }
-            "#" | "#@" | "#*" => self.positional_params.len().to_string(),
+            "#" | "#@" | "#*" => self.pparams().len().to_string(),
             // zsh alias: $ARGC also equals $#.
-            "ARGC" => self.positional_params.len().to_string(),
+            "ARGC" => self.pparams().len().to_string(),
             "?" | "status" => self.last_status.to_string(),
             "!" => self
                 .variables
@@ -4092,7 +4115,7 @@ impl crate::ported::exec::ShellExecutor {
                     Err(_) => "0.000000".to_string(),
                 }
             }
-            "argv" => self.positional_params.join(" "),
+            "argv" => self.pparams().join(" "),
             "HISTCMD" => {
                 // zsh: HISTCMD = current history-event number. With -f
                 // (no rc loading) and history-tracking off, zsh shows
@@ -4172,7 +4195,7 @@ impl crate::ported::exec::ShellExecutor {
                 if idx == 0 {
                     env::args().next().unwrap_or_default()
                 } else {
-                    self.positional_params
+                    self.pparams()
                         .get(idx - 1)
                         .cloned()
                         .unwrap_or_default()
@@ -4379,10 +4402,11 @@ impl crate::ported::exec::ShellExecutor {
                     .unwrap_or_else(|| "0".to_string())
             } else if name == "@" || name == "*" {
                 if let Ok(idx) = key_str.trim().parse::<i64>() {
-                    let len = self.positional_params.len() as i64;
+                    let pp = self.pparams();
+                    let len = pp.len() as i64;
                     let pos = if idx < 0 { len + idx } else { idx - 1 };
-                    if pos >= 0 && (pos as usize) < self.positional_params.len() {
-                        self.positional_params[pos as usize].clone()
+                    if pos >= 0 && (pos as usize) < pp.len() {
+                        pp[pos as usize].clone()
                     } else {
                         "0".to_string()
                     }
