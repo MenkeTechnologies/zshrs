@@ -107,6 +107,7 @@ pub use ported::parse;
 #[path = "extensions/zle_history.rs"] pub mod zle_history;
 #[path = "extensions/zle_refresh_state.rs"] pub mod zle_refresh_state;
 #[path = "extensions/heredoc_ast.rs"] pub mod heredoc_ast;
+#[path = "extensions/zsh_ast.rs"] pub mod zsh_ast;
 #[path = "extensions/log.rs"] pub mod log;
 // Backwards-compat flat re-exports — call sites that still write
 // `crate::datetime::…`, `crate::stat::…`, etc. resolve to the
