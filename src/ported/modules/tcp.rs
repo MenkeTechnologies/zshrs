@@ -277,6 +277,7 @@ pub fn tcp_cleanup() {                                                   // c:28
 /// }
 /// return 0;
 /// ```
+/// Port of `tcp_close` from `Src/Modules/tcp.c:295`.
 pub fn tcp_close(sess: TcpSessionHandle) -> i32 {                        // c:295
     if let Some(idx) = sess {                                            // c:298
         let fd = sess_get(idx, |s| s.fd);

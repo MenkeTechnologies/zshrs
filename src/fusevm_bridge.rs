@@ -7718,8 +7718,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `pat_subme` arrays; the Rust port plumbs through
         // `regex::Captures` and writes `state.arrays["match"]`
         // before each replacement-string expansion.
+        // Inline glob-flag pre-parse — direct call to patgetglobflags
+        // + bit-mask extraction (matches C pattern.c:1066+ inline).
         let (pattern, case_insensitive_repl, _l_flag_repl, _approx_repl, backref_mode) =
-            crate::ported::pattern::PatternFlags::parse(&pattern);
+            if let Some((bits, _assert, consumed)) =
+                crate::ported::pattern::patgetglobflags(&pattern)
+            {
+                let ci = (bits & crate::ported::zsh_h::GF_IGNCASE) != 0;
+                let l = (bits & crate::ported::zsh_h::GF_LCMATCHUC) != 0;
+                let errs = bits & 0xff;
+                let approx = if errs != 0 { Some(errs as u32) } else { None };
+                let br = (bits & crate::ported::zsh_h::GF_BACKREF) != 0;
+                (pattern[consumed..].to_string(), ci, l, approx, br)
+            } else {
+                (pattern.clone(), false, false, None, false)
+            };
         // zsh patterns in ${var/pat/repl} support `?`, `*`, `[...]`,
         // anchored `#`/`%` (handled via op codes 2/3). Compile to a
         // regex for the actual matching; falls back to plain string

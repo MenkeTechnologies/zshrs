@@ -21,7 +21,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::ported::exec::{
     self,
 };
-use crate::ported::pattern::PatternFlags;
 use crate::ported::zsh_h::{
     isset,
     BAREGLOBQUAL, BRACECCL, CASEGLOB, EXTENDEDGLOB, GLOBDOTS,
@@ -241,7 +240,7 @@ pub enum Qualifier {
 /// One glob match result.
 /// Port of `struct gmatch` from Src/glob.c — `gmatchcmp()`
 /// (line 936) sorts arrays of these for the `o`/`O` qualifier.
-pub struct GlobMatch {
+pub struct gmatch {
     pub name: String,
     pub path: PathBuf,
     pub size: u64,
@@ -282,10 +281,10 @@ pub struct GlobMatch {
 ///                       (GS__SIZE / GS__ATIME / …)
 ///   GS_DESC bit       — reverse direction (`O` qualifier instead of `o`)
 pub fn gmatchcmp(                                                            // c:936
-    a: &GlobMatch,
-    b: &GlobMatch,
-    specs: &[i32],
-    numeric_sort: bool,
+                                                                             a: &gmatch,
+                                                                             b: &gmatch,
+                                                                             specs: &[i32],
+                                                                             numeric_sort: bool,
 ) -> Ordering {
     for &tp in specs {                                                       // c:943
         let key = tp & !GS_DESC;                                             // c:944 s->tp & ~GS_DESC
@@ -400,7 +399,7 @@ pub struct complist {                                                        // 
 /// 1:1 correspondence to `struct globdata` is otherwise faithful.
 // struct to easily save/restore current state                              // c:166
 pub struct GlobData {                                                       // c:168
-    pub matches: Vec<GlobMatch>,
+    pub matches: Vec<gmatch>,
     pub qualifiers: Option<QualifierSet>,
     pub pathbuf: String,                                                     // c:170 gd_pathbuf
     pub pathpos: usize,                                                      // c:169 gd_pathpos
@@ -1036,8 +1035,8 @@ fn scan_pattern(state: &mut GlobData, base: &str, pattern: &str, rest: &[Pattern
         let name = entry.file_name().to_string_lossy().to_string();
 
         // Skip hidden files unless pattern starts with `.`. The bash
-        // alias `dotglob` resolves to `globdots` in zsh (options.rs
-        // OPTION_ALIASES); we read only the canonical name.
+        // alias `dotglob` resolves to `globdots` in zsh (per
+        // OPT_ALIAS entry at options.c:270); we read only the canonical name.
         let no_glob_dots = !isset(GLOBDOTS);
         if no_glob_dots && name.starts_with('.') && !pattern.starts_with('.') {
             continue;
@@ -1070,7 +1069,7 @@ fn scan_pattern(state: &mut GlobData, base: &str, pattern: &str, rest: &[Pattern
                                 (meta.size(), meta.atime(), meta.mtime(),
                                  meta.ctime(), meta.nlink())
                             };
-                        state.matches.push(GlobMatch {
+                        state.matches.push(gmatch {
                             name,
                             path: path.to_path_buf(),
                             size: meta.size(),
@@ -1162,7 +1161,7 @@ fn scan_recursive(                                                           // 
             let name = entry.file_name().to_string_lossy().to_string();
 
             // Skip hidden files (bash `dotglob` aliases to zsh
-            // `globdots` per options.rs OPTION_ALIASES).
+            // `globdots` per OPT_ALIAS entry at options.c:270).
             if !isset(GLOBDOTS) && name.starts_with('.') {
                 continue;
             }
@@ -2748,6 +2747,7 @@ pub struct MatchData {
 }
 
 /// Get match return value (from glob.c get_match_ret lines 2338-2420)
+/// Port of `get_match_ret` from `Src/glob.c:2550`.
 pub fn get_match_ret(data: &MatchData, start: usize, end: usize) -> String {
     if start >= end || start >= data.str.len() {
         return String::new();
@@ -2758,6 +2758,7 @@ pub fn get_match_ret(data: &MatchData, start: usize, end: usize) -> String {
 }
 
 /// Compile pattern and get match info (from glob.c compgetmatch lines 2430-2510)
+/// Port of `compgetmatch` from `Src/glob.c:2650`.
 pub fn compgetmatch(pat: &str) -> Option<(String, MatchFlags)> {
     let mut flags = MatchFlags::default();
     let mut pattern = pat.to_string();
@@ -2789,6 +2790,7 @@ pub fn compgetmatch(pat: &str) -> Option<(String, MatchFlags)> {
 ///
 /// This implements ${var#pat}, ${var##pat}, ${var%pat}, ${var%%pat},
 /// ${var/pat/repl}, ${var//pat/repl}
+/// Port of `getmatch` from `Src/glob.c:2710`.
 pub fn getmatch(s: &str, pat: &str, flags: MatchFlags, n: i32, replstr: Option<&str>) -> String {
     let chars: Vec<char> = s.chars().collect();
     let len = chars.len();
@@ -2874,6 +2876,7 @@ pub fn getmatch(s: &str, pat: &str, flags: MatchFlags, n: i32, replstr: Option<&
 }
 
 /// Get match for array elements (from glob.c getmatcharr lines 2690-2750)
+/// Port of `getmatcharr` from `Src/glob.c:2727`.
 pub fn getmatcharr(
     arr: &[String],
     pat: &str,
@@ -2887,6 +2890,7 @@ pub fn getmatcharr(
 }
 
 /// Get match list for global replacement (from glob.c getmatchlist lines 2760-2850)
+/// Port of `getmatchlist` from `Src/glob.c:2749`.
 pub fn getmatchlist(s: &str, pat: &str) -> Vec<(usize, usize)> {
     let mut matches = Vec::new();
     let chars: Vec<char> = s.chars().collect();
@@ -2911,6 +2915,7 @@ pub fn getmatchlist(s: &str, pat: &str) -> Vec<(usize, usize)> {
 }
 
 /// Set pattern start offset (from glob.c set_pat_start)
+/// Port of `set_pat_start` from `Src/glob.c:2780`.
 pub fn set_pat_start(pattern: &str, offset: usize) -> String {
     if offset == 0 || offset >= pattern.len() {
         return pattern.to_string();
@@ -2919,6 +2924,7 @@ pub fn set_pat_start(pattern: &str, offset: usize) -> String {
 }
 
 /// Set pattern end (from glob.c set_pat_end)
+/// Port of `set_pat_end` from `Src/glob.c:2797`.
 pub fn set_pat_end(pattern: &str, end: usize) -> String {
     if end >= pattern.len() {
         return pattern.to_string();
@@ -2993,6 +2999,7 @@ pub fn tokenize(s: &str) -> Vec<GlobToken> {
 
 /// Tokenize for shell (from glob.c shtokenize lines 3190-3250)
 /// Handles shell-specific quoting
+/// Port of `shtokenize` from `Src/glob.c:3565`.
 pub fn shtokenize(s: &str) -> Vec<GlobToken> {
     let mut tokens = Vec::new();
     let mut chars = s.chars().peekable();
@@ -3042,6 +3049,7 @@ pub fn shtokenize(s: &str) -> Vec<GlobToken> {
 }
 
 /// Tokenize with zsh-specific flags (from glob.c zshtokenize lines 3260-3380)
+/// Port of `zshtokenize` from `Src/glob.c:3575`.
 pub fn zshtokenize(s: &str, extended_glob: bool, sh_glob: bool) -> Vec<GlobToken> {
     let mut tokens = Vec::new();
     let mut chars = s.chars().peekable();
@@ -3077,6 +3085,7 @@ pub fn zshtokenize(s: &str, extended_glob: bool, sh_glob: bool) -> Vec<GlobToken
 }
 
 /// Remove null arguments from token list (from glob.c remnulargs lines 3390-3420)
+/// Port of `remnulargs` from `Src/glob.c:3649`.
 pub fn remnulargs(tokens: &mut Vec<GlobToken>) {
     tokens.retain(|t| {
         if let GlobToken::Literal(c) = t {
@@ -3101,6 +3110,7 @@ pub struct ModeSpec {
 
 /// Parse mode specification like chmod (from glob.c qgetmodespec lines 790-920)
 /// Examples: u+x, go-w, a=r, 755
+/// Port of `qgetmodespec` from `Src/glob.c:844`.
 pub fn qgetmodespec(s: &str) -> Option<(ModeSpec, &str)> {
     let mut chars = s.chars().peekable();
     let mut spec = ModeSpec::default();
@@ -3215,6 +3225,7 @@ pub fn apply_modespec(mode: u32, spec: &ModeSpec) -> u32 {
 // ============================================================================
 
 /// Parse character range in braces like {a..z} (from glob.c bracechardots lines 1780-1850)
+/// Port of `bracechardots` from `Src/glob.c:2222`.
 pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
     let chars: Vec<char> = s.chars().collect();
 
@@ -3312,6 +3323,7 @@ pub fn xpandredir(redir: &Redirect) -> Vec<Redirect> {                       // 
 
 /// Execute a command and capture output for sorting (from glob.c glob_exec_string lines 920-1020)
 /// This is used for the `e` glob qualifier: *(e:'cmd':)
+/// Port of `glob_exec_string` from `Src/glob.c:1085`.
 pub fn glob_exec_string(cmd: &str, filename: &str) -> Option<String> {
     use std::process::Command;
 
@@ -3328,6 +3340,7 @@ pub fn glob_exec_string(cmd: &str, filename: &str) -> Option<String> {
 }
 
 /// Execute a qualifier expression (from glob.c qualsheval full impl)
+/// Port of `qualsheval` from `Src/glob.c:3907`.
 pub fn qualsheval(filename: &str, expr: &str) -> bool {
     use std::process::Command;
 

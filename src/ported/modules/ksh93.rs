@@ -440,6 +440,7 @@ pub fn boot_(m: *const module) -> i32 {
 /// }
 /// return setfeatureenables(m, &module_features, NULL);
 /// ```
+/// Port of `cleanup_` from `Src/Modules/ksh93.c:265`.
 pub fn cleanup_(m: *const module) -> i32 {
     // c:267 — `struct paramdef *p;`
     let mut p: usize;                                                    // c:267 (index over partab)

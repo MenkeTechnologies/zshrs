@@ -256,6 +256,7 @@ pub static private_wraplevel: std::sync::atomic::AtomicI32
 /// Custom printnode hook for private params. Walks `pm->old` chain
 /// to find the visible Param at the current scope before delegating
 /// to the standard `printparamnode`.
+/// Port of `printprivatenode` from `Src/Modules/param_private.c:632`.
 pub fn printprivatenode(pm: *mut crate::ported::zsh_h::param, _printflags: i32) {  // c:632
     // c:635-638 — walk pm->old chain
     let mut cur = pm;
@@ -302,6 +303,7 @@ pub static FAKELEVEL: std::sync::atomic::AtomicI32 =
 ///
 /// Scalar private getter — chains through the saved original `getfn`
 /// when locallevel allows; else returns empty string.
+/// Port of `pps_getfn` from `Src/Modules/param_private.c:287`.
 pub fn pps_getfn(pm: *mut crate::ported::zsh_h::param) -> String {       // c:287
     if pm.is_null() { return String::new(); }
     let pm_level = unsafe { (*pm).level };
@@ -328,6 +330,7 @@ pub fn pps_getfn(pm: *mut crate::ported::zsh_h::param) -> String {       // c:28
 ///         setfn_error(pm);
 /// }
 /// ```
+/// Port of `pps_setfn` from `Src/Modules/param_private.c:300`.
 pub fn pps_setfn(pm: *mut crate::ported::zsh_h::param, x: &str) {        // c:300
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
@@ -356,6 +359,7 @@ pub fn pps_setfn(pm: *mut crate::ported::zsh_h::param, x: &str) {        // c:30
 ///         zfree(c, sizeof(struct gsu_closure));
 /// }
 /// ```
+/// Port of `pps_unsetfn` from `Src/Modules/param_private.c:312`.
 pub fn pps_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:312
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
@@ -781,6 +785,7 @@ pub fn scopeprivate(pm: *mut crate::ported::zsh_h::param, onoff: i32) {  // c:51
 /// every private param `PM_UNSET|PM_READONLY` so the wrapped function
 /// can't see them; on exit, restores their saved state. Returns 0
 /// when the wrapper ran (private_wraplevel < locallevel), 1 otherwise.
+/// Port of `wrap_private` from `Src/Modules/param_private.c:550`.
 pub fn wrap_private(_prog: *const crate::ported::zsh_h::eprog,               // c:550
                     _w: *const crate::ported::zsh_h::funcwrap,
                     _name: *mut libc::c_char) -> i32 {                    // c:550

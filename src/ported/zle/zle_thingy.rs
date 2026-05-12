@@ -138,6 +138,7 @@ pub fn gethashnode2(name: &str) -> Option<Thingy> {                           //
 /// Allocate the global thingytab. In Rust the table is `OnceLock`-
 /// initialized lazily; this entry forces creation eagerly to match
 /// C's "pre-zle init" call site at zle_main.c.
+/// Port of `createthingytab` from `Src/Zle/zle_thingy.c:58`.
 pub fn createthingytab() {                                                   // c:58
     let _ = thingytab();                                                     // c:62 newhashtable
 }
@@ -155,6 +156,7 @@ pub fn createthingytab() {                                                   // 
 /// Walk every non-disabled thingy and unbind it (frees user-
 /// defined widgets but leaves the fixed `thingies[]` entries
 /// alone).
+/// Port of `emptythingytab` from `Src/Zle/zle_thingy.c:78`.
 pub fn emptythingytab() {                                                    // c:78
     // c:91 — `scanhashtable(thingytab, 0, 0, DISABLED, scanemptythingies, 0)`.
     // The DISABLED filter skips already-disabled entries; we mirror
@@ -296,6 +298,7 @@ pub fn unrefthingy(name: &str) {                                             // 
 /// ```
 /// "Resolve thingy" — get-or-create-then-ref. Always returns a
 /// thingy; creates a fresh disabled one if none exists.
+/// Port of `rthingy` from `Src/Zle/zle_thingy.c:156`.
 pub fn rthingy(name: &str) {                                                 // c:156
     {
         let mut tab = thingytab().lock().unwrap();
@@ -363,6 +366,7 @@ pub fn rthingy_nocreate(name: &str) -> bool {                                // 
 /// consumed when TH_IMMORTAL blocks the bind. Samew chains are
 /// implicit in Rust — the `Arc<Widget>` identity links peers.
 /// Returns 0 on success, -1 on TH_IMMORTAL block.
+/// Port of `bindwidget` from `Src/Zle/zle_thingy.c:197`.
 pub fn bindwidget(w: Arc<Widget>, t_name: &str) -> i32 {                     // c:197
     let (immortal, disabled, same) = {
         let tab = thingytab().lock().unwrap();
@@ -421,6 +425,7 @@ pub fn bindwidget(w: Arc<Widget>, t_name: &str) -> i32 {                     // 
 /// detect the "last reference" case (samew == t in C); if so, the
 /// Widget is freed (Arc auto-drops when the Thingy clears it).
 /// `override_` non-zero overrides TH_IMMORTAL.
+/// Port of `unbindwidget` from `Src/Zle/zle_thingy.c:228`.
 pub fn unbindwidget(t_name: &str, override_: i32) -> i32 {                   // c:228
     let (disabled, immortal, w_opt) = {
         let tab = thingytab().lock().unwrap();
@@ -490,6 +495,7 @@ pub fn unbindwidget(t_name: &str, override_: i32) -> i32 {                   // 
 /// In Rust the `Arc<Widget>` auto-drops; this fn exists so the
 /// INUSE/FREE flag handshake matches C exactly. The actual storage
 /// drop happens when the last Arc is released by the caller's scope.
+/// Port of `freewidget` from `Src/Zle/zle_thingy.c:255`.
 pub fn freewidget(w: Arc<Widget>) {                                          // c:255
     // Direct port of `void freewidget(Widget w)` from zle_thingy.c:255:
     // ```c
@@ -544,6 +550,7 @@ pub fn freewidget(w: Arc<Widget>) {                                          // 
 /// `.name` (immortal canonical) and `name` (user-rebindable) in
 /// the thingytab. Refuses if `.name` already taken by another
 /// immortal or if `name` starts with `.`.
+/// Port of `addzlefunction` from `Src/Zle/zle_thingy.c:281`.
 pub fn addzlefunction(                                                       // c:281
     name: &str,
     ifunc: fn(&mut crate::ported::zle::Zle),
@@ -603,6 +610,7 @@ pub fn addzlefunction(                                                       // 
 /// Walk every Thingy bound to `w` and unbind it (override flag set,
 /// so even TH_IMMORTAL bindings come undone). Used by module
 /// teardown.
+/// Port of `deletezlefunction` from `Src/Zle/zle_thingy.c:308`.
 pub fn deletezlefunction(w: &Arc<Widget>) {                                  // c:308
     // c:312-323 — walk samew circular chain calling unbindwidget(p,1)
     // until p == p->samew (the last entry). In Rust we collect all
@@ -660,6 +668,7 @@ pub fn bin_zle(_nam: &str, args: &[String],                                  // 
 /// widget. The full path (flag parse + execzlefunc) needs ZLE
 /// session substrate; this port covers the empty-args probe and
 /// the !zle_usable guard.
+/// Port of `bin_zle_call` from `Src/Zle/zle_thingy.c:702`.
 pub fn bin_zle_call(args: &[String]) -> i32 {                                // c:702
     // c:710-716 — `if (!wname) return !zle_usable(); if (!zle_usable())
     //                  zwarnnam; return 1`. The flag-parsing loop +
@@ -694,6 +703,7 @@ pub fn bin_zle_call(args: &[String]) -> i32 {                                // 
 /// }
 /// ```
 /// `zle -C name comp-widget func` — register a completion widget.
+/// Port of `bin_zle_complete` from `Src/Zle/zle_thingy.c:599`.
 pub fn bin_zle_complete(args: &[String]) -> i32 {                            // c:599
     // c:601-629 — Load zsh/complete; resolve `args[1]` (or `.args[1]`)
     // to a Thingy; verify it's ZLE_ISCOMP; alloc a Widget with
@@ -752,6 +762,7 @@ pub fn bin_zle_complete(args: &[String]) -> i32 {                            // 
 /// `zle -D widget...` — unbind one or more widgets from the
 /// thingytab. Returns 1 if any widget was missing or protected
 /// (TH_IMMORTAL), else 0.
+/// Port of `bin_zle_del` from `Src/Zle/zle_thingy.c:547`.
 pub fn bin_zle_del(args: &[String]) -> i32 {                                 // c:547
     let mut ret = 0;
     for arg in args {                                                        // c:552-561 do-while
@@ -823,6 +834,7 @@ pub fn bin_zle_fd(args: &[String]) -> i32 {                                  // 
 /// ```
 /// `zle -f flag...` — set widget-execution flags (yank/yankbefore/
 /// kill) on the currently-running widget.
+/// Port of `bin_zle_flags` from `Src/Zle/zle_thingy.c:650`.
 pub fn bin_zle_flags(args: &[String]) -> i32 {                               // c:650
     // c:651-693 — `if (!zle_usable()) return 1; if (bindk) { Widget w =
     //                bindk->widget; for(flag = args; *flag; flag++)
@@ -865,6 +877,7 @@ pub fn bin_zle_flags(args: &[String]) -> i32 {                               // 
 /// we flag `ZLE_RESET_NEEDED` so the next zlecore tick observes
 /// the invalidation and re-enters `trashzle` directly on the live
 /// Zle struct.
+/// Port of `bin_zle_invalidate` from `Src/Zle/zle_thingy.c:828`.
 pub fn bin_zle_invalidate() -> i32 {                                         // c:828
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
@@ -914,6 +927,7 @@ pub fn bin_zle_keymap(args: &[String]) -> i32 {                              // 
 /// }
 /// ```
 /// `zle -A old new` — alias `new` to point at the same widget as `old`.
+/// Port of `bin_zle_link` from `Src/Zle/zle_thingy.c:566`.
 pub fn bin_zle_link(args: &[String]) -> i32 {                                // c:566
     // c:569-578 — `t = thingytab.getnode(args[0]); if(!t) ret=1; else
     //              if(bindwidget(t->widget, rthingy(args[1]))) ret=1`.
@@ -950,6 +964,7 @@ pub fn bin_zle_link(args: &[String]) -> i32 {                                // 
 /// }
 /// ```
 /// `zle -l` — list widget bindings (or check existence per arg).
+/// Port of `bin_zle_list` from `Src/Zle/zle_thingy.c:392`.
 pub fn bin_zle_list(args: &[String]) -> i32 {                                // c:392
     // c:393-413 — `if (!*args) scan all` else look up each in turn.
     // Returns 0 if all found and listable; 1 if any missing.
@@ -1010,6 +1025,7 @@ pub fn bin_zle_mesg(args: &[String]) -> i32 {                                // 
 /// ```
 /// `zle -N name [func]` — bind a user-defined widget. `func`
 /// defaults to `name` when omitted.
+/// Port of `bin_zle_new` from `Src/Zle/zle_thingy.c:583`.
 pub fn bin_zle_new(args: &[String]) -> i32 {                                 // c:583
     // c:586-595 — `Widget w = zalloc; w->flags=0; w->u.fnnam = ztrdup(args[1]?args[1]:args[0]);
     //              if(!bindwidget(w, rthingy(args[0]))) return 0;
@@ -1047,6 +1063,7 @@ pub fn bin_zle_new(args: &[String]) -> i32 {                                 // 
 /// handle reachable here (this fn has no params), we set the
 /// `ZLE_RESET_NEEDED` flag so the next zlecore tick triggers the
 /// redraw — same observable effect as the C direct call.
+/// Port of `bin_zle_refresh` from `Src/Zle/zle_thingy.c:416`.
 pub fn bin_zle_refresh() -> i32 {                                            // c:416
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
@@ -1112,6 +1129,7 @@ pub fn bin_zle_transform(args: &[String]) -> i32 {                           // 
 /// ```
 /// `zle -U str` — push string bytes back onto input queue in
 /// reverse so subsequent reads return them in original order.
+/// Port of `bin_zle_unget` from `Src/Zle/zle_thingy.c:472`.
 pub fn bin_zle_unget(zle: &mut crate::ported::zle::zle_main::Zle, args: &[String]) -> i32 {  // c:472
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {

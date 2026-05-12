@@ -805,6 +805,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
 ///      suffix (strdpos+len..). Special case: empty `$''` returns
 ///      a Nularg sentinel so it doesn't get elided downstream.
 ///   4. Set *pstrdpos to point past the substituted region.
+/// Port of `stringsubstquote` from `Src/subst.c:206`.
 fn stringsubstquote(strstart: &str, strdpos: usize) -> (String, usize) {
     // c:206
     let chars: Vec<char> = strstart.chars().collect(); // c:208
@@ -4556,31 +4557,31 @@ pub fn paramsubst(
                         )
                 });
                 if needs {
-                    crate::ported::utils::quotestring(s, crate::ported::utils::QuoteType::Single)
+                    crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_SINGLE)
                 } else {
                     s.to_string()
                 }
             } else if flag_qplus {
                 // c:2245 (q+)
-                crate::ported::utils::quotestring(s, crate::ported::utils::QuoteType::Dollars)
+                crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_DOLLARS)
             } else if flag_qcount > 0 {
                 // c:2237
                 match flag_qcount {
                     1 => crate::ported::utils::quotestring(
                         s,
-                        crate::ported::utils::QuoteType::Backslash,
+                        crate::ported::zsh_h::QT_BACKSLASH,
                     ),
                     2 => crate::ported::utils::quotestring(
                         s,
-                        crate::ported::utils::QuoteType::Single,
+                        crate::ported::zsh_h::QT_SINGLE,
                     ),
                     3 => crate::ported::utils::quotestring(
                         s,
-                        crate::ported::utils::QuoteType::Double,
+                        crate::ported::zsh_h::QT_DOUBLE,
                     ),
                     _ => crate::ported::utils::quotestring(
                         s,
-                        crate::ported::utils::QuoteType::Dollars,
+                        crate::ported::zsh_h::QT_DOLLARS,
                     ),
                 }
             } else {
@@ -5819,6 +5820,7 @@ pub fn singsub(s: &str) -> String {                  // c:514
 /// caller side and folded into `state.variables["IFS"]` for now;
 /// pending an explicit sep arg if a caller needs it. The return tuple
 /// carries (joined-scalar, array, isarr, ms_flags).
+/// Port of `multsub` from `Src/subst.c:544`.
 pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) { // c:544
     // c:544
     let mut ms_flags = 0i32; // c:551
@@ -6381,7 +6383,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
                 'q' => Some(crate::ported::utils::quotestring(
                     // c:4585 (:q)
                     w,
-                    crate::ported::utils::QuoteType::Backslash,
+                    crate::ported::zsh_h::QT_BACKSLASH,
                 )),
                 'Q' => {
                     // c:4585 (:Q unquote)
@@ -6584,6 +6586,7 @@ pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {                       // 
 ///   2. parsestr / parsestrnoerr depending on `err` flag — fails → return 1
 ///   3. If !single, walk buffer: outside DNULL (`"`) regions convert
 ///      `Qstring` → `String` and `Qtick` → `Tick`. DNULL toggles qt.
+/// Port of `subst_parse_str` from `Src/subst.c:1460`.
 pub fn subst_parse_str(s: &str, single: bool, err: bool) -> Option<String> { // c:1460
     // c:1460
     let _ = err; // c:1466 (parsestr error path
@@ -6658,6 +6661,7 @@ pub fn subst_parse_str(s: &str, single: bool, err: bool) -> Option<String> { // 
 /// Rust signature: takes the dirstack slice + pwd + the PUSHDMINUS
 /// option flag (callers read it from the live executor's options
 /// table). Returns Option.
+/// Port of `dstackent` from `Src/subst.c:4902`.
 pub fn dstackent(                                                            // c:4902
     ch: char,
     val: i32,

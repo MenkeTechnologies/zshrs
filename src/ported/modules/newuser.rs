@@ -74,6 +74,7 @@ pub fn check_dotfile(dotdir: &str, fname: &str) -> i32 {                 // c:58
 ///     return 0;
 /// }
 /// ```
+/// Port of `boot_` from `Src/Modules/newuser.c:68`.
 pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {           // c:68
     // c:70 — `const char *dotdir = getsparam_u("ZDOTDIR");`
     let mut dotdir: String = std::env::var("ZDOTDIR").unwrap_or_default();

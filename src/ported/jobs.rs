@@ -627,6 +627,7 @@ pub fn waitforpid(pid: i32) -> Option<i32> {                                 // 
 }
 
 /// Wait for job (from jobs.c zwaitjob lines 1673-1750)
+/// Port of `zwaitjob` from `Src/jobs.c:1673`.
 pub fn zwaitjob(job: &mut Job) -> Option<i32> {                              // c:1673
     if job.procs.is_empty() {
         return Some(0);
@@ -663,6 +664,7 @@ pub fn zwaitjob(job: &mut Job) -> Option<i32> {                              // 
 /// filelist. Walks the whole table — the previous Rust port took
 /// a single `&Job` and returned `!job.filelist.is_empty()`, which
 /// is the wrong shape (C iterates).
+/// Port of `havefiles` from `Src/jobs.c:1605`.
 pub fn havefiles(jobtab: &[Job]) -> bool {                                   // c:1605
     jobtab
         .iter()
@@ -670,6 +672,7 @@ pub fn havefiles(jobtab: &[Job]) -> bool {                                   // 
 }
 
 /// Delete job (from jobs.c deletejob lines 1511-1526)
+/// Port of `deletejob` from `Src/jobs.c:1512`.
 pub fn deletejob(job: &mut Job, disowning: bool) {                          // c:1511
     if !disowning {
         job.filelist.clear();
@@ -680,6 +683,7 @@ pub fn deletejob(job: &mut Job, disowning: bool) {                          // c
 }
 
 /// Free job (from jobs.c freejob lines 1456-1508)
+/// Port of `freejob` from `Src/jobs.c:1457`.
 pub fn freejob(job: &mut Job, notify: bool) {                               // c:1456
     let _ = notify;
     job.procs.clear();
@@ -691,6 +695,7 @@ pub fn freejob(job: &mut Job, notify: bool) {                               // c
 }
 
 /// Add process to job (from jobs.c addproc lines 1537-1597)
+/// Port of `addproc` from `Src/jobs.c:1538`.
 pub fn addproc(job: &mut Job, pid: i32, text: &str, aux: bool) {            // c:1537
     let proc = Process::new(pid);
     let proc = Process {
@@ -894,6 +899,7 @@ fn findjobnam(s: &str, jobtab: &[Job], maxjob: i32, thisjob: i32) -> Option<i32>
 /// jobspec is `%N` (numeric, with optional leading minus) versus
 /// `%name`. The previous Rust port required all-digits which
 /// rejected valid jobspecs like `-1` (the previous job).
+/// Port of `isanum` from `Src/jobs.c:2010`.
 pub fn isanum(s: &str) -> bool {                                             // c:2010
     !s.is_empty()
         && s.bytes().all(|b| b == b'-' || b.is_ascii_digit())
@@ -929,6 +935,7 @@ pub fn isanum(s: &str) -> bool {                                             // 
 /// for (; *envp; envp++) { ... }
 /// done: hackspace = p - hackzero;
 /// ```
+/// Port of `init_jobs` from `Src/jobs.c:2164`.
 pub fn init_jobs(argv: &[String], envp: &[String]) -> crate::exec_jobs::JobTable { // c:2164
     let table = crate::exec_jobs::JobTable::new();                           // c:2173 zalloc
     // c:2185-2210 — `-Z` hackspace scan: locate contiguous argv+envp
@@ -983,6 +990,7 @@ pub fn init_jobs(argv: &[String], envp: &[String]) -> crate::exec_jobs::JobTable
 /// } else opts[MONITOR] = 0;
 /// ```
 #[cfg(unix)]
+/// Port of `acquire_pgrp` from `Src/jobs.c:3222`.
 pub fn acquire_pgrp() -> bool {                                              // c:3222
     use crate::ported::signals::{signal_block, signal_setmask};
     let mypid = unsafe { libc::getpid() };
@@ -1064,6 +1072,7 @@ pub fn acquire_pgrp() -> bool {                                              // 
 ///
 /// Returns `(pipestats, pipefail)` — the decoded array and the
 /// last non-zero entry (0 if all succeeded).
+/// Port of `storepipestats` from `Src/jobs.c:420`.
 pub fn storepipestats(job: &Job) -> (Vec<i32>, i32) {
     let mut stats = Vec::with_capacity(job.procs.len().min(MAX_PIPESTATS));
     let mut pipefail = 0;
@@ -1136,6 +1145,7 @@ pub struct ChildTimes {
     pub sys_sec: f64,
 }
 
+/// Port of `shelltime` from `Src/jobs.c:1926`.
 pub fn shelltime() -> ChildTimes {
     #[cfg(unix)]
     {
@@ -1184,6 +1194,7 @@ pub fn get_usage() -> ChildTimes {
 /// Snapshots the children-rusage delta between the previous reading
 /// and the call to `get_usage()` — the per-process user/system time.
 /// The previous Rust port set status + endtime but left `ti` zeroed.
+/// Port of `update_process` from `Src/jobs.c:363`.
 pub fn update_process(proc: &mut Process, status: i32) {
     let prev = get_usage();
     let now = get_usage();
@@ -1261,6 +1272,7 @@ pub fn update_job(job: &mut Job) -> bool {                                   // 
 }
 
 /// Update a background job after waitpid (from jobs.c update_bg_job)
+/// Port of `update_bg_job` from `Src/jobs.c:677`.
 pub fn update_bg_job(jobtab: &mut [Job], pid: i32, status: i32) -> bool {
     if let Some((ji, pi, is_aux)) = findproc(jobtab, pid) {
         if is_aux {
@@ -1277,6 +1289,7 @@ pub fn update_bg_job(jobtab: &mut [Job], pid: i32, status: i32) -> bool {
 }
 
 /// Handle subjob completion (from jobs.c handle_sub)
+/// Port of `handle_sub` from `Src/jobs.c:274`.
 pub fn handle_sub(jobtab: &mut [Job], super_idx: usize, fg: bool) {
     let sub_idx = jobtab[super_idx].other;
     if sub_idx >= jobtab.len() {
@@ -1368,6 +1381,7 @@ pub fn setcurjob() {                                                         // 
 }
 
 /// Check if a job's time should be reported (from jobs.c should_report_time)
+/// Port of `should_report_time` from `Src/jobs.c:1039`.
 pub fn should_report_time(job: &Job, reporttime: f64) -> bool {
     if reporttime < 0.0 {
         return false;
@@ -1384,6 +1398,7 @@ pub fn should_report_time(job: &Job, reporttime: f64) -> bool {
 }
 
 /// Dump timing info for a job (from jobs.c dumptime)
+/// Port of `dumptime` from `Src/jobs.c:1020`.
 pub fn dumptime(job: &Job, format: &str) -> Option<String> {
     let first_start = job.procs.first()?.start_time?;
     let last_end = job.procs.last()?.end_time?;
@@ -1459,6 +1474,7 @@ pub fn initjob(jobtab: &mut Vec<Job>) -> usize {                             // 
 }
 
 /// Set the pwd for a job (from jobs.c setjobpwd)
+/// Port of `setjobpwd` from `Src/jobs.c:1881`.
 pub fn setjobpwd(job: &mut Job) {
     // Store current directory in job for display purposes
     if let Ok(cwd) = std::env::current_dir() {
@@ -1468,6 +1484,7 @@ pub fn setjobpwd(job: &mut Job) {
 }
 
 /// Spawn a job (mark as started, from jobs.c spawnjob)
+/// Port of `spawnjob` from `Src/jobs.c:1894`.
 pub fn spawnjob(job: &mut Job, fg: bool) {                                  // c:1894
     job.stat |= stat::INUSE;
     if !fg {
@@ -1521,6 +1538,7 @@ pub fn selectjobtab() -> (Vec<Job>, usize) {
 /// would be exceeded. The previous Rust port grew the table
 /// unconditionally without the cap, and used `<= needed` instead
 /// of growing by full chunks.
+/// Port of `expandjobtab` from `Src/jobs.c:2225`.
 pub fn expandjobtab(jobtab: &mut Vec<Job>, _needed: usize) -> bool {
     let newsize = jobtab.len() + MAXJOBS_ALLOC;
     if newsize > MAX_MAXJOBS {
@@ -1531,6 +1549,7 @@ pub fn expandjobtab(jobtab: &mut Vec<Job>, _needed: usize) -> bool {
 }
 
 /// Shrink job table if possible (from jobs.c maybeshrinkjobtab)
+/// Port of `maybeshrinkjobtab` from `Src/jobs.c:2259`.
 pub fn maybeshrinkjobtab(jobtab: &mut Vec<Job>) {
     while jobtab
         .last()
@@ -1712,6 +1731,7 @@ pub fn printjob(
 }
 
 /// Get the signal name for signal-based job output (from jobs.c getsigname)
+/// Port of `getsigname` from `Src/jobs.c:3087`.
 pub fn getsigname(sig: i32) -> String {
     match sig {
         0 => "EXIT".to_string(),
@@ -1749,6 +1769,7 @@ pub fn getsigname(sig: i32) -> String {
 }
 
 /// Time difference for timeval (from jobs.c dtime_tv)
+/// Port of `dtime_tv` from `Src/jobs.c:137`.
 pub fn dtime_tv(dt: &mut Duration, t1: &Duration, t2: &Duration) -> Duration {
     if *t2 > *t1 {
         *dt = *t2 - *t1;
@@ -1759,6 +1780,7 @@ pub fn dtime_tv(dt: &mut Duration, t1: &Duration, t2: &Duration) -> Duration {
 }
 
 /// Time difference for timespec (from jobs.c dtime_ts)
+/// Port of `dtime_ts` from `Src/jobs.c:152`.
 pub fn dtime_ts(t1: &Instant, t2: &Instant) -> Duration {
     if *t2 > *t1 {
         t2.duration_since(*t1)
@@ -1819,6 +1841,7 @@ pub fn makerunning(jobtab: &mut [Job], idx: usize) {
 /// Takes the job index (not a `&Job`) because the C signature is
 /// `int hasprocs(int job)`. Bounds-checks the index — out-of-range
 /// returns false (matching C's negative-index DPUTS+0 path).
+/// Port of `hasprocs` from `Src/jobs.c:243`.
 pub fn hasprocs(jobtab: &[Job], job: usize) -> bool {
     jobtab
         .get(job)
@@ -1828,6 +1851,7 @@ pub fn hasprocs(jobtab: &[Job], job: usize) -> bool {
 
 /// Check current shell signals (from jobs.c check_cursh_sig)
 #[cfg(unix)]
+/// Port of `check_cursh_sig` from `Src/jobs.c:397`.
 pub fn check_cursh_sig(jobtab: &[Job], sig: i32) {
     for job in jobtab {
         if (job.stat & stat::CURSH) != 0 && !job.is_done() {
@@ -1857,6 +1881,7 @@ pub fn check_cursh_sig(jobtab: &[Job], sig: i32) {
 /// the table. Called from the shell-exit path. The C source skips
 /// index 0 (job 0 is unused / "the shell itself"); Rust port does
 /// the same with `iter_mut().skip(1)`.
+/// Port of `cleanfilelists` from `Src/jobs.c:1443`.
 pub fn cleanfilelists(jobtab: &mut [Job]) {
     for job in jobtab.iter_mut().skip(1) {
         deletefilelist(job, false);
@@ -1879,6 +1904,7 @@ pub fn cleanfilelists(jobtab: &mut [Job]) {
 /// global, not the live `jobtab`.
 ///
 /// Rust port clears the OLDJOBTAB module static.
+/// Port of `clearoldjobtab` from `Src/jobs.c:1835`.
 pub fn clearoldjobtab() {
     *OLDJOBTAB.get_or_init(|| Mutex::new(Vec::new()))
         .lock().expect("oldjobtab poisoned") = Vec::new();
@@ -1945,6 +1971,7 @@ pub fn getbgstatus(pid: i32) -> Option<i32> {                                // 
 /// `ignoredisable` mirrors C: when 1, returns disabled entries
 /// too (used by `unsetfn` paths that need to remove disabled
 /// traps).
+/// Port of `gettrapnode` from `Src/jobs.c:3115`.
 pub fn gettrapnode(sig: i32) -> Option<String> {
     let name = format!("TRAP{}", getsigname(sig));
     let tab = crate::ported::hashtable::shfunctab_lock()
@@ -2539,6 +2566,7 @@ pub fn bin_suspend(name: &str, _argv: &[String],                             // 
 }
 
 /// Signal number from name (from jobs.c getsigidx)
+/// Port of `getsigidx` from `Src/jobs.c:3047`.
 pub fn getsigidx(name: &str) -> Option<i32> {
     let name = name.strip_prefix("SIG").unwrap_or(name);
     match name.to_uppercase().as_str() {

@@ -9,7 +9,7 @@ use crate::lex;
 use crate::parse;
 use crate::ported::linklist::LinkList;
 use crate::ported::mem::{queue_signals, unqueue_signals};
-use crate::ported::utils::{has_token, quotestring, QuoteType};
+use crate::ported::utils::{has_token, quotestring};
 use crate::ported::zsh_h;
 use crate::ported::zsh_h::{
     redir, wordcode, estate, Eprog, EC_NODUP, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_OR,
@@ -112,6 +112,7 @@ struct tstack {
     u: tstack_u,
 }
 
+/// Port of `taddassign` from `Src/text.c:184`.
 fn taddassign(code: wordcode, st: &mut estate, typeset: i32) {
     taddstr(&ecgetstr(st, EC_NODUP, None));
     if zsh_h::WC_ASSIGN_TYPE2(code) == zsh_h::WC_ASSIGN_INC {
@@ -133,6 +134,7 @@ fn taddassign(code: wordcode, st: &mut estate, typeset: i32) {
     }
 }
 
+/// Port of `taddlist` from `Src/text.c:170`.
 fn taddlist(st: &mut estate, num: i32) {
     if num == 0 {
         return;
@@ -148,6 +150,7 @@ fn taddlist(st: &mut estate, num: i32) {
     });
 }
 
+/// Port of `taddassignlist` from `Src/text.c:213`.
 fn taddassignlist(st: &mut estate, count: wordcode) {
     if count != 0 {
         tpush(b' ' as i32);
@@ -164,6 +167,7 @@ fn taddassignlist(st: &mut estate, count: wordcode) {
     }
 }
 
+/// Port of `taddstr` from `Src/text.c:146`.
 pub fn taddstr(s: &str) {
     let nl = tnewlins.with(|c| *c.borrow());
     if nl {
@@ -176,10 +180,12 @@ pub fn taddstr(s: &str) {
     }
 }
 
+/// Port of `taddchr` from `Src/text.c:128`.
 pub fn taddchr(c: i32) {
     tpush(c);
 }
 
+/// Port of `dec_tindent` from `Src/text.c:70`.
 pub fn dec_tindent() {
     tindent.with(|t| {
         let mut v = t.borrow_mut();
@@ -189,6 +195,7 @@ pub fn dec_tindent() {
     });
 }
 
+/// Port of `taddpending` from `Src/text.c:89`.
 pub fn taddpending(str1: &str, str2: &str) {
     let mut v = Vec::with_capacity(str1.len() + str2.len());
     v.extend_from_slice(str1.as_bytes());
@@ -205,6 +212,7 @@ pub fn taddpending(str1: &str, str2: &str) {
     });
 }
 
+/// Port of `tdopending` from `Src/text.c:114`.
 pub fn tdopending() {
     let drained = tpending.with(|p| p.borrow_mut().take());
     if let Some(p) = drained {
@@ -213,6 +221,7 @@ pub fn tdopending() {
     }
 }
 
+/// Port of `taddnl` from `Src/text.c:227`.
 pub fn taddnl(no_semicolon: i32) {
     let newlins = tnewlins.with(|c| *c.borrow());
     let indent = tindent.with(|t| *t.borrow());
@@ -245,6 +254,7 @@ const FSTR: [&str; 18] = [
     "<", ">",
 ];
 
+/// Port of `gettext2` from `Src/text.c:415`.
 pub fn gettext2(st: &mut estate) {
     let mut tstack: Vec<tstack> = Vec::new();
     let mut stack: i32 = 0;
@@ -1288,11 +1298,11 @@ pub fn getredirs(redirs: &LinkList<redir>) {
                         }
                         if !has_token(&n) {
                             tpush(b'\'' as i32);
-                            taddstr(&quotestring(&n, QuoteType::Single));
+                            taddstr(&quotestring(&n, crate::ported::zsh_h::QT_SINGLE));
                             tpush(b'\'' as i32);
                         } else {
                             tpush(b'"' as i32);
-                            taddstr(&quotestring(&n, QuoteType::Double));
+                            taddstr(&quotestring(&n, crate::ported::zsh_h::QT_DOUBLE));
                             tpush(b'"' as i32);
                         }
                         let _ = sav;

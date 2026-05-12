@@ -706,6 +706,7 @@ pub fn unset_killring(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  
 /// because the canonical Rust home for `zmod` is `Zle.zmod`. The
 /// `stdunsetfn` half of the C body fires from the Param.gsu.unsetfn
 /// vtable hook upstream — this fn just performs the zmod side.
+/// Port of `unset_numeric` from `Src/Zle/zle_params.c:491`.
 pub fn unset_numeric(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) { // c:491
     use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     if exp != 0 {                                                            // c:494

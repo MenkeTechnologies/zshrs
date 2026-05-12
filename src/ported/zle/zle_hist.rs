@@ -1511,6 +1511,7 @@ pub fn zle_setline(zle: &mut Zle) -> i32 {                                   // 
 /// the single-byte path — `to_ascii_lowercase()` matches the C
 /// `tulower()` behaviour for ASCII; non-ASCII multibyte folding
 /// follows when the broader UTF-8 lowercase port lands.
+/// Port of `zlinecmp` from `Src/Zle/zle_hist.c:127`.
 pub fn zlinecmp(histp: &str, inputp: &str) -> i32 {                          // c:127
     let h_bytes = histp.as_bytes();
     let i_bytes = inputp.as_bytes();
@@ -1585,6 +1586,7 @@ pub fn zlinecmp(histp: &str, inputp: &str) -> i32 {                          // 
 /// 3 = always-true).
 ///
 /// Returns `Some(byte_offset)` when found, `None` otherwise.
+/// Port of `zlinefind` from `Src/Zle/zle_hist.c:203`.
 pub fn zlinefind(haystack: &str, pos: usize, needle: &str, dir: i32, sens: i32) -> Option<usize> {  // c:203
     let bytes = haystack.as_bytes();
     let mut s = pos;                                                         // c:206 s = haystack + pos

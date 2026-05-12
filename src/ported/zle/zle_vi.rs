@@ -1447,6 +1447,7 @@ pub fn viquotedinsert(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
 /// context returns 1 to signal "no change to repeat" — the live
 /// widget tick has its own copy of this fn that touches the
 /// active state.
+/// Port of `virepeatchange` from `Src/Zle/zle_vi.c:795`.
 pub fn virepeatchange() -> i32 {                                             // c:795
     1                                                                        // c:798 no change to repeat
 }

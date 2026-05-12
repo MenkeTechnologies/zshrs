@@ -596,6 +596,7 @@ pub fn doexpansion() -> i32 {                                                // 
 ///
 /// Returns `(head, last)` — the C uses an out-pointer for `last`
 /// because callers want to splice further entries onto the tail.
+/// Port of `dupbrinfo` from `Src/Zle/zle_tricky.c:1032`.
 pub fn dupbrinfo(                                                            // c:1032
     mut p: Option<&crate::ported::zle::zle_h::brinfo>,
 ) -> (
@@ -641,6 +642,7 @@ pub fn dupbrinfo(                                                            // 
 /// }
 /// ```
 /// Like `dupstring`, but appends a single space.
+/// Port of `dupstrspace` from `Src/Zle/zle_tricky.c:954`.
 pub fn dupstrspace(s: &str) -> String {                                      // c:954
     let len = s.len();                                                       // c:957 strlen(str)
     let mut out = String::with_capacity(len + 2);                            // c:958 hcalloc(len+2)
@@ -734,6 +736,7 @@ pub fn fixmagicspace(zle: &mut crate::ported::zle::zle_main::Zle) {          // 
 /// Free a Brinfo `next`-linked list. C frees each node + its `str`
 /// allocation; Rust drops the Box chain (and each `String` inside)
 /// automatically when the head Box is dropped.
+/// Port of `freebrinfo` from `Src/Zle/zle_tricky.c:1015`.
 pub fn freebrinfo(p: Option<crate::ported::zle::zle_h::BrinfoPtr>) {         // c:1015
     // c:1020-1026 — walk + zsfree(str) + zfree(p) loop. In Rust the
     // Drop impls cascade through Box<brinfo> → String → next chain.
@@ -845,6 +848,7 @@ pub fn inststrlen(                                                           // 
 /// ```
 /// `list-choices` widget — set the menu/glob globals from options
 /// then dispatch to `docomplete(COMP_LIST_COMPLETE)`.
+/// Port of `listchoices` from `Src/Zle/zle_tricky.c:250`.
 pub fn listchoices() -> i32 {                                                // c:250
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
@@ -873,6 +877,7 @@ pub fn listchoices() -> i32 {                                                // 
 /// ```
 /// `list-expand` widget — like listchoices but dispatches with
 /// `COMP_LIST_EXPAND`.
+/// Port of `listexpand` from `Src/Zle/zle_tricky.c:333`.
 pub fn listexpand() -> i32 {                                                 // c:333
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_LIST_EXPAND;
@@ -1079,21 +1084,20 @@ pub fn processcmd(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
 /// thin alias used throughout zle_tricky to pick the quoting style
 /// based on the current `instring` parser state.
 pub fn quotename(s: &str, instring: i32) -> String {                         // c:427
-    use crate::ported::utils::QuoteType;
     use crate::ported::zsh_h::{
         QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE,
     };
     let raw = if instring == QT_NONE { QT_BACKSLASH } else { instring };
     let qt = if raw == QT_BACKSLASH {
-        QuoteType::Backslash
+        crate::ported::zsh_h::QT_BACKSLASH
     } else if raw == QT_SINGLE {
-        QuoteType::Single
+        crate::ported::zsh_h::QT_SINGLE
     } else if raw == QT_DOUBLE {
-        QuoteType::Double
+        crate::ported::zsh_h::QT_DOUBLE
     } else if raw == QT_DOLLARS {
-        QuoteType::Dollars
+        crate::ported::zsh_h::QT_DOLLARS
     } else {
-        QuoteType::None
+        crate::ported::zsh_h::QT_NONE
     };
     crate::ported::utils::quotestring(s, qt)
 }

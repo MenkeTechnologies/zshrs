@@ -227,6 +227,7 @@ pub fn getgroup(_name: &str, _sgr: bool) -> Option<String> {             // c:82
 /// **Strict-rule status: PARTIAL** for the same reason as `getgroup`
 /// (depends on the `$.zle.hlgroups` hash being readable through the
 /// param table). See `TODO.md`.
+/// Port of `scangroup` from `Src/Modules/hlgroup.c:113`.
 pub fn scangroup(_sgr: bool) -> Vec<(String, String)> {                  // c:113
     // c:123-125 — `if (!(v = getvalue(...)) || ... PM_HASHED) return;`
     // c:126 — hlg = v->pm->gsu.h->getfn(v->pm)

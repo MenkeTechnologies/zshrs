@@ -1937,6 +1937,7 @@ pub fn shfunctab_lock() -> &'static std::sync::RwLock<ShFuncTable> {        // c
 /// singleton on first call. The GSU function-pointer assignments
 /// from C are encoded as the free-fn names below (each callable
 /// directly without a vtable lookup).
+/// Port of `createshfunctable` from `Src/hashtable.c:812`.
 pub fn createshfunctable() {
     let _ = shfunctab_lock();
 }
@@ -1955,6 +1956,7 @@ pub fn createshfunctable() {
 /// Drops the named function from `shfunctab`. If the name is a
 /// `TRAP<sig>` form, also clears the trap via signals.rs.
 /// Returns the removed function (or None if absent).
+/// Port of `removeshfuncnode` from `Src/hashtable.c:836`.
 pub fn removeshfuncnode(nam: &str) -> Option<ShFunc> {
     if let Some(sig_part) = nam.strip_prefix("TRAP") {
         if let Some(sig) = crate::ported::signals::getsigidx(sig_part) {
@@ -1984,6 +1986,7 @@ pub fn removeshfuncnode(nam: &str) -> Option<ShFunc> {
 /// Sets the DISABLED flag on the function entry; for TRAP*
 /// functions, also unsettraps the corresponding signal so the
 /// shell stops invoking the (now-disabled) trap.
+/// Port of `disableshfuncnode` from `Src/hashtable.c:855`.
 pub fn disableshfuncnode(nam: &str) {
     {
         let mut tab = shfunctab_lock().write().expect("shfunctab poisoned");
@@ -2010,6 +2013,7 @@ pub fn disableshfuncnode(nam: &str) {
 /// Clears the DISABLED flag; for TRAP* functions, re-installs
 /// the signal handler with `ZSIG_FUNC` semantics so the shell
 /// dispatches the trap function on the next signal delivery.
+/// Port of `enableshfuncnode` from `Src/hashtable.c:873`.
 pub fn enableshfuncnode(nam: &str) {
     {
         let mut tab = shfunctab_lock().write().expect("shfunctab poisoned");
@@ -2192,6 +2196,7 @@ pub fn createaliastable(_ht: *mut crate::ported::zsh_h::hashtable) {         // 
 /// The OnceLock-backed `aliastab_lock()` / `sufaliastab_lock()`
 /// stand in for `newhashtable(...)` + `createaliastable(...)` — they
 /// lazy-init the underlying maps on first access.
+/// Port of `createaliastables` from `Src/hashtable.c:1206`.
 pub fn createaliastables() {
     // c:1210 — newhashtable(23, "aliastab", NULL)
     // c:1212 — createaliastable(aliastab)

@@ -525,6 +525,7 @@ pub(crate) static TIED_PARAMS: Lazy<Mutex<HashMap<String, Arc<TiedGdbmParam>>>> 
 /// Appends `name` to the global `zgdbm_tied` array. Rust port:
 /// the array is `ZGDBM_TIED: Mutex<Vec<String>>` below, mirroring
 /// the C global.
+/// Port of `append_tied_name` from `Src/Modules/db_gdbm.c:695`.
 pub fn append_tied_name(name: &str) -> i32 {                             // c:695
     if let Ok(mut tied) = ZGDBM_TIED.lock() {
         tied.push(name.to_string());                                      // c:707 *dst = ztrdup(name)
@@ -827,6 +828,7 @@ pub fn gdbmunsetfn(param_name: &str, key: &str, _um: i32) {              // c:39
 /// per key. Used by `${(k)db}` and similar. Rust port: takes a closure
 /// matching C's `ScanFunc func` signature `void func(HashNode, int)` —
 /// callers receive the per-key (param_name, key) tuple to dispatch.
+/// Port of `scangdbmkeys` from `Src/Modules/db_gdbm.c:442`.
 pub fn scangdbmkeys(param_name: &str, mut func: impl FnMut(&str, &str, i32), flags: i32) { // c:442
     let params = match TIED_PARAMS.lock() { Ok(p) => p, Err(_) => return };
     let tied = match params.get(param_name) { Some(t) => t.clone(), None => return };
@@ -1006,6 +1008,7 @@ pub fn unmetafy_zalloc(to_copy: &str) -> (String, usize) {               // c:77
 /// then frees `node.nam` and `ename`. Rust port: dispatches the
 /// gdbm unset via the registry, then drops the entry (Vec/String
 /// drop handles the C `zsfree`/`zfree`).
+/// Port of `myfreeparamnode` from `Src/Modules/db_gdbm.c:799`.
 pub fn myfreeparamnode(param_name: &str, key: &str) {                    // c:799
     /* Upstream: The second argument of unsetfn() is used by modules to
      * differentiate "exp"licit unset from implicit unset, as when
@@ -1051,6 +1054,7 @@ pub fn myfreeparamnode(param_name: &str, key: &str) {                    // c:79
 /// Returns `true` iff the key was already present, `false` if a
 /// fresh placeholder was created. Static-link path uses the
 /// `TiedGdbmParam` registry as the equivalent of `ht`.
+/// Port of `getgdbmnode` from `Src/Modules/db_gdbm.c:407`.
 pub fn getgdbmnode(param_name: &str, name: &str) -> bool {               // c:407
     let params = match TIED_PARAMS.lock() {
         Ok(p) => p,

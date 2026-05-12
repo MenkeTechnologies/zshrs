@@ -1085,3 +1085,6 @@ exec_pline_wordcode
 exec_cmd_wordcode
 exec_simple_wordcode
 exec_wordcode
+zftp_state
+zftp_state_clear_poison
+qflag_quotetype

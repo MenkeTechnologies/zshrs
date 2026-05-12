@@ -245,7 +245,7 @@ pub static patglobflags_orig: AtomicI32 = AtomicI32::new(0);    // c:276
 //
 // pattern.c uses `static char zpc_special[ZPC_COUNT];` and resets it
 // in patcompcharsset(). Rust mirrors as a Mutex-wrapped byte array.
-pub static zpc_special: Mutex<[u8; ZPC_COUNT]> = Mutex::new([0u8; ZPC_COUNT]); // c:278
+pub static zpc_special: Mutex<[u8; ZPC_COUNT as usize]> = Mutex::new([0u8; ZPC_COUNT as usize]); // c:278
 
 // C: `static char *patstrcache;` — caches the unmetafied trial string.
 // Rust port has no Meta encoding so the cache is unnecessary; we leave
@@ -429,21 +429,21 @@ fn patoptail(p: usize, val: usize) {                                          //
 /// `disables`.
 pub fn patcompcharsset() {                                                    // c:464
     let mut sp = zpc_special.lock().unwrap();
-    *sp = [0u8; ZPC_COUNT];
+    *sp = [0u8; ZPC_COUNT as usize];
     // Default special chars (matches pattern.c init block).
-    sp[ZPC_SLASH]   = b'/';
-    sp[ZPC_NULL]    = 0;
-    sp[ZPC_BAR]     = b'|';
-    sp[ZPC_OUTPAR]  = b')';
-    sp[ZPC_TILDE]   = b'~';
-    sp[ZPC_INPAR]   = b'(';
-    sp[ZPC_QUEST]   = b'?';
-    sp[ZPC_STAR]    = b'*';
-    sp[ZPC_INBRACK] = b'[';
-    sp[ZPC_INANG]   = b'<';
-    sp[ZPC_HAT]     = b'^';
-    sp[ZPC_HASH]    = b'#';
-    sp[ZPC_BNULLKEEP] = 0;
+    sp[ZPC_SLASH as usize]     = b'/';
+    sp[ZPC_NULL as usize]      = 0;
+    sp[ZPC_BAR as usize]       = b'|';
+    sp[ZPC_OUTPAR as usize]    = b')';
+    sp[ZPC_TILDE as usize]     = b'~';
+    sp[ZPC_INPAR as usize]     = b'(';
+    sp[ZPC_QUEST as usize]     = b'?';
+    sp[ZPC_STAR as usize]      = b'*';
+    sp[ZPC_INBRACK as usize]   = b'[';
+    sp[ZPC_INANG as usize]     = b'<';
+    sp[ZPC_HAT as usize]       = b'^';
+    sp[ZPC_HASH as usize]      = b'#';
+    sp[ZPC_BNULLKEEP as usize] = 0;
 }
 
 /// Port of `patcompstart()` from `Src/pattern.c:517`.
@@ -1746,6 +1746,7 @@ pub fn pat_enables(_cmd: &str, patterns: &[&str], enable: bool) -> i32 {      //
 /// `int patmatch(Upat prog)` (which takes a bytecode pointer and
 /// reads input/captures from file-statics) — Rust takes both pattern
 /// and text explicitly. Allowlisted as architectural convenience.
+/// Port of `patmatch` from `Src/pattern.c:2694`.
 pub fn patmatch(pattern: &str, text: &str) -> bool {
     match patcompile(pattern, PAT_HEAPDUP as i32, None) {
         Some(prog) => pattry(&prog, text),
@@ -1802,6 +1803,11 @@ pub type PatProg = Patprog;
 /// patcomppiece. This type pre-processes a glob string outside the
 /// pattern engine for callers in exec_shims/fusevm that need a
 /// pre-pattern pass. TODO: migrate callers to pure patcompile usage.
+// WARNING: NOT IN PATTERN.C — Rust-only helper, no faithful C
+// counterpart. C inlines `<a-b>` parsing in `patcomppiece` (Src/
+// pattern.c:1450+) and emits `P_NUMRNG` opcodes directly. This type
+// pre-processes outside the pattern engine — dissolve when fusevm
+// + exec_shims migrate to pure `patcompile` + `pattry`.
 #[derive(Debug, Clone, Copy)]
 pub struct NumericRange {
     pub start: usize,
@@ -1875,38 +1881,6 @@ impl NumericRange {
     }
 }
 
-/// Pattern-flag pre-parse used by exec_shims and fusevm before
-/// compile. NOT in pattern.c — C parses these inline via
-/// patgetglobflags during patcompile. Transitional convenience.
-#[derive(Debug, Clone)]
-pub struct PatternFlags {
-    pub pattern: String,
-    pub case_insensitive: bool,
-    pub l_flag: bool,
-    pub approx_errs: Option<u32>,
-    pub backref: bool,
-}
-
-impl PatternFlags {
-    /// Parse `(#...)` prefix off the front of a pattern, returning
-    /// (residual_pattern, case_insensitive, l_flag, approx, _).
-    pub fn parse(s: &str) -> (String, bool, bool, Option<u32>, bool) {
-        let mut residual = s.to_string();
-        let mut ci = false;
-        let mut l = false;
-        let mut approx: Option<u32> = None;
-        let mut br = false;
-        if let Some((bits, _assert, consumed)) = patgetglobflags(s) {
-            ci = (bits & GF_IGNCASE) != 0;
-            l = (bits & GF_LCMATCHUC) != 0;
-            let errs = bits & 0xff;
-            approx = if errs != 0 { Some(errs as u32) } else { None };
-            br = (bits & GF_BACKREF) != 0;
-            residual = s[consumed..].to_string();
-        }
-        (residual, ci, l, approx, br)
-    }
-}
 
 // =====================================================================
 // Tests

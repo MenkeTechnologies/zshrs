@@ -261,6 +261,7 @@ pub fn list_lines(matches: &[String], columns: usize) -> usize {             // 
 ///
 /// `showall` mirrors C: when non-zero, the NOLIST/MULT mask is
 /// dropped (only CMF_HIDE filters).
+/// Port of `skipnolist` from `Src/Zle/compresult.c:1480`.
 pub fn skipnolist(matches: &[crate::ported::zle::comp_h::Cmatch], showall: i32) -> usize {  // c:1480
     use crate::ported::zle::comp_h::{CMF_DISPLINE, CMF_HIDE, CMF_MULT, CMF_NOLIST};
     // c:1483 — `mask = (showall ? 0 : (CMF_NOLIST|CMF_MULT)) | CMF_HIDE`.
@@ -293,6 +294,7 @@ pub fn skipnolist(matches: &[crate::ported::zle::comp_h::Cmatch], showall: i32) 
 /// Set the `complist` global and update `onlyexpl` per the
 /// substring scan. Called from `bin_compset` to honour
 /// `compstate[list]`.
+/// Port of `comp_list` from `Src/Zle/compresult.c:1467`.
 pub fn comp_list(v: Option<&str>) {                                              // c:1467
     use std::sync::Mutex;
     use std::sync::atomic::Ordering;
@@ -342,6 +344,7 @@ pub fn comp_list(v: Option<&str>) {                                             
 /// repeated addition until non-negative. Used to map menu-cycle
 /// indices to match-array offsets (where `0` means "no match" and
 /// `1..N` are the real matches, so the table is 1-indexed).
+/// Port of `comp_mod` from `Src/Zle/compresult.c:1363`.
 pub fn comp_mod(mut v: i32, m: i32) -> i32 {                                     // c:1363
     if v >= 0 {                                                                  // c:1366
         v -= 1;                                                                  // c:1367
