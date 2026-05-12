@@ -112,22 +112,19 @@ where
     })
 }
 
-/// Fallible variant of `with_executor` — returns `None` when called
-/// outside VM context (e.g. from a unit test that exercises subst_port
-/// directly via `mk_state` without setting up an executor). Used by
-/// pure-paramsubst code paths that have a fallback when the executor
-/// isn't available, so they can run in unit tests without panicking.
-pub(crate) fn try_with_executor<F, R>(f: F) -> Option<R>
-where
-    F: FnOnce(&mut ShellExecutor) -> R,
-{
-    CURRENT_EXECUTOR.with(|cell| {
-        let ptr = (*cell.borrow())?;
-        // SAFETY: same as with_executor.
-        let executor = unsafe { &mut *ptr };
-        Some(f(executor))
-    })
-}
+// `try_with_executor` removed. The fallible variant was the bridge
+// canonical-side ports used to mirror writes into the legacy
+// exec.{variables,arrays,assoc_arrays,positional_params,
+// local_save_stack,var_attrs} caches. All such mirrors are now
+// dissolved: canonical setaparam / sethparam / setsparam write
+// paramtab as the single source of truth; fusevm reads consult
+// paramtab via exec.array() / exec.assoc() / exec.scalar() /
+// exec.pparams() / exec.param_flags() helpers.
+//
+// PM_LOCAL scope save lives in BUILTIN_LOCAL dispatcher (with
+// with_executor — the mandatory variant). Eval execute_script lives
+// in BUILTIN_EVAL dispatcher. Lastval reads from canonical LASTVAL
+// atomic that exec.set_last_status keeps current.
 
 
 
@@ -292,6 +289,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Variable declaration
     vm.register_builtin(BUILTIN_LOCAL, |vm, argc| {
         let args = pop_args(vm, argc);
+        // PM_LOCAL save: snapshot the outer value of each name BEFORE
+        // canonical bin_typeset writes the local one. Direct port of
+        // Src/params.c createparam's `pm->old = oldpm` chain — the
+        // unwind at fn exit (fusevm_bridge.rs ~9520) pops each saved
+        // pair and restores. Done at the dispatcher because canonical
+        // bin_typeset is in src/ported/ where it has no access to
+        // exec.local_save_stack without going through try_with_executor.
+        with_executor(|exec| {
+            if exec.local_scope_depth > 0 {
+                for a in &args {
+                    if a.starts_with('-') || a.starts_with('+') { continue; }
+                    let name: &str = match a.find('=') {
+                        Some(i) => &a[..i],
+                        None => a.as_str(),
+                    };
+                    let old = exec.scalar(name)
+                        .or_else(|| exec.variables.get(name).cloned());
+                    exec.local_save_stack.push((name.to_string(), old));
+                }
+            }
+        });
         let status = with_executor(|exec| exec.builtin_local(&args));
         Value::Status(status)
     });

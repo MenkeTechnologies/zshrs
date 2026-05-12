@@ -3969,21 +3969,12 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
                 // `setsparam` (Src/params.c:3350) writes paramtab; the
                 // env mirror at `Src/params.c:3024 addenv` follows.
                 //
-                // c:Src/params.c PM_LOCAL: when typeset is invoked as
-                // `local`/`private`/inside a fn with implicit local
-                // scope, save the current value to local_save_stack
-                // so the function-exit unwind at fusevm_bridge.rs:
-                // 9514 can restore it. Without this, `x=outer; f() {
-                // local x=inner }; f; echo $x` left x=inner after f.
-                if (on & PM_LOCAL) != 0 {
-                    let n_owned = n.to_string();
-                    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
-                        if exec.local_scope_depth > 0 {
-                            let old = exec.variables.get(&n_owned).cloned();
-                            exec.local_save_stack.push((n_owned, old));
-                        }
-                    });
-                }
+                // PM_LOCAL save now happens in the BUILTIN_LOCAL
+                // dispatcher (fusevm_bridge.rs) before this canonical
+                // bin_typeset runs, since the unwind stack lives on
+                // ShellExecutor and `local`'s scope-save semantics
+                // are at the dispatcher boundary.
+                let _ = on & PM_LOCAL;
                 // c:Src/params.c PM_LOWER/PM_UPPER setstrvalue arms:
                 // when typeset -l or -u is set, the assigned value is
                 // case-folded BEFORE storage. Without this, `typeset -l
