@@ -21,21 +21,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Flags for hash nodes
-pub mod flags {
-    pub const DISABLED: u32 = 1 << 0;
-    pub const HASHED: u32 = 1 << 1;
-    pub const ALIAS_GLOBAL: u32 = 1 << 2;
-    pub const ALIAS_SUFFIX: u32 = 1 << 3;
-    pub const PM_UNDEFINED: u32 = 1 << 4;
-    pub const PM_TAGGED: u32 = 1 << 5;
-    pub const PM_TAGGED_LOCAL: u32 = 1 << 6;
-    pub const PM_LOADDIR: u32 = 1 << 7;
-    pub const PM_UNALIASED: u32 = 1 << 8;
-    pub const PM_KSHSTORED: u32 = 1 << 9;
-    pub const PM_ZSHSTORED: u32 = 1 << 10;
-    pub const PM_CUR_FPATH: u32 = 1 << 11;
-}
 
 /// Generic hash function (zsh's hasher)
 /// Compute the canonical zsh hash for a string.

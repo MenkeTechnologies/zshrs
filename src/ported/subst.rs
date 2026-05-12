@@ -184,7 +184,6 @@ pub const NULSTRING: &str = "\u{8F}"; // c:100
 /// `scanpmraliases` — port of `Src/Modules/parameter.c:1990`.
 /// Walks `aliastab` for regular (non-global, non-suffix) aliases.
 fn scanpmraliases() -> String {
-    use crate::ported::hashtable::flags::{ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED};
     crate::ported::hashtable::aliastab_lock().read().ok()
         .map(|t| t.iter()
             .filter(|(_, a)| {
@@ -200,7 +199,6 @@ fn scanpmraliases() -> String {
 
 /// `scanpmgaliases` — port of `Src/Modules/parameter.c:1990` (global arm).
 fn scanpmgaliases() -> String {
-    use crate::ported::hashtable::flags::{ALIAS_GLOBAL, DISABLED};
     crate::ported::hashtable::aliastab_lock().read().ok()
         .map(|t| t.iter()
             .filter(|(_, a)| {
@@ -214,7 +212,6 @@ fn scanpmgaliases() -> String {
 
 /// `scanpmsaliases` — port of `Src/Modules/parameter.c` (suffix arm).
 fn scanpmsaliases() -> String {
-    use crate::ported::hashtable::flags::DISABLED;
     crate::ported::hashtable::sufaliastab_lock().read().ok()
         .map(|t| t.iter()
             .filter(|(_, a)| (a.node.flags & DISABLED as i32) == 0)
@@ -226,7 +223,6 @@ fn scanpmsaliases() -> String {
 /// `scanpmdisraliases` — port of `Src/Modules/parameter.c:1998`.
 /// Disabled regular-aliases arm.
 fn scanpmdisraliases() -> String {
-    use crate::ported::hashtable::flags::{ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED};
     crate::ported::hashtable::aliastab_lock().read().ok()
         .map(|t| t.iter()
             .filter(|(_, a)| {
@@ -242,7 +238,6 @@ fn scanpmdisraliases() -> String {
 
 /// `scanpmdisgaliases` — disabled-global-aliases arm.
 fn scanpmdisgaliases() -> String {
-    use crate::ported::hashtable::flags::{ALIAS_GLOBAL, DISABLED};
     crate::ported::hashtable::aliastab_lock().read().ok()
         .map(|t| t.iter()
             .filter(|(_, a)| {
@@ -256,7 +251,6 @@ fn scanpmdisgaliases() -> String {
 
 /// `scanpmdissaliases` — disabled-suffix-aliases arm.
 fn scanpmdissaliases() -> String {
-    use crate::ported::hashtable::flags::DISABLED;
     crate::ported::hashtable::sufaliastab_lock().read().ok()
         .map(|t| t.iter()
             .filter(|(_, a)| (a.node.flags & DISABLED as i32) != 0)
@@ -269,7 +263,6 @@ fn scanpmdissaliases() -> String {
 /// HASHED arm reads `cmd` (resolved path); unhashed reads first
 /// path segment in `name` (Vec<String>) joined with the cmd name.
 fn scanpmcommands() -> String {
-    use crate::ported::hashtable::flags::HASHED;
     crate::ported::hashtable::cmdnamtab_lock().read().ok()
         .map(|t| t.iter()
             .filter_map(|(nm, c)| {
@@ -288,7 +281,6 @@ fn scanpmcommands() -> String {
 
 /// `scanpmfunctions` — port of `Src/Modules/parameter.c:519`.
 fn scanpmfunctions() -> String {
-    use crate::ported::hashtable::flags::DISABLED;
     crate::ported::hashtable::shfunctab_lock().read().ok()
         .map(|t| t.iter()
             .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
@@ -299,7 +291,6 @@ fn scanpmfunctions() -> String {
 
 /// `scanpmdisfunctions` — disabled-functions arm.
 fn scanpmdisfunctions() -> String {
-    use crate::ported::hashtable::flags::DISABLED;
     crate::ported::hashtable::shfunctab_lock().read().ok()
         .map(|t| t.iter()
             .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
@@ -313,7 +304,6 @@ fn scanpmdisfunctions() -> String {
 /// function was loaded from). C delegates to `scanfunctions_source`
 /// with `dis=0`; the Rust port inlines the filtered iteration.
 fn scanpmfunction_source() -> String {
-    use crate::ported::hashtable::flags::DISABLED;
     crate::ported::hashtable::shfunctab_lock().read().ok()
         .map(|t| t.iter()
             .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
@@ -326,7 +316,6 @@ fn scanpmfunction_source() -> String {
 /// `$dis_functions_source` arm (delegates to `scanfunctions_source`
 /// with `dis=DISABLED` in C).
 fn scanpmdisfunction_source() -> String {
-    use crate::ported::hashtable::flags::DISABLED;
     crate::ported::hashtable::shfunctab_lock().read().ok()
         .map(|t| t.iter()
             .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
@@ -7842,7 +7831,7 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
 // `crate::ported::zsh_h` at the top of this file (DNULL) and
 // available there (BNULLKEEP). Bringing BNULLKEEP into scope.
 use crate::ported::zsh_h::BNULLKEEP;
-use crate::zsh_h::isset;
+use crate::zsh_h::{isset, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED};
 // c:zsh.h:200
 
 /// Equal substitution (=cmd)

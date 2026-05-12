@@ -374,7 +374,9 @@ pub struct ShellExecutor {
     pub traps: HashMap<String, String>,
     pub options: HashMap<String, bool>,
     pub completions: HashMap<String, CompSpec>, // command -> completion spec
-    pub dir_stack: Vec<PathBuf>,
+    // `dir_stack` field deleted — canonical `DIRSTACK` lives in
+    // `modules/parameter.rs:398` (mirror of C `dirstack` global at
+    // `Src/builtin.c:1456`). Callers go through that Mutex directly.
     // zsh completion system state
     pub comp_matches: Vec<CompMatch>, // Current completion matches
     pub comp_groups: Vec<CompGroup>,  // Completion groups
@@ -1054,7 +1056,6 @@ impl ShellExecutor {
             history,
             session_histnum: 0,
             completions: HashMap::new(),
-            dir_stack: Vec::new(),
             process_sub_counter: 0,
             traps: HashMap::new(),
             options: Self::default_options(),
@@ -3658,22 +3659,18 @@ impl crate::ported::exec::ShellExecutor {
             }
 
             // === DIRECTORY STACK ===
+            // Canonical `dirstack` lives in `modules/parameter.rs::DIRSTACK`
+            // — mirror of the C `dirstack` global (`Src/builtin.c:1456`).
             "dirstack" => {
+                let dirs = crate::ported::modules::parameter::DIRSTACK
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default();
                 if key == "@" || key == "*" {
-                    let dirs: Vec<String> = self
-                        .dir_stack
-                        .iter()
-                        .map(|p| p.display().to_string())
-                        .collect();
                     return Some(dirs.join(" "));
                 }
                 if let Ok(idx) = key.parse::<usize>() {
-                    Some(
-                        self.dir_stack
-                            .get(idx)
-                            .map(|p| p.display().to_string())
-                            .unwrap_or_default(),
-                    )
+                    Some(dirs.get(idx).cloned().unwrap_or_default())
                 } else {
                     Some(String::new())
                 }
