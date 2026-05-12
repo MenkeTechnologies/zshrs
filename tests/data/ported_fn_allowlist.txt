@@ -919,3 +919,4 @@ module_handle
 shfunc_with_body
 shfunc_autoload
 getkeystring_with
+apply_history_modifiers

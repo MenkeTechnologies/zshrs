@@ -1279,6 +1279,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // tracking via JobTable is deferred to Phase G6 — JobTable::add_job
     // currently requires a std::process::Child, which a libc::fork doesn't
     // produce. Until then, `jobs`/`fg`/`wait` can't see these pids.
+    //WARNING FAKE AND MUST BE DELETED
     vm.register_builtin(BUILTIN_RUN_BG, |vm, _argc| {
         let sub_idx = vm.pop().to_int() as usize;
         let chunk = match vm.chunk.sub_chunks.get(sub_idx).cloned() {
@@ -1325,6 +1326,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     //      + WORD_SPLIT processing.
     // Both end with name as the LAST arg. Values may be a single Value::Array
     // (in which case we extract its elements) or a sequence of strings.
+    //WARNING FAKE AND MUST BE DELETED
     vm.register_builtin(BUILTIN_SET_ARRAY, |vm, argc| {
         let n = argc as usize;
         let mut popped: Vec<fusevm::Value> = Vec::with_capacity(n);
@@ -1425,8 +1427,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         });
         Value::Status(if blocked { 1 } else { 0 })
     });
-
     // `arr+=(d e f)` — append. Same calling conventions as SET_ARRAY.
+    //WARNING FAKE AND MUST BE DELETED
     vm.register_builtin(BUILTIN_APPEND_ARRAY, |vm, argc| {
         let n = argc as usize;
         let mut popped: Vec<fusevm::Value> = Vec::with_capacity(n);
@@ -1545,6 +1547,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // which we recognize as a "user wants out" signal. zsh's `break` works
     // in select via the same loop-control mechanism as for/while. Phase G6
     // follow-up.
+    //WARNING FAKE AND MUST BE DELETED
     vm.register_builtin(BUILTIN_RUN_SELECT, |vm, argc| {
         use std::io::{BufRead, Write};
 
@@ -1728,6 +1731,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     //   reswords, options, parameters, jobtexts, jobdirs, jobstates,
     //   nameddirs, userdirs, modules.
     // Returns None if `name` isn't a recognized magic name.
+    //WARNING FAKE AND MUST BE DELETED
     fn magic_assoc_lookup(name: &str, idx: &str) -> Option<Value> {
         // Subscript-flag lookup `(r)pat` / `(R)pat` / `(i)pat` /
         // `(I)pat` on a magic-assoc — synthesize the (key,value)
@@ -1773,7 +1777,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let mut out: Vec<String> = Vec::new();
                 for (k, v) in &pairs {
                     let hay = if by_key { k } else { v };
-                    if ShellExecutor::glob_match_static(hay, &pat) {
+                    if crate::exec::glob_match_static(hay, &pat) {
                         out.push(if by_key { k.clone() } else { v.clone() });
                         if !return_all { break; }
                     }
@@ -1995,6 +1999,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         .map(|p| p.to_string_lossy().into_owned())
                         .unwrap_or_default(),
                 )),
+                //WARNING FAKE AND MUST BE DELETED
                 "userdirs" => {
                     // ~user → home dir lookup via /etc/passwd. No caching;
                     // each lookup hits getpwnam.
@@ -2060,6 +2065,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             .unwrap_or(false);
                     Some(Value::str(if loaded { "loaded" } else { "" }))
                 }
+                //WARNING FAKE AND MUST BE DELETED
                 "patchars" => Some(Value::str("*?[]<>(){}|^&;")),
                 "widgets" => {
                     // ${widgets[name]} → 'builtin' or 'user:func' per
@@ -2283,6 +2289,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // so Op::Exec splice produces N argv slots. For `${foo[key]}` where foo
     // is an assoc, the idx is a string key — we check assoc_arrays first
     // when the idx isn't `@`/`*` and the name has an assoc binding.
+    //  WARNING FAKE AND MUST BE DELETED
     vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, _argc| {
         let mut idx = vm.pop().to_str();
         let name = vm.pop().to_str();
@@ -2518,7 +2525,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             let return_all = flags.contains('I');
                             let mut out: Vec<String> = Vec::new();
                             for (k, v) in map.iter() {
-                                if ShellExecutor::glob_match_static(k, &pat) {
+                                if crate::exec::glob_match_static(k, &pat) {
                                     out.push(v.clone());
                                     if !return_all {
                                         break;
@@ -2536,7 +2543,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             let return_all = flags.contains('R');
                             let mut out: Vec<String> = Vec::new();
                             for (k, v) in map.iter() {
-                                if ShellExecutor::glob_match_static(v, &pat) {
+                                if crate::exec::glob_match_static(v, &pat) {
                                     out.push(k.clone());
                                     if !return_all {
                                         break;
@@ -2792,6 +2799,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Bridge entry that preserves array shape — see the const's doc.
     // Pops [content] (the brace body without the outer ${...}) and
     // returns Value::Array of per-element words.
+    //WARNING FAKE AND MUST BE DELETED
     vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, _argc| {
         // Inner body of `${(...)...}` (already stripped of `${`/`}` by
         // the caller). Re-wrap and route through subst.rs's paramsubst
@@ -5931,10 +5939,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 });
                 if extendedglob {
                     if let Some(neg) = pat.strip_prefix('^') {
-                        return !crate::ported::exec::ShellExecutor::glob_match_static(s, neg);
+                        return !crate::exec::glob_match_static(s, neg);
                     }
                 }
-                crate::ported::exec::ShellExecutor::glob_match_static(s, pat)
+                crate::exec::glob_match_static(s, pat)
             } else {
                 s == pat
             }
@@ -6859,7 +6867,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                     key
                                 };
                                 return Some(arr.iter().any(|el| {
-                                    crate::exec::ShellExecutor::glob_match_static(el, pat)
+                                    crate::exec::glob_match_static(el, pat)
                                 }));
                             }
                             None
@@ -7091,7 +7099,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     };                                       // c:2186
                     for end in end_iter {                    // c:2186
                         let sub: String = chars[start..end].iter().collect(); // c:2186
-                        if ShellExecutor::glob_match_static(&sub, pattern) { // c:2186
+                        if crate::exec::glob_match_static(&sub, pattern) { // c:2186
                             // (S) prefers the leftmost match
                             // for # / ##, and the rightmost for
                             // % / %%. # / ## scan left-to-right;
@@ -7132,7 +7140,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // shortest prefix strip — try k = 0, 1, ...
                     for k in 0..=n {
                         let prefix: String = chars[..k].iter().collect();
-                        if ShellExecutor::glob_match_static(&prefix, pattern) {
+                        if crate::exec::glob_match_static(&prefix, pattern) {
                             return if sub_match {            // c:2171
                                 prefix                       // c:2171
                             } else {                         // c:2171
@@ -7146,7 +7154,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // longest prefix strip — try k = n down to 0
                     for k in (0..=n).rev() {
                         let prefix: String = chars[..k].iter().collect();
-                        if ShellExecutor::glob_match_static(&prefix, pattern) {
+                        if crate::exec::glob_match_static(&prefix, pattern) {
                             return if sub_match {            // c:2171
                                 prefix                       // c:2171
                             } else {                         // c:2171
@@ -7160,7 +7168,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // shortest suffix strip
                     for k in 0..=n {
                         let suffix: String = chars[n - k..].iter().collect();
-                        if ShellExecutor::glob_match_static(&suffix, pattern) {
+                        if crate::exec::glob_match_static(&suffix, pattern) {
                             return if sub_match {            // c:2171
                                 suffix                       // c:2171
                             } else {                         // c:2171
@@ -7174,7 +7182,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // longest suffix strip
                     for k in (0..=n).rev() {
                         let suffix: String = chars[n - k..].iter().collect();
-                        if ShellExecutor::glob_match_static(&suffix, pattern) {
+                        if crate::exec::glob_match_static(&suffix, pattern) {
                             return if sub_match {            // c:2171
                                 suffix                       // c:2171
                             } else {                         // c:2171
@@ -8769,7 +8777,7 @@ impl fusevm::ShellHost for ZshrsHost {
     fn str_match(&mut self, s: &str, pattern: &str) -> bool {
         // Shell glob match — `*`, `?`, `[...]`, alternation. Used by `[[ x = pat ]]`,
         // `case` arms, and any other point that compares against a glob pattern.
-        ShellExecutor::glob_match_static(s, pattern)
+        crate::exec::glob_match_static(s, pattern)
     }
 
     fn expand_param(&mut self, name: &str, _modifier: u8, _args: &[fusevm::Value]) -> fusevm::Value {

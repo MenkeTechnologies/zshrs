@@ -3365,7 +3365,7 @@ impl ShellExecutor {
                             // Use the canonical glob matcher so `[Cc]ode*`,
                             // `?ar`, `{a,b}*` etc. work. Was a local 4-rule
                             // matcher that only handled '*PAT' / 'PAT*'.
-                            ShellExecutor::glob_match_static(name, pat)
+                            crate::exec::glob_match_static(name, pat)
                         }
                         None => true,
                     };

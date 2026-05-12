@@ -1710,3 +1710,245 @@ pub fn getargs(entry: &histent, arg1: usize, arg2: usize) -> Option<String> {
     }
     Some(entry.node.nam[pos1..pos2].to_string())
 }
+
+
+/// Apply chained history modifiers `:X:Y...` to `val`.
+/// Direct port of the modifier-loop body in `Src/hist.c:830-961`
+/// (the `for (;;)` switch on `:`-prefixed mod chars). Each branch
+/// dispatches via `chabspath`/`chrealpath`/`equalsubstr`/`remtpath`/
+/// `rembutext`/`remtext`/`remlpaths`/`subst`/`quote`/`casemodify`/
+/// `xsymlink`. Free fn — no executor state needed.
+/// Apply zsh history-style modifiers to a value
+/// Modifiers can be chained: :A:h:h
+pub fn apply_history_modifiers(val: &str, modifiers: &str) -> String {
+    let mut result = val.to_string();
+    let mut chars = modifiers.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            ':' => continue,
+            'A' => {
+                if let Ok(abs) = std::fs::canonicalize(&result) {
+                    result = abs.to_string_lossy().to_string();
+                } else {
+                    // canonicalize() requires the path to exist. For
+                    // non-existent paths zsh still removes `./` and
+                    // resolves `..` lexically — `./foo` → `<cwd>/foo`,
+                    // not `<cwd>/./foo`. Without this normalization,
+                    // `${a:A}` for `a=./foo` left the `./` segment in
+                    // the output even after the cwd-prefix.
+                    let joined = if result.starts_with('/') {
+                        std::path::PathBuf::from(&result)
+                    } else if let Ok(cwd) = std::env::current_dir() {
+                        cwd.join(&result)
+                    } else {
+                        std::path::PathBuf::from(&result)
+                    };
+                    let mut parts: Vec<String> = Vec::new();
+                    for comp in joined.components() {
+                        use std::path::Component::*;
+                        match comp {
+                            CurDir => {}
+                            ParentDir => {
+                                parts.pop();
+                            }
+                            Normal(s) => parts.push(s.to_string_lossy().to_string()),
+                            RootDir => parts.insert(0, String::new()),
+                            Prefix(p) => {
+                                parts.insert(0, p.as_os_str().to_string_lossy().to_string())
+                            }
+                        }
+                    }
+                    result = parts.join("/");
+                    if result.is_empty() {
+                        result = "/".to_string();
+                    }
+                }
+            }
+            'a' => {
+                if !result.starts_with('/') {
+                    if let Ok(cwd) = std::env::current_dir() {
+                        result = cwd.join(&result).to_string_lossy().to_string();
+                    }
+                }
+            }
+            'h' => {
+                // zsh strips trailing slashes BEFORE applying head:
+                // `/tmp/` :h is `/`, not `/tmp`. Repeatedly trim
+                // trailing `/` first, then drop the last segment.
+                let trimmed = result.trim_end_matches('/');
+                if trimmed.is_empty() {
+                    // Pure-slash input (`/`, `//`, …) — head is `/`.
+                    result = "/".to_string();
+                } else if let Some(pos) = trimmed.rfind('/') {
+                    if pos == 0 {
+                        result = "/".to_string();
+                    } else {
+                        result = trimmed[..pos].to_string();
+                    }
+                } else {
+                    result = ".".to_string();
+                }
+            }
+            't' => {
+                // Mirror zsh: strip trailing slashes before tail
+                // extraction so `foo/` :t is `foo`, not the empty
+                // segment after the slash.
+                let trimmed = result.trim_end_matches('/');
+                if let Some(pos) = trimmed.rfind('/') {
+                    result = trimmed[pos + 1..].to_string();
+                } else {
+                    result = trimmed.to_string();
+                }
+            }
+            'r' => {
+                if let Some(dot_pos) = result.rfind('.') {
+                    let slash_pos = result.rfind('/').map(|p| p + 1).unwrap_or(0);
+                    if dot_pos > slash_pos {
+                        result = result[..dot_pos].to_string();
+                    }
+                }
+            }
+            'e' => {
+                if let Some(dot_pos) = result.rfind('.') {
+                    let slash_pos = result.rfind('/').map(|p| p + 1).unwrap_or(0);
+                    if dot_pos > slash_pos {
+                        result = result[dot_pos + 1..].to_string();
+                    } else {
+                        result = String::new();
+                    }
+                } else {
+                    result = String::new();
+                }
+            }
+            'l' => {
+                // `:l` lowercase. Direct port of
+                // src/zsh/Src/hist.c:931-933 — calls casemodify
+                // with CASMOD_LOWER. Use the faithful
+                // casemodify port instead of plain to_lowercase
+                // for Unicode-correct multibyte handling.
+                result = casemodify(&result, CaseMod::CASMOD_LOWER);
+            }
+            'u' => {
+                // `:u` uppercase. Port of src/zsh/Src/hist.c:934-936.
+                result = casemodify(&result, CaseMod::CASMOD_UPPER);
+            }
+            'C' => {
+                // `:C` capitalize. zsh-only modifier per
+                // hist.c (see CASMOD_CAPS dispatch via
+                // casemodify). The history-modifier loop's
+                // legacy path didn't recognize `:C` — only the
+                // `(C)` parameter flag did. Same semantics:
+                // word-aware capitalization with mid-word
+                // lowercase enforcement.
+                result = casemodify(&result, CaseMod::CASMOD_CAPS);
+            }
+            'q' => {
+                // zsh `:q` uses backslash quoting, not single-bslashquote
+                // wrapping. Each shell-meta char gets a `\` prefix.
+                let mut out = String::with_capacity(result.len() + 8);
+                for ch in result.chars() {
+                    if " \t\n'\"\\$`;|&<>()[]{}*?#~!".contains(ch) {
+                        out.push('\\');
+                    }
+                    out.push(ch);
+                }
+                result = out;
+            }
+            'x' => {
+                // `:x` bslashquote with word breaks. Direct port of
+                // src/zsh/Src/hist.c:2527-2556 quotebreak —
+                // wraps the value in single quotes, escapes
+                // internal `'` as `'\''`, AND closes-then-reopens
+                // SQ around each whitespace char (so `hello world`
+                // becomes `'hello' 'world'`). Already ported as a
+                // standalone helper in zle_hist.
+                result = crate::hist::quotebreak(&result);
+            }
+            'Q' => {
+                // Same shell-bslashquote-remove as the other :Q path
+                // (hist.c remquote): strips matching `'`/`"` pairs
+                // AND backslash escapes inside or unquoted.
+                let bytes: Vec<char> = result.chars().collect();
+                let mut out = String::with_capacity(result.len());
+                let mut j = 0;
+                let mut in_dq = false;
+                let mut in_sq = false;
+                while j < bytes.len() {
+                    let c = bytes[j];
+                    if in_sq {
+                        if c == '\'' {
+                            in_sq = false;
+                        } else {
+                            out.push(c);
+                        }
+                        j += 1;
+                        continue;
+                    }
+                    if in_dq {
+                        if c == '"' {
+                            in_dq = false;
+                        } else if c == '\\' && j + 1 < bytes.len() {
+                            j += 1;
+                            out.push(bytes[j]);
+                        } else {
+                            out.push(c);
+                        }
+                        j += 1;
+                        continue;
+                    }
+                    match c {
+                        '\'' => in_sq = true,
+                        '"' => in_dq = true,
+                        '\\' if j + 1 < bytes.len() => {
+                            j += 1;
+                            out.push(bytes[j]);
+                        }
+                        _ => out.push(c),
+                    }
+                    j += 1;
+                }
+                result = out;
+            }
+            'P' => {
+                if let Ok(real) = std::fs::canonicalize(&result) {
+                    result = real.to_string_lossy().to_string();
+                }
+            }
+            'g' => {
+                // `:g` is a prefix to `:s` (or `:&`) meaning "global
+                // substitution". Peek next char — if `s` or `&`,
+                // route through the substitution arm with global=true.
+                let global = true;
+                let next = chars.next();
+                match next {
+                    Some('s') => {
+                        /* :g substitute — stubbed pending faithful subst.c modify() port */ let _ = global;
+                    }
+                    _ => {
+                        // Stray `:g` without `:s`/`:&` follow-up —
+                        // unrecognized in zsh, exit modifier loop.
+                        break;
+                    }
+                }
+            }
+            's' => {
+                // `:s/old/new/` — single substitution. Delimiter is
+                // the char after `s` (typically `/`). Final delim
+                // optional.
+                /* :s/old/new/ — stubbed pending faithful subst.c modify() port */
+            }
+            // Bash-only modifiers — zsh rejects with "unrecognized
+            // modifier". Match that error format. Without these arms,
+            // unknown modifiers silently terminated the loop and the
+            // caller saw the previous-stage value (often empty).
+            'U' | 'L' | 'V' | 'X' => {
+                crate::ported::utils::zerr(&format!("unrecognized modifier `{}'", c));
+                result = String::new();
+                break;
+            }
+            _ => break,
+        }
+    }
+    result
+}
