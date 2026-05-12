@@ -309,39 +309,6 @@ pub struct ZshLexer<'a> {
 
 const MAX_LEXER_RECURSION: usize = 200;
 
-/// Per-alias info returned by `AliasResolver::lookup_alias` and
-/// `lookup_suffix_alias`. Mirrors zsh's `struct alias` fields used
-/// at lex.c:1914-1943: `text` (replacement body), `in_use` (the
-/// recursion-guard flag), `global` (vs command-position-only).
-#[derive(Debug, Clone)]
-pub struct AliasInfo {
-    pub text: String,
-    pub in_use: bool,
-    pub global: bool,
-}
-
-/// Trait the lexer uses to look up aliases and reserved words during
-/// `exalias`. Implementors typically delegate to the executor's
-/// alias/reswd hash tables. Defining the trait here keeps lex
-/// free of executor-specific types — same pattern zsh uses with the
-/// hashtable.h opaque-handle approach against aliastab/reswdtab/
-/// sufaliastab.
-pub trait AliasResolver {
-    /// Look up an alias by name. Returns `None` if not found, or the
-    /// alias body + flags otherwise.
-    fn lookup_alias(&self, name: &str) -> Option<AliasInfo>;
-    /// Look up a suffix alias (e.g. `.txt → less`) by suffix only.
-    fn lookup_suffix_alias(&self, suffix: &str) -> Option<AliasInfo>;
-    /// Resolve a reserved word. Returns the lextok the word should
-    /// promote to (e.g. "if" → IF), or None if not a reswd.
-    fn lookup_reswd(&self, name: &str) -> Option<lextok>;
-    /// Mark an alias as in-use (recursion guard). Called when an
-    /// alias is about to be expanded; the matching unmark happens
-    /// when the alias text has been fully consumed by the lexer.
-    fn mark_in_use(&mut self, name: &str, in_use: bool);
-}
-
-// `#[derive(Default)]` on the canonical struct.
 
 impl<'a> ZshLexer<'a> {
     /// Create a new lexer for the given input
@@ -416,10 +383,10 @@ impl<'a> ZshLexer<'a> {
     ///      (lex.c:1993-2015).
     ///   6. Clear inalmore (lex.c:2016).
     ///
-    /// Takes an `AliasResolver` trait object so the lexer doesn't
-    /// hard-depend on the executor's alias-table types. zshrs callers
-    /// implement `AliasResolver` over their alias hash tables.
-    pub fn exalias<R: AliasResolver>(&mut self, resolver: &mut R) -> bool {
+    /// Direct port of `exalias(void)` at `Src/lex.c:1953`. No
+    /// parameters — reads global `aliastab`/`sufaliastab`/`reswdtab`
+    /// directly, mirroring C.
+    pub fn exalias(&mut self) -> bool {
         // lex.c:1957 — `hwend()` ends the history-word region. zshrs's
         // history layer doesn't track per-word boundaries here; no-op.
 
@@ -430,8 +397,7 @@ impl<'a> ZshLexer<'a> {
         if self.tokstr.is_none() {
             // lex.c:1965 — `zshlextext = tokstrings[tok];` — for tokens
             // like SEMI/AMPER/etc. the canonical text comes from a
-            // static table. zshrs's check_alias_for_text uses the
-            // resolver directly with the token's text representation.
+            // static table.
             if self.tok == NEWLIN {
                 return false;
             }
@@ -442,7 +408,7 @@ impl<'a> ZshLexer<'a> {
                 BAR_TOK => "|",
                 _ => return false,
             };
-            return self.check_alias(resolver, text);
+            return self.check_alias(text);
         }
 
         let tokstr = self.tokstr.clone().unwrap();
@@ -474,7 +440,7 @@ impl<'a> ZshLexer<'a> {
         if self.tok == STRING_LEX {
             // lex.c:1995 — `checkalias()`. POSIX-aliases gate skipped
             // here (zshrs doesn't have the option flag wired).
-            if self.check_alias(resolver, &lextext) {
+            if self.check_alias(&lextext) {
                 return true;
             }
 
@@ -482,7 +448,14 @@ impl<'a> ZshLexer<'a> {
             // command position OR when the text is bare `}` and
             // IGNOREBRACES is unset (so `}` ends a brace block).
             if self.incmdpos || lextext == "}" {
-                if let Some(rwtok) = resolver.lookup_reswd(&lextext) {
+                // lex.c:2002 — `(rw = (Reswd) reswdtab->getnode(reswdtab, tokstr))`
+                let rw_tok: Option<lextok> = {
+                    let guard = crate::ported::hashtable::reswdtab_lock()
+                        .lock()
+                        .expect("reswdtab poisoned");
+                    guard.get(&lextext).map(|r| r.token)
+                };
+                if let Some(rwtok) = rw_tok {
                     self.tok = rwtok;
                     if rwtok == REPEAT {
                         self.inrepeat = 1;
@@ -511,11 +484,14 @@ impl<'a> ZshLexer<'a> {
         false
     }
 
-    /// Helper for `exalias`. Direct port of zsh/Src/lex.c:1899-1947
-    /// `checkalias`. Returns true if the lookup matched (regular or
-    /// suffix alias) AND the alias text was successfully injected
-    /// back into the input stream for re-lexing.
-    fn check_alias<R: AliasResolver>(&mut self, resolver: &mut R, lextext: &str) -> bool {
+    /// Direct port of `checkalias(void)` at `Src/lex.c:1902`. No
+    /// parameters in C — reads `aliastab`/`sufaliastab` directly.
+    /// zshrs threads `lextext` in because it's already untokenized at
+    /// the call site; C re-derives it from `zshlextext`. Returns true
+    /// if the lookup matched (regular or suffix alias) AND the alias
+    /// text was successfully injected back into the input stream for
+    /// re-lexing.
+    fn check_alias(&mut self, lextext: &str) -> bool {
         // lex.c:1906-1907 — guard on null lextext.
         if lextext.is_empty() {
             return false;
@@ -528,9 +504,20 @@ impl<'a> ZshLexer<'a> {
             return false;
         }
 
-        // lex.c:1914-1933 — regular alias lookup.
-        if let Some(alias) = resolver.lookup_alias(lextext) {
-            if !alias.in_use && (alias.global || (self.incmdpos && self.tok == STRING_LEX)) {
+        // lex.c:1914-1933 — regular alias lookup. C: `an = (Alias)
+        // aliastab->getnode(aliastab, zshlextext);`
+        let alias_clone: Option<crate::ported::zsh_h::alias> = {
+            let guard = crate::ported::hashtable::aliastab_lock()
+                .lock()
+                .expect("aliastab poisoned");
+            guard.get(lextext).cloned()
+        };
+        if let Some(alias) = alias_clone {
+            let is_global =
+                (alias.node.flags & crate::ported::zsh_h::ALIAS_GLOBAL) != 0;
+            if alias.inuse == 0
+                && (is_global || (self.incmdpos && self.tok == STRING_LEX))
+            {
                 // lex.c:1918-1927 — if the next char isn't blank,
                 // insert a space so the alias body can't accidentally
                 // join the following word.
@@ -543,7 +530,14 @@ impl<'a> ZshLexer<'a> {
                 }
                 // lex.c:1928 — `inpush(an->text, INP_ALIAS, an);`
                 self.inject_alias_text(&alias.text);
-                resolver.mark_in_use(lextext, true);
+                // lex.c:1929 — `an->inuse = 1;` (set on the live node).
+                let mut guard = crate::ported::hashtable::aliastab_lock()
+                    .lock()
+                    .expect("aliastab poisoned");
+                if let Some(a) = guard.get_mut(lextext) {
+                    a.inuse = 1;
+                }
+                drop(guard);
                 self.lexstop = false;
                 return true;
             }
@@ -556,15 +550,30 @@ impl<'a> ZshLexer<'a> {
             if let Some(dot_pos) = lextext.rfind('.') {
                 if dot_pos > 0 && dot_pos + 1 < lextext.len() {
                     let suffix = &lextext[dot_pos + 1..];
-                    if let Some(alias) = resolver.lookup_suffix_alias(suffix) {
-                        if !alias.in_use {
+                    let alias_clone: Option<crate::ported::zsh_h::alias> = {
+                        let guard =
+                            crate::ported::hashtable::sufaliastab_lock()
+                                .lock()
+                                .expect("sufaliastab poisoned");
+                        guard.get(suffix).cloned()
+                    };
+                    if let Some(alias) = alias_clone {
+                        if alias.inuse == 0 {
                             // lex.c:1938-1940 — push three things in
                             // reverse: the alias text, a space, then
                             // the original word.
                             self.inject_alias_text(&alias.text);
                             self.inject_alias_text(" ");
                             self.inject_alias_text(lextext);
-                            resolver.mark_in_use(suffix, true);
+                            // lex.c:1941 — `an->inuse = 1;` on the
+                            // suffix-alias node.
+                            let mut guard = crate::ported::hashtable::sufaliastab_lock()
+                                .lock()
+                                .expect("sufaliastab poisoned");
+                            if let Some(a) = guard.get_mut(suffix) {
+                                a.inuse = 1;
+                            }
+                            drop(guard);
                             self.lexstop = false;
                             return true;
                         }
@@ -2978,8 +2987,9 @@ impl<'a> ZshLexer<'a> {
     }
 
     /// Check for reserved word — mirrors lex.c:2002-2015 in `exalias`,
-    /// but reachable from the bare `zshlex` path (without an
-    /// AliasResolver). Promotes STRING_TOK tokens to keyword tokens when:
+    /// but reachable from the bare `zshlex` path (without going
+    /// through `exalias`'s alias-expansion first). Promotes STRING_TOK
+    /// tokens to keyword tokens when:
     ///   - incmdpos is set (or text is `}` ending a brace block)
     ///   - text is `]]` and we're inside `[[ ]]` (incond > 0)
     ///   - text is bare `!` and we're at the start of a cond (incond == 1)
