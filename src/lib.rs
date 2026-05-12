@@ -202,8 +202,6 @@ pub use fish_features::{
     KillRing,
     ValidationStatus,
 };
-pub use lex::ZshLexer;
-pub use parse::ZshParser;
 pub use tokens::lextok;
 
 // ── Stryke integration hook ──

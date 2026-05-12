@@ -1673,8 +1673,8 @@ impl ZshCompiler {
             use std::sync::atomic::Ordering;
             let saved_errflag = errflag.load(Ordering::Relaxed);
             errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-            let mut sub_parser = crate::parse::ZshParser::new(inner);
-            let prog = sub_parser.parse();
+            crate::ported::parse::parse_init(inner);
+            let prog = crate::ported::parse::parse();
             let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
             errflag.store(saved_errflag, Ordering::Relaxed);
             if !parse_failed {

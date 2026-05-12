@@ -469,16 +469,14 @@ fn emit_str(s: &str, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lex::ZshLexer;
-    use crate::parse::ZshParser;
-
+        
     fn parse_to_sexp(src: &str) -> String {
         use crate::ported::utils::{errflag, ERRFLAG_ERROR};
         use std::sync::atomic::Ordering;
         let saved = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        let mut p = ZshParser::new(src);
-        let prog = p.parse();
+        crate::ported::parse::parse_init(src);
+        let prog = crate::ported::parse::parse();
         let had_err = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved, Ordering::Relaxed);
         assert!(!had_err, "parse failed");
