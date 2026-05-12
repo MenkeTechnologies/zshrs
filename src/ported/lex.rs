@@ -993,7 +993,7 @@ fn peek() -> Option<char> {
 }
 
 /// Add character to token buffer
-/// Port of `add` from `Src/lex.c:451`.
+/// Port of `add(c)` from `Src/lex.c:451`.
 fn add(c: char) {
     LEX_LEXBUF.with_borrow_mut(|b| b.add(c));
 }
@@ -1990,7 +1990,7 @@ fn lex_outang() -> lextok {
 }
 
 /// Get rest of token string
-/// Port of `gettokstr` from `Src/lex.c:937`.
+/// Port of `gettokstr(c, sub)` from `Src/lex.c:937`.
 fn gettokstr(c: char, sub: bool) -> lextok {
     let mut bct = 0; // brace count
     let mut pct = 0; // parenthesis count
@@ -3285,7 +3285,7 @@ pub fn isnumglob(input: &str, pos: usize) -> bool {
 /// lexer — same output for typical bodies. Documented divergence:
 /// nested cmd-sub `$(...)` and arith `$((...))` aren't lexed
 /// recursively; the runtime handles them at expansion time.
-/// Port of `parsestrnoerr` from `Src/lex.c:1713`.
+/// Port of `parsestrnoerr(s)` from `Src/lex.c:1713`.
 pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     parsestr_inner(s)
 }

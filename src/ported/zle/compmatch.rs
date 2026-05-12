@@ -51,7 +51,7 @@
 /// Walk two parallel `Cpattern` chains testing structural equality
 /// (same `tp` + same `str` for class types or same `chr` for
 /// CPAT_CHAR). Used by `cmatchers_same` to dedupe matcher specs.
-/// Port of `cpatterns_same` from `Src/Zle/compmatch.c:44`.
+/// Port of `cpatterns_same(a, b)` from `Src/Zle/compmatch.c:44`.
 pub fn cpatterns_same(                                                       // c:44
     mut a: Option<&crate::ported::zle::comp_h::Cpattern>,
     mut b: Option<&crate::ported::zle::comp_h::Cpattern>,
@@ -106,7 +106,7 @@ pub fn cpatterns_same(                                                       // 
 /// ```
 /// Test two matchers for full structural equality — flags, lengths,
 /// patterns, and (if anchored) anchor patterns must all match.
-/// Port of `cmatchers_same` from `Src/Zle/compmatch.c:84`.
+/// Port of `cmatchers_same(a, b)` from `Src/Zle/compmatch.c:84`.
 pub fn cmatchers_same(                                                       // c:84
     a: &crate::ported::zle::comp_h::Cmatcher,
     b: &crate::ported::zle::comp_h::Cmatcher,
@@ -168,7 +168,7 @@ pub fn cmatchers_same(                                                       // 
 /// }
 /// ```
 /// Total visual length of one Cline plus its prefix/suffix sub-lists.
-/// Port of `cline_sublen` from `Src/Zle/compmatch.c:218`.
+/// Port of `cline_sublen(l)` from `Src/Zle/compmatch.c:218`.
 pub fn cline_sublen(l: &crate::ported::zle::comp_h::Cline) -> i32 {          // c:218
     use crate::ported::zle::comp_h::{CLF_LINE, CLF_SUF};
     // c:221 — `len = (CLF_LINE ? llen : wlen)`.
@@ -213,7 +213,7 @@ pub fn cline_sublen(l: &crate::ported::zle::comp_h::Cline) -> i32 {          // 
 /// ```
 /// Walk a Cline list setting `min` (and optionally `max`) from
 /// `cline_sublen`.
-/// Port of `cline_setlens` from `Src/Zle/compmatch.c:239`.
+/// Port of `cline_setlens(l, both)` from `Src/Zle/compmatch.c:239`.
 pub fn cline_setlens(l: &mut Option<Box<crate::ported::zle::comp_h::Cline>>, both: i32) {  // c:239
     let mut cur = l.as_deref_mut();
     while let Some(node) = cur {                                             // c:242 while (l)
@@ -241,7 +241,7 @@ pub fn cline_setlens(l: &mut Option<Box<crate::ported::zle::comp_h::Cline>>, bot
 /// ```
 /// Set `CLF_MATCHED` on every Cline reachable through next/prefix/
 /// suffix from `p`.
-/// Port of `cline_matched` from `Src/Zle/compmatch.c:253`.
+/// Port of `cline_matched(p)` from `Src/Zle/compmatch.c:253`.
 pub fn cline_matched(p: &mut Option<Box<crate::ported::zle::comp_h::Cline>>) {  // c:253
     use crate::ported::zle::comp_h::CLF_MATCHED;
     let mut cur = p.as_deref_mut();
@@ -269,7 +269,7 @@ pub fn cline_matched(p: &mut Option<Box<crate::ported::zle::comp_h::Cline>>) {  
 /// }
 /// ```
 /// Reverse a Cline `next`-chained list in place; returns the new head.
-/// Port of `revert_cline` from `Src/Zle/compmatch.c:270`.
+/// Port of `revert_cline(p)` from `Src/Zle/compmatch.c:270`.
 pub fn revert_cline(                                                         // c:270
     mut p: Option<Box<crate::ported::zle::comp_h::Cline>>,
 ) -> Option<Box<crate::ported::zle::comp_h::Cline>> {                        // c:269
@@ -308,7 +308,7 @@ pub fn revert_cline(                                                         // 
 /// Deep- or shallow-copy a Cline list. `deep` recursively copies
 /// the prefix/suffix sub-lists too. The C source draws from a
 /// freecl free-list when available — Rust just heap-allocates.
-/// Port of `cp_cline` from `Src/Zle/compmatch.c:190`.
+/// Port of `cp_cline(l, deep)` from `Src/Zle/compmatch.c:190`.
 pub fn cp_cline(                                                             // c:190
     l: Option<&crate::ported::zle::comp_h::Cline>,
     deep: i32,
@@ -366,7 +366,7 @@ pub fn cp_cline(                                                             // 
 /// ```
 /// Free a Cline list. C pushes onto a `freecl` free-list to recycle;
 /// Rust just drops via Box.
-/// Port of `free_cline` from `Src/Zle/compmatch.c:171`.
+/// Port of `free_cline(l)` from `Src/Zle/compmatch.c:171`.
 pub fn free_cline(l: Option<Box<crate::ported::zle::comp_h::Cline>>) {       // c:171
     // c:176-183 — walk; free each prefix/suffix recursively. In Rust
     // dropping the Box of the list head triggers Drop on `next`/

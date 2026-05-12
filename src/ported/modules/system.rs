@@ -501,7 +501,8 @@ pub fn bin_sysseek(nam: &str, args: &[String],                               // 
 ///                                            mnumber *argv, int id)`.
 /// Returns the current `lseek(fd, 0, SEEK_CUR)` position of `argv[0]`
 /// as an `mnumber`. Negative fds error via `zerr` and return 0.
-pub fn math_systell(_name: &str, _argc: i32, argv: &[Mnumber], _id: i32) -> Mnumber {  // c:467
+#[allow(unused_variables)]
+pub fn math_systell(name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber {  // c:467
     // c:469 — `int fd = (argv->type == MN_INTEGER) ? argv->u.l : (int)argv->u.d;`
     let fd: i32 = if argv[0].type_ == MN_INTEGER {
         argv[0].l as i32
@@ -851,7 +852,7 @@ pub fn bin_zsystem_flock(nam: &str, args: &[String],                         // 
     0                                                                    // c:767
 }
 
-/// Port of `bin_zsystem_supports()` from `Src/Modules/system.c:781`.
+/// Port of `bin_zsystem_supports(nam, args, ops, func)` from `Src/Modules/system.c:781`.
 ///
 /// C signature: `static int bin_zsystem_supports(char *nam, char **args,
 ///                                                 Options ops, int func)`.
@@ -991,7 +992,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/system.c:920`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:920
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:920
     // C body c:922-923 — `return 0`. Faithful empty-body port.
     0
 }
@@ -1010,7 +1012,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_(m)` from `Src/Modules/system.c:942`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:942
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:942
     // C body c:944-945 — `return 0`. Faithful empty-body port; the
     //                    syserror/sysread/syswrite/zsystem builtins
     //                    register via the bn_list feature dispatch.
@@ -1024,7 +1027,8 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_(m)` from `Src/Modules/system.c:957`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:957
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:957
     // C body c:959-960 — `return 0`. Faithful empty-body port; the
     //                    builtins unregister via cleanup_'s setfeatureenables.
     0

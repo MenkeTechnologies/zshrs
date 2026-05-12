@@ -68,7 +68,7 @@ pub fn freecmlist(l: Option<Box<crate::ported::zle::comp_h::Cmlist>>) {      // 
 /// The C source uses refcounting (`refc`); Rust port relies on Box
 /// ownership semantics — when the last reference drops, every
 /// Box-owned Cpattern in the chain drops with it.
-/// Port of `freecmatcher` from `Src/Zle/complete.c:115`.
+/// Port of `freecmatcher(m)` from `Src/Zle/complete.c:115`.
 pub fn freecmatcher(m: Option<Box<crate::ported::zle::comp_h::Cmatcher>>) {  // c:115
     // c:120 — `if (!m || --(m->refc)) return;` — refcount handled by
     // Rust ownership; the function is a name-parity wrapper.
@@ -335,7 +335,8 @@ pub fn comp_check() -> i32 {                                                 // 
 /// C body (c:1358-1361): `return pm->u.hash;`. Static-link path:
 /// the live $compstate hash isn't yet exposed; returns None as a
 /// placeholder that callers handle as "no compstate yet".
-pub fn get_compstate(_pm: *mut crate::ported::zsh_h::param) -> Option<usize> { // c:1357
+#[allow(unused_variables)]
+pub fn get_compstate(pm: *mut crate::ported::zsh_h::param) -> Option<usize> { // c:1357
     None                                                                     // c:1359 pm->u.hash
 }
 
@@ -343,14 +344,16 @@ pub fn get_compstate(_pm: *mut crate::ported::zsh_h::param) -> Option<usize> { /
 /// C body (c:1403-1404): `return (permmatches(0) ? 0 : nmatches);`.
 /// Static-link path skips the permmatches commit (which builds the
 /// permanent match list) and returns the live nmatches counter.
-pub fn get_nmatches(_pm: *mut crate::ported::zsh_h::param) -> i64 {          // c:1401
+#[allow(unused_variables)]
+pub fn get_nmatches(pm: *mut crate::ported::zsh_h::param) -> i64 {          // c:1401
     NMATCHES_GLOBAL.load(std::sync::atomic::Ordering::Relaxed)               // c:1404 nmatches
 }
 
 /// Direct port of `get_listlines(pm)` from `Src/Zle/complete.c:1408`.
 /// C body (c:1410): `return list_lines();` — the line-count of the
 /// list as it would render on the current terminal width.
-pub fn get_listlines(_pm: *mut crate::ported::zsh_h::param) -> i64 {         // c:1408
+#[allow(unused_variables)]
+pub fn get_listlines(pm: *mut crate::ported::zsh_h::param) -> i64 {         // c:1408
     COMPLISTLINES.load(std::sync::atomic::Ordering::Relaxed)                 // c:1410
 }
 
@@ -358,7 +361,8 @@ pub fn get_listlines(_pm: *mut crate::ported::zsh_h::param) -> i64 {         // 
 /// C body (c:1417): `comp_list(v);` — parse the option-list string
 /// into the live complistctl bitmap. Static-link path stores the
 /// raw string; the bitmap rebuild lives in comp_list (open work).
-pub fn set_complist(_pm: *mut crate::ported::zsh_h::param, v: &str) {        // c:1415
+#[allow(unused_variables)]
+pub fn set_complist(pm: *mut crate::ported::zsh_h::param, v: &str) {        // c:1415
     if let Ok(mut s) = lock_str(&COMPLIST).lock() {
         *s = v.to_string();                                                  // c:1417 comp_list(v)
     }
@@ -366,7 +370,8 @@ pub fn set_complist(_pm: *mut crate::ported::zsh_h::param, v: &str) {        // 
 
 /// Direct port of `get_complist(pm)` from `Src/Zle/complete.c:1422`.
 /// C body (c:1424): `return complist;`.
-pub fn get_complist(_pm: *mut crate::ported::zsh_h::param) -> String {       // c:1422
+#[allow(unused_variables)]
+pub fn get_complist(pm: *mut crate::ported::zsh_h::param) -> String {       // c:1422
     lock_str(&COMPLIST).lock().map(|s| s.clone()).unwrap_or_default()        // c:1424
 }
 
@@ -374,28 +379,32 @@ pub fn get_complist(_pm: *mut crate::ported::zsh_h::param) -> String {       // 
 /// C body (c:1431): `return unambig_data(NULL, NULL, NULL);` — the
 /// unambiguous-prefix string of the current match set. Static-link
 /// path returns empty until unambig_data is wired.
-pub fn get_unambig(_pm: *mut crate::ported::zsh_h::param) -> String {        // c:1429
+#[allow(unused_variables)]
+pub fn get_unambig(pm: *mut crate::ported::zsh_h::param) -> String {        // c:1429
     String::new()                                                            // c:1431
 }
 
 /// Direct port of `get_unambig_curs(pm)` from `Src/Zle/complete.c:1436`.
 /// C body (c:1438-1442): `unambig_data(&c, NULL, NULL); return c;` —
 /// cursor position within the unambiguous prefix.
-pub fn get_unambig_curs(_pm: *mut crate::ported::zsh_h::param) -> i64 {      // c:1436
+#[allow(unused_variables)]
+pub fn get_unambig_curs(pm: *mut crate::ported::zsh_h::param) -> i64 {      // c:1436
     0                                                                        // c:1442
 }
 
 /// Direct port of `get_unambig_pos(pm)` from `Src/Zle/complete.c:1447`.
 /// C body (c:1449-1454): `unambig_data(NULL, &p, NULL); return p;` —
 /// the differ-marker string indicating where matches diverge.
-pub fn get_unambig_pos(_pm: *mut crate::ported::zsh_h::param) -> String {    // c:1447
+#[allow(unused_variables)]
+pub fn get_unambig_pos(pm: *mut crate::ported::zsh_h::param) -> String {    // c:1447
     String::new()                                                            // c:1454
 }
 
 /// Direct port of `get_insert_pos(pm)` from `Src/Zle/complete.c:1458`.
 /// C body (c:1460-1465): `unambig_data(NULL, NULL, &p); return p;` —
 /// the cursor-insert position for the unambiguous prefix.
-pub fn get_insert_pos(_pm: *mut crate::ported::zsh_h::param) -> String {     // c:1458
+#[allow(unused_variables)]
+pub fn get_insert_pos(pm: *mut crate::ported::zsh_h::param) -> String {     // c:1458
     String::new()                                                            // c:1465
 }
 
@@ -403,7 +412,8 @@ pub fn get_insert_pos(_pm: *mut crate::ported::zsh_h::param) -> String {     // 
 /// C body (c:1472-1488): walks compqstack, decoding each quote-byte
 /// (one of `"`, `'`, `\\`, etc.) into a printable form. Static-link
 /// path returns the raw stack contents.
-pub fn get_compqstack(_pm: *mut crate::ported::zsh_h::param) -> String {     // c:1469
+#[allow(unused_variables)]
+pub fn get_compqstack(pm: *mut crate::ported::zsh_h::param) -> String {     // c:1469
     lock_str(&COMPQSTACK).lock().map(|s| s.clone()).unwrap_or_default()
 }
 
@@ -411,7 +421,8 @@ pub fn get_compqstack(_pm: *mut crate::ported::zsh_h::param) -> String {     // 
 /// C body (c:1664-1672): `if (comp_check())` then dispatch to
 /// do_comp_vars with id=CVT_PREPAT|CVT_SUFPAT and the arg as the
 /// pattern (or `arg[0]` as the pattern with `arg[1]` as the count).
-pub fn cond_psfix(a: &[String], _id: i32) -> i32 {                           // c:1662
+#[allow(unused_variables)]
+pub fn cond_psfix(a: &[String], id: i32) -> i32 {                           // c:1662
     if comp_check() != 0 {                                                   // c:1664
         // c:1665-1670 — do_comp_vars dispatch. Static-link path
         // doesn't yet implement do_comp_vars; conservative "false"
@@ -530,7 +541,8 @@ pub fn parse_ordering(arg: &str, flags: &mut Option<i32>) -> i32 {           // 
 /// hook the gsu vtable based on PM_TYPE. Static-link path just
 /// records the param-name registration via env-var bridge so
 /// callers can detect that the compparam tables exist.
-pub fn addcompparams(cp: &[compparam], _pp: &mut Vec<*mut crate::ported::zsh_h::param>) { // c:1297
+#[allow(unused_variables)]
+pub fn addcompparams(cp: &[compparam], pp: &mut Vec<*mut crate::ported::zsh_h::param>) { // c:1297
     // c:1300 — walk cp->name; for each: createparam + assign gsu.
     // Static-link path: paramtab createparam isn't yet wired. The
     // table-walk shape is preserved so the dispatch surface lands.
@@ -605,7 +617,8 @@ pub fn compunsetfn(pm: *mut crate::ported::zsh_h::param, exp: i32) {         // 
 /// Static-link path: the comprpms / compkpms arrays aren't yet
 /// stored, so this is a no-op until they land. Signature preserved
 /// so the dispatch surface is right.
-pub fn comp_setunset(_rset: i32, _runset: i32, _kset: i32, _kunset: i32) {   // c:1528
+#[allow(unused_variables)]
+pub fn comp_setunset(rset: i32, runset: i32, kset: i32, kunset: i32) {   // c:1528
     // c:1532 — `if (comprpms && (rset >= 0 || runset >= 0))` walk.
     // c:1542 — same for compkpms.
 }
@@ -663,7 +676,7 @@ pub fn cond_range(a: &[String], id: i32) -> i32 {                            // 
 /// parses the flag-letter shape, then forwards the residual argv
 /// through `compcore::addmatches` with a minimally-populated Cadata.
 /// Per-flag arg capture into Cadata fields is the next refinement.
-/// Port of `bin_compadd` from `Src/Zle/complete.c:603`.
+/// Port of `bin_compadd(name, argv, ops, func)` from `Src/Zle/complete.c:603`.
 pub fn bin_compadd(name: &str, argv: &[String],                              // c:603
                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
@@ -815,7 +828,7 @@ pub fn bin_compset(name: &str, argv: &[String],                              // 
 /// Returns 1 on match, 0 on no-match. Walks the live completion-
 /// state globals (compwords / compcurrent / compprefix / compsuffix)
 /// added in the earlier compcore.rs port batch.
-/// Port of `do_comp_vars` from `Src/Zle/complete.c:935`.
+/// Port of `do_comp_vars(test, na, sa, nb, sb, mod)` from `Src/Zle/complete.c:935`.
 pub fn do_comp_vars(test: i32, mut na: i32, sa: &str,                        // c:935
                     mut nb: i32, sb: &str, mod_: i32) -> i32 {
     use std::sync::atomic::Ordering;
@@ -1014,7 +1027,7 @@ pub fn parse_cmatcher(name: &str, s: &str)                                   // 
 /// Structural port returns the input pointer unmodified (signaling
 /// "consumed nothing, parse failed") so the caller can detect the
 /// stub state and skip emitting the matcher.
-/// Port of `parse_class` from `Src/Zle/complete.c:480`.
+/// Port of `parse_class(p, iptr)` from `Src/Zle/complete.c:480`.
 pub fn parse_class<'a>(_p: &mut crate::ported::zle::comp_h::Cpattern,        // c:480
                        iptr: &'a str) -> &'a str {
     // c:485-573 — the full bytewise parser. Deferred.

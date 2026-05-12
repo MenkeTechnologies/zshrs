@@ -1696,7 +1696,8 @@ pub fn describekeybriefly() -> i32 {                                         // 
 }
 
 /// Port of `enables_(m, enables)` from Src/Zle/zle_main.c:2294.
-pub fn enables_(_m: *const crate::ported::zsh_h::module, _enables: &mut Option<Vec<i32>>) -> i32 {
+#[allow(unused_variables)]
+pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:zle_main.c enables_ — `return handlefeatures(m, &module_features, enables)`.
     // Module-features substrate is shared across all module loaders;
     // returns the feature-mask handler.
@@ -1704,13 +1705,13 @@ pub fn enables_(_m: *const crate::ported::zsh_h::module, _enables: &mut Option<V
 }
 
 /// Port of `execimmortal(func, args)` from Src/Zle/zle_main.c:1404.
-pub fn execimmortal(name: &str, args: &[String]) -> i32 {                    // c:1403
-    // C body (c:1404-1410): `Thingy immortal = rthingy_nocreate(dyncat(".", name));
+pub fn execimmortal(func: &str, args: &[String]) -> i32 {                    // c:1403
+    // C body (c:1404-1410): `Thingy immortal = rthingy_nocreate(dyncat(".", func));
     //                       if (immortal) return execzlefunc(immortal, args, 0, 0);
     //                       return 1`.
     // Look up `.NAME` and dispatch to execzlefunc; the dot-prefixed
-    // name guarantees we hit the immortal/canonical thingy.
-    let dotted = format!(".{}", name);
+    // func guarantees we hit the immortal/canonical thingy.
+    let dotted = format!(".{}", func);
     if crate::ported::zle::zle_thingy::rthingy_nocreate(&dotted) {           // c:1406
         // c:1407 — `return execzlefunc(immortal, args, 0, 0)`.
         return execzlefunc(&dotted, args);
@@ -1733,7 +1734,7 @@ pub fn execimmortal(name: &str, args: &[String]) -> i32 {                    // 
 ///   - lastcmd update from the widget's flag mask.
 /// Bindk/metafy boundary management lives on the per-thread Zle
 /// struct already.
-/// Port of `execzlefunc` from `Src/Zle/zle_main.c:1420`.
+/// Port of `execzlefunc(func, args, set_bindk, set_lbindk)` from `Src/Zle/zle_main.c:1420`.
 pub fn execzlefunc(name: &str, args: &[String]) -> i32 {                     // c:1420
     // c:1422 — `if (!func) return 1`.
     if !crate::ported::zle::zle_thingy::rthingy_nocreate(name) {             // c:1422
@@ -1808,7 +1809,8 @@ pub fn features_(_m: *const crate::ported::zsh_h::module,
 }
 
 /// Port of `finish_(m)` from Src/Zle/zle_main.c:2327.
-pub fn finish_(_m: *const crate::ported::zsh_h::module) -> i32 {             // c:zle_main.c finish_
+#[allow(unused_variables)]
+pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {             // c:zle_main.c finish_
     // C body: per-module dispose hook, runs after cleanup_; releases
     // per-module-instance state. zshrs has no per-module state; no-op.
     0
@@ -1832,7 +1834,7 @@ pub fn getrestchar(zle: &mut Zle, inchar: i32) -> i32 {                      // 
 }
 
 /// Port of `recursiveedit(args)` from Src/Zle/zle_main.c:1974.
-pub fn recursiveedit(zle: &mut Zle) -> i32 {                                 // c:1973
+pub fn recursiveedit(args: &mut Zle) -> i32 {                                 // c:1973
     // C body (c:1976-1995): `++zle_recursive; redrawhook(); zrefresh();
     //                       zlecore(); --zle_recursive;
     //                       locerror = errflag ? 1 : 0;
@@ -1840,13 +1842,13 @@ pub fn recursiveedit(zle: &mut Zle) -> i32 {                                 // 
     // zlecore needs the editor mainloop substrate; we faithfully
     // bump/decrement zle_recursive and reset errflag/done.
     use std::sync::atomic::Ordering;
-    crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    crate::ported::args::zle_main::ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     // c:1984-1986 — `redrawhook(); zrefresh(); zlecore()`. Deferred.
-    crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    crate::ported::args::zle_main::ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     let cur_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed);
     let locerror = if cur_errflag != 0 { 1 } else { 0 };
     crate::ported::utils::errflag.store(0, Ordering::Relaxed);
-    crate::ported::zle::zle_misc::DONE.store(0, Ordering::SeqCst);           // c:1993
+    crate::ported::args::zle_misc::DONE.store(0, Ordering::SeqCst);           // c:1993
     locerror                                                                 // c:1995
 }
 
@@ -1896,7 +1898,8 @@ pub fn scanfindfunc(seq: &str, func: &str, ff: &mut findfunc) {              // 
 }
 
 /// Port of `setup_(m)` from Src/Zle/zle_main.c:2243.
-pub fn setup_(_m: *const crate::ported::zsh_h::module) -> i32 {              // c:zle_main.c setup_
+#[allow(unused_variables)]
+pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {              // c:zle_main.c setup_
     // C body: `bpaste = ... bracketed-paste arrays; set up editor
     //          entry points`. Module-init substrate; returns 0.
     0
@@ -1922,7 +1925,7 @@ pub fn setup_(_m: *const crate::ported::zsh_h::module) -> i32 {              // 
 /// XOR 0x20) sequences, decoding them as we go. C walks backward
 /// through `s` because `ungetbyte` is a stack push — to surface
 /// `s[0]` first on subsequent read, the last byte goes on first.
-/// Port of `ungetbytes_unmeta` from `Src/Zle/zle_main.c:365`.
+/// Port of `ungetbytes_unmeta(s, len)` from `Src/Zle/zle_main.c:365`.
 pub fn ungetbytes_unmeta(zle: &mut Zle, s: &[u8]) {                          // c:365
     let mut i = s.len();                                                     // c:368 s += len
     while i > 0 {                                                            // c:369 while (len--)
@@ -2089,7 +2092,7 @@ pub fn zleaftertrap() -> i32 {                                               // 
 /// Hook callback fired BEFORE a trap handler runs — pushes a
 /// param scope and exposes ZLE state to the trap function (when
 /// zle is active).
-/// Port of `zlebeforetrap` from `Src/Zle/zle_main.c:2103`.
+/// Port of `zlebeforetrap(dummy, dat)` from `Src/Zle/zle_main.c:2103`.
 pub fn zlebeforetrap() -> i32 {                                              // c:2103
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2106

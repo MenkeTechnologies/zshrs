@@ -361,7 +361,7 @@ pub fn is_interact() -> bool {
 /// signal handlers interrupt blocked reads (so ^C breaks out of
 /// `read` etc.).
 #[cfg(unix)]
-/// Port of `install_handler` from `Src/signals.c:100`.
+/// Port of `install_handler(sig)` from `Src/signals.c:100`.
 pub fn install_handler(sig: i32) {                                           // c:100
     unsafe {
         let mut act: libc::sigaction = std::mem::zeroed();
@@ -485,8 +485,9 @@ pub fn endtrapscope() {                                                      // 
 /// completely wrong (that's job-control suspend, not "wait for
 /// signal delivery"). Now real port via `sigsuspend(2)`.
 #[cfg(unix)]
-/// Port of `signal_suspend` from `Src/signals.c:214`.
-pub fn signal_suspend(_sig: i32, wait_cmd: bool) -> i32 {                    // c:214
+/// Port of `signal_suspend(sig, wait_cmd)` from `Src/signals.c:214`.
+#[allow(unused_variables)]
+pub fn signal_suspend(sig: i32, wait_cmd: bool) -> i32 {                    // c:214
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
         libc::sigemptyset(&mut set);
@@ -618,7 +619,7 @@ pub fn noholdintr() {                                                        // 
 /// Builds a sigset containing only the given signal; `sig == 0`
 /// returns an empty set (matches the explicit C check).
 #[cfg(unix)]
-/// Port of `signal_mask` from `Src/signals.c:160`.
+/// Port of `signal_mask(sig)` from `Src/signals.c:160`.
 pub fn signal_mask(sig: i32) -> libc::sigset_t {
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
@@ -637,10 +638,10 @@ pub fn signal_mask(sig: i32) -> libc::sigset_t {
 /// Sets the process signal mask, returning the previous mask
 /// (the previous Rust port discarded the old mask).
 #[cfg(unix)]
-pub fn signal_setmask(mask: &libc::sigset_t) -> libc::sigset_t {
+pub fn signal_setmask(set: &libc::sigset_t) -> libc::sigset_t {
     let mut oset: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
-        libc::sigprocmask(libc::SIG_SETMASK, mask, &mut oset);
+        libc::sigprocmask(libc::SIG_SETMASK, set, &mut oset);
     }
     oset
 }
@@ -816,19 +817,19 @@ extern "C" fn zhandler(sig: libc::c_int) {
 /// Port of `killrunjobs(from_signal)` from Src/signals.c:506.
 // SIGHUP any jobs left running                                             // c:502
 #[cfg(unix)]
-pub fn killrunjobs(sig: i32) {
+pub fn killrunjobs(from_signal: i32) {
     // This would need access to the job table
     // In practice, the exec module calls this during shutdown
-    let _ = sig;
+    let _ = from_signal;
 }
 
 /// Kill a specific job by process group.
 /// Port of `killjb(jn, sig)` from Src/signals.c:529.
 // send a signal to a job (simply involves kill if monitoring is on)       // c:525
 #[cfg(unix)]
-pub fn killjb(pgrp: i32, sig: i32) -> i32 {                                 // c:529
-    if pgrp > 0 {
-        unsafe { libc::killpg(pgrp, sig) }
+pub fn killjb(jn: i32, sig: i32) -> i32 {                                 // c:529
+    if jn > 0 {
+        unsafe { libc::killpg(jn, sig) }
     } else {
         -1
     }
@@ -1077,13 +1078,13 @@ pub fn removetrap(sig: i32) {
 /// macOS lacks `SIGRTMIN`/`SIGRTMAX`.
 ///
 /// SIGRTMIN is typically 34 on Linux, not available on macOS
-pub fn rtsigno(offset: i32) -> Option<i32> {
+pub fn rtsigno(signame: i32) -> Option<i32> {
     #[cfg(target_os = "linux")]
     {
         // SIGRTMIN is 34 on most Linux systems
         let sigrtmin = 34;
         let sigrtmax = 64;
-        let sig = sigrtmin + offset;
+        let sig = sigrtmin + signame;
         if sig <= sigrtmax {
             Some(sig)
         } else {
@@ -1092,7 +1093,7 @@ pub fn rtsigno(offset: i32) -> Option<i32> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = offset;
+        let _ = signame;
         None
     }
 }

@@ -51,7 +51,7 @@ pub fn dupstring(s: &str) -> String {                                        // 
 /// `s[..len.min(s.len())]` which panics if `len` lands on a non-
 /// UTF-8 boundary. C just `memcpy`s the bytes; this port matches
 /// that semantic via `as_bytes` slicing + `from_utf8_lossy`.
-/// Port of `dupstring_wlen` from `Src/string.c:48`.
+/// Port of `dupstring_wlen(s, len)` from `Src/string.c:48`.
 pub fn dupstring_wlen(s: &str, len: usize) -> String {                       // c:48
     let bytes = s.as_bytes();
     let n = len.min(bytes.len());
@@ -186,7 +186,7 @@ pub fn ztrduppfx(s: &str, len: usize) -> String {
 /// of C's "return the new pointer" is "the caller's reference is
 /// still valid after the push" — `String::push_str` reallocates
 /// transparently if needed.
-/// Port of `appstr` from `Src/string.c:186`.
+/// Port of `appstr(base, append)` from `Src/string.c:186`.
 pub fn appstr(base: &mut String, append: &str) {
     base.push_str(append);
 }
@@ -206,7 +206,7 @@ pub fn appstr(base: &mut String, append: &str) {
 /// - Empty input → empty `&str` (the "`*str == '\\0'`" branch).
 /// - Non-empty input → the trailing UTF-8 character as a `&str`
 ///   slice.
-/// Port of `strend` from `Src/string.c:196`.
+/// Port of `strend(str)` from `Src/string.c:196`.
 pub fn strend(str: &str) -> &str {
     if str.is_empty() {
         return str;

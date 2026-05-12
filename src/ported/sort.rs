@@ -49,23 +49,23 @@ use crate::ported::zsh_h::sortelt;
 /// from `sortflags` (`sort.c:207-210`), then calls `eltpcmp`. It does
 /// **not** consult `SORTIT_BACKWARDS` or `SORTIT_IGNORING_CASE` — those
 /// apply in `strmetasort` via `sortdir` and the pre-transform loop.
-pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {              // c:191
-    let sortnumeric = if sort_flags & (SORTIT_NUMERICALLY_SIGNED as u32) != 0 {
+pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {              // c:191
+    let sortnumeric = if sortflags & (SORTIT_NUMERICALLY_SIGNED as u32) != 0 {
         -1 // c:209-210
-    } else if sort_flags & (SORTIT_NUMERICALLY as u32) != 0 {
+    } else if sortflags & (SORTIT_NUMERICALLY as u32) != 0 {
         1
     } else {
         0
     };
     let numeric = sortnumeric != 0;
     let numeric_signed = sortnumeric < 0;
-    let no_backslash = (sort_flags & (SORTIT_IGNORING_BACKSLASHES as u32)) != 0;
+    let no_backslash = (sortflags & (SORTIT_IGNORING_BACKSLASHES as u32)) != 0;
 
     // Approximation of `sortnobslash` scanning (`sort.c:120-131`): C
     // drops `\\` pairwise while comparing; stripping all backslashes
     // matches zsh for typical glob names.
     let mut a_str = a.to_string();
-    let mut b_str = b.to_string();
+    let mut b_str = bs.to_string();
     if no_backslash {
         a_str = a_str.chars().filter(|&c| c != '\\').collect();
         b_str = b_str.chars().filter(|&c| c != '\\').collect();
@@ -79,9 +79,9 @@ pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {              // 
     // bigger; flipped for negatives via `mul`). Falls back to byte
     // compare from the divergence point when neither side is a
     // digit.
-    let cmp_numeric = |a: &str, b: &str, signed_mode: bool| -> Ordering {
+    let cmp_numeric = |a: &str, bs: &str, signed_mode: bool| -> Ordering {
         let ab = a.as_bytes();
-        let bb = b.as_bytes();
+        let bb = bs.as_bytes();
         let n = ab.len().min(bb.len());
         let mut i = 0;
         while i < n && ab[i] == bb[i] {
@@ -93,10 +93,10 @@ pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {              // 
         let mut mul: i32 = 0;
         let mut cmp: i32 = (ac as i32) - (bc as i32);
         if signed_mode {
-            if ac == b'-' && ab.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(bc) {
+            if ac == bs'-' && ab.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(bc) {
                 return Ordering::Less;
             }
-            if bc == b'-' && bb.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(ac) {
+            if bc == bs'-' && bb.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(ac) {
                 return Ordering::Greater;
             }
         }
@@ -105,7 +105,7 @@ pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {              // 
             while start > 0 && is_digit(ab[start - 1]) {
                 start -= 1;
             }
-            if signed_mode && start > 0 && ab[start - 1] == b'-' {
+            if signed_mode && start > 0 && ab[start - 1] == bs'-' {
                 mul = -1;
             } else {
                 mul = 1;
@@ -121,11 +121,11 @@ pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {              // 
                 .take_while(|&c| is_digit(c))
                 .collect();
             let stripped_a: &[u8] = {
-                let z = run_a.iter().take_while(|&&c| c == b'0').count();
+                let z = run_a.iter().take_while(|&&c| c == bs'0').count();
                 &run_a[z..]
             };
             let stripped_b: &[u8] = {
-                let z = run_b.iter().take_while(|&&c| c == b'0').count();
+                let z = run_b.iter().take_while(|&&c| c == bs'0').count();
                 &run_b[z..]
             };
             match stripped_a.len().cmp(&stripped_b.len()) {
@@ -177,9 +177,9 @@ pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {              // 
                 use libc;
                 use std::ffi::CString;
                 let cstr_head = |s: &str| -> CString {
-                    let b = s.as_bytes();
-                    let n = b.iter().position(|&x| x == 0).unwrap_or(b.len());
-                    CString::new(&b[..n]).unwrap_or_else(|_| CString::new(vec![0u8]).expect("nul"))
+                    let bs = s.as_bytes();
+                    let n = bs.iter().position(|&x| x == 0).unwrap_or(bs.len());
+                    CString::new(&bs[..n]).unwrap_or_else(|_| CString::new(vec![0u8]).expect("nul"))
                 };
                 let ca = cstr_head(&a_str);
                 let cb = cstr_head(&b_str);

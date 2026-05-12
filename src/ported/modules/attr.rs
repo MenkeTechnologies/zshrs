@@ -107,7 +107,7 @@ pub fn xlistxattr(_path: &str, _list: &mut [u8], _symlink: i32) -> isize { -1 }
 //           size_t size, int flags, int symlink)                       c:66
 // =====================================================================
 
-/// Port of `xsetxattr()` from `Src/Modules/attr.c:66`.
+/// Port of `xsetxattr(path, name, value, size, flags, symlink)` from `Src/Modules/attr.c:66`.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn xsetxattr(path: &str, name: &str, value: &[u8], flags: i32, symlink: i32) -> i32 { // c:67
     let path_c = match CString::new(path) { Ok(c) => c, Err(_) => return -1 };
@@ -132,7 +132,7 @@ pub fn xsetxattr(path: &str, name: &str, value: &[u8], flags: i32, symlink: i32)
     }
 }
 
-/// Port of `xsetxattr()` from `Src/Modules/attr.c:67`.
+/// Port of `xsetxattr(path, name, value, size, flags, symlink)` from `Src/Modules/attr.c:67`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn xsetxattr(_path: &str, _name: &str, _value: &[u8], _flags: i32, _symlink: i32) -> i32 { -1 }
 
@@ -163,14 +163,16 @@ pub fn xremovexattr(path: &str, name: &str, symlink: i32) -> i32 {           // 
 
 /// Port of `xremovexattr(path, name, symlink)` from `Src/Modules/attr.c:83`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn xremovexattr(_path: &str, _name: &str, _symlink: i32) -> i32 { -1 }
+#[allow(unused_variables)]
+pub fn xremovexattr(path: &str, name: &str, symlink: i32) -> i32 { -1 }
 
 // =====================================================================
 // bin_getattr(char *nam, char **argv, Options ops, UNUSED(int func))  c:97
 // =====================================================================
 
 /// Port of `bin_getattr(nam, argv, ops)` from `Src/Modules/attr.c:97`.
-pub fn bin_getattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 { // c:98
+#[allow(unused_variables)]
+pub fn bin_getattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 { // c:98
     // c:100 — `int ret = 0;`
     let mut ret: i32 = 0;
     // c:101 — `int val_len = 0, attr_len = 0, slen;`
@@ -232,7 +234,8 @@ pub fn bin_getattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32
 // =====================================================================
 
 /// Port of `bin_setattr(nam, argv, ops)` from `Src/Modules/attr.c:132`.
-pub fn bin_setattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 { // c:133
+#[allow(unused_variables)]
+pub fn bin_setattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 { // c:133
     // c:135 — `int ret = 0, slen, vlen;`
     let _slen: usize;
     let vlen: usize;
@@ -267,7 +270,8 @@ pub fn bin_setattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32
 // =====================================================================
 
 /// Port of `bin_delattr(nam, argv, ops)` from `Src/Modules/attr.c:149`.
-pub fn bin_delattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 {
+#[allow(unused_variables)]
+pub fn bin_delattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 {
     // c:152 — `int ret = 0, slen;`
     let _slen: usize;
     // c:153 — `int symlink = OPT_ISSET(ops, 'h');`
@@ -302,7 +306,8 @@ pub fn bin_delattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32
 // =====================================================================
 
 /// Port of `bin_listattr(nam, argv, ops)` from `Src/Modules/attr.c:168`.
-pub fn bin_listattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 {
+#[allow(unused_variables)]
+pub fn bin_listattr(nam: &str, argv: &[String], ops: &options, func: i32) -> i32 {
     // c:171 — `int ret = 0;`
     let mut ret: i32 = 0;
     // c:172 — `int val_len, list_len = 0, slen;`
@@ -396,7 +401,8 @@ pub fn bin_listattr(nam: &str, argv: &[String], ops: &options, _func: i32) -> i3
 
 
 /// Port of `setup_(m)` from `Src/Modules/attr.c:236`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:236
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:236
     // C body c:238-239 — `return 0`. Faithful empty-body port.
     0
 }
@@ -415,7 +421,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_(m)` from `Src/Modules/attr.c:258`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:258
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:258
     // C body c:260-261 — `return 0`. Faithful empty-body port; the
     //                    zgetattr/zsetattr/zdelattr/zlistattr builtins
     //                    register via the bn_list feature dispatch.
@@ -429,7 +436,8 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_(m)` from `Src/Modules/attr.c:272`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:272
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:272
     // C body c:274-275 — `return 0`. Faithful empty-body port; the
     //                    builtins unregister via cleanup_'s setfeatureenables.
     0
@@ -457,8 +465,8 @@ fn setaparam(name: &str, value: Vec<String>) {
 /// Port of `unsetparam(s)` from `Src/params.c:3690` — env::remove_var
 /// is the static-link equivalent of paramtab->removenode +
 /// freeparamnode for scalar params.
-fn unsetparam(name: &str) {
-    std::env::remove_var(name);
+fn unsetparam(v: &str) {
+    std::env::remove_var(v);
 }
 
 // =====================================================================

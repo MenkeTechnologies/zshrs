@@ -219,17 +219,17 @@ pub fn tcp_socket(domain: i32, ty: i32, protocol: i32, ztflags: i32) -> TcpSessi
 
 /// Port of `ztcp_free_session(sess)` from `Src/Modules/tcp.c:245`.
 /// In the Rust port the Vec drop handles `zfree(sess, ...)`.
-pub fn ztcp_free_session(_idx: usize) -> i32 {                           // c:245
+pub fn ztcp_free_session(sess: usize) -> i32 {                           // c:245
     0                                                                    // c:250
 }
 
 /// Port of `zts_delete(sess)` from `Src/Modules/tcp.c:253`. Removes a
 /// session from the list and frees its slot. Returns 0 on success,
 /// 1 if the fd has no matching session.
-pub fn zts_delete(fd: RawFd) -> i32 {                                    // c:253
+pub fn zts_delete(sess: RawFd) -> i32 {                                    // c:253
     ZTCP_SESSIONS.with(|s| {
         let mut sessions = s.borrow_mut();
-        let pos = sessions.iter().position(|sess| sess.fd == fd);        // c:259
+        let pos = sessions.iter().position(|sess| sess.sess == sess);        // c:259
         match pos {
             Some(i) => {                                                 // c:266 remnode + zfree
                 sessions.remove(i);
@@ -277,7 +277,7 @@ pub fn tcp_cleanup() {                                                   // c:28
 /// }
 /// return 0;
 /// ```
-/// Port of `tcp_close` from `Src/Modules/tcp.c:295`.
+/// Port of `tcp_close(sess)` from `Src/Modules/tcp.c:295`.
 pub fn tcp_close(sess: TcpSessionHandle) -> i32 {                        // c:295
     if let Some(idx) = sess {                                            // c:298
         let fd = sess_get(idx, |s| s.fd);
@@ -669,7 +669,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/tcp.c:714`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:714
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:714
     // C body c:716-717 — `return 0`. Faithful empty-body port.
     0
 }
@@ -688,7 +689,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 }
 
 /// Port of `boot_(m)` from `Src/Modules/tcp.c:736`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:736
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:736
     // C body c:738-739 — `ztcp_sessions = znewlinklist(); return 0`.
     //                    Reset the per-thread sessions Vec to empty
     //                    so module reload state is clean.
@@ -704,7 +706,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/tcp.c:754`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:754
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:754
     // C body c:756-757 — `return 0`. Faithful empty-body port; the
     //                    actual session teardown happens in cleanup_.
     0

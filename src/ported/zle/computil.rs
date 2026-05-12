@@ -629,7 +629,7 @@ pub fn freectags(t: Option<Box<ctags>>) {                                    // 
 /// Strip every `\:` two-byte sequence to nothing (the `\` is dropped,
 /// the `:` follows on the next iteration). Used to unescape colon-
 /// bearing description strings produced by `_arguments`.
-/// Port of `rembslashcolon` from `Src/Zle/computil.c:1046`.
+/// Port of `rembslashcolon(s)` from `Src/Zle/computil.c:1046`.
 pub fn rembslashcolon(s: &str) -> String {                                   // c:1046
     let bytes = s.as_bytes();                                                // c:1051 dupstring(s)
     let mut out = Vec::<u8>::with_capacity(bytes.len());
@@ -667,7 +667,7 @@ pub fn rembslashcolon(s: &str) -> String {                                   // 
 /// Insert a backslash before every `:`, doubling the worst-case
 /// length. Inverse of `rembslashcolon` for description-string
 /// emission.
-/// Port of `bslashcolon` from `Src/Zle/computil.c:1065`.
+/// Port of `bslashcolon(s)` from `Src/Zle/computil.c:1065`.
 pub fn bslashcolon(s: &str) -> String {                                      // c:1065
     let bytes = s.as_bytes();                                                // c:1070 zhalloc(2*strlen(s)+1)
     let mut out = Vec::<u8>::with_capacity(2 * bytes.len() + 1);
@@ -697,7 +697,7 @@ pub fn bslashcolon(s: &str) -> String {                                      // 
 ///
 /// `pre` is `-` for the negative-prefix slot and anything else
 /// (typically `+`) for the positive-prefix slot.
-/// Port of `single_index` from `Src/Zle/computil.c:1088`.
+/// Port of `single_index(pre, opt)` from `Src/Zle/computil.c:1088`.
 pub fn single_index(pre: u8, opt: u8) -> i32 {                               // c:1088
     if opt <= 0x20 || opt > 0x7e {                                           // c:1091
         return -1;                                                           // c:1092
@@ -1276,14 +1276,14 @@ pub fn boot_() -> i32 {                                                      // 
 }
 
 /// Port of `ca_colonlist(l)` from Src/Zle/computil.c:2428.
-pub fn ca_colonlist(items: &[String]) -> String {                            // c:2428
-    // C body c:2430-2459 — joins items with `:`, escapes `:` and `\`
+pub fn ca_colonlist(l: &[String]) -> String {                            // c:2428
+    // C body c:2430-2459 — joins l with `:`, escapes `:` and `\`
     //                      with `\` per item.
-    if items.is_empty() {
+    if l.is_empty() {
         return String::new();                                                // c:2459
     }
     let mut out = String::new();
-    for (i, item) in items.iter().enumerate() {                              // c:2444
+    for (i, item) in l.iter().enumerate() {                              // c:2444
         if i > 0 {
             out.push(':');                                                   // c:2452
         }
@@ -1298,7 +1298,8 @@ pub fn ca_colonlist(items: &[String]) -> String {                            // 
 }
 
 /// Port of `ca_foreign_opt(curset, all, option)` from Src/Zle/computil.c:1787.
-pub fn ca_foreign_opt(_curset: i32, _all: i32, _option: &str) -> i32 {       // c:1787
+#[allow(unused_variables)]
+pub fn ca_foreign_opt(curset: i32, all: i32, option: &str) -> i32 {       // c:1787
     // C body c:1789-1801 — walk Cadef snext list, skipping curset,
     //                      check each set's opts for a name match.
     //                      Cadef Rust struct not yet hydrated; 0 (no
@@ -1307,7 +1308,8 @@ pub fn ca_foreign_opt(_curset: i32, _all: i32, _option: &str) -> i32 {       // 
 }
 
 /// Port of `ca_get_arg(d, n)` from Src/Zle/computil.c:1807.
-pub fn ca_get_arg(_d: i32, _n: i32) -> i32 {                                 // c:1807
+#[allow(unused_variables)]
+pub fn ca_get_arg(d: i32, n: i32) -> i32 {                                 // c:1807
     // C body c:1809-1830 — walks Cadef args linked-list to find the
     //                      n'th positional arg or rest-of-line. Cadef
     //                      not yet hydrated; null result.
@@ -1315,7 +1317,8 @@ pub fn ca_get_arg(_d: i32, _n: i32) -> i32 {                                 // 
 }
 
 /// Port of `ca_get_opt(d, line, full, end)` from Src/Zle/computil.c:1706.
-pub fn ca_get_opt(_d: i32, _line: &str, _full: i32, _end: &mut String) -> i32 { // c:1706
+#[allow(unused_variables)]
+pub fn ca_get_opt(d: i32, line: &str, full: i32, end: &mut String) -> i32 { // c:1706
     // C body c:1708-1745 — looks up an option-spec by long-name match
     //                      against `line`; updates `end` to point past
     //                      the option text. Cadef not yet hydrated.
@@ -1337,16 +1340,16 @@ pub fn ca_inactive(_d: i32, _xor: &[String]) {                               // 
 }
 
 /// Port of `ca_nullist(l)` from Src/Zle/computil.c:2411.
-pub fn ca_nullist(items: &[String]) -> Vec<u8> {                             // c:2411
+pub fn ca_nullist(l: &[String]) -> Vec<u8> {                             // c:2411
     // C body c:2413-2419 — `if (l) { array = zlinklist2array(l, 0);
     //                              ret = zjoin(array, '\\0', 0); free(array);
     //                              return ret; } else return ztrdup("")`.
     //                      Returns NUL-joined byte buffer.
-    if items.is_empty() {
+    if l.is_empty() {
         return Vec::new();                                                   // c:2419
     }
     let mut out = Vec::new();
-    for (i, item) in items.iter().enumerate() {
+    for (i, item) in l.iter().enumerate() {
         if i > 0 {
             out.push(0);
         }
@@ -1496,7 +1499,7 @@ pub fn cf_remove_other(names: &[String], pre: &str, amb: &mut i32) -> Vec<String
     out
 }
 
-/// Port of `cfp_add_sdirs()` from Src/Zle/computil.c:4735.
+/// Port of `cfp_add_sdirs(final, orig, skipped, sdirs, fake)` from Src/Zle/computil.c:4735.
 pub fn cfp_add_sdirs(final_list: &mut Vec<String>, orig: &[String],          // c:4735
                      _skipped: &str, sdirs: &str, fake: &[String]) {
     // C body c:4738-4767: if sdirs ∈ {"yes","true","on","1","..","../"}
@@ -1532,7 +1535,8 @@ pub fn cfp_bld_pats(_dirs: i32, _names: &[String], _matcher: &str,           // 
 }
 
 /// Port of `cfp_matcher_pats(matcher, add)` from Src/Zle/computil.c:4525.
-pub fn cfp_matcher_pats(_matcher: &str, _pats: &[String]) -> Vec<String> {   // c:4525
+#[allow(unused_variables)]
+pub fn cfp_matcher_pats(matcher: &str, add: &[String]) -> Vec<String> {   // c:4525
     // C body c:4527-4619 — applies the Cmatcher equivalences from
     //                      `matcher` to expand each pattern. Without
     //                      Cmatcher in Rust: identity passthrough.
@@ -1547,7 +1551,8 @@ pub fn cfp_matcher_range(_ml: i32, _matcher: &str, _pat: &str) -> Vec<String> { 
 }
 
 /// Port of `cfp_opt_pats(pats, matcher)` from Src/Zle/computil.c:4621.
-pub fn cfp_opt_pats(_pats: &[String], _matcher: &str) -> Vec<String> {       // c:4621
+#[allow(unused_variables)]
+pub fn cfp_opt_pats(pats: &[String], matcher: &str) -> Vec<String> {       // c:4621
     // C body c:4623-4702 — optimization pass over `pats`: prunes
     //                      redundant `*` segments etc.
     Vec::new()
@@ -1571,18 +1576,18 @@ pub fn cleanup_() -> i32 {                                                   // 
 }
 
 /// Port of `comp_quote(str, prefix)` from Src/Zle/computil.c:3662.
-pub fn comp_quote(s: &str, prefix: i32) -> String {                          // c:3662
+pub fn comp_quote(str: &str, prefix: i32) -> String {                          // c:3662
     use crate::ported::zle::complete::COMPQSTACK;
     // c:3667 — `x = (prefix && *str == '=')`.
-    let (s_eff, x) = if prefix != 0 && s.starts_with('=') {                  // c:3667
-        ("x".to_string() + &s[1..], true)                                    // c:3668
+    let (s_eff, x) = if prefix != 0 && str.starts_with('=') {                  // c:3667
+        ("x".to_string() + &str[1..], true)                                    // c:3668
     } else {
-        (s.to_string(), false)
+        (str.to_string(), false)
     };
     // c:3670 — `ret = quotestring(str, *compqstack)`.
     //          *compqstack is the first byte of the qstack string.
     let qhead = COMPQSTACK.get()
-        .and_then(|m| m.lock().ok().and_then(|s| s.bytes().next()))
+        .and_then(|m| m.lock().ok().and_then(|str| str.bytes().next()))
         .unwrap_or(0);
     let mut ret = crate::ported::zle::zle_tricky::quotename(&s_eff, qhead as i32);
     // c:3672-3673 — restore `=` prefix on both ret and original.
@@ -1595,7 +1600,8 @@ pub fn comp_quote(s: &str, prefix: i32) -> String {                          // 
 }
 
 /// Port of `cv_get_val(d, name)` from Src/Zle/computil.c:3178.
-pub fn cv_get_val(_d: i32, _name: &str) -> i32 {                             // c:3178
+#[allow(unused_variables)]
+pub fn cv_get_val(d: i32, name: &str) -> i32 {                             // c:3178
     // C body c:3180-3186 — `for (p = d->vals; p; p = p->next)
     //                       if (!strcmp(name, p->name)) return p; return NULL`.
     //                       Cvdef Rust struct not yet hydrated; null result.
@@ -1603,13 +1609,15 @@ pub fn cv_get_val(_d: i32, _name: &str) -> i32 {                             // 
 }
 
 /// Port of `cv_inactive(d, xor)` from Src/Zle/computil.c:3209.
-pub fn cv_inactive(_d: i32, _xor: &[String]) {                               // c:3209
+#[allow(unused_variables)]
+pub fn cv_inactive(d: i32, xor: &[String]) {                               // c:3209
     // C body c:3211-3217 — for each xor entry, find via cv_get_val
     //                      and clear active flag. No Cvdef yet; no-op.
 }
 
 /// Port of `cv_next(d, sp, ap)` from Src/Zle/computil.c:3240.
-pub fn cv_next(_d: i32, _sp: &mut String, _ap: &mut String) -> i32 {         // c:3240
+#[allow(unused_variables)]
+pub fn cv_next(d: i32, sp: &mut String, ap: &mut String) -> i32 {         // c:3240
     // C body c:3242-3334 — splits the next value out of *sp using
     //                      d->sep / d->argsep, returns its Cvval.
     //                      No Cvdef yet; null result.
@@ -1617,7 +1625,8 @@ pub fn cv_next(_d: i32, _sp: &mut String, _ap: &mut String) -> i32 {         // 
 }
 
 /// Port of `cv_parse_word(d)` from Src/Zle/computil.c:3336.
-pub fn cv_parse_word(_d: i32) {                                              // c:3336
+#[allow(unused_variables)]
+pub fn cv_parse_word(d: i32) {                                              // c:3336
     // C body c:3338-3433 — full word parser: walks compwords/compprefix,
     //                      builds Cvstate, calls cv_next + cv_inactive.
     //                      Substrate not ready; no-op.
@@ -1671,7 +1680,8 @@ pub fn setup_() -> i32 {                                                     // 
 // landed above with the castate / ctags / ctset / cvdef structs.
 
 /// Port of `get_cadef(nam, args)` from Src/Zle/computil.c:1673.
-pub fn get_cadef(_nam: &str, _args: &[String]) -> i32 {                      // c:1673
+#[allow(unused_variables)]
+pub fn get_cadef(nam: &str, args: &[String]) -> i32 {                      // c:1673
     // C body c:1675-1700 — scans cadef_cache[MAX_CACACHE] for a hit
     //                      keyed by `args`; on miss parses `args` via
     //                      parse_cadef + caches in the LRU slot.
@@ -1681,13 +1691,15 @@ pub fn get_cadef(_nam: &str, _args: &[String]) -> i32 {                      // 
 }
 
 /// Port of `get_cvdef(nam, args)` from Src/Zle/computil.c:3154.
-pub fn get_cvdef(_nam: &str, _args: &[String]) -> i32 {                      // c:3154
+#[allow(unused_variables)]
+pub fn get_cvdef(nam: &str, args: &[String]) -> i32 {                      // c:3154
     // Mirror of get_cadef for cvdef_cache. Same fallback.
     0
 }
 
 /// Port of `parse_cvdef(nam, args)` from Src/Zle/computil.c:2986.
-pub fn parse_cvdef(_nam: &str, _args: &[String]) -> i32 {                    // c:2986
+#[allow(unused_variables)]
+pub fn parse_cvdef(nam: &str, args: &[String]) -> i32 {                    // c:2986
     // C body c:2988-3151 — parses _values style spec into a Cvdef
     //                      tree (Cvval list with name/desc/action).
     //                      Without Cvdef Rust struct: returns 0.
@@ -1746,7 +1758,7 @@ pub fn settags(level: i32, tags: &[String]) {                                // 
 /// Static-link path: the comp_quote helper currently returns 0 (stub);
 /// without it, every quote() call is a no-op, but the entry still
 /// validates incompfunc + compqstack guards correctly.
-/// Port of `bin_compquote` from `Src/Zle/computil.c:3679`.
+/// Port of `bin_compquote(nam, args, ops, func)` from `Src/Zle/computil.c:3679`.
 pub fn bin_compquote(nam: &str, args: &[String],                             // c:3679
                      ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;

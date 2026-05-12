@@ -259,30 +259,30 @@ pub fn znewlinklist() -> LinkList<String> {                                  // 
 
 // Insert a node in a linked list after a given node                       // c:129
 /// Port of `insertlinknode(list, node, dat)` (`Src/linklist.c:133`).
-pub fn insertlinknode<T>(list: &mut LinkList<T>, after_idx: usize, value: T) -> usize { // c:133
-    list.insertlinknode(after_idx, value)
+pub fn insertlinknode<T>(list: &mut LinkList<T>, node: usize, dat: T) -> usize { // c:133
+    list.insertlinknode(node, dat)
 }
 
 /// Port of `zinsertlinknode(list, node, dat)` (`Src/linklist.c:151`).
-pub fn zinsertlinknode<T>(list: &mut LinkList<T>, after_idx: usize, value: T) -> usize {
-    list.insertlinknode(after_idx, value)
+pub fn zinsertlinknode<T>(list: &mut LinkList<T>, node: usize, dat: T) -> usize {
+    list.insertlinknode(node, dat)
 }
 
 /// Port of `uinsertlinknode(list, node, new)` (`Src/linklist.c:173`).
-pub fn uinsertlinknode(list: &mut LinkList<String>, after_idx: usize, value: String) -> Option<usize> {
-    if list.iter().any(|s| s == &value) {
+pub fn uinsertlinknode(list: &mut LinkList<String>, node: usize, new: String) -> Option<usize> {
+    if list.iter().any(|s| s == &new) {
         None
     } else {
-        Some(list.insertlinknode(after_idx, value))
+        Some(list.insertlinknode(node, new))
     }
 }
 
 // Insert a list in another list                                           // c:186
 /// Port of `insertlinklist(l, where, x)` (`Src/linklist.c:190`).
-pub fn insertlinklist<T: Clone>(list1: &mut LinkList<T>, after_idx: usize, list2: &LinkList<T>) { // c:190
+pub fn insertlinklist<T: Clone>(l: &mut LinkList<T>, after_idx: usize, x: &LinkList<T>) { // c:190
     let mut idx = after_idx;
-    for v in list2.iter() {
-        idx = list1.insertlinknode(idx, v.clone());
+    for v in x.iter() {
+        idx = l.insertlinknode(idx, v.clone());
     }
 }
 
@@ -300,13 +300,13 @@ pub fn ugetnode<T>(list: &mut LinkList<T>) -> Option<T> {                    // 
 
 // Remove a node from a linked list                                        // c:247
 /// Port of `remnode(list, nd)` (`Src/linklist.c:251`).
-pub fn remnode<T>(list: &mut LinkList<T>, idx: usize) -> Option<T> {         // c:251
-    list.delete_node(idx)
+pub fn remnode<T>(list: &mut LinkList<T>, nd: usize) -> Option<T> {         // c:251
+    list.delete_node(nd)
 }
 
 /// Port of `uremnode(list, nd)` (`Src/linklist.c:270`).
-pub fn uremnode<T>(list: &mut LinkList<T>, idx: usize) -> Option<T> {        // c:270
-    list.delete_node(idx)
+pub fn uremnode<T>(list: &mut LinkList<T>, nd: usize) -> Option<T> {        // c:270
+    list.delete_node(nd)
 }
 
 // Free a linked list                                                       // c:283
@@ -323,13 +323,13 @@ pub fn countlinknodes<T>(list: &LinkList<T>) -> usize {                      // 
 
 // Make specified node first, moving preceding nodes to end                // c:313
 /// Port of `rolllist(l, nd)` (`Src/linklist.c:317`).
-pub fn rolllist<T>(list: &mut LinkList<T>, n: usize) {                       // c:317
-    let len = list.len();
+pub fn rolllist<T>(l: &mut LinkList<T>, nd: usize) {                       // c:317
+    let len = l.len();
     if len > 0 {
-        let n = n % len;
-        for _ in 0..n {
-            if let Some(v) = list.pop_front() {
-                list.push_back(v);
+        let nd = nd % len;
+        for _ in 0..nd {
+            if let Some(v) = l.pop_front() {
+                l.push_back(v);
             }
         }
     }
@@ -337,23 +337,24 @@ pub fn rolllist<T>(list: &mut LinkList<T>, n: usize) {                       // 
 
 // Create linklist of specified size. node->dats are not initialized.      // c:327
 /// Port of `newsizedlist(size)` (`Src/linklist.c:331`).
-pub fn newsizedlist<T>(_size: usize) -> LinkList<T> {                        // c:331
+#[allow(unused_variables)]
+pub fn newsizedlist<T>(size: usize) -> LinkList<T> {                        // c:331
     LinkList::new()
 }
 
 /// Port of `joinlists(first, second)` (`Src/linklist.c:360`).
-pub fn joinlists<T>(a: &mut LinkList<T>, b: &mut LinkList<T>) {              // c:360
-    a.append(b);
+pub fn joinlists<T>(first: &mut LinkList<T>, second: &mut LinkList<T>) {              // c:360
+    first.append(second);
 }
 
 /// Port of `linknodebydatum(list, dat)` (`Src/linklist.c:386`).
-pub fn linknodebydatum<T: PartialEq>(list: &LinkList<T>, value: &T) -> Option<usize> { // c:386
-    list.iter().position(|v| v == value)
+pub fn linknodebydatum<T: PartialEq>(list: &LinkList<T>, dat: &T) -> Option<usize> { // c:386
+    list.iter().position(|v| v == dat)
 }
 
 /// Port of `linknodebystring(list, dat)` (`Src/linklist.c:403`).
-pub fn linknodebystring(list: &LinkList<String>, s: &str) -> Option<usize> { // c:403
-    list.iter().position(|v| v == s)
+pub fn linknodebystring(list: &LinkList<String>, dat: &str) -> Option<usize> { // c:403
+    list.iter().position(|v| v == dat)
 }
 
 /// Port of `zlinklist2array(list, copy)` (`Src/linklist.c:449`).

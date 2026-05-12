@@ -1061,8 +1061,8 @@ pub(crate) fn printcompctl(
 /// Print a compctl hash node.
 /// Port of `printcompctlp(hn, printflags)` from Src/Zle/compctl.c:1549 — hash-table
 /// callback that calls printcompctl.
-pub(crate) fn printcompctlp(name: &str, cc: &Compctl, printflags: i32) {
-    printcompctl(name, cc, printflags, false);
+pub(crate) fn printcompctlp(name: &str, hn: &Compctl, printflags: i32) {
+    printcompctl(name, hn, printflags, false);
 }
 
 /// `compctl` builtin entry point.
@@ -1822,7 +1822,7 @@ thread_local! { static CMDSTR: std::cell::RefCell<Option<String>> = const { std:
 /// }
 /// return ret;
 /// ```
-/// Port of `makecomplistpc` from `Src/Zle/compctl.c:2530`.
+/// Port of `makecomplistpc(os, incmd)` from `Src/Zle/compctl.c:2530`.
 pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {                 // c:2530
     let mut ret: i32 = 0;                                                    // c:2535
     let cmdstr = match CMDSTR.with(|r| r.borrow().clone()) {                 // c:2533

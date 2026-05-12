@@ -328,26 +328,26 @@ pub fn inungetc(c: char) {                                                   // 
 /// Port of `inpush(str, flags, inalias)` from Src/input.c:675 — used for `eval`/
 /// `source`, alias expansion, and process substitution to layer a
 /// new input on top of the current one.
-pub fn inpush(s: &str, new_flags: i32, alias: Option<String>) {              // c:675
+pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {              // c:675
     let saved = instacks {
         buf: inbuf.with(|b| std::mem::take(&mut *b.borrow_mut())),
         bufpos: inbufpos.with(|p| p.replace(0)),
         flags: inbufflags.with(|f| f.get()),
-        alias: None,
+        inalias: None,
     };
     instack.with(|st| st.borrow_mut().push(saved));
 
-    inbuf.with(|b| *b.borrow_mut() = s.to_string());
+    inbuf.with(|b| *b.borrow_mut() = str.to_string());
     inbufpos.with(|p| p.set(0));
 
-    let mut combined = new_flags;
-    if (new_flags & (INP_ALIAS | INP_HIST)) != 0 {
+    let mut combined = flags;
+    if (flags & (INP_ALIAS | INP_HIST)) != 0 {
         combined |= INP_CONT | INP_ALIAS;
-        if let Some(a) = alias {
+        if let Some(a) = inalias {
             instack.with(|st| {
                 if let Some(last) = st.borrow_mut().last_mut() {
-                    last.alias = Some(a);
-                    if (new_flags & INP_HIST) != 0 {
+                    last.inalias = Some(a);
+                    if (flags & INP_HIST) != 0 {
                         last.flags |= INP_HISTCONT;
                     } else {
                         last.flags |= INP_ALCONT;
@@ -404,16 +404,16 @@ pub fn inpopalias() {                                                        // 
 
 /// Replace the current input line.
 /// Port of `inputsetline(str, flags)` from Src/input.c:510.
-pub fn inputsetline(s: &str, new_flags: i32) {                               // c:510
-    inbuf.with(|b| *b.borrow_mut() = s.to_string());
+pub fn inputsetline(str: &str, flags: i32) {                               // c:510
+    inbuf.with(|b| *b.borrow_mut() = str.to_string());
     inbufpos.with(|p| p.set(0));
-    let len = s.len() as i32;
-    if (new_flags & INP_CONT) != 0 {
+    let len = str.len() as i32;
+    if (flags & INP_CONT) != 0 {
         inbufct.with(|c| c.set(c.get() + len));
     } else {
         inbufct.with(|c| c.set(len));
     }
-    inbufflags.with(|f| f.set(new_flags));
+    inbufflags.with(|f| f.set(flags));
 }
 
 /// Discard pending input after a parse error.

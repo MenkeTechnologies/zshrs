@@ -193,10 +193,10 @@ pub fn free_prepostdisplay() {                                               // 
 }
 
 /// Port of `get_context(pm)` from Src/Zle/zle_params.c:942.
-pub fn get_context(zle: &crate::ported::zle::zle_main::Zle) -> &'static str {  // c:942
+pub fn get_context(pm: &crate::ported::pm::zle_main::Zle) -> &'static str {  // c:942
     use crate::ported::zsh_h::{ZLCON_LINE_CONT, ZLCON_SELECT, ZLCON_VARED};
     // c:944-958 — switch on zlecontext → "cont" / "select" / "vared" / "line".
-    match crate::ported::zle::zle_main::ZLECONTEXT.load(std::sync::atomic::Ordering::SeqCst) {
+    match crate::ported::pm::zle_main::ZLECONTEXT.load(std::sync::atomic::Ordering::SeqCst) {
         x if x == ZLCON_LINE_CONT => "cont",                                  // c:945-946
         x if x == ZLCON_SELECT    => "select",                                // c:949-950
         x if x == ZLCON_VARED     => "vared",                                 // c:953-954
@@ -205,10 +205,10 @@ pub fn get_context(zle: &crate::ported::zle::zle_main::Zle) -> &'static str {  /
 }
 
 /// Port of `get_histno(pm)` from Src/Zle/zle_params.c:514.
-pub fn get_histno(zle: &crate::ported::zle::zle_main::Zle) -> i64 {          // c:513
+pub fn get_histno(pm: &crate::ported::pm::zle_main::Zle) -> i64 {          // c:513
     // c:516 — `return histline`. zshrs tracks the editing history
     // line via the History.cursor field (offset into entries Vec).
-    zle.history.cursor as i64
+    pm.history.cursor as i64
 }
 
 /// Port of `get_isearchmatchactive(pm)` from Src/Zle/zle_params.c:591.
@@ -230,26 +230,26 @@ pub fn get_isearchmatchstart() -> i64 {                                      // 
 }
 
 /// Port of `get_keys(pm)` from Src/Zle/zle_params.c:463.
-pub fn get_keys(zle: &crate::ported::zle::zle_main::Zle) -> Vec<u8> {        // c:462
+pub fn get_keys(pm: &crate::ported::pm::zle_main::Zle) -> Vec<u8> {        // c:462
     // c:465 — `return keybuf`. The active keymap-walk byte buffer.
-    let _ = zle;
-    crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clone()
+    let _ = pm;
+    crate::ported::pm::zle_keymap::keybuf.lock().unwrap().clone()
 }
 
 /// Port of `get_keys_queued_count(pm)` from Src/Zle/zle_params.c:470.
-pub fn get_keys_queued_count(zle: &crate::ported::zle::zle_main::Zle) -> i64 {  // c:469
+pub fn get_keys_queued_count(pm: &crate::ported::pm::zle_main::Zle) -> i64 {  // c:469
     // c:472 — `return kungetct`. Bytes pending in the unget queue.
-    zle.unget_buf.len() as i64
+    pm.unget_buf.len() as i64
 }
 
 /// Port of `get_killring(pm)` from Src/Zle/zle_params.c:705.
-pub fn get_killring(zle: &crate::ported::zle::zle_main::Zle) -> Vec<String> {  // c:704
+pub fn get_killring(pm: &crate::ported::pm::zle_main::Zle) -> Vec<String> {  // c:704
     // c:706-733 — return kring entries with most-recently-killed
     // first. Empty entries returned as "" so the array length always
     // equals kringsize. zshrs holds the kill ring as
     // VecDeque<ZleString> where push_front puts newest at index 0,
     // so we iterate forward.
-    zle.killring.iter()
+    pm.killring.iter()
         .map(|entry| entry.iter().collect::<String>())
         .collect()
 }
@@ -273,9 +273,9 @@ pub fn get_lsearch() -> String {                                             // 
 }
 
 /// Port of `get_lwidget(pm)` from Src/Zle/zle_params.c:449.
-pub fn get_lwidget(zle: &crate::ported::zle::zle_main::Zle) -> String {      // c:448
+pub fn get_lwidget(pm: &crate::ported::pm::zle_main::Zle) -> String {      // c:448
     // c:451 — `return (lbindk ? lbindk->nam : "")`.
-    zle.lbindk.as_ref().map(|t| t.nam.clone()).unwrap_or_default()
+    pm.lbindk.as_ref().map(|t| t.nam.clone()).unwrap_or_default()
 }
 
 /// Port of `get_postdisplay(pm)` from Src/Zle/zle_params.c:907.
@@ -289,13 +289,13 @@ pub fn get_postdisplay() -> String {                                         // 
 }
 
 /// Port of `get_prebuffer(pm)` from Src/Zle/zle_params.c:394.
-pub fn get_prebuffer(zle: &crate::ported::zle::zle_main::Zle) -> String {    // c:394
+pub fn get_prebuffer(pm: &crate::ported::pm::zle_main::Zle) -> String {    // c:394
     // C body c:396-410 — `if (!stackhist) return ztrdup("");
     //                     dputs(...prepended buffer...)`. Returns the
     //                     stacked-line buffer (multi-line input not
     //                     yet committed to current zleline). Without
     //                     stackhist tracking we return empty.
-    let _ = zle;
+    let _ = pm;
     String::new()
 }
 
@@ -324,8 +324,8 @@ pub fn get_prepost(text: &str, len: usize) -> String {                       // 
 /// ```
 /// `$ZLE_RECURSIVE` getter — current ZLE recursion depth (>0 when
 /// inside a `recursive-edit` widget call).
-pub fn get_recursive(zle: &crate::ported::zle::zle_main::Zle) -> i64 {       // c:534
-    crate::ported::zle::zle_main::ZLE_RECURSIVE.load(std::sync::atomic::Ordering::SeqCst) as i64                                                 // c:537 return zle_recursive
+pub fn get_recursive(pm: &crate::ported::pm::zle_main::Zle) -> i64 {       // c:534
+    crate::ported::pm::zle_main::ZLE_RECURSIVE.load(std::sync::atomic::Ordering::SeqCst) as i64                                                 // c:537 return zle_recursive
 }
 
 /// Port of `get_region_active(pm)` from `Src/Zle/zle_params.c:324`.
@@ -337,12 +337,12 @@ pub fn get_recursive(zle: &crate::ported::zle::zle_main::Zle) -> i64 {       // 
 /// }
 /// ```
 /// `$REGION_ACTIVE` getter — returns the current region_active flag.
-pub fn get_region_active(zle: &crate::ported::zle::zle_main::Zle) -> i64 {   // c:324
-    zle.region_active as i64                                                 // c:327 return region_active
+pub fn get_region_active(pm: &crate::ported::pm::zle_main::Zle) -> i64 {   // c:324
+    pm.region_active as i64                                                 // c:327 return region_active
 }
 
 /// Port of `get_registers(name)` from Src/Zle/zle_params.c:807.
-pub fn get_registers(zle: &crate::ported::zle::zle_main::Zle, name: &str) -> Option<String> {  // c:806
+pub fn get_registers(ht: &crate::ported::ht::zle_main::Zle, name: &str) -> Option<String> {  // c:806
     // c:815-820 — name[1] non-zero → invalid; '0'..'9' → idx = name-'0'+26;
     // 'a'..'z' → idx = name-'a'.
     let bytes = name.as_bytes();
@@ -358,8 +358,8 @@ pub fn get_registers(zle: &crate::ported::zle::zle_main::Zle, name: &str) -> Opt
         return None;                                                         // c:822-824 (vbuf==-1)
     };
     // c:798 — `pm->u.str = zlelineasstring(vibuf[i].buf, ...)`.
-    if (idx as usize) < zle.vibuf.len() {
-        Some(zle.vibuf[idx as usize].iter().collect::<String>())
+    if (idx as usize) < ht.vibuf.len() {
+        Some(ht.vibuf[idx as usize].iter().collect::<String>())
     } else {
         None
     }
@@ -390,8 +390,8 @@ pub fn get_suffixactive() -> i64 {                                           // 
 /// ```
 /// `$SUFFIX_END` getter — returns the cursor position (suffixes are
 /// auto-removed FROM the cursor backward).
-pub fn get_suffixend(zle: &crate::ported::zle::zle_main::Zle) -> i64 {       // c:604
-    zle.zlecs as i64                                                         // c:607 return zlecs
+pub fn get_suffixend(pm: &crate::ported::pm::zle_main::Zle) -> i64 {       // c:604
+    pm.zlecs as i64                                                         // c:607 return zlecs
 }
 
 /// Port of `get_suffixstart(pm)` from `Src/Zle/zle_params.c:597`.
@@ -404,26 +404,26 @@ pub fn get_suffixend(zle: &crate::ported::zle::zle_main::Zle) -> i64 {       // 
 /// ```
 /// `$SUFFIX_START` getter — start byte of the active suffix
 /// (cursor minus suffix length).
-pub fn get_suffixstart(zle: &crate::ported::zle::zle_main::Zle) -> i64 {     // c:597
+pub fn get_suffixstart(pm: &crate::ported::pm::zle_main::Zle) -> i64 {     // c:597
     use std::sync::atomic::Ordering;
-    let suffixlen = crate::ported::zle::zle_misc::SUFFIXLEN.load(Ordering::Relaxed);
-    (zle.zlecs as i64) - (suffixlen as i64)                                  // c:600 zlecs - suffixlen
+    let suffixlen = crate::ported::pm::zle_misc::SUFFIXLEN.load(Ordering::Relaxed);
+    (pm.zlecs as i64) - (suffixlen as i64)                                  // c:600 zlecs - suffixlen
 }
 
 /// Port of `get_widget(pm)` from Src/Zle/zle_params.c:414.
-pub fn get_widget(zle: &crate::ported::zle::zle_main::Zle) -> String {       // c:413
+pub fn get_widget(pm: &crate::ported::pm::zle_main::Zle) -> String {       // c:413
     // c:416 — `return bindk ? bindk->nam : ""`.
-    zle.bindk.as_ref().map(|t| t.nam.clone()).unwrap_or_default()
+    pm.bindk.as_ref().map(|t| t.nam.clone()).unwrap_or_default()
 }
 
 /// Port of `get_widgetfunc(pm)` from Src/Zle/zle_params.c:421.
-pub fn get_widgetfunc(zle: &crate::ported::zle::zle_main::Zle) -> String {   // c:420
-    use crate::ported::zle::widget::{WidgetFlags, WidgetFunc};
+pub fn get_widgetfunc(pm: &crate::ported::pm::zle_main::Zle) -> String {   // c:420
+    use crate::ported::pm::widget::{WidgetFlags, WidgetFunc};
     // c:423-430 — read bindk->widget. C union dispatches:
     //   WIDGET_INT  → ".internal"  (c:426-427)
     //   WIDGET_NCOMP → comp.func   (c:428-429)
     //   else → fnnam               (c:430)
-    let Some(t) = zle.bindk.as_ref() else {
+    let Some(t) = pm.bindk.as_ref() else {
         return String::new();
     };
     let Some(w) = t.widget.as_ref() else {
@@ -441,11 +441,11 @@ pub fn get_widgetfunc(zle: &crate::ported::zle::zle_main::Zle) -> String {   // 
 }
 
 /// Port of `get_widgetstyle(pm)` from Src/Zle/zle_params.c:435.
-pub fn get_widgetstyle(zle: &crate::ported::zle::zle_main::Zle) -> String {  // c:434
-    use crate::ported::zle::widget::WidgetFlags;
+pub fn get_widgetstyle(pm: &crate::ported::pm::zle_main::Zle) -> String {  // c:434
+    use crate::ported::pm::widget::WidgetFlags;
     // c:437-444 — read bindk->widget. INT → ".internal"; NCOMP →
     // comp.wid (the underlying widget name); else "".
-    let Some(t) = zle.bindk.as_ref() else {
+    let Some(t) = pm.bindk.as_ref() else {
         return String::new();
     };
     let Some(w) = t.widget.as_ref() else {
@@ -460,12 +460,12 @@ pub fn get_widgetstyle(zle: &crate::ported::zle::zle_main::Zle) -> String {  // 
 }
 
 /// Port of `get_yankactive(pm)` from Src/Zle/zle_params.c:556.
-pub fn get_yankactive(zle: &crate::ported::zle::zle_main::Zle) -> i64 {      // c:555
+pub fn get_yankactive(pm: &crate::ported::pm::zle_main::Zle) -> i64 {      // c:555
     // c:558 — `return !!(lastcmd & ZLE_YANK) + !!(lastcmd & ZLE_YANKAFTER)`.
-    use crate::ported::zle::widget::WidgetFlags;
-    let _ = zle;
+    use crate::ported::pm::widget::WidgetFlags;
+    let _ = pm;
     let last = WidgetFlags::from_bits_truncate(
-        crate::ported::zle::zle_main::LASTCMD.load(std::sync::atomic::Ordering::SeqCst),
+        crate::ported::pm::zle_main::LASTCMD.load(std::sync::atomic::Ordering::SeqCst),
     );
     let yank      = last.contains(WidgetFlags::YANK)      as i64;
     let yankafter = last.contains(WidgetFlags::YANKAFTER) as i64;
@@ -473,15 +473,15 @@ pub fn get_yankactive(zle: &crate::ported::zle::zle_main::Zle) -> i64 {      // 
 }
 
 /// Port of `get_yankend(pm)` from Src/Zle/zle_params.c:549.
-pub fn get_yankend(zle: &crate::ported::zle::zle_main::Zle) -> i64 {         // c:548
+pub fn get_yankend(pm: &crate::ported::pm::zle_main::Zle) -> i64 {         // c:548
     // c:551 — `return yanke`.
-    zle.yank_end as i64
+    pm.yank_end as i64
 }
 
 /// Port of `get_yankstart(pm)` from Src/Zle/zle_params.c:542.
-pub fn get_yankstart(zle: &crate::ported::zle::zle_main::Zle) -> i64 {       // c:541
+pub fn get_yankstart(pm: &crate::ported::pm::zle_main::Zle) -> i64 {       // c:541
     // c:544 — `return yankb`.
-    zle.yank_start as i64
+    pm.yank_start as i64
 }
 
 /// Direct port of `void makezleparams(int ro)` from
@@ -535,38 +535,38 @@ pub fn scan_registers(_t: i32, _flags: i32) {                                // 
 }
 
 /// Port of `set_histno(x)` from Src/Zle/zle_params.c:503.
-pub fn set_histno(zle: &mut crate::ported::zle::zle_main::Zle, x: i64) {     // c:502
+pub fn set_histno(pm: &mut crate::ported::pm::zle_main::Zle, x: i64) {     // c:502
     // c:505-509 — `Histent he = quietgethist(x); if (!he) return;
     //              zle_setline(he)`.
     // zshrs uses History.cursor as the active history index. Clamp
     // to entries.len() when x is out of range (matches the
     // quietgethist NULL-result early-return).
     let idx = x.max(0) as usize;
-    if idx <= zle.history.entries.len() {
-        zle.history.cursor = idx;
+    if idx <= pm.history.entries.len() {
+        pm.history.cursor = idx;
     }
 }
 
 /// Port of `set_killring(x)` from Src/Zle/zle_params.c:661.
-pub fn set_killring(zle: &mut crate::ported::zle::zle_main::Zle, x: Option<&[String]>) {  // c:660
+pub fn set_killring(pm: &mut crate::ported::pm::zle_main::Zle, x: Option<&[String]>) {  // c:660
     // c:667-672 — `if (kring) { free each kptr->buf; zfree(kring) }`.
     // Then either rebuild from `x` or leave NULL.
-    zle.killring.clear();
+    pm.killring.clear();
     if let Some(arr) = x {
         for entry in arr {
-            zle.killring.push_back(entry.chars().collect());
+            pm.killring.push_back(entry.chars().collect());
         }
     }
 }
 
 /// Port of `set_numeric(x)` from Src/Zle/zle_params.c:477.
-pub fn set_numeric(zle: &mut crate::ported::zle::zle_main::Zle, x: i64) {   // c:476
-    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+pub fn set_numeric(pm: &mut crate::ported::pm::zle_main::Zle, x: i64) {   // c:476
+    use crate::ported::pm::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // c:479 — `zmult = x`. zmult is zmod.mult.
-    zle.zmod.mult = x as i32;
+    pm.zmod.mult = x as i32;
     // c:480 — `zmod.flags = MOD_MULT`. Replaces the whole flags
     // bitfield with just MOD_MULT (not OR — the C is a plain `=`).
-    zle.zmod.flags = MOD_MULT;
+    pm.zmod.flags = MOD_MULT;
 }
 
 /// Port of `set_postdisplay(x)` from Src/Zle/zle_params.c:900.
@@ -662,32 +662,32 @@ pub fn set_registers(zle: &mut crate::ported::zle::zle_main::Zle,            // 
 }
 
 /// Port of `set_yankend(i)` from Src/Zle/zle_params.c:570.
-pub fn set_yankend(zle: &mut crate::ported::zle::zle_main::Zle, i: i64) {    // c:569
+pub fn set_yankend(pm: &mut crate::ported::pm::zle_main::Zle, i: i64) {    // c:569
     // c:572 — `yanke = i`.
-    zle.yank_end = i.max(0) as usize;
+    pm.yank_end = i.max(0) as usize;
 }
 
 /// Port of `set_yankstart(i)` from Src/Zle/zle_params.c:563.
-pub fn set_yankstart(zle: &mut crate::ported::zle::zle_main::Zle, i: i64) {  // c:562
+pub fn set_yankstart(pm: &mut crate::ported::pm::zle_main::Zle, i: i64) {  // c:562
     // c:565 — `yankb = i`.
-    zle.yank_start = i.max(0) as usize;
+    pm.yank_start = i.max(0) as usize;
 }
 
 /// Port of `unset_cutbuffer(pm, exp)` from Src/Zle/zle_params.c:647.
-pub fn unset_cutbuffer(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  // c:646
+pub fn unset_cutbuffer(pm: &mut crate::ported::pm::zle_main::Zle, exp: i32) {  // c:646
     // c:649-655 — `if (exp) { stdunsetfn; if (cutbuf.buf) { free; NULL; len=0 } }`.
     if exp != 0 {
         // zshrs uses VecDeque for the kill ring; the "primary" cut
         // buffer is the front entry. Clearing means popping it.
-        zle.killring.pop_front();
+        pm.killring.pop_front();
     }
 }
 
 /// Port of `unset_killring(pm, exp)` from Src/Zle/zle_params.c:741.
-pub fn unset_killring(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  // c:740
+pub fn unset_killring(pm: &mut crate::ported::pm::zle_main::Zle, exp: i32) {  // c:740
     // c:743-746 — `if (exp) { set_killring(pm, NULL); stdunsetfn(...) }`.
     if exp != 0 {
-        set_killring(zle, None);
+        set_killring(pm, None);
         // stdunsetfn handles param-table bookkeeping — substrate.
     }
 }
@@ -706,12 +706,12 @@ pub fn unset_killring(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  
 /// because the canonical Rust home for `zmod` is `Zle.zmod`. The
 /// `stdunsetfn` half of the C body fires from the Param.gsu.unsetfn
 /// vtable hook upstream — this fn just performs the zmod side.
-/// Port of `unset_numeric` from `Src/Zle/zle_params.c:491`.
-pub fn unset_numeric(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) { // c:491
-    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+/// Port of `unset_numeric(pm, exp)` from `Src/Zle/zle_params.c:491`.
+pub fn unset_numeric(pm: &mut crate::ported::pm::zle_main::Zle, exp: i32) { // c:491
+    use crate::ported::pm::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     if exp != 0 {                                                            // c:494
-        zle.zmod.flags = 0;                             // c:496
-        zle.zmod.mult = 1;                                                   // c:497
+        pm.zmod.flags = 0;                             // c:496
+        pm.zmod.mult = 1;                                                   // c:497
     }
 }
 
@@ -722,11 +722,11 @@ pub fn unset_register(zle: &mut crate::ported::zle::zle_main::Zle, name: char, _
 }
 
 /// Port of `unset_registers(pm, exp)` from Src/Zle/zle_params.c:857.
-pub fn unset_registers(zle: &mut crate::ported::zle::zle_main::Zle, exp: i32) { // c:857
+pub fn unset_registers(pm: &mut crate::ported::pm::zle_main::Zle, exp: i32) { // c:857
     // C body c:859-870 — `if (exp) { for (i...) { vibuf[i].buf=NULL;
     //                              vibuf[i].len = 0; } stdunsetfn(...) }`.
     if exp != 0 {
-        for buf in zle.vibuf.iter_mut() {
+        for buf in pm.vibuf.iter_mut() {
             buf.clear();
         }
     }

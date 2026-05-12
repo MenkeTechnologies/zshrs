@@ -170,7 +170,7 @@ mod tests {
 }
 
 /// Port of `adjust_mcol(wish, tabp, grp)` from Src/Zle/complist.c:2127.
-pub fn adjust_mcol(wish: i32, _spp: &mut i32, _lpp: &mut i32) -> i32 {       // c:2127
+pub fn adjust_mcol(wish: i32, tabp: &mut i32, grp: &mut i32) -> i32 {       // c:2127
     // C body c:2129-2170 — clamps mcol to nearest valid column when
     //                      moving across rows of variable-width matches.
     //                      Without the mtab[][] matrix we just clamp
@@ -200,7 +200,8 @@ pub fn cleanup_() -> i32 {                                                   // 
 }
 
 /// Port of `clnicezputs(do_colors, s, ml)` from Src/Zle/complist.c:715.
-pub fn clnicezputs(do_colors: i32, s: &str, _ml: i32) -> i32 {               // c:715
+#[allow(unused_variables)]
+pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {               // c:715
     // C body c:717-790 — emits a string with nice-character escapes
     //                    plus per-char LS_COLORS coloring (when do_colors).
     //                    The full multibyte/colorize body needs the Cline
@@ -214,11 +215,11 @@ pub fn clnicezputs(do_colors: i32, s: &str, _ml: i32) -> i32 {               // 
 }
 
 /// Port of `clprintfmt(p, ml)` from Src/Zle/complist.c:671.
-pub fn clprintfmt(fmt: &str, n: i32) -> i32 {                                // c:671
+pub fn clprintfmt(p: &str, ml: i32) -> i32 {                                // c:671
     // C body c:673-712 — colored variant of printfmt that uses mcolors
     //                    for %F/%B etc. Without the mcolors substrate
     //                    we delegate to the plain printfmt.
-    crate::ported::zle::zle_tricky::printfmt(fmt, n, true, true)
+    crate::ported::zle::zle_tricky::printfmt(p, ml, true, true)
 }
 
 /// Port of `clprintm(g, mp, mc, ml, lastc, width)` from Src/Zle/complist.c:1730.
@@ -242,7 +243,8 @@ pub fn complistmatches() -> i32 {                                            // 
 }
 
 /// Port of `compprintnl(ml)` from Src/Zle/complist.c:1054.
-pub fn compprintnl(_ml: i32) -> i32 {                                        // c:1054
+#[allow(unused_variables)]
+pub fn compprintnl(ml: i32) -> i32 {                                        // c:1054
     // C body c:1056-1064 — `cleareol(); putc('\n', shout);
     //                       if (mscroll && !--mrestlines && (ask = asklistscroll(ml))) return ask;
     //                       return 0`.
@@ -252,7 +254,8 @@ pub fn compprintnl(_ml: i32) -> i32 {                                        // 
 }
 
 /// Port of `compzputs(s, ml)` from Src/Zle/complist.c:1338.
-pub fn compzputs(s: &str, _ml: i32) -> i32 {                                 // c:1338
+#[allow(unused_variables)]
+pub fn compzputs(s: &str, ml: i32) -> i32 {                                 // c:1338
     // C body c:1342-1361 — walks bytes, demetafies (Meta byte XOR 32),
     //                      skips itok() pseudo-tokens, prints to shout,
     //                      handles wrap/asklistscroll. Without curses
@@ -281,11 +284,11 @@ pub fn compzputs(s: &str, _ml: i32) -> i32 {                                 // 
 }
 
 /// Port of `doiscol(pos)` from Src/Zle/complist.c:635.
-pub fn doiscol(ml: i32) -> i32 {                                             // c:635
+pub fn doiscol(pos: i32) -> i32 {                                             // c:635
     // C body c:637-668 — emits an in-list color escape from `last_cap`
     //                    using shout. Without curses we no-op and
-    //                    return the input ml unchanged.
-    let _ = ml;
+    //                    return the input pos unchanged.
+    let _ = pos;
     0
 }
 
@@ -623,7 +626,7 @@ pub static MAX_CAPLEN:  std::sync::atomic::AtomicI32 = std::sync::atomic::Atomic
 /// ```
 /// Allocate a fresh filecol with no group pattern and the given
 /// color string. Caller is expected to chain it via `mcolors.files[i]`.
-/// Port of `filecol` from `Src/Zle/complist.c:487`.
+/// Port of `filecol(col)` from `Src/Zle/complist.c:487`.
 pub fn filecol(col: &str) -> filecol {                                       // c:487
     filecol {                                                                // c:492 zhalloc
         prog: None,                                                          // c:493 fc->prog = NULL
@@ -660,7 +663,8 @@ pub fn getcols(_lscol: &str) -> i32 {                                        // 
 }
 
 /// Port of `getcolval(s, multi)` from Src/Zle/complist.c:275.
-pub fn getcolval(s: &str, _multi: i32) -> &str {                             // c:275
+#[allow(unused_variables)]
+pub fn getcolval(s: &str, multi: i32) -> &str {                             // c:275
     // C body c:277-329 — walks one ANSI escape sequence (digits and
     //                    `;`) and returns pointer past it. Used while
     //                    parsing `key=val` from LS_COLORS.
@@ -724,7 +728,7 @@ pub fn msearchpush() -> i32 {                                                // 
 }
 
 /// Port of `putfilecol(group, filename, m, special)` from Src/Zle/complist.c:910.
-pub fn putfilecol(group: &str, _name: &str, _filemode: u32, _icol: i32) -> i32 { // c:910
+pub fn putfilecol(group: &str, filename: &str, m: u32, special: i32) -> i32 { // c:910
     // C body c:912-988 — looks up the LS_COLORS class for `name`
     //                    by mode bits + filename suffix, emits the
     //                    matching escape via putcolstr.
@@ -735,7 +739,7 @@ pub fn putfilecol(group: &str, _name: &str, _filemode: u32, _icol: i32) -> i32 {
 
 // Get the terminal color string for the given match.                      // c:878
 /// Port of `putmatchcol(group, n)` from Src/Zle/complist.c:881.
-pub fn putmatchcol(group: &str, _name: &str) -> i32 {                       // c:881
+pub fn putmatchcol(group: &str, n: &str) -> i32 {                       // c:881
     // C body c:883-908 — looks up "ma" or "co" entries in mcolors
     //                    for the given group/name and emits the
     //                    escape via putcolstr.
@@ -744,7 +748,7 @@ pub fn putmatchcol(group: &str, _name: &str) -> i32 {                       // c
     0
 }
 
-/// Port of `setmstatus()` from Src/Zle/complist.c:2203.
+/// Port of `setmstatus(status, sline, sll, scs, csp, llp, lenp)` from Src/Zle/complist.c:2203.
 pub fn setmstatus(_status: &str, _sline: i32, _scs: i32, _np: &mut i32, _nl: &mut i32, _nc: &mut i32) -> i32 { // c:2203
     // C body c:2205-2265 — updates the menu-select status line at
     //                      the bottom of the screen. Without curses
@@ -759,7 +763,8 @@ pub fn setup_() -> i32 {                                                     // 
 }
 
 /// Port of `singlecalc(cp, l, lcp)` from Src/Zle/complist.c:1909.
-pub fn singlecalc(_cp: &mut i32, _ml: i32, _lcp: &mut i32) -> i32 {          // c:1909
+#[allow(unused_variables)]
+pub fn singlecalc(cp: &mut i32, l: i32, lcp: &mut i32) -> i32 {          // c:1909
     // C body c:1911-1933 — computes scroll offset for single-column
     //                      mode. Without mtab/mline substrate: 0.
     0

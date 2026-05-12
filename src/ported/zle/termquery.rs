@@ -93,7 +93,7 @@ pub fn query_terminal() {                                                    // 
 }
 
 /// Send an escape sequence query and read the response.
-/// Port of `probe_terminal()` from Src/Zle/termquery.c — the
+/// Port of `probe_terminal(tquery, states, handle_seq, numbers, len, capture, clen, output)` from Src/Zle/termquery.c — the
 /// raw-mode write+read+restore harness that drives all DA1/DA2/
 /// status-report probes.
 fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
@@ -582,12 +582,12 @@ pub fn start_edit() -> i32 {                                                 // 
 }
 
 /// Port of `write_urlencoded(path_components)` from Src/Zle/termquery.c:769.
-pub fn write_urlencoded(s: &str) -> String {                                 // c:769
+pub fn write_urlencoded(path_components: &str) -> String {                                 // c:769
     // C body c:771-796 — URL-encodes a string for OSC 8 hyperlink
     //                    emission. Real escape: convert non-printable
     //                    + reserved bytes to %HH.
-    let mut out = String::with_capacity(s.len());
-    for &b in s.as_bytes() {
+    let mut out = String::with_capacity(path_components.len());
+    for &b in path_components.as_bytes() {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'/' | b':') {
             out.push(b as char);
         } else {

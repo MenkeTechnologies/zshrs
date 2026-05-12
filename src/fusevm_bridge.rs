@@ -380,7 +380,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     vm.register_builtin(BUILTIN_EVAL, |vm, argc| {
-        // Direct port of `bin_eval` body from Src/builtin.c:6151:
+        // Direct port of `bin_eval(nam, argv, ops, func)` body from Src/builtin.c:6151:
         //   `if (!*argv) return 0;`
         //   `prog = parse_string(zjoin(argv, ' ', 1), 1);`
         //   `execode(prog, 1, 0, "eval");`

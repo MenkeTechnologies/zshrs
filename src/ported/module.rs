@@ -357,7 +357,7 @@ impl ModuleTable {
     // ------- Builtin management (from module.c addbuiltin/deletebuiltin) -------
 
     /// Register a builtin (from module.c addbuiltin)
-/// Port of `addbuiltin` from `Src/module.c:409`.
+/// Port of `addbuiltin(b)` from `Src/module.c:409`.
     pub fn addbuiltin(&mut self, name: &str, module: &str) {                // c:409
         if let Some(m) = self.modules.get_mut(module) {
             m.features.push(ModuleFeature {
@@ -369,7 +369,7 @@ impl ModuleTable {
     }
 
     /// Unregister a builtin (from module.c deletebuiltin)
-/// Port of `deletebuiltin` from `Src/module.c:449`.
+/// Port of `deletebuiltin(nam)` from `Src/module.c:449`.
     pub fn deletebuiltin(&mut self, name: &str, module: &str) {             // c:449
         if let Some(m) = self.modules.get_mut(module) {
             m.features
@@ -378,7 +378,7 @@ impl ModuleTable {
     }
 
     /// Register autoloading builtin (from module.c add_autobin)
-/// Port of `add_autobin` from `Src/module.c:426`.
+/// Port of `add_autobin(module, bnam, flags)` from `Src/module.c:426`.
     pub fn add_autobin(&mut self, name: &str, module: &str) {               // c:426
         self.autoload_builtins
             .insert(name.to_string(), module.to_string());
@@ -391,7 +391,7 @@ impl ModuleTable {
     }
 
     /// Set builtins en masse (from module.c setbuiltins/addbuiltins)
-/// Port of `setbuiltins` from `Src/module.c:501`.
+/// Port of `setbuiltins(nam, binl, size, e)` from `Src/module.c:501`.
     pub fn setbuiltins(&mut self, module: &str, names: &[&str]) {
         for name in names {
             self.addbuiltin(name, module);
@@ -401,7 +401,7 @@ impl ModuleTable {
     // ------- Condition management (from module.c addconddef/deleteconddef) -------
 
     /// Register a condition (from module.c addconddef)
-/// Port of `addconddef` from `Src/module.c:703`.
+/// Port of `addconddef(c)` from `Src/module.c:703`.
     pub fn addconddef(&mut self, name: &str, module: &str) {                // c:703
         if let Some(m) = self.modules.get_mut(module) {
             m.features.push(ModuleFeature {
@@ -413,7 +413,7 @@ impl ModuleTable {
     }
 
     /// Unregister a condition (from module.c deleteconddef)
-/// Port of `deleteconddef` from `Src/module.c:724`.
+/// Port of `deleteconddef(c)` from `Src/module.c:724`.
     pub fn deleteconddef(&mut self, name: &str, module: &str) {
         if let Some(m) = self.modules.get_mut(module) {
             m.features
@@ -422,7 +422,7 @@ impl ModuleTable {
     }
 
     /// Get condition definition (from module.c getconddef)
-/// Port of `getconddef` from `Src/module.c:648`.
+/// Port of `getconddef(inf, name, autol)` from `Src/module.c:648`.
     pub fn getconddef(&self, name: &str) -> Option<&str> {
         for (mod_name, module) in &self.modules {
             for feature in &module.features {
@@ -435,14 +435,14 @@ impl ModuleTable {
     }
 
     /// Register autoloading condition (from module.c add_autocond)
-/// Port of `add_autocond` from `Src/module.c:792`.
+/// Port of `add_autocond(module, cnam, flags)` from `Src/module.c:792`.
     pub fn add_autocond(&mut self, name: &str, module: &str) {
         self.autoload_conditions
             .insert(name.to_string(), module.to_string());
     }
 
     /// Remove autoloading condition (from module.c del_autocond)
-/// Port of `del_autocond` from `Src/module.c:819`.
+/// Port of `del_autocond(modnam, cnam, flags)` from `Src/module.c:819`.
     pub fn del_autocond(&mut self, name: &str) {
         self.autoload_conditions.remove(name);
     }
@@ -450,13 +450,13 @@ impl ModuleTable {
     // ------- Hook management (from module.c addhookdef/deletehookdef) -------
 
     /// Register a hook (from module.c addhookdef)
-/// Port of `addhookdef` from `Src/module.c:864`.
-    pub fn addhookdef(&mut self, name: &str) {                              // c:864
-        self.hooks.entry(name.to_string()).or_default();
+/// Port of `addhookdef(h)` from `Src/module.c:864`.
+    pub fn addhookdef(&mut self, h: &str) {                              // c:864
+        self.hooks.entry(h.to_string()).or_default();
     }
 
     /// Register multiple hooks (from module.c addhookdefs)
-/// Port of `addhookdefs` from `Src/module.c:883`.
+/// Port of `addhookdefs(m, h, size)` from `Src/module.c:883`.
     pub fn addhookdefs(&mut self, names: &[&str]) {
         for name in names {
             self.addhookdef(name);
@@ -470,7 +470,7 @@ impl ModuleTable {
     }
 
     /// Unregister multiple hooks (from module.c deletehookdefs)
-/// Port of `deletehookdefs` from `Src/module.c:923`.
+/// Port of `deletehookdefs(m, h, size)` from `Src/module.c:923`.
     pub fn deletehookdefs(&mut self, names: &[&str]) {
         for name in names {
             self.deletehookdef(name);
@@ -478,26 +478,26 @@ impl ModuleTable {
     }
 
     /// Add function to hook (from module.c addhookdeffunc/addhookfunc)
-/// Port of `addhookfunc` from `Src/module.c:948`.
-    pub fn addhookfunc(&mut self, hook: &str, func: &str) {
+/// Port of `addhookfunc(n, f)` from `Src/module.c:948`.
+    pub fn addhookfunc(&mut self, n: &str, f: &str) {
         self.hooks
-            .entry(hook.to_string())
+            .entry(n.to_string())
             .or_default()
-            .push(func.to_string());
+            .push(f.to_string());
     }
 
     /// Remove function from hook (from module.c deletehookdeffunc/deletehookfunc)
-/// Port of `deletehookfunc` from `Src/module.c:977`.
-    pub fn deletehookfunc(&mut self, hook: &str, func: &str) {
-        if let Some(funcs) = self.hooks.get_mut(hook) {
-            funcs.retain(|f| f != func);
+/// Port of `deletehookfunc(n, f)` from `Src/module.c:977`.
+    pub fn deletehookfunc(&mut self, n: &str, f: &str) {
+        if let Some(funcs) = self.hooks.get_mut(n) {
+            funcs.retain(|f| f != f);
         }
     }
 
     /// Get hook definition (from module.c gethookdef)
-/// Port of `gethookdef` from `Src/module.c:849`.
-    pub fn gethookdef(&self, name: &str) -> Option<&Vec<String>> {
-        self.hooks.get(name)
+/// Port of `gethookdef(n)` from `Src/module.c:849`.
+    pub fn gethookdef(&self, n: &str) -> Option<&Vec<String>> {
+        self.hooks.get(n)
     }
 
     // Run the function(s) for a hook.                                       // c:986
@@ -509,7 +509,7 @@ impl ModuleTable {
     // ------- Parameter management (from module.c addparamdef/deleteparamdef) -------
 
     /// Register a parameter from module (from module.c addparamdef/checkaddparam)
-/// Port of `addparamdef` from `Src/module.c:1061`.
+/// Port of `addparamdef(d)` from `Src/module.c:1061`.
     pub fn addparamdef(&mut self, name: &str, module: &str) {
         if let Some(m) = self.modules.get_mut(module) {
             m.features.push(ModuleFeature {
@@ -521,7 +521,7 @@ impl ModuleTable {
     }
 
     /// Unregister a parameter (from module.c deleteparamdef)
-/// Port of `deleteparamdef` from `Src/module.c:1124`.
+/// Port of `deleteparamdef(d)` from `Src/module.c:1124`.
     pub fn deleteparamdef(&mut self, name: &str, module: &str) {
         if let Some(m) = self.modules.get_mut(module) {
             m.features
@@ -530,7 +530,7 @@ impl ModuleTable {
     }
 
     /// Set parameters en masse (from module.c setparamdefs)
-/// Port of `setparamdefs` from `Src/module.c:1165`.
+/// Port of `setparamdefs(nam, d, size, e)` from `Src/module.c:1165`.
     pub fn setparamdefs(&mut self, module: &str, names: &[&str]) {
         for name in names {
             self.addparamdef(name, module);
@@ -538,14 +538,14 @@ impl ModuleTable {
     }
 
     /// Register autoloading parameter (from module.c add_autoparam)
-/// Port of `add_autoparam` from `Src/module.c:1198`.
+/// Port of `add_autoparam(module, pnam, flags)` from `Src/module.c:1198`.
     pub fn add_autoparam(&mut self, name: &str, module: &str) {
         self.autoload_params
             .insert(name.to_string(), module.to_string());
     }
 
     /// Remove autoloading parameter (from module.c del_autoparam)
-/// Port of `del_autoparam` from `Src/module.c:1235`.
+/// Port of `del_autoparam(modnam, pnam, flags)` from `Src/module.c:1235`.
     pub fn del_autoparam(&mut self, name: &str) {
         self.autoload_params.remove(name);
     }
@@ -594,7 +594,7 @@ impl ModuleTable {
     }
 
     /// Check if a module is linked (statically compiled) (from module.c module_linked)
-/// Port of `module_linked` from `Src/module.c:385`.
+/// Port of `module_linked(name)` from `Src/module.c:385`.
     pub fn module_linked(&self, name: &str) -> bool {
         self.modules.contains_key(name)
     }
@@ -610,7 +610,7 @@ impl ModuleTable {
     }
 
     /// Ensure a module's feature is available
-/// Port of `ensurefeature` from `Src/module.c:3415`.
+/// Port of `ensurefeature(modname, prefix, feature)` from `Src/module.c:3415`.
     pub fn ensurefeature(&mut self, module: &str, feature: &str) -> bool {
         if !self.is_loaded(module) {
             self.load_module(module);
@@ -645,21 +645,21 @@ pub trait ModuleLifecycle {
 /// Port of `freemodulenode(hn)` from Src/module.c:119 — Rust's
 /// `Drop` handles the per-field free; this exists for API
 /// parity with C callers.
-pub fn freemodulenode(_module: Module) {
+pub fn freemodulenode(hn: Module) {
     // Rust Drop handles this
 }
 
 /// Print module node (from module.c printmodulenode)
 /// Format a module entry for `zmodload -L` listing.
 /// Port of `printmodulenode(hn, flags)` from Src/module.c:154.
-pub fn printmodulenode(name: &str, module: &Module) -> String {
-    let state = match module.state {
+pub fn printmodulenode(hn: &str, flags: &Module) -> String {
+    let state = match flags.state {
         ModuleState::Loaded => "loaded",
         ModuleState::Autoloaded => "autoloaded",
         ModuleState::Unloaded => "unloaded",
         ModuleState::Failed => "failed",
     };
-    format!("{} ({})", name, state)
+    format!("{} ({})", hn, state)
 }
 
 /// Create new module table (from module.c newmoduletable)
@@ -673,7 +673,7 @@ pub fn newmoduletable() -> ModuleTable {
 // This registers a builtin module.                                        // c:355
 /// Register module (from module.c register_module)
 /// Register a module by name.
-/// Port of `register_module()` from Src/module.c:359 — wraps
+/// Port of `register_module(n, setup, features, enables, boot, cleanup, finish)` from Src/module.c:359 — wraps
 /// a slot in the global `modulestab` and seeds its lifecycle
 /// callbacks.
 pub fn register_module(table: &mut ModuleTable, name: &str) -> bool {       // c:359
@@ -833,7 +833,7 @@ pub const FEAT_CHECKAUTO: i32 = 0x0010;                                  // c:81
 /// ```
 ///
 /// Registers `fnam` as an autoloadable math function provided by `module`.
-/// Port of `add_automathfunc` from `Src/module.c:1410`.
+/// Port of `add_automathfunc(module, fnam, flags)` from `Src/module.c:1410`.
 pub fn add_automathfunc(table: &mut ModuleTable, module: &str, fnam: &str, flags: i32) -> i32 { // c:1410
     // c:1414-1418 — alloc + populate MathFunc
     if table.autoload_mathfuncs.contains_key(fnam) {                     // c:1420 addmathfunc clash
@@ -867,7 +867,7 @@ pub fn add_automathfunc(table: &mut ModuleTable, module: &str, fnam: &str, flags
 ///
 /// Records that module `name` depends on module `from`. Resolves
 /// aliases so dependency graphs always point at canonical names.
-/// Port of `add_dep` from `Src/module.c:2369`.
+/// Port of `add_dep(name, from)` from `Src/module.c:2369`.
 pub fn add_dep(table: &mut ModuleTable, name: &str, from: &str) -> i32 { // c:2369
     // c:2386 — m = find_module(name, FINDMOD_ALIASP|FINDMOD_CREATE, &name)
     let canon = match find_module(table, name, FINDMOD_ALIASP | FINDMOD_CREATE) {
@@ -929,7 +929,7 @@ pub fn add_dep(table: &mut ModuleTable, name: &str, from: &str) -> i32 { // c:23
 /// `LinkList` with `void *` payload (cast to Hookfn at dispatch); Rust
 /// port uses the table's per-hook `Vec<String>` (function names) since
 /// fn-pointer storage requires a more elaborate type-erased registry.
-/// Port of `addhookdeffunc` from `Src/module.c:939`.
+/// Port of `addhookdeffunc(h, f)` from `Src/module.c:939`.
 pub fn addhookdeffunc(table: &mut ModuleTable, h: &mut crate::ported::zsh_h::hookdef, fn_name: &str) -> i32 { // c:939
     // c:941 — zaddlinknode(h->funcs, (void *) f);
     table.hooks.entry(h.name.clone()).or_default().push(fn_name.to_string());
@@ -950,7 +950,7 @@ pub fn addhookdeffunc(table: &mut ModuleTable, h: &mut crate::ported::zsh_h::hoo
 // above). Re-port using `crate::ported::zsh_h::mathfunc` will
 // follow with the wider modulestab-as-global refactor.
 
-/// Port of `autofeatures()` from `Src/module.c:3437`.
+/// Port of `autofeatures(cmdnam, module, features, prefchar, defflags)` from `Src/module.c:3437`.
 ///
 /// C body is ~140 lines. Top-level structure:
 /// ```c
@@ -969,7 +969,7 @@ pub fn addhookdeffunc(table: &mut ModuleTable, h: &mut crate::ported::zsh_h::hoo
 /// Static-link path: registers each `module:feature` pair into the
 /// matching `table.autoload_*` map. Honors `+`/`-` prefix for
 /// add/remove, and the type prefix or `prefchar` arg for routing.
-/// Port of `autofeatures` from `Src/module.c:3437`.
+/// Port of `autofeatures(cmdnam, module, features, prefchar, defflags)` from `Src/module.c:3437`.
 pub fn autofeatures(table: &mut ModuleTable, _cmdnam: &str, module: Option<&str>,
                     features: &[String], prefchar: u8, defflags: i32) -> i32 { // c:3437
     let mut ret: i32 = 0;
@@ -1060,7 +1060,7 @@ pub fn autofeatures(table: &mut ModuleTable, _cmdnam: &str, module: Option<&str>
 /// `printflags & PRINT_LIST` selects long form (`zmodload -ab MOD NAME`)
 /// vs short form (`NAME (MOD)`). Skips already-registered builtins
 /// (BINF_ADDED set).
-/// Port of `autoloadscan` from `Src/module.c:2403`.
+/// Port of `autoloadscan(hn, printflags)` from `Src/module.c:2403`.
 pub fn autoloadscan(name: &str, optstr: &str, flags: u32, printflags: i32) { // c:2403
     if (flags & BINF_ADDED) != 0 {                                       // c:2407
         return;                                                          // c:2408
@@ -1334,7 +1334,7 @@ pub fn bin_zmodload_alias(table: &mut ModuleTable, nam: &str, args: &[String], o
 /// `add_autoparam` / `add_automathfunc` already ported. Without a
 /// module name (just `-a`), runs the listing scan via `autoloadscan`
 /// or its conddef/param/mathfn equivalents.
-/// Port of `bin_zmodload_auto` from `Src/module.c:2726`.
+/// Port of `bin_zmodload_auto(nam, args, ops)` from `Src/module.c:2726`.
 pub fn bin_zmodload_auto(table: &mut ModuleTable, _nam: &str, args: &[String], ops: &crate::ported::zsh_h::options) -> i32 { // c:2726
     let fchar: char;                                                      // c:2728
     let _flags: i32 = if crate::ported::zsh_h::OPT_ISSET(ops, b'i') { FEAT_IGNORE } else { 0 }; // c:2728
@@ -1478,7 +1478,7 @@ pub fn bin_zmodload_dep(table: &mut ModuleTable, _nam: &str, args: &[String], op
 /// `zmodload [-A]` lists or tests module presence. Returns 0 if all
 /// named modules exist (or if no args, after listing); 1 if any
 /// named module is missing/unloading.
-/// Port of `bin_zmodload_exist` from `Src/module.c:2623`.
+/// Port of `bin_zmodload_exist(nam, args, ops)` from `Src/module.c:2623`.
 pub fn bin_zmodload_exist(table: &mut ModuleTable, _nam: &str, args: &[String], _ops: &crate::ported::zsh_h::options) -> i32 { // c:2623
     if args.is_empty() {                                                  // c:2627
         // c:2628-2630 — scanhashtable + printnode listing.
@@ -1581,7 +1581,7 @@ pub fn bin_zmodload_features(table: &mut ModuleTable, nam: &str, args: &[String]
 /// ```
 ///
 /// `zmodload [-u] [args]`: load, unload, or list modules.
-/// Port of `bin_zmodload_load` from `Src/module.c:2971`.
+/// Port of `bin_zmodload_load(nam, args, ops)` from `Src/module.c:2971`.
 pub fn bin_zmodload_load(table: &mut ModuleTable, nam: &str, args: &[String], ops: &crate::ported::zsh_h::options) -> i32 { // c:2971
     let mut ret: i32 = 0;
     if crate::ported::zsh_h::OPT_ISSET(ops, b'u') {                      // c:2974
@@ -1614,7 +1614,8 @@ pub fn bin_zmodload_load(table: &mut ModuleTable, nam: &str, args: &[String], op
 ///
 /// C body: `boot_(UNUSED(Module m)) { return 0; }` — the no-op
 /// boot hook of the module subsystem itself.
-pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {           // c:331
+#[allow(unused_variables)]
+pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:331
     0                                                                    // c:333
 }
 
@@ -1632,7 +1633,7 @@ pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {           // c:33
 /// per-module `boot_(m)` callback. zshrs's static dispatch is via
 /// the modules-table feature lookup (see `register_module` /
 /// `enable_module`); both branches collapse to 0 success.
-/// Port of `boot_module` from `Src/module.c:1910`.
+/// Port of `boot_module(m)` from `Src/module.c:1910`.
 pub fn boot_module(_table: &mut ModuleTable, _name: &str) -> i32 {       // c:1910
     0                                                                    // c:1913 (boot)(m) success
 }
@@ -1668,7 +1669,7 @@ pub fn boot_module(_table: &mut ModuleTable, _name: &str) -> i32 {       // c:19
 /// Static-link path: the param-table is `crate::ported::params::*`
 /// global. Stub returns 0 (no clash) until the params global-state
 /// port wires gethashnode2(paramtab, ...) in.
-/// Port of `checkaddparam` from `Src/module.c:1026`.
+/// Port of `checkaddparam(nam, opt_i)` from `Src/module.c:1026`.
 #[allow(unused_variables)]
 pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {                   // c:1026
     // c:1030 — if (!(pm = gethashnode2(paramtab, nam))) return 0;
@@ -1680,7 +1681,8 @@ pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {                   // c:1026
 ///
 /// C body: `cleanup_(UNUSED(Module m)) { return 0; }` — the no-op
 /// cleanup hook of the module subsystem itself.
-pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {        // c:338
+#[allow(unused_variables)]
+pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {        // c:338
     0                                                                    // c:340
 }
 
@@ -1714,7 +1716,7 @@ pub fn cleanup_module(_table: &mut ModuleTable, _name: &str) -> i32 {    // c:19
 /// ```
 ///
 /// Removes `fnam` from the autoloadable math-function registry.
-/// Port of `del_automathfunc` from `Src/module.c:1436`.
+/// Port of `del_automathfunc(modnam, fnam, flags)` from `Src/module.c:1436`.
 pub fn del_automathfunc(table: &mut ModuleTable, _modnam: &str, fnam: &str, flags: i32) -> i32 { // c:1436
     if !table.autoload_mathfuncs.contains_key(fnam) {                    // c:1438 if (!f)
         if (flags & FEAT_IGNORE) == 0 {                                  // c:1441
@@ -1762,7 +1764,7 @@ pub fn delete_module(table: &mut ModuleTable, name: &str) -> i32 {       // c:16
 ///
 /// Removes function `f` from the hook's function-list. Returns 0 on
 /// successful removal, 1 if not found.
-/// Port of `deletehookdeffunc` from `Src/module.c:961`.
+/// Port of `deletehookdeffunc(h, f)` from `Src/module.c:961`.
 pub fn deletehookdeffunc(table: &mut ModuleTable, h: &mut crate::ported::zsh_h::hookdef, fn_name: &str) -> i32 { // c:961
     if let Some(funcs) = table.hooks.get_mut(&h.name) {
         // c:965-969 — for (p = firstnode...; p; incnode(p)) if (f == ...)
@@ -1816,18 +1818,18 @@ pub fn deletehookdeffunc(table: &mut ModuleTable, h: &mut crate::ported::zsh_h::
 ///     return ret;
 /// }
 /// ```
-/// Port of `do_boot_module` from `Src/module.c:2139`.
-pub fn do_boot_module(table: &mut ModuleTable, name: &str, silent: i32) -> i32 { // c:2139
+/// Port of `do_boot_module(m, enablesarr, silent)` from `Src/module.c:2139`.
+pub fn do_boot_module(m: &mut ModuleTable, enablesarr: &str, silent: i32) -> i32 { // c:2139
     let flags = if silent != 0 {                                          // c:2142
         FEAT_IGNORE | FEAT_CHECKAUTO
     } else {
         FEAT_CHECKAUTO                                                    // c:2143
     };
-    let ret = do_module_features(table, name, flags);                     // c:2141
+    let ret = do_module_features(m, enablesarr, flags);                     // c:2141
     if ret == 1 {                                                         // c:2145
         return 1;                                                         // c:2146
     }
-    if boot_module(table, name) != 0 {                                    // c:2148
+    if boot_module(m, enablesarr) != 0 {                                    // c:2148
         return 1;                                                         // c:2149
     }
     ret                                                                   // c:2150
@@ -1870,7 +1872,7 @@ pub fn do_cleanup_module(table: &mut ModuleTable, name: &str) -> i32 {   // c:21
 /// C returns `void *` (the dlopen handle); Rust port returns 0 on
 /// success / 1 on failure. zshrs's static-link path: `try_load_module`
 /// always succeeds for built-in modules. Returns 1 + zwarn on miss.
-/// Port of `do_load_module` from `Src/module.c:1610`.
+/// Port of `do_load_module(name, silent)` from `Src/module.c:1610`.
 pub fn do_load_module(table: &mut ModuleTable, name: &str, silent: i32) -> i32 { // c:1610
     // c:1614 — ret = try_load_module(name);
     let ret = try_load_module(table, name);
@@ -1891,20 +1893,20 @@ pub fn do_load_module(table: &mut ModuleTable, name: &str, silent: i32) -> i32 {
 /// feature the module doesn't actually export.
 ///
 /// Returns 0 on full success, 1 if any feature couldn't be enabled.
-pub fn do_module_features(table: &mut ModuleTable, name: &str, flags: i32) -> i32 { // c:1998
+pub fn do_module_features(m: &mut ModuleTable, enablesarr: &str, flags: i32) -> i32 { // c:1998
     let mut features: Vec<String> = Vec::new();                          // c:2000
     let mut ret: i32 = 0;                                                // c:2001
 
     // c:2003 — `if (features_module(m, &features) == 0)` — fetch features.
-    if features_module(table, name, &mut features) == 0 {
+    if features_module(m, enablesarr, &mut features) == 0 {
         // c:2011-2018 — fetch enables. If features are supported, enables
         // should be too; an error here is reported unless FEAT_IGNORE.
         let mut enables: Option<Vec<i32>> = None;
-        if enables_module(table, name, &mut enables) != 0 {              // c:2012
+        if enables_module(m, enablesarr, &mut enables) != 0 {              // c:2012
             if (flags & FEAT_IGNORE) == 0 {                              // c:2014
                 crate::ported::utils::zwarn(&format!(
                     "error getting enabled features for module `{}'",   // c:2015
-                    name,
+                    enablesarr,
                 ));
             }
             return 1;                                                    // c:2017
@@ -1912,7 +1914,7 @@ pub fn do_module_features(table: &mut ModuleTable, name: &str, flags: i32) -> i3
 
         // c:2020 — `if ((flags & FEAT_CHECKAUTO) && m->autoloads)`
         if (flags & FEAT_CHECKAUTO) != 0 {
-            let autoloads: Vec<String> = match table.modules.get(name) {
+            let autoloads: Vec<String> = match m.modules.get(enablesarr) {
                 Some(m) => m.autoloads.clone(),
                 None => return ret,
             };
@@ -1924,12 +1926,12 @@ pub fn do_module_features(table: &mut ModuleTable, name: &str, flags: i32) -> i3
                     if (flags & FEAT_IGNORE) == 0 {                      // c:2037
                         crate::ported::utils::zwarn(&format!(
                             "module `{}' has no such feature: `{}': autoload cancelled", // c:2038-2040
-                            name, al,
+                            enablesarr, al,
                         ));
                     }
                     // c:2045-2047 — `autofeatures(NULL, m->node.nam, arg, 0, FEAT_IGNORE|FEAT_REMOVE)`
                     let arg = vec![al.clone()];
-                    autofeatures(table, "", Some(name), &arg, 0, FEAT_IGNORE | FEAT_REMOVE);
+                    autofeatures(m, "", Some(enablesarr), &arg, 0, FEAT_IGNORE | FEAT_REMOVE);
                 }
             }
         }
@@ -1942,7 +1944,8 @@ pub fn do_module_features(table: &mut ModuleTable, name: &str, flags: i32) -> i3
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(1, m, NULL);`
 /// Calls the dynamic module's exported entry-point with op-code 1
 /// (boot). Static-link path: opcode dispatch unused, returns 0.
-pub fn dyn_boot_module(_m: *const crate::ported::zsh_h::module) -> i32 { // c:1747
+#[allow(unused_variables)]
+pub fn dyn_boot_module(m: *const crate::ported::zsh_h::module) -> i32 { // c:1747
     0                                                                    // c:1749
 }
 
@@ -1950,7 +1953,8 @@ pub fn dyn_boot_module(_m: *const crate::ported::zsh_h::module) -> i32 { // c:17
 ///
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(2, m, NULL);`
 /// Op-code 2 = cleanup.
-pub fn dyn_cleanup_module(_m: *const crate::ported::zsh_h::module) -> i32 { // c:1754
+#[allow(unused_variables)]
+pub fn dyn_cleanup_module(m: *const crate::ported::zsh_h::module) -> i32 { // c:1754
     0                                                                    // c:1756
 }
 
@@ -1958,7 +1962,8 @@ pub fn dyn_cleanup_module(_m: *const crate::ported::zsh_h::module) -> i32 { // c
 ///
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(5, m, enables);`
 /// Op-code 5 = enables.
-pub fn dyn_enables_module(_m: *const crate::ported::zsh_h::module, _enables: &mut Option<Vec<i32>>) -> i32 { // c:1740
+#[allow(unused_variables)]
+pub fn dyn_enables_module(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 { // c:1740
     0                                                                    // c:1742
 }
 
@@ -1966,7 +1971,8 @@ pub fn dyn_enables_module(_m: *const crate::ported::zsh_h::module, _enables: &mu
 ///
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(4, m, features);`
 /// Op-code 4 = features.
-pub fn dyn_features_module(_m: *const crate::ported::zsh_h::module, _features: &mut Vec<String>) -> i32 { // c:1733
+#[allow(unused_variables)]
+pub fn dyn_features_module(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 { // c:1733
     0                                                                    // c:1735
 }
 
@@ -1974,7 +1980,8 @@ pub fn dyn_features_module(_m: *const crate::ported::zsh_h::module, _features: &
 ///
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(3, m, NULL);`
 /// Op-code 3 = finish.
-pub fn dyn_finish_module(_m: *const crate::ported::zsh_h::module) -> i32 { // c:1761
+#[allow(unused_variables)]
+pub fn dyn_finish_module(m: *const crate::ported::zsh_h::module) -> i32 { // c:1761
     0                                                                    // c:1763
 }
 
@@ -1983,7 +1990,8 @@ pub fn dyn_finish_module(_m: *const crate::ported::zsh_h::module) -> i32 { // c:
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(0, m, NULL);`
 /// Op-code 0 = setup. AIX-only path that multiplexes all six module
 /// hooks through one symbol; static-link path skips it entirely.
-pub fn dyn_setup_module(_m: *const crate::ported::zsh_h::module) -> i32 { // c:1726
+#[allow(unused_variables)]
+pub fn dyn_setup_module(m: *const crate::ported::zsh_h::module) -> i32 { // c:1726
     0                                                                    // c:1728
 }
 
@@ -1991,7 +1999,8 @@ pub fn dyn_setup_module(_m: *const crate::ported::zsh_h::module) -> i32 { // c:1
 ///
 /// C body: `enables_(UNUSED(Module m), UNUSED(int **enables)) { return 1; }`
 /// — the module subsystem itself doesn't manage feature enables.
-pub fn enables_(_m: *const crate::ported::zsh_h::module, _enables: &mut Option<Vec<i32>>) -> i32 { // c:324
+#[allow(unused_variables)]
+pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 { // c:324
     1                                                                    // c:326
 }
 
@@ -2019,7 +2028,8 @@ pub fn enables_module(_table: &mut ModuleTable, _name: &str, _enables: &mut Opti
 ///     return 1;
 /// }
 /// ```
-pub fn features_(_m: *const crate::ported::zsh_h::module, _features: &mut Vec<String>) -> i32 { // c:313
+#[allow(unused_variables)]
+pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 { // c:313
     /* There are lots and lots of features, but they're not handled here. */ // c:316-318
     1                                                                    // c:319
 }
@@ -2086,7 +2096,7 @@ pub const FINDMOD_CREATE: i32 = 0x0002;                                  // c:11
 /// Returns the resolved module name (after alias chasing) and
 /// whether an entry was created. C's `Module` return becomes
 /// `Option<String>` of the canonical name.
-/// Port of `find_module` from `Src/module.c:1659`.
+/// Port of `find_module(name, flags, namep)` from `Src/module.c:1659`.
 pub fn find_module(table: &mut ModuleTable, name: &str, flags: i32) -> Option<String> { // c:1659
     // c:1663 — m = modulestab->getnode2(modulestab, name);
     let mut cur_name = name.to_string();
@@ -2125,7 +2135,8 @@ pub fn find_module(table: &mut ModuleTable, name: &str, flags: i32) -> Option<St
 ///
 /// C body: `finish_(UNUSED(Module m)) { return 0; }` —
 /// the no-op finish hook for the module subsystem itself.
-pub fn finish_(_m: *const crate::ported::zsh_h::module) -> i32 {         // c:345
+#[allow(unused_variables)]
+pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {         // c:345
     0                                                                    // c:347
 }
 
@@ -2194,7 +2205,7 @@ pub fn getmathfunc(table: &mut ModuleTable, name: &str, autol: i32) -> Option<St
 ///
 /// HP-UX-specific dlsym wrapper around `shl_findsym(3)`. Static-link
 /// path: never invoked since zshrs doesn't dlopen modules.
-/// Port of `hpux_dlsym` from `Src/module.c:1530`.
+/// Port of `hpux_dlsym(handle, name)` from `Src/module.c:1530`.
 #[allow(unused_variables)]
 pub fn hpux_dlsym(handle: usize, name: &str) -> usize {                // c:1530
     0                                                                    // c:1535 NULL
@@ -2230,7 +2241,7 @@ pub fn load_and_bind(_fn_path: &str) -> usize {                          // c:14
 ///     return 0;
 /// }
 /// ```
-/// Port of `modname_ok` from `Src/module.c:2173`.
+/// Port of `modname_ok(p)` from `Src/module.c:2173`.
 pub fn modname_ok(p: &str) -> i32 {                                       // c:2173
     let bytes = p.as_bytes();
     let mut i: usize = 0;
@@ -2278,7 +2289,7 @@ pub fn modname_ok(p: &str) -> i32 {                                       // c:2
 /// `Qq` so e.g. `setup_zsh_random` becomes `setup_zshQurandom`.
 ///
 /// Static-link path: dlsym not used; returns 0 (NULL handle).
-/// Port of `module_func` from `Src/module.c:1770`.
+/// Port of `module_func(m, name)` from `Src/module.c:1770`.
 #[allow(unused_variables)]
 pub fn module_func(m: &Module, name: &str) -> usize {                  // c:1770
     0                                                                    // c:1794 NULL
@@ -2302,7 +2313,7 @@ pub fn module_func(m: &Module, name: &str) -> usize {                  // c:1770
 /// In zshrs's static-link path: a module is "loaded" iff it's
 /// registered in the live `ModuleTable`. The `MOD_UNLOAD` flag check
 /// is skipped because static-link modules cannot be unloaded.
-/// Port of `module_loaded` from `Src/module.c:1703`.
+/// Port of `module_loaded(name)` from `Src/module.c:1703`.
 pub fn module_loaded(table: &ModuleTable, name: &str) -> i32 {           // c:1703
     // c:1707 — find_module(name, FINDMOD_ALIASP, NULL)
     if table.modules.contains_key(name) {                                // m && m->u.handle
@@ -2331,7 +2342,7 @@ pub fn module_loaded(table: &ModuleTable, name: &str) -> i32 {           // c:17
 /// Hash-table scan callback for `zmodload -ap` listing. Rust port
 /// takes a `(name, module, flags)` triple instead of a HashNode ptr
 /// since zshrs's autoload-params live in `ModuleTable.autoload_params`.
-/// Port of `printautoparams` from `Src/module.c:2710`.
+/// Port of `printautoparams(hn, lon)` from `Src/module.c:2710`.
 pub fn printautoparams(name: &str, module: &str, flags: u32, lon: i32) { // c:2710
     if (flags & crate::ported::zsh_h::PM_AUTOLOAD) != 0 {                // c:2714
         if lon != 0 {                                                     // c:2715
@@ -2404,7 +2415,7 @@ pub fn require_module(table: &mut ModuleTable, modname: &str, _features: Option<
 ///     return require_module(modname, features, 0);
 /// }
 /// ```
-/// Port of `ensurefeature` from `Src/module.c:3415`.
+/// Port of `ensurefeature(modname, prefix, feature)` from `Src/module.c:3415`.
 pub fn ensurefeature(table: &mut ModuleTable, modname: &str, prefix: &str, feature: Option<&str>) -> i32 { // c:3415
     match feature {
         None => require_module(table, modname, None),                    // c:3420-3421
@@ -2431,7 +2442,8 @@ pub fn ensurefeature(table: &mut ModuleTable, modname: &str, prefix: &str, featu
 ///
 /// C body: `setup_(UNUSED(Module m)) { return 0; }` — the no-op
 /// setup hook of the module subsystem itself.
-pub fn setup_(_m: *const crate::ported::zsh_h::module) -> i32 {          // c:306
+#[allow(unused_variables)]
+pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {          // c:306
     0                                                                    // c:308
 }
 

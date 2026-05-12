@@ -156,12 +156,12 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:67
 ///
 /// C signature: `static void unsetpmmapfile(Param pm, int exp)`. The
 /// `exp` arg is `UNUSED` (c:126).
-pub fn unsetpmmapfile(name: &str, readonly: bool) {                      // c:126
+pub fn unsetpmmapfile(pm: &str, exp: bool) {                      // c:126
     // c:129 — `char *fname = ztrdup(pm->node.nam);`
     // c:131 — `unmetafy(fname, &dummy);`
-    let fname = unmeta(name);                                      // c:129+131
+    let fname = unmeta(pm);                                      // c:129+131
     // c:133-134 — `if (!(pm->node.flags & PM_READONLY)) unlink(fname);`
-    if !readonly {                                                       // c:133
+    if !exp {                                                       // c:133
         let _ = std::fs::remove_file(&fname);                            // c:134
     }
     // c:136 — free(fname); auto on drop.
@@ -359,7 +359,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/mapfile.c:279`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:279
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:279
     // C body c:280-281 — `return 0`. Faithful empty-body port.
     0
 }
@@ -378,7 +379,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 }
 
 /// Port of `boot_(m)` from `Src/Modules/mapfile.c:301`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:301
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:301
     // C body c:302-303 — `return 0`. Faithful empty-body port; the
     //                    $mapfile assoc-param registers via pd_list.
     0
@@ -391,7 +393,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/mapfile.c:315`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:315
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:315
     // C body c:316-317 — `return 0`. Faithful empty-body port.
     0
 }

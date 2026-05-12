@@ -176,7 +176,7 @@ impl Zle {
     /// Move the history cursor by `n` (negative = older / "up", positive = newer / "down").
     /// If `skipdups`, keep stepping while the visited entry equals the current line.
     /// Returns true if the line changed, false if exhausted (caller may beep).
-    /// Port of `zle_goto_hist` from Src/Zle/zle_hist.c:805.
+    /// Port of `zle_goto_hist(ev, n, skipdups)` from Src/Zle/zle_hist.c:805.
     pub fn zle_goto_hist(&mut self, n: i32, skipdups: bool) -> bool {
         let len = self.history.entries.len() as i32;
         if len == 0 {
@@ -830,44 +830,44 @@ mod tests {
 }
 
 /// Port of `acceptandinfernexthistory(args)` from Src/Zle/zle_hist.c:1757.
-pub fn acceptandinfernexthistory(zle: &mut Zle) -> i32 {                     // c:691
+pub fn acceptandinfernexthistory(args: &mut Zle) -> i32 {                     // c:691
     // C body (c:691-715): mark line for accept then queue infer-next.
     //                    The actual infer happens after acceptline
     //                    when the next prompt is drawn.
-    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
-    zle.history.search_pattern.clear();
+    crate::ported::args::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+    args.history.search_pattern.clear();
     0
 }
 
 /// Port of `acceptlineanddownhistory(args)` from Src/Zle/zle_hist.c:420.
-pub fn acceptlineanddownhistory(zle: &mut Zle) -> i32 {                      // c:716
+pub fn acceptlineanddownhistory(args: &mut Zle) -> i32 {                      // c:716
     // C body (c:716-738): mark for accept; on next prompt, fetch the
     //                    history entry one position later than the
     //                    one currently displayed.
-    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
-    zle.stackhist = (zle.history.cursor as i32) + 1;
+    crate::ported::args::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+    args.stackhist = (args.history.cursor as i32) + 1;
     0
 }
 
 /// Port of `beginningofbufferorhistory(args)` from Src/Zle/zle_hist.c:573.
-pub fn beginningofbufferorhistory(zle: &mut Zle) -> i32 {                    // c:573
+pub fn beginningofbufferorhistory(args: &mut Zle) -> i32 {                    // c:573
     // C body (c:576-580): `if (findbol()) zlecs = 0; else
     //                    return beginningofhistory(args)`. If not at
     //                    bol of first line, jump there; else move up.
-    let bol = crate::ported::zle::zle_utils::findbol(zle);
+    let bol = crate::ported::args::zle_utils::findbol(args);
     if bol > 0 {
-        zle.zlecs = 0;
+        args.zlecs = 0;
         0
     } else {
-        beginningofhistory(zle)
+        beginningofhistory(args)
     }
 }
 
 /// Port of `beginningofhistory(args)` from Src/Zle/zle_hist.c:584.
-pub fn beginningofhistory(zle: &mut Zle) -> i32 {                            // c:583
+pub fn beginningofhistory(args: &mut Zle) -> i32 {                            // c:583
     // C body (c:586-589): `if (!zle_goto_hist(firsthist(), 0, 0) &&
     //                    isset(HISTBEEP)) return 1; return 0`.
-    zle.history.cursor = 0;
+    args.history.cursor = 0;
     0
 }
 
@@ -893,13 +893,13 @@ pub fn doisearch(zle: &mut Zle, dir: i32) -> i32 {                           // 
 }
 
 /// Port of `downhistory(args)` from Src/Zle/zle_hist.c:434.
-pub fn downhistory(zle: &mut Zle) -> i32 {                                   // c:433
+pub fn downhistory(args: &mut Zle) -> i32 {                                   // c:433
     // C body (c:435-440): `nodups = isset(HISTIGNOREDUPS); if
     //                    (!zle_goto_hist(histline, zmult, nodups) &&
     //                    isset(HISTBEEP)) return 1; return 0`.
-    let n = zle.zmod.mult.max(1);
+    let n = args.zmod.mult.max(1);
     for _ in 0..n {
-        if zle.history.down().is_none() {
+        if args.history.down().is_none() {
             return 1;
         }
     }
@@ -907,45 +907,45 @@ pub fn downhistory(zle: &mut Zle) -> i32 {                                   // 
 }
 
 /// Port of `downlineorhistory(args)` from Src/Zle/zle_hist.c:370.
-pub fn downlineorhistory(zle: &mut Zle) -> i32 {                             // c:370
-    zle.down_line_or_history_widget()
+pub fn downlineorhistory(args: &mut Zle) -> i32 {                             // c:370
+    args.down_line_or_history_widget()
 }
 
 /// Port of `downlineorsearch(args)` from Src/Zle/zle_hist.c:412.
 /// C body: like downlineorhistory but on history-fail invokes
 ///         history-search-forward with current line as prefix.
-pub fn downlineorsearch(zle: &mut Zle) -> i32 {                              // c:412
-    let ocs = zle.zlecs;
-    let n = zle.downline();
+pub fn downlineorsearch(args: &mut Zle) -> i32 {                              // c:412
+    let ocs = args.zlecs;
+    let n = args.downline();
     if n != 0 {
-        zle.zlecs = ocs;
-        let saved = zle.mult;
-        zle.mult = n;
-        let r = historysearchforward(zle);
-        zle.mult = saved;
+        args.zlecs = ocs;
+        let saved = args.mult;
+        args.mult = n;
+        let r = historysearchforward(args);
+        args.mult = saved;
         return r;
     }
     0
 }
 
 /// Port of `endofbufferorhistory(args)` from Src/Zle/zle_hist.c:593.
-pub fn endofbufferorhistory(zle: &mut Zle) -> i32 {                          // c:593
+pub fn endofbufferorhistory(args: &mut Zle) -> i32 {                          // c:593
     // C body (c:595-600): `if (findeol() != zlell) zlecs = zlell;
     //                    else return endofhistory(args)`.
-    let eol = crate::ported::zle::zle_utils::findeol(zle);
-    if eol != zle.zlell {
-        zle.zlecs = zle.zlell;
+    let eol = crate::ported::args::zle_utils::findeol(args);
+    if eol != args.zlell {
+        args.zlecs = args.zlell;
         0
     } else {
-        endofhistory(zle)
+        endofhistory(args)
     }
 }
 
 /// Port of `endofhistory(args)` from Src/Zle/zle_hist.c:604.
-pub fn endofhistory(zle: &mut Zle) -> i32 {                                  // c:603
+pub fn endofhistory(args: &mut Zle) -> i32 {                                  // c:603
     // C body (c:606): `zle_goto_hist(curhist, 0, 0); return 0`. Reset
     //                cursor to live-buffer sentinel (just past last entry).
-    zle.history.cursor = zle.history.entries.len();
+    args.history.cursor = args.history.entries.len();
     0
 }
 
@@ -1012,7 +1012,7 @@ pub fn free_isrch_spots() {                                                  // 
     isrch_spots().lock().unwrap().clear();
 }
 
-/// Port of `set_isrch_spot()` from Src/Zle/zle_hist.c:973.
+/// Port of `set_isrch_spot(num, hl, pos, pat_hl, pat_pos, end_pos, cs, len, dir, nomatch)` from Src/Zle/zle_hist.c:973.
 #[allow(clippy::too_many_arguments)]
 pub fn set_isrch_spot(                                                       // c:973
     num: usize,
@@ -1044,7 +1044,7 @@ pub fn set_isrch_spot(                                                       // 
     };
 }
 
-/// Port of `get_isrch_spot()` from Src/Zle/zle_hist.c:1000. Returns the
+/// Port of `get_isrch_spot(num, hlp, posp, pat_hlp, pat_posp, end_posp, csp, lenp, dirp, nomatch)` from Src/Zle/zle_hist.c:1000. Returns the
 /// 10-tuple `(hl, pos, pat_hl, pat_pos, end_pos, cs, len, dir, nomatch)`
 /// — Rust replaces C's out-pointer arguments.
 pub fn get_isrch_spot(num: usize) -> Option<(i32, i32, i32, i32, i32, i32, i32, i32, i32)> { // c:1000
@@ -1076,14 +1076,14 @@ pub fn getvisrchstr(zle: &mut Zle) -> i32 {                                  // 
 }
 
 /// Port of `historybeginningsearchbackward(args)` from Src/Zle/zle_hist.c:2039.
-pub fn historybeginningsearchbackward(zle: &mut Zle) -> i32 {                // c:2035
+pub fn historybeginningsearchbackward(args: &mut Zle) -> i32 {                // c:2035
     // C body (c:2035-2063): like historysearchbackward but uses the
     //                      buffer prefix up to cursor (not the whole
     //                      first word) and preserves cursor position.
-    let prefix: String = zle.zleline[..zle.zlecs].iter().collect();
-    let n = zle.zmod.mult.max(1);
+    let prefix: String = args.zleline[..args.zlecs].iter().collect();
+    let n = args.zmod.mult.max(1);
     for _ in 0..n {
-        if zle.history.search_backward(&prefix).is_none() {
+        if args.history.search_backward(&prefix).is_none() {
             return 1;
         }
     }
@@ -1091,13 +1091,13 @@ pub fn historybeginningsearchbackward(zle: &mut Zle) -> i32 {                // 
 }
 
 /// Port of `historybeginningsearchforward(args)` from Src/Zle/zle_hist.c:2085.
-pub fn historybeginningsearchforward(zle: &mut Zle) -> i32 {                 // c:2082
+pub fn historybeginningsearchforward(args: &mut Zle) -> i32 {                 // c:2082
     // C body (c:2082-2110): like historysearchforward but uses the
     //                      buffer prefix up to cursor.
-    let prefix: String = zle.zleline[..zle.zlecs].iter().collect();
-    let n = zle.zmod.mult.max(1);
+    let prefix: String = args.zleline[..args.zlecs].iter().collect();
+    let n = args.zmod.mult.max(1);
     for _ in 0..n {
-        if zle.history.search_forward(&prefix).is_none() {
+        if args.history.search_forward(&prefix).is_none() {
             return 1;
         }
     }
@@ -1105,40 +1105,40 @@ pub fn historybeginningsearchforward(zle: &mut Zle) -> i32 {                 // 
 }
 
 /// Port of `historyincrementalpatternsearchbackward(args)` from Src/Zle/zle_hist.c:936.
-pub fn historyincrementalpatternsearchbackward(zle: &mut Zle) -> i32 {       // c:1759
+pub fn historyincrementalpatternsearchbackward(args: &mut Zle) -> i32 {       // c:1759
     // C body c:1761-1764 — `return doisearch(args, -1, 1)` — passes
     //                      pattern-flag=1 so search treats sbuf as a
     //                      glob. Our doisearch is non-pattern; OK.
-    doisearch(zle, -1)
+    doisearch(args, -1)
 }
 
 /// Port of `historyincrementalpatternsearchforward(args)` from Src/Zle/zle_hist.c:943.
-pub fn historyincrementalpatternsearchforward(zle: &mut Zle) -> i32 {        // c:943
+pub fn historyincrementalpatternsearchforward(args: &mut Zle) -> i32 {        // c:943
     // C body — `return doisearch(args, 1, 1)`.
-    doisearch(zle, 1)
+    doisearch(args, 1)
 }
 
 /// Port of `historyincrementalsearchbackward(args)` from Src/Zle/zle_hist.c:922.
-pub fn historyincrementalsearchbackward(zle: &mut Zle) -> i32 {              // c:922
+pub fn historyincrementalsearchbackward(args: &mut Zle) -> i32 {              // c:922
     // C body — `return doisearch(args, -1, 0)`.
-    doisearch(zle, -1)
+    doisearch(args, -1)
 }
 
 /// Port of `historyincrementalsearchforward(args)` from Src/Zle/zle_hist.c:929.
-pub fn historyincrementalsearchforward(zle: &mut Zle) -> i32 {               // c:929
+pub fn historyincrementalsearchforward(args: &mut Zle) -> i32 {               // c:929
     // C body — `return doisearch(args, 1, 0)`.
-    doisearch(zle, 1)
+    doisearch(args, 1)
 }
 
 /// Port of `historysearchbackward(args)` from Src/Zle/zle_hist.c:457.
-pub fn historysearchbackward(zle: &mut Zle) -> i32 {                         // c:457
+pub fn historysearchbackward(args: &mut Zle) -> i32 {                         // c:457
     // C body (c:459-514): walks history backward from current cursor
     //                    looking for an entry whose prefix matches
     //                    the current line up to cursor position.
-    let prefix: String = zle.zleline[..zle.zlecs].iter().collect();
-    let n = zle.zmod.mult.max(1);
+    let prefix: String = args.zleline[..args.zlecs].iter().collect();
+    let n = args.zmod.mult.max(1);
     for _ in 0..n {
-        if zle.history.search_backward(&prefix).is_none() {
+        if args.history.search_backward(&prefix).is_none() {
             return 1;
         }
     }
@@ -1146,14 +1146,14 @@ pub fn historysearchbackward(zle: &mut Zle) -> i32 {                         // 
 }
 
 /// Port of `historysearchforward(args)` from Src/Zle/zle_hist.c:516.
-pub fn historysearchforward(zle: &mut Zle) -> i32 {                          // c:541
+pub fn historysearchforward(args: &mut Zle) -> i32 {                          // c:541
     // C body (c:543-595): mirror of historysearchbackward — walks
     //                    history forward looking for an entry whose
     //                    prefix matches the current line up to cursor.
-    let prefix: String = zle.zleline[..zle.zlecs].iter().collect();
-    let n = zle.zmod.mult.max(1);
+    let prefix: String = args.zleline[..args.zlecs].iter().collect();
+    let n = args.zmod.mult.max(1);
     for _ in 0..n {
-        if zle.history.search_forward(&prefix).is_none() {
+        if args.history.search_forward(&prefix).is_none() {
             return 1;
         }
     }
@@ -1188,24 +1188,24 @@ pub fn infernexthist(zle: &mut Zle) -> i32 {                                 // 
 }
 
 /// Port of `infernexthistory(args)` from Src/Zle/zle_hist.c:1772.
-pub fn infernexthistory(zle: &mut Zle) -> i32 {                              // c:1772
+pub fn infernexthistory(args: &mut Zle) -> i32 {                              // c:1772
     // C body (c:1772-1786): wrapper around infernexthist that
     //                      additionally fetches the entry into the
     //                      buffer (handled by next prompt redraw).
-    infernexthist(zle)
+    infernexthist(args)
 }
 
 /// Port of `insertlastword(args)` from Src/Zle/zle_hist.c:612.
-pub fn insertlastword(zle: &mut Zle) -> i32 {                                // c:836
+pub fn insertlastword(args: &mut Zle) -> i32 {                                // c:836
     // C body (c:836-880): take last word of previous history entry
     //                    and insert at cursor; with mult, take that
     //                    many entries back.
-    let n = zle.zmod.mult.max(1) as usize;
-    if zle.history.cursor < n {
+    let n = args.zmod.mult.max(1) as usize;
+    if args.history.cursor < n {
         return 1;
     }
-    let idx = zle.history.cursor - n;
-    let entry = match zle.history.entries.get(idx) {
+    let idx = args.history.cursor - n;
+    let entry = match args.history.entries.get(idx) {
         Some(e) => e.line.clone(),
         None => return 1,
     };
@@ -1214,13 +1214,13 @@ pub fn insertlastword(zle: &mut Zle) -> i32 {                                // 
         None => return 1,
     };
     for ch in word.chars() {
-        zle.zleline.insert(zle.zlecs, ch);
-        zle.zlecs += 1;
+        args.zleline.insert(args.zlecs, ch);
+        args.zlecs += 1;
     }
     0
 }
 
-/// Port of `isearch_newpos()` from Src/Zle/zle_hist.c:1024.
+/// Port of `isearch_newpos(matchlist, curpos, dir, endmatchpos)` from Src/Zle/zle_hist.c:1024.
 pub fn isearch_newpos(curpos: i32, dir: i32, end: &mut i32) -> i32 {         // c:1018
     // C body (c:1024-1080): scan ISEARCH_MATCHES list for a hit at-or-
     //                      after curpos when dir > 0, at-or-before when
@@ -1231,59 +1231,59 @@ pub fn isearch_newpos(curpos: i32, dir: i32, end: &mut i32) -> i32 {         // 
 }
 
 /// Port of `pushinput(args)` from Src/Zle/zle_hist.c:883.
-pub fn pushinput(zle: &mut Zle) -> i32 {                                     // c:883
+pub fn pushinput(args: &mut Zle) -> i32 {                                     // c:883
     // C body (c:883-895): push current line onto buffer-stack and
     //                    clear, then bind to subsequent input read.
-    let snapshot: String = zle.zleline.iter().collect();
-    zle.history.entries.push(HistEntry {
+    let snapshot: String = args.zleline.iter().collect();
+    args.history.entries.push(HistEntry {
         line: snapshot,
         num: 0,
         time: None,
     });
-    zle.zleline.clear();
-    zle.zlecs = 0;
+    args.zleline.clear();
+    args.zlecs = 0;
     0
 }
 
 /// Port of `pushline(args)` from Src/Zle/zle_hist.c:832.
-pub fn pushline(zle: &mut Zle) -> i32 {                                      // c:832
+pub fn pushline(args: &mut Zle) -> i32 {                                      // c:832
     // C body (c:832-848): save current line on bufstack, clear, and
     //                    accept-line so caller pulls it back next time.
-    let snapshot: String = zle.zleline.iter().collect();
+    let snapshot: String = args.zleline.iter().collect();
     if snapshot.is_empty() {
         return 1;
     }
-    zle.history.entries.push(HistEntry {
+    args.history.entries.push(HistEntry {
         line: snapshot,
         num: 0,
         time: None,
     });
-    zle.zleline.clear();
-    zle.zlecs = 0;
-    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+    args.zleline.clear();
+    args.zlecs = 0;
+    crate::ported::args::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
 /// Port of `pushlineoredit(args)` from Src/Zle/zle_hist.c:852.
-pub fn pushlineoredit(zle: &mut Zle) -> i32 {                                // c:852
+pub fn pushlineoredit(args: &mut Zle) -> i32 {                                // c:852
     // C body (c:852-880): like pushline but if line is empty just
     //                    edit (no-op).
-    let snapshot: String = zle.zleline.iter().collect();
+    let snapshot: String = args.zleline.iter().collect();
     if snapshot.is_empty() {
         return 0;
     }
-    zle.history.entries.push(HistEntry {
+    args.history.entries.push(HistEntry {
         line: snapshot,
         num: 0,
         time: None,
     });
-    zle.zleline.clear();
-    zle.zlecs = 0;
-    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+    args.zleline.clear();
+    args.zlecs = 0;
+    crate::ported::args::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     0
 }
 
-/// Port of `save_isearch_buffer()` from Src/Zle/zle_hist.c:1058.
+/// Port of `save_isearch_buffer(sbuf, sbptr, search, searchlen)` from Src/Zle/zle_hist.c:1058.
 pub fn save_isearch_buffer(zle: &mut Zle) -> i32 {                           // c:1058
     // C body (c:1058-1077): copy current sbuf into a freshly-zalloc'd
     //                      string and stash on the isearch state for
@@ -1299,21 +1299,21 @@ pub fn save_isearch_buffer(zle: &mut Zle) -> i32 {                           // 
 // implementation landed.
 
 /// Port of `setlocalhistory(args)` from Src/Zle/zle_hist.c:794.
-pub fn setlocalhistory(zle: &mut Zle) -> i32 {                               // c:794
+pub fn setlocalhistory(args: &mut Zle) -> i32 {                               // c:794
     // C body (c:794-815): toggle hist_skip_flags HIST_FOREIGN bit so
     //                    foreign-shell entries are hidden during
     //                    subsequent history navigation.
-    zle.history.hist_skip_flags ^= 1;
+    args.history.hist_skip_flags ^= 1;
     0
 }
 
 /// Port of `uphistory(args)` from Src/Zle/zle_hist.c:233.
-pub fn uphistory(zle: &mut Zle) -> i32 {                                     // c:232
+pub fn uphistory(args: &mut Zle) -> i32 {                                     // c:232
     // C body (c:234-239): same as downhistory but `-zmult`. Walk
     //                    backward through History entries.
-    let n = zle.zmod.mult.max(1);
+    let n = args.zmod.mult.max(1);
     for _ in 0..n {
-        if zle.history.up().is_none() {
+        if args.history.up().is_none() {
             return 1;
         }
     }
@@ -1321,22 +1321,22 @@ pub fn uphistory(zle: &mut Zle) -> i32 {                                     // 
 }
 
 /// Port of `uplineorhistory(args)` from Src/Zle/zle_hist.c:282.
-pub fn uplineorhistory(zle: &mut Zle) -> i32 {                               // c:282
-    zle.up_line_or_history_widget()
+pub fn uplineorhistory(args: &mut Zle) -> i32 {                               // c:282
+    args.up_line_or_history_widget()
 }
 
 /// Port of `uplineorsearch(args)` from Src/Zle/zle_hist.c:312.
 /// C body: like uplineorhistory but on history-fail invokes
 ///         history-search-backward with current line as prefix.
-pub fn uplineorsearch(zle: &mut Zle) -> i32 {                                // c:312
-    let ocs = zle.zlecs;
-    let n = zle.upline();
+pub fn uplineorsearch(args: &mut Zle) -> i32 {                                // c:312
+    let ocs = args.zlecs;
+    let n = args.upline();
     if n != 0 {
-        zle.zlecs = ocs;
-        let saved = zle.mult;
-        zle.mult = n;
-        let r = historysearchbackward(zle);
-        zle.mult = saved;
+        args.zlecs = ocs;
+        let saved = args.mult;
+        args.mult = n;
+        let r = historysearchbackward(args);
+        args.mult = saved;
         return r;
     }
     0
@@ -1345,80 +1345,80 @@ pub fn uplineorsearch(zle: &mut Zle) -> i32 {                                // 
 /// Port of `vidownlineorhistory(args)` from Src/Zle/zle_hist.c:390.
 /// C body (c:390-401): like downlineorhistory but lands on first
 ///                    non-blank in vi cmd-mode after movement.
-pub fn vidownlineorhistory(zle: &mut Zle) -> i32 {                           // c:390
-    zle.down_line_or_history_widget()
+pub fn vidownlineorhistory(args: &mut Zle) -> i32 {                           // c:390
+    args.down_line_or_history_widget()
 }
 
 /// Port of `vifetchhistory(args)` from Src/Zle/zle_hist.c:1787.
-pub fn vifetchhistory(zle: &mut Zle) -> i32 {                                // c:1787
+pub fn vifetchhistory(args: &mut Zle) -> i32 {                                // c:1787
     // C body (c:1787-1804): vi `G` — fetch history entry numbered
     //                      mult; with no count fetch most recent.
-    let n = zle.zmod.mult;
+    let n = args.zmod.mult;
     if n <= 0 {
-        if zle.history.entries.is_empty() {
+        if args.history.entries.is_empty() {
             return 1;
         }
-        zle.history.cursor = zle.history.entries.len() - 1;
+        args.history.cursor = args.history.entries.len() - 1;
         return 0;
     }
-    if (n as usize) > zle.history.entries.len() {
+    if (n as usize) > args.history.entries.len() {
         return 1;
     }
-    zle.history.cursor = (n as usize).saturating_sub(1);
+    args.history.cursor = (n as usize).saturating_sub(1);
     0
 }
 
 /// Port of `vihistorysearchbackward(args)` from Src/Zle/zle_hist.c:1964.
-pub fn vihistorysearchbackward(zle: &mut Zle) -> i32 {                       // c:1964
+pub fn vihistorysearchbackward(args: &mut Zle) -> i32 {                       // c:1964
     // C body (c:1964-1986): vi `?` — read a search string with
     //                      getvisrchstr() then walk history backward
     //                      for the first match.
-    if zle.history.search_pattern.is_empty() {
+    if args.history.search_pattern.is_empty() {
         return 1;
     }
-    let pat = zle.history.search_pattern.clone();
-    let n = zle.zmod.mult.max(1);
+    let pat = args.history.search_pattern.clone();
+    let n = args.zmod.mult.max(1);
     for _ in 0..n {
-        if zle.history.search_backward(&pat).is_none() {
+        if args.history.search_backward(&pat).is_none() {
             return 1;
         }
     }
-    zle.history.search_backward = true;
+    args.history.search_backward = true;
     0
 }
 
 /// Port of `vihistorysearchforward(args)` from Src/Zle/zle_hist.c:1940.
-pub fn vihistorysearchforward(zle: &mut Zle) -> i32 {                        // c:1940
+pub fn vihistorysearchforward(args: &mut Zle) -> i32 {                        // c:1940
     // C body (c:1940-1962): vi `/` — read a search string then walk
     //                      forward.
-    if zle.history.search_pattern.is_empty() {
+    if args.history.search_pattern.is_empty() {
         return 1;
     }
-    let pat = zle.history.search_pattern.clone();
-    let n = zle.zmod.mult.max(1);
+    let pat = args.history.search_pattern.clone();
+    let n = args.zmod.mult.max(1);
     for _ in 0..n {
-        if zle.history.search_forward(&pat).is_none() {
+        if args.history.search_forward(&pat).is_none() {
             return 1;
         }
     }
-    zle.history.search_backward = false;
+    args.history.search_backward = false;
     0
 }
 
 /// Port of `virepeatsearch(args)` from Src/Zle/zle_hist.c:1988.
-pub fn virepeatsearch(zle: &mut Zle) -> i32 {                                // c:1988
+pub fn virepeatsearch(args: &mut Zle) -> i32 {                                // c:1988
     // C body (c:1988-2008): vi `n` — repeat the last search in the
     //                      same direction as the last vi search.
-    if zle.history.search_pattern.is_empty() {
+    if args.history.search_pattern.is_empty() {
         return 1;
     }
-    let pat = zle.history.search_pattern.clone();
-    let n = zle.zmod.mult.max(1);
+    let pat = args.history.search_pattern.clone();
+    let n = args.zmod.mult.max(1);
     for _ in 0..n {
-        let hit = if zle.history.search_backward {
-            zle.history.search_backward(&pat)
+        let hit = if args.history.search_backward {
+            args.history.search_backward(&pat)
         } else {
-            zle.history.search_forward(&pat)
+            args.history.search_forward(&pat)
         };
         if hit.is_none() {
             return 1;
@@ -1428,19 +1428,19 @@ pub fn virepeatsearch(zle: &mut Zle) -> i32 {                                // 
 }
 
 /// Port of `virevrepeatsearch(args)` from Src/Zle/zle_hist.c:2024.
-pub fn virevrepeatsearch(zle: &mut Zle) -> i32 {                             // c:2024
+pub fn virevrepeatsearch(args: &mut Zle) -> i32 {                             // c:2024
     // C body (c:2024-2030): vi `N` — repeat the last search in the
     //                      reverse direction.
-    if zle.history.search_pattern.is_empty() {
+    if args.history.search_pattern.is_empty() {
         return 1;
     }
-    let pat = zle.history.search_pattern.clone();
-    let n = zle.zmod.mult.max(1);
+    let pat = args.history.search_pattern.clone();
+    let n = args.zmod.mult.max(1);
     for _ in 0..n {
-        let hit = if zle.history.search_backward {
-            zle.history.search_forward(&pat)
+        let hit = if args.history.search_backward {
+            args.history.search_forward(&pat)
         } else {
-            zle.history.search_backward(&pat)
+            args.history.search_backward(&pat)
         };
         if hit.is_none() {
             return 1;
@@ -1452,33 +1452,33 @@ pub fn virevrepeatsearch(zle: &mut Zle) -> i32 {                             // 
 /// Port of `viuplineorhistory(args)` from Src/Zle/zle_hist.c:302.
 /// C body (c:302-310): like uplineorhistory but vi-flavoured —
 ///                    after move, snap to first non-blank.
-pub fn viuplineorhistory(zle: &mut Zle) -> i32 {                             // c:302
-    zle.up_line_or_history_widget()
+pub fn viuplineorhistory(args: &mut Zle) -> i32 {                             // c:302
+    args.up_line_or_history_widget()
 }
 
 /// Port of `zgetline(args)` from Src/Zle/zle_hist.c:898.
-pub fn zgetline(zle: &mut Zle) -> i32 {                                      // c:898
+pub fn zgetline(args: &mut Zle) -> i32 {                                      // c:898
     // C body (c:898-930): fetch next bufstack entry into zleline,
     //                    cursor at end. Returns 1 if stack empty.
-    let entry = match zle.history.entries.pop() {
+    let entry = match args.history.entries.pop() {
         Some(e) => e.line,
         None => return 1,
     };
-    zle.zleline.clear();
-    zle.zleline.extend(entry.chars());
-    zle.zlecs = zle.zleline.len();
+    args.zleline.clear();
+    args.zleline.extend(entry.chars());
+    args.zlecs = args.zleline.len();
     0
 }
 
 /// Port of `zle_setline(he)` from Src/Zle/zle_hist.c:772.
-pub fn zle_setline(zle: &mut Zle) -> i32 {                                   // c:772
+pub fn zle_setline(he: &mut Zle) -> i32 {                                   // c:772
     // C body (c:772-792): replace current line with the entry at
     //                    history.cursor. Used after history navigation.
-    if let Some(entry) = zle.history.entries.get(zle.history.cursor) {
+    if let Some(entry) = he.history.entries.get(he.history.cursor) {
         let line = entry.line.clone();
-        zle.zleline.clear();
-        zle.zleline.extend(line.chars());
-        zle.zlecs = zle.zleline.len();
+        he.zleline.clear();
+        he.zleline.extend(line.chars());
+        he.zlecs = he.zleline.len();
         return 0;
     }
     1
@@ -1511,7 +1511,7 @@ pub fn zle_setline(zle: &mut Zle) -> i32 {                                   // 
 /// the single-byte path — `to_ascii_lowercase()` matches the C
 /// `tulower()` behaviour for ASCII; non-ASCII multibyte folding
 /// follows when the broader UTF-8 lowercase port lands.
-/// Port of `zlinecmp` from `Src/Zle/zle_hist.c:127`.
+/// Port of `zlinecmp(histp, inputp)` from `Src/Zle/zle_hist.c:127`.
 pub fn zlinecmp(histp: &str, inputp: &str) -> i32 {                          // c:127
     let h_bytes = histp.as_bytes();
     let i_bytes = inputp.as_bytes();
@@ -1586,7 +1586,7 @@ pub fn zlinecmp(histp: &str, inputp: &str) -> i32 {                          // 
 /// 3 = always-true).
 ///
 /// Returns `Some(byte_offset)` when found, `None` otherwise.
-/// Port of `zlinefind` from `Src/Zle/zle_hist.c:203`.
+/// Port of `zlinefind(haystack, pos, needle, dir, sens)` from `Src/Zle/zle_hist.c:203`.
 pub fn zlinefind(haystack: &str, pos: usize, needle: &str, dir: i32, sens: i32) -> Option<usize> {  // c:203
     let bytes = haystack.as_bytes();
     let mut s = pos;                                                         // c:206 s = haystack + pos

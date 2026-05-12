@@ -552,7 +552,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/zpty.c:896`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:896
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:896
     // C body c:898-899 — `return 0`. Faithful empty-body port.
     0
 }
@@ -580,7 +581,8 @@ fn ptycmds() -> &'static Mutex<HashMap<String, PtyCmd>> {
 }
 
 /// Port of `boot_(m)` from `Src/Modules/zpty.c:918`.
-pub fn boot_(_m: *const module) -> i32 {                                 // c:918
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                 // c:918
     // C body c:921-922 — `ptycmds = NULL; addhookfunc("exit", ptyhook)`.
     *ptycmds().lock().unwrap() = HashMap::<String, PtyCmd>::new();
     let _ = ptyhook(&mut ptycmds().lock().unwrap());                     // c:922 (hook handle)
@@ -598,7 +600,8 @@ pub fn cleanup_(m: *const module) -> i32 {                              // c:928
 }
 
 /// Port of `finish_(m)` from `Src/Modules/zpty.c:937`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:937
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:937
     // C body c:939-940 — `return 0`. Faithful empty-body port; the
     //                    pty session teardown happens in cleanup_.
     0

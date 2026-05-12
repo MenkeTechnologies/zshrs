@@ -255,7 +255,8 @@ pub(crate) fn bin_setcap(nam: &str, _argv: &[String], _ops: &options, _func: i32
 // =====================================================================
 
 /// Port of `setup_(m)` from `Src/Modules/cap.c:139`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:139
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:139
     0                                                                  // c:141
 }
 
@@ -273,7 +274,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 }
 
 /// Port of `boot_(m)` from `Src/Modules/cap.c:161`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:161
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:161
     0                                                                  // c:163
 }
 
@@ -284,7 +286,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/cap.c:175`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:175
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:175
     0                                                                  // c:177
 }
 

@@ -1399,7 +1399,8 @@ fn module_features() -> &'static Mutex<features_t> {
 // =====================================================================
 
 /// Port of `setup_(m)` from `Src/Builtins/rlimits.c:883`.
-pub fn setup_(_m: *const module) -> i32 {
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {
     0                                                                    // c:885
 }
 
@@ -1418,7 +1419,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 
 /// Port of `boot_(m)` from `Src/Builtins/rlimits.c:905`.
 /// C body: `set_resinfo(); return 0;`
-pub fn boot_(_m: *const module) -> i32 {
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {
     set_resinfo();                                                        // c:907
     0                                                                    // c:908
 }
@@ -1431,7 +1433,8 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_(m)` from `Src/Builtins/rlimits.c:921`.
-pub fn finish_(_m: *const module) -> i32 {
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {
     0                                                                    // c:923
 }
 

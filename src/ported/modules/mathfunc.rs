@@ -270,7 +270,8 @@ pub fn math_func(_name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber {
 /// random-bit production lives in `crate::ported::random` and
 /// `crate::ported::modules::random_real`. Returns `zero_mnumber`
 /// for unrecognised ids (matching C's pre-init `ret = zero_mnumber`).
-pub fn math_string(_name: &str, arg: &str, id: i32) -> Mnumber {         // c:439
+#[allow(unused_variables)]
+pub fn math_string(name: &str, arg: &str, id: i32) -> Mnumber {         // c:439
     let trimmed = arg.trim_matches(|c: char| c == ' ' || c == '\t');     // c:447-451 iblank
     match id {
         MS_RAND48 => {                                                   // c:457
@@ -363,7 +364,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/mathfunc.c:548`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:548
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:548
     // C body c:550-551 — `return 0`. Faithful empty-body port.
     0
 }
@@ -382,7 +384,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 }
 
 /// Port of `boot_(m)` from `Src/Modules/mathfunc.c:570`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:570
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:570
     // C body c:572-573 — `return 0`. Faithful empty-body port; the
     //                    math functions are registered via the mf_list
     //                    feature dispatch, no extra boot work needed.
@@ -396,7 +399,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/mathfunc.c:584`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:584
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:584
     // C body c:586-587 — `return 0`. Faithful empty-body port; the
     //                    math functions are unregistered via cleanup_.
     0

@@ -276,7 +276,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/zselect.c:288`.
-pub fn setup_(_m: *const module) -> i32 {                                // c:288
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                // c:288
     0                                                                    // c:291
 }
 
@@ -294,7 +295,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:
 }
 
 /// Port of `boot_(m)` from `Src/Modules/zselect.c:310`.
-pub fn boot_(_m: *const module) -> i32 {                                 // c:310
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                 // c:310
     0                                                                    // c:313
 }
 
@@ -305,7 +307,8 @@ pub fn cleanup_(m: *const module) -> i32 {                              // c:318
 }
 
 /// Port of `finish_(m)` from `Src/Modules/zselect.c:325`.
-pub fn finish_(_m: *const module) -> i32 {                               // c:325
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                               // c:325
     0                                                                    // c:328
 }
 

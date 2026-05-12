@@ -167,12 +167,12 @@ pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // 
 
 /// Port of `getrandom_buffer(buf, len)` from `Src/Modules/random.c:282`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // c:62
+pub fn getrandom_buffer(m: &mut [u8]) -> io::Result<()> {                  // c:62
     use std::fs::File;
     use std::io::Read;
 
     let mut file = File::open("/dev/urandom")?;
-    file.read_exact(buf)?;
+    file.read_exact(m)?;
     Ok(())
 }
 
@@ -228,7 +228,7 @@ pub fn math_zrand_int(upper: Option<i64>, lower: Option<i64>, inclusive: bool) -
 }
 
 /// `math_zrand_float()` math function.
-/// Port of `math_zrand_float()` from Src/Modules/random.c:204 —
+/// Port of `math_zrand_float(name, argc, argv, id)` from Src/Modules/random.c:204 —
 /// the C source's math-function entry point that returns a
 /// uniform double in `[0, 1)`.
 pub fn math_zrand_float() -> f64 {                                           // c:204
@@ -395,7 +395,8 @@ use crate::ported::zsh_h::module;
 pub static RANDFD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:34
 
 /// Port of `setup_(m)` from `Src/Modules/random.c:243`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:243
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:243
     // c:245-261 — USE_URANDOM block: stat /dev/urandom; verify
     //              S_ISCHR. We probe via std::fs::metadata + file_type().
     use std::fs::metadata;
@@ -427,7 +428,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 }
 
 /// Port of `boot_(m)` from `Src/Modules/random.c:282`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:282
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:282
     // c:284-308 — USE_URANDOM block: open(/dev/urandom, O_RDONLY),
     //              movefd, addmodulefd to track the fd.
     use std::os::fd::IntoRawFd;
@@ -451,7 +453,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/random.c:319`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:319
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:319
     // c:321-324 — USE_URANDOM block: `if (randfd >= 0) zclose(randfd)`.
     use std::sync::atomic::Ordering;
     let fd = RANDFD.swap(-1, Ordering::SeqCst);

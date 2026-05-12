@@ -1510,14 +1510,14 @@ pub fn prompt_width(s: &str) -> usize {
 /// falls through to numeric parsing. Returns palette index 0-7
 /// for basic colours, 8 for "default" sentinel (per C:1909),
 /// numeric value for raw integers.
-pub fn match_named_colour(name: &str) -> Option<u8> {                        // c:1915
-    let lower = name.to_lowercase(); // c:1917
+pub fn match_named_colour(teststrp: &str) -> Option<u8> {                        // c:1915
+    let lower = teststrp.to_lowercase(); // c:1917
     for (i, &n) in COLOUR_NAMES.iter().enumerate() { // c:1922
         if n == lower {
             return Some(i as u8); // c:1929
         }
     }
-    name.parse::<u8>().ok() // c:1933 (fall-through to numeric)
+    teststrp.parse::<u8>().ok() // c:1933 (fall-through to numeric)
 }
 
 /// Build an ANSI escape for an indexed colour.
@@ -1795,8 +1795,8 @@ pub fn tsetcap(cap: &str) -> String {                                        // 
 
 /// Output a string from a terminal capability.
 /// Port of `putstr(d)` from Src/prompt.c:1121.
-pub fn putstr(cap: &str) -> String {
-    tsetcap(cap)
+pub fn putstr(d: &str) -> String {
+    tsetcap(d)
 }
 
 /// Replace one set of text attributes with another.
@@ -1853,21 +1853,21 @@ pub fn treplaceattrs(old: zattr, new: zattr) -> String {             // c:1719
 
 /// Set text attributes (full apply).
 /// Port of `tsetattrs(newattrs)` from Src/prompt.c:1737.
-pub fn tsetattrs(attrs: zattr) -> String {                               // c:1737
-    apply_text_attributes(attrs)
+pub fn tsetattrs(newattrs: zattr) -> String {                               // c:1737
+    apply_text_attributes(newattrs)
 }
 
 /// Unset (clear) text attributes via SGR-22/24/27 + 39/49.
 /// Port of `tunsetattrs(newattrs)` from Src/prompt.c:1755.
-pub fn tunsetattrs(attrs: zattr) -> String {                             // c:1755
+pub fn tunsetattrs(newattrs: zattr) -> String {                             // c:1755
     let mut result = String::new();
-    if attrs & TXTBOLDFACE != 0 { result.push_str("\x1b[22m"); }
-    if attrs & TXTUNDERLINE != 0 {
+    if newattrs & TXTBOLDFACE != 0 { result.push_str("\x1b[22m"); }
+    if newattrs & TXTUNDERLINE != 0 {
         result.push_str("\x1b[24m");
     }
-    if attrs & TXTSTANDOUT != 0 { result.push_str("\x1b[27m"); }
-    if attrs & TXTFGCOLOUR != 0 { result.push_str("\x1b[39m"); }
-    if attrs & TXTBGCOLOUR != 0 { result.push_str("\x1b[49m"); }
+    if newattrs & TXTSTANDOUT != 0 { result.push_str("\x1b[27m"); }
+    if newattrs & TXTFGCOLOUR != 0 { result.push_str("\x1b[39m"); }
+    if newattrs & TXTBGCOLOUR != 0 { result.push_str("\x1b[49m"); }
     result
 }
 
@@ -2127,7 +2127,7 @@ pub fn set_pending_text_attrs(attrs: zattr) {
 ///
 /// `_flags` parameter (currently unused in zshrs port — C uses it
 /// to gate "force reset" mode).
-/// Port of `applytextattributes` from `Src/prompt.c:1645`.
+/// Port of `applytextattributes(flags)` from `Src/prompt.c:1645`.
 #[allow(unused_variables)]
 pub fn applytextattributes(flags: i32) -> String {
     let mut current = current_attrs_lock().lock().expect("current_attrs poisoned");
@@ -2149,6 +2149,7 @@ pub fn applytextattributes(flags: i32) -> String {
 /// Rust port handles truncation inline inside `expand_prompt()`
 /// rather than via this recursive callback; this entry exists for
 /// ABI parity.
-pub fn prompttrunc(_arg: i32, _truncchar: i32, _doprint: i32, _endchar: i32) -> i32 {
+#[allow(unused_variables)]
+pub fn prompttrunc(arg: i32, truncchar: i32, doprint: i32, endchar: i32) -> i32 {
     0
 }

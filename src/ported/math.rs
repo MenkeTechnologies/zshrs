@@ -1945,7 +1945,7 @@ pub(crate) fn checkunary() {
     }
 
     /// Operator-precedence parser - closely follows zsh math.c mathparse()
-/// Port of `mathparse` from `Src/math.c:1594`.
+/// Port of `mathparse(pc)` from `Src/math.c:1594`.
     pub(crate) fn mathparse(pc: u8) {
         if m_error_some() {
             return;
@@ -2098,7 +2098,7 @@ pub(crate) fn checkunary() {
     }
 
     /// Call a math function
-/// Port of `callmathfunc` from `Src/math.c:1037`.
+/// Port of `callmathfunc(o)` from `Src/math.c:1037`.
     pub(crate) fn callmathfunc(call: &str) -> Mnumber {
         // Parse function name and args
         let paren = call.find('(').unwrap_or(call.len());
@@ -2223,7 +2223,7 @@ pub(crate) fn checkunary() {
     }
 
     /// Evaluate the expression
-/// Port of `mathevall` from `Src/math.c:367`.
+/// Port of `mathevall(s, prec_tp, ep)` from `Src/math.c:367`.
     pub(crate) fn mathevall() -> Result<Mnumber, String> {
         m_prec_set(if m_c_precedences() { &C_PREC } else { &Z_PREC });
 
@@ -2289,16 +2289,16 @@ pub(crate) fn getmathparams() -> HashMap<String, Mnumber> {
 /// Convenience function to evaluate a math expression
 /// Top-level math-expression evaluator.
 /// Port of `matheval(s)` from Src/math.c:1480 — wraps `mathevall()`\n/// (line 367) with the C source's standard error-message\n/// formatting.
-pub fn matheval(expr: &str) -> Result<Mnumber, String> {                     // c:1480
-    new(expr);
+pub fn matheval(s: &str) -> Result<Mnumber, String> {                     // c:1480
+    new(s);
     mathevall()
 }
 
 /// Evaluate and return integer
 /// Math evaluator that coerces the result to integer.
 /// Port of `mathevali(s)` from Src/math.c:1505.
-pub fn mathevali(expr: &str) -> Result<i64, String> {                        // c:1505
-    matheval(expr).map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
+pub fn mathevali(s: &str) -> Result<i64, String> {                        // c:1505
+    matheval(s).map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
 }
 
 #[cfg(test)]

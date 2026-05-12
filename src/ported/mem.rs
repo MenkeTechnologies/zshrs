@@ -181,7 +181,7 @@ pub fn zfree<T>(_ptr: Box<T>) {                                              // 
 /// Port of `zsfree(p)` from Src/mem.c:1641 — the C source's
 /// `free(NULL)`-tolerant string-specific deallocator. In Rust the
 /// Drop impl on `String` handles the actual free.
-pub fn zsfree(_s: String) {                                                  // c:1641
+pub fn zsfree(p: String) {                                                  // c:1641
     // Drop happens automatically
 }
 
@@ -206,7 +206,7 @@ pub fn dupstring_wlen(s: &str, len: usize) -> String {                      // c
 /// has different freeing rules). Rust's borrow-checker subsumes
 /// this distinction; the function is kept for call-site parity but
 /// always returns true.
-pub fn zheapptr<T>(_ptr: &T) -> bool {                                       // c:561
+pub fn zheapptr<T>(p: &T) -> bool {                                       // c:561
     true
 }
 
@@ -221,8 +221,8 @@ pub fn hrealloc(old: Vec<u8>, new_size: usize) -> Vec<u8> {                 // c
 
 /// Duplicate an array of strings.
 /// Port of `zarrdup(s)` from Src/utils.c:4532.
-pub fn zarrdup(arr: &[String]) -> Vec<String> {                             // c:4532
-    arr.to_vec()
+pub fn zarrdup(s: &[String]) -> Vec<String> {                             // c:4532
+    s.to_vec()
 }
 
 /// Duplicate an array up to a maximum length.
@@ -236,27 +236,27 @@ pub fn arrdup_max(arr: &[String], max: usize) -> Vec<String> {
 /// Port of `arrlen(s)` from Src/utils.c:2357 — the C source's
 /// canonical NULL-terminated `char**` length walker. Rust slices
 /// already know their length, so this collapses to `arr.len()`.
-pub fn arrlen<T>(arr: &[T]) -> usize {                                      // c:2357
-    arr.len()
+pub fn arrlen<T>(s: &[T]) -> usize {                                      // c:2357
+    s.len()
 }
 
 /// Check if array length is less than n.
 /// Port of `arrlen_lt(s, upper_bound)` from Src/utils.c:2400 — short-circuit
 /// version that stops walking once the bound is exceeded.
-pub fn arrlen_lt<T>(arr: &[T], n: usize) -> bool {                          // c:2400
-    arr.len() < n
+pub fn arrlen_lt<T>(s: &[T], upper_bound: usize) -> bool {                          // c:2400
+    s.len() < upper_bound
 }
 
 /// Check if array length is less than or equal to n.
 /// Port of `arrlen_le(s, upper_bound)` from Src/utils.c:2391.
-pub fn arrlen_le<T>(arr: &[T], n: usize) -> bool {                          // c:2391
-    arr.len() <= n
+pub fn arrlen_le<T>(s: &[T], upper_bound: usize) -> bool {                          // c:2391
+    s.len() <= upper_bound
 }
 
 /// Check if array length is greater than n.
 /// Port of `arrlen_gt(s, lower_bound)` from Src/utils.c:2382.
-pub fn arrlen_gt<T>(arr: &[T], n: usize) -> bool {                          // c:2382
-    arr.len() > n
+pub fn arrlen_gt<T>(s: &[T], lower_bound: usize) -> bool {                          // c:2382
+    s.len() > lower_bound
 }
 
 /// Concatenate strings with separator.
@@ -325,8 +325,8 @@ pub fn dyncat(s1: &str, s2: &str) -> String {                               // c
 /// Port of `strend(str)` from Src/string.c:196 — C source returns the
 /// pointer to the NUL terminator's predecessor; Rust returns the
 /// char.
-pub fn strend(s: &str) -> Option<char> {                                    // c:196
-    s.chars().last()
+pub fn strend(str: &str) -> Option<char> {                                    // c:196
+    str.chars().last()
 }
 
 // Append a string to an allocated string, reallocating to make room.     // c:182
@@ -548,7 +548,8 @@ pub fn mmap_heap_alloc(n: &mut usize) -> *mut std::ffi::c_void {             // 
 /// Port of `zhalloc(size)` from Src/mem.c:577 — heap-arena `malloc`
 /// (memory freed at the end of the current heap frame). Shim;
 /// Rust callers use owned `Vec`/`String`.
-pub fn zhalloc(_size: usize) -> usize { 0 }                                  // c:577
+#[allow(unused_variables)]
+pub fn zhalloc(size: usize) -> usize { 0 }                                  // c:577
 
 /// Port of `memory_validate(heap_id)` from Src/mem.c:896.
 /// C: `int memory_validate(Heapid heap_id)` — under `ZSH_MEM_DEBUG`,
@@ -567,16 +568,19 @@ pub fn memory_validate(heap_id: u64) -> i32 {                                // 
 
 /// Port of `hcalloc(size)` from Src/mem.c:946 — heap-arena `calloc`
 /// (zero-fill `zhalloc`). Shim.
-pub fn hcalloc(_size: usize) -> usize { 0 }                                  // c:946
+#[allow(unused_variables)]
+pub fn hcalloc(size: usize) -> usize { 0 }                                  // c:946
 
 /// Port of `malloc(size)` from Src/mem.c:1189 — wrapped `malloc`
 /// for the legacy arena system. Shim.
-pub fn malloc(_size: usize) -> usize { 0 }
+#[allow(unused_variables)]
+pub fn malloc(size: usize) -> usize { 0 }
 
 /// Port of `free(p)` from Src/mem.c:1631.
 /// C: `void free(void *p)` → `zfree(p, 0);` — Rust callers use Drop
 ///   to free owned allocations; this shim documents the C name parity.
-pub fn free(_p: *mut std::ffi::c_void) {                                     // c:1631
+#[allow(unused_variables)]
+pub fn free(p: *mut std::ffi::c_void) {                                     // c:1631
     // c:1634 — `zfree(p, 0);` — size unknown. Static-link path: nothing
     // to free since Rust drop manages memory.
 }
@@ -587,4 +591,5 @@ pub fn realloc(_size: usize) -> usize { 0 }
 
 /// Port of `calloc(n, size)` from Src/mem.c:1697 — wrapped `calloc`.
 /// Shim.
-pub fn calloc(_n: usize, _size: usize) -> usize { 0 }
+#[allow(unused_variables)]
+pub fn calloc(n: usize, size: usize) -> usize { 0 }

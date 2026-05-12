@@ -289,16 +289,16 @@ pub fn isprint_ascii(c: char) -> bool {                                      // 
 /// ships its own Unicode 9 u9_wcwidth fallback because system
 /// `u9_wcwidth(3)` data ages with libc. Rust uses the
 /// `unicode-width` crate which tracks the latest UCD.
-pub fn u9_wcwidth(c: char) -> i32 {                                          // c:760
-    unicode_width::UnicodeWidthChar::width(c)
+pub fn u9_wcwidth(ucs: char) -> i32 {                                          // ucs:760
+    unicode_width::UnicodeWidthChar::width(ucs)
         .map(|w| w as i32)
-        .unwrap_or(if c.is_control() { -1 } else { 1 })
+        .unwrap_or(if ucs.is_control() { -1 } else { 1 })
 }
 
 /// Check whether a wide character is printable.
 /// Port of `u9_iswprint(ucs)` from Src/compat.c:770.
-pub fn u9_iswprint(c: char) -> bool {                                        // c:770
-    !c.is_control() && u9_wcwidth(c) >= 0
+pub fn u9_iswprint(ucs: char) -> bool {                                        // ucs:770
+    !ucs.is_control() && u9_wcwidth(ucs) >= 0
 }
 
 // `metafy` / `unmetafy` moved out — canonical ports live at

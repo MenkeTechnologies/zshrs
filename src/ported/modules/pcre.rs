@@ -44,7 +44,8 @@ thread_local! {
 /// C: `static int bin_pcre_compile(char *nam, char **args, Options ops,
 /// UNUSED(int func))` — compile *args into the file-static
 /// `pcre_pattern`. Option bits read from `ops` via OPT_ISSET.
-pub fn bin_pcre_compile(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 { // c:70
+#[allow(unused_variables)]
+pub fn bin_pcre_compile(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { // c:70
     use crate::ported::zsh_h::OPT_ISSET;
     // c:72-76 — locals at function top.
     let mut pcre_opts: u32 = 0;                                              // c:72
@@ -97,7 +98,8 @@ pub fn bin_pcre_compile(nam: &str, args: &[String], ops: &options, _func: i32) -
 /// source calls `pcre2_jit_compile()` to JIT-optimize the compiled
 /// pattern; the Rust `regex` crate already builds an optimal NFA
 /// at compile time, so this is the "no pattern" guard plus return 0.
-pub fn bin_pcre_study(nam: &str, _args: &[String], _ops: &options, _func: i32) -> i32 { // c:112
+#[allow(unused_variables)]
+pub fn bin_pcre_study(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { // c:112
     let has_pat = PCRE_PATTERN.with(|r| r.borrow().is_some());
     if !has_pat {                                                            // c:115
         zwarnnam(nam, "no pattern has been compiled for study");             // c:116
@@ -370,7 +372,7 @@ mod tests {
         assert_eq!(m, 0);
     }
 
-    /// Port of `zpcre_get_substrings()` from `Src/Modules/pcre.c:157`.
+    /// Port of `zpcre_get_substrings(pat, arg, mdata, captured_count, matchvar, substravar, namedassoc, want_offset_pair, matchedinarr, want_begin_end)` from `Src/Modules/pcre.c:157`.
     /// Verifies bin_pcre_compile with no args returns status 1
     /// (Src/Modules/pcre.c first-arg ztrdup falls back to empty target).
     #[test]
@@ -422,7 +424,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/pcre.c:542`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:542
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:542
     // C body c:544-545 — `return 0`. Faithful empty-body port.
     0
 }
@@ -439,7 +442,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 }
 
 /// Port of `boot_(m)` from `Src/Modules/pcre.c:564`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:564
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:564
     // C body c:566-567 — `return 0`. Faithful empty-body port; the
     //                    pcre_compile/pcre_match/pcre_study builtins
     //                    register via the bn_list dispatch.
@@ -452,7 +456,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/pcre.c:578`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:578
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:578
     // C body c:580-581 — `return 0`. Faithful empty-body port; the
     //                    builtins unregister via cleanup_'s setfeatureenables.
     0
@@ -494,7 +499,7 @@ pub fn pcre_callout(_block: *mut std::ffi::c_void,                           // 
     0                                                                        // c:155
 }
 
-/// Port of `zpcre_get_substrings()` from Src/Modules/pcre.c:157.
+/// Port of `zpcre_get_substrings(pat, arg, mdata, captured_count, matchvar, substravar, namedassoc, want_offset_pair, matchedinarr, want_begin_end)` from Src/Modules/pcre.c:157.
 /// C: `static int zpcre_get_substrings(pcre2_code *pat, char *arg,
 ///     pcre2_match_data *mdata, int captured_count, char *matchvar,
 ///     char *substravar, char *namedassoc, int want_offset_pair,

@@ -149,7 +149,7 @@ pub fn removenameddirnode(nam: &str) -> Option<nameddir> {                 // c:
 /// C frees the two embedded `char*`s plus the struct; in Rust the
 /// `Drop` impl for `nameddir` (which owns its `String`s) covers
 /// the same teardown.
-pub fn freenameddirnode(_nd: nameddir) {                                   // c:148
+pub fn freenameddirnode(hn: nameddir) {                                   // c:148
     // c:152-154 — `zsfree(nd->node.nam); zsfree(nd->dir); zfree(nd, …);`
     // Rust drop covers all three.
 }
@@ -157,24 +157,24 @@ pub fn freenameddirnode(_nd: nameddir) {                                   // c:
 /* Print a named directory */                                              // c:157
 
 /// Port of `printnameddirnode(hn, printflags)` from `Src/hashnameddir.c:160`.
-pub fn printnameddirnode(nd: &nameddir, printflags: i32) {                 // c:161
+pub fn printnameddirnode(hn: &nameddir, printflags: i32) {                 // c:161
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     if (printflags & PRINT_NAMEONLY) != 0 {                                // c:165
-        let _ = writeln!(out, "{}", nd.node.nam);                          // c:166-168
+        let _ = writeln!(out, "{}", hn.node.nam);                          // c:166-168
         return;
     }
     if (printflags & PRINT_LIST) != 0 {                                    // c:171
         let _ = write!(out, "hash -d ");                                   // c:172
-        if nd.node.nam.starts_with('-') {                                  // c:174
+        if hn.node.nam.starts_with('-') {                                  // c:174
             let _ = write!(out, "-- ");                                    // c:175
         }
     }
     let _ = write!(
         out,
         "{}={}",
-        crate::ported::utils::quotedzputs(&nd.node.nam),                   // c:178
-        crate::ported::utils::quotedzputs(&nd.dir),                        // c:180
+        crate::ported::utils::quotedzputs(&hn.node.nam),                   // c:178
+        crate::ported::utils::quotedzputs(&hn.dir),                        // c:180
     );
     let _ = writeln!(out);                                                 // c:181
 }

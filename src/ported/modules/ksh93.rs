@@ -53,7 +53,8 @@ use crate::ported::zsh_h::{
 // =====================================================================
 
 /// Port of `edcharsetfn(pm, x)` from `Src/Modules/ksh93.c:47`.
-pub fn edcharsetfn(_pm: *mut param, _x: *mut libc::c_char) {           // c:47
+#[allow(unused_variables)]
+pub fn edcharsetfn(pm: *mut param, x: *mut libc::c_char) {           // c:47
     /*
      * To make this work like ksh, we must intercept $KEYS before the widget
      * is looked up, so that changing the key sequence causes a different
@@ -204,7 +205,8 @@ const LOCAL_NAMEREF: u32 = PM_LOCAL | PM_UNSET | PM_NAMEREF;            // c:158
 /// static int
 /// ksh93_wrapper(Eprog prog, FuncWrap w, char *name)
 /// ```
-pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::c_char) -> i32 { // c:143
+#[allow(unused_variables)]
+pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_char) -> i32 { // c:143
     // c:145 — `Funcstack f;`
     let mut f: *const crate::ported::zsh_h::funcstack;
     // c:146 — `Param pm;`
@@ -398,7 +400,8 @@ pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::
 // =====================================================================
 
 /// Port of `setup_(m)` from `Src/Modules/ksh93.c:236`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:236
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:236
     // C body c:238-239 — `return 0`. Faithful empty-body port.
     0
 }
@@ -440,7 +443,7 @@ pub fn boot_(m: *const module) -> i32 {
 /// }
 /// return setfeatureenables(m, &module_features, NULL);
 /// ```
-/// Port of `cleanup_` from `Src/Modules/ksh93.c:265`.
+/// Port of `cleanup_(m)` from `Src/Modules/ksh93.c:265`.
 pub fn cleanup_(m: *const module) -> i32 {
     // c:267 — `struct paramdef *p;`
     let mut p: usize;                                                    // c:267 (index over partab)
@@ -560,7 +563,8 @@ fn gethashnode2(_ht: &AtomicI32, _name: &str) -> *mut param {
 }
 
 /// Port of `finish_(m)` from `Src/Modules/ksh93.c:284`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:284
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:284
     // C body c:286-287 — `return 0`. Faithful empty-body port; the
     //                    ksh93 wrapper unregisters in cleanup_ via
     //                    deletewrapper.

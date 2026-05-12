@@ -596,7 +596,8 @@ fn module_features() -> &'static Mutex<features_t> {
 // =====================================================================
 
 /// Port of `setup_(m)` from `Src/Builtins/sched.c:396`.
-pub fn setup_(_m: *const crate::ported::zsh_h::module) -> i32 {              // c:396
+#[allow(unused_variables)]
+pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {              // c:396
     0                                                                    // c:398
 }
 
@@ -614,7 +615,8 @@ pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec
 }
 
 /// Port of `boot_(m)` from `Src/Builtins/sched.c:418`.
-pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {               // c:418
+#[allow(unused_variables)]
+pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {               // c:418
     addprepromptfn(checksched_thunk);                                    // c:420 addprepromptfn(&checksched);
     0                                                                    // c:421
 }
@@ -641,7 +643,8 @@ pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {             // 
 }
 
 /// Port of `finish_(m)` from `Src/Builtins/sched.c:443`.
-pub fn finish_(_m: *const crate::ported::zsh_h::module) -> i32 {             // c:443
+#[allow(unused_variables)]
+pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {             // c:443
     0                                                                    // c:445
 }
 

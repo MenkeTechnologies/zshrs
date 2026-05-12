@@ -319,7 +319,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/termcap.c:323`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:323
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:323
     // C body c:325-326 — `return 0`. Faithful empty-body port.
     0
 }
@@ -338,7 +339,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 }
 
 /// Port of `boot_(m)` from `Src/Modules/termcap.c:345`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:345
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:345
     // C body c:347-350 — `#ifdef HAVE_TGETENT zsetupterm(); #endif
     //                     return 0`. Initializes the termcap database
     //                     for echotc/$termcap to use.
@@ -353,7 +355,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/termcap.c:365`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:365
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:365
     // C body c:367-368 — `return 0`. Faithful empty-body port; the
     //                    termcap database is process-lifetime, not
     //                    module-lifetime.

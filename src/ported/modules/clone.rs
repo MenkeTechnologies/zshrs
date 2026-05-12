@@ -53,7 +53,8 @@ pub static ttystrname: Mutex<String> = Mutex::new(String::new());
 /// bin_clone(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))
 /// ```
 #[cfg(unix)]
-pub fn bin_clone(nam: &str, args: &[String], _ops: &options, _func: i32) -> i32 { // c:44
+#[allow(unused_variables)]
+pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { // c:44
     use std::ffi::CString;
     use std::os::unix::io::RawFd;
 
@@ -168,7 +169,8 @@ pub fn bin_clone(nam: &str, args: &[String], _ops: &options, _func: i32) -> i32 
 
 /// Port of `bin_clone(nam, args)` from `Src/Modules/clone.c:44`.
 #[cfg(not(unix))]
-pub fn bin_clone(nam: &str, _args: &[String], _ops: &options, _func: i32) -> i32 {
+#[allow(unused_variables)]
+pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 {
     zwarnnam(nam, "not available on this host");
     1
 }
@@ -198,7 +200,8 @@ pub fn bin_clone(nam: &str, _args: &[String], _ops: &options, _func: i32) -> i32
 // =====================================================================
 
 /// Port of `setup_(m)` from `Src/Modules/clone.c:123`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:123
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:123
     0                                                                    // c:125
 }
 
@@ -216,7 +219,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 }
 
 /// Port of `boot_(m)` from `Src/Modules/clone.c:145`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:145
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:145
     0                                                                    // c:147
 }
 
@@ -227,7 +231,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/clone.c:159`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:159
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:159
     0                                                                    // c:161
 }
 
