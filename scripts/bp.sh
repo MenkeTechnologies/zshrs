@@ -10,9 +10,9 @@
 # inherit via `version.workspace = true` and `xxx.workspace = true`.
 #
 # Publish order is dependency-driven:
-#   1. zshrs-parse  (no internal deps)
+# (zshrs-parse absorbed into runtime; no separate publish)
 #   2. compsys      (no internal deps)
-#   3. zshrs-daemon (depends on zshrs-parse)
+#   3. zshrs-daemon
 #   4. zshrs        (depends on all three)
 #
 # Each `cargo publish` waits a few seconds for the previous to land on
@@ -111,7 +111,7 @@ publish() {
     sleep 8
 }
 
-publish zshrs-parse
+# zshrs-parse absorbed into runtime — no longer published separately
 publish compsys
 publish zshrs-daemon
 publish zshrs

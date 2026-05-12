@@ -1242,9 +1242,14 @@ fn optno_by_name(name: &str) -> Option<i32> {
 // `OPTS_LIVE` is the process-wide option-state map that bin_setopt
 // reads + writes. The C source uses a flat `char opts[OPTSIZE]`
 // global indexed by optno (Src/options.c:36 + accessors `isset(o)`,
-// `opts[o] = 1` etc.). Rust uses a Mutex<HashMap<String,bool>>
+// `opts[o] = 1` etc.). Rust uses an RwLock<HashMap<String,bool>>
 // because optno is FNV-hashed (no flat index range) and HashMap is
 // the natural Rust mirror of "name → set?" lookup.
+//
+// Per PORT_PLAN.md Phase 3 (bucket-2 read-mostly): options are read
+// on every command dispatch (`isset(ERREXIT)`, `isset(INTERACTIVE)`,
+// etc.) but written only on `setopt`/`unsetopt`. `RwLock` lets
+// parallel readers proceed without serialising on a mutex.
 //
 // !!! Do NOT add a parallel options store elsewhere. Every read /
 // write of an option's set-state in the lib must route through
@@ -1254,23 +1259,23 @@ fn optno_by_name(name: &str) -> Option<i32> {
 // =====================================================================
 
 static OPTS_LIVE: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, bool>>> =
+    std::sync::RwLock<std::collections::HashMap<String, bool>>> =
     std::sync::OnceLock::new();
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Read the live
 /// state of `name` from the process-wide option store.
 pub fn opt_state_get(name: &str) -> Option<bool> {
-    let m = OPTS_LIVE.get_or_init(|| std::sync::Mutex::new(
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(
         std::collections::HashMap::new()));
-    m.lock().ok().and_then(|g| g.get(name).copied())
+    m.read().ok().and_then(|g| g.get(name).copied())
 }
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Write `value`
 /// into the process-wide option store.
 pub fn opt_state_set(name: &str, value: bool) {
-    let m = OPTS_LIVE.get_or_init(|| std::sync::Mutex::new(
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(
         std::collections::HashMap::new()));
-    if let Ok(mut g) = m.lock() {
+    if let Ok(mut g) = m.write() {
         g.insert(name.to_string(), value);
     }
 }

@@ -137,7 +137,7 @@
           <div class="bar-fill cyan" style="width:100%;"></div>
           <span class="bar-pct" style="font-size:12px;">369,525 Rust / 147,355 C &mdash; 100% coverage</span>
         </div>
-        <p style="font-size:10px;color:var(--text-muted);margin-top:4px;">Rust line count covers the entire 4-crate workspace (<code>zshrs</code> runtime, <code>compsys</code>, <code>zshrs-daemon</code>, <code>zshrs-parse</code>) plus <code>fish/</code>, <code>tests/</code>, <code>bins/</code>, and root <code>build.rs</code>. C-line ratio is ~251% Rust : C by raw lines, but most files are <em>more concise</em> than their C source &mdash; the inflation comes from the non-port surface (extensions, daemon, parse, fish, compsys) that has no C ancestor. <code>exec.rs</code> alone is 353% of <code>exec.c</code> because it includes 180+ builtins (23 coreutils anti-fork) that C splits across <code>builtin.c</code>.</p>
+        <p style="font-size:10px;color:var(--text-muted);margin-top:4px;">Rust line count covers the entire 3-crate workspace (<code>zshrs</code> runtime, <code>compsys</code>, <code>zshrs-daemon</code>) plus <code>fish/</code>, <code>tests/</code>, <code>bins/</code>, and root <code>build.rs</code>. C-line ratio is ~251% Rust : C by raw lines, but most files are <em>more concise</em> than their C source &mdash; the inflation comes from the non-port surface (extensions, daemon, parse, fish, compsys) that has no C ancestor. <code>exec.rs</code> alone is 353% of <code>exec.c</code> because it includes 180+ builtins (23 coreutils anti-fork) that C splits across <code>builtin.c</code>.</p>
       </div>
 
       <hr class="section-rule">
@@ -146,7 +146,7 @@
       <!-- SECTION 2: FILE-BY-FILE TABLE           -->
       <!-- ═══════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">#</span>FILE-BY-FILE COVERAGE</h2>
-      <p class="tutorial-subtitle">Every row is green. The &ldquo;Grep Match&rdquo; column shows functions findable by exact C name; &ldquo;Renamed&rdquo; shows functions restructured into Rust idioms. Both columns sum to the total C function count. Rust Target paths reflect the post-refactor layout: <code>src/ported/&lt;x&gt;.rs</code> for strict-port files, <code>parse/src/&lt;x&gt;.rs</code> for the lexer / parser sub-crate. Lex and parse moved out of <code>src/</code> into the dedicated <code>zshrs-parse</code> workspace crate so the daemon can re-use them without depending on the runtime.</p>
+      <p class="tutorial-subtitle">Every row is green. The &ldquo;Grep Match&rdquo; column shows functions findable by exact C name; &ldquo;Renamed&rdquo; shows functions restructured into Rust idioms. Both columns sum to the total C function count. Rust Target paths reflect the post-refactor layout: <code>src/ported/&lt;x&gt;.rs</code> for strict-port files, <code>src/ported/lex.rs</code> and <code>src/ported/parse.rs</code> for the lexer / parser (absorbed into the runtime crate; no separate workspace package).</p>
 
       <table class="file-table">
         <thead><tr><th>C Source</th><th>Rust Target</th><th class="num">C Lines</th><th class="num">Rust Lines</th><th class="num">Ratio</th><th class="num">C Fns</th><th class="num">Grep</th><th class="num">Renamed</th><th style="min-width:120px;">Coverage</th><th class="status">&nbsp;</th></tr></thead>
@@ -1210,7 +1210,7 @@
       <!-- SECTION 8: ENGINEERING OVERVIEW         -->
       <!-- ═══════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">%</span>ENGINEERING OVERVIEW</h2>
-      <p class="tutorial-subtitle">Workspace-wide cargo workspace metrics (four packages: <code>zshrs</code>, <code>compsys</code>, <code>zshrs-daemon</code>, <code>zshrs-parse</code>). Counts below are from <code>wc</code> / <code>rg</code> on 2026-05-11; per-subsystem module tables follow unchanged.</p>
+      <p class="tutorial-subtitle">Workspace-wide cargo workspace metrics (three packages: <code>zshrs</code>, <code>compsys</code>, <code>zshrs-daemon</code>). Counts below are from <code>wc</code> / <code>rg</code> on 2026-05-11; per-subsystem module tables follow unchanged.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));">
         <div class="stat-card"><div class="stat-val">369,525</div><div class="stat-label">Total Rust Lines</div></div>
@@ -1494,7 +1494,7 @@
       <!-- SECTION: FUSEVM + PARSE CRATE — WORKSPACE COMPILATION -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title" style="color:var(--accent);"><span class="step-hash" style="color:var(--accent);">&#x2B22;</span>FUSEVM + <code>ZSHRS-PARSE</code></h2>
-      <p class="tutorial-subtitle">Runtime bytecode targets the crates.io <a href="https://crates.io/crates/fusevm" target="_blank" rel="noopener noreferrer"><code>fusevm</code></a> crate (pinned in workspace <code>Cargo.toml</code>). Lexing and parsing live in the workspace <code>parse/</code> package (<code>zshrs-parse</code>) so the daemon and shell share one lexer/parser without linking the full executor. <a href="https://github.com/MenkeTechnologies/strykelang" target="_blank" rel="noopener noreferrer">Stryke / strykelang</a> is a separate repository &mdash; it is not part of this workspace; the former Perl-interpreter block here was erroneous pasted content.</p>
+      <p class="tutorial-subtitle">Runtime bytecode targets the crates.io <a href="https://crates.io/crates/fusevm" target="_blank" rel="noopener noreferrer"><code>fusevm</code></a> crate (pinned in workspace <code>Cargo.toml</code>). Lexing and parsing live in <code>src/ported/lex.rs</code> and <code>src/ported/parse.rs</code> in the runtime crate (the standalone parse package was absorbed back). <a href="https://github.com/MenkeTechnologies/strykelang" target="_blank" rel="noopener noreferrer">Stryke / strykelang</a> is a separate repository &mdash; it is not part of this workspace; the former Perl-interpreter block here was erroneous pasted content.</p>
 
       <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--accent);letter-spacing:1.5px;margin:1.5rem 0 0.5rem;">// PARSE CRATE FILES</h3>
       <table class="file-table">
@@ -1616,7 +1616,7 @@
       <!-- SECTION: GRAND TOTAL — WORKSPACE CRATES       -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">&#x2261;</span>GRAND TOTAL &mdash; FULL WORKSPACE</h2>
-      <p class="tutorial-subtitle">Four Rust packages in one Cargo workspace (<code>zshrs</code>, <code>compsys</code>, <code>zshrs-daemon</code>, <code>zshrs-parse</code>). Combined: 369,525 Rust lines (<code>git ls-files '*.rs' | xargs wc -l</code>), 5,489 <code>pub fn</code> lines (<code>rg '^\s*pub fn '</code>), 675 <code>pub struct</code>, 167 <code>pub enum</code>, 4,838 <code>#[test]</code> lines (<code>rg '^\s*#\[test\]'</code>) — each <code>rg</code> scoped to the same path sets as the table, 2026-05-11.</p>
+      <p class="tutorial-subtitle">Three Rust packages in one Cargo workspace (<code>zshrs</code>, <code>compsys</code>, <code>zshrs-daemon</code>). Combined: 369,525 Rust lines (<code>git ls-files '*.rs' | xargs wc -l</code>), 5,489 <code>pub fn</code> lines (<code>rg '^\s*pub fn '</code>), 675 <code>pub struct</code>, 167 <code>pub enum</code>, 4,838 <code>#[test]</code> lines (<code>rg '^\s*#\[test\]'</code>) — each <code>rg</code> scoped to the same path sets as the table, 2026-05-11.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
         <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">369,525</div><div class="stat-label">Total Rust Lines</div></div>
@@ -1644,7 +1644,6 @@
             <td>Singleton daemon: IPC + HTTP/OpenAPI, canonical shards, jobs, fsnotify, pub/sub.</td>
           </tr>
           <tr>
-            <td style="color:var(--green);"><code>zshrs-parse</code></td><td class="num">7,999</td><td class="num">4</td><td class="num">66</td><td class="num">29</td><td class="num">20</td><td class="num">33</td>
             <td><div class="bar-wrap"><div class="bar-fill green" style="width:2.2%"></div><span class="bar-pct">2.2%</span></div></td>
             <td>Shared lexer/parser extracted from upstream <code>lex.c</code> + <code>parse.c</code> for shell + daemon.</td>
           </tr>

@@ -6622,7 +6622,7 @@ pub fn getindex(pptr: &mut &str, v: &mut crate::ported::zsh_h::value, scanflags:
     let after_lbrack = &s[1..];
 
     // c:2008 — `parse_subscript(s, dq, ']')`. Routes through the
-    // existing lex-layer port at `zshrs_parse::lex::parse_subscript`
+    // existing lex-layer port at `crate::ported::lex::parse_subscript`
     // which honours `[...]` / `(...)` / `{...}` nesting and single/
     // double quoting (parse/src/lex.rs:3074).
     let close_pos = crate::lex::parse_subscript(after_lbrack, ']');

@@ -520,7 +520,7 @@ pub fn docompletion() -> i32 {                                               // 
 ///
 /// **Substrate tradeoff:** the C body uses the lexer's
 /// `inputline`/`inputstack` machinery to drive `!`-style history
-/// expansion via `histexpand()`. zshrs's lexer (`zshrs-parse`
+/// expansion via `histexpand()`. zshrs lexer (in `src/ported/lex.rs`
 /// crate) does history expansion as part of its tokenizer; the
 /// canonical Rust entry is `crate::ported::hist::histexpand`
 /// which we route through here. On no-change return 0; on actual
