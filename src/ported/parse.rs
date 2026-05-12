@@ -638,7 +638,7 @@ pub fn parse_event(endtok: lextok) -> Option<ZshProgram> {
 ///
 /// zshrs port note: the C version emits wordcodes via ecadd/
 /// set_list_code; zshrs's parser builds AST nodes via
-/// parse_sublist + parse_list. Same flow, different output.
+/// par_sublist + par_list. Same flow, different output.
 pub fn par_event(endtok: lextok) -> bool {
     // parse.c:639-643 — skip leading SEPERs.
     while crate::ported::lex::tok() == SEPER {
@@ -656,12 +656,12 @@ pub fn par_event(endtok: lextok) -> bool {
     if crate::ported::lex::tok() == endtok {
         return true;
     }
-    // parse.c:649-... — drive parse_sublist + handle terminator.
-    // zshrs's parse_sublist already builds the AST node directly.
-    match parse_sublist() {
+    // parse.c:649-... — drive par_sublist + handle terminator.
+    // zshrs's par_sublist already builds the AST node directly.
+    match par_sublist() {
         Some(_) => {
             // parse.c:651-693 — terminator handling. zshrs's
-            // parse_list wraps this; for parse_event we just
+            // par_list wraps this; for parse_event we just
             // confirm the sublist parsed.
             true
         }
@@ -678,7 +678,7 @@ pub fn par_list1() -> Option<ZshSublist> {
     // parse.c:810-816 — body is a single par_sublist call wrapped
     // in the eu/ecused tracking that zshrs doesn't need (no
     // wordcode buffer).
-    parse_sublist()
+    par_sublist()
 }
 
 /// Wire a here-document body onto the redirection token that
@@ -989,7 +989,8 @@ pub fn ecispace(p: usize, n: usize) {
 /// the pending-heredocs list and bump each `pc` by `d` if it's
 /// at or after position `p`. Called by `ecispace` / `ecdel` when
 /// wordcodes shift.
-pub fn ecadjusthere(_p: usize, _d: i32) {
+#[allow(unused_variables)]
+pub fn ecadjusthere(p: usize, d: i32) {
     // parse.c:362-366 — `for (p2 = hdocs; p2; p2 = p2->next) if
     // (p2->pc >= p) p2->pc += d;`. zshrs's hdocs are still
     // Vec<HereDoc> on the lexer (pre-P9c migration); since none
@@ -1075,7 +1076,7 @@ pub fn init_eprog() {
 }
 
 /// Parse the complete input. Direct port of `parse_event` /
-/// `parse_list` from `Src/parse.c:614-720`. On syntax error,
+/// `par_list` from `Src/parse.c:614-720`. On syntax error,
 /// sets `errflag |= ERRFLAG_ERROR` (via `zerr`) and returns the
 /// partial program — callers check `errflag` to detect failure,
 /// matching C's `Eprog parse_event(...)` + `if (errflag) {...}`.
@@ -1445,7 +1446,7 @@ pub fn par_simple_wordcode() {
 /// Parse a program (list of lists)
 /// Parse a complete program (top-level entry). Calls
 /// parse_program_until with no end-token sentinel. Direct port of
-/// zsh/Src/parse.c:614-720 `parse_event` / `parse_list` /
+/// zsh/Src/parse.c:614-720 `parse_event` / `par_list` /
 /// `par_event` flow. C distinguishes COND_EVENT (single command
 /// for here-string) from full event parse; zshrs's parse_program
 /// is the full-event entry.
@@ -1455,7 +1456,7 @@ fn parse_program() -> ZshProgram {
 
 /// Parse a program until we hit an end token
 /// Parse a program until one of `end_tokens` is seen (or EOF).
-/// Drives parse_list in a loop. C equivalent: the body of par_event
+/// Drives par_list in a loop. C equivalent: the body of par_event
 /// (parse.c:635-695) iterating par_list against the lexer.
 fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
     let mut lists = Vec::new();
@@ -1487,14 +1488,14 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
         }
 
         // Also stop at these tokens when not explicitly looking for them
-        // Note: Else/Elif/Then are NOT here - they're handled by parse_if
+        // Note: Else/Elif/Then are NOT here - they're handled by par_if
         // to allow nested if statements inside case arms, loops, etc.
         match crate::ported::lex::tok() {
             OUTBRACE_TOK | DSEMI | SEMIAMP | SEMIBAR | DONE | FI | ESAC | ZEND => break,
             _ => {}
         }
 
-        match parse_list() {
+        match par_list() {
             Some(list) => {
                 let detected = simple_name_with_inoutpar(&list);
                 lists.push(list);
@@ -1619,7 +1620,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                     ) {
                         // No-brace one-line body: `foo() echo hello`.
                         // Parse a single command for the body.
-                        let body_cmd = parse_cmd();
+                        let body_cmd = par_cmd();
                         if let Some(cmd) = body_cmd {
                             let body_list = ZshList {
                                 sublist: ZshSublist {
@@ -1687,8 +1688,8 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
 /// AST in Rust. The compile_zsh module then traverses the AST to
 /// emit fusevm bytecode, which serves the same role as zsh's
 /// wordcode but with a different opcode set and execution model.
-fn parse_list() -> Option<ZshList> {
-    let sublist = parse_sublist()?;
+fn par_list() -> Option<ZshList> {
+    let sublist = par_sublist()?;
 
     let flags = match crate::ported::lex::tok() {
         AMPER => {
@@ -1725,10 +1726,10 @@ fn parse_list() -> Option<ZshList> {
 /// AST mapping: ZshSublist { pipe, conj_chain }, where `conj_chain`
 /// is a Vec<(ConjOp, ZshSublist)> for chained && / ||. C uses
 /// flat wordcode with WC_SUBLIST_AND / WC_SUBLIST_OR markers.
-fn parse_sublist() -> Option<ZshSublist> {
+fn par_sublist() -> Option<ZshSublist> {
     PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
     if check_recursion() {
-        error("parse_sublist: max recursion depth exceeded");
+        error("par_sublist: max recursion depth exceeded");
         PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
         return None;
     }
@@ -1744,7 +1745,7 @@ fn parse_sublist() -> Option<ZshSublist> {
         crate::ported::lex::zshlex();
     }
 
-    let pipe = match parse_pipe() {
+    let pipe = match par_pline() {
         Some(p) => p,
         None => {
             PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
@@ -1757,12 +1758,12 @@ fn parse_sublist() -> Option<ZshSublist> {
         DAMPER => {
             crate::ported::lex::zshlex();
             skip_separators();
-            parse_sublist().map(|s| (SublistOp::And, Box::new(s)))
+            par_sublist().map(|s| (SublistOp::And, Box::new(s)))
         }
         DBAR => {
             crate::ported::lex::zshlex();
             skip_separators();
-            parse_sublist().map(|s| (SublistOp::Or, Box::new(s)))
+            par_sublist().map(|s| (SublistOp::Or, Box::new(s)))
         }
         _ => None,
     };
@@ -1775,16 +1776,16 @@ fn parse_sublist() -> Option<ZshSublist> {
 /// Parse a pipeline (cmds joined by `|` / `|&`). Direct port of
 /// zsh/Src/parse.c:894-956 `par_pline`. AST: ZshPipe { cmds: Vec<ZshCommand> }.
 /// C emits WC_PIPE wordcodes per command; same flow.
-fn parse_pipe() -> Option<ZshPipe> {
+fn par_pline() -> Option<ZshPipe> {
     PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
     if check_recursion() {
-        error("parse_pipe: max recursion depth exceeded");
+        error("par_pline: max recursion depth exceeded");
         PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
         return None;
     }
 
     let lineno = crate::ported::lex::toklineno();
-    let cmd = match parse_cmd() {
+    let cmd = match par_cmd() {
         Some(c) => c,
         None => {
             PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
@@ -1799,7 +1800,7 @@ fn parse_pipe() -> Option<ZshPipe> {
             merge_stderr = crate::ported::lex::tok() == BARAMP;
             crate::ported::lex::zshlex();
             skip_separators();
-            parse_pipe().map(Box::new)
+            par_pline().map(Box::new)
         }
         _ => None,
     };
@@ -1818,41 +1819,41 @@ fn parse_pipe() -> Option<ZshPipe> {
 /// IF / WHILE / UNTIL / REPEAT / FUNC / DINBRACK / DINPAR /
 /// INPAR subshell / INBRACE current-shell / TIME / NOCORRECT,
 /// else simple). Direct port of zsh/Src/parse.c:958-1085 `par_cmd`.
-fn parse_cmd() -> Option<ZshCommand> {
+fn par_cmd() -> Option<ZshCommand> {
     // Parse leading redirections
     let mut redirs = Vec::new();
     while IS_REDIROP(crate::ported::lex::tok()) {
-        if let Some(redir) = parse_redir() {
+        if let Some(redir) = par_redir() {
             redirs.push(redir);
         }
     }
 
     let cmd = match crate::ported::lex::tok() {
-        FOR | FOREACH => parse_for(),
+        FOR | FOREACH => par_for(),
         SELECT => parse_select(),
-        CASE => parse_case(),
-        IF => parse_if(),
-        WHILE => parse_while(false),
-        UNTIL => parse_while(true),
-        REPEAT => parse_repeat(),
-        INPAR_TOK => parse_subsh(),
+        CASE => par_case(),
+        IF => par_if(),
+        WHILE => par_while(false),
+        UNTIL => par_while(true),
+        REPEAT => par_repeat(),
+        INPAR_TOK => par_subsh(),
         INOUTPAR => parse_anon_funcdef(),
         INBRACE_TOK => parse_cursh(),
-        FUNC => parse_funcdef(),
-        DINBRACK => parse_cond(),
+        FUNC => par_funcdef(),
+        DINBRACK => par_cond(),
         DINPAR => parse_arith(),
-        TIME => parse_time(),
-        _ => parse_simple(redirs),
+        TIME => par_time(),
+        _ => par_simple(redirs),
     };
 
     // Parse trailing redirections. For Simple commands the redirs were
-    // already captured inside parse_simple; for compound forms (Cursh,
+    // already captured inside par_simple; for compound forms (Cursh,
     // Subsh, If, While, etc.) we collect them here and wrap in
     // ZshCommand::Redirected so compile_zsh can scope-bracket them.
     if let Some(inner) = cmd {
         let mut trailing: Vec<ZshRedir> = Vec::new();
         while IS_REDIROP(crate::ported::lex::tok()) {
-            if let Some(redir) = parse_redir() {
+            if let Some(redir) = par_redir() {
                 trailing.push(redir);
             }
         }
@@ -1882,7 +1883,7 @@ fn parse_cmd() -> Option<ZshCommand> {
 /// typeset-style multi-assignment commands, and the trailing
 /// inout-par `()` that converts a simple command into an inline
 /// function definition.
-fn parse_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
+fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     let mut assigns = Vec::new();
     let mut words = Vec::new();
     const MAX_ITERATIONS: usize = 10_000;
@@ -1892,7 +1893,7 @@ fn parse_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     while crate::ported::lex::tok() == ENVSTRING || crate::ported::lex::tok() == ENVARRAY {
         iterations += 1;
         if iterations > MAX_ITERATIONS {
-            error("parse_simple: exceeded max iterations in assignments");
+            error("par_simple: exceeded max iterations in assignments");
             return None;
         }
         if let Some(assign) = parse_assign() {
@@ -1905,7 +1906,7 @@ fn parse_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     loop {
         iterations += 1;
         if iterations > MAX_ITERATIONS {
-            error("parse_simple: exceeded max iterations");
+            error("par_simple: exceeded max iterations");
             return None;
         }
         match crate::ported::lex::tok() {
@@ -1961,7 +1962,7 @@ fn parse_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                         {
                             let varid = name.to_string();
                             words.pop();
-                            if let Some(mut redir) = parse_redir() {
+                            if let Some(mut redir) = par_redir() {
                                 redir.varid = Some(varid);
                                 redirs.push(redir);
                             }
@@ -1971,7 +1972,7 @@ fn parse_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 }
             }
             _ if IS_REDIROP(crate::ported::lex::tok()) => {
-                match parse_redir() {
+                match par_redir() {
                     Some(redir) => redirs.push(redir),
                     None => break, // Error in redir parsing, stop
                 }
@@ -1997,7 +1998,7 @@ fn parse_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
 
 /// Parse an assignment
 /// Parse an assignment word `NAME=value` or `NAME=(arr items)`.
-/// Sub-routine of parse_simple. The C source handles assignments
+/// Sub-routine of par_simple. The C source handles assignments
 /// inline in par_simple via the ENVSTRING/ENVARRAY token paths
 /// (parse.c:1842-2000ish); zshrs splits it out to a dedicated
 /// helper for clarity.
@@ -2103,16 +2104,16 @@ fn parse_assign() -> Option<ZshAssign> {
             crate::ported::lex::zshlex();
         }
 
-        // The closing OUTPAR is consumed here. The outer parse_simple
+        // The closing OUTPAR is consumed here. The outer par_simple
         // loop will then `zshlex()` past whatever follows (typically
         // a separator or the next word) — calling zshlex twice in
-        // tandem (here AND in parse_simple) over-advances and merges
+        // tandem (here AND in par_simple) over-advances and merges
         // a following `name() { … }` funcdef into the same Simple.
         // We only consume Outpar; let the caller handle the rest.
         // Without this guard `g=(o1); f() { :; }` parsed as one
         // Simple with assigns=[g] and words=["f()"] (one token).
         if crate::ported::lex::tok() == OUTPAR_TOK {
-            // Note: do NOT zshlex() here. parse_simple's `lexer
+            // Note: do NOT zshlex() here. par_simple's `lexer
             // .zshlex()` after `parse_assign` returns advances past
             // the Outpar onto the next significant token.
             //
@@ -2142,7 +2143,7 @@ fn parse_assign() -> Option<ZshAssign> {
 /// a ZshRedir node carrying the operator type, fd, target word
 /// (or here-doc body / pipe-redir command), and any `{var}` style
 /// fd-binding parameter.
-fn parse_redir() -> Option<ZshRedir> {
+fn par_redir() -> Option<ZshRedir> {
     let rtype = match crate::ported::lex::tok() {
         OUTANG_TOK => REDIR_WRITE,
         OUTANGBANG => REDIR_WRITENOW,
@@ -2222,7 +2223,7 @@ fn parse_redir() -> Option<ZshRedir> {
 /// of zsh/Src/parse.c:1087-1207 `par_for`. parse_for_cstyle is the
 /// inner branch for the `((...))` arithmetic-header variant
 /// (parse.c:1100-1140 inside par_for).
-fn parse_for() -> Option<ZshCommand> {
+fn par_for() -> Option<ZshCommand> {
     let is_foreach = crate::ported::lex::tok() == FOREACH;
     crate::ported::lex::zshlex();
 
@@ -2401,9 +2402,9 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
 /// the executor. C equivalent: the SELECT case in par_for at
 /// parse.c:1087-1207 (selects share parser flow with foreach).
 fn parse_select() -> Option<ZshCommand> {
-    // `select` shares parse_for's grammar (var, words, body) but the
+    // `select` shares par_for's grammar (var, words, body) but the
     // compile path is different (interactive prompt loop).
-    match parse_for()? {
+    match par_for()? {
         ZshCommand::For(mut f) => {
             f.is_select = true;
             Some(ZshCommand::For(f))
@@ -2417,7 +2418,7 @@ fn parse_select() -> Option<ZshCommand> {
 /// of zsh/Src/parse.c:1209-1409 `par_case`. Each case arm is a
 /// (pattern_list, body, terminator) tuple where terminator is
 /// `;;` (default), `;&` (fallthrough), or `;|` (continue testing).
-fn parse_case() -> Option<ZshCommand> {
+fn par_case() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip 'case'
 
     let word = match crate::ported::lex::tok() {
@@ -2460,7 +2461,7 @@ fn parse_case() -> Option<ZshCommand> {
 
     loop {
         if arms.len() > MAX_ARMS {
-            error("parse_case: too many arms");
+            error("par_case: too many arms");
             break;
         }
 
@@ -2507,7 +2508,7 @@ fn parse_case() -> Option<ZshCommand> {
         loop {
             pattern_iterations += 1;
             if pattern_iterations > 1000 {
-                error("parse_case: too many pattern iterations");
+                error("par_case: too many pattern iterations");
                 crate::ported::lex::set_incasepat(0);
                 return None;
             }
@@ -2621,7 +2622,7 @@ fn parse_case() -> Option<ZshCommand> {
 /// Direct port of zsh/Src/parse.c:1411-1519 `par_if`. The C source
 /// emits WC_IF wordcodes per arm; zshrs builds an AST chain of
 /// (cond, then_body) tuples plus an optional else_body.
-fn parse_if() -> Option<ZshCommand> {
+fn par_if() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip 'if'
 
     // Parse condition - stops at 'then' or '{' (zsh allows { instead of then)
@@ -2744,7 +2745,7 @@ fn parse_if() -> Option<ZshCommand> {
 /// Parse `while COND; do BODY; done` and `until COND; do BODY; done`.
 /// Direct port of zsh/Src/parse.c:1521-1563 `par_while`. The
 /// `until` variant is the same loop with the condition negated.
-fn parse_while(until: bool) -> Option<ZshCommand> {
+fn par_while(until: bool) -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip while/until
 
     let cond = Box::new(parse_program());
@@ -2764,7 +2765,7 @@ fn parse_while(until: bool) -> Option<ZshCommand> {
 /// zsh/Src/parse.c:1565-1617 `par_repeat`. The C source supports
 /// the SHORTLOOPS short-form `repeat N CMD` (no do/done) — zshrs's
 /// parser doesn't yet special-case that variant.
-fn parse_repeat() -> Option<ZshCommand> {
+fn par_repeat() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip 'repeat'
 
     let count = match crate::ported::lex::tok() {
@@ -2820,7 +2821,7 @@ fn parse_loop_body(foreach_style: bool) -> Option<ZshProgram> {
         Some(body)
     } else {
         // Short loop - single command
-        parse_list().map(|list| ZshProgram { lists: vec![list] })
+        par_list().map(|list| ZshProgram { lists: vec![list] })
     }
 }
 
@@ -2828,7 +2829,7 @@ fn parse_loop_body(foreach_style: bool) -> Option<ZshProgram> {
 /// Parse a subshell `( ... )`. Direct port of zsh/Src/parse.c:1619-1670
 /// `par_subsh`. Body parses as a normal list; the subshell wrapper
 /// fork-isolates execution in the executor.
-fn parse_subsh() -> Option<ZshCommand> {
+fn par_subsh() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip (
     let prog = parse_program();
     if crate::ported::lex::tok() == OUTPAR_TOK {
@@ -2943,7 +2944,7 @@ fn parse_cursh() -> Option<ZshCommand> {
 /// the multiple keyword shapes (function FOO, FOO (), function FOO ()),
 /// the optional `[fname1 fname2 ...]` for multi-name function defs,
 /// and the `function FOO () { ... }` traditional/POSIX hybrid form.
-fn parse_funcdef() -> Option<ZshCommand> {
+fn par_funcdef() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip 'function'
 
     let mut names = Vec::new();
@@ -3067,7 +3068,7 @@ fn parse_funcdef() -> Option<ZshCommand> {
         }))
     } else {
         // Short form
-        parse_list().map(|list| {
+        par_list().map(|list| {
             ZshCommand::FuncDef(ZshFuncDef {
                 names,
                 body: Box::new(ZshProgram { lists: vec![list] }),
@@ -3082,7 +3083,7 @@ fn parse_funcdef() -> Option<ZshCommand> {
 /// Parse inline function definition: name() { ... }
 /// Parse the inline form `NAME () { BODY }` (POSIX-style funcdef
 /// without the `function` keyword). The name has already been
-/// consumed and pushed by parse_simple before this method fires.
+/// consumed and pushed by par_simple before this method fires.
 /// C source: handled inline in par_simple's INOUTPAR-after-name
 /// arm (parse.c:1836-2228).
 fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
@@ -3095,7 +3096,7 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
 
     // Parse body
     if crate::ported::lex::tok() == INBRACE_TOK {
-        // Same body_start-before-zshlex fix as parse_funcdef.
+        // Same body_start-before-zshlex fix as par_funcdef.
         let body_start = crate::ported::lex::pos();
         crate::ported::lex::zshlex();
         let body = parse_program();
@@ -3118,7 +3119,7 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
             body_source,
         }))
     } else {
-        match parse_cmd() {
+        match par_cmd() {
             Some(cmd) => {
                 let list = ZshList {
                     sublist: ZshSublist {
@@ -3153,7 +3154,7 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
 /// at parse.c:2434-2731). Expression operators: `||` `&&` `!`
 /// + unary tests (-f, -d, -n, -z, etc.) + binary tests (=, !=,
 ///   <, >, ==, =~, -eq, -ne, -lt, -le, -gt, -ge, -nt, -ot, -ef).
-fn parse_cond() -> Option<ZshCommand> {
+fn par_cond() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip [[
                                   // Empty cond `[[ ]]` is a parse error in zsh — emit the
                                   // diagnostic and return None so the caller produces a
@@ -3403,7 +3404,7 @@ fn parse_arith() -> Option<ZshCommand> {
 /// Parse `time CMD` (POSIX time keyword). Direct port of
 /// zsh/Src/parse.c:1787-1808 `par_time`. The `time` keyword
 /// times the execution of the following pipeline / cmd.
-fn parse_time() -> Option<ZshCommand> {
+fn par_time() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip 'time'
 
     // Check if there's a pipeline to time
@@ -3413,7 +3414,7 @@ fn parse_time() -> Option<ZshCommand> {
     {
         Some(ZshCommand::Time(None))
     } else {
-        let sublist = parse_sublist();
+        let sublist = par_sublist();
         Some(ZshCommand::Time(sublist.map(Box::new)))
     }
 }

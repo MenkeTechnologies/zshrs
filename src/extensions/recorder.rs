@@ -1,7 +1,7 @@
 //! Recorder helpers — extension; no zsh C counterpart.
 #![cfg(feature = "recorder")]
 #[allow(unused_imports)]
-use crate::ported::exec::{ShellExecutor, VarKind};
+use crate::ported::exec::ShellExecutor;
 
 // ===========================================================
 // Methods moved verbatim from src/ported/exec.rs because their

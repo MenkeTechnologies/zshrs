@@ -207,21 +207,21 @@ pub fn appstr(base: &mut String, append: &str) {
 /// - Non-empty input → the trailing UTF-8 character as a `&str`
 ///   slice.
 /// Port of `strend` from `Src/string.c:196`.
-pub fn strend(s: &str) -> &str {
-    if s.is_empty() {
-        return s;
+pub fn strend(str: &str) -> &str {
+    if str.is_empty() {
+        return str;
     }
-    let bytes = s.as_bytes();
+    let bytes = str.as_bytes();
     // Walk back to the start of the last UTF-8 codepoint.
     let mut i = bytes.len();
     while i > 0 {
         i -= 1;
         if bytes[i] & 0xC0 != 0x80 {
             // Codepoint boundary (not a continuation byte).
-            return &s[i..];
+            return &str[i..];
         }
     }
-    s
+    str
 }
 
 #[cfg(test)]

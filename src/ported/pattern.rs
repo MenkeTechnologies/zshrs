@@ -110,30 +110,17 @@ pub const P_PURESTR: i32 = 0x04;  // c:218 Can be matched with a strcmp.
 // 4. struct patprog — zsh.h:1601
 // =====================================================================
 
-/// Compiled pattern. Direct port of `struct patprog` at `Src/zsh.h:1601`.
-///
-/// C layout uses a trailing byte buffer accessed via `(char *)prog +
-/// prog->startoff`; the Rust port stores it as a `code` field of
-/// `Vec<u8>`. The opcode stream layout is preserved byte-for-byte.
-#[allow(non_camel_case_types)]
-pub struct patprog {
-    pub startoff: i64,    // c:1602 length before start of programme
-    pub size:     i64,    // c:1603 total size from start of struct
-    pub mustoff:  i64,    // c:1604 offset to string that must be present
-    pub patmlen:  i64,    // c:1605 length of pure string or longest match
-    pub globflags: i32,   // c:1606 globbing flags to set at start
-    pub globend:   i32,   // c:1607 globbing flags set after finish
-    pub flags:     i32,   // c:1608 PAT_* flags
-    pub patnpar:   i32,   // c:1609 number of active parentheses
-    pub patstartch: u8,   // c:1610 starting character (optimization)
-    /// Bytecode buffer. In C this is the trailing memory past the
-    /// fixed-size struct header; Rust port holds it inline.
-    pub code: Vec<u8>,
-}
-
 /// `typedef struct patprog *Patprog;` from `zsh.h:542`.
 #[allow(non_camel_case_types)]
-pub type Patprog = Box<patprog>;
+/// `typedef struct patprog *Patprog;` from `zsh.h:542`.
+///
+/// C zsh allocates the `struct patprog` header + bytecode as one
+/// contiguous `malloc` block, accessing bytecode via
+/// `(char *)prog + prog->startoff`. Rust has no flexible array
+/// members, so this typedef pairs the C-exact `patprog` header
+/// (zsh_h.rs:768) with an owned bytecode `Vec<u8>` — header at
+/// `.0`, bytecode at `.1`. `startoff`/`size` index into `.1`.
+pub type Patprog = Box<(patprog, Vec<u8>)>;
 
 // =====================================================================
 // 5. PAT_* flag constants — re-exports of zsh.h:1623-1640 already in
@@ -162,7 +149,7 @@ pub const NSUBEXP: usize = 9;
 pub use crate::ported::zsh_h::{
     GF_LCMATCHUC, GF_IGNCASE, GF_BACKREF, GF_MATCHREF, GF_MULTIBYTE,
 };
-use crate::zsh_h::{ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH, ZPC_HAT, ZPC_INANG, ZPC_INBRACK, ZPC_INPAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE};
+use crate::zsh_h::{patprog, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH, ZPC_HAT, ZPC_INANG, ZPC_INBRACK, ZPC_INPAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE};
 // =====================================================================
 // Bytecode field offsets within each instruction.
 //
@@ -532,18 +519,20 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>)   //
         *end = parse[consumed_off..].to_string();
     }
 
-    Some(Box::new(patprog {
-        startoff: 0,
-        size: code.len() as i64,
-        mustoff: 0,
-        patmlen: 0,
-        globflags: hoisted_globflags,
-        globend: patglobflags.load(Ordering::Relaxed),
-        flags: patflags.load(Ordering::Relaxed) | hoisted_globflags,
-        patnpar: patnpar.load(Ordering::Relaxed) - 1,
-        patstartch: 0,
+    Some(Box::new((
+        patprog {
+            startoff: 0,
+            size: code.len() as i64,
+            mustoff: 0,
+            patmlen: 0,
+            globflags: hoisted_globflags,
+            globend: patglobflags.load(Ordering::Relaxed),
+            flags: patflags.load(Ordering::Relaxed) | hoisted_globflags,
+            patnpar: patnpar.load(Ordering::Relaxed) - 1,
+            patstartch: 0,
+        },
         code,
-    }))
+    )))
 }
 
 /// Port of `patcompswitch()` from `Src/pattern.c:765`.
@@ -1203,9 +1192,9 @@ pub fn pattrylen(prog: &Patprog, string: &str, len: usize) -> bool {          //
     // C pattry anchors at both ends by default — match must consume
     // the entire trial string unless PAT_NOANCH / PAT_NOTEND are set.
     // Port: require end_pos == trial.len() when neither flag set.
-    match patmatch_internal(&prog.code, 0, trial, 0, &mut state, prog.flags) {
+    match patmatch_internal(&prog.1, 0, trial, 0, &mut state, prog.0.flags) {
         Some(end_pos) => {
-            let no_anchor = (prog.flags & (PAT_NOANCH | PAT_NOTEND) as i32) != 0; // c:3397
+            let no_anchor = (prog.0.flags & (PAT_NOANCH | PAT_NOTEND) as i32) != 0; // c:3397
             no_anchor || end_pos == trial.len()
         }
         None => false,
@@ -1216,10 +1205,10 @@ pub fn pattrylen(prog: &Patprog, string: &str, len: usize) -> bool {          //
 /// return capture group ranges.
 pub fn pattryrefs(prog: &Patprog, string: &str) -> Option<(bool, Vec<(usize, usize)>)> { // c:2294
     let mut state = rpat::new();
-    let ok = patmatch_internal(&prog.code, 0, string, 0, &mut state, prog.flags).is_some();
+    let ok = patmatch_internal(&prog.1, 0, string, 0, &mut state, prog.0.flags).is_some();
     if ok {
-        let mut refs = Vec::with_capacity(prog.patnpar as usize);
-        for i in 0..(prog.patnpar as usize).min(NSUBEXP) {
+        let mut refs = Vec::with_capacity(prog.0.patnpar as usize);
+        for i in 0..(prog.0.patnpar as usize).min(NSUBEXP) {
             let start = state.patbeginp[i];
             let end = state.patendp[i];
             if (state.captures_set & (1 << i)) != 0 {
@@ -1238,7 +1227,7 @@ pub fn pattryrefs(prog: &Patprog, string: &str) -> Option<(bool, Vec<(usize, usi
 /// length of a successful match, or None.
 pub fn patmatchlen(prog: &Patprog, string: &str) -> Option<usize> {           // c:2649
     let mut state = rpat::new();
-    patmatch_internal(&prog.code, 0, string, 0, &mut state, prog.flags)
+    patmatch_internal(&prog.1, 0, string, 0, &mut state, prog.0.flags)
 }
 
 /// Port of `patmatch()` from `Src/pattern.c:2694`. The interpreter.
@@ -1762,7 +1751,7 @@ pub fn patrepeat(prog: &Patprog, s: &str, max: Option<usize>) -> usize {      //
     let max = max.unwrap_or(usize::MAX);
     while pos < s.len() && count < max {
         let mut state = rpat::new();
-        match patmatch_internal(&prog.code, 0, s, pos, &mut state, prog.flags) {
+        match patmatch_internal(&prog.1, 0, s, pos, &mut state, prog.0.flags) {
             Some(new_pos) if new_pos > pos => {
                 pos = new_pos;
                 count += 1;
@@ -1798,87 +1787,74 @@ pub type PatProg = Patprog;
 // (patcompile + pattry + patgetglobflags). Allowlisted as transitional.
 // =====================================================================
 
-/// `<a-b>` numeric-range extraction helper. NOT in pattern.c — the C
-/// source handles numeric ranges via P_NUMRNG opcode emission inside
-/// patcomppiece. This type pre-processes a glob string outside the
-/// pattern engine for callers in exec_shims/fusevm that need a
-/// pre-pattern pass. TODO: migrate callers to pure patcompile usage.
-// WARNING: NOT IN PATTERN.C — Rust-only helper, no faithful C
-// counterpart. C inlines `<a-b>` parsing in `patcomppiece` (Src/
-// pattern.c:1450+) and emits `P_NUMRNG` opcodes directly. This type
-// pre-processes outside the pattern engine — dissolve when fusevm
-// + exec_shims migrate to pure `patcompile` + `pattry`.
-#[derive(Debug, Clone, Copy)]
-pub struct NumericRange {
-    pub start: usize,
-    pub end:   usize,
-    /// Lower bound, `None` for unbounded (`<-N>` form).
-    pub lo:    Option<i64>,
-    /// Upper bound, `None` for unbounded (`<N->` form).
-    pub hi:    Option<i64>,
-}
+// `NumericRange` struct + impl DELETED. C zsh's `patcomppiece`
+// (Src/pattern.c:1450+) inlines `<N-M>` parsing and emits `P_NUMRNG`
+// opcodes — no aggregator type. Rust port uses these bare helpers
+// returning tuples `(start, end, lo, hi)` for the pre-pattern pass
+// that exec_shims/fusevm need because the `glob` crate has no
+// native `P_NUMRNG`. Dissolve fully when fusevm + exec_shims
+// migrate to pure `patcompile` + `pattry`.
 
-impl NumericRange {
-    /// Extract all `<a-b>` / `<a->` / `<-b>` / `<->` ranges from a
-    /// glob pattern string.
-    pub fn extract_all(s: &str) -> Vec<NumericRange> {
-        let mut out = Vec::new();
-        let bytes = s.as_bytes();
-        let mut i = 0;
-        while i < bytes.len() {
-            if bytes[i] == b'<' {
-                let start = i;
-                let mut j = i + 1;
-                // Lower part: digits or empty.
-                let lo_start = j;
+/// Extract all `<N-M>` / `<N->` / `<-M>` / `<->` ranges from a glob
+/// pattern. Returns `(start, end, lo, hi)` tuples — `start`/`end`
+/// are byte offsets of `<` / past `>`, `lo`/`hi` are bounds (`None`
+/// = unbounded on that side).
+pub fn extract_numeric_ranges(s: &str) -> Vec<(usize, usize, Option<i64>, Option<i64>)> {
+    let mut out = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            let start = i;
+            let mut j = i + 1;
+            let lo_start = j;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            let lo: Option<i64> = if j > lo_start {
+                std::str::from_utf8(&bytes[lo_start..j]).ok()
+                    .and_then(|s| s.parse::<i64>().ok())
+            } else { None };
+            if j < bytes.len() && bytes[j] == b'-' {
+                j += 1;
+                let hi_start = j;
                 while j < bytes.len() && bytes[j].is_ascii_digit() {
                     j += 1;
                 }
-                let lo: Option<i64> = if j > lo_start {
-                    std::str::from_utf8(&bytes[lo_start..j]).ok()
+                let hi: Option<i64> = if j > hi_start {
+                    std::str::from_utf8(&bytes[hi_start..j]).ok()
                         .and_then(|s| s.parse::<i64>().ok())
                 } else { None };
-                // Mandatory dash.
-                if j < bytes.len() && bytes[j] == b'-' {
-                    j += 1;
-                    let hi_start = j;
-                    while j < bytes.len() && bytes[j].is_ascii_digit() {
-                        j += 1;
-                    }
-                    let hi: Option<i64> = if j > hi_start {
-                        std::str::from_utf8(&bytes[hi_start..j]).ok()
-                            .and_then(|s| s.parse::<i64>().ok())
-                    } else { None };
-                    if j < bytes.len() && bytes[j] == b'>' {
-                        out.push(NumericRange { start, end: j + 1, lo, hi });
-                        i = j + 1;
-                        continue;
-                    }
+                if j < bytes.len() && bytes[j] == b'>' {
+                    out.push((start, j + 1, lo, hi));
+                    i = j + 1;
+                    continue;
                 }
             }
-            i += 1;
         }
-        out
+        i += 1;
     }
+    out
+}
 
-    /// Replace every `<...>` with `*` for fallback glob expansion.
-    pub fn replace_all_with_star(s: &str) -> String {
-        let mut out = String::with_capacity(s.len());
-        let mut last = 0;
-        for r in Self::extract_all(s) {
-            out.push_str(&s[last..r.start]);
-            out.push('*');
-            last = r.end;
-        }
-        out.push_str(&s[last..]);
-        out
+/// Replace every `<N-M>` in `s` with `*` for fallback glob
+/// expansion.
+pub fn numeric_ranges_to_star(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut last = 0;
+    for (start, end, _, _) in extract_numeric_ranges(s) {
+        out.push_str(&s[last..start]);
+        out.push('*');
+        last = end;
     }
+    out.push_str(&s[last..]);
+    out
+}
 
-    /// Test whether `n` falls within this range. Unbounded sides
-    /// always pass.
-    pub fn contains(&self, n: i64) -> bool {
-        self.lo.map_or(true, |l| n >= l) && self.hi.map_or(true, |h| n <= h)
-    }
+/// Test whether `n` falls within numeric range `(lo, hi)`. Unbounded
+/// sides always pass.
+pub fn numeric_range_contains(lo: Option<i64>, hi: Option<i64>, n: i64) -> bool {
+    lo.map_or(true, |l| n >= l) && hi.map_or(true, |h| n <= h)
 }
 
 
@@ -1892,9 +1868,9 @@ mod tests {
 
     // Pattern compile shares file-static globals (patout, patparse,
     // patnpar, ...) with the same single-thread semantics as zsh's
-    // C source. `patcompile` clones the globals into prog.code
+    // C source. `patcompile` clones the globals into prog.1
     // before returning, so we only need the mutex held during
-    // compile — pattry() reads from prog.code with no global state.
+    // compile — pattry() reads from prog.1 with no global state.
     static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn compile(p: &str) -> Patprog {
@@ -2257,12 +2233,12 @@ mod tests {
     #[test]
     fn debug_alt_b() {
         let prog = compile("(a)|b");
-        eprintln!("bytecode len: {}", prog.code.len());
-        for (i, b) in prog.code.iter().enumerate() {
+        eprintln!("bytecode len: {}", prog.1.len());
+        for (i, b) in prog.1.iter().enumerate() {
             eprintln!("  [{:3}] {:#04x}", i, b);
         }
         let mut state = rpat::new();
-        let r = super::patmatch_internal(&prog.code, 0, "b", 0, &mut state, prog.flags);
+        let r = super::patmatch_internal(&prog.1, 0, "b", 0, &mut state, prog.0.flags);
         eprintln!("match result: {:?}", r);
         assert!(pattry(&prog, "b"));
     }

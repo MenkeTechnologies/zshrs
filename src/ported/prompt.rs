@@ -2128,7 +2128,8 @@ pub fn set_pending_text_attrs(attrs: zattr) {
 /// `_flags` parameter (currently unused in zshrs port — C uses it
 /// to gate "force reset" mode).
 /// Port of `applytextattributes` from `Src/prompt.c:1645`.
-pub fn applytextattributes(_flags: i32) -> String {
+#[allow(unused_variables)]
+pub fn applytextattributes(flags: i32) -> String {
     let mut current = current_attrs_lock().lock().expect("current_attrs poisoned");
     let pending = pending_attrs_lock()
         .lock()

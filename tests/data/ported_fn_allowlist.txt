@@ -1088,3 +1088,11 @@ exec_wordcode
 zftp_state
 zftp_state_clear_poison
 qflag_quotetype
+utmp_user
+utmp_line
+utmp_host
+utmp_is_active
+utmp_make
+extract_numeric_ranges
+numeric_ranges_to_star
+numeric_range_contains

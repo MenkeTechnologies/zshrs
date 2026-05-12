@@ -759,6 +759,12 @@ pub struct hookdef {
 }
 
 /// Port of `struct patprog` from `Src/zsh.h:1601-1611`.
+///
+/// C layout uses a trailing byte buffer accessed via
+/// `(char *)prog + prog->startoff`; the Rust port stores it inline
+/// as a `code: Vec<u8>` field. The opcode stream layout is preserved
+/// byte-for-byte — `startoff` and `size` index into `code`.
+/// 
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub struct patprog {
@@ -771,7 +777,7 @@ pub struct patprog {
     pub globend: i32,   // c:1607
     pub flags: i32,     // c:1608 PAT_*
     pub patnpar: i32,   // c:1609
-    pub patstartch: u8, // c:1610
+    pub patstartch: u8, // c:1610 (last field per zsh.h)
 }
 
 /// Port of `struct patstralloc` from `Src/zsh.h:1613-1620`.
