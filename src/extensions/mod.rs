@@ -37,6 +37,7 @@ pub use crate::daemon_presence;
 pub use crate::ext_builtins;
 pub use crate::fds;
 pub use crate::fish_features;
+pub use crate::heredoc_ast;
 pub use crate::history;
 pub use crate::log;
 pub use crate::overlay_snapshot;

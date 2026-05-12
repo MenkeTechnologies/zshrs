@@ -259,16 +259,11 @@ pub struct ZshRedir {
     pub heredoc_idx: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HereDocInfo {
-    pub content: String,
-    pub terminator: String,
-    /// Originally-quoted terminator (`<<'EOF'`, `<<"EOF"`). When true the
-    /// body is passed verbatim — no `$var` / `$(cmd)` / `$((expr))`
-    /// expansion. Plain `<<EOF` runs all expansions.
-    #[serde(default)]
-    pub quoted: bool,
-}
+// Heredoc body+metadata — Rust-only AST-glue, NOT in parse.c. Canonical
+// home is `src/extensions/heredoc_ast.rs`. Dies in Phase 9e (PORT_PLAN.md)
+// when bodies land directly in the wordcode stream at the redirection's
+// pc slot.
+pub use crate::extensions::heredoc_ast::HereDocInfo;
 
 // `enum RedirType` — port of `Src/zsh.h:377-408` `#define REDIR_WRITE …
 // REDIR_OUTPIPE`. The flat constants live in `super::zsh_h:268-285`. No
