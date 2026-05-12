@@ -80,7 +80,7 @@ fn execute_command_dispatches_via_compiler_or_is_absent() {
     };
     let window = &src[entry..entry + 1800];
     assert!(
-        window.contains("ZshParser::new") && window.contains("ZshCompiler::new()"),
+        (window.contains("parse_init(") || window.contains("ZshParser::new")) && window.contains("ZshCompiler::new()"),
         "execute_command must compile via ZshParser+ZshCompiler:\n{}",
         window
     );
@@ -107,7 +107,7 @@ fn execute_command_substitution_uses_pipe_capture_or_is_absent() {
     };
     let window = &src[entry..entry + 2200];
     assert!(
-        window.contains("ZshParser::new") && window.contains("ZshCompiler::new()"),
+        (window.contains("parse_init(") || window.contains("ZshParser::new")) && window.contains("ZshCompiler::new()"),
         "capture must compile via ZshParser+ZshCompiler"
     );
     assert!(

@@ -19,8 +19,15 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use zsh::lex::ZshLexer;
-use zsh::tokens::lextok;
+use zsh::tokens::{
+    lextok, AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BAR_TOK, BARAMP, CASE, COPROC, DAMPER, DBAR,
+    DINANG, DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG,
+    DOUTANGBANG, DOUTBRACK, DOUTPAR, DSEMI, ELIF, ELSE, ENDINPUT, ENVARRAY, ENVSTRING, ESAC, FI,
+    FOR, FOREACH, FUNC, IF, INANG_TOK, INANGAMP, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK, LEXERR,
+    NEWLIN, NOCORRECT, NULLTOK, OUTANG_TOK, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG, OUTBRACE_TOK,
+    OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP, SEMIBAR, SEPER, STRING_LEX, THEN, TIME, TRINANG,
+    TYPESET, UNTIL, WHILE, ZEND,
+};
 
 fn corpus_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/lexer_corpus")
@@ -129,6 +136,7 @@ fn tok_name(t: lextok) -> &'static str {
         UNTIL => "UNTIL",
         WHILE => "WHILE",
         TYPESET => "TYPESET",
+        _ => "UNKNOWN",
     }
 }
 
@@ -188,10 +196,11 @@ fn shell_escape(s: &str) -> String {
 /// we do the equivalent here via `zsh::lexer::untokenize`.
 fn dump_via_zshrs(src: &str) -> String {
     let mut out = String::new();
-    let mut lex = ZshLexer::new(src);
+    zsh::lex::lex_init(src);
+    use zsh::tokens::{ENDINPUT, LEXERR};
     loop {
-        lex.zshlex();
-        let tok = lex.tok;
+        zsh::lex::zshlex();
+        let tok = zsh::lex::tok();
         if tok == ENDINPUT {
             out.push_str("ENDINPUT\n");
             return out;
@@ -200,7 +209,8 @@ fn dump_via_zshrs(src: &str) -> String {
             out.push_str("LEXERR\n");
             return out;
         }
-        let raw = lex.tokstr.as_deref().unwrap_or("");
+        let raw_owned = zsh::lex::tokstr().unwrap_or_default();
+        let raw = raw_owned.as_str();
         // C zsh's `untokenize` (exec.c:2077-2099) maps SNULL → `'`, DNULL →
         // `"`, BNULL → `\` via the `ztokens` table (lex.c:38). zshrs's
         // plain `untokenize` strips them; `untokenize_preserve_quotes`
