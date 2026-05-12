@@ -172,7 +172,7 @@ impl ZshCompiler {
     fn compile_program(&mut self, program: &ZshProgram) {
         // The parser synthesizes a FuncDef for the `name() { body }` shape
         // at parse time (the parser detects the
-        // Simple<INPAR><OUTPAR> + Inbrace pattern and emits a FuncDef with
+        // Simple<Inpar><Outpar> + Inbrace pattern and emits a FuncDef with
         // body_source captured). No compile-side workaround is needed.
         for list in &program.lists {
             self.compile_list(list);
@@ -924,7 +924,7 @@ impl ZshCompiler {
         // strips quotes before the builtin/function dispatch, only
         // disabling alias expansion. Without this untokenize, p10k's
         // `'builtin' 'local' '-a' 'arr'` failed with `command not found:
-        // builtin` because the lookup table didn't contain the SNULL-
+        // builtin` because the lookup table didn't contain the Snull-
         // wrapped form `\u{9d}builtin\u{9d}`.
         // Precommand-modifier strip for dispatch: `builtin foo`,
         // `command foo`, `exec foo`, `nocorrect foo`, `noglob foo`,
@@ -1114,7 +1114,7 @@ impl ZshCompiler {
     fn compile_assign(&mut self, assign: &ZshAssign) {
         // Subscripted scalar assignment: `name[key]=value` and
         // `name[key]+=tail`. Untokenize the raw name (which carries
-        // INBRACK/OUTBRACK markers) and split on the subscript brackets.
+        // Inbrack/Outbrack markers) and split on the subscript brackets.
         let untoked_name = crate::lex::untokenize(&assign.name);
         if let Some((base, key)) = split_subscript(&untoked_name) {
             if let ZshAssignValue::Scalar(s) = &assign.value {
@@ -1190,10 +1190,10 @@ impl ZshCompiler {
                 // RHS by default.
                 let needs_dq_wrap = !s.starts_with('\u{9e}')
                     && !s.starts_with('\u{9d}')
-                    && (s.contains('*') || s.contains('\u{87}')   // STAR
-                        || s.contains('?') || s.contains('\u{86}') // QUEST
-                        || s.contains('[') || s.contains('\u{91}') // INBRACK
-                        || s.contains('{') || s.contains('\u{8f}')); // INBRACE
+                    && (s.contains('*') || s.contains('\u{87}')   // Star
+                        || s.contains('?') || s.contains('\u{86}') // Quest
+                        || s.contains('[') || s.contains('\u{91}') // Inbrack
+                        || s.contains('{') || s.contains('\u{8f}')); // Inbrace
                 self.assign_context_depth += 1;
                 self.scalar_assign_depth += 1;
                 if needs_dq_wrap {
@@ -1307,11 +1307,11 @@ impl ZshCompiler {
     /// to a runtime expand call via BUILTIN_EXPAND_TEXT.
     fn compile_word_str(&mut self, s: &str) {
         // ANSI-C quoted form: `$'a\tb'` arrives from the lexer as
-        // `<META-QSTRING><SNULL>a<BNULL>tb<SNULL>` —
+        // `<META-Qstring><Snull>a<Bnull>tb<Snull>` —
         // `\u{8c}\u{9d}a\u{9f}tb\u{9d}` per parse/src/lex:1767-1799.
         // (Older comments reference `<META-$>` = `\u{85}`; accept either
-        // marker.) Strip the leading `<META-?>` + `<SNULL>` and trailing
-        // `<SNULL>`, convert each BNULL+X back to `\X` so decode_ansi_c
+        // marker.) Strip the leading `<META-?>` + `<Snull>` and trailing
+        // `<Snull>`, convert each Bnull+X back to `\X` so decode_ansi_c
         // sees real backslash escapes, then run the C-escape decoder.
         let first = s.chars().next();
         if matches!(first, Some('\u{85}') | Some('\u{8c}')) && s.len() >= 3 {
@@ -1320,7 +1320,7 @@ impl ZshCompiler {
                 let body_start = '\u{9d}'.len_utf8();
                 let body_end = inner.len() - '\u{9d}'.len_utf8();
                 let body_raw = &inner[body_start..body_end];
-                // BNULL → `\` so `BNULL t` becomes `\t` for the decoder.
+                // Bnull → `\` so `Bnull t` becomes `\t` for the decoder.
                 let body: String = body_raw
                     .chars()
                     .map(|c| if c == '\u{9f}' { '\\' } else { c })
@@ -1331,15 +1331,15 @@ impl ZshCompiler {
                 return;
             }
         }
-        // Single-quoted: word contains SNULL markers wrapping a literal
+        // Single-quoted: word contains Snull markers wrapping a literal
         // segment. Three shapes — only the first two take the literal
         // shortcut:
         //
         //   1. The whole value is one single-quoted span — e.g.
-        //      `y='hello'` → `<SNULL>hello<SNULL>`. Take the literal
+        //      `y='hello'` → `<Snull>hello<Snull>`. Take the literal
         //      shortcut: no expansion needed, no $/glob/brace meta.
         //
-        //   2. `NAME=<SNULL>…<SNULL>` — a `typeset`/`local`/`export`
+        //   2. `NAME=<Snull>…<Snull>` — a `typeset`/`local`/`export`
         //      argument (or any arg shaped like an assignment) where
         //      the value is fully single-quoted. zsh preserves the
         //      quoting semantics across the `=`; the value after `=`
@@ -1350,7 +1350,7 @@ impl ZshCompiler {
         //
         //   3. Mixed: a single-quoted segment embedded INSIDE a
         //      larger unquoted/expansion-bearing word — e.g.
-        //      `y=${x:-'foo'}` → `${x:-<SNULL>foo<SNULL>}`. Falls
+        //      `y=${x:-'foo'}` → `${x:-<Snull>foo<Snull>}`. Falls
         //      through to the runtime expand path so the surrounding
         //      `${…}` still resolves while the SQ body stays literal.
         if s.contains('\u{9d}') {
@@ -1364,11 +1364,11 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(idx), 0);
                 return;
             }
-            // `NAME=<SNULL>…<SNULL>` — assignment-arg shape with a
+            // `NAME=<Snull>…<Snull>` — assignment-arg shape with a
             // fully-SQ value. The lexer represents the `=` either as
-            // its META code (EQUALS = `\u{8d}`) or as a literal `=`
+            // its META code (Equals = `\u{8d}`) or as a literal `=`
             // depending on context; accept both. Char-aware scan so
-            // the multi-byte SNULL/EQUALS markers don't trip the
+            // the multi-byte Snull/Equals markers don't trip the
             // byte-index slice path.
             let trimmed_chars: Vec<char> = trimmed.chars().collect();
             let eq_pos = trimmed_chars
@@ -1414,8 +1414,8 @@ impl ZshCompiler {
                     return;
                 }
                 // Multi-segment SQ-concat shape: `NAME='X'\''Y'\''Z'`
-                // lexes to a sequence of SNULL-bounded chunks
-                // separated by BNULL+char (escape-concat). Direct
+                // lexes to a sequence of Snull-bounded chunks
+                // separated by Bnull+char (escape-concat). Direct
                 // port of zsh's parse-time concatenation rule
                 // (Src/lex.c::dquote_parse handles it the same way
                 // — adjacent quoted/unquoted segments form one
@@ -1426,9 +1426,9 @@ impl ZshCompiler {
                 // code.
                 //
                 // Detector: every char in the value is either inside
-                // a SNULL pair OR is a BNULL-escaped char OR is the
-                // BNULL marker itself. NO `$` / `` ` `` outside
-                // SNULL pairs (those would mean an unquoted
+                // a Snull pair OR is a Bnull-escaped char OR is the
+                // Bnull marker itself. NO `$` / `` ` `` outside
+                // Snull pairs (those would mean an unquoted
                 // expansion segment that the bridge must handle).
                 let value_is_sq_concat = !value_chars.is_empty() && {
                     let mut inside_sq = false;
@@ -1442,7 +1442,7 @@ impl ZshCompiler {
                             had_sq = true;
                         } else if !inside_sq {
                             if c == '\u{9f}' && i + 1 < value_chars.len() {
-                                // BNULL + char — escape pair, skip both
+                                // Bnull + char — escape pair, skip both
                                 i += 2;
                                 continue;
                             }
@@ -1458,10 +1458,10 @@ impl ZshCompiler {
                     had_sq && all_inside_or_escaped && !inside_sq
                 };
                 if prefix_is_ident && value_is_sq_concat {
-                    // Decode: walk the value, dropping SNULL markers
-                    // and BNULL escape-bytes, emitting the rest as
-                    // literal. Inside SNULL: chars are verbatim.
-                    // Outside SNULL: BNULL+char becomes char literal.
+                    // Decode: walk the value, dropping Snull markers
+                    // and Bnull escape-bytes, emitting the rest as
+                    // literal. Inside Snull: chars are verbatim.
+                    // Outside Snull: Bnull+char becomes char literal.
                     let mut decoded = String::new();
                     let mut inside_sq = false;
                     let mut i = 0;
@@ -1493,11 +1493,11 @@ impl ZshCompiler {
                 }
             }
             // Mixed: fall through. The runtime expand path needs to
-            // see the SNULL-bounded segments as literal islands while
+            // see the Snull-bounded segments as literal islands while
             // expanding the surrounding `${…}` / `$name` content.
         }
 
-        // `NAME=<DNULL>…<DNULL>` — assignment-arg shape with a
+        // `NAME=<Dnull>…<Dnull>` — assignment-arg shape with a
         // fully-DQ value (no `$` / `` ` `` / `\` escapes inside; for
         // values WITH expansions the bridge path is required).
         // Direct port of zsh's parse-time decision in par_simple
@@ -1577,7 +1577,7 @@ impl ZshCompiler {
             return;
         }
 
-        // BNULL marker (`\u{9f}`) means "the next char is literal" — used
+        // Bnull marker (`\u{9f}`) means "the next char is literal" — used
         // by the lexer for backslash-escaped specials (`\$`, `\`, etc.).
         // Fast-paths that match `$NAME` shapes on the un-tokenized form
         // would mis-route here (the `$` was escaped). Skip the fast paths
@@ -1589,7 +1589,7 @@ impl ZshCompiler {
         // un-tokenized form because the lexer turns `$` into
         // `\u{85}` (META-$) in `s` — the literal-char check on
         // `s` would miss every expansion. Glob triggers (`*`,
-        // `?`, `[`) however MUST run on `s` so the SNULL/DNULL
+        // `?`, `[`) however MUST run on `s` so the Snull/Dnull
         // bslashquote markers correctly suppress meta-interpretation
         // inside `'…'` / `"…"` spans. Direct port of Src/pattern.c
         // ::patcompswitch — chars inside quoted spans bypass meta.
@@ -1602,19 +1602,19 @@ impl ZshCompiler {
         // Glob metacharacters arrive in two forms:
         //   - Literal char (`*`, `?`, `[`) — the lexer leaves them
         //     bare in some paths (e.g. SQ-stripped contexts)
-        //   - META-encoded (`\u{87}` STAR, `\u{86}` QUEST, `\u{91}`
-        //     INBRACK) — the lexer's primary tokenization
+        //   - META-encoded (`\u{87}` Star, `\u{86}` Quest, `\u{91}`
+        //     Inbrack) — the lexer's primary tokenization
         // Trigger glob expansion when EITHER form appears unquoted.
         // Direct port of Src/pattern.c::patcompswitch which treats
         // both encodings as glob metas. Without the META branch,
         // `echo *.toml` saw `\u{87}.toml` (no literal `*`) and
         // skipped expand_glob entirely → literal pattern emitted.
         let trigger_glob = unquoted(s, '*')
-            || unquoted(s, '\u{87}')   // STAR (parse/tokens.rs:14)
+            || unquoted(s, '\u{87}')   // Star (parse/tokens.rs:14)
             || unquoted(s, '?')
-            || unquoted(s, '\u{97}')   // QUEST (parse/tokens.rs:30)
+            || unquoted(s, '\u{97}')   // Quest (parse/tokens.rs:30)
             || unquoted(s, '[')
-            || unquoted(s, '\u{91}')   // INBRACK (parse/tokens.rs:24)
+            || unquoted(s, '\u{91}')   // Inbrack (parse/tokens.rs:24)
             // extendedglob `^pat` (negation) and `pat~excl` (exclusion).
             // `^` is a no-op without `setopt extendedglob`, but routing
             // through expand_glob lets the runtime decide. The unquoted
@@ -1651,8 +1651,8 @@ impl ZshCompiler {
         let trigger_brace = looks_like_brace_expansion(&untoked);
 
         // Process substitution `<(cmd)` / `>(cmd)`. The lexer marks the
-        // outer angle bracket with INANG (`\u{94}`) / OUTANG (`\u{95}`)
-        // and the parens as INPAR/OUTPAR. After untokenize, the form
+        // outer angle bracket with Inang (`\u{94}`) / Outang (`\u{95}`)
+        // and the parens as Inpar/Outpar. After untokenize, the form
         // is `<(...)` / `>(...)`. Compile the inner program as a
         // sub-chunk and emit ProcessSubIn/Out which wires up the
         // FIFO/temp file at runtime.
@@ -1703,9 +1703,9 @@ impl ZshCompiler {
             return;
         }
 
-        // Skip native fast-paths if the raw word has a BNULL escape marker
+        // Skip native fast-paths if the raw word has a Bnull escape marker
         // — the bridge path is the only one that preserves backslash-quoted
-        // specials. (Normal untokenize collapses BNULL away, hiding the
+        // specials. (Normal untokenize collapses Bnull away, hiding the
         // escape from the simple $NAME / ${NAME} matchers below.)
         if has_bnull {
             // Fall through to the bridge.
@@ -1746,9 +1746,9 @@ impl ZshCompiler {
         // no modifier). Covers `$x`, `$1`, `$#`, `$?`, `$!`, etc. — the
         // most common case in real scripts. Emits BUILTIN_GET_VAR
         // directly without going through the runtime expand path.
-        // Skip when the raw word has DNULL/SNULL bslashquote markers — those
+        // Skip when the raw word has Dnull/Snull bslashquote markers — those
         // signal an internal bslashquote boundary (e.g. `"$a"bar` becomes
-        // DNULL+$+a+DNULL+bar; after untokenize it looks like `$abar`
+        // Dnull+$+a+Dnull+bar; after untokenize it looks like `$abar`
         // and the fast-path reads the wrong name). The bridge below
         // handles those correctly by routing through expand_string.
         let has_quote_markers = s.contains('\u{9d}') || s.contains('\u{9e}');
@@ -2409,7 +2409,7 @@ impl ZshCompiler {
         // multi-word output to the caller.
         // Bridge-array fast path is normally gated on `!has_bnull`,
         // but the `(M)`/`(R)` + `:#` filter form is allowed even with
-        // BNULL escapes — the filter's pattern compile in
+        // Bnull escapes — the filter's pattern compile in
         // `param_pattern_to_regex_anchored` handles literal `\X`
         // (including the special `\(#e)` / `\(#s)` anchor cases).
         // Without this, `${(M)arr:#*\\(#e)}` falls through to the
@@ -2544,7 +2544,7 @@ impl ZshCompiler {
         // substring (`:` + digit/dash), strip (`#`/`##`/`%`/`%%`),
         // replace (`/`/`//`/`/#`/`/%`).
         //
-        // `has_bnull` gating: BNULL marks `\X` lexer-escapes that
+        // `has_bnull` gating: Bnull marks `\X` lexer-escapes that
         // some downstream paths can't honor (the rhs of `:-` etc.
         // gets re-expand_string'd which loses the escape distinction).
         // EXCEPTION: `(@)`-flagged Replace MUST take this path even
@@ -2562,13 +2562,13 @@ impl ZshCompiler {
         );
         if !has_bnull || modifier_safe_with_bnull {
             if let Some(modifier) = parsed_mod {
-                // The whole-word DNULL wrapping (`"${...}"`) gets
+                // The whole-word Dnull wrapping (`"${...}"`) gets
                 // stripped from `untoked` before parse_param_modifier
                 // sees it, but downstream emitters need to know the
                 // DQ context (e.g. strip op: join-then-strip in DQ
                 // vs per-element unquoted). Bump dq_context_depth
                 // for the duration of emit_param_modifier when the
-                // raw word is DNULL-wrapped, mirroring the
+                // raw word is Dnull-wrapped, mirroring the
                 // segments-loop above. Without this, the strip
                 // fast path passed dq=0 to BUILTIN_PARAM_STRIP
                 // even inside `"..."`.
@@ -2682,7 +2682,7 @@ impl ZshCompiler {
                     Some(crate::exec::BUILTIN_CONCAT_DISTRIBUTE)
                 };
                 // If the parent word is DQ-wrapped (raw form starts and
-                // ends with DNULL), each Expansion segment inherits the
+                // ends with Dnull), each Expansion segment inherits the
                 // DQ context. Track via the compiler's
                 // `dq_context_depth` counter so child compile_word_str
                 // calls can see they're being expanded inside DQ
@@ -2775,8 +2775,8 @@ impl ZshCompiler {
         // preserved text + mode_byte, call BUILTIN_EXPAND_TEXT.
         //
         // Mode detection:
-        // - Whole-word DNULL-wrapped (`"…"`) and no inner unescaped
-        //   DNULL → DoubleQuoted. Suppresses brace + glob expansion;
+        // - Whole-word Dnull-wrapped (`"…"`) and no inner unescaped
+        //   Dnull → DoubleQuoted. Suppresses brace + glob expansion;
         //   var / cmd-sub / arith inside still expand.
         // - Backquote-wrapped (`` `…` ``) → AltBackquote, runs as
         //   command substitution.
@@ -3538,11 +3538,11 @@ impl ZshCompiler {
         let line_base_str = lineno_off.to_string();
 
         for raw_name in &f.names {
-            // Strip any trailing INPAR+OUTPAR markers (\u{88}\u{8a})
+            // Strip any trailing Inpar+Outpar markers (\u{88}\u{8a})
             // that the lexer may pack into a single String token under
             // some `function name() { body }` paths, then untokenize
-            // unconditionally so DASH/BANG/etc. bytes inside the name
-            // (e.g. `foo-bar` lexes as `foo<DASH>bar`) become literal
+            // unconditionally so Dash/Bang/etc. bytes inside the name
+            // (e.g. `foo-bar` lexes as `foo<Dash>bar`) become literal
             // chars before registration. Without the unconditional
             // untokenize, hyphenated function names register under the
             // raw tokenized form and the call site (which DOES
@@ -3787,10 +3787,10 @@ impl ZshCompiler {
                     // a filesystem path. Wrap in DQ to suppress brace
                     // expansion + filesystem globbing during expansion
                     // — UNLESS the operand is ALREADY single-quoted
-                    // (SNULL-wrapped, `\u{9d}…\u{9d}`). zsh treats
+                    // (Snull-wrapped, `\u{9d}…\u{9d}`). zsh treats
                     // `[[ x =~ '(pat)' ]]` as a literal regex; double-
                     // wrapping in DQ markers makes compile_word_str's
-                    // markup-strip skip the SNULL pair and the regex
+                    // markup-strip skip the Snull pair and the regex
                     // engine sees the meta bytes verbatim.
                     let already_sq_wrapped = right.starts_with('\u{9d}')
                         && right.ends_with('\u{9d}');
@@ -3814,8 +3814,8 @@ impl ZshCompiler {
                     // - Otherwise use the literal-pattern path with
                     //   pre-escaped quoted-glob metas.
                     let needs_expand = right.contains('\u{85}')   // META-$
-                        || right.contains('\u{8c}')                  // QSTRING-$
-                        || right.contains('\u{93}')                  // TICK
+                        || right.contains('\u{8c}')                  // Qstring-$
+                        || right.contains('\u{93}')                  // Tick
                         || right.contains('$')
                         || right.contains('`');
                     if needs_expand {
@@ -3846,7 +3846,7 @@ impl ZshCompiler {
                     && {
                         // No unquoted glob meta outside the DQ wrap.
                         // The DQ pair brackets the whole word — count
-                        // DNULL markers; if exactly 2, the whole word
+                        // Dnull markers; if exactly 2, the whole word
                         // is one DQ span.
                         right.chars().filter(|&c| c == '\u{9e}').count() == 2
                     };
@@ -4317,11 +4317,11 @@ fn looks_like_brace_expansion(s: &str) -> bool {
 ///   0 = Default (full expand_string + braces + glob)
 ///   1 = DoubleQuoted (expand vars, suppress brace + glob)
 ///   3 = AltBackquote (run as command substitution)
-/// Mode 2 (SingleQuoted) is rare here because the SNULL early-return at
+/// Mode 2 (SingleQuoted) is rare here because the Snull early-return at
 /// the top of compile_word_str already catches `'…'` shapes.
 fn expand_text_mode(raw: &str, preserved: &str) -> u8 {
-    // DoubleQuoted: starts AND ends with raw DNULL, no inner unescaped
-    // DNULL pair (i.e. exactly one matching pair wrapping the whole
+    // DoubleQuoted: starts AND ends with raw Dnull, no inner unescaped
+    // Dnull pair (i.e. exactly one matching pair wrapping the whole
     // word). Looking at the raw form catches escape-context correctly.
     if raw.starts_with('\u{9e}') && raw.ends_with('\u{9e}') && raw.len() >= 2 {
         // Count interior DNULLs — for a simple `"…"` it's exactly 0 in
@@ -4347,7 +4347,7 @@ fn expand_text_mode(raw: &str, preserved: &str) -> u8 {
 }
 
 /// One piece of a concatenated word. Either a literal stretch (raw
-/// zsh-tokenized chars; may contain META markers like STAR/QUEST that
+/// zsh-tokenized chars; may contain META markers like Star/Quest that
 /// need un-tokenize), or one expansion (`$NAME`, `${NAME[..]}`, etc.).
 #[derive(Debug)]
 enum WordSegment {
@@ -4361,10 +4361,10 @@ enum WordSegment {
 /// are handled by the existing single-expansion fast paths. Returns
 /// `Some(segs)` with `segs.len() >= 2` for concat shapes.
 ///
-/// Walks the chars looking for META-$ (`\u{85}`), QSTRING-`$` inside
+/// Walks the chars looking for META-$ (`\u{85}`), Qstring-`$` inside
 /// double-quotes (`\u{8c}`), or backtick (`` ` ``) markers. Each marker
 /// plus its body becomes one Expansion segment; everything else is
-/// Literal. NOTE: `\u{84}` is POUND (`#`), not a `$`-marker; including
+/// Literal. NOTE: `\u{84}` is Pound (`#`), not a `$`-marker; including
 /// it here would treat `${#arr[@]}` as a concat with `#arr` as the
 /// expansion body.
 /// True for expansions that splice with FIRST/LAST sticking semantics:
@@ -4461,8 +4461,8 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
     let mut segs: Vec<WordSegment> = Vec::new();
     let mut lit_start = 0;
     let mut i = 0;
-    // Track nesting inside `{...}` (INBRACE/OUTBRACE) and `[...]`
-    // (INBRACK/OUTBRACK) so an inner expansion marker like the `$i`
+    // Track nesting inside `{...}` (Inbrace/Outbrace) and `[...]`
+    // (Inbrack/Outbrack) so an inner expansion marker like the `$i`
     // in `${a[$i]}` doesn't get pulled out as its own segment.
     // Top-level (depth 0) markers are real concat boundaries.
     let mut brace_depth = 0i32;
@@ -4470,18 +4470,18 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
     while i < n {
         let c = chars[i];
         match c {
-            '\u{8f}' => brace_depth += 1,                       // INBRACE
-            '\u{90}' => brace_depth = (brace_depth - 1).max(0), // OUTBRACE
-            '\u{91}' => brack_depth += 1,                       // INBRACK
-            '\u{92}' => brack_depth = (brack_depth - 1).max(0), // OUTBRACK
+            '\u{8f}' => brace_depth += 1,                       // Inbrace
+            '\u{90}' => brace_depth = (brace_depth - 1).max(0), // Outbrace
+            '\u{91}' => brack_depth += 1,                       // Inbrack
+            '\u{92}' => brack_depth = (brack_depth - 1).max(0), // Outbrack
             _ => {}
         }
         // Recognize segment boundaries:
-        // - META-$ (\u{85}) and META-QSTRING (\u{8c}) — emitted by the
+        // - META-$ (\u{85}) and META-Qstring (\u{8c}) — emitted by the
         //   lexer for `$` outside / inside double quotes
         // - Literal `$` (0x24) — emitted in some lexer paths where the
         //   `$` survives untokenized but the surrounding braces / brackets
-        //   are META-marked. Followed by INBRACE/INPAR/alphanumeric to
+        //   are META-marked. Followed by Inbrace/Inpar/alphanumeric to
         //   distinguish from a literal trailing `$`.
         let is_meta_dollar = c == '\u{85}' || c == '\u{8c}';
         let is_literal_dollar_with_expansion = c == '$' && {
@@ -4489,8 +4489,8 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
             chars
                 .get(i + 1)
                 .map(|&n| {
-                    n == '\u{8f}'  // INBRACE
-                        || n == '\u{88}'  // INPAR
+                    n == '\u{8f}'  // Inbrace
+                        || n == '\u{88}'  // Inpar
                         || n == '_'
                         || n.is_ascii_alphanumeric()
                         || n == '@' || n == '*' || n == '#' || n == '?'
@@ -4499,11 +4499,11 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
                 .unwrap_or(false)
         };
         let is_dollar = is_meta_dollar || is_literal_dollar_with_expansion;
-        // Backtick trigger: literal `` ` `` OR the lexer's TICK
-        // (`\u{93}`) / QTICK (`\u{99}`) markers. Without the marker
+        // Backtick trigger: literal `` ` `` OR the lexer's Tick
+        // (`\u{93}`) / Qtick (`\u{99}`) markers. Without the marker
         // forms, `\`echo $foo\`` (which the lexer emits as
         // `\u{93}echo $foo\u{93}`) only split on `$foo`, treating
-        // the surrounding TICK chars as literal text — the bridge
+        // the surrounding Tick chars as literal text — the bridge
         // never saw a whole-word backquote.
         let is_backtick = c == '`' || c == '\u{93}' || c == '\u{99}';
         let at_top = brace_depth == 0 && brack_depth == 0;
@@ -4543,15 +4543,15 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
     Some(segs)
 }
 
-/// Given chars[i] is META-$ / QSTRING / backtick, return the index just
+/// Given chars[i] is META-$ / Qstring / backtick, return the index just
 /// past the end of the expansion. Handles `${...}`, `$(...)`,
 /// `$((...))`, `$NAME`, `$N`, `$@` etc., and `` `cmd` ``.
 fn find_expansion_end(chars: &[char], i: usize) -> usize {
     let c = chars[i];
     if c == '`' || c == '\u{93}' || c == '\u{99}' {
-        // Backtick: find matching `, TICK, or QTICK. The opening
+        // Backtick: find matching `, Tick, or Qtick. The opening
         // marker MUST match the closing form per parse/tokens
-        // (TICK pairs with TICK, etc.) but in practice the lexer
+        // (Tick pairs with Tick, etc.) but in practice the lexer
         // is consistent within a word — accept any of the three
         // as the close.
         let mut j = i + 1;
@@ -4564,10 +4564,10 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
         }
         return (j + 1).min(chars.len());
     }
-    // META-$ or QSTRING — look at next char
+    // META-$ or Qstring — look at next char
     let next = chars.get(i + 1).copied();
     match next {
-        // INBRACE: ${...}
+        // Inbrace: ${...}
         Some('\u{8f}') => {
             let mut depth = 1;
             let mut j = i + 2;
@@ -4581,14 +4581,14 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             }
             j
         }
-        // INPAR: $(...) or $((...))
+        // Inpar: $(...) or $((...))
         // The lexer emits these shapes:
-        //   `$(cmd)`    → META-$ INPAR <body chars> OUTPAR
-        //   `$((expr))` → META-$ INPAR <body w/ literal `(`/`)`> OUTPARMATH
+        //   `$(cmd)`    → META-$ Inpar <body chars> Outpar
+        //   `$((expr))` → META-$ Inpar <body w/ literal `(`/`)`> Outparmath
         // For `$((`, the inner `(` is kept literal and the closing `))`
-        // is collapsed into a single OUTPARMATH (\u{8b}). We detect by
-        // peeking after INPAR — if the next char is literal `(` (0x28)
-        // or INPARMATH, we're in arith mode and end at OUTPARMATH.
+        // is collapsed into a single Outparmath (\u{8b}). We detect by
+        // peeking after Inpar — if the next char is literal `(` (0x28)
+        // or Inparmath, we're in arith mode and end at Outparmath.
         Some('\u{88}') => {
             let after = chars.get(i + 2).copied();
             let is_arith = matches!(after, Some('(') | Some('\u{89}'));
@@ -4606,7 +4606,7 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             }
             j
         }
-        // Also catch META-$ + INPARMATH directly for arith forms.
+        // Also catch META-$ + Inparmath directly for arith forms.
         Some('\u{89}') => {
             let mut j = i + 2;
             while j < chars.len() && chars[j] != '\u{8b}' {
@@ -4614,7 +4614,7 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             }
             (j + 1).min(chars.len())
         }
-        // INBRACK: $[...]
+        // Inbrack: $[...]
         Some('\u{91}') => {
             let mut depth = 1;
             let mut j = i + 2;
@@ -4645,13 +4645,13 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             if matches!(
                 ch,
                 '@' | '*' | '#' | '?' | '!' | '-' | '$'
-                    | '\u{87}' // META-* (STAR)
-                    | '\u{84}' // META-# (POUND)
-                    | '\u{97}' // META-? (QUEST)
-                    | '\u{9b}' // META-- (DASH)
-                    | '\u{9c}' // META-! (BANG)
+                    | '\u{87}' // META-* (Star)
+                    | '\u{84}' // META-# (Pound)
+                    | '\u{97}' // META-? (Quest)
+                    | '\u{9b}' // META-- (Dash)
+                    | '\u{9c}' // META-! (Bang)
                     | '\u{85}' // META-$ ($$ → PID; second $ also lexed as STRING)
-                    | '\u{8c}' // META-QSTRING ($ in DQ context)
+                    | '\u{8c}' // META-Qstring ($ in DQ context)
             ) =>
         {
             // `$#@`, `$#*`, `$#NAME` — `$#`-then-suffix shapes. After
@@ -4694,8 +4694,8 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             }
             // Pull a trailing `[subscript]` into the same expansion so
             // `$NAME[idx]` (especially in DQ context) is one piece, not
-            // `$NAME` + literal `[idx]`. The lexer emits INBRACK
-            // (`\u{91}`) / OUTBRACK (`\u{92}`) for top-level `[]`, but
+            // `$NAME` + literal `[idx]`. The lexer emits Inbrack
+            // (`\u{91}`) / Outbrack (`\u{92}`) for top-level `[]`, but
             // some lex paths leave bare `[`/`]` (DQ context, etc.).
             if j < chars.len() && (chars[j] == '\u{91}' || chars[j] == '[') {
                 let in_b = chars[j];
@@ -5278,7 +5278,7 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
 ///
 /// Detect `${(flags)"literal"}` or `${(flags)'literal'}` shape. Caller
 /// passes the untokenize_preserve_quotes form so brace/paren markers are
-/// already mapped back to ASCII and DNULL/SNULL are mapped to `"`/`'`.
+/// already mapped back to ASCII and Dnull/Snull are mapped to `"`/`'`.
 /// Returns (flags, literal_value) on match.
 fn parse_zsh_flag_literal(raw: &str) -> Option<(String, String)> {
     let pq = crate::lex::untokenize_preserve_quotes(raw);
@@ -5740,8 +5740,8 @@ fn array_splice_is_star(s: &str) -> bool {
 /// glob metas (`*`, `?`, `[`) that fall INSIDE single/double-quoted
 /// regions with backslash-escaped versions. Quoted glob metas should
 /// match literally per zsh. Markers used by the lexer:
-///   `\u{9d}` (SNULL) — single-bslashquote boundary
-///   `\u{9e}` (DNULL) — double-bslashquote boundary
+///   `\u{9d}` (Snull) — single-bslashquote boundary
+///   `\u{9e}` (Dnull) — double-bslashquote boundary
 fn escape_quoted_glob_metas(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut in_squote = false;
@@ -5979,7 +5979,7 @@ fn bare_subscript_with_suffix(s: &str) -> Option<(&str, &str, &str)> {
 /// (`$var`, `${arr[@]}`) DO NOT get IFS-split unless `SH_WORD_SPLIT`
 /// is set, so we deliberately don't trigger on those.
 ///
-/// Lexer markers: `\u{85}` = META-$, `\u{88}` = INPAR.
+/// Lexer markers: `\u{85}` = META-$, `\u{88}` = Inpar.
 fn has_unquoted_expansion(s: &str) -> bool {
     let mut in_dq = false;
     let mut in_sq = false;
@@ -5998,11 +5998,11 @@ fn has_unquoted_expansion(s: &str) -> bool {
             continue;
         }
         if !in_dq && !in_sq {
-            // `$(...)` — META-$ followed by INPAR
+            // `$(...)` — META-$ followed by Inpar
             if c == '\u{85}' && i + 1 < chars.len() && chars[i + 1] == '\u{88}' {
                 return true;
             }
-            // Plain `$` followed by INPAR (lexer sometimes leaves `$` literal)
+            // Plain `$` followed by Inpar (lexer sometimes leaves `$` literal)
             if c == '$' && i + 1 < chars.len() && chars[i + 1] == '\u{88}' {
                 return true;
             }
@@ -6057,8 +6057,8 @@ fn render_cond(c: &crate::parse::ZshCond) -> String {
 
 fn unquoted(s: &str, target: char) -> bool {
     // True iff `target` appears in the un-quoted portion of `s`. The
-    // word may carry lexer-level bslashquote markers — `\u{9d}` (SNULL,
-    // single-quoted span) and `\u{9e}` (DNULL, double-quoted span)
+    // word may carry lexer-level bslashquote markers — `\u{9d}` (Snull,
+    // single-quoted span) and `\u{9e}` (Dnull, double-quoted span)
     // bracket regions where globbing is suppressed. C zsh's pattern
     // compiler (Src/pattern.c::patcompswitch) skips meta-interpretation
     // for bytes inside these spans; the trigger detector must match
@@ -6067,7 +6067,7 @@ fn unquoted(s: &str, target: char) -> bool {
     // are inside DQ.
     //
     // Also honors `\x00` literal-marker (one-char escape from
-    // expand_string preprocessing) and `\u{9f}` (BNULL — lexer
+    // expand_string preprocessing) and `\u{9f}` (Bnull — lexer
     // backslash-escape).
     let mut prev = ' ';
     let mut inside_sq = false;

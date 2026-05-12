@@ -125,39 +125,42 @@ pub const DEFAULT_IFS_SH: &str = " \t\n"; // c:153
 // `crate::ported::config_h::DEFAULT_HISTSIZE` (cast `as i64` where
 // the destination is `histsiz: AtomicI64`).
 
-pub const POUND: char = '\u{84}'; // c:159 #
-pub const STRING_TOK: char = '\u{85}'; // c:160 $
-pub const HAT: char = '\u{86}'; // c:161 ^
-pub const STAR: char = '\u{87}'; // c:162 *
-pub const INPAR: char = '\u{88}'; // c:163 (
-pub const INPARMATH: char = '\u{89}'; // c:164 ((
-pub const OUTPAR: char = '\u{8a}'; // c:165 )
-pub const OUTPARMATH: char = '\u{8b}'; // c:166 ))
-pub const QSTRING: char = '\u{8c}'; // c:167 "$"
-pub const EQUALS: char = '\u{8d}'; // c:168 =
-pub const BAR: char = '\u{8e}'; // c:169 |
-pub const INBRACE: char = '\u{8f}'; // c:170 {
-pub const OUTBRACE: char = '\u{90}'; // c:171 }
-pub const INBRACK: char = '\u{91}'; // c:172 [
-pub const OUTBRACK: char = '\u{92}'; // c:173 ]
-pub const TICK: char = '\u{93}'; // c:174 `
-pub const INANG: char = '\u{94}'; // c:175 <
-pub const OUTANG: char = '\u{95}'; // c:176 >
-pub const OUTANG_PROC: char = '\u{96}'; // c:177 >( ...)
-pub const QUEST: char = '\u{97}'; // c:178 ?
-pub const TILDE: char = '\u{98}'; // c:179 ~
-pub const QTICK: char = '\u{99}'; // c:180 "`"
-pub const COMMA: char = '\u{9a}'; // c:181 ,
-pub const DASH: char = '\u{9b}'; // c:182 -
-pub const BANG: char = '\u{9c}'; // c:183 !
-pub const LAST_NORMAL_TOK: char = BANG; // c:188
+// Byte-token constants — names match C `Src/zsh.h:159-224` exactly
+// (PascalCase). One exception: C `String` (`0x85`) would shadow Rust's
+// `std::string::String`, so we use `Stringg` for that single token.
+#[allow(non_upper_case_globals)] pub const Pound: char      = '\u{84}'; // c:159 #
+pub const Stringg: char = '\u{85}'; // c:160 $ — C `String` (renamed: collides with std::string::String)
+#[allow(non_upper_case_globals)] pub const Hat: char        = '\u{86}'; // c:161 ^
+#[allow(non_upper_case_globals)] pub const Star: char       = '\u{87}'; // c:162 *
+#[allow(non_upper_case_globals)] pub const Inpar: char      = '\u{88}'; // c:163 (
+#[allow(non_upper_case_globals)] pub const Inparmath: char  = '\u{89}'; // c:164 ((
+#[allow(non_upper_case_globals)] pub const Outpar: char     = '\u{8a}'; // c:165 )
+#[allow(non_upper_case_globals)] pub const Outparmath: char = '\u{8b}'; // c:166 ))
+#[allow(non_upper_case_globals)] pub const Qstring: char    = '\u{8c}'; // c:167 "$"
+#[allow(non_upper_case_globals)] pub const Equals: char     = '\u{8d}'; // c:168 =
+#[allow(non_upper_case_globals)] pub const Bar: char        = '\u{8e}'; // c:169 |
+#[allow(non_upper_case_globals)] pub const Inbrace: char    = '\u{8f}'; // c:170 {
+#[allow(non_upper_case_globals)] pub const Outbrace: char   = '\u{90}'; // c:171 }
+#[allow(non_upper_case_globals)] pub const Inbrack: char    = '\u{91}'; // c:172 [
+#[allow(non_upper_case_globals)] pub const Outbrack: char   = '\u{92}'; // c:173 ]
+#[allow(non_upper_case_globals)] pub const Tick: char       = '\u{93}'; // c:174 `
+#[allow(non_upper_case_globals)] pub const Inang: char      = '\u{94}'; // c:175 <
+#[allow(non_upper_case_globals)] pub const Outang: char     = '\u{95}'; // c:176 >
+#[allow(non_upper_case_globals)] pub const OutangProc: char = '\u{96}'; // c:177 >(...)
+#[allow(non_upper_case_globals)] pub const Quest: char      = '\u{97}'; // c:178 ?
+#[allow(non_upper_case_globals)] pub const Tilde: char      = '\u{98}'; // c:179 ~
+#[allow(non_upper_case_globals)] pub const Qtick: char      = '\u{99}'; // c:180 "`"
+#[allow(non_upper_case_globals)] pub const Comma: char      = '\u{9a}'; // c:181 ,
+#[allow(non_upper_case_globals)] pub const Dash: char       = '\u{9b}'; // c:182 -
+#[allow(non_upper_case_globals)] pub const Bang: char       = '\u{9c}'; // c:183 !
+pub const LAST_NORMAL_TOK: char = Bang; // c:188
 
-pub const SNULL: char = '\u{9d}'; // c:193
-pub const DNULL: char = '\u{9e}'; // c:194
-pub const BNULL: char = '\u{9f}'; // c:195
-pub const BNULLKEEP: char = '\u{a0}'; // c:200
-pub const NULARG: char = '\u{a1}'; // c:206
-pub const MARKER: char = '\u{a2}'; // c:224
+#[allow(non_upper_case_globals)] pub const Snull: char     = '\u{9d}'; // c:193
+#[allow(non_upper_case_globals)] pub const Dnull: char     = '\u{9e}'; // c:194
+#[allow(non_upper_case_globals)] pub const Bnull: char     = '\u{9f}'; // c:195
+#[allow(non_upper_case_globals)] pub const Bnullkeep: char = '\u{a0}'; // c:200
+#[allow(non_upper_case_globals)] pub const Nularg: char    = '\u{a1}'; // c:206
+#[allow(non_upper_case_globals)] pub const Marker: char    = '\u{a2}'; // c:224
 
 pub const SPECCHARS: &str = "#$^*()=|{}[]`<>?~;&\n\t \\\'\""; // c:228
 pub const PATCHARS: &str = "#^*()|[]<>?~\\"; // c:232
@@ -166,7 +169,7 @@ pub const PATCHARS: &str = "#^*()|[]<>?~\\"; // c:232
 #[inline]
 #[allow(non_snake_case)]
 pub fn IS_DASH(x: char) -> bool {
-    x == '-' || x == DASH
+    x == '-' || x == Dash
 } // c:242
 
 // =============================================================================
@@ -796,7 +799,7 @@ pub struct hookdef {
 /// `(char *)prog + prog->startoff`; the Rust port stores it inline
 /// as a `code: Vec<u8>` field. The opcode stream layout is preserved
 /// byte-for-byte — `startoff` and `size` index into `code`.
-/// 
+///
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub struct patprog {
@@ -3550,14 +3553,14 @@ mod tests {
 
     #[test]
     fn parser_tokens_correct() {
-        assert_eq!(POUND as u32, 0x84);
-        assert_eq!(BANG as u32, 0x9c);
-        assert_eq!(SNULL as u32, 0x9d);
-        assert_eq!(DNULL as u32, 0x9e);
-        assert_eq!(BNULL as u32, 0x9f);
-        assert_eq!(BNULLKEEP as u32, 0xa0);
-        assert_eq!(NULARG as u32, 0xa1);
-        assert_eq!(MARKER as u32, 0xa2);
+        assert_eq!(Pound as u32, 0x84);
+        assert_eq!(Bang as u32, 0x9c);
+        assert_eq!(Snull as u32, 0x9d);
+        assert_eq!(Dnull as u32, 0x9e);
+        assert_eq!(Bnull as u32, 0x9f);
+        assert_eq!(Bnullkeep as u32, 0xa0);
+        assert_eq!(Nularg as u32, 0xa1);
+        assert_eq!(Marker as u32, 0xa2);
     }
 
     #[test]

@@ -4757,7 +4757,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let pat = vm.pop().to_str();
         let s = vm.pop().to_str();
         // Same untokenize before regex compile as ZshrsHost::regex_match
-        // — SNULL/DQ markers from quoted patterns must be stripped
+        // — Snull/DQ markers from quoted patterns must be stripped
         // before the regex engine sees them. Direct port of
         // bin_test/cond_match's untokenize() call.
         let pat = crate::lex::untokenize(&pat);
@@ -7259,7 +7259,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     //   1 = DoubleQuoted — strip outer `"…"`, expand_string only
     //         (no brace, no glob — DQ semantics)
     //   2 = SingleQuoted — strip outer `'…'`, no expansion
-    //         (kept for symmetry; SNULL early-return covers most SQ)
+    //         (kept for symmetry; Snull early-return covers most SQ)
     //   3 = AltBackquote — strip backticks, run as cmd-sub
     // Single result → Value::str; multi → Value::Array.
     vm.register_builtin(BUILTIN_EXPAND_TEXT, |vm, _argc| {
@@ -7652,7 +7652,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // arith expansion before use (zsh semantics — `${s/$pat/X}`
         // resolves $pat).
         // Untokenize before pattern compile — zsh's lexer leaves
-        // SNULL/DQ markers and meta-encoded metachars in the
+        // Snull/DQ markers and meta-encoded metachars in the
         // pattern stream. regex::Regex::new errors on those bytes,
         // and even when it compiles, it matches against tokenized
         // text rather than the user's literal pattern. Direct port
@@ -7778,7 +7778,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // BUILTIN_PARAM_REPLACE pattern compile. Matches the
             // same handling in subst_port::glob_to_regex_capturing
             // and exec.rs::glob_match_static — direct port of zsh's
-            // pattern.c POUND/POUND2 cases. Used by zinit's
+            // pattern.c Pound/POUND2 cases. Used by zinit's
             // main-message-formatter pattern `[^\}]##` (one-or-
             // more non-`}`).
             let consume_postfix = |chars: &mut std::iter::Peekable<std::str::Chars>| -> Option<&'static str> {
@@ -8486,7 +8486,7 @@ pub const BUILTIN_ARITH_EVAL: u16 = 312;
 /// raw Op::CmdSubst path.
 pub const BUILTIN_CMD_SUBST_TEXT: u16 = 313;
 /// Text-based word expansion. Pops \[preserved_text\]: the word with
-/// quotes preserved (DNULL→`"`, SNULL→`'`, BNULL→`\`), runs
+/// quotes preserved (Dnull→`"`, Snull→`'`, Bnull→`\`), runs
 /// `expand_string` (variable + cmd-sub + arith) then `xpandbraces`
 /// then `expand_glob`. Returns Value::str (single match) or
 /// Value::Array (multi-match brace/glob).
@@ -8789,9 +8789,9 @@ impl fusevm::ShellHost for ZshrsHost {
 
     fn regex_match(&mut self, s: &str, regex: &str) -> bool {
         // Untokenize the pattern + subject before compiling. zsh's
-        // lexer emits SNULL/DQ markers around quoted regions; if a
+        // lexer emits Snull/DQ markers around quoted regions; if a
         // single-quoted regex like `'([a-z]+)([0-9]+)'` reaches us
-        // with the SNULL bytes still present, regex::Regex::new
+        // with the Snull bytes still present, regex::Regex::new
         // returns Err (the markers aren't valid pattern syntax).
         // Direct port of zsh's bin_test path which calls untokenize()
         // on both operands before handing to the regex compiler

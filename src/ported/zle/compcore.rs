@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::ported::zsh_h::{
-    BNULL, INBRACE, OUTBRACE, QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_SINGLE, STRING_TOK,
+    Bnull, Inbrace, Outbrace, QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_SINGLE, Stringg,
 };
 use crate::ported::zle::comp_h::{
     Aminfo, Cexpl, Cmatch, Cmgroup, CGF_MATSORT, CGF_NOSORT, CGF_NUMSORT, CGF_REVSORT,
@@ -366,13 +366,13 @@ pub fn ctokenize(p: &str) -> String {                                        // 
                     if let Some(pi) = prev_idx {                             // c:1379
                         out.truncate(pi);
                         let mut buf = [0u8; 4];
-                        out.extend_from_slice(BNULL.encode_utf8(&mut buf).as_bytes());
+                        out.extend_from_slice(Bnull.encode_utf8(&mut buf).as_bytes());
                     }
                     out.push(b);
                 } else {
-                    let tok = if b == b'$' { STRING_TOK }                    // c:1381
-                              else if b == b'{' { INBRACE }                  // c:1382
-                              else { OUTBRACE };                             // c:1382
+                    let tok = if b == b'$' { Stringg }                    // c:1381
+                              else if b == b'{' { Inbrace }                  // c:1382
+                              else { Outbrace };                             // c:1382
                     let mut buf = [0u8; 4];
                     out.extend_from_slice(tok.encode_utf8(&mut buf).as_bytes());
                 }
@@ -403,9 +403,9 @@ pub fn comp_str(untok: bool) -> (String, i32, i32) {                         // 
         .lock().unwrap().clone();
     if !untok {                                                              // c:1411
         p = ctokenize(&p);                                                   // c:1412
-        p = p.chars().filter(|&c| c != BNULL).collect();                     // c:1413 remnulargs
+        p = p.chars().filter(|&c| c != Bnull).collect();                     // c:1413 remnulargs
         s = ctokenize(&s);                                                   // c:1414
-        s = s.chars().filter(|&c| c != BNULL).collect();                     // c:1415
+        s = s.chars().filter(|&c| c != Bnull).collect();                     // c:1415
     }
     let lp = p.len() as i32;                                                 // c:1417
     let lip = ip.len() as i32;                                               // c:1419
@@ -1440,8 +1440,8 @@ fn set_compstate_str(key: &str, val: &str) {                                  //
 /// Returns `None` when there's no parameter expression at the cursor.
 pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // c:1113
     use crate::ported::zsh_h::{
-        BNULL, DNULL, EQUALS, HAT, INBRACE, INBRACK, INPAR, OUTBRACE, OUTPAR, POUND,
-        QSTRING, QUEST, SNULL, STAR, STRING_TOK, TILDE,
+        Bnull, Dnull, Equals, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outpar, Pound,
+        Qstring, Quest, Snull, Star, Stringg, Tilde,
     };
 
     // c:1117-1118 — zsfree(parpre); parpre = NULL.
@@ -1466,13 +1466,13 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
     loop {
         if p < bytes.len() {
             let ch = char_at(bytes, p);
-            if ch == STRING_TOK || ch == QSTRING {                           // c:1141
+            if ch == Stringg || ch == Qstring {                           // c:1141
                 let next = char_at(bytes, p + ch.len_utf8());
-                let snull_next  = ch == STRING_TOK && next == SNULL;         // c:1151
-                let qstr_quot   = ch == QSTRING && next == '\'';             // c:1152
+                let snull_next  = ch == Stringg && next == Snull;         // c:1151
+                let qstr_quot   = ch == Qstring && next == '\'';             // c:1152
                 if p < offs_v && !snull_next && !qstr_quot {
                     found = true;                                            // c:1154
-                    qstring = ch == QSTRING;                                 // c:1155
+                    qstring = ch == Qstring;                                 // c:1155
                     break;
                 }
             }
@@ -1486,7 +1486,7 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
         while p > 0 {
             let prev = prev_char_index(bytes, p);
             let pc = char_at(bytes, prev);
-            if pc == STRING_TOK || pc == QSTRING { p = prev; } else { break; }
+            if pc == Stringg || pc == Qstring { p = prev; } else { break; }
         }
         loop {                                                               // c:1175-1176
             let n1 = p + char_at(bytes, p).len_utf8();
@@ -1495,8 +1495,8 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
             let n2 = n1 + c1.len_utf8();
             if n2 >= bytes.len() { break; }
             let c2 = char_at(bytes, n2);
-            if (c1 == STRING_TOK || c1 == QSTRING)
-                && (c2 == STRING_TOK || c2 == QSTRING)
+            if (c1 == Stringg || c1 == Qstring)
+                && (c2 == Stringg || c2 == Qstring)
             {
                 p = n2;
             } else {
@@ -1510,7 +1510,7 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
         let dollar_len = char_at(bytes, p).len_utf8();
         char_at(bytes, p + dollar_len)
     } else { '\0' };
-    if !(found && next_char != INPAR && next_char != INBRACK && next_char != SNULL) {
+    if !(found && next_char != Inpar && next_char != Inbrack && next_char != Snull) {
         return None;                                                         // c:1316
     }
 
@@ -1520,9 +1520,9 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
     let mut br: i32 = 1;                                                     // c:1182
     let mut nest: i32 = 0;                                                   // c:1182
 
-    if char_at(bytes, b) == INBRACE {                                        // c:1184
+    if char_at(bytes, b) == Inbrace {                                        // c:1184
         // c:1188 — skipparens(Inbrace, Outbrace, &tb) check.
-        let close = skip_token_parens(bytes, b, INBRACE, OUTBRACE);
+        let close = skip_token_parens(bytes, b, Inbrace, Outbrace);
         if let Some(end) = close {
             if end <= s.len() && offs_v >= end - bytes.iter().take(end).count() {
                 // Already past `}` — not in this param.
@@ -1532,10 +1532,10 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
             return None;
         }
 
-        b += INBRACE.len_utf8();                                             // c:1192 b++
+        b += Inbrace.len_utf8();                                             // c:1192 b++
         br += 1;
         // c:1193-1203 — skip leading `(...)` flag group.
-        let (open_p, close_p) = if qstring { ('(', ')') } else { (INPAR, OUTPAR) };
+        let (open_p, close_p) = if qstring { ('(', ')') } else { (Inpar, Outpar) };
         let after_flags = skip_token_parens(bytes, b, open_p, close_p);
         if let Some(end) = after_flags {
             // Compute "b-s offset" — bytes already chars-aware.
@@ -1551,14 +1551,14 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
         while tb > 0 {
             let prev = prev_char_index(bytes, tb);
             let pc = char_at(bytes, prev);
-            if pc == OUTBRACE || pc == INBRACE { tb = prev; break; }
+            if pc == Outbrace || pc == Inbrace { tb = prev; break; }
             tb = prev;
         }
         if tb > 0 {
             let cc = char_at(bytes, tb);
             let prev = prev_char_index(bytes, tb);
             let pp = char_at(bytes, prev);
-            if cc == INBRACE && (pp == STRING_TOK || cc == QSTRING) {
+            if cc == Inbrace && (pp == Stringg || cc == Qstring) {
                 nest = 1;                                                    // c:1207
             }
         }
@@ -1567,7 +1567,7 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
     // c:1212-1213 — skip `^=~` prefix flags.
     while b < bytes.len() {
         let c = char_at(bytes, b);
-        if c == '^' || c == HAT || c == '=' || c == EQUALS || c == '~' || c == TILDE {
+        if c == '^' || c == Hat || c == '=' || c == Equals || c == '~' || c == Tilde {
             b += c.len_utf8();
         } else {
             break;
@@ -1576,12 +1576,12 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
     // c:1215 — `#` / `+` length-prefix.
     if b < bytes.len() {
         let c = char_at(bytes, b);
-        if c == '#' || c == POUND || c == '+' { b += c.len_utf8(); }
+        if c == '#' || c == Pound || c == '+' { b += c.len_utf8(); }
     }
 
     let mut e: usize = b;                                                    // c:1219
     if br != 0 {                                                             // c:1220
-        let qopen = if test { DNULL } else { '"' };
+        let qopen = if test { Dnull } else { '"' };
         while e < bytes.len() && char_at(bytes, e) == qopen {                // c:1221
             e += qopen.len_utf8();
             parq.fetch_add(1, Ordering::Relaxed);                            // c:1221
@@ -1593,7 +1593,7 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
     if e < bytes.len() {
         let c = char_at(bytes, e);
         let one_char_name = matches!(c,
-            ch if ch == QUEST || ch == STAR || ch == STRING_TOK || ch == QSTRING
+            ch if ch == Quest || ch == Star || ch == Stringg || ch == Qstring
                 || ch == '?' || ch == '*' || ch == '$' || ch == '-' || ch == '!' || ch == '@');
         if one_char_name {                                                   // c:1230
             e += c.len_utf8();
@@ -1616,7 +1616,7 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
     if offs_v <= e && offs_v >= b {
         // c:1263 — strip trailing `"`s when br set.
         if br != 0 {
-            let qopen = if test { DNULL } else { '"' };
+            let qopen = if test { Dnull } else { '"' };
             let mut pq = e;
             while pq < bytes.len() && char_at(bytes, pq) == qopen {
                 pq += qopen.len_utf8();
@@ -1691,7 +1691,7 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // 
         return None;                                                         // c:1317
     }
 
-    let _ = (BNULL,); // silence unused-import warning if BNULL not hit
+    let _ = (Bnull,); // silence unused-import warning if Bnull not hit
     None                                                                     // c:1320
 }
 
@@ -1744,7 +1744,7 @@ fn walk_namespace(bytes: &[u8]) -> usize {                                    //
     len
 }
 
-/// Strip Inbrace/Outbrace/STRING_TOK/etc. token bytes back to literal
+/// Strip Inbrace/Outbrace/Stringg/etc. token bytes back to literal
 /// characters — substitute for C `untokenize()` over the slice. The
 /// canonical Rust untokenize lives in `crate::lex::untokenize`.
 fn strip_tokens(s: &str) -> String {                                          // local
@@ -2753,11 +2753,11 @@ mod tests {
     fn ctokenize_dollar_substitution() {
         let out = ctokenize("$x{y}");
         let chars: Vec<char> = out.chars().collect();
-        assert_eq!(chars[0], STRING_TOK);
+        assert_eq!(chars[0], Stringg);
         assert_eq!(chars[1], 'x');
-        assert_eq!(chars[2], INBRACE);
+        assert_eq!(chars[2], Inbrace);
         assert_eq!(chars[3], 'y');
-        assert_eq!(chars[4], OUTBRACE);
+        assert_eq!(chars[4], Outbrace);
     }
 
     #[test]
@@ -2861,7 +2861,7 @@ mod tests {
     fn check_param_simple_dollar_var_at_cursor() {
         // c:1259-1311: `$FOO` with cursor inside the name → return b.
         OFFS.store(2, Ordering::Relaxed);
-        let s = format!("{}FOO", crate::ported::zsh_h::STRING_TOK);
+        let s = format!("{}FOO", crate::ported::zsh_h::Stringg);
         let r = check_param(&s, false, true);
         assert!(r.is_some(), "expected Some(b) inside $FOO");
     }

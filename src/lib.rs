@@ -97,8 +97,8 @@ pub mod daemon {
 // Re-export the modules so existing call sites (`zsh::lex::…`,
 // `zsh::parse::…`, `zsh::tokens::…`) keep resolving.
 // `tokens` aliases `lex` because tokens.rs's contents (lextok enum +
-// reserved-word table) now live inside lex.rs. Char tokens (POUND / INPAR /
-// EQUALS / …) and the REDIR_* / COND_* constants are not duplicated — they
+// reserved-word table) now live inside lex.rs. Char tokens (Pound / Inpar /
+// Equals / …) and the REDIR_* / COND_* constants are not duplicated — they
 // live as flat `pub const` items in `ported::zsh_h` per `Src/zsh.h:144-679`.
 pub use ported::lex;
 pub use ported::lex as tokens;

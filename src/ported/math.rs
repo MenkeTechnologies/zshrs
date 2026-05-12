@@ -63,7 +63,7 @@ pub const NEQ: i32 = 23;          // c:132  !=
 pub const DAND: i32 = 24;         // c:133  &&
 pub const DOR: i32 = 25;          // c:134  ||
 pub const DXOR: i32 = 26;         // c:135  ^^
-pub const QUEST: i32 = 27;        // c:136  ?
+pub const Quest: i32 = 27;        // c:136  ?
 pub const COLON: i32 = 28;        // c:137  :
 pub const EQ: i32 = 29;           // c:138  =
 pub const PLUSEQ: i32 = 30;       // c:139  +=
@@ -79,7 +79,7 @@ pub const SHRIGHTEQ: i32 = 39;    // c:148  >>=
 pub const DANDEQ: i32 = 40;       // c:149  &&=
 pub const DOREQ: i32 = 41;        // c:150  ||=
 pub const DXOREQ: i32 = 42;       // c:151  ^^=
-pub const COMMA: i32 = 43;        // c:152  ,
+pub const Comma: i32 = 43;        // c:152  ,
 pub const EOI: i32 = 44;          // c:153  end of input
 pub const PREPLUS: i32 = 45;      // c:154  ++x
 pub const PREMINUS: i32 = 46;     // c:155  --x
@@ -1132,11 +1132,11 @@ pub(crate) fn zzlex() -> i32 {
                         m_yyval_set(mnumber { l: m_lastval() as i64, d: 0.0, type_: MN_INTEGER });
                         return NUM;
                     }
-                    return QUEST;
+                    return Quest;
                 }
 
                 ':' => return COLON,
-                ',' => return COMMA,
+                ',' => return Comma,
 
                 '[' => {
                     // [base]value or output format [#base]
@@ -1531,7 +1531,7 @@ pub(crate) fn op(what: i32) {
             let (a, b) = if (tp & (OP_A2IO | OP_E2IO)) != 0 {
                 // Must be integers
                 (mnumber { l: (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l }), d: 0.0, type_: MN_INTEGER }, mnumber { l: (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l }), d: 0.0, type_: MN_INTEGER })
-            } else if (a.type_ == MN_FLOAT) != (b.type_ == MN_FLOAT) && what != COMMA {
+            } else if (a.type_ == MN_FLOAT) != (b.type_ == MN_FLOAT) && what != Comma {
                 // Different types, coerce to float
                 (mnumber { l: 0, d: (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 }), type_: MN_FLOAT }, mnumber { l: 0, d: (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 }), type_: MN_FLOAT })
             } else {
@@ -1687,7 +1687,7 @@ pub(crate) fn op(what: i32) {
                         }
                     }
 
-                    COMMA => b,
+                    Comma => b,
                     EQ => b,
 
                     _ => mnumber { l: 0, d: 0.0, type_: MN_INTEGER },
@@ -1810,7 +1810,7 @@ pub(crate) fn op(what: i32) {
                 setmathvar(name, new_val);
                 push(new_val, mv.lval);
             }
-            QUEST => {
+            Quest => {
                 // Ternary: stack has [cond, true_val, false_val]
                 // val already popped = false_val
                 // Need to pop true_val and cond
@@ -1868,10 +1868,10 @@ pub(crate) fn bop(tk: i32) {
     }
 
     // WARNING: NOT IN MATH.C — Rust-only helper. C inlines the
-    // expression `prec[COMMA] + 1` directly in mathparse() and
+    // expression `prec[Comma] + 1` directly in mathparse() and
     // mathevall() everywhere it's needed (math.c:1594, 367).
     pub(crate) fn top_prec() -> u8 {
-        m_prec()[COMMA as usize] + 1
+        m_prec()[Comma as usize] + 1
     }
 
 /// Port of `checkunary(int mtokc, char *mptr)` from `Src/math.c:1548`.
@@ -2014,7 +2014,7 @@ pub(crate) fn checkunary() {
                         return;
                     }
                 }
-                QUEST => {
+                Quest => {
                     // Ternary operator
                     if m_stack_is_empty() {
                         m_error_set("bad math expression".to_string());
@@ -2056,13 +2056,13 @@ pub(crate) fn checkunary() {
                     if q {
                         m_noeval_inc();
                     }
-                    let quest_prec = m_prec()[QUEST as usize];
+                    let quest_prec = m_prec()[Quest as usize];
                     mathparse(quest_prec);
                     if q {
                         m_noeval_dec();
                     }
 
-                    op(QUEST);
+                    op(Quest);
                     continue;
                 }
                 _ => {

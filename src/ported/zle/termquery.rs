@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn curf_constants_match_c() {
-        // c:488-491 — CURF_DEFAULT/UNDERLINE/BAR/BLOCK occupy the
+        // c:488-491 — CURF_DEFAULT/UNDERLINE/Bar/BLOCK occupy the
         // low 2 bits per Src/Zle/zle.h.
         use crate::ported::zle::zle_h::{CURF_DEFAULT, CURF_UNDERLINE, CURF_BAR, CURF_BLOCK, CURF_SHAPE_MASK};
         assert_eq!(CURF_DEFAULT, 0);

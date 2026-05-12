@@ -2963,8 +2963,8 @@ pub fn set_pat_end(p: &str, null_me: usize) -> String {
 /// `Src/glob.c:3548` (which calls `zshtokenize(s, 0)`).
 pub fn tokenize(s: &mut String) {
     use crate::ported::zsh_h::{
-        BAR, COMMA, HAT, INBRACE, INBRACK, INPAR, OUTBRACE, OUTBRACK, OUTPAR, POUND, QUEST, STAR,
-        TILDE,
+        Bar, Comma, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outbrack, Outpar, Pound, Quest, Star,
+        Tilde,
     };
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
@@ -2981,19 +2981,19 @@ pub fn tokenize(s: &mut String) {
                     out.push('\\');
                 }
             }
-            '*' => out.push(STAR),
-            '?' => out.push(QUEST),
-            '[' => out.push(INBRACK),
-            ']' => out.push(OUTBRACK),
-            '(' => out.push(INPAR),
-            ')' => out.push(OUTPAR),
-            '|' => out.push(BAR),
-            '#' => out.push(POUND),
-            '~' => out.push(TILDE),
-            '^' => out.push(HAT),
-            '{' => out.push(INBRACE),
-            '}' => out.push(OUTBRACE),
-            ',' => out.push(COMMA),
+            '*' => out.push(Star),
+            '?' => out.push(Quest),
+            '[' => out.push(Inbrack),
+            ']' => out.push(Outbrack),
+            '(' => out.push(Inpar),
+            ')' => out.push(Outpar),
+            '|' => out.push(Bar),
+            '#' => out.push(Pound),
+            '~' => out.push(Tilde),
+            '^' => out.push(Hat),
+            '{' => out.push(Inbrace),
+            '}' => out.push(Outbrace),
+            ',' => out.push(Comma),
             _ => out.push(c),
         }
         i += 1;
@@ -3006,7 +3006,7 @@ pub fn tokenize(s: &mut String) {
 /// byte tokens — `shtokenize` is `zshtokenize(s, ZSHTOK_SUBST | ...)`
 /// at `Src/glob.c:3565`.
 pub fn shtokenize(s: &mut String) {
-    use crate::ported::zsh_h::{INBRACK, OUTBRACK, QUEST, STAR};
+    use crate::ported::zsh_h::{Inbrack, Outbrack, Quest, Star};
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
@@ -3042,10 +3042,10 @@ pub fn shtokenize(s: &mut String) {
                     continue;
                 }
             }
-            '*' => out.push(STAR),
-            '?' => out.push(QUEST),
-            '[' => out.push(INBRACK),
-            ']' => out.push(OUTBRACK),
+            '*' => out.push(Star),
+            '?' => out.push(Quest),
+            '[' => out.push(Inbrack),
+            ']' => out.push(Outbrack),
             _ => out.push(c),
         }
         i += 1;
@@ -3057,8 +3057,8 @@ pub fn shtokenize(s: &mut String) {
 /// from `Src/glob.c:3575` — mutates `s` in place.
 pub fn zshtokenize(s: &mut String, extended_glob: bool, sh_glob: bool) {
     use crate::ported::zsh_h::{
-        BAR, COMMA, HAT, INBRACE, INBRACK, INPAR, OUTBRACE, OUTBRACK, OUTPAR, POUND, QUEST, STAR,
-        TILDE,
+        Bar, Comma, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outbrack, Outpar, Pound, Quest, Star,
+        Tilde,
     };
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
@@ -3075,19 +3075,19 @@ pub fn zshtokenize(s: &mut String, extended_glob: bool, sh_glob: bool) {
                     out.push('\\');
                 }
             }
-            '*' => out.push(STAR),
-            '?' => out.push(QUEST),
-            '[' => out.push(INBRACK),
-            ']' => out.push(OUTBRACK),
-            '#' if extended_glob => out.push(POUND),
-            '^' if extended_glob => out.push(HAT),
-            '~' if extended_glob => out.push(TILDE),
-            '(' if extended_glob => out.push(INPAR),
-            ')' if extended_glob => out.push(OUTPAR),
-            '|' if extended_glob => out.push(BAR),
-            '{' if !sh_glob => out.push(INBRACE),
-            '}' if !sh_glob => out.push(OUTBRACE),
-            ',' if !sh_glob => out.push(COMMA),
+            '*' => out.push(Star),
+            '?' => out.push(Quest),
+            '[' => out.push(Inbrack),
+            ']' => out.push(Outbrack),
+            '#' if extended_glob => out.push(Pound),
+            '^' if extended_glob => out.push(Hat),
+            '~' if extended_glob => out.push(Tilde),
+            '(' if extended_glob => out.push(Inpar),
+            ')' if extended_glob => out.push(Outpar),
+            '|' if extended_glob => out.push(Bar),
+            '{' if !sh_glob => out.push(Inbrace),
+            '}' if !sh_glob => out.push(Outbrace),
+            ',' if !sh_glob => out.push(Comma),
             _ => out.push(c),
         }
         i += 1;
@@ -3098,8 +3098,8 @@ pub fn zshtokenize(s: &mut String, extended_glob: bool, sh_glob: bool) {
 /// Port of `remnulargs(char *s)` from `Src/glob.c:3649` — strip
 /// `Bnullkeep` (`\0xa0`) markers from a string. Mutates in place.
 pub fn remnulargs(s: &mut String) {
-    use crate::ported::zsh_h::BNULLKEEP;
-    s.retain(|c| c != '\0' && c != BNULLKEEP);
+    use crate::ported::zsh_h::Bnullkeep;
+    s.retain(|c| c != '\0' && c != Bnullkeep);
 }
 
 // ============================================================================

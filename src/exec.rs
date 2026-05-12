@@ -6978,7 +6978,7 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
     // Helper: after emitting any atom, check for zsh extendedglob
     // postfix `#` (zero-or-more) / `##` (one-or-more) and append
     // the equivalent regex quantifier. Direct port of zsh's
-    // pattern.c (`POUND` / `POUND2` cases in `patcompswitch`).
+    // pattern.c (`Pound` / `POUND2` cases in `patcompswitch`).
     // Only fires when extendedglob is enabled.
     let consume_extglob_postfix =
         |chars: &mut std::iter::Peekable<std::str::Chars>| -> Option<&'static str> {
@@ -7312,7 +7312,7 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
                 // After a literal/(#l)-class atom, extendedglob
                 // `#`/`##` postfix maps to regex `*`/`+` and
                 // binds to that single atom. Same as zsh's
-                // pattern.c POUND/POUND2 handling on the atom
+                // pattern.c Pound/POUND2 handling on the atom
                 // just compiled.
                 if let Some(q) = consume_extglob_postfix(&mut chars) {
                     regex_pattern.push_str(q);

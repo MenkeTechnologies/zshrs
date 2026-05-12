@@ -2098,18 +2098,18 @@ static INSUBSCR: Mutex<i32> = Mutex::new(0);
 /// the lexer uses to mark suppressed quoted-region boundaries
 /// (Snull = single-quote, Dnull = double-quote, Bnull = backslash,
 /// String/Qstring = `$`/`'$'` markers).
-pub const SNULL: char  = '\u{9d}';  // Single-quote null
-pub const DNULL: char  = '\u{9e}';  // Double-quote null
-pub const BNULL: char  = '\u{9f}';  // Backslash null
-pub const STRING_TOK: char  = '\u{85}';  // META-$
-pub const QSTRING_TOK: char = '\u{84}';  // QSTRING (for $'...')
+pub const Snull: char  = '\u{9d}';  // Single-quote null
+pub const Dnull: char  = '\u{9e}';  // Double-quote null
+pub const Bnull: char  = '\u{9f}';  // Backslash null
+pub const Stringg: char  = '\u{85}';  // META-$
+pub const QSTRING_TOK: char = '\u{84}';  // Qstring (for $'...')
 
 /// Direct port of `#define inull(X) zistype(X,INULL)` from
 /// `Src/ztype.h:62`. Tests whether `c` is one of the parser's
 /// "inull" token chars (the high-bit token bytes the lexer
 /// produces).
 fn inull(c: char) -> bool {                                                  // c:62
-    matches!(c, SNULL | DNULL | BNULL | STRING_TOK | QSTRING_TOK)
+    matches!(c, Snull | Dnull | Bnull | Stringg | QSTRING_TOK)
 }
 
 /// Separate the cursor word into prefix/word/suffix components.
@@ -2267,20 +2267,20 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     // marker conversion). Skipped pending check_param port.
 
     // C: c:2898-2929 — quote-prefix detection. Examine ns[0] for
-    // SNULL/DNULL/STRING_TOK/QSTRING_TOK and adjust instring + autoq.
+    // Snull/Dnull/Stringg/QSTRING_TOK and adjust instring + autoq.
     let ts = ns.clone();
     let _ = ts.clone();
     let first_char = ns.chars().next();
     let is_quoted_open = matches!(
         first_char,
-        Some(SNULL) | Some(DNULL)
-    ) || (matches!(first_char, Some(STRING_TOK) | Some(QSTRING_TOK))
-        && ns.chars().nth(1) == Some(SNULL));
+        Some(Snull) | Some(Dnull)
+    ) || (matches!(first_char, Some(Stringg) | Some(QSTRING_TOK))
+        && ns.chars().nth(1) == Some(Snull));
 
     if is_quoted_open {
         let new_instring = match first_char {
-            Some(SNULL) => QT_SINGLE,
-            Some(DNULL) => QT_DOUBLE,
+            Some(Snull) => QT_SINGLE,
+            Some(Dnull) => QT_DOUBLE,
             _ => QT_DOLLARS,
         };
         *INSTRING.lock().unwrap() = new_instring;
@@ -2314,13 +2314,13 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
         if inull(c) {
             if walk_i < scs {
                 soffs -= 1;
-                if remq && c == BNULL && p_idx + 1 < ns_chars.len() {
+                if remq && c == Bnull && p_idx + 1 < ns_chars.len() {
                     swb -= 2;
                 }
             }
             let next = ns_chars.get(p_idx + 1).copied();
-            if next.is_some() || c != BNULL {
-                if c == BNULL {
+            if next.is_some() || c != Bnull {
+                if c == Bnull {
                     if scs == walk_i + 1 {
                         scs += 1;
                         soffs += 1;
@@ -3183,12 +3183,12 @@ mod tests {
 
     #[test]
     fn inull_recognises_marker_chars() {
-        // C compctl.c:2917 — INULL macro recognises SNULL/DNULL/BNULL
+        // C compctl.c:2917 — INULL macro recognises Snull/Dnull/Bnull
         // plus String/Qstring tokens for inull-walk.
-        assert!(inull(SNULL));
-        assert!(inull(DNULL));
-        assert!(inull(BNULL));
-        assert!(inull(STRING_TOK));
+        assert!(inull(Snull));
+        assert!(inull(Dnull));
+        assert!(inull(Bnull));
+        assert!(inull(Stringg));
         assert!(inull(QSTRING_TOK));
         assert!(!inull('a'));
         assert!(!inull(' '));

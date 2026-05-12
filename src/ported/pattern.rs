@@ -2203,7 +2203,7 @@ mod tests {
         assert!(!pattry(&prog, "FOO"));
     }
 
-    /// Mid-pattern P_GFLAGS opcode: `foo(#i)BAR` — first half exact,
+    /// Mid-pattern P_GFLAGS opcode: `foo(#i)Bar` — first half exact,
     /// second half case-insensitive.
     #[test]
     fn mid_pattern_gflags_switch() {

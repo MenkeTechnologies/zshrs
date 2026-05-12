@@ -104,31 +104,31 @@ pub const WC_IF_ELSE: u32 = 3;
 pub const WC_CODEBITS: u32 = 5;
 
 // Zsh tokens (from zsh.h)
-const POUND: u8 = 0x84;
+const Pound: u8 = 0x84;
 const STRING: u8 = 0x85; // $ for variables
-const HAT: u8 = 0x86; // ^
-const STAR: u8 = 0x87; // *
-const INPAR: u8 = 0x88; // (
-const OUTPAR: u8 = 0x8a; // )
-const QSTRING: u8 = 0x8c; // $ in double quotes
-const EQUALS: u8 = 0x8d; // =
-const BAR: u8 = 0x8e; // |
-const INBRACE: u8 = 0x8f; // {
-const OUTBRACE: u8 = 0x90; // }
-const INBRACK: u8 = 0x91; // [
-const OUTBRACK: u8 = 0x92; // ]
-const TICK: u8 = 0x93; // `
-const INANG: u8 = 0x94; // <
-const OUTANG: u8 = 0x95; // >
-const QUEST: u8 = 0x97; // ?
-const TILDE: u8 = 0x98; // ~
-const COMMA: u8 = 0x9a; // ,
-const DASH: u8 = 0x9b; // - (only in patterns; zsh.h:182)
-const BANG: u8 = 0x9c; // ! (only in patterns; zsh.h:183)
-const SNULL: u8 = 0x9d; // ' bslashquote marker
-const DNULL: u8 = 0x9e; // " bslashquote marker
-const BNULL: u8 = 0x9f; // \ backslash marker
-const NULARG: u8 = 0xa1; // empty argument marker
+const Hat: u8 = 0x86; // ^
+const Star: u8 = 0x87; // *
+const Inpar: u8 = 0x88; // (
+const Outpar: u8 = 0x8a; // )
+const Qstring: u8 = 0x8c; // $ in double quotes
+const Equals: u8 = 0x8d; // =
+const Bar: u8 = 0x8e; // |
+const Inbrace: u8 = 0x8f; // {
+const Outbrace: u8 = 0x90; // }
+const Inbrack: u8 = 0x91; // [
+const Outbrack: u8 = 0x92; // ]
+const Tick: u8 = 0x93; // `
+const Inang: u8 = 0x94; // <
+const Outang: u8 = 0x95; // >
+const Quest: u8 = 0x97; // ?
+const Tilde: u8 = 0x98; // ~
+const Comma: u8 = 0x9a; // ,
+const Dash: u8 = 0x9b; // - (only in patterns; zsh.h:182)
+const Bang: u8 = 0x9c; // ! (only in patterns; zsh.h:183)
+const Snull: u8 = 0x9d; // ' bslashquote marker
+const Dnull: u8 = 0x9e; // " bslashquote marker
+const Bnull: u8 = 0x9f; // \ backslash marker
+const Nularg: u8 = 0xa1; // empty argument marker
 
 /// Untokenize a zsh tokenized string back to shell syntax
 pub(crate) fn untokenize(bytes: &[u8]) -> String {
@@ -138,27 +138,27 @@ pub(crate) fn untokenize(bytes: &[u8]) -> String {
     while i < bytes.len() {
         let b = bytes[i];
         match b {
-            POUND => result.push('#'),
-            STRING | QSTRING => result.push('$'),
-            HAT => result.push('^'),
-            STAR => result.push('*'),
-            INPAR => result.push('('),
-            OUTPAR => result.push(')'),
-            EQUALS => result.push('='),
-            BAR => result.push('|'),
-            INBRACE => result.push('{'),
-            OUTBRACE => result.push('}'),
-            INBRACK => result.push('['),
-            OUTBRACK => result.push(']'),
-            TICK => result.push('`'),
-            INANG => result.push('<'),
-            OUTANG => result.push('>'),
-            QUEST => result.push('?'),
-            TILDE => result.push('~'),
-            COMMA => result.push(','),
-            DASH => result.push('-'),
-            BANG => result.push('!'),
-            SNULL | DNULL | BNULL | NULARG => {
+            Pound => result.push('#'),
+            STRING | Qstring => result.push('$'),
+            Hat => result.push('^'),
+            Star => result.push('*'),
+            Inpar => result.push('('),
+            Outpar => result.push(')'),
+            Equals => result.push('='),
+            Bar => result.push('|'),
+            Inbrace => result.push('{'),
+            Outbrace => result.push('}'),
+            Inbrack => result.push('['),
+            Outbrack => result.push(']'),
+            Tick => result.push('`'),
+            Inang => result.push('<'),
+            Outang => result.push('>'),
+            Quest => result.push('?'),
+            Tilde => result.push('~'),
+            Comma => result.push(','),
+            Dash => result.push('-'),
+            Bang => result.push('!'),
+            Snull | Dnull | Bnull | Nularg => {
                 // Skip null markers
             }
             0x89 => result.push_str("(("), // Inparmath
