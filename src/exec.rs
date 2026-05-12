@@ -4670,6 +4670,8 @@ impl crate::ported::exec::ShellExecutor {
     pub(crate) fn expand_prompt_string(&self, s: &str) -> String {
         expand_prompt(s)
     }
+    //WARNING FAKE AND MUST BE DELETED
+
     pub(crate) fn apply_prompt_theme(&mut self, theme: &str, preview: bool) {
         let (ps1, rps1) = match theme {
             "minimal" => ("%# ", ""),
@@ -4697,532 +4699,7 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
-    //WARNING FAKE AND MUST BE DELETED
-    pub fn evaluate_arithmetic(&mut self, expr: &str) -> String {
-        // First, resolve `$NAME[(flags)pat]` / `$@[(flags)pat]`
-        // before expand_string — otherwise `$@` gets joined into
-        // a scalar (`a b c`) and the trailing `[…]` becomes
-        // ambiguous text. zinit relies on `(( $@[(I)-*] ))`.
-        let expr_pre = if expr.contains('$') {
-            self.pre_resolve_dollar_subscripts(expr)
-        } else {
-            expr.to_string()
-        };
-        // Only run expand_string when the expression has `$` (for
-        // var/cmd-subst/nested-arith). Otherwise pass through —
-        // expand_string would tilde-expand `~` (bitwise NOT in arith
-        // context) into "no such user" errors.
-        let expr = if expr_pre.contains('$') || expr_pre.contains('`') {
-            crate::ported::subst::singsub(&expr_pre)
-        } else {
-            expr_pre
-        };
-        // Subscripted-array compound-assign / increment / decrement:
-        // `((a[i]++))`, `((a[i]+=v))`, `((a[i]-=v))`, etc. Read the
-        // current value, apply the operation, write back. MathState
-        // can't write through `a[i]` for compound forms (only the
-        // bare `=` write was special-cased below), so handle here.
-        // Subscript compound op: `((a[i]++))`, `((h[k]+=5))`, etc.
-        // Combined post-op + pre-op detection. Direct port of zsh
-        // math.c LVAL_NUM_SUBSC: the subscript receiver retains its
-        // lvalue identity across the operator. Without this,
-        // pre_resolve_array_subscripts substitutes the value first
-        // and `5++` errors "lvalue required".
-        let compound = parse_compound(&expr)
-            .map(|(n, i, o, r)| (n, i, o, r, false))
-            .or_else(|| {
-                parse_pre_inc(&expr).map(|(n, i, o)| (n, i, o, String::new(), true))
-            });
-        if let Some((name, idx_expr, op, rhs, is_pre)) = compound {
-            let is_assoc = self.has_assoc(&name);
-            let idx_val = if is_assoc {
-                0
-            } else {
-                self.eval_arith_expr(&idx_expr)
-            };
-            let key_str = if is_assoc {
-                let s = idx_expr.trim();
-                if (s.starts_with('"') && s.ends_with('"'))
-                    || (s.starts_with('\'') && s.ends_with('\''))
-                {
-                    s[1..s.len() - 1].to_string()
-                } else {
-                    s.to_string()
-                }
-            } else {
-                String::new()
-            };
-            let rhs_val = if rhs.is_empty() {
-                1
-            } else {
-                self.eval_arith_expr(&rhs)
-            };
-            let cur: i64 = if is_assoc {
-                self.assoc(&name)
-                    .and_then(|m| m.get(&key_str).and_then(|v| v.parse().ok()))
-                    .unwrap_or(0)
-            } else if let Some(arr) = self.array(&name) {
-                let len = arr.len() as i64;
-                let pos = if idx_val < 0 {
-                    len + idx_val
-                } else {
-                    idx_val - 1
-                };
-                if pos >= 0 && (pos as usize) < arr.len() {
-                    arr[pos as usize].parse().unwrap_or(0)
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
-            let new_val: i64 = match op.as_str() {
-                "++" => cur + 1,
-                "--" => cur - 1,
-                "+=" => cur + rhs_val,
-                "-=" => cur - rhs_val,
-                "*=" => cur * rhs_val,
-                "/=" => {
-                    if rhs_val == 0 {
-                        zerr("division by zero");
-                        return cur.to_string();
-                    }
-                    cur / rhs_val
-                }
-                "%=" => {
-                    if rhs_val == 0 {
-                        zerr("division by zero");
-                        return cur.to_string();
-                    }
-                    cur % rhs_val
-                }
-                "&=" => cur & rhs_val,
-                "|=" => cur | rhs_val,
-                "^=" => cur ^ rhs_val,
-                "<<=" => cur << rhs_val,
-                ">>=" => cur >> rhs_val,
-                "**=" => (cur as f64).powi(rhs_val as i32) as i64,
-                _ => cur,
-            };
-            // Write back.
-            if is_assoc {
-                let mut map = self.assoc(&name).unwrap_or_default();
-                map.insert(key_str, new_val.to_string());
-                self.set_assoc(name.clone(), map);
-            } else if let Some(mut arr) = self.array(&name) {
-                let len = arr.len() as i64;
-                let pos = if idx_val < 0 {
-                    len + idx_val
-                } else {
-                    idx_val - 1
-                };
-                if pos >= 0 {
-                    let p = pos as usize;
-                    if p >= arr.len() {
-                        arr.resize(p + 1, "0".to_string());
-                    }
-                    arr[p] = new_val.to_string();
-                }
-                self.set_array(name, arr);
-            } else {
-                // Auto-create indexed array.
-                let mut arr: Vec<String> = Vec::new();
-                let pos = (idx_val - 1).max(0) as usize;
-                arr.resize(pos + 1, "0".to_string());
-                arr[pos] = new_val.to_string();
-                self.set_array(name, arr);
-            }
-            // Post `++`/`--` returns OLD value; pre-op + compound
-            // assigns return NEW value.
-            let result = if !is_pre && (op == "++" || op == "--") {
-                cur
-            } else {
-                new_val
-            };
-            return result.to_string();
-        }
-        // Subscripted-array arith assignment: `((a[i]=expr))`. Without
-        // this special case, pre_resolve_array_subscripts would
-        // substitute a[i] with its current value (`0=42` → invalid).
-        if let Some((name, idx_expr, rhs)) = parse_assign(&expr) {
-            let idx_val = self.eval_arith_expr(&idx_expr);
-            let rhs_val = self.eval_arith_expr(&rhs);
-            if let Some(mut arr) = self.array(&name) {
-                let i_pos = if idx_val < 0 {
-                    arr.len() as i64 + idx_val
-                } else {
-                    idx_val - 1
-                };
-                if i_pos >= 0 {
-                    let pos = i_pos as usize;
-                    if pos >= arr.len() {
-                        arr.resize(pos + 1, "0".to_string());
-                    }
-                    arr[pos] = rhs_val.to_string();
-                }
-                self.set_array(name, arr);
-            } else if self.has_assoc(&name) {
-                let mut map = self.assoc(&name).unwrap_or_default();
-                map.insert(idx_val.to_string(), rhs_val.to_string());
-                self.set_assoc(name, map);
-            } else {
-                let mut arr: Vec<String> = Vec::new();
-                let i_pos = if idx_val < 0 {
-                    0
-                } else {
-                    (idx_val - 1).max(0) as usize
-                };
-                arr.resize(i_pos + 1, "0".to_string());
-                arr[i_pos] = rhs_val.to_string();
-                self.set_array(name, arr);
-            }
-            return rhs_val.to_string();
-        }
-        let expr = self.pre_resolve_array_subscripts(&expr);
-        // Output radix prefix `[#N]EXPR` (with `N#` prefix) and
-        // `[##N]EXPR` (without). Direct port of zsh's math.c
-        // (line 786 onward in patcompswitch's `[` case): `n=1`
-        // for single-`#` (prefix kept), `n=-1` for double-`##`
-        // (prefix dropped). The base must be 2..=36. Strip the
-        // prefix from `expr`, store the radix for post-eval
-        // formatting, then continue with the inner expression.
-        let mut output_radix: Option<(u32, bool)> = None;
-        let mut output_underscore: Option<u32> = None;
-        let expr = {
-            // Direct port of zsh src/zsh/Src/math.c:786-833. Handles:
-            //   [N]NUM       (base-N literal, processed elsewhere)
-            //   [#N]EXPR     (output radix N, prefixed `N#`)
-            //   [##N]EXPR    (output radix N, no prefix)
-            //   [#N_M]EXPR   (output radix N, group every M digits with `_`)
-            //   [##N_]EXPR   (output radix, group default 3 digits)
-            // Allow leading whitespace before `[#`; trim again after `]`.
-            let mut e = expr.as_str().trim_start();
-            if let Some(rest) = e.strip_prefix("[#") {
-                let (no_prefix_form, body) = if let Some(r2) = rest.strip_prefix('#') {
-                    (true, r2)
-                } else {
-                    (false, rest)
-                };
-                if let Some(close_idx) = body.find(']') {
-                    // Split radix and optional `_GROUP` per math.c:810-815:
-                    //   if (*ptr == '_') { ptr++; if (idigit(*ptr))
-                    //     outputunderscore=zstrtol(ptr,...); else outputunderscore=3; }
-                    let inside = &body[..close_idx];
-                    let (n_str, under_part) = match inside.find('_') {
-                        Some(p) => (&inside[..p], Some(&inside[p + 1..])),
-                        None => (inside, None),
-                    };
-                    if let Ok(n) = n_str.parse::<u32>() {
-                        if (2..=36).contains(&n) {
-                            output_radix = Some((n, no_prefix_form));
-                            // Underscore digit-group size. Empty
-                            // suffix means default 3 (matches zsh's
-                            // `else outputunderscore = 3`).
-                            output_underscore = under_part.map(|s| {
-                                if s.is_empty() {
-                                    3
-                                } else {
-                                    s.parse::<u32>().unwrap_or(3)
-                                }
-                            });
-                            e = body[close_idx + 1..].trim_start();
-                        }
-                    }
-                }
-            }
-            e.to_string()
-        };
-        let force_float = self.options.get("forcefloat").copied().unwrap_or(false);
-        let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
-        let octal = self.options.get("octalzeroes").copied().unwrap_or(false);
 
-        // Pre-resolve dynamic special parameters that aren't in the
-        // variables map: $RANDOM, $SECONDS, $EPOCHSECONDS,
-        // $EPOCHREALTIME, $LINENO, $PPID, $UID, $EUID, $GID, $EGID.
-        // MathState looks up names in a static HashMap, so without
-        // substitution these would resolve to 0. Inject the current
-        // value into a fresh extras HashMap.
-        //
-        // Seed with paramtab scalar values first (so canonical-set
-        // entries like `typeset -i n=10` are visible to arith eval),
-        // then overlay the legacy `self.variables` HashMap so fusevm-
-        // side direct writes win for entries that exist in both.
-        let mut extras: std::collections::HashMap<String, String> = {
-            let tab = crate::ported::params::paramtab().lock();
-            match tab {
-                Ok(g) => g
-                    .iter()
-                    .filter_map(|(k, pm)| pm.u_str.clone().map(|v| (k.clone(), v)))
-                    .collect(),
-                Err(_) => std::collections::HashMap::new(),
-            }
-        };
-        if let Ok(tab) = crate::ported::params::paramtab().lock() {
-            for (k, pm) in tab.iter().filter(|(_, p)| p.u_arr.is_none()) {
-                extras.insert(k.clone(), pm.u_str.clone().unwrap_or_default());
-            }
-        }
-        for special in [
-            "RANDOM",
-            "SECONDS",
-            "EPOCHSECONDS",
-            "EPOCHREALTIME",
-            "LINENO",
-            "PPID",
-            "UID",
-            "EUID",
-            "GID",
-            "EGID",
-        ] {
-            if !extras.contains_key(special) || special == "RANDOM" {
-                let v = self.get_variable(special);
-                extras.insert(special.to_string(), v);
-            }
-        }
-        new(&expr);
-        with_string_variables(&extras);
-        with_force_float(force_float);
-        with_c_precedences(c_prec);
-        with_octal_zeroes(octal);
-
-        match mathevall() {
-            Ok(result) => {
-                for (k, v) in extract_string_variables() {
-                    let formatted = self.format_for_var_attr(&k, &v);
-                    // Only mirror to env when the variable is
-                    // explicitly exported (typeset -x or env::var
-                    // already has it from a prior export). zshrs
-                    // previously env::set_var-d every arith write-
-                    // back, which leaked `local -i x=0; ((x=5))`
-                    // values into the process env and survived the
-                    // fn-exit local_save_stack unwind — variables
-                    // got restored but env::var() lookup-fallback
-                    // still saw the leaked value, so `${x:-unset}`
-                    // post-fn returned the stale leaked value.
-                    let is_exported =
-                        (self.param_flags(&k) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
-                    self.set_scalar(k.clone(), formatted.clone());
-                    if is_exported {
-                        env::set_var(&k, &formatted);
-                    }
-                }
-                // If the expression had a `[#N]` / `[##N]` prefix,
-                // format the integer result in base N. zsh's
-                // single-`#` form prefixes `N#`; double-`##` drops
-                // the prefix (math.c: `outputradix < 0` means
-                // no-prefix). Floats fall back to the default %g
-                // format (zsh: same thing — radix only affects
-                // integer results).
-                if let Some((base, no_prefix)) = output_radix {
-                    let n = (if result.type_ == crate::ported::math::MN_FLOAT { result.d as i64 } else { result.l });
-                    // Direct port of convbase_underscore at
-                    // Src/params.c:5645 — handles `[#N_M]` underscore
-                    // grouping (no-op when group is None / 0).
-                    let body = crate::ported::params::convbase_underscore(
-                        n,
-                        base,
-                        output_underscore.map(|g| g as i32).unwrap_or(0),
-                    );
-                    // Direct port of convbase_ptr at
-                    // src/zsh/Src/params.c:5596-5604:
-                    //   isset(CBASES) && base == 16              → "0x"
-                    //   isset(CBASES) && base == 8 && OCTALZEROES → "0"
-                    //   base != 10                                → "N#"
-                    //   else                                      → ""
-                    // The double-`##` form (`[##N]`) drops the prefix
-                    // entirely (math.c outputradix < 0 → params.c:5606
-                    // takes the else branch with negated base, no prefix).
-                    let cbases = self.options.get("cbases").copied().unwrap_or(false);
-                    let octalzeroes = self.options.get("octalzeroes").copied().unwrap_or(false);
-                    // body currently has "N#DIGITS" (or "-N#DIGITS").
-                    // Strip the "N#" so we can prepend whichever prefix
-                    // the option-set demands.
-                    let (sign, raw_digits) = if let Some(stripped) = body.strip_prefix('-') {
-                        ("-", stripped)
-                    } else {
-                        ("", body.as_str())
-                    };
-                    // `convbase` prefixes `0x` for base 16 and `0` for
-                    // base 8 (mirroring C's default-output style).
-                    // Strip whichever prefix is present so we can
-                    // re-add the correct one (or none, for `[##N]`).
-                    let digits = if let Some(rest) = raw_digits.strip_prefix("0x") {
-                        rest
-                    } else if base == 8 && raw_digits.starts_with('0')
-                        && raw_digits.len() > 1
-                    {
-                        &raw_digits[1..]
-                    } else if let Some(idx) = raw_digits.find('#') {
-                        &raw_digits[idx + 1..]
-                    } else {
-                        raw_digits
-                    };
-                    let prefix = if no_prefix {
-                        ""
-                    } else if cbases && base == 16 {
-                        "0x"
-                    } else if cbases && base == 8 && octalzeroes {
-                        "0"
-                    } else if base != 10 {
-                        // Will format below with `N#` prefix.
-                        return format!("{}{}#{}", sign, base, digits);
-                    } else {
-                        ""
-                    };
-                    return format!("{}{}{}", sign, prefix, digits);
-                }
-                // zsh splits formatting between the two contexts that
-                // share this code path:
-                //   - `$(())` arithmetic substitution → `%g`-ish: 4.0
-                //     prints as "4." (zsh quirk — keeps the dot to
-                //     mark "this is float", drops trailing zeros)
-                //   - storage from `let`/`(( a=… ))` → `%.10f`
-                // extract_string_variables (storage) already uses
-                // %.10f via format_zsh; here for the substitution
-                // return value emulate zsh's %g style.
-                match result.type_ {
-                    MN_INTEGER => result.l.to_string(),
-                    crate::ported::math::MN_FLOAT => crate::ported::params::convfloat(result.d, 0, 0),
-                    _ => "0".to_string(),
-                }
-            }
-            Err(msg) => {
-                // zsh writes arith errors to stderr in `zsh:LINE: <msg>`
-                // form. Status conventions differ by context but both
-                // paths call this method — emit the diagnostic and
-                // return "0"; the calling site decides whether to abort
-                // (substitution: zsh aborts the whole command) or
-                // continue (arith command: status 1-or-2 from the
-                // StrEq-to-"0" check). Avoid touching `last_status`
-                // here — the SetStatus op emitted by callers wins
-                // anyway, AND a stray `last_status=2` clobbers the
-                // status of unrelated paths that share evaluate_arith
-                // (e.g. `a+=y` where the value parses as a non-arith
-                // string then errors silently).
-                zerr(&format!("{}", msg));
-                // zsh aborts the surrounding command on arith
-                // errors — `echo $((2#5))` emits the diagnostic
-                // but does NOT print `0`. Match common error
-                // shapes — "bad math expression" is the canonical
-                // give-up signal; "invalid base" is a separate
-                // diagnostic from numeric base parsing. Without
-                // this, zshrs printed the diagnostic THEN the
-                // bogus `0` value.
-                if msg.starts_with("bad math expression") || msg.starts_with("invalid base") {
-                    std::process::exit(1);
-                }
-                // NOTE: NOT aborting on "division by zero" — `((1/0))`
-                // arith COMMAND continues with non-zero status (zsh
-                // sets 2). Only `$((1/0))` substitution should abort,
-                // but both share this evaluator and we lack a context
-                // signal to distinguish. Keeping continue-with-"0"
-                // for now; substitution callers see the diagnostic.
-                "0".to_string()
-            }
-        }
-    }
-
-    //WARNING FAKE AND MUST BE DELETED
-
-    pub(crate) fn eval_arith_expr(&mut self, expr: &str) -> i64 {
-        let expr_expanded = if expr.contains('$') || expr.contains('`') {
-            crate::ported::subst::singsub(expr)
-        } else {
-            expr.to_string()
-        };
-        // Subscripted-array arith assignment: `((a[i]=expr))`. The
-        // pre_resolve_array_subscripts pass below substitutes a[i]
-        // with the current value (e.g. 0=42 → invalid). Detect the
-        // assignment LHS first, evaluate the RHS, write to arrays.
-        if let Some((name, idx_expr, rhs)) = parse_assign(&expr_expanded) {
-            // Evaluate the index (could itself be an expression).
-            let idx_val = self.eval_arith_expr(&idx_expr);
-            // Evaluate the RHS.
-            let rhs_val = self.eval_arith_expr(&rhs);
-            // Write back: arrays for numeric idx, assoc otherwise.
-            if let Some(mut arr) = self.array(&name) {
-                let i_pos = if idx_val < 0 {
-                    arr.len() as i64 + idx_val
-                } else {
-                    idx_val - 1
-                };
-                if i_pos >= 0 {
-                    let pos = i_pos as usize;
-                    if pos >= arr.len() {
-                        arr.resize(pos + 1, "0".to_string());
-                    }
-                    arr[pos] = rhs_val.to_string();
-                }
-                self.set_array(name, arr);
-            } else if self.has_assoc(&name) {
-                let mut map = self.assoc(&name).unwrap_or_default();
-                map.insert(idx_val.to_string(), rhs_val.to_string());
-                self.set_assoc(name, map);
-            } else {
-                // Auto-create indexed array.
-                let mut arr: Vec<String> = Vec::new();
-                let i_pos = if idx_val < 0 {
-                    0
-                } else {
-                    (idx_val - 1).max(0) as usize
-                };
-                arr.resize(i_pos + 1, "0".to_string());
-                arr[i_pos] = rhs_val.to_string();
-                self.set_array(name, arr);
-            }
-            return rhs_val;
-        }
-        let expr_expanded = self.pre_resolve_array_subscripts(&expr_expanded);
-        let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
-        let octal = self.options.get("octalzeroes").copied().unwrap_or(false);
-
-        new(&expr_expanded);
-        let scalar_snap: HashMap<String, String> =
-            if let Ok(tab) = crate::ported::params::paramtab().lock() {
-                tab.iter()
-                    .filter(|(_, p)| p.u_arr.is_none())
-                    .map(|(k, p)| (k.clone(), p.u_str.clone().unwrap_or_default()))
-                    .collect()
-            } else {
-                HashMap::new()
-            };
-        with_string_variables(&scalar_snap);
-        with_c_precedences(c_prec);
-        with_octal_zeroes(octal);
-
-        match mathevall() {
-            Ok(result) => {
-                for (k, v) in extract_string_variables() {
-                    let formatted = self.format_for_var_attr(&k, &v);
-                    // Only mirror to env when the variable is
-                    // explicitly exported (typeset -x or env::var
-                    // already has it from a prior export). zshrs
-                    // previously env::set_var-d every arith write-
-                    // back, which leaked `local -i x=0; ((x=5))`
-                    // values into the process env and survived the
-                    // fn-exit local_save_stack unwind — variables
-                    // got restored but env::var() lookup-fallback
-                    // still saw the leaked value, so `${x:-unset}`
-                    // post-fn returned the stale leaked value.
-                    let is_exported =
-                        (self.param_flags(&k) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
-                    self.set_scalar(k.clone(), formatted.clone());
-                    if is_exported {
-                        env::set_var(&k, &formatted);
-                    }
-                }
-                (if result.type_ == crate::ported::math::MN_FLOAT { result.d as i64 } else { result.l })
-            }
-            Err(msg) => {
-                // zsh writes arith errors (div-by-zero, bad expr, etc.) to
-                // stderr in the form `zshrs:LINE: <message>`. Without this
-                // gate, `$((10/0))` returned 0 silently — masking real bugs
-                // in user scripts.
-                zerr(&format!("{}", msg));
-                0
-            }
-        }
-    }
 }
 
 // =====================================================================
@@ -5237,6 +4714,8 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
+
+    //WARNING FAKE AND MUST BE DELETED
 
     pub(crate) fn builtin_jobs(&mut self, args: &[String]) -> i32 {
         // jobs [ -dlprsZ ] [ job ... ]
@@ -5372,6 +4851,8 @@ impl crate::ported::exec::ShellExecutor {
         }
         0
     }
+    //WARNING FAKE AND MUST BE DELETED
+
     pub(crate) fn builtin_bg(&mut self, args: &[String]) -> i32 {
         // Same no-job-control semantics as `fg` — see comment there.
         if !atty::is(atty::Stream::Stdin) {
@@ -5413,6 +4894,8 @@ impl crate::ported::exec::ShellExecutor {
         println!("[{}] {} &", id, cmd);
         0
     }
+    //WARNING FAKE AND MUST BE DELETED
+
     pub(crate) fn builtin_disown(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
             // Disown current job — but if there isn't one, zsh emits
@@ -5459,6 +4942,8 @@ impl crate::ported::exec::ShellExecutor {
         }
         status
     }
+    //WARNING FAKE AND MUST BE DELETED
+
     pub(crate) fn builtin_wait(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
             // Wait for all jobs. Two job-entry shapes coexist:
@@ -5608,6 +5093,7 @@ impl crate::ported::exec::ShellExecutor {
 impl crate::ported::exec::ShellExecutor {
     /// Static glob match — same logic as glob_match but callable without &self,
     /// needed for Rayon parallel iterators that can't capture &self.
+    ///     //WARNING FAKE AND MUST BE DELETED
     pub fn glob_match_static(s: &str, pattern: &str) -> bool {
         // Extendedglob `^pat` negation: when extendedglob is on AND
         // the pattern starts with a literal `^`, strip it and invert

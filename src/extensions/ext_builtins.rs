@@ -1187,6 +1187,7 @@ impl ShellExecutor {
     }
 
     /// readarray/mapfile - read lines into array (bash)
+    ///     //WARNING FAKE AND MUST BE DELETED
     pub(crate) fn builtin_readarray(&mut self, args: &[String]) -> i32 {
         // bash readarray / mapfile: read lines from a fd into an array.
         // Direct port of bash's read_builtin_array_loadable. zsh has no
@@ -1312,6 +1313,8 @@ impl ShellExecutor {
         let _ = (callback, callback_quantum);
         0
     }
+
+    //WARNING FAKE AND MUST BE DELETED
 
     pub(crate) fn builtin_shopt(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
@@ -2015,6 +2018,7 @@ impl ShellExecutor {
     /// modifier (Src/exec.c precommand-modifier loop). Without this
     /// handler, `nocorrect echo hello` resolved `nocorrect` as a
     /// command and exited 127.
+    ///     //WARNING FAKE AND MUST BE DELETED
     pub(crate) fn builtin_nocorrect(&mut self, args: &[String], _redirects: &[Redirect]) -> i32 {
         if args.is_empty() {
             return 0;
@@ -2032,6 +2036,7 @@ impl ShellExecutor {
     }
 
     /// zsleep - sleep with fractional seconds
+    ///     //WARNING FAKE AND MUST BE DELETED
     pub(crate) fn builtin_zsleep(&self, args: &[String]) -> i32 {
         // zsh/Src/Modules/system.c sleep_main accepts a single
         // non-negative numeric arg (NaN / negative / inf are
@@ -2069,6 +2074,7 @@ impl ShellExecutor {
 
     /// cp - copy files
     /// Port from zsh/Src/Modules/files.c recursive copy functionality
+    ///     //WARNING FAKE AND MUST BE DELETED
     pub(crate) fn builtin_cp(&self, args: &[String]) -> i32 {
         let mut recursive = false;
         let mut force = false;
@@ -2214,6 +2220,7 @@ impl ShellExecutor {
     }
 
     /// zln/zmv/zcp - file operations (zsh/files module)
+    ///     //WARNING FAKE AND MUST BE DELETED
     pub(crate) fn builtin_zfiles(&self, cmd: &str, args: &[String]) -> i32 {
         let mut force = false;
         let mut verbose = false;
@@ -2295,6 +2302,7 @@ impl ShellExecutor {
     }
 
     /// coproc - manage coprocesses
+    ///     //WARNING FAKE AND MUST BE DELETED
     pub(crate) fn builtin_coproc(&mut self, args: &[String]) -> i32 {
         // Basic coproc implementation
         if args.is_empty() {
@@ -2339,6 +2347,7 @@ impl ShellExecutor {
     ///   -L   force ln mode (hard link)
     ///   -s   ln -s (symlink) when in ln mode
     ///   -p prog  use `prog` instead of mv/cp/ln
+    ///     //WARNING FAKE AND MUST BE DELETED
     pub(crate) fn builtin_zmv(&mut self, args: &[String], default_action: &str) -> i32 {
         let mut action = default_action.to_string();
         let mut dry_run = false;
@@ -2599,6 +2608,7 @@ impl ShellExecutor {
     /// zcalc is interactive (REPL); we support the `-e EXPR` form
     /// which evaluates a single expression and prints the result.
     /// Without `-e`, interactive mode is not supported and we exit 1.
+    ///     //WARNING FAKE AND MUST BE DELETED
     pub(crate) fn builtin_zcalc(&mut self, args: &[String]) -> i32 {
         // -e EXPR / --expression EXPR — evaluate one expression and
         // print the result.
@@ -2606,12 +2616,12 @@ impl ShellExecutor {
         while let Some(a) = iter.next() {
             if a == "-e" || a == "--expression" {
                 if let Some(expr) = iter.next() {
-                    let result = self.evaluate_arithmetic(expr);
+                    let result = crate::ported::subst::arithsubst(expr, "", "");
                     println!("{}", result);
                     return 0;
                 }
             } else if let Some(expr) = a.strip_prefix("-e") {
-                let result = self.evaluate_arithmetic(expr);
+                let result = crate::ported::subst::arithsubst(expr, "", "");
                 println!("{}", result);
                 return 0;
             }
@@ -2646,6 +2656,7 @@ impl ShellExecutor {
     }
 
     /// promptinit - initialize prompt theme system
+    ///     //WARNING FAKE AND MUST BE DELETED
     pub(crate) fn builtin_promptinit(&mut self, _args: &[String]) -> i32 {
         self.set_array(
             "prompt_themes".to_string(),
@@ -2676,6 +2687,7 @@ impl ShellExecutor {
     }
 
     /// prompt - set or list prompt themes
+    //WARNING FAKE AND MUST BE DELETED
     pub(crate) fn builtin_prompt(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
             let theme = self

@@ -1378,6 +1378,62 @@ pub(crate) fn getmathparam(name: &str) -> Mnumber {
         if let Some(v) = m_variables_get(base_name) {
             return v;
         }
+        // c:Src/math.c:337 getmathparam — falls back to `getvalue(s)`
+        // which parses the full subscript syntax (params.c:2180).
+        // The Rust port previously required callers to seed
+        // `with_string_variables` (a pre-populate pattern that
+        // diverged from C). Read paramtab + array subscripts here
+        // so matheval works without seeding.
+        if let Some(bracket) = name.find('[') {
+            let close = name.rfind(']').unwrap_or(name.len());
+            let arr_name = &name[..bracket];
+            let idx_str = &name[bracket + 1..close];
+            // Recursively eval the index (so a[i+1], h[$k], etc work).
+            let idx_val = matheval(idx_str)
+                .map(|n| if n.type_ == crate::ported::zsh_h::MN_FLOAT { n.d as i64 } else { n.l })
+                .unwrap_or(0);
+            // Read paramtab directly: PM_ARRAY → u_arr indexed by 1-based pos.
+            if let Ok(tab) = crate::ported::params::paramtab().lock() {
+                if let Some(pm) = tab.get(arr_name) {
+                    if let Some(arr) = &pm.u_arr {
+                        let len = arr.len() as i64;
+                        let pos = if idx_val < 0 { len + idx_val } else { idx_val - 1 };
+                        if pos >= 0 && (pos as usize) < arr.len() {
+                            let raw = &arr[pos as usize];
+                            if let Ok(n) = raw.parse::<i64>() {
+                                return Mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
+                            }
+                            if let Ok(f) = raw.parse::<f64>() {
+                                return Mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
+                            }
+                        }
+                    }
+                }
+            }
+            // PM_HASHED via paramtab_hashed_storage.
+            if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
+                if let Some(map) = m.get(arr_name) {
+                    if let Some(v) = map.get(idx_str) {
+                        if let Ok(n) = v.parse::<i64>() {
+                            return Mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
+                        }
+                        if let Ok(f) = v.parse::<f64>() {
+                            return Mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
+                        }
+                    }
+                }
+            }
+            return Mnumber { l: 0, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
+        }
+        if let Some(raw) = crate::ported::params::getsparam(base_name) {
+            if let Ok(n) = raw.parse::<i64>() {
+                return Mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
+            }
+            if let Ok(f) = raw.parse::<f64>() {
+                return Mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
+            }
+            // Non-numeric string: fall through to recursive-eval below.
+        }
         // Recursive eval: if the var holds a non-numeric string, evaluate
         // it AS an arith expression. zsh: `a="3+2"; $((a))` → 5. Bound
         // to one level of indirection — fresh evaluator each call so we
