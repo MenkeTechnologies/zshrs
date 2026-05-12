@@ -1083,14 +1083,108 @@ pub fn parse() -> ZshProgram {
 /// drives the live ECBUF emission so downstream consumers (P9d
 /// exec_wordcode) have a real wordcode buffer to walk.
 pub fn par_event_wordcode() -> usize {
-    // Reset the wordcode buffer for this parse — parse.c:513
-    // `init_parse` zeros it. P9b's `init_parse` does the full
-    // reset; we just need the start index for the caller.
     let start = ECUSED.get() as usize;
-    // parse.c:712 — `ecadd(WCB_END());` terminates every parse_event
-    // with the end marker.
+    // parse.c:691-710 — par_list loop. Each iteration emits one WC_LIST
+    // entry plus its sublist payload; terminator handling between
+    // lists matches the SEMI/NEWLIN/AMPER/SEPER switch in the C source.
+    while crate::ported::lex::tok() != ENDINPUT
+        && crate::ported::lex::tok() != LEXERR
+    {
+        par_list_wordcode();
+        match crate::ported::lex::tok() {
+            SEMI | NEWLIN | AMPER | AMPERBANG | SEPER => {
+                crate::ported::lex::zshlex();
+            }
+            _ => break,
+        }
+    }
+    // parse.c:712 — `ecadd(WCB_END());`
     ecadd(crate::ported::zsh_h::WCB_END());
     start
+}
+
+/// P9c stub: direct port of `par_list(int *complex)` from
+/// `Src/parse.c:799-878`. Emits WC_LIST + the sublist body. Real
+/// implementation tracks Z_SYNC/Z_ASYNC/Z_END flags and emits per-list
+/// `WCB_LIST(flags, skip)` headers; this stub emits Z_SYNC + skip
+/// patched after the sublist payload size is known.
+pub fn par_list_wordcode() {
+    let p = ecadd(0); // reserve WCB_LIST patch slot
+    par_sublist_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            let data = (crate::ported::zsh_h::Z_SYNC as u32)
+                | ((skip as u32) << crate::ported::zsh_h::WC_LIST_FREE);
+            b[p] = crate::ported::zsh_h::WC_LIST
+                | (data << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: direct port of `par_sublist(int *complex)` from
+/// `Src/parse.c:880-980`. Emits WC_SUBLIST + pipeline. Real
+/// implementation handles `!`/`&&`/`||`/coproc; this stub emits a
+/// single sublist + pipeline.
+pub fn par_sublist_wordcode() {
+    let p = ecadd(0);
+    par_pipe_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            let data = (skip as u32) << 7;
+            b[p] = crate::ported::zsh_h::WC_SUBLIST
+                | (data << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: direct port of `par_pline(int *complex)` from
+/// `Src/parse.c:982-1020`. Emits WC_PIPE + cmd. Real implementation
+/// handles `|`/`|&` pipeline chains.
+pub fn par_pipe_wordcode() {
+    let p = ecadd(0);
+    par_cmd_wordcode();
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            let skip = b.len() - p - 1;
+            let data = (crate::ported::zsh_h::WC_PIPE_END as u32)
+                | ((skip as u32) << 1);
+            b[p] = crate::ported::zsh_h::WC_PIPE
+                | (data << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
+}
+
+/// P9c stub: direct port of `par_cmd(int *complex, int zsh_construct)`
+/// from `Src/parse.c:1022-1320`. Real implementation dispatches on tok
+/// to ~15 different par_* subroutines (par_for, par_case, par_if, etc.);
+/// this stub falls through to par_simple_wordcode for every shape.
+pub fn par_cmd_wordcode() {
+    par_simple_wordcode();
+}
+
+/// P9c stub: direct port of `par_simple(int *complex, int nr)` from
+/// `Src/parse.c:1321-1640`. Emits WC_SIMPLE + word count + interned
+/// string offsets. Real implementation walks assignments + redirections
+/// inline; this stub emits a WC_SIMPLE header with `nwords` plus one
+/// ecstrcode'd string per STRING_LEX token consumed.
+pub fn par_simple_wordcode() {
+    let p = ecadd(0);
+    let mut nwords: u32 = 0;
+    while crate::ported::lex::tok() == STRING_LEX {
+        let s = crate::ported::lex::tokstr().unwrap_or_default();
+        let coded = ecstrcode(&s);
+        ecadd(coded);
+        nwords += 1;
+        crate::ported::lex::zshlex();
+    }
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() {
+            b[p] = crate::ported::zsh_h::WC_SIMPLE
+                | (nwords << crate::ported::zsh_h::WC_CODEBITS);
+        }
+    });
 }
 
 /// Parse a program (list of lists)
