@@ -1278,7 +1278,8 @@ pub fn eval_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,     // 
 /// raw file text on `ShFunc.body` (the Rust-side ShFunc in
 /// `hashtable.rs:362`); the parser pass that converts text →
 /// Eprog runs lazily at first call site.
-fn loadautofn(shf: *mut crate::ported::zsh_h::shfunc,                        // c:5050 (Src/exec.c)
+/// Port of `loadautofn` from `Src/exec.c:5682`.
+fn loadautofn(shf: *mut crate::ported::zsh_h::shfunc,                        // c:5682 (Src/exec.c)
               _ks: i32, test_only: i32, _ignore_loaddir: i32) -> i32 {
     use crate::ported::zsh_h::PM_UNDEFINED;
     if shf.is_null() {
@@ -1504,7 +1505,7 @@ pub fn add_autoload_function(shf: *mut crate::ported::zsh_h::shfunc,         // 
         // c:3298-3299 — `shf->node.flags |= PM_LOADDIR | PM_ABSPATH_USED;`
         shf_ref.node.flags |= (PM_LOADDIR | PM_ABSPATH_USED) as i32;         // c:3298
         // c:3300 — `shfunctab->addnode(shfunctab, ztrdup(nam), shf);`
-        if let Ok(mut t) = SHFUNCTAB.lock() {
+        if let Ok(mut t) = shfunctab_table().lock() {
             t.insert(nam, shf as usize);                                     // c:3300
         }
     } else {
@@ -1525,7 +1526,7 @@ pub fn add_autoload_function(shf: *mut crate::ported::zsh_h::shfunc,         // 
         };
         if let Some(cf) = calling_f {                                        // c:3315
             // c:3316 — `shf2 = shfunctab->getnode2(shfunctab, calling_f);`
-            let shf2_ptr = SHFUNCTAB.lock()
+            let shf2_ptr = shfunctab_table().lock()
                 .ok()
                 .and_then(|t| t.get(&cf).copied())
                 .unwrap_or(0) as *mut crate::ported::zsh_h::shfunc;
@@ -1557,7 +1558,7 @@ pub fn add_autoload_function(shf: *mut crate::ported::zsh_h::shfunc,         // 
             }
         }
         // c:3334 — `shfunctab->addnode(shfunctab, ztrdup(funcname), shf);`
-        if let Ok(mut t) = SHFUNCTAB.lock() {
+        if let Ok(mut t) = shfunctab_table().lock() {
             t.insert(funcname.to_string(), shf as usize);                    // c:3334
         }
     }
@@ -1571,15 +1572,6 @@ static SHFUNCTAB_INNER: std::sync::OnceLock<std::sync::Mutex<std::collections::H
 pub fn shfunctab_table() -> &'static std::sync::Mutex<std::collections::HashMap<String, usize>> {
     SHFUNCTAB_INNER.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
-#[allow(non_camel_case_types)]
-pub struct ShfunctabAccessor;
-impl ShfunctabAccessor {
-    pub fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'static, std::collections::HashMap<String, usize>>> {
-        shfunctab_table().lock()
-    }
-}
-#[allow(non_upper_case_globals)]
-pub static SHFUNCTAB: ShfunctabAccessor = ShfunctabAccessor;
 
 /// Port of `mkautofn()` from Src/builtin.c:3790.
 /// C: `Eprog mkautofn(Shfunc shf)` — synthesize a 5-wordcode body that
@@ -1975,7 +1967,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
         let src_name = &argv[0];
         let dst_name = &argv[1];
         // c:3409 — `shf = shfunctab->getnode(shfunctab, *argv);`
-        let src_ptr = SHFUNCTAB.lock()
+        let src_ptr = shfunctab_table().lock()
             .ok()
             .and_then(|t| t.get(src_name.as_str()).copied())
             .unwrap_or(0) as *mut crate::ported::zsh_h::shfunc;
@@ -2035,7 +2027,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
             }
         }
         // c:3450 — `shfunctab->addnode(shfunctab, ztrdup(s), &newsh->node);`
-        if let Ok(mut t) = SHFUNCTAB.lock() {
+        if let Ok(mut t) = shfunctab_table().lock() {
             t.insert(dst_name.clone(), src_ptr as usize);                    // c:3450
         }
         return 0;                                                            // c:3451
@@ -2255,7 +2247,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
         } else {
             let fname = funcname.unwrap();
             // c:3640-3647 — getnode(shfunctab, funcname) || addnode(new shf).
-            let shf_ptr = SHFUNCTAB.lock()
+            let shf_ptr = shfunctab_table().lock()
                 .ok()
                 .and_then(|t| t.get(fname.as_str()).copied())
                 .unwrap_or(0) as *mut crate::ported::zsh_h::shfunc;
@@ -2264,7 +2256,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
             } else {
                 // c:3645 — `shf = zshcalloc(sizeof *shf);`
                 //          `shfunctab->addnode(shfunctab, ztrdup(funcname), shf);`
-                if let Ok(mut t) = SHFUNCTAB.lock() {
+                if let Ok(mut t) = shfunctab_table().lock() {
                     t.insert(fname.clone(), 0);                              // c:3646
                 }
             }
@@ -2329,7 +2321,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
                 } else {
                     // c:3686-3699 — walk shfunctab, apply (on, off) and
                     // re-eval autoload for each matching shf.
-                    let names: Vec<String> = SHFUNCTAB.lock()
+                    let names: Vec<String> = shfunctab_table().lock()
                         .map(|t| t.keys().cloned().collect())
                         .unwrap_or_default();
                     for nm in &names {
@@ -2338,7 +2330,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
                         if !crate::ported::pattern::pattry(&prog, nm) {     // c:3690
                             continue;
                         }
-                        let shf_ptr = SHFUNCTAB.lock()
+                        let shf_ptr = shfunctab_table().lock()
                             .ok()
                             .and_then(|t| t.get(nm.as_str()).copied())
                             .unwrap_or(0) as *mut crate::ported::zsh_h::shfunc;
@@ -2374,7 +2366,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
             continue;
         }
         // c:3715 — `shf = shfunctab->getnode(shfunctab, *argv);`
-        let shf_ptr = SHFUNCTAB.lock()
+        let shf_ptr = shfunctab_table().lock()
             .ok()
             .and_then(|t| t.get(fname.as_str()).copied())
             .unwrap_or(0) as *mut crate::ported::zsh_h::shfunc;
@@ -2409,7 +2401,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
             if fname.starts_with('/') {                                      // c:3737
                 let base = fname.rsplit('/').next().unwrap_or("");
                 if !base.is_empty() {
-                    let base_ptr = SHFUNCTAB.lock()
+                    let base_ptr = shfunctab_table().lock()
                         .ok()
                         .and_then(|t| t.get(base).copied())
                         .unwrap_or(0) as *mut crate::ported::zsh_h::shfunc;
@@ -2462,7 +2454,7 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
                     crate::ported::zsh_h::ZSIG_FUNC,
                 ) != 0 {                                                     // c:3770
                     // c:3771 — `shfunctab->removenode(shfunctab, *argv);`
-                    if let Ok(mut t) = SHFUNCTAB.lock() {
+                    if let Ok(mut t) = shfunctab_table().lock() {
                         t.remove(fname);
                     }
                     // c:3772 — `shfunctab->freenode(&shf->node);` Drop covers it.
@@ -4203,7 +4195,7 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
                         }
                         // c:4056-4060 — shell functions scan
                         // (scanmatchshfunc → shfunctab walk + printnode).
-                        let names: Vec<String> = crate::ported::builtin::SHFUNCTAB
+                        let names: Vec<String> = crate::ported::builtin::shfunctab_table()
                             .lock().map(|t| t.keys().cloned().collect())
                             .unwrap_or_default();
                         for n in &names {
@@ -4323,7 +4315,7 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
                 if !all { continue; }                                        // c:4150
             }
             // c:4153-4158 — shell function check.
-            if let Ok(t) = crate::ported::builtin::SHFUNCTAB.lock() {
+            if let Ok(t) = crate::ported::builtin::shfunctab_table().lock() {
                 if t.contains_key(arg) {                                     // c:4153
                     if (printflags & PRINT_WHENCE_FUNCDEF as i32) != 0 {
                         let body = crate::ported::utils::getshfunc(arg)
@@ -4832,7 +4824,7 @@ pub fn bin_trap(name: &str, argv: &[String],                                 // 
     // c:7357-7380 — no args: list current traps.
     if argv.is_empty() {                                                     // c:7357
         crate::ported::mem::queue_signals();                                 // c:7358
-        let traps = TRAPS.lock().map(|t| t.clone()).unwrap_or_default();
+        let traps = traps_table().lock().map(|t| t.clone()).unwrap_or_default();
         for (sig, body) in traps.iter() {                                    // c:7359
             // c:7370-7375 — `printf("trap -- "); quotedzputs(...); printf(" %s\n", name);`
             print!("trap -- ");                                              // c:7372
@@ -4849,7 +4841,7 @@ pub fn bin_trap(name: &str, argv: &[String],                                 // 
         let start = if first == "-" { 1 } else { 0 };                        // c:7385
         if start >= argv.len() {                                             // c:7386
             // c:7387 — clear all.
-            if let Ok(mut t) = TRAPS.lock() {
+            if let Ok(mut t) = traps_table().lock() {
                 t.clear();                                                   // c:7388
             }
         } else {
@@ -4860,7 +4852,7 @@ pub fn bin_trap(name: &str, argv: &[String],                                 // 
                         &format!("undefined signal: {}", arg));              // c:7393
                     break;                                                   // c:7394
                 }
-                if let Ok(mut t) = TRAPS.lock() {
+                if let Ok(mut t) = traps_table().lock() {
                     t.remove(arg);                                           // c:7396
                 }
             }
@@ -4889,7 +4881,7 @@ pub fn bin_trap(name: &str, argv: &[String],                                 // 
                 &format!("undefined signal: {}", sigarg));                   // c:7427
             break;                                                           // c:7428
         }
-        if let Ok(mut t) = TRAPS.lock() {
+        if let Ok(mut t) = traps_table().lock() {
             t.insert(sigarg.clone(), arg.clone());                           // c:7448 (effective)
         }
     }
@@ -4904,15 +4896,6 @@ static TRAPS_INNER: std::sync::OnceLock<std::sync::Mutex<std::collections::HashM
 pub fn traps_table() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
     TRAPS_INNER.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
-#[allow(non_camel_case_types)]
-pub struct TrapsAccessor;
-impl TrapsAccessor {
-    pub fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'static, std::collections::HashMap<String, String>>> {
-        traps_table().lock()
-    }
-}
-#[allow(non_upper_case_globals)]
-pub static TRAPS: TrapsAccessor = TrapsAccessor;
 
 /// Port of `getsigidx()` from Src/signals.c — return signal number for
 /// a name, or -1 if unknown. Strips optional `SIG` prefix; falls back
@@ -5315,7 +5298,7 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
         Tab::Alias => { let _ = crate::ported::hashtable::aliastab_lock().write().map(|mut g| g.clear()); }
         Tab::SufAlias => { let _ = crate::ported::hashtable::sufaliastab_lock().write().map(|mut g| g.clear()); }
         Tab::NamedDir => { crate::ported::hashnameddir::emptynameddirtable(); }
-        Tab::Shfunc => { let _ = SHFUNCTAB.lock().map(|mut g| g.clear()); }
+        Tab::Shfunc => { let _ = shfunctab_table().lock().map(|mut g| g.clear()); }
         Tab::CmdNam => { crate::ported::hashtable::emptycmdnamtable(); }     // c:4389
     };
     let remove_one = |t: &Tab, nm: &str| -> bool {
@@ -5325,7 +5308,7 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
             Tab::SufAlias => crate::ported::hashtable::sufaliastab_lock().write()
                 .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
             Tab::NamedDir => crate::ported::hashnameddir::removenameddirnode(nm).is_some(),
-            Tab::Shfunc => SHFUNCTAB.lock()
+            Tab::Shfunc => shfunctab_table().lock()
                 .map(|mut g| g.remove(nm).is_some()).unwrap_or(false),
             // c:4405 — `cmdnamtab->removenode(cmdnamtab, asg->name)`.
             Tab::CmdNam => {
@@ -5357,7 +5340,7 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
                         .map(|t| t.iter().map(|(n,_)| n.clone()).collect()).unwrap_or_default(),
                     Tab::NamedDir => crate::ported::hashnameddir::nameddirtab().lock()
                         .map(|t| t.keys().cloned().collect()).unwrap_or_default(),
-                    Tab::Shfunc => SHFUNCTAB.lock()
+                    Tab::Shfunc => shfunctab_table().lock()
                         .map(|t| t.keys().cloned().collect()).unwrap_or_default(),
                     Tab::CmdNam => Vec::new(),
                 };

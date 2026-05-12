@@ -166,6 +166,7 @@ pub fn alignmultiwordright(_pos: &mut usize, _interactive: i32) {            // 
 /// ```
 /// `backward-char` widget — move cursor left by `zmult` positions.
 /// Negative count delegates to `forwardchar` with negated count.
+/// Port of `backwardchar` from `Src/Zle/zle_move.c:463`.
 pub fn backwardchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {    // c:463
     let mut n = zle.zmod.mult;                                               // c:466 int n = zmult
     if n < 0 {                                                               // c:468
@@ -354,6 +355,7 @@ pub fn endoflinehist(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {   // 
 /// Swap the cursor (point) with the mark. With `zmult == 0` just
 /// activates the region without swapping. With `zmult > 0` also
 /// activates the region after the swap.
+/// Port of `exchangepointandmark` from `Src/Zle/zle_move.c:495`.
 pub fn exchangepointandmark(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:495
     if zle.zmod.mult == 0 {                                                  // c:500 if (zmult == 0)
         zle.region_active = 1;                                               // c:501
@@ -391,6 +393,7 @@ pub fn exchangepointandmark(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 
 /// ```
 /// `forward-char` widget — move cursor right by `zmult` positions.
 /// Negative count delegates to `backwardchar` with negated count.
+/// Port of `forwardchar` from `Src/Zle/zle_move.c:440`.
 pub fn forwardchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {     // c:440
     let mut n = zle.zmod.mult;                                               // c:443 int n = zmult
     if n < 0 {                                                               // c:445
@@ -458,6 +461,7 @@ pub fn incpos(pos: &mut usize) {                                             // 
 /// `set-mark-command` widget — saves the cursor position into
 /// `mark` and activates the region. Negative numeric arg
 /// (`zmult < 0`) cancels the region instead.
+/// Port of `setmarkcommand` from `Src/Zle/zle_move.c:482`.
 pub fn setmarkcommand(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:482
     if zle.zmod.mult < 0 {                                                   // c:485 if (zmult < 0)
         zle.region_active = 0;                                               // c:486
@@ -495,6 +499,7 @@ pub fn setmarkcommand(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // 
 /// ```
 /// `vi-backward-char` widget — move left by zmult positions but
 /// stop at the start of the current line (don't cross a newline).
+/// Port of `vibackwardchar` from `Src/Zle/zle_move.c:682`.
 pub fn vibackwardchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:682
     let mut n = zle.zmod.mult;                                               // c:685
     if n < 0 {                                                               // c:687
@@ -688,6 +693,7 @@ pub fn vifindprevcharskip(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 { 
 /// ```
 /// `vi-first-non-blank` widget — jump to bol then skip leading
 /// whitespace. ZC_iblank is `iblank` (space/tab) for ASCII.
+/// Port of `vifirstnonblank` from `Src/Zle/zle_move.c:861`.
 pub fn vifirstnonblank(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:861
     zle.zlecs = crate::ported::zle::zle_utils::findbol(zle);                 // c:864
     while zle.zlecs != zle.zlell {                                           // c:865
@@ -727,6 +733,7 @@ pub fn vifirstnonblank(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  //
 /// `vi-forward-char` widget — move right by zmult positions but
 /// stop at the end of the current line. In vi-cmd-mode the cursor
 /// can't sit ON the trailing newline (DECPOS(lim) excludes it).
+/// Port of `viforwardchar` from `Src/Zle/zle_move.c:659`.
 pub fn viforwardchar(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {   // c:659
     let mut lim = crate::ported::zle::zle_utils::findeol(zle);               // c:662
     let mut n = zle.zmod.mult;                                               // c:663

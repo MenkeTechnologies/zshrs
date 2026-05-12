@@ -742,6 +742,7 @@ mod tests {
 /// opts[EXTENDEDGLOB] = oldextendedglob;
 /// return ret;
 /// ```
+/// Port of `bin_zregexparse` from `Src/Modules/zutil.c:1486`.
 pub fn bin_zregexparse(nam: &str, args: &[String],                            // c:1486
                        ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;

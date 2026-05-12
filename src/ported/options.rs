@@ -22,19 +22,6 @@ use crate::ported::utils::zwarnnam;
 #[allow(non_upper_case_globals)]
 pub static emulation: AtomicI32 = AtomicI32::new(0);                         // c:36
 
-/// Shell emulation modes.
-/// Port of the `EMULATE_*` constants from Src/zsh.h —
-/// `emulate()` (Src/options.c:533) maps the `--emulate NAME`
-/// argument onto these and `installemulation()` (line 523) flips
-/// the option flags to match.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Emulation {
-    Zsh = 1,
-    Csh = 2,
-    Ksh = 4,
-    Sh = 8,
-}
-
 /// Emulation flags for option defaults
 // `#define OPT_X EMULATE_X` (options.c:55-58) — the option-default
 // bits ARE the emulation bits. Direct mirror of the C macros.
@@ -62,24 +49,8 @@ const OPT_ALIAS: u16 = (crate::ported::zsh_h::EMULATE_UNUSED << 2) as u16;   // 
 /// (Src/options.c:684), `dosetopt()` (line 735), and the option
 /// table built by `createoptiontable()` (line 471).
 
-/// Option aliases for bash/ksh compatibility
-pub static OPTION_ALIASES: &[(&str, &str, bool)] = &[
-    ("braceexpand", "ignorebraces", true),  // ksh/bash, negated
-    ("dotglob", "globdots", false),         // bash
-    ("hashall", "hashcmds", false),         // bash
-    ("histappend", "appendhistory", false), // bash
-    ("histexpand", "banghist", false),      // bash
-    ("log", "histnofunctions", true),       // ksh, negated
-    ("mailwarn", "mailwarning", false),     // bash
-    ("onecmd", "singlecommand", false),     // bash
-    ("physical", "chaselinks", false),      // ksh/bash
-    ("promptvars", "promptsubst", false),   // bash
-    ("stdin", "shinstdin", false),          // ksh
-    ("trackall", "hashcmds", false),        // ksh
-];
-
 /// Zsh single-letter options (zshletters in C)
-pub static ZSH_LETTERS: &[(char, &str, bool)] = &[
+pub static zshletters: &[(char, &str, bool)] = &[
     ('0', "correct", false),
     ('1', "printexitvalue", false),
     ('2', "badpattern", true),
@@ -168,8 +139,10 @@ pub struct ShellOptions {
     /// Current option values (true = set)
     options: HashMap<String, bool>,
     // current emulation (used to decide which set of option letters is used) // c:33
-    /// Current emulation mode
-    pub emulation: Emulation,
+    /// Current emulation mode — bare `int emulation` per `Src/options.c`.
+    /// Values: `EMULATE_ZSH` / `EMULATE_CSH` / `EMULATE_KSH` / `EMULATE_SH`
+    /// (`Src/zsh.h:2341-2344`), OR-able with `EMULATE_FULLY` (c:2354).
+    pub emulation: i32,
     /// Is fully emulating (vs just setting some options)
     pub fully_emulating: bool,
 }
@@ -185,7 +158,7 @@ impl ShellOptions {
     pub fn new() -> Self {
         let mut opts = ShellOptions {
             options: HashMap::new(),
-            emulation: Emulation::Zsh,
+            emulation: crate::ported::zsh_h::EMULATE_ZSH,
             fully_emulating: false,
         };
         opts.set_zsh_defaults();
@@ -252,17 +225,30 @@ impl ShellOptions {
             (normalized, value)
         };
 
-        // Check for aliases
-        for (alias, target, negated) in OPTION_ALIASES {
-            if actual_name == *alias {
-                let target_value = if *negated {
-                    !actual_value
-                } else {
-                    actual_value
-                };
-                self.options.insert(target.to_string(), target_value);
-                return Ok(());
-            }
+        // Alias resolution — direct port of `optns[]:269-280` from
+        // Src/options.c (OPT_ALIAS-flagged entries). Each C row is
+        // `{NULL, "<alias>", OPT_ALIAS}, <target>` where a leading `-`
+        // on `<target>` indicates negation. Lowercased name → target +
+        // negation bit.
+        let alias_target: Option<(&'static str, bool)> = match actual_name.as_str() {
+            "braceexpand" => Some(("ignorebraces",   true)),                  // c:269 -IGNOREBRACES
+            "dotglob"     => Some(("globdots",       false)),                 // c:270 GLOBDOTS
+            "hashall"     => Some(("hashcmds",       false)),                 // c:271 HASHCMDS
+            "histappend"  => Some(("appendhistory",  false)),                 // c:272 APPENDHISTORY
+            "histexpand"  => Some(("banghist",       false)),                 // c:273 BANGHIST
+            "log"         => Some(("histnofunctions", true)),                 // c:274 -HISTNOFUNCTIONS
+            "mailwarn"    => Some(("mailwarning",    false)),                 // c:275 MAILWARNING
+            "onecmd"      => Some(("singlecommand",  false)),                 // c:276 SINGLECOMMAND
+            "physical"    => Some(("chaselinks",     false)),                 // c:277 CHASELINKS
+            "promptvars"  => Some(("promptsubst",    false)),                 // c:278 PROMPTSUBST
+            "stdin"       => Some(("shinstdin",      false)),                 // c:279 SHINSTDIN
+            "trackall"    => Some(("hashcmds",       false)),                 // c:280 HASHCMDS
+            _ => None,
+        };
+        if let Some((target, negated)) = alias_target {
+            let target_value = if negated { !actual_value } else { actual_value };
+            self.options.insert(target.to_string(), target_value);
+            return Ok(());
         }
 
         // Special options that can't be changed
@@ -288,7 +274,7 @@ impl ShellOptions {
         let letters = if self.is_set("shoptionletters") {
             KSH_LETTERS
         } else {
-            ZSH_LETTERS
+            zshletters
         };
 
         for (ch, name, negated) in letters {
@@ -310,6 +296,7 @@ impl ShellOptions {
     }
 
     /// Set emulation mode
+/// Port of `emulate` from `Src/options.c:533`.
     pub fn emulate(&mut self, mode: &str, fully: bool) {                     // c:533
         let ch = mode.chars().next().unwrap_or('z');
         let ch = if ch == 'r' {
@@ -319,10 +306,10 @@ impl ShellOptions {
         };
 
         self.emulation = match ch {
-            'c' => Emulation::Csh,
-            'k' => Emulation::Ksh,
-            's' | 'b' => Emulation::Sh,
-            _ => Emulation::Zsh,
+            'c' => crate::ported::zsh_h::EMULATE_CSH,
+            'k' => crate::ported::zsh_h::EMULATE_KSH,
+            's' | 'b' => crate::ported::zsh_h::EMULATE_SH,
+            _ => crate::ported::zsh_h::EMULATE_ZSH,
         };
         self.fully_emulating = fully;
 
@@ -336,13 +323,8 @@ impl ShellOptions {
     /// populate `new_opts[]`, then applies it onto the live `opts[]`
     /// skipping OPT_SPECIAL entries (exec.c:5933-5938).
     fn install_emulation_defaults(&mut self) {
-        // c:531-549 — translate emulation enum → bit pattern.
-        let mut emu = match self.emulation {
-            Emulation::Zsh => crate::ported::zsh_h::EMULATE_ZSH,
-            Emulation::Ksh => crate::ported::zsh_h::EMULATE_KSH,
-            Emulation::Sh  => crate::ported::zsh_h::EMULATE_SH,
-            Emulation::Csh => crate::ported::zsh_h::EMULATE_CSH,
-        };
+        // c:531-549 — emulation bit pattern is already in `self.emulation`.
+        let mut emu = self.emulation;
         if self.fully_emulating {
             emu |= crate::ported::zsh_h::EMULATE_FULLY;                      // c:551
         }
@@ -361,7 +343,7 @@ impl ShellOptions {
         // Keep canonical zsh-mode defaults aligned with the zsh
         // baseline; for non-zsh emulations the setemulate walk above
         // sets every emulation-relevant option per defset(name, emu).
-        if matches!(self.emulation, Emulation::Zsh) {
+        if self.emulation == crate::ported::zsh_h::EMULATE_ZSH {
             self.set_zsh_defaults();
         }
     }
@@ -372,7 +354,7 @@ impl ShellOptions {
         let letters = if self.is_set("shoptionletters") {
             KSH_LETTERS
         } else {
-            ZSH_LETTERS
+            zshletters
         };
 
         for (c, name, negated) in letters {
@@ -485,11 +467,11 @@ mod tests {
         let mut opts = ShellOptions::new();
 
         opts.emulate("sh", true);
-        assert_eq!(opts.emulation, Emulation::Sh);
+        assert_eq!(opts.emulation, crate::ported::zsh_h::EMULATE_SH);
         assert!(opts.is_set("shwordsplit"));
 
         opts.emulate("zsh", true);
-        assert_eq!(opts.emulation, Emulation::Zsh);
+        assert_eq!(opts.emulation, crate::ported::zsh_h::EMULATE_ZSH);
     }
 
     #[test]
@@ -745,7 +727,8 @@ pub(crate) static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::n
         "xtrace",
         "zle",
         // bash/ksh-compat aliases — the canonical zsh names live in
-        // src/options.rs OPTION_ALIASES, but for the runtime
+        // alias-resolution match in set_option (port of optns[]:269-280),
+        // but for the runtime
         // `setopt`/`unsetopt` "no such option" check we accept the
         // alias spellings too so scripts written for bash/ksh (e.g.
         // p10k's `setopt brace_expand`, `dotglob` users) don't error.
@@ -826,6 +809,7 @@ pub fn createoptiontable() {                                                 // 
 ///     puts(nam);
 /// }
 /// ```
+/// Port of `printoptionnode` from `Src/options.c:450`.
 pub fn printoptionnode(name: &str, set: bool) {                              // c:450
     let on = opt_state_get(name).unwrap_or(false);                           // c:454 isset(optno)
     let default_on = default_on_options().contains(&name);                   // c:455 defset(on, emulation)
@@ -1187,6 +1171,7 @@ pub fn setoption(name: &str, value: i32) -> i32 {
 /// NOT a Rust-side hash — that earlier hash-based encoding caused
 /// `isset(optlookup(name))` to read a wrong slot via `opt_name(h)`
 /// and `[[ -o NAME ]]` returned false even after `setopt NAME`.
+/// Port of `optlookup` from `Src/options.c:684`.
 pub fn optlookup(name: &str) -> i32 {                                        // c:684
     // c:689 — `s = t = dupstring(name);`
     // c:691-705 — strip `_` + lowercase.
@@ -1522,6 +1507,7 @@ pub fn printoptionstates(hadplus: bool) {                                    // 
 ///         printf("%-21s %s\n", nam, isset(optno) ? "on" : "off");
 /// }
 /// ```
+/// Port of `printoptionnodestate` from `Src/options.c:916`.
 pub fn printoptionnodestate(name: &str, value: bool, hadplus: bool) {        // c:916
     let default_on = default_on_options().contains(&name);                   // c:919 defset
     if hadplus {                                                             // c:920
@@ -1553,6 +1539,7 @@ pub fn printoptionnodestate(name: &str, value: bool, hadplus: bool) {        // 
 ///     printoptionlist_printequiv(*lp);
 /// }
 /// ```
+/// Port of `printoptionlist` from `Src/options.c:938`.
 pub fn printoptionlist() {                                                   // c:940
     println!();
     println!("Named options:");                                              // c:945
@@ -1625,6 +1612,7 @@ pub fn printoptionlist_printequiv(optno: i32) {                              // 
 /// Static-link path: per-option flag bits (OPT_ALIAS / OPT_SPECIAL /
 /// OPT_EMULATE) aren't yet ported with the optns[] table; the Rust
 /// port emits every non-default option whose value matches `value`.
+/// Port of `print_emulate_option` from `Src/options.c:984`.
 pub fn print_emulate_option(name: &str, value: bool, _fully: bool) {         // c:986
     if !value {                                                              // c:995 !print_emulate_opts[optno]
         print!("no");                                                        // c:995

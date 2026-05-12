@@ -629,6 +629,7 @@ pub fn freectags(t: Option<Box<ctags>>) {                                    // 
 /// Strip every `\:` two-byte sequence to nothing (the `\` is dropped,
 /// the `:` follows on the next iteration). Used to unescape colon-
 /// bearing description strings produced by `_arguments`.
+/// Port of `rembslashcolon` from `Src/Zle/computil.c:1046`.
 pub fn rembslashcolon(s: &str) -> String {                                   // c:1046
     let bytes = s.as_bytes();                                                // c:1051 dupstring(s)
     let mut out = Vec::<u8>::with_capacity(bytes.len());
@@ -666,6 +667,7 @@ pub fn rembslashcolon(s: &str) -> String {                                   // 
 /// Insert a backslash before every `:`, doubling the worst-case
 /// length. Inverse of `rembslashcolon` for description-string
 /// emission.
+/// Port of `bslashcolon` from `Src/Zle/computil.c:1065`.
 pub fn bslashcolon(s: &str) -> String {                                      // c:1065
     let bytes = s.as_bytes();                                                // c:1070 zhalloc(2*strlen(s)+1)
     let mut out = Vec::<u8>::with_capacity(2 * bytes.len() + 1);
@@ -695,6 +697,7 @@ pub fn bslashcolon(s: &str) -> String {                                      // 
 ///
 /// `pre` is `-` for the negative-prefix slot and anything else
 /// (typically `+`) for the positive-prefix slot.
+/// Port of `single_index` from `Src/Zle/computil.c:1088`.
 pub fn single_index(pre: u8, opt: u8) -> i32 {                               // c:1088
     if opt <= 0x20 || opt > 0x7e {                                           // c:1091
         return -1;                                                           // c:1092
@@ -1743,6 +1746,7 @@ pub fn settags(level: i32, tags: &[String]) {                                // 
 /// Static-link path: the comp_quote helper currently returns 0 (stub);
 /// without it, every quote() call is a no-op, but the entry still
 /// validates incompfunc + compqstack guards correctly.
+/// Port of `bin_compquote` from `Src/Zle/computil.c:3679`.
 pub fn bin_compquote(nam: &str, args: &[String],                             // c:3679
                      ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;

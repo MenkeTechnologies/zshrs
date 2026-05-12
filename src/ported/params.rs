@@ -905,6 +905,7 @@ pub const special_params_sh: &[SpecialParamDef] = &[
 ///     return (zlong)v->pm->gsu.f->getfn(v->pm);
 /// return mathevali(getstrvalue(v));
 /// ```
+/// Port of `getintvalue` from `Src/params.c:2601`.
 pub fn getintvalue(v: Option<&mut crate::ported::zsh_h::value>) -> i64 {
     let v = match v { Some(v) => v, None => return 0 };
     if (v.valflags & VALFLAG_INV) != 0 {
@@ -2274,6 +2275,7 @@ pub fn setarrvalue(v: &mut crate::ported::zsh_h::value, val: Vec<String>) {  // 
 // ---------------------------------------------------------------------------
 
 /// Convert integer to string with base (from params.c convbase)
+/// Port of `convbase` from `Src/params.c:5632`.
 pub fn convbase(val: i64, base: u32) -> String {
     if base == 0 || base == 10 {
         return val.to_string();
@@ -2325,6 +2327,7 @@ pub fn convbase(val: i64, base: u32) -> String {
 }
 
 /// Convert integer to string with underscores for readability
+/// Port of `convbase_underscore` from `Src/params.c:5646`.
 pub fn convbase_underscore(val: i64, base: u32, underscore: i32) -> String {
     let s = convbase(val, base);
     if underscore <= 0 {
@@ -2384,6 +2387,7 @@ pub fn convbase_underscore(val: i64, base: u32, underscore: i32) -> String {
 /// integer-valued floats (`5` -> `5.`) is added by the caller (params'
 /// internal printing path) in C zsh; mirrored here for the no-flag case
 /// so `MathNum::(crate::ported::math::mn_format_subst(Float(5.0)))` produces `5.` not `5`.
+/// Port of `convfloat` from `Src/params.c:5690`.
 pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
     if dval.is_infinite() {                                       // c:5742
         return if dval < 0.0 {
@@ -3958,6 +3962,7 @@ pub fn argzerogetfn() -> String {
 ///     }
 ///     zsfree(x);
 ///   }
+/// Port of `argzerosetfn` from `Src/params.c:4937`.
 pub fn argzerosetfn(x: String) {                                             // c:4937
     // c:4939 — if (x).
     if !x.is_empty() {
@@ -4406,6 +4411,7 @@ pub fn zgetenv(name: &str) -> Option<String> {
 /// as the name (with value pointing at the trailing `\0`). Rust
 /// equivalent: split, set_var; the in-place mutation isn't
 /// observable since we copy.
+/// Port of `zputenv` from `Src/params.c:5325`.
 pub fn zputenv(str: &str) -> i32 {                                           // c:5325
     if str.is_empty() {
         // c:5328 — DPUTS(!str, ...); treat as no-op.
@@ -5280,6 +5286,7 @@ pub fn assignnparam(
 /// `setscope(pm)`, errflag/env/ALLEXPORT/PM_ARRAY/ename gate, and
 /// `export_param`. Width tracking for PM_LEFT/PM_RIGHT_B/PM_RIGHT_Z
 /// preserved.
+/// Port of `assignstrvalue` from `Src/params.c:2692`.
 pub fn assignstrvalue(
     v: Option<&mut crate::ported::zsh_h::value>,
     val: Option<String>,
@@ -5651,6 +5658,7 @@ pub fn copyparamtable(ht: Option<&crate::ported::zsh_h::HashTable>, name: &str)
 /// /* OK to import */
 /// return 0;
 /// ```
+/// Port of `dontimport` from `Src/params.c:796`.
 fn dontimport(flags: i32) -> i32 {                                           // c:796
     let flags = flags as u32;
     // c:799-800 — `if (flags & PM_DONTIMPORT) return 1`.
@@ -6297,6 +6305,7 @@ pub fn createparam(                                                          // 
 /// param scope-save) and don't need callable get/set callbacks; in
 /// that case `tpm->old`/PM_SPECIAL are preserved untouched and
 /// `assigngetset` is skipped.
+/// Port of `copyparam` from `Src/params.c:1236`.
 pub fn copyparam(                                                            // c:1236
     tpm: &mut crate::ported::zsh_h::param,
     pm: &mut crate::ported::zsh_h::param,
@@ -6726,6 +6735,7 @@ pub fn getindex(pptr: &mut &str, v: &mut crate::ported::zsh_h::value, scanflags:
 /// Returns 1 if `name` resolves to a set parameter (or a non-empty
 /// slice/element of one). Used by `[[ -v NAME ]]`/`[[ -n …]]`
 /// dispatch in cond.c and the readonly-check inside builtin.c.
+/// Port of `issetvar` from `Src/params.c:732`.
 pub fn issetvar(name: &str) -> i32 {                                         // c:732
     let mut vbuf = crate::ported::zsh_h::value {
         pm: None,
@@ -6816,6 +6826,7 @@ pub fn getvaluearr(v: Option<&mut crate::ported::zsh_h::value>) -> Vec<String> {
 ///       if (!pm) zerr("autoloading module %s failed...", mn, nam);
 ///   }
 ///   return pm;
+/// Port of `loadparamnode` from `Src/params.c:544`.
 pub fn loadparamnode(                                                        // c:544
     _ht: &crate::ported::zsh_h::HashTable,
     pm: Option<crate::ported::zsh_h::Param>,
@@ -6921,6 +6932,7 @@ pub fn newparamtable(size: i32, _name: &str)
 ///
 /// The Rust port takes a `&Mutex<HashMap>` (paramtab handle) so
 /// callers don't need to thread the HashTable wrapper through.
+/// Port of `paramvalarr` from `Src/params.c:689`.
 pub fn paramvalarr(_ht: &crate::ported::zsh_h::HashTable, flags: i32) -> Vec<String> {  // c:689
     use crate::ported::zsh_h::{
         PM_HASHELEM, PM_UNSET, SCANPM_WANTINDEX, SCANPM_WANTKEYS, SCANPM_WANTVALS,
@@ -7478,6 +7490,7 @@ fn pattry(prog: &str, s: &str) -> bool {
 /// branch falls through to `setsparam`. Stub: requires real
 /// `paramtab` global with HashTable backend; until then the
 /// non-nameref `setsparam` path is the only one that fires.
+/// Port of `setloopvar` from `Src/params.c:6362`.
 pub fn setloopvar(_name: &str, _value: &str) {
     // Once paramtab gethashnode2 is wired:
     //   if let Some(pm) = paramtab_get(name) {
@@ -7536,6 +7549,7 @@ pub fn setnumvalue(v: Option<&mut crate::ported::zsh_h::value>, val: crate::port
 /// are stubbed elsewhere; this port wires the structural path
 /// against existing helpers and falls through cleanly when the
 /// nameref chain backend isn't available.
+/// Port of `setscope` from `Src/params.c:6382`.
 pub fn setscope(pm: &mut crate::ported::zsh_h::param) {
     crate::ported::signals::queue_signals();
     if (pm.node.flags as u32 & PM_NAMEREF) != 0 {
@@ -7581,6 +7595,7 @@ pub fn setscope(pm: &mut crate::ported::zsh_h::param) {
 /// stores `base` on the param; the global `scoperefs` LinkList
 /// table is not yet ported, so the bookkeeping push is described
 /// here as architectural intent rather than executed.
+/// Port of `setscope_base` from `Src/params.c:6436`.
 pub fn setscope_base(pm: &mut crate::ported::zsh_h::param, base: i32) {
     pm.base = base;
     if base > pm.level {

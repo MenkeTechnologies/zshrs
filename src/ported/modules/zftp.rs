@@ -833,6 +833,7 @@ fn parse_pasv_response(msg: &str) -> io::Result<(String, u16)> {                
 /// and stores the connected stream's fd as `sess.dfd`. The non-PASV
 /// branch requires the caller to accept(2) before reading.
 #[allow(non_snake_case)]
+/// Port of `zfopendata` from `Src/Modules/zftp.c:859`.
 pub fn zfopendata(name: &str) -> (i32, bool) {                                  // c:859
     use std::sync::atomic::Ordering;
     // c:862-865 — error if neither SNDP nor PASV preference is set.
@@ -881,7 +882,7 @@ pub fn zfopendata(name: &str) -> (i32, bool) {                                  
             // Keep the stream alive past this fn so the fd stays open;
             // the session owns the fd via `dfd`.
             std::mem::forget(stream);
-            if let Ok(mut state) = ZFTP_STATE.lock() {
+            if let Ok(mut state) = zftp_state().lock() {
                 if let Some(sess) = state.get_session_mut(None) {
                     sess.dfd = dfd_raw;                                         // c:961 dfd stored
                 }
@@ -936,7 +937,7 @@ pub fn zfopendata(name: &str) -> (i32, bool) {                                  
     use std::os::unix::io::AsRawFd;
     let lfd = listener.as_raw_fd();
     std::mem::forget(listener);
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         if let Some(sess) = state.get_session_mut(None) {
             sess.dfd = lfd;                                                     // c:1029
         }
@@ -1042,8 +1043,8 @@ impl Zftp {
 pub fn bin_zftp(_nam: &str, args: &[String],                                 // c:3002
                 _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let mut zftp_guard = ZFTP_STATE.lock()
-        .unwrap_or_else(|e| { ZFTP_STATE.clear_poison(); e.into_inner() });
+    let mut zftp_guard = zftp_state().lock()
+        .unwrap_or_else(|e| { zftp_state_clear_poison(); e.into_inner() });
     let zftp = &mut *zftp_guard;
     let args = &argv[..];
     let (status, output): (i32, String) = (|| {
@@ -1612,7 +1613,7 @@ mod tests {
         zftp_cleanup();
         let status = bin_zftp("zftp", &["session", "test"].iter().map(|s: &&str| s.to_string()).collect::<Vec<_>>(), &crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }, 0);
         assert_eq!(status, 0);
-        assert!(ZFTP_STATE.lock().unwrap().sessions.contains_key("test"));
+        assert!(zftp_state().lock().unwrap().sessions.contains_key("test"));
         zftp_cleanup();
     }
 
@@ -1744,7 +1745,7 @@ pub fn savesession() {                                                        //
     let val: String;
     let _ = val;
 
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         let sess = match state.get_session_mut(None) {
             Some(s) => s,
             None => return,
@@ -1768,7 +1769,7 @@ pub fn savesession() {                                                        //
 /// C: `static void switchsession(char *nm)`.
 #[allow(non_snake_case)]
 pub fn switchsession(nm: &str) {
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         // C: walks zfsessions list for matching `nm`; if missing,
         // creates one. Static-link path: register-or-create on the Zftp wrapper.
         let _ = state.create_session(nm);
@@ -1826,7 +1827,7 @@ pub fn zfargstring(cmd: &str, args: &[&str]) -> String {
 pub fn zfclose(leaveparams: i32) {                                            // c:2711
     use std::sync::atomic::Ordering;
     // c:2715-2716 — early-return when no live control connection.
-    let alive = ZFTP_STATE.lock().ok()
+    let alive = zftp_state().lock().ok()
         .and_then(|s| s.get_session(None).map(|sess| sess.control.is_some()))
         .unwrap_or(false);
     if !alive {                                                               // c:2715
@@ -1839,7 +1840,7 @@ pub fn zfclose(leaveparams: i32) {                                            //
         let _ = zfsendcmd("QUIT\r\n");                                        // c:2724
     }
     // c:2727-2737 — drop cin + control TcpStream + decrement zfnopen.
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         if let Some(sess) = state.get_session_mut(None) {
             sess.cin = None;                                                  // c:2735 fclose(cin)
             sess.control = None;                                              // c:2745 tcp_close
@@ -1881,7 +1882,7 @@ pub fn zfclose(leaveparams: i32) {                                            //
 /// live, otherwise close(dfd) + dfd = -1.
 #[allow(non_snake_case)]
 pub fn zfclosedata() {                                                    // c:1043
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         if let Some(sess) = state.get_session_mut(None) {
             if sess.dfd == -1 {                                           // c:1045
                 return;                                                   // c:1046
@@ -1977,7 +1978,7 @@ pub fn zfgetdata(name: &str, rest: &str, cmd: &str, getsize: i32) -> i32 {    //
         // c:1124-1128 — accept the connection from the server.
         let mut sa: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
         let mut sl: libc::socklen_t = std::mem::size_of::<libc::sockaddr_storage>() as _;
-        let listen_fd = ZFTP_STATE.lock().ok()
+        let listen_fd = zftp_state().lock().ok()
             .and_then(|s| s.get_session(None).map(|x| x.dfd))
             .unwrap_or(-1);
         let newfd = unsafe {
@@ -1994,12 +1995,12 @@ pub fn zfgetdata(name: &str, rest: &str, cmd: &str, getsize: i32) -> i32 {    //
         dfd_raw = zfmovefd(newfd);
     } else {                                                                  // c:1136
         // c:1139-1142 — zfmovefd(zfsess->dfd) for PASV.
-        let cur_dfd = ZFTP_STATE.lock().ok()
+        let cur_dfd = zftp_state().lock().ok()
             .and_then(|s| s.get_session(None).map(|x| x.dfd))
             .unwrap_or(-1);
         dfd_raw = zfmovefd(cur_dfd);
     }
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         if let Some(sess) = state.get_session_mut(None) {
             sess.dfd = dfd_raw;                                               // c:1142
         }
@@ -2120,7 +2121,7 @@ pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {             //
     zfalarm(tmout);                                                           // c:588
 
     // c:597-678 — for (;;) read loop with TELNET IAC handling.
-    let mut state = match ZFTP_STATE.lock() {
+    let mut state = match zftp_state().lock() {
         Ok(s) => s,
         Err(_) => return 6,
     };
@@ -2250,7 +2251,7 @@ pub fn zfgetmsg() -> i32 {                                                    //
 
     // c:707-708 — if (!zfsess->control) return 6;
     {
-        let state = match ZFTP_STATE.lock() {
+        let state = match zftp_state().lock() {
             Ok(s) => s,
             Err(_) => return 6,
         };
@@ -2586,7 +2587,7 @@ pub fn zfsendcmd(cmd: &str) -> i32 {                                          //
     let tmout: i32;
 
     // c:834-835 — if (!zfsess->control) return 6;
-    let mut state = match ZFTP_STATE.lock() {
+    let mut state = match zftp_state().lock() {
         Ok(s) => s,
         Err(_) => return 6,
     };
@@ -2668,7 +2669,7 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
     // c:1482-1498 — direction-dependent fd + ascii-flag setup.
     let mut use_block_mode = false;
     {
-        let state = match ZFTP_STATE.lock() {
+        let state = match zftp_state().lock() {
             Ok(s) => s,
             Err(_) => return 1,
         };
@@ -2854,7 +2855,7 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
         // c:1647 — holdintr(); block SIGINT around the abort handshake.
         crate::ported::signals::holdintr();                                   // c:1647
         // c:1651-1652 — send IAC IP IAC + SYNCH OOB on control connection.
-        if let Ok(state) = ZFTP_STATE.lock() {
+        if let Ok(state) = zftp_state().lock() {
             if let Some(sess) = state.get_session(None) {
                 use std::os::unix::io::AsRawFd;
                 if let Some(ref ctrl) = sess.control {
@@ -3061,7 +3062,7 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {                
     // c:1701-1708 — fall back to userparams when no positional args.
     let mut effective: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     if effective.is_empty() {                                                   // c:1701 !*args
-        let up = ZFTP_STATE.lock().ok()
+        let up = zftp_state().lock().ok()
             .and_then(|s| s.get_session(None).map(|sess| sess.userparams.clone()))
             .unwrap_or_default();
         if !up.is_empty() {
@@ -3073,7 +3074,7 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {                
     }
 
     // c:1715-1716 — close any existing connection.
-    let already_open = ZFTP_STATE.lock().ok()
+    let already_open = zftp_state().lock().ok()
         .and_then(|s| s.get_session(None).map(|sess| sess.control.is_some()))
         .unwrap_or(false);
     if already_open {                                                           // c:1715
@@ -3239,7 +3240,7 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {                
             return 1;
         }
     };
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         if let Some(sess) = state.get_session_mut(None) {
             sess.control = Some(stream);
             sess.cin = Some(stream_clone);
@@ -3256,7 +3257,7 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {                
     }
 
     // c:1952-1954 — has_size, has_mdtm, dfd reset; initial status word.
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         if let Some(sess) = state.get_session_mut(None) {
             sess.has_size = ZFCP_UNKN;                                          // c:1952
             sess.has_mdtm = ZFCP_UNKN;                                          // c:1952
@@ -3274,7 +3275,7 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {                
     }
 
     // c:1988 — control alive?
-    let alive = ZFTP_STATE.lock().ok()
+    let alive = zftp_state().lock().ok()
         .and_then(|s| s.get_session(None).map(|sess| sess.control.is_some()))
         .unwrap_or(false);
     if alive { 0 } else { 1 }                                                   // c:1988 return !control
@@ -3294,7 +3295,7 @@ pub fn zftp_login(name: &str, args: &[&str], _flags: i32) -> i32 {              
     let mut arg_idx: usize = 0;
 
     // c:2124-2125 — already logged in; REIN to reset.
-    let already_logged_in = ZFTP_STATE.lock().ok()
+    let already_logged_in = zftp_state().lock().ok()
         .and_then(|s| s.get_session(None).map(|sess| sess.logged_in))
         .unwrap_or(false);
     if already_logged_in && zfsendcmd("REIN\r\n") >= 4 {                        // c:2124
@@ -3302,7 +3303,7 @@ pub fn zftp_login(name: &str, args: &[&str], _flags: i32) -> i32 {              
     }
 
     // c:2127 — clear ZFST_LOGI.
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         if let Some(sess) = state.get_session_mut(None) {
             sess.logged_in = false;                                             // c:2127
         }
@@ -3381,7 +3382,7 @@ pub fn zftp_login(name: &str, args: &[&str], _flags: i32) -> i32 {              
     let _ = passwd; // suppress unused-warn; password kept only for parity
 
     // c:2185-2186 — control gone after exchange.
-    let control_alive = ZFTP_STATE.lock().ok()
+    let control_alive = zftp_state().lock().ok()
         .and_then(|s| s.get_session(None).map(|sess| sess.control.is_some()))
         .unwrap_or(false);
     if !control_alive {                                                         // c:2185
@@ -3404,7 +3405,7 @@ pub fn zftp_login(name: &str, args: &[&str], _flags: i32) -> i32 {              
     }
 
     // c:2198 — set ZFST_LOGI on the session.
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         if let Some(sess) = state.get_session_mut(None) {
             sess.logged_in = true;                                              // c:2198
             sess.user = Some(user.clone());
@@ -3418,7 +3419,7 @@ pub fn zftp_login(name: &str, args: &[&str], _flags: i32) -> i32 {              
 
     // c:2207-2226 — SYST probe gated by per-session ZFST_SYST cache bit
     // AND zfprefs ZFPF_DUMB bit (when DUMB set, skip the probe entirely).
-    let already_probed = ZFTP_STATE.lock().ok()
+    let already_probed = zftp_state().lock().ok()
         .and_then(|s| s.get_session(None).map(|sess| sess.syst_probed))
         .unwrap_or(false);
     let dumb = (zfprefs.load(std::sync::atomic::Ordering::Relaxed)
@@ -3426,7 +3427,7 @@ pub fn zftp_login(name: &str, args: &[&str], _flags: i32) -> i32 {              
     if !dumb && !already_probed && zfsendcmd("SYST\r\n") == 2 {                 // c:2208
         let systype = lastmsg.lock().ok().map(|m| m.clone()).unwrap_or_default();
         if systype.starts_with("UNIX Type: L8") {                               // c:2212-2218
-            if let Ok(mut state) = ZFTP_STATE.lock() {
+            if let Ok(mut state) = zftp_state().lock() {
                 if let Some(sess) = state.get_session_mut(None) {
                     sess.transfer_type = ZFST_IMAG;                             // c:2220
                 }
@@ -3434,7 +3435,7 @@ pub fn zftp_login(name: &str, args: &[&str], _flags: i32) -> i32 {              
         }
         zfsetparam("ZFTP_SYSTEM", &systype, ZFPM_READONLY);                     // c:2222
         // c:2224 — zfstatusp[zfsessno] |= ZFST_SYST.
-        if let Ok(mut state) = ZFTP_STATE.lock() {
+        if let Ok(mut state) = zftp_state().lock() {
             if let Some(sess) = state.get_session_mut(None) {
                 sess.syst_probed = true;                                        // c:2224
             }
@@ -3442,7 +3443,7 @@ pub fn zftp_login(name: &str, args: &[&str], _flags: i32) -> i32 {              
     }
 
     // c:2228-2230 — ZFTP_TYPE param.
-    let ttype = ZFTP_STATE.lock().ok()
+    let ttype = zftp_state().lock().ok()
         .and_then(|s| s.get_session(None).map(|sess| sess.transfer_type))
         .unwrap_or(ZFST_ASCI);
     let tbuf = if ZFST_TYPE(ttype) == ZFST_ASCI { "A" } else { "I" };           // c:2228
@@ -3460,7 +3461,7 @@ pub fn zftp_params(_name: &str, args: &[&str], _flags: i32) -> i32 {            
     let prompts: [&str; 4] = ["Host: ", "User: ", "Password: ", "Account: "];   // c:2067
     // c:2071-2083 — no args: print current userparams (mask the password slot).
     if args.is_empty() {                                                        // c:2071 !*args
-        let state = match ZFTP_STATE.lock() {
+        let state = match zftp_state().lock() {
             Ok(s) => s,
             Err(_) => return 1,
         };
@@ -3487,7 +3488,7 @@ pub fn zftp_params(_name: &str, args: &[&str], _flags: i32) -> i32 {            
     }
     // c:2084-2089 — single "-" arg: clear userparams.
     if args[0] == "-" {                                                         // c:2084 !strcmp "-"
-        if let Ok(mut state) = ZFTP_STATE.lock() {
+        if let Ok(mut state) = zftp_state().lock() {
             if let Some(sess) = state.get_session_mut(None) {
                 sess.userparams.clear();                                        // c:2085-2087 freearray
             }
@@ -3520,7 +3521,7 @@ pub fn zftp_params(_name: &str, args: &[&str], _flags: i32) -> i32 {            
         // c:2101-2104 — free newarr; Rust Drop handles it.
         return 1;                                                               // c:2105
     }
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         if let Some(sess) = state.get_session_mut(None) {
             sess.userparams = newarr;                                           // c:2107-2109
         }
@@ -3534,7 +3535,7 @@ pub fn zftp_params(_name: &str, args: &[&str], _flags: i32) -> i32 {            
 /// 1 otherwise (zftpcmdtab flags = ZFTP_TEST).
 pub fn zftp_test(_name: &str, _args: &[&str], _flags: i32) -> i32 {            // c:2251
     // c:2263 — early-return when no control connection.
-    let control_fd = ZFTP_STATE.lock().ok().and_then(|s| {
+    let control_fd = zftp_state().lock().ok().and_then(|s| {
         s.get_session(None).and_then(|sess| {
             sess.control.as_ref().map(|c| {
                 use std::os::unix::io::AsRawFd;
@@ -3558,7 +3559,7 @@ pub fn zftp_test(_name: &str, _args: &[&str], _flags: i32) -> i32 {            /
         zfgetmsg();                                                             // c:2277 handles 421
     }
     // c:2291 — return zfsess->control ? 0 : 2;
-    let still_alive = ZFTP_STATE.lock().ok()
+    let still_alive = zftp_state().lock().ok()
         .and_then(|s| s.get_session(None).map(|sess| sess.control.is_some()))
         .unwrap_or(false);
     if still_alive { 0 } else { 2 }                                             // c:2291
@@ -3618,7 +3619,7 @@ pub fn zftp_type(name: &str, args: &[&str], flags: i32) -> i32 {                
         nt = if (flags & ZFTP_TBIN) != 0 { b'I' } else { b'A' };                // c:2430
     } else if args.first().copied().unwrap_or("").is_empty() {                  // c:2431
         // No args: print current type ('A' or 'I').
-        let ttype = ZFTP_STATE.lock().ok()
+        let ttype = zftp_state().lock().ok()
             .and_then(|s| s.get_session(None).map(|sess| sess.transfer_type))
             .unwrap_or(ZFST_IMAG as i32);
         let is_ascii = (ttype & ZFST_ASCI) != 0;
@@ -3637,7 +3638,7 @@ pub fn zftp_type(name: &str, args: &[&str], flags: i32) -> i32 {                
     }
 
     // c:2455-2456 — update zfstatusp[zfsessno] (kept on the session.transfer_type).
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         if let Some(sess) = state.get_session_mut(None) {
             sess.transfer_type = if nt == b'I' { ZFST_IMAG } else { ZFST_ASCI } as i32;
         }
@@ -3656,7 +3657,7 @@ pub fn zftp_mode(name: &str, args: &[&str], _flags: i32) -> i32 {               
     let nt: u8;                                                                 // c:2467 int nt
 
     if args.first().copied().unwrap_or("").is_empty() {                         // c:2469
-        let tmode = ZFTP_STATE.lock().ok()
+        let tmode = zftp_state().lock().ok()
             .and_then(|s| s.get_session(None).map(|sess| sess.transfer_mode))
             .unwrap_or(ZFST_STRE as i32);
         let is_stream = tmode == ZFST_STRE;
@@ -3676,7 +3677,7 @@ pub fn zftp_mode(name: &str, args: &[&str], _flags: i32) -> i32 {               
         return 1;                                                               // c:2482
     }
     // c:2483-2484 — update session transfer_mode.
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         if let Some(sess) = state.get_session_mut(None) {
             sess.transfer_mode = if nt == b'S' { ZFST_STRE } else { ZFST_BLOC } as i32;
         }
@@ -3734,7 +3735,7 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {              
                   else { "STOR " };
 
     // c:2559 — zfsettype(ZFST_TYPE(zfstatusp[zfsessno]));
-    let ttype = ZFTP_STATE.lock().ok()
+    let ttype = zftp_state().lock().ok()
         .and_then(|s| s.get_session(None).map(|sess| sess.transfer_type))
         .unwrap_or(ZFST_IMAG as i32);
     zfsettype(ttype);
@@ -3919,7 +3920,7 @@ pub fn zftp_close(_name: &str, _args: &[&str], _flags: i32) -> i32 {           /
 pub fn zftp_session(_name: &str, args: &[&str], _flags: i32) -> i32 {           // c:2889
     if args.is_empty() {                                                        // c:2891
         // c:2892-2895 — walk zfsessions list, print each name.
-        if let Ok(state) = ZFTP_STATE.lock() {
+        if let Ok(state) = zftp_state().lock() {
             for sess_name in state.session_names() {                            // c:2894
                 println!("{}", sess_name);                                      // c:2895
             }
@@ -3927,7 +3928,7 @@ pub fn zftp_session(_name: &str, args: &[&str], _flags: i32) -> i32 {           
         return 0;                                                               // c:2896
     }
     // c:2903-2904 — no-op if already in the requested session.
-    let current = ZFTP_STATE.lock().ok()
+    let current = zftp_state().lock().ok()
         .and_then(|s| s.current_name().map(|n| n.to_string()))
         .unwrap_or_default();
     if args[0] == current {
@@ -3947,7 +3948,7 @@ pub fn zftp_rmsession(_name: &str, args: &[&str], _flags: i32) -> i32 {         
 
     // c:2922-2928 — find session by name (or current if no arg).
     {
-        let state = match ZFTP_STATE.lock() {
+        let state = match zftp_state().lock() {
             Ok(s) => s,
             Err(_) => return 1,
         };
@@ -3971,7 +3972,7 @@ pub fn zftp_rmsession(_name: &str, args: &[&str], _flags: i32) -> i32 {         
         zfclosedata();                                                          // c:2934
         zfclose(0);                                                             // c:2935
         // c:2941-2946 — pick a new current session if any others remain.
-        let other = ZFTP_STATE.lock().ok()
+        let other = zftp_state().lock().ok()
             .map(|s| s.session_names().into_iter()
                 .find(|n| *n != target_name).map(String::from))
             .unwrap_or(None);
@@ -3982,14 +3983,14 @@ pub fn zftp_rmsession(_name: &str, args: &[&str], _flags: i32) -> i32 {         
         // c:2948-2956 — temporarily switch to target, close-non-destructive,
         // then switch back. Rust collapses this to a direct close on
         // the named session.
-        let prev = ZFTP_STATE.lock().ok()
+        let prev = zftp_state().lock().ok()
             .and_then(|s| s.current_name().map(String::from));
-        if let Ok(mut state) = ZFTP_STATE.lock() {
+        if let Ok(mut state) = zftp_state().lock() {
             state.set_current(&target_name);                                    // c:2949
         }
         zfclosedata();                                                          // c:2954
         zfclose(1);                                                             // c:2955 (leaveparams=1)
-        if let (Some(p), Ok(mut state)) = (prev, ZFTP_STATE.lock()) {
+        if let (Some(p), Ok(mut state)) = (prev, zftp_state().lock()) {
             state.set_current(&p);                                              // c:2956
         }
     }
@@ -3997,12 +3998,12 @@ pub fn zftp_rmsession(_name: &str, args: &[&str], _flags: i32) -> i32 {         
     // c:2964-2993 — remove session from list + switch to newsess if any.
     // Rust port: remove via Zftp::remove_session; newsess switch via
     // switchsession (already ported above).
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         state.remove_session(&target_name);
     }
     if let Some(n) = newsess {                                                  // c:2982
         switchsession(&n);                                                      // c:2983
-    } else if ZFTP_STATE.lock().map(|s| s.session_names().is_empty()).unwrap_or(false) {
+    } else if zftp_state().lock().map(|s| s.session_names().is_empty()).unwrap_or(false) {
         // c:2992 — last session gone, start fresh.
         newsession("default");
     }
@@ -4014,15 +4015,15 @@ pub fn zftp_rmsession(_name: &str, args: &[&str], _flags: i32) -> i32 {         
 /// closing the control fd on others, then clears the session table.
 pub fn zftp_cleanup() -> i32 {                                              // c:3128
     // c:3134 — Zftp_session cursess = zfsess; (snapshot current).
-    let cursess = ZFTP_STATE.lock().ok()
+    let cursess = zftp_state().lock().ok()
         .and_then(|s| s.current_name().map(|n| n.to_string()));
-    let session_names: Vec<String> = ZFTP_STATE.lock().ok()
+    let session_names: Vec<String> = zftp_state().lock().ok()
         .map(|s| s.session_names().iter().map(|n| n.to_string()).collect())
         .unwrap_or_default();
     // c:3135-3142 — walk every session: zfclosedata + zfclose(leaveparams).
     for nm in session_names {                                               // c:3136
         // c:3137 — zfsess = (Zftp_session)nptr->dat; (switch to session).
-        if let Ok(mut s) = ZFTP_STATE.lock() {
+        if let Ok(mut s) = zftp_state().lock() {
             let _ = s.set_current(&nm);
         }
         zfclosedata();                                                      // c:3140
@@ -4036,7 +4037,7 @@ pub fn zftp_cleanup() -> i32 {                                              // c
         m.clear();                                                          // c:3147
     }
     zfunsetparam("ZFTP_SESSION");                                           // c:3149
-    if let Ok(mut state) = ZFTP_STATE.lock() {
+    if let Ok(mut state) = zftp_state().lock() {
         *state = Zftp::new();                                               // c:3150 freelinklist
     }
     // c:3152 — zfree(zfstatusp): per-session status array. zfstatusp
@@ -4051,24 +4052,20 @@ pub fn zftp_cleanup() -> i32 {                                              // c
 /// through this so subcommand dispatch matches C behaviour.
 static ZFTP_STATE_INNER: std::sync::OnceLock<std::sync::Mutex<Zftp>> = std::sync::OnceLock::new();
 
-pub struct ZftpStateAccessor;
-impl ZftpStateAccessor {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
-    pub fn lock(&self) -> Result<std::sync::MutexGuard<'static, Zftp>, std::sync::PoisonError<std::sync::MutexGuard<'static, Zftp>>> {
-        ZFTP_STATE_INNER.get_or_init(|| std::sync::Mutex::new(Zftp::new())).lock()
-    }
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
-    pub fn clear_poison(&self) {
-        if let Some(m) = ZFTP_STATE_INNER.get() {
-            m.clear_poison();
-        }
-    }
+/// Accessor for the live zftp module state. C's `Src/Modules/zftp.c`
+/// keeps per-session state in scattered file-statics (`zfsess`,
+/// `zfsessions`, `zfcommand`, ...); this fn returns the single
+/// `Mutex<Zftp>` aggregating those into one shared store.
+pub fn zftp_state() -> &'static std::sync::Mutex<Zftp> {
+    ZFTP_STATE_INNER.get_or_init(|| std::sync::Mutex::new(Zftp::new()))
 }
 
-#[allow(non_upper_case_globals)]
-pub static ZFTP_STATE: ZftpStateAccessor = ZftpStateAccessor;
+/// Clear poison on the zftp state mutex (test teardown helper).
+pub fn zftp_state_clear_poison() {
+    if let Some(m) = ZFTP_STATE_INNER.get() {
+        m.clear_poison();
+    }
+}
 
 /// Port of `zftpexithook()` from Src/Modules/zftp.c:3156.
 /// C: `static int zftpexithook(UNUSED(Hookdef d), UNUSED(void *dummy))`

@@ -219,6 +219,7 @@ pub fn set_shinstdin(v: bool) {
 /// }
 /// zerrmsg(stderr, fmt, ap);
 /// ```
+/// Port of `zwarning` from `Src/utils.c:142`.
 fn zwarning(cmd: Option<&str>, msg: &str) {
     use std::io::Write;
     // C: if (isatty(2)) zleentry(ZLE_CMD_TRASH);
@@ -514,36 +515,23 @@ pub fn adjustlines() -> usize {                                             // c
         .unwrap_or(24)
 }
 
-/// Quote type constants for quotestring()
-/// Port from zsh.h QT_* enum
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Quote-rendering mode.
-/// Mirrors the `quotetype_t` enum in Src/utils.c —
-/// `quotestring()` (line ~6500) takes one of these to choose
-/// `\`-escape, `'…'`, `"…"`, or POSIX `$'…'` quoting.
-pub enum QuoteType {
-    None = 0,
-    Backslash = 1,
-    Single = 2,
-    Double = 3,
-    Dollars = 4,
-    Backtick = 5,
-    SingleOptional = 6,
-    BackslashPattern = 7,
-    BackslashShownull = 8,
-}
+// QuoteType enum + impl deleted — the canonical quote-type values are
+// the bare `QT_*: i32` constants at `zsh_h.rs:175` (port of anonymous
+// `enum { QT_NONE, QT_BACKSLASH, … }` from `Src/zsh.h:253-298`).
+// `quotestring()` takes `quote_type: i32` matching C's signature.
 
-impl QuoteType {
-    /// Convert q flag count to QuoteType
-    /// (q)=Backslash, (qq)=Single, (qqq)=Double, (qqqq)=Dollars
-    pub fn from_q_count(count: u32) -> Self {
-        match count {
-            0 => QuoteType::None,
-            1 => QuoteType::Backslash,
-            2 => QuoteType::Single,
-            3 => QuoteType::Double,
-            _ => QuoteType::Dollars,
-        }
+/// Map a `(q)` flag count to a `QT_*` value.
+/// Port of the q-flag dispatch in `Src/subst.c` `paramsubst()` —
+/// `(q)`=`QT_BACKSLASH`, `(qq)`=`QT_SINGLE`, `(qqq)`=`QT_DOUBLE`,
+/// `(qqqq+)`=`QT_DOLLARS`.
+pub fn qflag_quotetype(count: u32) -> i32 {
+    use crate::ported::zsh_h::{QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS};
+    match count {
+        0 => QT_NONE,
+        1 => QT_BACKSLASH,
+        2 => QT_SINGLE,
+        3 => QT_DOUBLE,
+        _ => QT_DOLLARS,
     }
 }
 
@@ -592,152 +580,127 @@ fn ispecial(c: char) -> bool {
 /// Port of `quotestring()` from Src/utils.c — used by `print
 /// -%q`, `${(q)var}`, completion-output escaping, history
 /// re-emission.
-pub fn quotestring(s: &str, quote_type: QuoteType) -> String {               // c:6141
+pub fn quotestring(s: &str, quote_type: i32) -> String {                     // c:6141
+    use crate::ported::zsh_h::{
+        QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS, QT_BACKTICK,
+        QT_SINGLE_OPTIONAL, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL,
+    };
     if s.is_empty() {
-        return match quote_type {
-            QuoteType::None => String::new(),
-            QuoteType::BackslashShownull | QuoteType::Backslash => "''".to_string(),
-            QuoteType::Single | QuoteType::SingleOptional => "''".to_string(),
-            QuoteType::Double => "\"\"".to_string(),
-            QuoteType::Dollars => "$''".to_string(),
-            QuoteType::BackslashPattern => String::new(),
-            QuoteType::Backtick => String::new(),
+        return if quote_type == QT_NONE {
+            String::new()
+        } else if quote_type == QT_BACKSLASH || quote_type == QT_BACKSLASH_SHOWNULL {
+            "''".to_string()
+        } else if quote_type == QT_SINGLE || quote_type == QT_SINGLE_OPTIONAL {
+            "''".to_string()
+        } else if quote_type == QT_DOUBLE {
+            "\"\"".to_string()
+        } else if quote_type == QT_DOLLARS {
+            "$''".to_string()
+        } else {
+            String::new()
         };
     }
 
-    match quote_type {
-        QuoteType::None => s.to_string(),
-
-        QuoteType::BackslashPattern => {
-            // Only bslashquote pattern characters (lines 6242-6247)
-            let mut result = String::with_capacity(s.len() * 2);
-            for c in s.chars() {
-                if matches!(
-                    c,
-                    '*' | '?' | '[' | ']' | '<' | '>' | '(' | ')' | '|' | '#' | '^' | '~'
-                ) {
-                    result.push('\\');
-                }
+    if quote_type == QT_NONE {
+        s.to_string()
+    } else if quote_type == QT_BACKSLASH_PATTERN {
+        // Only bslashquote pattern characters (lines 6242-6247)
+        let mut result = String::with_capacity(s.len() * 2);
+        for c in s.chars() {
+            if matches!(c, '*' | '?' | '[' | ']' | '<' | '>' | '(' | ')' | '|' | '#' | '^' | '~') {
+                result.push('\\');
+            }
+            result.push(c);
+        }
+        result
+    } else if quote_type == QT_BACKSLASH || quote_type == QT_BACKSLASH_SHOWNULL {
+        // Backslash quoting (lines 6260-6416)
+        let mut result = String::with_capacity(s.len() * 2);
+        for c in s.chars() {
+            if ispecial(c) {
+                result.push('\\');
+            }
+            result.push(c);
+        }
+        result
+    } else if quote_type == QT_SINGLE {
+        // Single quote: 'string' (lines 6359-6382)
+        let mut result = String::with_capacity(s.len() + 4);
+        result.push('\'');
+        for c in s.chars() {
+            if c == '\'' {
+                result.push_str("'\\''");
+            } else if c == '\n' {
+                result.push_str("'$'\\n''");
+            } else {
                 result.push(c);
             }
-            result
         }
-
-        QuoteType::Backslash | QuoteType::BackslashShownull => {
-            // Backslash quoting (lines 6260-6416)
-            let mut result = String::with_capacity(s.len() * 2);
-            for c in s.chars() {
-                if ispecial(c) {
-                    result.push('\\');
-                }
+        result.push('\'');
+        result
+    } else if quote_type == QT_SINGLE_OPTIONAL {
+        // Only add quotes where necessary (lines 6314-6363)
+        let needs_quoting = s.chars().any(ispecial);
+        if !needs_quoting {
+            return s.to_string();
+        }
+        let mut result = String::with_capacity(s.len() + 4);
+        let mut in_quotes = false;
+        for c in s.chars() {
+            if c == '\'' {
+                if in_quotes { result.push('\''); in_quotes = false; }
+                result.push_str("\\'");
+            } else if ispecial(c) {
+                if !in_quotes { result.push('\''); in_quotes = true; }
+                result.push(c);
+            } else {
+                if in_quotes { result.push('\''); in_quotes = false; }
                 result.push(c);
             }
-            result
         }
-
-        QuoteType::Single => {
-            // Single bslashquote: 'string' (lines 6359-6382)
-            let mut result = String::with_capacity(s.len() + 4);
-            result.push('\'');
-            for c in s.chars() {
-                if c == '\'' {
-                    // End bslashquote, add escaped bslashquote, start new bslashquote
-                    result.push_str("'\\''");
-                } else if c == '\n' {
-                    // Newlines need $'...' quoting
-                    result.push_str("'$'\\n''");
-                } else {
-                    result.push(c);
+        if in_quotes { result.push('\''); }
+        result
+    } else if quote_type == QT_DOUBLE {
+        // Double quote: "string" (lines 6272-6280, 6311-6312)
+        let mut result = String::with_capacity(s.len() + 4);
+        result.push('"');
+        for c in s.chars() {
+            if matches!(c, '$' | '`' | '"' | '\\') {
+                result.push('\\');
+            }
+            result.push(c);
+        }
+        result.push('"');
+        result
+    } else if quote_type == QT_DOLLARS {
+        // $'...' quoting with escape sequences (lines 6203-6241)
+        let mut result = String::with_capacity(s.len() + 4);
+        result.push_str("$'");
+        for c in s.chars() {
+            match c {
+                '\\' | '\'' => { result.push('\\'); result.push(c); }
+                '\n' => result.push_str("\\n"),
+                '\r' => result.push_str("\\r"),
+                '\t' => result.push_str("\\t"),
+                '\x1b' => result.push_str("\\e"),
+                '\x07' => result.push_str("\\a"),
+                '\x08' => result.push_str("\\b"),
+                '\x0c' => result.push_str("\\f"),
+                '\x0b' => result.push_str("\\v"),
+                c if c.is_ascii_control() => {
+                    result.push_str(&format!("\\{:03o}", c as u8));
                 }
+                c => result.push(c),
             }
-            result.push('\'');
-            result
         }
-
-        QuoteType::SingleOptional => {
-            // Only add quotes where necessary (lines 6314-6363)
-            let needs_quoting = s.chars().any(ispecial);
-            if !needs_quoting {
-                return s.to_string();
-            }
-
-            let mut result = String::with_capacity(s.len() + 4);
-            let mut in_quotes = false;
-
-            for c in s.chars() {
-                if c == '\'' {
-                    if in_quotes {
-                        result.push('\'');
-                        in_quotes = false;
-                    }
-                    result.push_str("\\'");
-                } else if ispecial(c) {
-                    if !in_quotes {
-                        result.push('\'');
-                        in_quotes = true;
-                    }
-                    result.push(c);
-                } else {
-                    if in_quotes {
-                        result.push('\'');
-                        in_quotes = false;
-                    }
-                    result.push(c);
-                }
-            }
-            if in_quotes {
-                result.push('\'');
-            }
-            result
-        }
-
-        QuoteType::Double => {
-            // Double bslashquote: "string" (lines 6272-6280, 6311-6312)
-            let mut result = String::with_capacity(s.len() + 4);
-            result.push('"');
-            for c in s.chars() {
-                if matches!(c, '$' | '`' | '"' | '\\') {
-                    result.push('\\');
-                }
-                result.push(c);
-            }
-            result.push('"');
-            result
-        }
-
-        QuoteType::Dollars => {
-            // $'...' quoting with escape sequences (lines 6203-6241)
-            let mut result = String::with_capacity(s.len() + 4);
-            result.push_str("$'");
-            for c in s.chars() {
-                match c {
-                    '\\' | '\'' => {
-                        result.push('\\');
-                        result.push(c);
-                    }
-                    '\n' => result.push_str("\\n"),
-                    '\r' => result.push_str("\\r"),
-                    '\t' => result.push_str("\\t"),
-                    '\x1b' => result.push_str("\\e"),
-                    '\x07' => result.push_str("\\a"),
-                    '\x08' => result.push_str("\\b"),
-                    '\x0c' => result.push_str("\\f"),
-                    '\x0b' => result.push_str("\\v"),
-                    c if c.is_ascii_control() => {
-                        // Octal escape for control characters
-                        result.push_str(&format!("\\{:03o}", c as u8));
-                    }
-                    c => result.push(c),
-                }
-            }
-            result.push('\'');
-            result
-        }
-
-        QuoteType::Backtick => {
-            // Backtick quoting (minimal - just escape backticks)
-            s.replace('`', "\\`")
-        }
+        result.push('\'');
+        result
+    } else if quote_type == QT_BACKTICK {
+        // Backtick quoting (minimal - just escape backticks)
+        s.replace('`', "\\`")
+    } else {
+        // Unknown quote_type — treat as no-op to match C's `default:` arm.
+        s.to_string()
     }
 }
 
@@ -821,6 +784,7 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {                // 
 /// On overflow, mirrors C's "number truncated after N digits"
 /// behaviour: emits a `zwarn` and returns the truncated value
 /// (last in-range computation).
+/// Port of `zstrtol` from `Src/utils.c:2427`.
 pub fn zstrtol(s: &str, base: i32) -> (i64, &str) {                      // c:2425
     zstrtol_underscore(s, base, false)                                   // c:2427
 }
@@ -1039,6 +1003,7 @@ pub fn has_token(s: &str) -> bool {                                         // c
 }
 
 /// Array length - port from arrlen()
+/// Port of `arrlen` from `Src/utils.c:2357`.
 pub fn arrlen<T>(arr: &[T]) -> usize {                                      // c:2357
     arr.len()
 }
@@ -1122,6 +1087,7 @@ pub fn ztrlen(s: &str) -> usize {                                            // 
 /// else if (c2 == Meta) c2 = *++s2 ^ 32;
 /// return c1 - c2;
 /// ```
+/// Port of `ztrcmp` from `Src/utils.c:5106`.
 pub fn ztrcmp(s1: &str, s2: &str) -> std::cmp::Ordering {                    // c:5106
     let b1 = s1.as_bytes();
     let b2 = s2.as_bytes();
@@ -1152,6 +1118,7 @@ pub fn ztrcmp(s1: &str, s2: &str) -> std::cmp::Ordering {                    // 
 }
 
 /// String pointer subtraction with meta handling (from utils.c ztrsub)
+/// Port of `ztrsub` from `Src/utils.c:5187`.
 pub fn ztrsub(t: &str, s: &str) -> usize {                                   // c:5187
     ztrlen(&t[..t.len().saturating_sub(s.len())])
 }
@@ -1180,6 +1147,7 @@ pub fn ztrdup(s: &str) -> String {                                           // 
 }
 
 /// Duplicate n characters (from utils.c ztrncpy)
+/// Port of `ztrncpy` from `Src/utils.c:2320`.
 pub fn ztrncpy(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
@@ -1228,6 +1196,7 @@ pub fn bicat(s1: &str, s2: &str) -> String {                                 // 
 /// branch uses [`iwsep`] for whitespace-separator detection (C's
 /// `ISEP` char class collapsed to whitespace, which is the common
 /// case for default `$IFS` = `" \t\n"`).
+/// Port of `wordcount` from `Src/utils.c:3879`.
 pub fn wordcount(s: &str, sep: Option<&str>, mul: i32) -> i32 {              // c:3879
     let bytes = s.as_bytes();
     if let Some(sep) = sep {
@@ -1322,11 +1291,13 @@ pub fn wordcount(s: &str, sep: Option<&str>, mul: i32) -> i32 {              // 
 }
 
 /// Join array with delimiter (from utils.c zjoin)
+/// Port of `zjoin` from `Src/utils.c:3622`.
 pub fn zjoin(arr: &[String], delim: char) -> String {
     arr.join(&delim.to_string())
 }
 
 /// Split colon-separated list (from utils.c colonsplit)
+/// Port of `colonsplit` from `Src/utils.c:3650`.
 pub fn colonsplit(s: &str, uniq: bool) -> Vec<String> {
     let mut result = Vec::new();
     for item in s.split(':') {
@@ -1356,6 +1327,7 @@ pub fn colonsplit(s: &str, uniq: bool) -> Vec<String> {
 ///
 /// The C version honours Meta-encoded bytes (`Meta` followed by
 /// `^32`-XOR'd byte). Rust port mirrors that byte-by-byte.
+/// Port of `skipwsep` from `Src/utils.c:3680`.
 pub fn skipwsep(s: &str) -> (&str, usize) {
     let bytes = s.as_bytes();
     let mut i: usize = 0;
@@ -1406,6 +1378,7 @@ pub fn imeta(c: char) -> bool {
 }
 
 /// Format time struct (from utils.c ztrftime)
+/// Port of `ztrftime` from `Src/utils.c:3337`.
 pub fn ztrftime(fmt: &str, time: std::time::SystemTime) -> String {
     use std::time::UNIX_EPOCH;
 
@@ -1640,6 +1613,7 @@ pub fn printtime(secs: i64) -> String {
 // ---------------------------------------------------------------------------
 
 /// Split path into components (from utils.c slashsplit)
+/// Port of `slashsplit` from `Src/utils.c:837`.
 pub fn slashsplit(s: &str) -> Vec<String> {                                 // c:837
     s.split('/')
         .filter(|s| !s.is_empty())
@@ -1648,12 +1622,14 @@ pub fn slashsplit(s: &str) -> Vec<String> {                                 // c
 }
 
 /// Split on '=' returning (name, value) (from utils.c equalsplit)
+/// Port of `equalsplit` from `Src/utils.c:4133`.
 pub fn equalsplit(s: &str) -> Option<(String, String)> {
     let eq = s.find('=')?;
     Some((s[..eq].to_string(), s[eq + 1..].to_string()))
 }
 
 /// Make single-element array (from utils.c mkarray)
+/// Port of `mkarray` from `Src/utils.c:4083`.
 pub fn mkarray(s: Option<&str>) -> Vec<String> {
     match s {
         Some(val) => vec![val.to_string()],
@@ -1662,6 +1638,7 @@ pub fn mkarray(s: Option<&str>) -> Vec<String> {
 }
 
 /// Free array (no-op in Rust, provided for API compat)
+/// Port of `freearray` from `Src/utils.c:4120`.
 pub fn freearray(_arr: Vec<String>) {
     // Rust Drop handles this
 }
@@ -1737,6 +1714,7 @@ pub fn zbeep() {                                                             // 
 ///     return m;
 /// }
 /// ```
+/// Port of `mode_to_octal` from `Src/utils.c:7634`.
 pub fn mode_to_octal(mode: u32) -> i32 {
     #[cfg(unix)]
     use libc::{
@@ -1771,6 +1749,7 @@ pub fn mode_to_octal(mode: u32) -> i32 {
 }
 
 /// Go up n directories (from utils.c upchdir)
+/// Port of `upchdir` from `Src/utils.c:7356`.
 pub fn upchdir(n: usize) -> io::Result<()> {
     let mut path = String::new();
     for i in 0..n {
@@ -1784,6 +1763,7 @@ pub fn upchdir(n: usize) -> io::Result<()> {
 }
 
 /// Change directory with safeguards (from utils.c lchdir)
+/// Port of `lchdir` from `Src/utils.c:7400`.
 pub fn lchdir(path: &str) -> io::Result<()> {
     let resolved = if path.starts_with('/') {
         PathBuf::from(path)
@@ -1819,6 +1799,7 @@ pub fn spckword(word: &str, candidates: &[&str], threshold: usize) -> Option<Str
 }
 
 /// Simple interactive query (from utils.c getquery)
+/// Port of `getquery` from `Src/utils.c:3014`.
 pub fn getquery(prompt: &str, valid_chars: &str) -> Option<char> {
     eprint!("{}", prompt);
     let _ = io::stderr().flush();
@@ -1838,6 +1819,7 @@ pub fn getquery(prompt: &str, valid_chars: &str) -> Option<char> {
 }
 
 /// Read a single character (from utils.c read1char)
+/// Port of `read1char` from `Src/utils.c:2972`.
 pub fn read1char() -> Option<char> {
     #[cfg(unix)]
     {
@@ -1851,6 +1833,7 @@ pub fn read1char() -> Option<char> {
 }
 
 /// Check before removing directory tree (from utils.c checkrmall)
+/// Port of `checkrmall` from `Src/utils.c:2867`.
 pub fn checkrmall(path: &str) -> bool {
     if let Some(c) = getquery(
         &format!("zsh: sure you want to delete all of {}? [yn] ", path),
@@ -1936,6 +1919,7 @@ pub fn xsymlink(path: &str) -> Option<String> {                             // c
 /// behind the `libcap` feature in `crate::ported::modules::cap`);
 /// without it, only the euid==0 path is exercised — same as the
 /// C `#else` arm when HAVE_CAP_GET_PROC isn't defined.
+/// Port of `privasserted` from `Src/utils.c:7608`.
 pub fn privasserted() -> bool {
     #[cfg(unix)]
     {
@@ -2020,16 +2004,19 @@ pub fn fprintdir(s: &str) -> String {                                        // 
 }
 
 /// Duplicate array (from utils.c arrdup)
+/// Port of `arrdup` from `Src/utils.c:4493`.
 pub fn arrdup(arr: &[String]) -> Vec<String> {
     arr.to_vec()
 }
 
 /// Duplicate array with max elements (from utils.c arrdup_max)
+/// Port of `arrdup_max` from `Src/utils.c:4508`.
 pub fn arrdup_max(arr: &[String], max: usize) -> Vec<String> {
     arr.iter().take(max).cloned().collect()
 }
 
 /// Read/write loop wrappers (from utils.c read_loop/write_loop)
+/// Port of `read_loop` from `Src/utils.c:2923`.
 pub fn read_loop(fd: i32, buf: &mut [u8]) -> io::Result<usize> {
     #[cfg(unix)]
     {
@@ -2063,6 +2050,7 @@ pub fn read_loop(fd: i32, buf: &mut [u8]) -> io::Result<usize> {
     }
 }
 
+/// Port of `write_loop` from `Src/utils.c:2949`.
 pub fn write_loop(fd: i32, buf: &[u8]) -> io::Result<usize> {
     #[cfg(unix)]
     {
@@ -2132,6 +2120,7 @@ pub fn redup(x: i32, y: i32) -> i32 {                                    // c:20
 
 /// Check if a character type at end of string (from utils.c itype_end)
 /// Returns the position after the identifier characters
+/// Port of `itype_end` from `Src/utils.c:4395`.
 pub fn itype_end(s: &str, allow_digits_start: bool) -> usize {
     let mut chars = s.chars().peekable();
     let mut pos = 0;
@@ -2177,6 +2166,7 @@ pub fn itype_end(s: &str, allow_digits_start: bool) -> usize {
 /// Marker / Pound / Snull / Nularg constants from zsh_h/zsh.h and
 /// the `ifs` global; the remaining Meta/IFS marks are skipped until
 /// those land. Idempotent — safe to call multiple times.
+/// Port of `inittyptab` from `Src/utils.c:4155`.
 pub fn inittyptab() {                                                    // utils.c:4155
     use crate::ported::ztype_h::{
         TYPTAB, TYPTAB_FLAGS, ZTF_INIT,
@@ -2225,6 +2215,7 @@ pub fn inittyptab() {                                                    // util
 }
 
 /// Find a separator in string (from utils.c findsep)
+/// Port of `findsep` from `Src/utils.c:3784`.
 pub fn findsep(s: &str, sep: Option<&str>) -> Option<usize> {
     match sep {
         Some(sep) if sep.len() == 1 => s.find(sep.chars().next().unwrap()),
@@ -2237,6 +2228,7 @@ pub fn findsep(s: &str, sep: Option<&str>) -> Option<usize> {
 }
 
 /// Find word at position (from utils.c findword)
+/// Port of `findword` from `Src/utils.c:3849`.
 pub fn findword<'a>(s: &'a str, sep: Option<&'a str>) -> Option<(&'a str, &'a str)> {
     let s = match sep {
         Some(_) => s,
@@ -2262,6 +2254,7 @@ pub fn findword<'a>(s: &'a str, sep: Option<&'a str>) -> Option<(&'a str, &'a st
 
 /// Parse getkeystring escape sequences (from utils.c getkeystring)
 /// Handles \n \t \r \e \a \b \f \v \\ \' \" \xNN \uNNNN \UNNNNNNNN \0NNN
+/// Port of `getkeystring` from `Src/utils.c:6915`.
 pub fn getkeystring(s: &str) -> (String, usize) {                           // c:6915
     let mut result = String::new();
     let mut chars = s.chars().peekable();
@@ -2501,11 +2494,13 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {              //
 }
 
 /// Convert UCS-4 to UTF-8 (from utils.c ucs4toutf8)
+/// Port of `ucs4toutf8` from `Src/utils.c:6743`.
 pub fn ucs4toutf8(codepoint: u32) -> Option<String> {
     char::from_u32(codepoint).map(|c| c.to_string())
 }
 
 /// Check for special characters that need quoting (from utils.c hasspecial)
+/// Port of `hasspecial` from `Src/utils.c:6072`.
 pub fn hasspecial(s: &str) -> bool {
     s.chars().any(ispecial)
 }
@@ -2571,6 +2566,7 @@ pub fn gettygrp() -> i32 {                                                   // 
 }
 
 /// Check if directory is readable with entries (from utils.c)
+/// Port of `zreaddir` from `Src/utils.c:5217`.
 pub fn zreaddir(path: &str) -> Vec<String> {
     match std::fs::read_dir(path) {
         Ok(entries) => entries
@@ -2620,6 +2616,7 @@ pub fn putshout(c: char) -> i32 {                                            // 
 }
 
 /// Nice char with quoting selection (from utils.c nicechar_sel)
+/// Port of `nicechar_sel` from `Src/utils.c:462`.
 pub fn nicechar_sel(c: char, quotable: bool) -> String {
     if quotable && ispecial(c) {
         format!("\\{}", c)
@@ -2629,16 +2626,19 @@ pub fn nicechar_sel(c: char, quotable: bool) -> String {
 }
 
 /// Initialize multibyte state (from utils.c mb_charinit) - no-op in Rust
+/// Port of `mb_charinit` from `Src/utils.c:553`.
 pub fn mb_charinit() {
     // Rust handles UTF-8 natively
 }
 
 /// Wide char nice format (from utils.c wcs_nicechar_sel)
+/// Port of `wcs_nicechar_sel` from `Src/utils.c:593`.
 pub fn wcs_nicechar_sel(c: char, quotable: bool) -> String {
     nicechar_sel(c, quotable)
 }
 
 /// Wide char nice format (from utils.c wcs_nicechar)
+/// Port of `wcs_nicechar` from `Src/utils.c:709`.
 pub fn wcs_nicechar(c: char) -> String {
     nicechar(c)
 }
@@ -2665,6 +2665,7 @@ pub fn is_wcs_nicechar(c: char) -> bool {                                    // 
 }
 
 /// Get wide character width (from utils.c zwcwidth)
+/// Port of `zwcwidth` from `Src/utils.c:734`.
 pub fn zwcwidth(c: char) -> usize {
     unicode_width::UnicodeWidthChar::width(c).unwrap_or(1)
 }
@@ -2748,7 +2749,7 @@ pub fn print_if_link(s: &str, all: bool) {                                   // 
 /// the residue.
 pub fn substnamedir(s: &str) -> String {                                     // c:1053
     match finddir(s) {                                                       // c:1055
-        None => quotestring(s, QuoteType::Backslash),                        // c:1058
+        None => quotestring(s, crate::ported::zsh_h::QT_BACKSLASH),                        // c:1058
         // C: zhtricat("~", d->node.nam, quotestring(s + strlen(d->dir), …)).
         // `finddir` already renders the leading `~name` segment, so
         // the residue is what `finddir` returned past the `~name`
@@ -2896,6 +2897,7 @@ pub fn getnameddir(name: &str) -> Option<String> {                           // 
 }
 
 /// Compare directory paths (from utils.c dircmp)
+/// Port of `dircmp` from `Src/utils.c:1296`.
 pub fn dircmp(s: &str, t: &str) -> bool {
     let s = s.trim_end_matches('/');
     let t = t.trim_end_matches('/');
@@ -2958,6 +2960,7 @@ pub fn settyinfo(ti: &libc::termios) -> bool {                               // 
 }
 
 /// Check fd table for valid file descriptors (from utils.c check_fd_table)
+/// Port of `check_fd_table` from `Src/utils.c:1969`.
 pub fn check_fd_table(fd: i32) -> bool {
     #[cfg(unix)]
     {
@@ -2971,6 +2974,7 @@ pub fn check_fd_table(fd: i32) -> bool {
 }
 
 /// Move file descriptor to a high number (from utils.c movefd)
+/// Port of `movefd` from `Src/utils.c:1990`.
 pub fn movefd(fd: i32) -> i32 {
     #[cfg(unix)]
     {
@@ -2992,6 +2996,7 @@ pub fn movefd(fd: i32) -> i32 {
 }
 
 /// Add module file descriptor (from utils.c addmodulefd)
+/// Port of `addmodulefd` from `Src/utils.c:2091`.
 pub fn addmodulefd(fd: i32) {
     #[cfg(unix)]
     {
@@ -3068,6 +3073,7 @@ pub fn fdtable_set(fd: i32, kind: i32) {                                 // c:ut
 }
 
 /// Add lock file descriptor (from utils.c addlockfd)
+/// Port of `addlockfd` from `Src/utils.c:2112`.
 pub fn addlockfd(fd: i32, cloexec: bool) {
     #[cfg(unix)]
     {
@@ -3251,6 +3257,7 @@ pub fn zstrtol_underscore(s: &str, base: i32, underscore: bool) -> (i64, &str) {
 }
 
 /// Compute time difference in microseconds (from utils.c timespec_diff_us)
+/// Port of `timespec_diff_us` from `Src/utils.c:2752`.
 pub fn timespec_diff_us(t1: &std::time::Instant, t2: &std::time::Instant) -> i64 {
     if *t2 > *t1 {
         t2.duration_since(*t1).as_micros() as i64
@@ -3332,6 +3339,7 @@ pub fn noquery(purge: bool) -> i32 {                                         // 
 }
 
 /// Scan for spelling correction (from utils.c spscan)
+/// Port of `spscan` from `Src/utils.c:3109`.
 pub fn spscan(name: &str, candidates: &[String], threshold: usize) -> Option<String> {
     let mut best = None;
     let mut best_dist = threshold + 1;
@@ -3360,6 +3368,7 @@ pub fn spscan(name: &str, candidates: &[String], threshold: usize) -> Option<Str
 /// `Option<String>` (zshrs's `Shfunc` equivalent is the
 /// function-text mapping; bytecode dispatch happens in fusevm
 /// at call time).
+/// Port of `getshfunc` from `Src/utils.c:3998`.
 pub fn getshfunc(name: &str) -> Option<String> {
     let tab = crate::ported::hashtable::shfunctab_lock()
         .read()
@@ -3386,11 +3395,13 @@ pub fn makecommaspecial(yesno: bool) {                                       // 
 }
 
 /// Duplicate array with zsh allocation (from utils.c zarrdup)
+/// Port of `zarrdup` from `Src/utils.c:4532`.
 pub fn zarrdup(arr: &[String]) -> Vec<String> {
     arr.to_vec()
 }
 
 /// Spelling correction: find closest match (from utils.c spname)
+/// Port of `spname` from `Src/utils.c:4562`.
 pub fn spname(name: &str, dir: &str) -> Option<String> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -3413,6 +3424,7 @@ pub fn spname(name: &str, dir: &str) -> Option<String> {
 }
 
 /// Spelling correction with full path (from utils.c mindist)
+/// Port of `mindist` from `Src/utils.c:4624`.
 pub fn mindist(dir: &str, name: &str) -> Option<(String, usize)> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -3473,6 +3485,7 @@ pub fn imeta_byte(b: u8) -> bool {
 ///
 /// Same algorithm here, byte-indexed against the Vec rather than
 /// pointer-walked.
+/// Port of `unmetafy` from `Src/utils.c:4954`.
 pub fn unmetafy(s: &mut Vec<u8>) -> usize {                                 // c:4954
     // First loop: find the first `Meta` byte. Everything before it
     // stays as-is, so we don't need to copy.
@@ -3501,6 +3514,7 @@ pub fn unmetafy(s: &mut Vec<u8>) -> usize {                                 // c
 }
 
 /// Count meta characters in string (from utils.c metalen)
+/// Port of `metalen` from `Src/utils.c:4972`.
 pub fn metalen(s: &str, len: usize) -> usize {
     let bytes = s.as_bytes();
     let mut count = 0;
@@ -3631,6 +3645,7 @@ pub fn dquotedztrdup(s: &str) -> String {
 /// Signature change: previous Rust port took `saved: &str` and
 /// returned `bool` — different shape from C, missed the dirfd /
 /// level / dev / ino fields entirely.
+/// Port of `restoredir` from `Src/utils.c:7565`.
 pub fn restoredir(d: &mut crate::ported::zsh_h::dirsav) -> i32 {
     use std::os::unix::fs::MetadataExt;
 
@@ -3719,6 +3734,7 @@ pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
 /// if (count == -1) zerr("character not in range");
 /// return count;
 /// ```
+/// Port of `ucs4tomb` from `Src/utils.c:6788`.
 pub fn ucs4tomb(wval: u32, buf: &mut [u8]) -> i32 {
     // libc::wctomb requires at least MB_CUR_MAX bytes (typically 4
     // for UTF-8, 6 for some encodings). Use a stack buffer first,
@@ -4051,57 +4067,57 @@ mod tests {
 
     #[test]
     fn test_quotestring_backslash() {
-        assert_eq!(quotestring("hello", QuoteType::Backslash), "hello");
+        assert_eq!(quotestring("hello", crate::ported::zsh_h::QT_BACKSLASH), "hello");
         assert_eq!(
-            quotestring("has space", QuoteType::Backslash),
+            quotestring("has space", crate::ported::zsh_h::QT_BACKSLASH),
             "has\\ space"
         );
-        assert_eq!(quotestring("$var", QuoteType::Backslash), "\\$var");
+        assert_eq!(quotestring("$var", crate::ported::zsh_h::QT_BACKSLASH), "\\$var");
     }
 
     #[test]
     fn test_quotestring_single() {
-        assert_eq!(quotestring("hello", QuoteType::Single), "'hello'");
-        assert_eq!(quotestring("it's", QuoteType::Single), "'it'\\''s'");
+        assert_eq!(quotestring("hello", crate::ported::zsh_h::QT_SINGLE), "'hello'");
+        assert_eq!(quotestring("it's", crate::ported::zsh_h::QT_SINGLE), "'it'\\''s'");
     }
 
     #[test]
     fn test_quotestring_double() {
-        assert_eq!(quotestring("hello", QuoteType::Double), "\"hello\"");
+        assert_eq!(quotestring("hello", crate::ported::zsh_h::QT_DOUBLE), "\"hello\"");
         assert_eq!(
-            quotestring("say \"hi\"", QuoteType::Double),
+            quotestring("say \"hi\"", crate::ported::zsh_h::QT_DOUBLE),
             "\"say \\\"hi\\\"\""
         );
     }
 
     #[test]
     fn test_quotestring_dollars() {
-        assert_eq!(quotestring("hello", QuoteType::Dollars), "$'hello'");
+        assert_eq!(quotestring("hello", crate::ported::zsh_h::QT_DOLLARS), "$'hello'");
         assert_eq!(
-            quotestring("line\nbreak", QuoteType::Dollars),
+            quotestring("line\nbreak", crate::ported::zsh_h::QT_DOLLARS),
             "$'line\\nbreak'"
         );
         assert_eq!(
-            quotestring("tab\there", QuoteType::Dollars),
+            quotestring("tab\there", crate::ported::zsh_h::QT_DOLLARS),
             "$'tab\\there'"
         );
     }
 
     #[test]
     fn test_quotestring_pattern() {
-        assert_eq!(quotestring("*.txt", QuoteType::BackslashPattern), "\\*.txt");
+        assert_eq!(quotestring("*.txt", crate::ported::zsh_h::QT_BACKSLASH_PATTERN), "\\*.txt");
         assert_eq!(
-            quotestring("file[1]", QuoteType::BackslashPattern),
+            quotestring("file[1]", crate::ported::zsh_h::QT_BACKSLASH_PATTERN),
             "file\\[1\\]"
         );
     }
 
     #[test]
     fn test_quotetype_from_q_count() {
-        assert_eq!(QuoteType::from_q_count(1), QuoteType::Backslash);
-        assert_eq!(QuoteType::from_q_count(2), QuoteType::Single);
-        assert_eq!(QuoteType::from_q_count(3), QuoteType::Double);
-        assert_eq!(QuoteType::from_q_count(4), QuoteType::Dollars);
+        assert_eq!(qflag_quotetype(1), crate::ported::zsh_h::QT_BACKSLASH);
+        assert_eq!(qflag_quotetype(2), crate::ported::zsh_h::QT_SINGLE);
+        assert_eq!(qflag_quotetype(3), crate::ported::zsh_h::QT_DOUBLE);
+        assert_eq!(qflag_quotetype(4), crate::ported::zsh_h::QT_DOLLARS);
     }
 
     #[test]
@@ -4252,6 +4268,7 @@ pub fn gettempfile(prefix: Option<&str>) -> Option<(i32, String)> {           //
 }
 
 /// Copy string with upper/lower case (from utils.c strucpy)
+/// Port of `strucpy` from `Src/utils.c:2331`.
 pub fn strucpy(s: &str, upper: bool) -> String {
     if upper {
         s.to_uppercase()
@@ -4261,6 +4278,7 @@ pub fn strucpy(s: &str, upper: bool) -> String {
 }
 
 /// Copy n chars with upper/lower case (from utils.c struncpy)
+/// Port of `struncpy` from `Src/utils.c:2341`.
 pub fn struncpy(s: &str, n: usize, upper: bool) -> String {
     let s: String = s.chars().take(n).collect();
     if upper {
@@ -4303,6 +4321,7 @@ pub fn arrlen_lt<T>(arr: &[T], n: usize) -> bool {                          // c
 /// fd 0 (stdin) is correct, but the second argument was `true`
 /// meaning unblock=true. C's `setblock_fd(1, ...)` first arg is
 /// `unblock=1` meaning enable blocking; second arg is fd 0.
+/// Port of `setblock_stdin` from `Src/utils.c:2622`.
 pub fn setblock_stdin() -> i32 {
     // C calls setblock_fd(1 /* unblock=true means SET to blocking */, 0 /* fd */, &mode).
     // The Rust setblock_fd shim just toggles O_NONBLOCK on the fd.
@@ -4328,6 +4347,7 @@ pub fn setblock_stdin() -> i32 {
 /// (a buffer-sizing helper) instead of the C "decrement-and-check"
 /// semantics. New port matches C: takes &mut bufsize + decr,
 /// returns i32 (0 = fit, 1 = doesn't fit).
+/// Port of `ztrftimebuf` from `Src/utils.c:3312`.
 pub fn ztrftimebuf(bufsize: &mut i32, decr: i32) -> i32 {
     if *bufsize <= decr {
         return 1;
@@ -4418,6 +4438,7 @@ pub fn makebangspecial(yesno: bool) {                                        // 
 /// whitespace EXCEPT newline. The previous Rust port included
 /// newline (since `c.is_whitespace()` returns true for '\n') —
 /// wrong for callers that use this to find token boundaries.
+/// Port of `wcsiblank` from `Src/utils.c:4302`.
 pub fn wcsiblank(c: char) -> bool {
     c.is_whitespace() && c != '\n'
 }
@@ -4477,12 +4498,14 @@ pub fn wcsitype(c: char, itype: u32) -> bool {                               // 
 }
 
 /// Duplicate array of wide strings (from utils.c wcs_zarrdup) - same as zarrdup in Rust
+/// Port of `wcs_zarrdup` from `Src/utils.c:4547`.
 pub fn wcs_zarrdup(arr: &[String]) -> Vec<String> {
     arr.to_vec()
 }
 
 /// Set terminal to cbreak mode (from utils.c setcbreak)
 #[cfg(unix)]
+/// Port of `setcbreak` from `Src/utils.c:4756`.
 pub fn setcbreak() -> bool {
     if let Some(mut ti) = gettyinfo() {
         ti.c_lflag &= !(libc::ICANON | libc::ECHO);
@@ -4495,6 +4518,7 @@ pub fn setcbreak() -> bool {
 }
 
 #[cfg(not(unix))]
+/// Port of `setcbreak` from `Src/utils.c:4756`.
 pub fn setcbreak() -> bool {
     false
 }
@@ -4514,6 +4538,7 @@ pub fn ztrdup_metafy(s: &str) -> String {
 }
 
 /// Unmetafy a single character (from utils.c unmeta_one)
+/// Port of `unmeta_one` from `Src/utils.c:5058`.
 pub fn unmeta_one(s: &str) -> (char, usize) {
     let bytes = s.as_bytes();
     if bytes.is_empty() {
@@ -4539,6 +4564,7 @@ pub fn unmeta_one(s: &str) -> (char, usize) {
 /// bytes. Each Meta-escaped pair counts as 1 character.
 /// Previous Rust port called `chars().count()` which counts UTF-8
 /// codepoints, not byte-walked Meta-pairs — wrong semantics.
+/// Port of `ztrlenend` from `Src/utils.c:5162`.
 pub fn ztrlenend(s: &str, end: usize) -> usize {
     let bytes = s.as_bytes();
     let cap = end.min(bytes.len());
@@ -4557,6 +4583,7 @@ pub fn ztrlenend(s: &str, end: usize) -> usize {
 }
 
 /// Multibyte metachar length with conversion (from utils.c mb_metacharlenconv_r)
+/// Port of `mb_metacharlenconv_r` from `Src/utils.c:5548`.
 pub fn mb_metacharlenconv_r(s: &str, pos: usize) -> (usize, Option<char>) {
     if let Some(c) = s[pos..].chars().next() {
         (c.len_utf8(), Some(c))
@@ -4566,6 +4593,7 @@ pub fn mb_metacharlenconv_r(s: &str, pos: usize) -> (usize, Option<char>) {
 }
 
 /// Multibyte metastring length to end (from utils.c mb_metastrlenend)
+/// Port of `mb_metastrlenend` from `Src/utils.c:5655`.
 pub fn mb_metastrlenend(s: &str, width: bool, end: usize) -> usize {
     if width {
         s[..end.min(s.len())]
@@ -4578,16 +4606,19 @@ pub fn mb_metastrlenend(s: &str, width: bool, end: usize) -> usize {
 }
 
 /// Multibyte char length with conversion (from utils.c mb_charlenconv_r)
+/// Port of `mb_charlenconv_r` from `Src/utils.c:5747`.
 pub fn mb_charlenconv_r(s: &str, pos: usize) -> (usize, Option<char>) {
     mb_metacharlenconv_r(s, pos)
 }
 
 /// Multibyte char length (from utils.c mb_charlenconv)
+/// Port of `mb_charlenconv` from `Src/utils.c:5793`.
 pub fn mb_charlenconv(s: &str, pos: usize) -> usize {
     s[pos..].chars().next().map(|c| c.len_utf8()).unwrap_or(0)
 }
 
 /// Single-byte nice format (from utils.c sb_niceformat)
+/// Port of `sb_niceformat` from `Src/utils.c:5851`.
 pub fn sb_niceformat(s: &str) -> String {
     let mut result = String::new();
     for c in s.chars() {
@@ -4601,11 +4632,13 @@ pub fn sb_niceformat(s: &str) -> String {
 }
 
 /// Check if single-byte needs nice format (from utils.c is_sb_niceformat)
+/// Port of `is_sb_niceformat` from `Src/utils.c:5937`.
 pub fn is_sb_niceformat(s: &str) -> bool {
     s.chars().any(|c| c.is_ascii_control())
 }
 
 /// Add unprintable character representation (from utils.c addunprintable)
+/// Port of `addunprintable` from `Src/utils.c:6083`.
 pub fn addunprintable(c: char) -> String {
     if c.is_ascii_control() {
         if (c as u8) < 32 {
@@ -4679,6 +4712,7 @@ pub fn init_dirsav() -> crate::ported::zsh_h::dirsav {                       // 
 }
 
 /// Debug printf (from utils.c dputs) - only active in debug builds
+/// Port of `dputs` from `Src/utils.c:253`.
 pub fn dputs(msg: &str) {
     #[cfg(debug_assertions)]
     {
@@ -4757,6 +4791,7 @@ pub fn subst_string_by_hook(name: &str, arg1: Option<&str>, orig: &str)
 }
 
 /// Make single-element array on heap (from utils.c hmkarray)
+/// Port of `hmkarray` from `Src/utils.c:4094`.
 pub fn hmkarray(s: &str) -> Vec<String> {
     if s.is_empty() {
         Vec::new()
@@ -4766,6 +4801,7 @@ pub fn hmkarray(s: &str) -> Vec<String> {
 }
 
 /// Nice-format and duplicate string (from utils.c nicedupstring)
+/// Port of `nicedupstring` from `Src/utils.c:5301`.
 pub fn nicedupstring(s: &str) -> String {
     sb_niceformat(s)
 }
@@ -4783,6 +4819,7 @@ pub fn nicedupstring(s: &str) -> String {
 /// nlink=1, S_IFDIR→S_IFREG, size=Σ message bytes,
 /// blocks=Σ messages, atime=newest, mtime=newest. When the path is
 /// a plain file, leaves the native `stat(2)` result in `*st`.
+/// Port of `mailstat` from `Src/utils.c:7685`.
 pub fn mailstat(path: &str, st: &mut libc::stat) -> i32 {                    // c:7685
     use std::ffi::CString;
     let c_path = match CString::new(path) {
@@ -5076,6 +5113,7 @@ pub(crate) fn ispwd(pwd: &str) -> bool {
 /// the `stream==NULL` form (the `set -x` callers all want the string
 /// back, not direct stdout writing).
 #[allow(non_snake_case)]
+/// Port of `quotedzputs` from `Src/utils.c:6464`.
 pub(crate) fn quotedzputs(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();
@@ -5402,6 +5440,7 @@ pub fn fdgettyinfo(fd: i32) -> std::io::Result<libc::termios> {
 }
 
 #[cfg(not(unix))]
+/// Port of `fdgettyinfo` from `Src/utils.c:1753`.
 pub fn fdgettyinfo(_fd: i32) -> std::io::Result<()> {
     Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "no termios"))
 }
@@ -5424,6 +5463,7 @@ pub fn fdsettyinfo(fd: i32, tio: &libc::termios) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
+/// Port of `fdsettyinfo` from `Src/utils.c:1785`.
 pub fn fdsettyinfo(_fd: i32, _tio: &()) -> std::io::Result<()> {
     Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "no termios"))
 }
@@ -5476,6 +5516,7 @@ pub fn mb_niceformat(s: &str) -> String {
 /// resulting bytes. For valid UTF-8 sequences, check
 /// `is_wcs_nicechar(scalar)`; for invalid bytes, check
 /// `is_nicechar(byte)`. Either path bailing positive returns true.
+/// Port of `is_mb_niceformat` from `Src/utils.c:5474`.
 pub fn is_mb_niceformat(s: &str) -> bool {
     // C: ums = ztrdup(s); untokenize(ums); ptr = unmetafy(ums, &umlen);
     let mut bytes = s.as_bytes().to_vec();
@@ -5678,6 +5719,7 @@ pub fn metafy(buf: &str) -> String {                                        // c
 /// (`WORDCHARS_w`, `IFS_w`, etc.). C aborts on non-convertible
 /// chars (returns without setting `wca->chars`); Rust port mirrors
 /// by returning empty Vec when conversion fails.
+/// Port of `set_widearray` from `Src/utils.c:69`.
 pub fn set_widearray(mb_array: &str) -> Vec<char> {
     let mut bytes = mb_array.as_bytes().to_vec();
     unmetafy(&mut bytes);

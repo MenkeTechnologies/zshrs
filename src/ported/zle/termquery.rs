@@ -406,6 +406,7 @@ mod tests {
 /// "current output byte" is reset to `n << (2 * (i % 4))` BEFORE
 /// `b++`, then later iterations OR-in the high bits. This mirrors
 /// the standard base64 decode but with an unusual write pattern.
+/// Port of `base64_decode` from `Src/Zle/termquery.c:570`.
 pub fn base64_decode(src: &str) -> Vec<u8> {                                 // c:570
     let bytes = src.as_bytes();
     let len = bytes.len();

@@ -1822,6 +1822,7 @@ thread_local! { static CMDSTR: std::cell::RefCell<Option<String>> = const { std:
 /// }
 /// return ret;
 /// ```
+/// Port of `makecomplistpc` from `Src/Zle/compctl.c:2530`.
 pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {                 // c:2530
     let mut ret: i32 = 0;                                                    // c:2535
     let cmdstr = match CMDSTR.with(|r| r.borrow().clone()) {                 // c:2533
@@ -1831,7 +1832,7 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {                 // 
     // c:2537-2540 — `s = (shfunctab[cmdstr] || builtintab[cmdstr]) ?
     // NULL : findcmd(cmdstr, 1, 0);` — only resolve via $PATH when
     // cmdstr is neither a defined function nor a builtin.
-    let is_function = crate::ported::builtin::SHFUNCTAB.lock()
+    let is_function = crate::ported::builtin::shfunctab_table().lock()
         .map(|t| t.contains_key(&cmdstr)).unwrap_or(false);
     let is_builtin = crate::ported::builtin::BUILTINS.iter()
         .any(|b| b.node.nam == cmdstr);

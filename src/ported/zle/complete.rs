@@ -68,6 +68,7 @@ pub fn freecmlist(l: Option<Box<crate::ported::zle::comp_h::Cmlist>>) {      // 
 /// The C source uses refcounting (`refc`); Rust port relies on Box
 /// ownership semantics — when the last reference drops, every
 /// Box-owned Cpattern in the chain drops with it.
+/// Port of `freecmatcher` from `Src/Zle/complete.c:115`.
 pub fn freecmatcher(m: Option<Box<crate::ported::zle::comp_h::Cmatcher>>) {  // c:115
     // c:120 — `if (!m || --(m->refc)) return;` — refcount handled by
     // Rust ownership; the function is a name-parity wrapper.
@@ -662,6 +663,7 @@ pub fn cond_range(a: &[String], id: i32) -> i32 {                            // 
 /// parses the flag-letter shape, then forwards the residual argv
 /// through `compcore::addmatches` with a minimally-populated Cadata.
 /// Per-flag arg capture into Cadata fields is the next refinement.
+/// Port of `bin_compadd` from `Src/Zle/complete.c:603`.
 pub fn bin_compadd(name: &str, argv: &[String],                              // c:603
                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
@@ -813,6 +815,7 @@ pub fn bin_compset(name: &str, argv: &[String],                              // 
 /// Returns 1 on match, 0 on no-match. Walks the live completion-
 /// state globals (compwords / compcurrent / compprefix / compsuffix)
 /// added in the earlier compcore.rs port batch.
+/// Port of `do_comp_vars` from `Src/Zle/complete.c:935`.
 pub fn do_comp_vars(test: i32, mut na: i32, sa: &str,                        // c:935
                     mut nb: i32, sb: &str, mod_: i32) -> i32 {
     use std::sync::atomic::Ordering;
@@ -1011,6 +1014,7 @@ pub fn parse_cmatcher(name: &str, s: &str)                                   // 
 /// Structural port returns the input pointer unmodified (signaling
 /// "consumed nothing, parse failed") so the caller can detect the
 /// stub state and skip emitting the matcher.
+/// Port of `parse_class` from `Src/Zle/complete.c:480`.
 pub fn parse_class<'a>(_p: &mut crate::ported::zle::comp_h::Cpattern,        // c:480
                        iptr: &'a str) -> &'a str {
     // c:485-573 — the full bytewise parser. Deferred.

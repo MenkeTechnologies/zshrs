@@ -682,22 +682,10 @@ fn setfeatureenables(_m: *const crate::ported::zsh_h::module, _f: &Mutex<feature
 // proper ports of their home files.
 // =====================================================================
 
-// `zleentry` lives in `Src/init.c:1742` (autoload-aware varargs
-// dispatcher) — for the sched.c use-case (`zleentry(ZLE_CMD_TRASH)`)
-// the C body at init.c:1820 calls `trashzleptr()` to drop ZLE display
-// state below the prompt before sched runs the timer body. zshrs
-// hasn't wired the live ZLE/sched bridge yet (the full ZLE port is
-// in src/ported/zle/, but the host runs sched on the bytecode VM),
-// so the static-link path returns 0 (no-op trash).
+// `zleentry` (Src/init.c:1742) — canonical port lives at
+// `crate::ported::init::zleentry`. Use that from sched callsites
+// instead of duplicating here.
 const ZLE_CMD_TRASH: i32 = 3;                                                // zsh.h:3236
-fn zleentry(op: i32) -> i32 {                                                // c:1742
-    if op == ZLE_CMD_TRASH {
-        // c:1820-1825 — `trashzleptr()` if ZLE is loaded, else no-op.
-        // No live ZLE bridge: succeed silently.
-        return 0;
-    }
-    0
-}
 
 // `zleactive` is the int global in `Src/Zle/zle_main.c` indicating
 // whether ZLE is the active reader. Mirrored as an atomic int so other

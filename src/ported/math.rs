@@ -1945,6 +1945,7 @@ pub(crate) fn checkunary() {
     }
 
     /// Operator-precedence parser - closely follows zsh math.c mathparse()
+/// Port of `mathparse` from `Src/math.c:1594`.
     pub(crate) fn mathparse(pc: u8) {
         if m_error_some() {
             return;
@@ -2097,6 +2098,7 @@ pub(crate) fn checkunary() {
     }
 
     /// Call a math function
+/// Port of `callmathfunc` from `Src/math.c:1037`.
     pub(crate) fn callmathfunc(call: &str) -> Mnumber {
         // Parse function name and args
         let paren = call.find('(').unwrap_or(call.len());
@@ -2221,6 +2223,7 @@ pub(crate) fn checkunary() {
     }
 
     /// Evaluate the expression
+/// Port of `mathevall` from `Src/math.c:367`.
     pub(crate) fn mathevall() -> Result<Mnumber, String> {
         m_prec_set(if m_c_precedences() { &C_PREC } else { &Z_PREC });
 

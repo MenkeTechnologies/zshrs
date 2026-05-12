@@ -361,6 +361,7 @@ pub fn is_interact() -> bool {
 /// signal handlers interrupt blocked reads (so ^C breaks out of
 /// `read` etc.).
 #[cfg(unix)]
+/// Port of `install_handler` from `Src/signals.c:100`.
 pub fn install_handler(sig: i32) {                                           // c:100
     unsafe {
         let mut act: libc::sigaction = std::mem::zeroed();
@@ -484,6 +485,7 @@ pub fn endtrapscope() {                                                      // 
 /// completely wrong (that's job-control suspend, not "wait for
 /// signal delivery"). Now real port via `sigsuspend(2)`.
 #[cfg(unix)]
+/// Port of `signal_suspend` from `Src/signals.c:214`.
 pub fn signal_suspend(_sig: i32, wait_cmd: bool) -> i32 {                    // c:214
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
@@ -519,6 +521,7 @@ pub fn signal_suspend(_sig: i32, wait_cmd: bool) -> i32 {                    // 
 /// scope's `endtrapscope` (the locallevel++/-- bump tags the
 /// save entry with the higher scope so it's restored
 /// when THIS scope ends, not the outer one's).
+/// Port of `starttrapscope` from `Src/signals.c:855`.
 pub fn starttrapscope() {                                                    // c:855
     // c:858 — `if (intrap) return`.
     if intrap.load(Ordering::Relaxed) != 0 {
@@ -615,6 +618,7 @@ pub fn noholdintr() {                                                        // 
 /// Builds a sigset containing only the given signal; `sig == 0`
 /// returns an empty set (matches the explicit C check).
 #[cfg(unix)]
+/// Port of `signal_mask` from `Src/signals.c:160`.
 pub fn signal_mask(sig: i32) -> libc::sigset_t {
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {

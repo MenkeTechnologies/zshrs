@@ -582,7 +582,7 @@ pub fn exalias() -> bool {
             BAR_TOK => "|",
             _ => return false,
         };
-        return check_alias(text);
+        return checkalias(text);
     }
 
     let tokstr = tokstr().unwrap();
@@ -614,7 +614,7 @@ pub fn exalias() -> bool {
     if tok() == STRING_LEX {
         // lex.c:1995 — `checkalias()`. POSIX-aliases gate skipped
         // here (zshrs doesn't have the option flag wired).
-        if check_alias(&lextext) {
+        if checkalias(&lextext) {
             return true;
         }
 
@@ -665,7 +665,7 @@ pub fn exalias() -> bool {
 /// if the lookup matched (regular or suffix alias) AND the alias
 /// text was successfully injected back into the input stream for
 /// re-lexing.
-fn check_alias(lextext: &str) -> bool {
+fn checkalias(lextext: &str) -> bool {
     // lex.c:1906-1907 — guard on null lextext.
     if lextext.is_empty() {
         return false;
@@ -993,6 +993,7 @@ fn peek() -> Option<char> {
 }
 
 /// Add character to token buffer
+/// Port of `add` from `Src/lex.c:451`.
 fn add(c: char) {
     LEX_LEXBUF.with_borrow_mut(|b| b.add(c));
 }
@@ -1989,6 +1990,7 @@ fn lex_outang() -> lextok {
 }
 
 /// Get rest of token string
+/// Port of `gettokstr` from `Src/lex.c:937`.
 fn gettokstr(c: char, sub: bool) -> lextok {
     let mut bct = 0; // brace count
     let mut pct = 0; // parenthesis count
@@ -3283,6 +3285,7 @@ pub fn isnumglob(input: &str, pos: usize) -> bool {
 /// lexer — same output for typical bodies. Documented divergence:
 /// nested cmd-sub `$(...)` and arith `$((...))` aren't lexed
 /// recursively; the runtime handles them at expansion time.
+/// Port of `parsestrnoerr` from `Src/lex.c:1713`.
 pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     parsestr_inner(s)
 }

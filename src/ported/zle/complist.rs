@@ -623,6 +623,7 @@ pub static MAX_CAPLEN:  std::sync::atomic::AtomicI32 = std::sync::atomic::Atomic
 /// ```
 /// Allocate a fresh filecol with no group pattern and the given
 /// color string. Caller is expected to chain it via `mcolors.files[i]`.
+/// Port of `filecol` from `Src/Zle/complist.c:487`.
 pub fn filecol(col: &str) -> filecol {                                       // c:487
     filecol {                                                                // c:492 zhalloc
         prog: None,                                                          // c:493 fc->prog = NULL

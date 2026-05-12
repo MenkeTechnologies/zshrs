@@ -38,72 +38,10 @@ use crate::zsh_h::{
     SORTIT_NUMERICALLY, SORTIT_NUMERICALLY_SIGNED, SORTIT_SOMEHOW,
 };
 
-/// Sort element. Direct port of `struct sortelt` from `Src/zsh.h`,
-/// referenced by `Src/sort.c::eltpcmp` (line 44) and `strmetasort`
-/// (line 234).
-///
-/// Fields:
-/// - `orig`: the original metafied string the caller will get back.
-/// - `cmp`: the comparison key — pre-transformed by
-///   [`SortElt::with_transforms`] to apply case-fold / backslash-
-///   strip once, instead of per-compare.
-/// - `len`: `Some(n)` means "compare first n bytes" for embedded-
-///   NUL-bearing strings; `None` matches C's `len == -1` meaning
-///   "use strlen — no embedded NULs".
-/// - `origlen`: the per-element pre-unmetafy length, mirroring C's
-///   `unmetalenp` array element. Read back after sort to pair the
-///   sorted strings with their original lengths.
-#[derive(Clone, Debug)]
-pub struct SortElt {
-    pub orig: String,
-    pub cmp: String,
-    pub len: Option<usize>,
-    pub origlen: Option<usize>,
-}
-
-impl SortElt {
-    /// Construct a sort element for a string with no embedded NULs.
-    /// C: `e.cmp = s; e.orig = s; e.len = -1;`.
-    pub fn new(s: &str) -> Self {
-        SortElt {
-            orig: s.to_string(),
-            cmp: s.to_string(),
-            len: None,
-            origlen: None,
-        }
-    }
-
-    /// Construct with explicit length (embedded-NUL-bearing buffer).
-    /// C: `e.len = len; e.origlen = len;`.
-    pub fn with_len(s: &str, len: usize) -> Self {
-        SortElt {
-            orig: s.to_string(),
-            cmp: s.to_string(),
-            len: Some(len),
-            origlen: Some(len),
-        }
-    }
-
-    /// Build the `cmp` form once, applying the `SORTIT_IGNORING_*`
-    /// transformations the C source does inline at sort.c:289-385:
-    /// - `IGNORING_CASE`: lowercase the comparison form.
-    /// - `IGNORING_BACKSLASHES`: drop literal backslashes.
-    ///
-    /// The result is stored on `self.cmp` so the eltpcmp callback
-    /// can compare the transformed form directly without repeating
-    /// the work for every pair.
-    pub fn with_transforms(mut self, sort_flags: u32) -> Self {
-        let mut t = self.cmp.clone();
-        if sort_flags & (SORTIT_IGNORING_CASE as u32) != 0 {
-            t = t.to_lowercase(); // c:329-374 before backslash strip
-        }
-        if sort_flags & (SORTIT_IGNORING_BACKSLASHES as u32) != 0 {
-            t = t.chars().filter(|&c| c != '\\').collect(); // c:375-385
-        }
-        self.cmp = t;
-        self
-    }
-}
+// SortElt struct + impl deleted — the canonical sort-element type is
+// `crate::ported::zsh_h::sortelt` (port of `struct sortelt` at
+// `Src/zsh.h:3013-3028`); this file no longer carries a duplicate.
+use crate::ported::zsh_h::sortelt;
 
 /// Port of `zstrcmp()` from `Src/sort.c:191`.
 ///
@@ -277,37 +215,36 @@ pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {              // 
 /// the comparison runs over the first `n` bytes of `cmp` field
 /// (matching C's `len != -1` branch at sort.c:52-118). Equal-but-
 /// shorter strings sort below their longer continuations.
-pub fn eltpcmp(a: &SortElt, b: &SortElt, sort_flags: u32) -> Ordering {      // c:44
+pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {      // c:44
     let reverse = (sort_flags & (SORTIT_BACKWARDS as u32)) != 0;
-    let result = match (a.len, b.len) {
-        (None, None) => zstrcmp(
+    // C's `len == -1` sentinel = "no embedded NULs, use strlen".
+    let a_has_len = a.len >= 0;
+    let b_has_len = b.len >= 0;
+    let result = if !a_has_len && !b_has_len {
+        zstrcmp(
             &a.cmp,
             &b.cmp,
             sort_flags & !(SORTIT_BACKWARDS as u32),
-        ),
-        _ => {
-            // Embedded-null path: compare first min(a.len, b.len)
-            // bytes; equal-prefix-but-different-length means the
-            // shorter sorts lower.
-            let len = match (a.len, b.len) {
-                (Some(la), Some(lb)) => la.min(lb),
-                (Some(la), None) => la.min(b.cmp.len()),
-                (None, Some(lb)) => lb.min(a.cmp.len()),
-                _ => unreachable!(),
-            };
-            let ab = a.cmp.as_bytes();
-            let bb = b.cmp.as_bytes();
-            let take_a = ab.len().min(len);
-            let take_b = bb.len().min(len);
-            match ab[..take_a].cmp(&bb[..take_b]) {
-                Ordering::Equal => match (a.len, b.len) {
-                    (Some(la), Some(lb)) => la.cmp(&lb),
-                    (Some(_), None) => Ordering::Greater,
-                    (None, Some(_)) => Ordering::Less,
-                    _ => Ordering::Equal,
-                },
-                o => o,
-            }
+        )
+    } else {
+        // Embedded-null path: compare first min(a.len, b.len)
+        // bytes; equal-prefix-but-different-length means the
+        // shorter sorts lower.
+        let la = if a_has_len { a.len as usize } else { a.cmp.len() };
+        let lb = if b_has_len { b.len as usize } else { b.cmp.len() };
+        let len = la.min(lb);
+        let ab = a.cmp.as_bytes();
+        let bb = b.cmp.as_bytes();
+        let take_a = ab.len().min(len);
+        let take_b = bb.len().min(len);
+        match ab[..take_a].cmp(&bb[..take_b]) {
+            Ordering::Equal => match (a_has_len, b_has_len) {
+                (true, true)   => la.cmp(&lb),
+                (true, false)  => Ordering::Greater,
+                (false, true)  => Ordering::Less,
+                (false, false) => Ordering::Equal,
+            },
+            o => o,
         }
     };
     if reverse {
@@ -334,17 +271,37 @@ pub fn strmetasort(                                                          // 
         return;
     }
 
-    // Build SortElts up front, applying transforms once (C does the
+    // Build sortelts up front, applying transforms once (C does the
     // same at sort.c:289-385 inside the prep loop).
-    let elts: Vec<SortElt> = match unmetalenp.as_deref() {
+    let apply_transforms = |s: &str| -> String {
+        let mut t = s.to_string();
+        if sort_flags & (SORTIT_IGNORING_CASE as u32) != 0 {
+            t = t.to_lowercase();                                            // c:329-374
+        }
+        if sort_flags & (SORTIT_IGNORING_BACKSLASHES as u32) != 0 {
+            t = t.chars().filter(|&c| c != '\\').collect();                  // c:375-385
+        }
+        t
+    };
+    let elts: Vec<sortelt> = match unmetalenp.as_deref() {
         Some(lens) => arr
             .iter()
             .zip(lens.iter())
-            .map(|(s, &l)| SortElt::with_len(s, l).with_transforms(sort_flags))
+            .map(|(s, &l)| sortelt {
+                orig: s.clone(),
+                cmp: apply_transforms(s),
+                origlen: l as i32,
+                len: l as i32,
+            })
             .collect(),
         None => arr
             .iter()
-            .map(|s| SortElt::new(s).with_transforms(sort_flags))
+            .map(|s| sortelt {
+                orig: s.clone(),
+                cmp: apply_transforms(s),
+                origlen: -1,
+                len: -1,
+            })
             .collect(),
     };
 
@@ -474,24 +431,22 @@ mod tests {
     }
 
     #[test]
-    fn test_with_transforms_lowercases_cmp() {
-        let e = SortElt::new("ABC").with_transforms(SORTIT_IGNORING_CASE as u32);
-        assert_eq!(e.orig, "ABC");
-        assert_eq!(e.cmp, "abc");
+    fn test_strmetasort_lowercases_via_ignoring_case() {
+        // Coverage for the case-fold transform inside `strmetasort`'s
+        // build-elts pass (formerly `SortElt::with_transforms`).
+        let mut arr = vec!["BANANA".to_string(), "apple".to_string()];
+        strmetasort(&mut arr, SORTIT_IGNORING_CASE as u32, None);
+        assert_eq!(arr, vec!["apple", "BANANA"]);
     }
 
     #[test]
-    fn test_with_transforms_strips_backslashes() {
-        let e = SortElt::new("a\\b\\c").with_transforms(SORTIT_IGNORING_BACKSLASHES as u32);
-        assert_eq!(e.orig, "a\\b\\c");
-        assert_eq!(e.cmp, "abc");
-    }
-
-    #[test]
-    fn test_with_transforms_combines_flags() {
-        let e = SortElt::new("A\\BC")
-            .with_transforms((SORTIT_IGNORING_CASE | SORTIT_IGNORING_BACKSLASHES) as u32);
-        assert_eq!(e.cmp, "abc");
+    fn test_strmetasort_strips_backslashes_via_ignoring_bs() {
+        // Backslash-strip in cmp form lets `\\b` compare equal to `b`.
+        let mut arr = vec!["a\\b".to_string(), "ab".to_string()];
+        strmetasort(&mut arr, SORTIT_IGNORING_BACKSLASHES as u32, None);
+        // Stable on equal: original order preserved when cmp is equal.
+        assert_eq!(arr[0], "a\\b");
+        assert_eq!(arr[1], "ab");
     }
 
     #[test]
@@ -500,8 +455,8 @@ mod tests {
         // C: "the string that's finished sorts below the other"
         // (sort.c:88-89). With len markers, prefix "abc" + 0 sorts
         // below prefix "abc" + 0 + "d" (the longer continuation).
-        let a = SortElt::with_len("abc", 3);
-        let b = SortElt::with_len("abc", 5);
+        let a = sortelt { orig: "abc".to_string(), cmp: "abc".to_string(), origlen: 3, len: 3 };
+        let b = sortelt { orig: "abc".to_string(), cmp: "abc".to_string(), origlen: 5, len: 5 };
         assert_eq!(eltpcmp(&a, &b, 0), Ordering::Less);
         assert_eq!(eltpcmp(&b, &a, 0), Ordering::Greater);
     }

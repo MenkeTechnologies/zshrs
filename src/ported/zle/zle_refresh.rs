@@ -835,6 +835,7 @@ pub fn wpfxlen(olds: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
 /// correct cross-language equivalent for this fn shape (the
 /// caller doesn't have a Zle handle from this entry point;
 /// the live tick clears its buffer directly via Zle methods).
+/// Port of `zle_free_highlight` from `Src/Zle/zle_refresh.c:415`.
 pub fn zle_free_highlight() {                                                // c:415
     // Rust ownership handles the equivalent free; explicit clear
     // happens on the active Zle when invalidate fires.
@@ -931,6 +932,7 @@ pub fn ZR_strcpy(                                                            // 
 /// ```
 /// Length of a NUL-terminated REFRESH_ELEMENT string.
 #[allow(non_snake_case)]
+/// Port of `ZR_strlen` from `Src/Zle/zle_refresh.c:101`.
 pub fn ZR_strlen(wstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {  // c:101
     let mut len = 0;                                                         // c:104 int len = 0
     while len < wstr.len() && wstr[len].chr != '\0' {                        // c:106 while (wstr++->chr != ZWC('\0'))
@@ -961,6 +963,7 @@ pub fn ZR_strlen(wstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {
 /// (chr+atr pair-equal), 1 otherwise. Stops early at NUL in
 /// either string (treating it as the shorter-string boundary).
 #[allow(non_snake_case)]
+/// Port of `ZR_strncmp` from `Src/Zle/zle_refresh.c:119`.
 pub fn ZR_strncmp(                                                           // c:119
     oldwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
     newwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],

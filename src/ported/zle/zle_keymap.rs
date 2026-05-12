@@ -1499,6 +1499,7 @@ pub fn getrestchar_keybuf(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 { 
 /// Test whether `seq` is a strict prefix of some longer binding in
 /// `km`. Returns 1 if `seq` is a prefix (incl. empty input), 0 if
 /// `seq` is itself a complete binding or no match exists.
+/// Port of `keyisprefix` from `Src/Zle/zle_keymap.c:683`.
 pub fn keyisprefix(km: &Keymap, seq: &[u8]) -> i32 {                         // c:683
     // c:687-688 — `if(!*seq) return 1`. Empty sequence → trivially prefix.
     if seq.is_empty() {
@@ -1682,6 +1683,7 @@ pub fn refkeymap(km: &mut Keymap) {                                          // 
 /// immutable; promotion only happens on the next `linkkeymap`).
 /// We keep the lookup as a contract check so callers see a working
 /// "did this name exist?" probe.
+/// Port of `refkeymap_by_name` from `Src/Zle/zle_keymap.c:208`.
 pub fn refkeymap_by_name(name: &str) {                                       // c:208
     let _ = keymapnamtab().lock().unwrap().get(name);                        // c:210 getnode probe
 }
@@ -1909,6 +1911,7 @@ pub fn unlinkkeymap(name: &str, ignm: i32) -> i32 {                          // 
 /// indicated via the `should_delete` out flag (the caller is expected
 /// to drop the Keymap; Rust ownership doesn't allow self-deletion
 /// from the &mut reference).
+/// Port of `unrefkeymap` from `Src/Zle/zle_keymap.c:479`.
 pub fn unrefkeymap(km: &mut Keymap) -> i32 {                                 // c:479
     km.rc -= 1;                                                              // c:482 --km->rc
     if km.rc == 0 {

@@ -1733,6 +1733,7 @@ pub fn execimmortal(name: &str, args: &[String]) -> i32 {                    // 
 ///   - lastcmd update from the widget's flag mask.
 /// Bindk/metafy boundary management lives on the per-thread Zle
 /// struct already.
+/// Port of `execzlefunc` from `Src/Zle/zle_main.c:1420`.
 pub fn execzlefunc(name: &str, args: &[String]) -> i32 {                     // c:1420
     // c:1422 — `if (!func) return 1`.
     if !crate::ported::zle::zle_thingy::rthingy_nocreate(name) {             // c:1422
@@ -1921,6 +1922,7 @@ pub fn setup_(_m: *const crate::ported::zsh_h::module) -> i32 {              // 
 /// XOR 0x20) sequences, decoding them as we go. C walks backward
 /// through `s` because `ungetbyte` is a stack push — to surface
 /// `s[0]` first on subsequent read, the last byte goes on first.
+/// Port of `ungetbytes_unmeta` from `Src/Zle/zle_main.c:365`.
 pub fn ungetbytes_unmeta(zle: &mut Zle, s: &[u8]) {                          // c:365
     let mut i = s.len();                                                     // c:368 s += len
     while i > 0 {                                                            // c:369 while (len--)
@@ -2087,6 +2089,7 @@ pub fn zleaftertrap() -> i32 {                                               // 
 /// Hook callback fired BEFORE a trap handler runs — pushes a
 /// param scope and exposes ZLE state to the trap function (when
 /// zle is active).
+/// Port of `zlebeforetrap` from `Src/Zle/zle_main.c:2103`.
 pub fn zlebeforetrap() -> i32 {                                              // c:2103
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2106

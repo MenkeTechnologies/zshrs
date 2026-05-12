@@ -505,6 +505,7 @@ pub struct zle_position {                                                    // 
 /// Position save/restore
 /// Port of zle_save_positions() / zle_restore_positions() from zle_utils.c
 impl Zle {
+    /// Port of `zle_save_positions` from `Src/Zle/zle_utils.c:619`.
     pub fn zle_save_positions(&self) -> zle_position {                       // c:619
         zle_position {
             cs: self.zlecs,
@@ -513,6 +514,7 @@ impl Zle {
         }
     }
 
+    /// Port of `zle_restore_positions` from `Src/Zle/zle_utils.c:677`.
     pub fn zle_restore_positions(&mut self, saved: &zle_position) {          // c:677
         self.zlecs = saved.cs.min(self.zlell);
         self.mark = saved.mk.min(self.zlell);
@@ -988,6 +990,7 @@ pub fn cuttext(zle: &mut crate::ported::zle::zle_main::Zle, txt: &[char],    // 
 /// Walk backward from the cursor to the start of the current line
 /// (or the start of the buffer if there's no preceding newline).
 /// Returns the byte offset.
+/// Port of `findbol` from `Src/Zle/zle_utils.c:1157`.
 pub fn findbol(zle: &crate::ported::zle::zle_main::Zle) -> usize {           // c:1157
     let mut x = zle.zlecs;                                                   // c:1160 int x = zlecs
     while x > 0 && zle.zleline.get(x - 1) != Some(&'\n') {                   // c:1162
@@ -1009,6 +1012,7 @@ pub fn findbol(zle: &crate::ported::zle::zle_main::Zle) -> usize {           // 
 /// ```
 /// Walk forward from the cursor to the next newline (or end of
 /// buffer). Returns the byte offset.
+/// Port of `findeol` from `Src/Zle/zle_utils.c:1168`.
 pub fn findeol(zle: &crate::ported::zle::zle_main::Zle) -> usize {           // c:1168
     let mut x = zle.zlecs;                                                   // c:1171 int x = zlecs
     while x != zle.zlell && zle.zleline.get(x) != Some(&'\n') {              // c:1173

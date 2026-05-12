@@ -452,11 +452,11 @@ pub fn multiquote(s: &str, ign: i32) -> String {                             // 
         let mut cur = s.to_string();
         for &q in &p_bytes[start..] {                                        // c:1073
             let qt = match q as i32 {                                        // c:1074
-                x if x == QT_BACKSLASH => crate::ported::utils::QuoteType::Backslash,
-                x if x == QT_SINGLE    => crate::ported::utils::QuoteType::Single,
-                x if x == QT_DOUBLE    => crate::ported::utils::QuoteType::Double,
-                x if x == QT_DOLLARS   => crate::ported::utils::QuoteType::Dollars,
-                _ => crate::ported::utils::QuoteType::Backslash,
+                x if x == QT_BACKSLASH => crate::ported::zsh_h::QT_BACKSLASH,
+                x if x == QT_SINGLE    => crate::ported::zsh_h::QT_SINGLE,
+                x if x == QT_DOUBLE    => crate::ported::zsh_h::QT_DOUBLE,
+                x if x == QT_DOLLARS   => crate::ported::zsh_h::QT_DOLLARS,
+                _ => crate::ported::zsh_h::QT_BACKSLASH,
             };
             cur = crate::ported::utils::quotestring(&cur, qt);
         }

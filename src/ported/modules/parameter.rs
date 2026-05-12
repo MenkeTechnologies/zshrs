@@ -455,6 +455,7 @@ use crate::ported::zsh_h::{ALIAS_GLOBAL, DISABLED};
 /// link path: dispatch on the ALIAS_SUFFIX bit in `flags` since the
 /// ht pointer isn't passed through.
 #[allow(non_snake_case)]
+/// Port of `getalias` from `Src/Modules/parameter.c:1900`.
 pub fn getalias(_alht: *mut HashTable, _ht: *mut HashTable,                  // c:1900
                 name: &str, flags: i32) -> Option<Param> {
     use crate::ported::zsh_h::{PM_UNSET, PM_SPECIAL, ALIAS_SUFFIX};
@@ -646,6 +647,7 @@ pub fn getpmbuiltin(ht: *mut HashTable, name: &str) -> Option<Param> {       // 
 /// }
 /// ```
 #[allow(non_snake_case)]
+/// Port of `getpmcommand` from `Src/Modules/parameter.c:213`.
 pub fn getpmcommand(_ht: *mut HashTable, name: &str) -> Option<Param> {      // c:213
     use crate::ported::zsh_h::{PM_SCALAR, PM_UNSET, PM_SPECIAL};
     let g = crate::ported::hashtable::cmdnamtab_lock().read().ok()?;

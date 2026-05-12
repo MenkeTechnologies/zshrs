@@ -754,6 +754,7 @@ pub fn addsuffixstring(tp: i32, flags: i32, chars: &str, lensuf: i32) {      // 
 /// `argument-base` widget — set the numeric base for digit-arg
 /// parsing. Valid range 2..36 (10 digits + 26 letters). Returns 1
 /// for out-of-range bases without changing state.
+/// Port of `argumentbase` from `Src/Zle/zle_misc.c:1037`.
 pub fn argumentbase(zle: &mut Zle, args: &[String]) -> i32 {                 // c:1037
     use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // c:1042-1045 — `if (*args) multbase = zstrtol(...) else zmod.mult`.
@@ -860,7 +861,7 @@ pub fn backwardkillline(zle: &mut Zle) -> i32 {                              // 
 /// (`quotestring(pbuf, QT_SINGLE_OPTIONAL)`) when `zmult != 1`
 /// prevents the user from accidentally pasting shell metacharacters.
 pub fn bracketedpaste(zle: &mut Zle, args: &[String]) -> i32 {               // c:813
-    use crate::ported::utils::{quotestring, QuoteType};
+    use crate::ported::utils::quotestring;
     let pbuf = bracketedstring();                                            // c:816
     if let Some(name) = args.first() {                                       // c:818
         // c:819 — `setsparam(*args, pbuf)`. Param-table not yet a
@@ -873,7 +874,7 @@ pub fn bracketedpaste(zle: &mut Zle, args: &[String]) -> i32 {               // 
     let payload = if zle.zmod.mult == 1 {                                    // c:823
         pbuf.clone()
     } else {
-        quotestring(&pbuf, QuoteType::SingleOptional)                        // c:824
+        quotestring(&pbuf, crate::ported::zsh_h::QT_SINGLE_OPTIONAL)                        // c:824
     };
     let wpaste: Vec<char> = payload.chars().collect();
     // c:826-834 — !(zmod.flags & MOD_VIBUF) → reset kct, killregion if
@@ -1079,6 +1080,7 @@ pub fn digitargument(zle: &mut Zle) -> i32 {                                 // 
 /// inserts AFTER the cursor (cursor stays put). Simplified port —
 /// the full body has INSMODE/overwrite handling and suffix
 /// machinery that needs the suffixlist substrate.
+/// Port of `doinsert` from `Src/Zle/zle_misc.c:37`.
 pub fn doinsert(zle: &mut Zle, zstr: &[char]) {                              // c:37
     let m = zle.zmod.mult.unsigned_abs() as usize;
     let neg = zle.zmod.mult < 0;
@@ -1429,6 +1431,7 @@ pub fn makesuffixstr(_funcnam: Option<&str>, str_arg: Option<&str>, n: i32) {  /
 /// ```
 /// `negative-argument` widget — start a negative count prefix.
 /// Refuses if a tmult is already in flight.
+/// Port of `negargument` from `Src/Zle/zle_misc.c:974`.
 pub fn negargument(zle: &mut Zle) -> i32 {                                   // c:974
     use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     if zle.zmod.flags & MOD_TMULT != 0 {                       // c:976
@@ -1748,6 +1751,7 @@ pub fn scancompcmd(name: &str) -> i32 {                                      // 
 /// `wide_valid=false` branch is unreachable in the Rust input path
 /// and the ASCII-promotion is the correct fallback for the rare
 /// case where a widget sets `lastchar` directly.
+/// Port of `selfinsert` from `Src/Zle/zle_misc.c:112`.
 pub fn selfinsert(zle: &mut Zle) -> i32 {                                    // c:112
     if !(crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.load(std::sync::atomic::Ordering::SeqCst) != 0) {                                            // c:118
         crate::ported::zle::zle_main::LASTCHAR_WIDE.store((crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst)) as i32, std::sync::atomic::Ordering::SeqCst);
@@ -1809,6 +1813,7 @@ pub fn sendbreak() -> i32 {                                                  // 
 /// `zleline[start..middle]` and `zleline[middle..end]`. After the
 /// swap, `zleline[start..start+(end-middle)]` holds the second
 /// chunk and `zleline[start+(end-middle)..end]` holds the first.
+/// Port of `transpose_swap` from `Src/Zle/zle_misc.c:254`.
 pub fn transpose_swap(zle: &mut Zle, start: usize, middle: usize, end: usize) {  // c:254
     let len1 = middle - start;                                               // c:260
     let len2 = end - middle;                                                 // c:261
