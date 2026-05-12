@@ -1033,6 +1033,7 @@ pub struct hist_stack {
 
 /// Port of `struct lexbufstate` from `Src/zsh.h:3069-3079`.
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Default)]
 pub struct lexbufstate {
     // c:3069
     pub ptr: Option<String>, // c:3074
@@ -1042,6 +1043,7 @@ pub struct lexbufstate {
 
 /// Port of `struct lex_stack` from `Src/zsh.h:3082-3096`.
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Default)]
 pub struct lex_stack {
     // c:3082
     pub dbparens: i32,              // c:3083

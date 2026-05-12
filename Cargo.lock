@@ -3369,7 +3369,6 @@ dependencies = [
  "ureq",
  "walkdir",
  "zshrs-daemon",
- "zshrs-parse",
  "zstd",
 ]
 
@@ -3410,15 +3409,6 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "walkdir",
- "zshrs-parse",
-]
-
-[[package]]
-name = "zshrs-parse"
-version = "0.10.9"
-dependencies = [
- "glob",
- "serde",
 ]
 
 [[package]]

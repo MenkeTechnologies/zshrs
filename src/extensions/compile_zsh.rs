@@ -997,16 +997,21 @@ impl ZshCompiler {
 
     /// Translate a ZshRedir → fusevm Redirect/HereDoc/HereString op.
     fn compile_redir(&mut self, redir: &crate::parse::ZshRedir) {
-        use crate::parse::RedirType;
+        use crate::ported::zsh_h::{
+            REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP, REDIR_ERRAPPNOW, REDIR_ERRWRITE,
+            REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE,
+            REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ, REDIR_READWRITE, REDIR_WRITE,
+            REDIR_WRITENOW,
+        };
         // Default fd: stdin for read-side redirects, stdout for write-side.
         let fd_default: u8 = match redir.rtype {
-            RedirType::Read
-            | RedirType::Heredoc
-            | RedirType::HeredocDash
-            | RedirType::Herestr
-            | RedirType::ReadWrite
-            | RedirType::MergeIn
-            | RedirType::InPipe => 0,
+            REDIR_READ
+            | REDIR_HEREDOC
+            | REDIR_HEREDOCDASH
+            | REDIR_HERESTR
+            | REDIR_READWRITE
+            | REDIR_MERGEIN
+            | REDIR_INPIPE => 0,
             _ => 1,
         };
         let fd = if redir.fd >= 0 {
@@ -1016,7 +1021,7 @@ impl ZshCompiler {
         };
 
         // Heredoc / herestring carry their content in `redir.heredoc`.
-        if matches!(redir.rtype, RedirType::Heredoc | RedirType::HeredocDash) {
+        if matches!(redir.rtype, REDIR_HEREDOC | REDIR_HEREDOCDASH) {
             if let Some(hd) = &redir.heredoc {
                 let content_clean = crate::lex::untokenize(&hd.content);
                 // Empty heredoc body — route through HereDoc op (no
@@ -1052,7 +1057,7 @@ impl ZshCompiler {
             }
             return;
         }
-        if matches!(redir.rtype, RedirType::Herestr) {
+        if matches!(redir.rtype, REDIR_HERESTR) {
             // <<< str — push the target string as the content.
             self.compile_word_str(&redir.name);
             self.builder.emit(Op::HereString, 0);
@@ -1063,19 +1068,19 @@ impl ZshCompiler {
         // (handles var expansion etc.). DupRead/DupWrite take a numeric fd
         // string; the runtime parses it and dup2s.
         let op_byte = match redir.rtype {
-            RedirType::Write => fusevm::op::redirect_op::WRITE,
-            RedirType::Writenow => fusevm::op::redirect_op::CLOBBER,
-            RedirType::Append => fusevm::op::redirect_op::APPEND,
-            RedirType::Appendnow => fusevm::op::redirect_op::APPEND,
-            RedirType::Read => fusevm::op::redirect_op::READ,
-            RedirType::ReadWrite => fusevm::op::redirect_op::READ_WRITE,
-            RedirType::MergeIn => fusevm::op::redirect_op::DUP_READ,
-            RedirType::MergeOut => fusevm::op::redirect_op::DUP_WRITE,
-            RedirType::ErrWrite => fusevm::op::redirect_op::WRITE_BOTH,
-            RedirType::ErrWritenow => fusevm::op::redirect_op::WRITE_BOTH,
-            RedirType::ErrAppend => fusevm::op::redirect_op::APPEND_BOTH,
-            RedirType::ErrAppendnow => fusevm::op::redirect_op::APPEND_BOTH,
-            RedirType::InPipe | RedirType::OutPipe => {
+            REDIR_WRITE => fusevm::op::redirect_op::WRITE,
+            REDIR_WRITENOW => fusevm::op::redirect_op::CLOBBER,
+            REDIR_APP => fusevm::op::redirect_op::APPEND,
+            REDIR_APPNOW => fusevm::op::redirect_op::APPEND,
+            REDIR_READ => fusevm::op::redirect_op::READ,
+            REDIR_READWRITE => fusevm::op::redirect_op::READ_WRITE,
+            REDIR_MERGEIN => fusevm::op::redirect_op::DUP_READ,
+            REDIR_MERGEOUT => fusevm::op::redirect_op::DUP_WRITE,
+            REDIR_ERRWRITE => fusevm::op::redirect_op::WRITE_BOTH,
+            REDIR_ERRWRITENOW => fusevm::op::redirect_op::WRITE_BOTH,
+            REDIR_ERRAPP => fusevm::op::redirect_op::APPEND_BOTH,
+            REDIR_ERRAPPNOW => fusevm::op::redirect_op::APPEND_BOTH,
+            REDIR_INPIPE | REDIR_OUTPIPE => {
                 // Process substitution attached to a redirect target —
                 // unusual; the parser models `< <(cmd)` differently.
                 // Defer.
@@ -1083,7 +1088,11 @@ impl ZshCompiler {
                 return;
             }
             // Already handled above.
-            RedirType::Heredoc | RedirType::HeredocDash | RedirType::Herestr => return,
+            REDIR_HEREDOC | REDIR_HEREDOCDASH | REDIR_HERESTR => return,
+            _ => {
+                tracing::debug!(?redir.rtype, "compile_zsh: unknown redir type, skipping");
+                return;
+            }
         };
 
         self.compile_word_str(&redir.name);

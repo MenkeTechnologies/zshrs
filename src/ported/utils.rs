@@ -2158,7 +2158,7 @@ pub fn itype_end(s: &str, allow_digits_start: bool) -> usize {
 // initialize the ztypes table                                              // c:4151
 /// Port of `inittyptab()` from `Src/utils.c:4155`. Initialise the
 /// `typtab[256]` lookup table that backs the `idigit`/`ialnum`/etc.
-/// predicates in `ztype.rs`.
+/// predicates in `ztype_h`.
 ///
 /// C body (c:4155-4250) does:
 ///   1. Zero the table.
@@ -2178,7 +2178,7 @@ pub fn itype_end(s: &str, allow_digits_start: bool) -> usize {
 /// the `ifs` global; the remaining Meta/IFS marks are skipped until
 /// those land. Idempotent — safe to call multiple times.
 pub fn inittyptab() {                                                    // utils.c:4155
-    use crate::ported::ztype::{
+    use crate::ported::ztype_h::{
         TYPTAB, TYPTAB_FLAGS, ZTF_INIT,
         ICNTRL, IDIGIT, IALNUM, IWORD, IIDENT, IUSER, IALPHA,
         IBLANK, INBLANK,
@@ -3373,7 +3373,7 @@ pub fn getshfunc(name: &str) -> Option<String> {
 /// global typtab — used by glob/extended-glob to flag `,`
 /// (KSH_GLOB) as a metacharacter.
 pub fn makecommaspecial(yesno: bool) {                                       // c:4270
-    use crate::ported::ztype::{ISPECIAL, TYPTAB, TYPTAB_FLAGS, ZTF_SP_COMMA};
+    use crate::ported::ztype_h::{ISPECIAL, TYPTAB, TYPTAB_FLAGS, ZTF_SP_COMMA};
     let mut flags = TYPTAB_FLAGS.lock().unwrap();
     let mut tab = TYPTAB.lock().unwrap();
     if yesno {                                                               // c:4272
@@ -4389,7 +4389,7 @@ pub fn subst_string_by_func(func_name: &str, arg1: Option<&str>, orig: &str)
 /// always clears; when nonzero, sets only if `ZTF_BANGCHAR` was
 /// stored by `inittyptab` (i.e. BANGHIST is on).
 pub fn makebangspecial(yesno: bool) {                                        // c:4283
-    use crate::ported::ztype::{ISPECIAL, TYPTAB, TYPTAB_FLAGS, ZTF_BANGCHAR};
+    use crate::ported::ztype_h::{ISPECIAL, TYPTAB, TYPTAB_FLAGS, ZTF_BANGCHAR};
     use std::sync::atomic::Ordering;
     let bc = crate::ported::hist::bangchar.load(Ordering::SeqCst) as usize;
     if bc == 0 || bc >= 256 {
@@ -4433,7 +4433,7 @@ pub fn wcsiblank(c: char) -> bool {
 /// route through Unicode predicates that mirror the C `iswalnum`
 /// fallback at line 4346.
 pub fn wcsitype(c: char, itype: u32) -> bool {                               // c:4321
-    use crate::ported::ztype::{TYPTAB, IIDENT, IWORD, IALNUM, ISEP};
+    use crate::ported::ztype_h::{TYPTAB, IIDENT, IWORD, IALNUM, ISEP};
     if !isset(crate::ported::zsh_h::MULTIBYTE) { // c:4327
         if (c as u32) < 256 {
             let tab = TYPTAB.lock().unwrap();
@@ -5075,6 +5075,7 @@ pub(crate) fn ispwd(pwd: &str) -> bool {
 /// otherwise it returns the quoted string. Rust's variant covers only
 /// the `stream==NULL` form (the `set -x` callers all want the string
 /// back, not direct stdout writing).
+#[allow(non_snake_case)]
 pub(crate) fn quotedzputs(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();

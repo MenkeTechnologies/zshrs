@@ -9,7 +9,7 @@
 //!      macOS). The harness skips with a clear message if the module
 //!      isn't built.
 //!   2. Drive zshrs's `ZshLexer` over the same source bytes; collect
-//!      `(LexTok, tokstr)` pairs.
+//!      `(lextok, tokstr)` pairs.
 //!   3. Render both streams to identical canonical form
 //!      (`TOKNAME\tTOKSTR\n` per token); diff byte-for-byte.
 //!
@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use zsh::lex::ZshLexer;
-use zsh::tokens::LexTok;
+use zsh::tokens::lextok;
 
 fn corpus_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/lexer_corpus")
@@ -63,72 +63,72 @@ fn collect_corpus() -> Vec<PathBuf> {
 
 /// Token name table — must match `enum lextok` in `zsh.h:304-336` in order.
 /// Same table as `Src/Modules/zshrs_dump.c::toknames`.
-fn tok_name(t: LexTok) -> &'static str {
+fn tok_name(t: lextok) -> &'static str {
     match t {
-        LexTok::Nulltok => "NULLTOK",
-        LexTok::Seper => "SEPER",
-        LexTok::Newlin => "NEWLIN",
-        LexTok::Semi => "SEMI",
-        LexTok::Dsemi => "DSEMI",
-        LexTok::Amper => "AMPER",
-        LexTok::Inpar => "INPAR",
-        LexTok::Outpar => "OUTPAR",
-        LexTok::Dbar => "DBAR",
-        LexTok::Damper => "DAMPER",
-        LexTok::Outang => "OUTANG",
-        LexTok::Outangbang => "OUTANGBANG",
-        LexTok::Doutang => "DOUTANG",
-        LexTok::Doutangbang => "DOUTANGBANG",
-        LexTok::Inang => "INANG",
-        LexTok::Inoutang => "INOUTANG",
-        LexTok::Dinang => "DINANG",
-        LexTok::Dinangdash => "DINANGDASH",
-        LexTok::Inangamp => "INANGAMP",
-        LexTok::Outangamp => "OUTANGAMP",
-        LexTok::Ampoutang => "AMPOUTANG",
-        LexTok::Outangampbang => "OUTANGAMPBANG",
-        LexTok::Doutangamp => "DOUTANGAMP",
-        LexTok::Doutangampbang => "DOUTANGAMPBANG",
-        LexTok::Trinang => "TRINANG",
-        LexTok::Bar => "BAR",
-        LexTok::Baramp => "BARAMP",
-        LexTok::Inoutpar => "INOUTPAR",
-        LexTok::Dinpar => "DINPAR",
-        LexTok::Doutpar => "DOUTPAR",
-        LexTok::Amperbang => "AMPERBANG",
-        LexTok::Semiamp => "SEMIAMP",
-        LexTok::Semibar => "SEMIBAR",
-        LexTok::Doutbrack => "DOUTBRACK",
-        LexTok::String => "STRING",
-        LexTok::Envstring => "ENVSTRING",
-        LexTok::Envarray => "ENVARRAY",
-        LexTok::Endinput => "ENDINPUT",
-        LexTok::Lexerr => "LEXERR",
-        LexTok::Bang => "BANG",
-        LexTok::Dinbrack => "DINBRACK",
-        LexTok::Inbrace => "INBRACE",
-        LexTok::Outbrace => "OUTBRACE",
-        LexTok::Case => "CASE",
-        LexTok::Coproc => "COPROC",
-        LexTok::Doloop => "DOLOOP",
-        LexTok::Done => "DONE",
-        LexTok::Elif => "ELIF",
-        LexTok::Else => "ELSE",
-        LexTok::Zend => "ZEND",
-        LexTok::Esac => "ESAC",
-        LexTok::Fi => "FI",
-        LexTok::For => "FOR",
-        LexTok::Foreach => "FOREACH",
-        LexTok::Func => "FUNC",
-        LexTok::If => "IF",
-        LexTok::Nocorrect => "NOCORRECT",
-        LexTok::Repeat => "REPEAT",
-        LexTok::Select => "SELECT",
-        LexTok::Then => "THEN",
-        LexTok::Time => "TIME",
-        LexTok::Until => "UNTIL",
-        LexTok::While => "WHILE",
-        LexTok::Typeset => "TYPESET",
+        NULLTOK => "NULLTOK",
+        SEPER => "SEPER",
+        NEWLIN => "NEWLIN",
+        SEMI => "SEMI",
+        DSEMI => "DSEMI",
+        AMPER => "AMPER",
+        INPAR_TOK => "INPAR",
+        OUTPAR_TOK => "OUTPAR",
+        DBAR => "DBAR",
+        DAMPER => "DAMPER",
+        OUTANG_TOK => "OUTANG",
+        OUTANGBANG => "OUTANGBANG",
+        DOUTANG => "DOUTANG",
+        DOUTANGBANG => "DOUTANGBANG",
+        INANG_TOK => "INANG",
+        INOUTANG => "INOUTANG",
+        DINANG => "DINANG",
+        DINANGDASH => "DINANGDASH",
+        INANGAMP => "INANGAMP",
+        OUTANGAMP => "OUTANGAMP",
+        AMPOUTANG => "AMPOUTANG",
+        OUTANGAMPBANG => "OUTANGAMPBANG",
+        DOUTANGAMP => "DOUTANGAMP",
+        DOUTANGAMPBANG => "DOUTANGAMPBANG",
+        TRINANG => "TRINANG",
+        BAR_TOK => "BAR",
+        BARAMP => "BARAMP",
+        INOUTPAR => "INOUTPAR",
+        DINPAR => "DINPAR",
+        DOUTPAR => "DOUTPAR",
+        AMPERBANG => "AMPERBANG",
+        SEMIAMP => "SEMIAMP",
+        SEMIBAR => "SEMIBAR",
+        DOUTBRACK => "DOUTBRACK",
+        STRING_LEX => "STRING",
+        ENVSTRING => "ENVSTRING",
+        ENVARRAY => "ENVARRAY",
+        ENDINPUT => "ENDINPUT",
+        LEXERR => "LEXERR",
+        BANG_TOK => "BANG",
+        DINBRACK => "DINBRACK",
+        INBRACE_TOK => "INBRACE",
+        OUTBRACE_TOK => "OUTBRACE",
+        CASE => "CASE",
+        COPROC => "COPROC",
+        DOLOOP => "DOLOOP",
+        DONE => "DONE",
+        ELIF => "ELIF",
+        ELSE => "ELSE",
+        ZEND => "ZEND",
+        ESAC => "ESAC",
+        FI => "FI",
+        FOR => "FOR",
+        FOREACH => "FOREACH",
+        FUNC => "FUNC",
+        IF => "IF",
+        NOCORRECT => "NOCORRECT",
+        REPEAT => "REPEAT",
+        SELECT => "SELECT",
+        THEN => "THEN",
+        TIME => "TIME",
+        UNTIL => "UNTIL",
+        WHILE => "WHILE",
+        TYPESET => "TYPESET",
     }
 }
 
@@ -192,11 +192,11 @@ fn dump_via_zshrs(src: &str) -> String {
     loop {
         lex.zshlex();
         let tok = lex.tok;
-        if tok == LexTok::Endinput {
+        if tok == ENDINPUT {
             out.push_str("ENDINPUT\n");
             return out;
         }
-        if tok == LexTok::Lexerr {
+        if tok == LEXERR {
             out.push_str("LEXERR\n");
             return out;
         }

@@ -37,7 +37,7 @@ use crate::ported::utils::{
     addprepromptfn, addtimedfn, delprepromptfn, deltimedfn,
     unmeta, zjoin, zstrtol, ztrftime, zwarnnam,
 };
-use crate::ported::ztype::idigit;
+use crate::ported::ztype_h::idigit;
 use crate::ported::zsh_h::options;
 
 // =====================================================================

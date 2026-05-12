@@ -9,15 +9,16 @@
 use crate::ported::zsh_h::hist_stack;
 use crate::ported::zsh_h::{ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
 use std::sync::Mutex;
-use zshrs_parse::lex::{LexStack, ZshLexer};
-use zshrs_parse::parse::{ParseStack, ZshParser};
+use crate::zsh_h::lex_stack;
+use super::lex::{ZshLexer};
+use super::parse::{ParseStack, ZshParser};
 
 /// Port of `struct context_stack` from Src/context.c:38-44.
 #[allow(non_camel_case_types)]
 pub struct context_stack {                                                   // c:38
     pub next: Option<Box<context_stack>>,                                    // c:39
     pub hist_stack: hist_stack,                                              // c:41
-    pub lex_stack: LexStack,                                                 // c:42
+    pub lex_stack: lex_stack,                                                 // c:42
     pub parse_stack: ParseStack,                                             // c:43
 }
 
@@ -30,6 +31,7 @@ static cstack: Mutex<Option<Box<context_stack>>> = Mutex::new(None);         // 
 /// hist.c / lex.c / parse.c file-statics; the Rust port takes the
 /// owning `ZshLexer` and `ZshParser` because zshrs_parse doesn't
 /// expose those subsystems as globals.
+#[allow(non_snake_case)]
 pub fn zcontext_save_partial(                                                // c:52
     parts: i32,
     lexer: Option<&mut ZshLexer<'_>>,
@@ -44,7 +46,7 @@ pub fn zcontext_save_partial(                                                // 
             hline: None, hptr: None, chwords: Vec::new(),
             chwordlen: 0, chwordpos: 0, csp: 0, hist_keep_comment: 0,
         },
-        lex_stack: LexStack::default(),
+        lex_stack: lex_stack::default(),
         parse_stack: ParseStack::default(),
     });
 
