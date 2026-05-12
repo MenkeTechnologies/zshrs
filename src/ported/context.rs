@@ -189,7 +189,7 @@ mod tests {
         let mut parser = ZshParser::new("echo hello");
         // Mutate lexer state.
         crate::ported::lex::LEX_DBPARENS.set(true);
-        lexer.toklineno = 42;
+        lexer.set_toklineno(42);
         zcontext_save(Some(&mut lexer), Some(&mut parser));
         // c:lex.c:235-238 — lex_context_save resets only
         // `tokstr/zshlextext/lexbuf.ptr/lexbuf.siz` + raw counterparts.
@@ -197,9 +197,9 @@ mod tests {
         // explicitly preserves them so the nested parser can read the
         // outer context's line tracker / arith-DPAREN state).
         assert!(crate::ported::lex::LEX_DBPARENS.with(|c| c.get()));
-        assert_eq!(lexer.toklineno, 42);
+        assert_eq!(lexer.toklineno(), 42);
         zcontext_restore(Some(&mut lexer), Some(&mut parser));
         assert!(crate::ported::lex::LEX_DBPARENS.with(|c| c.get()));
-        assert_eq!(lexer.toklineno, 42);
+        assert_eq!(lexer.toklineno(), 42);
     }
 }
