@@ -599,6 +599,14 @@ const MAX_RECURSION_DEPTH: usize = 500;
 /// (parse.c:295-355) to snapshot per-parse-call state so a nested
 /// parse (e.g. inside command substitution) doesn't clobber the
 /// outer parse.
+///
+/// A second port of `struct parse_stack` exists at
+/// `crate::ported::zsh_h::parse_stack` (zsh.h:1066) using canonical
+/// Wordcode / Eccstr / `struct heredocs` types — that port is unused
+/// today and will become authoritative when Phase 9b (PORT_PLAN.md)
+/// wires wordcode emission. This local version uses the working-set
+/// shapes (Vec<HereDoc>, stubbed wordcode fields) suited to zshrs's
+/// pre-wordcode AST architecture; the consolidation happens in P9b.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Default, Clone)]
 pub struct parse_stack {
