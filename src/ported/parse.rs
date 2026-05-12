@@ -863,7 +863,7 @@ impl<'a> ZshParser<'a> {
     /// recursion counters too so nested parses get fresh limits.
     pub fn parse_context_save(&mut self, ps: &mut parse_stack) {
         // parse.c:299 — `ps->hdocs = hdocs; hdocs = NULL;`
-        ps.hdocs = std::mem::take(&mut self.lexer.heredocs);
+        ps.hdocs = self.lexer.heredocs_take();
         // parse.c:302-310 — save lexer-side state.
         ps.incmdpos = self.lexer.incmdpos();
         // parse.c:303 — aliasspaceflag — not yet a field on ZshLexer.
@@ -913,7 +913,7 @@ impl<'a> ZshParser<'a> {
         // frees them.
 
         // parse.c:333-352 — restore saved state.
-        self.lexer.heredocs = ps.hdocs.clone();
+        self.lexer.heredocs_set(ps.hdocs.clone());
         self.lexer.set_incmdpos(ps.incmdpos);
         // aliasspaceflag STUB until Phase 7.
         self.lexer.set_incond(ps.incond);
@@ -997,7 +997,7 @@ impl<'a> ZshParser<'a> {
     /// stores pending heredocs on the lexer's `heredocs` Vec —
     /// truncating it has the same effect.
     pub fn clear_hdocs(&mut self) {
-        self.lexer.heredocs.clear();
+        self.lexer.heredocs_clear();
     }
 
     /// Top-level parse-event entry. Direct port of zsh/Src/parse.c:
@@ -1470,11 +1470,11 @@ impl<'a> ZshParser<'a> {
         // back into ZshRedir.heredoc fields via heredoc_idx.
         let bodies: Vec<HereDocInfo> = self
             .lexer
-            .heredocs
-            .iter()
+            .heredocs_clone()
+            .into_iter()
             .map(|h| HereDocInfo {
-                content: h.content.clone(),
-                terminator: h.terminator.clone(),
+                content: h.content,
+                terminator: h.terminator,
                 quoted: h.quoted,
             })
             .collect();
@@ -2250,8 +2250,8 @@ impl<'a> ZshParser<'a> {
         // index so fill_heredoc_bodies() can wire content back after
         // process_heredocs() has run.
         let heredoc_idx = if matches!(rtype, REDIR_HEREDOC | REDIR_HEREDOCDASH) {
-            if !self.lexer.heredocs.is_empty() {
-                Some(self.lexer.heredocs.len() - 1)
+            if !self.lexer.heredocs_is_empty() {
+                Some(self.lexer.heredocs_len() - 1)
             } else {
                 None
             }

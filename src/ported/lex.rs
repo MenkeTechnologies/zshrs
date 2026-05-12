@@ -349,11 +349,14 @@ pub struct ZshLexer<'a> {
     // to LEX_* thread_locals.
     // P7-batch-5: lineno, incmdpos, incond, incasepat migrated to
     // LEX_LINENO, LEX_INCMDPOS, LEX_INCOND, LEX_INCASEPAT thread_locals.
+    // P7-batch-6: heredocs migrated to LEX_HEREDOCS thread_local;
+    // callers reach in via heredocs_push/clear/clone/len/etc. methods
+    // on ZshLexer.
     // `isfirstch` field DELETED — never read for any logic (was
     // `#[allow(dead_code)]`); the save/restore round-trip through
     // lex_stack stores a constant zero now.
-    /// Pending here-documents
-    pub heredocs: Vec<HereDoc>,
+    // `heredocs: Vec<HereDoc>` migrated to LEX_HEREDOCS thread_local;
+    // callers use heredocs_push/clear/clone/etc. accessor methods.
     // `heredoc_pending: u8` migrated to LEX_HEREDOC_PENDING thread_local
     // (file-static parity with C). Access via LEX_HEREDOC_PENDING.get()/set().
     // `lexbuf: lexbufstate` migrated to LEX_LEXBUF thread_local
@@ -401,6 +404,30 @@ impl<'a> ZshLexer<'a> {
     pub fn set_incond(&self, v: i32) { LEX_INCOND.set(v); }
     pub fn incasepat(&self) -> i32 { LEX_INCASEPAT.get() }
     pub fn set_incasepat(&self, v: i32) { LEX_INCASEPAT.set(v); }
+    /// Pending-heredocs accessors. The Vec lives in LEX_HEREDOCS;
+    /// these helpers package the common operations so callers don't
+    /// touch the thread_local directly.
+    pub fn heredocs_take(&self) -> Vec<HereDoc> {
+        LEX_HEREDOCS.with_borrow_mut(|v| std::mem::take(v))
+    }
+    pub fn heredocs_set(&self, v: Vec<HereDoc>) {
+        LEX_HEREDOCS.with_borrow_mut(|c| *c = v);
+    }
+    pub fn heredocs_clear(&self) {
+        LEX_HEREDOCS.with_borrow_mut(|v| v.clear());
+    }
+    pub fn heredocs_is_empty(&self) -> bool {
+        LEX_HEREDOCS.with_borrow(|v| v.is_empty())
+    }
+    pub fn heredocs_len(&self) -> usize {
+        LEX_HEREDOCS.with_borrow(|v| v.len())
+    }
+    pub fn heredocs_clone(&self) -> Vec<HereDoc> {
+        LEX_HEREDOCS.with_borrow(|v| v.clone())
+    }
+    pub fn heredocs_push(&self, h: HereDoc) {
+        LEX_HEREDOCS.with_borrow_mut(|v| v.push(h));
+    }
 
     /// Create a new lexer for the given input
     pub fn new(input: &'a str) -> Self {
@@ -438,12 +465,13 @@ impl<'a> ZshLexer<'a> {
         LEX_INCMDPOS.set(true);
         LEX_INCOND.set(0);
         LEX_INCASEPAT.set(0);
+        // P7-batch-6 reset.
+        LEX_HEREDOCS.with_borrow_mut(|v| v.clear());
         ZshLexer {
             input,
             pos: 0,
             tokstr: None,
             tok: ENDINPUT,
-            heredocs: Vec::new(),
         }
     }
 
@@ -1113,13 +1141,13 @@ impl<'a> ZshLexer<'a> {
                             && *c != '\u{9f}'
                     })
                     .collect::<String>();
-                self.heredocs.push(HereDoc {
+                LEX_HEREDOCS.with_borrow_mut(|v| v.push(HereDoc {
                     terminator: term,
                     strip_tabs,
                     content: String::new(),
                     quoted,
                     processed: false,
-                });
+                }));
             }
             LEX_HEREDOC_PENDING.set(0);
         }
@@ -1272,17 +1300,22 @@ impl<'a> ZshLexer<'a> {
     /// into `hdoc.content` IN PLACE. The list itself is preserved so the
     /// parser can index into it after parse() finishes.
     fn process_heredocs(&mut self) {
-        let n = self.heredocs.len();
+        let n = LEX_HEREDOCS.with_borrow(|v| v.len());
         for i in 0..n {
             // Skip heredocs we've already processed AND those without
             // a terminator (early-error case). The `processed` bool
             // distinguishes "filled with empty body" from "not yet
             // visited" — both have empty `content`.
-            if self.heredocs[i].processed || self.heredocs[i].terminator.is_empty() {
+            let (skip, strip_tabs, terminator) = LEX_HEREDOCS.with_borrow(|v| {
+                if v[i].processed || v[i].terminator.is_empty() {
+                    (true, false, String::new())
+                } else {
+                    (false, v[i].strip_tabs, v[i].terminator.clone())
+                }
+            });
+            if skip {
                 continue;
             }
-            let strip_tabs = self.heredocs[i].strip_tabs;
-            let terminator = self.heredocs[i].terminator.clone();
             let mut content = String::new();
             let mut line_count = 0;
 
@@ -1322,8 +1355,10 @@ impl<'a> ZshLexer<'a> {
                 }
             }
 
-            self.heredocs[i].content = content;
-            self.heredocs[i].processed = true;
+            LEX_HEREDOCS.with_borrow_mut(|v| {
+                v[i].content = content;
+                v[i].processed = true;
+            });
         }
     }
 
@@ -3098,13 +3133,13 @@ impl<'a> ZshLexer<'a> {
 
     /// Register a heredoc to be processed at next newline
     pub fn register_heredoc(&mut self, terminator: String, strip_tabs: bool) {
-        self.heredocs.push(HereDoc {
+        LEX_HEREDOCS.with_borrow_mut(|v| v.push(HereDoc {
             terminator,
             strip_tabs,
             content: String::new(),
             quoted: false,
             processed: false,
-        });
+        }));
     }
 
     /// Check for reserved word — mirrors lex.c:2002-2015 in `exalias`,
