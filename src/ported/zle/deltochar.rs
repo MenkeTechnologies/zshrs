@@ -9,7 +9,7 @@
 
 use crate::ported::zle::zle_main::Zle;
 
-/// Port of `deltochar(args)` from `Src/Zle/deltochar.c:38`. The shared
+/// Port of `deltochar(UNUSED(char **args))` from `Src/Zle/deltochar.c:38`. The shared
 /// body behind both the `delete-to-char` and `zap-to-char` widgets:
 /// reads the next char from input, then for each repeat of `zmult`
 /// scans the buffer toward that target and kills the spanned text
@@ -20,8 +20,9 @@ use crate::ported::zle::zle_main::Zle;
 /// C signature: `static int deltochar(char **args)` (args UNUSED).
 /// Returns 0 on success (target found, kill performed), 1 on
 /// failure (target not in buffer).
+/// WARNING: param names don't match C — Rust=(zle) vs C=(args)
 pub fn deltochar(zle: &mut Zle) -> i32 {                                 // c:38
-    let c = match zle.getfullchar(false) {                               // c:41 getfullchar(0)
+    let c = match zle.getfullchar(false) {                               // c:38 getfullchar(0)
         Some(ch) => ch,
         None => return 1,
     };
@@ -67,53 +68,59 @@ pub fn deltochar(zle: &mut Zle) -> i32 {                                 // c:38
                     crate::ported::zle::zle_utils::backkill(zle, ct, 0); // c:70 CUT_RAW|CUT_FRONT
                     ok += 1;                                             // c:71
                 }
-                if dest > 0 {                                            // c:73
-                    dest -= 1;                                           // c:74 DECPOS(dest)
+                if dest > 0 {                                            // c:90
+                    dest -= 1;                                           // c:90 DECPOS(dest)
                 }
             }
         }
     }
-    if ok != 0 { 0 } else { 1 }                                          // c:79 return !ok
+    if ok != 0 { 0 } else { 1 }                                          // c:90 return !ok
 }
 
-/// Port of `setup_(m)` from `Src/Zle/deltochar.c:90`. C body is
+/// Port of `setup_(UNUSED(Module m))` from `Src/Zle/deltochar.c:90`. C body is
 /// `return 0;` (UNUSED `Module m`).
+/// WARNING: param names don't match C — Rust=() vs C=(m)
 pub fn setup_() -> i32 {                                                 // c:90
-    0                                                                    // c:93
+    0                                                                    // c:97
 }
 
-/// Port of `features_(m, features)` from `Src/Zle/deltochar.c:97`. C body is
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Zle/deltochar.c:97`. C body is
 /// `*features = featuresarray(m, &module_features); return 0;`.
 /// Static-link path: 0.
+/// WARNING: param names don't match C — Rust=() vs C=(m, features)
 pub fn features_() -> i32 {                                              // c:97
-    0                                                                    // c:101
+    0                                                                    // c:105
 }
 
-/// Port of `enables_(m, enables)` from `Src/Zle/deltochar.c:105`. C body is
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Zle/deltochar.c:105`. C body is
 /// `return handlefeatures(m, &module_features, enables);`.
+/// WARNING: param names don't match C — Rust=() vs C=(m, enables)
 pub fn enables_() -> i32 {                                               // c:105
-    0                                                                    // c:108
+    0                                                                    // c:112
 }
 
-/// Port of `boot_(m)` from `Src/Zle/deltochar.c:112`. C registers
+/// Port of `boot_(UNUSED(Module m))` from `Src/Zle/deltochar.c:112`. C registers
 /// the `delete-to-char` and `zap-to-char` ZLE functions via
 /// `addzlefunction(name, deltochar, ZLE_KILL | ZLE_KEEPSUFFIX)`.
 /// zshrs wires both widgets through `extensions/widget.rs` at
 /// build time, so this is a no-op port.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
 pub fn boot_() -> i32 {                                                  // c:112
-    0                                                                    // c:124
+    0                                                                    // c:129
 }
 
-/// Port of `cleanup_(m)` from `Src/Zle/deltochar.c:129`. C calls
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Zle/deltochar.c:129`. C calls
 /// `deletezlefunction()` for both widgets and then
 /// `setfeatureenables(...)`. zshrs widgets are static-linked and
 /// never deleted; no-op port.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
 pub fn cleanup_() -> i32 {                                               // c:129
-    0                                                                    // c:135
+    0                                                                    // c:138
 }
 
-/// Port of `finish_(m)` from `Src/Zle/deltochar.c:138`. C body is
+/// Port of `finish_(UNUSED(Module m))` from `Src/Zle/deltochar.c:138`. C body is
 /// `return 0;` (UNUSED `Module m`).
+/// WARNING: param names don't match C — Rust=() vs C=(m)
 pub fn finish_() -> i32 {                                                // c:138
-    0                                                                    // c:141
+    0                                                                    // c:138
 }

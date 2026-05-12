@@ -33,14 +33,14 @@ pub const PCRE2_CODE_UNIT_WIDTH: i32 = 8;                                    // 
 
 thread_local! {
     /// Port of file-static `static pcre2_code *pcre_pattern;` at
-    /// `Src/Modules/pcre.c:41`. Compiled regex shared between the
+    /// `Src/Modules/pcre.c:70`. Compiled regex shared between the
     /// `pcre_compile`/`pcre_study`/`pcre_match` builtins.
     static PCRE_PATTERN: std::cell::RefCell<Option<Regex>> = const {
         std::cell::RefCell::new(None)
     };
 }
 
-/// Port of `bin_pcre_compile(nam, args, ops)` from `Src/Modules/pcre.c:70`.
+/// Port of `bin_pcre_compile(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/pcre.c:70`.
 /// C: `static int bin_pcre_compile(char *nam, char **args, Options ops,
 /// UNUSED(int func))` — compile *args into the file-static
 /// `pcre_pattern`. Option bits read from `ops` via OPT_ISSET.
@@ -87,14 +87,14 @@ pub fn bin_pcre_compile(nam: &str, args: &[String], ops: &options, func: i32) ->
             0                                                                // c:107
         }
         Err(e) => {
-            // c:99-105 — pcre2_get_error_message + zwarnnam
-            zwarnnam(nam, &format!("error in regex: {}", e));                // c:103
-            1                                                                // c:104
+            // c:112-105 — pcre2_get_error_message + zwarnnam
+            zwarnnam(nam, &format!("error in regex: {}", e));                // c:112
+            1                                                                // c:112
         }
     }
 }
 
-/// Port of `bin_pcre_study(nam)` from `Src/Modules/pcre.c:112`. The C
+/// Port of `bin_pcre_study(char *nam, UNUSED(char **args), UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/pcre.c:112`. The C
 /// source calls `pcre2_jit_compile()` to JIT-optimize the compiled
 /// pattern; the Rust `regex` crate already builds an optimal NFA
 /// at compile time, so this is the "no pattern" guard plus return 0.
@@ -108,7 +108,7 @@ pub fn bin_pcre_study(nam: &str, args: &[String], ops: &options, func: i32) -> i
     0
 }
 
-/// Port of `bin_pcre_match(nam, args, ops)` from `Src/Modules/pcre.c:328`. Runs
+/// Port of `bin_pcre_match(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/pcre.c:328`. Runs
 /// the file-static PCRE_PATTERN against `*args`. Returns C's
 /// "0 on match, 1 on no-match / error" int convention.
 ///
@@ -116,6 +116,7 @@ pub fn bin_pcre_study(nam: &str, args: &[String], ops: &options, func: i32) -> i
 /// C's side-effecting `zpcre_get_substrings()` (which writes to
 /// paramtab via setsparam/setaparam). The caller writes the
 /// captures into the executor's parameter table.
+/// WARNING: param names don't match C — Rust=() vs C=(nam, args, ops, func)
 pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) // c:328
     -> (i32, Option<String>, Vec<Option<String>>) {
     use crate::ported::zsh_h::{OPT_ARG, OPT_HASARG, OPT_ISSET};
@@ -208,15 +209,16 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) // 
     ret = if full_match.is_some() { 1 } else { 0 };                          // c:398/c:399 sentinel
     let _ = ret;
 
-    // c:411-415 — free match_data + context, zsfree(plaintext) — Rust Drop.
-    (return_value, full_match, captures)                                     // c:417
+    // c:422-415 — free match_data + context, zsfree(plaintext) — Rust Drop.
+    (return_value, full_match, captures)                                     // c:422
 }
 
-/// Port of `cond_pcre_match(a, id)` from `Src/Modules/pcre.c:422`. The
+/// Port of `cond_pcre_match(char **a, int id)` from `Src/Modules/pcre.c:422`. The
 /// `-pcre-match` operator dispatch hook the lexer wires for
 /// `[[ s -pcre-match pat ]]`. Compiles `a[1]` and matches `a[0]`.
 /// Returns C's `int` (0 = no match, 1 = match) plus the captures so
 /// the caller can install $MATCH / $match.
+/// WARNING: param names don't match C — Rust=() vs C=(a, id)
 pub fn cond_pcre_match(a: &[String], _id: i32)                                // c:422
     -> (i32, Option<String>, Vec<Option<String>>) {
     if a.len() < 2 { return (0, None, Vec::new()); }
@@ -372,7 +374,7 @@ mod tests {
         assert_eq!(m, 0);
     }
 
-    /// Port of `zpcre_get_substrings(pat, arg, mdata, captured_count, matchvar, substravar, namedassoc, want_offset_pair, matchedinarr, want_begin_end)` from `Src/Modules/pcre.c:157`.
+    /// Port of `zpcre_get_substrings(pcre2_code *pat, char *arg, pcre2_match_data *mdata, int captured_count, char *matchvar, char *substravar, char *namedassoc, int want_offset_pair, int matchedinarr, int want_begin_end)` from `Src/Modules/pcre.c:157`.
     /// Verifies bin_pcre_compile with no args returns status 1
     /// (Src/Modules/pcre.c first-arg ztrdup falls back to empty target).
     #[test]
@@ -423,25 +425,25 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_(m)` from `Src/Modules/pcre.c:542`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/pcre.c:542`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                    // c:542
     // C body c:544-545 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/pcre.c:549`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/pcre.c:549`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:549
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/pcre.c:557`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/pcre.c:557`.
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:557
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_(m)` from `Src/Modules/pcre.c:564`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/pcre.c:564`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:564
     // C body c:566-567 — `return 0`. Faithful empty-body port; the
@@ -450,12 +452,12 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
     0
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/pcre.c:571`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/pcre.c:571`.
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:571
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_(m)` from `Src/Modules/pcre.c:578`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/pcre.c:578`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:578
     // C body c:580-581 — `return 0`. Faithful empty-body port; the
@@ -468,12 +470,12 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 // yet covered above. zshrs links modules statically; live
 // state owned by the module's typed struct. Name-parity shims.
 
-/// Port of `getposint(instr, nam)` from Src/Modules/pcre.c:312.
+/// Port of `getposint(char *instr, char *nam)` from Src/Modules/pcre.c:312.
 /// C: `static int getposint(char *instr, char *nam)` — parse positive
 /// decimal integer; emit "integer expected" warning + return -1 on bad input.
 #[allow(non_snake_case)]
 pub fn getposint(instr: &str, nam: &str) -> i32 {                            // c:312
-    // c:317 — `ret = (int)zstrtol(instr, &eptr, 10);`
+    // c:312 — `ret = (int)zstrtol(instr, &eptr, 10);`
     match instr.trim().parse::<i32>() {                                      // c:317
         Ok(n) if n >= 0 => n,                                                // c:323
         _ => {
@@ -484,11 +486,12 @@ pub fn getposint(instr: &str, nam: &str) -> i32 {                            // 
     }
 }
 
-/// Port of `pcre_callout(block)` from Src/Modules/pcre.c:132.
+/// Port of `pcre_callout(pcre2_callout_block_8 *block, UNUSED(void *callout_data))` from Src/Modules/pcre.c:132.
 /// C: `static int pcre_callout(pcre2_callout_block_8 *block,
 ///     UNUSED(void *callout_data))` — eval the callout string as zsh code,
 ///     bind .pcre.subject and .pcre.pos parameters, return $? | errflag.
 #[allow(non_snake_case)]
+/// WARNING: param names don't match C — Rust=(_block) vs C=(block, callout_data)
 pub fn pcre_callout(_block: *mut std::ffi::c_void,                           // c:132
                     _callout_data: *mut std::ffi::c_void) -> i32 {
     // c:138-152 — parse_string(callout_string), setsparam(".pcre.subject"),
@@ -496,16 +499,17 @@ pub fn pcre_callout(_block: *mut std::ffi::c_void,                           // 
     // Static-link path: zshrs's pcre integration uses the `regex` crate
     // directly; native pcre callouts arrive only when the C pcre2 backend
     // is wired in. Until then return success-no-callout.
-    0                                                                        // c:155
+    0                                                                        // c:157
 }
 
-/// Port of `zpcre_get_substrings(pat, arg, mdata, captured_count, matchvar, substravar, namedassoc, want_offset_pair, matchedinarr, want_begin_end)` from Src/Modules/pcre.c:157.
+/// Port of `zpcre_get_substrings(pcre2_code *pat, char *arg, pcre2_match_data *mdata, int captured_count, char *matchvar, char *substravar, char *namedassoc, int want_offset_pair, int matchedinarr, int want_begin_end)` from Src/Modules/pcre.c:157.
 /// C: `static int zpcre_get_substrings(pcre2_code *pat, char *arg,
 ///     pcre2_match_data *mdata, int captured_count, char *matchvar,
 ///     char *substravar, char *namedassoc, int want_offset_pair,
 ///     int matchedinarr, int want_begin_end)` — extract submatches
 ///     into shell parameters.
 #[allow(non_snake_case)]
+/// WARNING: param names don't match C — Rust=(_pat, _arg, _captured_count, _matchvar, _substravar, _namedassoc, _want_offset_pair, _matchedinarr, _want_begin_end) vs C=(pat, arg, mdata, captured_count, matchvar, substravar, namedassoc, want_offset_pair, matchedinarr, want_begin_end)
 pub fn zpcre_get_substrings(_pat: *mut std::ffi::c_void, _arg: &str,         // c:157
                             _mdata: *mut std::ffi::c_void,
                             _captured_count: i32,
@@ -525,7 +529,7 @@ pub fn zpcre_get_substrings(_pat: *mut std::ffi::c_void, _arg: &str,         // 
 /// reports "UTF-8".
 #[allow(non_snake_case)]
 pub fn zpcre_utf8_enabled() -> i32 {                                         // c:45
-    // c:48-67 — under MULTIBYTE_SUPPORT && HAVE_NL_LANGINFO && CODESET.
+    // c:45-67 — under MULTIBYTE_SUPPORT && HAVE_NL_LANGINFO && CODESET.
     // Static-link path: zshrs hosts on macOS/Linux where PCRE2 ships with
     // Unicode by default; check MULTIBYTE option + LANG/LC_ALL CODESET.
     let multibyte = crate::ported::zsh_h::isset(crate::ported::options::optlookup("multibyte"));      // c:53

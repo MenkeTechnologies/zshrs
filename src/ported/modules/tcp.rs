@@ -52,9 +52,10 @@ thread_local! {
     };
 }
 
-/// Port of `zsh_inet_ntop(af, cp, buf, len)` from `Src/Modules/tcp.c:72`. Wraps
+/// Port of `zsh_inet_ntop(int af, void const *cp, char *buf, size_t len)` from `Src/Modules/tcp.c:72`. Wraps
 /// libc inet_ntop(3) — converts AF_INET / AF_INET6 network-byte
 /// addresses to dotted/colon presentation form.
+/// WARNING: param names don't match C — Rust=(af, addr_bytes) vs C=(af, cp, buf, len)
 pub fn zsh_inet_ntop(af: i32, addr_bytes: &[u8]) -> Option<String> {     // c:72
     if af == libc::AF_INET && addr_bytes.len() >= 4 {
         let v4 = std::net::Ipv4Addr::new(addr_bytes[0], addr_bytes[1], addr_bytes[2], addr_bytes[3]);
@@ -64,16 +65,17 @@ pub fn zsh_inet_ntop(af: i32, addr_bytes: &[u8]) -> Option<String> {     // c:72
         octets.copy_from_slice(&addr_bytes[..16]);
         Some(std::net::Ipv6Addr::from(octets).to_string())
     } else {
-        None                                                              // c:88 NULL
+        None                                                              // c:103 NULL
     }
 }
 
-/// Port of `zsh_inet_aton(src, dst)` from `Src/Modules/tcp.c:103`.
+/// Port of `zsh_inet_aton(char const *src, struct in_addr *dst)` from `Src/Modules/tcp.c:103`.
+/// WARNING: param names don't match C — Rust=(src) vs C=(src, dst)
 pub fn zsh_inet_aton(src: &str) -> Option<u32> {                         // c:103
     src.parse::<std::net::Ipv4Addr>().ok().map(|a| u32::from(a).to_be())
 }
 
-/// Port of `zsh_inet_pton(af, src, dst)` from `Src/Modules/tcp.c:122`. Wraps
+/// Port of `zsh_inet_pton(int af, char const *src, void *dst)` from `Src/Modules/tcp.c:122`. Wraps
 /// libc inet_pton(3) — parses an IP-presentation string into the
 /// network-byte-order bytes. Returns 1 / 0 / -1 per C.
 pub fn zsh_inet_pton(af: i32, src: &str, dst: &mut [u8]) -> i32 {        // c:122
@@ -98,7 +100,7 @@ pub fn zsh_inet_pton(af: i32, src: &str, dst: &mut [u8]) -> i32 {        // c:12
     }
 }
 
-/// Port of `zsh_gethostbyname2(name, af)` from `Src/Modules/tcp.c:146`.
+/// Port of `zsh_gethostbyname2(char const *name, int af)` from `Src/Modules/tcp.c:146`.
 pub fn zsh_gethostbyname2(name: &str, af: i32) -> Vec<[u8; 4]> {         // c:146
     // C body wraps gethostbyname2(name, af); when AF_INET6 is unused
     // it falls back to gethostbyname(name). The relevant payload is
@@ -118,20 +120,22 @@ pub fn zsh_gethostbyname2(name: &str, af: i32) -> Vec<[u8; 4]> {         // c:14
     out
 }
 
-/// Port of `zsh_getipnodebyname(name, af, errorp)` from `Src/Modules/tcp.c:170`.
+/// Port of `zsh_getipnodebyname(char const *name, int af, UNUSED(int flags), int *errorp)` from `Src/Modules/tcp.c:170`.
 /// C body falls through to `zsh_gethostbyname2(name, af)` and returns
 /// its `hostent`. Rust returns the AF_INET address list directly.
+/// WARNING: param names don't match C — Rust=(name, af) vs C=(name, af, flags, errorp)
 pub fn zsh_getipnodebyname(name: &str, af: i32) -> Vec<[u8; 4]> {        // c:170
-    zsh_gethostbyname2(name, af)                                         // c:190
+    zsh_gethostbyname2(name, af)                                         // c:170
 }
 
-/// Port of `freehostent(ptr)` from `Src/Modules/tcp.c:198`. C body is
+/// Port of `freehostent(UNUSED(struct hostent *ptr))` from `Src/Modules/tcp.c:198`. C body is
 /// a no-op (UNUSED `struct hostent *ptr`).
+/// WARNING: param names don't match C — Rust=() vs C=(ptr)
 pub fn freehostent() {                                                   // c:198
-    // c:200 — empty body.
+    // c:215 — empty body.
 }
 
-/// Port of `zts_alloc(ztflags)` from `Src/Modules/tcp.c:215`. Allocates a
+/// Port of `zts_alloc(int ztflags)` from `Src/Modules/tcp.c:215`. Allocates a
 /// fresh Tcp_session, initialises `fd = -1` + `flags = ztflags`,
 /// and inserts it into the `ztcp_sessions` list. Returns the index
 /// (proxy for the C pointer return).
@@ -199,7 +203,7 @@ fn sess_with<F: FnOnce(&mut tcp_session)>(idx: usize, f: F) {
     });
 }
 
-/// Port of `tcp_socket(domain, type, protocol, ztflags)` from `Src/Modules/tcp.c:231`.
+/// Port of `tcp_socket(int domain, int type, int protocol, int ztflags)` from `Src/Modules/tcp.c:231`.
 /// C body (c:235-243):
 /// ```c
 /// Tcp_session sess = zts_alloc(ztflags);
@@ -207,45 +211,49 @@ fn sess_with<F: FnOnce(&mut tcp_session)>(idx: usize, f: F) {
 /// addmodulefd(sess->fd, FDT_MODULE);
 /// return sess;
 /// ```
+/// WARNING: param names don't match C — Rust=(domain, ty, protocol, ztflags) vs C=(domain, type, protocol, ztflags)
 pub fn tcp_socket(domain: i32, ty: i32, protocol: i32, ztflags: i32) -> TcpSessionHandle {  // c:231
-    let idx = zts_alloc(ztflags);                                        // c:235
-    let fd = unsafe { libc::socket(domain, ty, protocol) };              // c:238
-    sess_with(idx, |s| { s.fd = fd; });                                  // c:238 sess->fd = ...
+    let idx = zts_alloc(ztflags);                                        // c:245
+    let fd = unsafe { libc::socket(domain, ty, protocol) };              // c:245
+    sess_with(idx, |s| { s.fd = fd; });                                  // c:245 sess->fd = ...
     if fd >= 0 {
-        crate::ported::utils::addmodulefd(fd);                           // c:241
+        crate::ported::utils::addmodulefd(fd);                           // c:245
     }
-    Some(idx)                                                            // c:243 return sess
+    Some(idx)                                                            // c:245 return sess
 }
 
-/// Port of `ztcp_free_session(sess)` from `Src/Modules/tcp.c:245`.
+/// Port of `ztcp_free_session(Tcp_session sess)` from `Src/Modules/tcp.c:245`.
 /// In the Rust port the Vec drop handles `zfree(sess, ...)`.
 pub fn ztcp_free_session(sess: usize) -> i32 {                           // c:245
-    0                                                                    // c:250
+    0                                                                    // c:253
 }
 
-/// Port of `zts_delete(sess)` from `Src/Modules/tcp.c:253`. Removes a
-/// session from the list and frees its slot. Returns 0 on success,
-/// 1 if the fd has no matching session.
-pub fn zts_delete(sess: RawFd) -> i32 {                                    // c:253
+/// Port of `zts_delete(Tcp_session sess)` from `Src/Modules/tcp.c:253`. Removes a
+/// session from the list and frees its slot. Rust callers pass the
+/// session's fd (the field that uniquely identifies it in `ztcp_sessions`);
+/// C accepts a `Tcp_session*` which the Rust port resolves to an fd-indexed
+/// scan. Returns 0 on success, 1 if the fd has no matching session.
+/// WARNING: param names don't match C — Rust=(fd) vs C=(sess)
+pub fn zts_delete(fd: i32) -> i32 {                                          // c:253
     ZTCP_SESSIONS.with(|s| {
         let mut sessions = s.borrow_mut();
-        let pos = sessions.iter().position(|sess| sess.sess == sess);        // c:259
+        let pos = sessions.iter().position(|sess| sess.fd == fd);            // c:259
         match pos {
-            Some(i) => {                                                 // c:266 remnode + zfree
+            Some(i) => {                                                 // c:271 remnode + zfree
                 sessions.remove(i);
-                0                                                        // c:268
+                0                                                        // c:271
             }
-            None => 1,                                                   // c:262 not found
+            None => 1,                                                   // c:271 not found
         }
     })
 }
 
-/// Port of `zts_byfd(fd)` from `Src/Modules/tcp.c:271`. Linear scan.
+/// Port of `zts_byfd(int fd)` from `Src/Modules/tcp.c:271`. Linear scan.
 /// C returns `Tcp_session` (pointer to the session) or NULL. Rust
 /// returns the index handle or None.
 pub fn zts_byfd(fd: RawFd) -> TcpSessionHandle {                         // c:271
     ZTCP_SESSIONS.with(|s| {
-        s.borrow().iter().position(|sess| sess.fd == fd)                 // c:275-278
+        s.borrow().iter().position(|sess| sess.fd == fd)                 // c:283-278
     })
 }
 
@@ -262,7 +270,6 @@ pub fn tcp_cleanup() {                                                   // c:28
     });
 }
 
-/// Port of `tcp_close(sess)` from `Src/Modules/tcp.c:295`. Takes a session
 /// pointer (Rust handle), closes its fd, and removes it from the list.
 /// C body (c:298-313):
 /// ```c
@@ -277,9 +284,9 @@ pub fn tcp_cleanup() {                                                   // c:28
 /// }
 /// return 0;
 /// ```
-/// Port of `tcp_close(sess)` from `Src/Modules/tcp.c:295`.
+/// Port of `tcp_close(Tcp_session sess)` from `Src/Modules/tcp.c:295`.
 pub fn tcp_close(sess: TcpSessionHandle) -> i32 {                        // c:295
-    if let Some(idx) = sess {                                            // c:298
+    if let Some(idx) = sess {                                            // c:295
         let fd = sess_get(idx, |s| s.fd);
         let mut err = -1;
         if fd != -1 {                                                    // c:301
@@ -298,7 +305,7 @@ pub fn tcp_close(sess: TcpSessionHandle) -> i32 {                        // c:29
     0                                                                    // c:313 — NULL sess: noop
 }
 
-/// Port of `tcp_connect(sess, addrp, zhost, d_port)` from `Src/Modules/tcp.c:316`. C body
+/// Port of `tcp_connect(Tcp_session sess, char *addrp, struct hostent *zhost, int d_port)` from `Src/Modules/tcp.c:316`. C body
 /// (c:319-340):
 /// ```c
 /// sess->peer.in.sin_family = zhost->h_addrtype;
@@ -307,6 +314,7 @@ pub fn tcp_close(sess: TcpSessionHandle) -> i32 {                        // c:29
 /// return connect(sess->fd, (struct sockaddr *)&sess->peer.in,
 ///                sizeof(struct sockaddr_in));
 /// ```
+/// WARNING: param names don't match C — Rust=(sess, addr, d_port) vs C=(sess, addrp, zhost, d_port)
 pub fn tcp_connect(sess: TcpSessionHandle, addr: &[u8; 4], d_port: u16) -> i32 { // c:316
     let idx = match sess { Some(i) => i, None => return -1 };
     let fd = sess_get(idx, |s| s.fd);
@@ -316,17 +324,18 @@ pub fn tcp_connect(sess: TcpSessionHandle, addr: &[u8; 4], d_port: u16) -> i32 {
     peer.sin_addr.s_addr = u32::from_be_bytes(*addr).to_be();            // c:321 memcpy
     sess_with(idx, |s| { s.peer.in_ = peer; });
     unsafe {
-        libc::connect(fd,                                                // c:323
+        libc::connect(fd,                                                // c:342
             &peer as *const _ as *const libc::sockaddr,
             std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t)
     }
 }
 
 
-/// Direct port of `bin_ztcp(nam, args, ops)` from `Src/Modules/tcp.c:342`. Implements
+/// Direct port of `bin_ztcp(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/tcp.c:342`. Implements
 /// the `ztcp` builtin: connect / listen / accept / close / list, with
 /// the same `-acdflLtv` flags as the C source.
 #[allow(non_snake_case)]
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_ztcp(nam: &str, args: &[String],                                  // c:342
                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 { // c:342
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
@@ -668,44 +677,44 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_(m)` from `Src/Modules/tcp.c:714`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/tcp.c:714`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                    // c:714
     // C body c:716-717 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/tcp.c:721`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/tcp.c:721`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:721
     *features = featuresarray(m, module_features());
-    0                                                                    // c:725
+    0                                                                    // c:736
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/tcp.c:729`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/tcp.c:729`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:729
-    handlefeatures(m, module_features(), enables) // c:731
+    handlefeatures(m, module_features(), enables) // c:736
 }
 
-/// Port of `boot_(m)` from `Src/Modules/tcp.c:736`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/tcp.c:736`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:736
     // C body c:738-739 — `ztcp_sessions = znewlinklist(); return 0`.
     //                    Reset the per-thread sessions Vec to empty
     //                    so module reload state is clean.
-    ZTCP_SESSIONS.with(|s| s.borrow_mut().clear());                          // c:738
+    ZTCP_SESSIONS.with(|s| s.borrow_mut().clear());                          // c:745
     0
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/tcp.c:745`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/tcp.c:745`.
 /// C body: `tcp_cleanup(); return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:745
-    tcp_cleanup();                                                       // c:748
-    setfeatureenables(m, module_features(), None) // c:751
+    tcp_cleanup();                                                       // c:754
+    setfeatureenables(m, module_features(), None) // c:754
 }
 
-/// Port of `finish_(m)` from `Src/Modules/tcp.c:754`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/tcp.c:754`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:754
     // C body c:756-757 — `return 0`. Faithful empty-body port; the
@@ -764,6 +773,7 @@ mod tests {
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
+use crate::modules::tcp_h::Tcp_session;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 

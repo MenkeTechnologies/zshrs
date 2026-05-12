@@ -41,15 +41,16 @@ mod ffi {
 }
 
 // =====================================================================
-// Port of `bin_cap(nam, argv)` from Src/Modules/cap.c:36.
+// Port of `bin_cap(char *nam, char **argv, UNUSED(Options ops), UNUSED(int func))` from Src/Modules/cap.c:36.
 // =====================================================================
 
-/// Port of `bin_cap(nam, argv)` from `Src/Modules/cap.c:36`.
+/// Port of `bin_cap(char *nam, char **argv, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/cap.c:36`.
 ///
 /// `cap [STRING]`: with `STRING`, parse via `cap_from_text` and
 /// install via `cap_set_proc`; without args, print the current
 /// process's capability set.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
+/// WARNING: param names don't match C — Rust=(argv, _ops, _func) vs C=(nam, argv, ops, func)
 pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 { // c:36
     use std::ffi::{CStr, CString};
 
@@ -119,15 +120,16 @@ pub(crate) fn bin_cap(nam: &str, _argv: &[String], _ops: &options, _func: i32) -
 }
 
 // =====================================================================
-// Port of `bin_getcap(nam, argv)` from Src/Modules/cap.c:68.
+// Port of `bin_getcap(char *nam, char **argv, UNUSED(Options ops), UNUSED(int func))` from Src/Modules/cap.c:68.
 // =====================================================================
 
-/// Port of `bin_getcap(nam, argv)` from `Src/Modules/cap.c:68`.
+/// Port of `bin_getcap(char *nam, char **argv, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/cap.c:68`.
 ///
 /// `getcap FILE...`: print each file's capability set as
 /// `FILE CAPS`. C bails on the first error but iterates the rest;
 /// the Rust port mirrors that exact loop.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
+/// WARNING: param names don't match C — Rust=(argv, _ops, _func) vs C=(nam, argv, ops, func)
 pub(crate) fn bin_getcap(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
     use std::ffi::{CStr, CString};
 
@@ -175,15 +177,16 @@ pub(crate) fn bin_getcap(nam: &str, _argv: &[String], _ops: &options, _func: i32
 }
 
 // =====================================================================
-// Port of `bin_setcap(nam, argv)` from Src/Modules/cap.c:91.
+// Port of `bin_setcap(char *nam, char **argv, UNUSED(Options ops), UNUSED(int func))` from Src/Modules/cap.c:91.
 // =====================================================================
 
-/// Port of `bin_setcap(nam, argv)` from `Src/Modules/cap.c:91`.
+/// Port of `bin_setcap(char *nam, char **argv, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/cap.c:91`.
 ///
 /// `setcap STRING FILE...`: parse `STRING` via `cap_from_text`, then
 /// apply via `cap_set_file` to each remaining file argument. Mirrors
 /// C's loop: free `caps` once at end, advance `argv` per iteration.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
+/// WARNING: param names don't match C — Rust=(argv, _ops, _func) vs C=(nam, argv, ops, func)
 pub(crate) fn bin_setcap(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
     use std::ffi::CString;
 
@@ -254,41 +257,41 @@ pub(crate) fn bin_setcap(nam: &str, _argv: &[String], _ops: &options, _func: i32
 // Module entry points (cap.c:138-178).
 // =====================================================================
 
-/// Port of `setup_(m)` from `Src/Modules/cap.c:139`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/cap.c:139`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                    // c:139
-    0                                                                  // c:141
+    0                                                                  // c:154
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/cap.c:146`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/cap.c:146`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:146
     *features = featuresarray(m, module_features());
-    0                                                                  // c:149
+    0                                                                  // c:161
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/cap.c:154`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/cap.c:154`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:154
-    handlefeatures(m, module_features(), enables) // c:156
+    handlefeatures(m, module_features(), enables) // c:168
 }
 
-/// Port of `boot_(m)` from `Src/Modules/cap.c:161`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/cap.c:161`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:161
-    0                                                                  // c:163
+    0                                                                  // c:175
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/cap.c:168`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/cap.c:168`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:168
-    setfeatureenables(m, module_features(), None) // c:170
+    setfeatureenables(m, module_features(), None) // c:175
 }
 
-/// Port of `finish_(m)` from `Src/Modules/cap.c:175`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/cap.c:175`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:175
-    0                                                                  // c:177
+    0                                                                  // c:175
 }
 
 // =====================================================================

@@ -28,15 +28,15 @@ use crate::ported::math::{Mnumber, MN_INTEGER, MN_FLOAT};
 use crate::ported::params::{setiparam, setsparam, setiparam_no_convert};
 use crate::ported::utils::{isident, metafy, unmeta, zwarnnam, zclose, movefd};
 
-const SYSREAD_BUFSIZE: usize = 8192;                                     // c:41
+const SYSREAD_BUFSIZE: usize = 8192;                                     // c:45
 
-/// Port of `getposint(instr, nam)` from `Src/Modules/system.c:45`. Parses
+/// Port of `getposint(char *instr, char *nam)` from `Src/Modules/system.c:45`. Parses
 /// `instr` as a non-negative integer (zstrtol with base 10); emits
 /// `zwarnnam` and returns -1 on parse error or negative.
 ///
 /// C signature: `static int getposint(char *instr, char *nam)`.
 pub fn getposint(instr: &str, nam: &str) -> i32 {                        // c:45
-    // c:50 — `ret = (int)zstrtol(instr, &eptr, 10);`
+    // c:45 — `ret = (int)zstrtol(instr, &eptr, 10);`
     let (ret, eptr) = crate::ported::utils::zstrtol(instr, 10);
     let ret = ret as i32;
     // c:51 — `if (*eptr || ret < 0)`
@@ -47,7 +47,7 @@ pub fn getposint(instr: &str, nam: &str) -> i32 {                        // c:45
     ret                                                                  // c:56
 }
 
-/// Port of `bin_sysread(nam, args, ops)` from `Src/Modules/system.c:72`.
+/// Port of `bin_sysread(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/system.c:72`.
 /// C: `int bin_sysread(char *nam, char **args, Options ops, int func)`.
 /// Builtin spec: `"c:i:o:s:t:"` (system.c:820).
 ///
@@ -58,6 +58,7 @@ pub fn getposint(instr: &str, nam: &str) -> i32 {                        // c:45
 ///   3 — Write error (errno set; partial residue stashed)
 ///   4 — Timeout on read
 ///   5 — Zero bytes read (EOF)
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_sysread(nam: &str, args: &[String],                               // c:72
                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
@@ -209,7 +210,7 @@ pub fn bin_sysread(nam: &str, args: &[String],                               // 
     if count != 0 { 0 } else { 5 }                                       // c:225
 }
 
-/// Port of `bin_syswrite(nam, args, ops)` from `Src/Modules/system.c:238`.
+/// Port of `bin_syswrite(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/system.c:238`.
 ///
 /// C signature: `static int bin_syswrite(char *nam, char **args,
 ///                                        Options ops, int func)`.
@@ -220,6 +221,7 @@ pub fn bin_sysread(nam: &str, args: &[String],                               // 
 ///   0 — Successfully written
 ///   1 — Error in parameters
 ///   2 — Write error (errno set)
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_syswrite(nam: &str, args: &[String],                              // c:238
                     ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
@@ -283,7 +285,7 @@ pub fn bin_syswrite(nam: &str, args: &[String],                              // 
     0                                                                    // c:279
 }
 
-/// Port of `bin_sysopen(nam, args, ops)` from `Src/Modules/system.c:319`.
+/// Port of `bin_sysopen(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/system.c:319`.
 ///
 /// C signature: `static int bin_sysopen(char *nam, char **args,
 ///                                       Options ops, int func)`.
@@ -291,6 +293,7 @@ pub fn bin_syswrite(nam: &str, args: &[String],                              // 
 /// positional arg (the file path).
 ///
 /// Return values per c:312-314: 0 success / 1 bad params / 2 open error.
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_sysopen(nam: &str, args: &[String],                               // c:319
                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
@@ -442,10 +445,10 @@ pub fn bin_sysopen(nam: &str, args: &[String],                               // 
         crate::ported::params::setiparam(&fdvar, moved_fd as i64);   // c:414
     }
 
-    0                                                                    // c:420
+    0                                                                    // c:433
 }
 
-/// Port of `bin_sysseek(nam, args, ops)` from `Src/Modules/system.c:433`.
+/// Port of `bin_sysseek(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/system.c:433`.
 ///
 /// C signature: `static int bin_sysseek(char *nam, char **args,
 ///                                       Options ops, int func)`.
@@ -453,6 +456,7 @@ pub fn bin_sysopen(nam: &str, args: &[String],                               // 
 /// arg (the offset).
 ///
 /// Return values per c:425-428: 0 success / 1 bad params / 2 lseek error.
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_sysseek(nam: &str, args: &[String],                               // c:433
                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
@@ -495,7 +499,7 @@ pub fn bin_sysseek(nam: &str, args: &[String],                               // 
     }
 }
 
-/// Port of `math_systell(argv)` from `Src/Modules/system.c:467`.
+/// Port of `math_systell(UNUSED(char *name), UNUSED(int argc), mnumber *argv, UNUSED(int id))` from `Src/Modules/system.c:467`.
 ///
 /// C signature: `static mnumber math_systell(char *name, int argc,
 ///                                            mnumber *argv, int id)`.
@@ -503,7 +507,7 @@ pub fn bin_sysseek(nam: &str, args: &[String],                               // 
 /// as an `mnumber`. Negative fds error via `zerr` and return 0.
 #[allow(unused_variables)]
 pub fn math_systell(name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber {  // c:467
-    // c:469 — `int fd = (argv->type == MN_INTEGER) ? argv->u.l : (int)argv->u.d;`
+    // c:467 — `int fd = (argv->type == MN_INTEGER) ? argv->u.l : (int)argv->u.d;`
     let fd: i32 = if argv[0].type_ == MN_INTEGER {
         argv[0].l as i32
     } else {
@@ -522,10 +526,10 @@ pub fn math_systell(name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber
     }
     // c:478 — `ret.u.l = lseek(fd, 0, SEEK_CUR);`
     ret.l = unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) } as i64;
-    ret                                                                  // c:479
+    ret                                                                  // c:494
 }
 
-/// Port of `bin_syserror(nam, args, ops)` from `Src/Modules/system.c:494`.
+/// Port of `bin_syserror(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/system.c:494`.
 ///
 /// C signature: `static int bin_syserror(char *nam, char **args,
 ///                                        Options ops, int func)`.
@@ -533,6 +537,7 @@ pub fn math_systell(name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber
 /// (the errno number or symbolic name).
 ///
 /// Return values per c:485-489: 0 success / 1 bad params / 2 unknown errno name.
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_syserror(nam: &str, args: &[String],                              // c:494
                     ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
@@ -598,7 +603,7 @@ pub fn bin_syserror(nam: &str, args: &[String],                              // 
     0                                                                    // c:541
 }
 
-/// Port of `bin_zsystem_flock(nam, args)` from `Src/Modules/system.c:546`.
+/// Port of `bin_zsystem_flock(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/system.c:546`.
 ///
 /// C signature: `static int bin_zsystem_flock(char *nam, char **args,
 ///                                              Options ops, int func)`.
@@ -608,6 +613,7 @@ pub fn bin_syserror(nam: &str, args: &[String],                              // 
 ///
 /// Return values per inline comments: 0 success / 1 param/lock error
 /// / 2 timeout exhausted / 255 not supported on this platform.
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_zsystem_flock(nam: &str, args: &[String],                         // c:546
                          _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     // c:548-551 — option-state locals.
@@ -849,16 +855,17 @@ pub fn bin_zsystem_flock(nam: &str, args: &[String],                         // 
     if let Some(ref var) = fdvar {
         crate::ported::params::setiparam(var, flock_fd as i64);      // c:765
     }
-    0                                                                    // c:767
+    0                                                                    // c:781
 }
 
-/// Port of `bin_zsystem_supports(nam, args, ops, func)` from `Src/Modules/system.c:781`.
+/// Port of `bin_zsystem_supports(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/system.c:781`.
 ///
 /// C signature: `static int bin_zsystem_supports(char *nam, char **args,
 ///                                                 Options ops, int func)`.
 ///
 /// Returns 0 if the named feature is supported, 1 if not, 255 on
 /// argument-count error.
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_zsystem_supports(nam: &str, args: &[String],                      // c:781
                             _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     // c:784-787 — `if (!args[0]) ... return 255;`
@@ -875,16 +882,17 @@ pub fn bin_zsystem_supports(nam: &str, args: &[String],                      // 
     if args[0] == "supports" { return 0; }                               // c:794-795
     // c:796-799 — HAVE_FCNTL_H gate; flock is universal on supported unix.
     #[cfg(unix)]
-    if args[0] == "flock" { return 0; }                                  // c:797-798
-    1                                                                    // c:800
+    if args[0] == "flock" { return 0; }                                  // c:806-798
+    1                                                                    // c:806
 }
 
-/// Port of `bin_zsystem(nam, args, ops, func)` from `Src/Modules/system.c:806`.
+/// Port of `bin_zsystem(char *nam, char **args, Options ops, int func)` from `Src/Modules/system.c:806`.
 ///
 /// C signature: `static int bin_zsystem(char *nam, char **args,
 ///                                       Options ops, int func)`.
 /// The `zsystem` builtin dispatcher — peels the first arg and routes
 /// to `bin_zsystem_flock` or `bin_zsystem_supports`.
+/// WARNING: param names don't match C — Rust=(nam, args, func) vs C=(nam, args, ops, func)
 pub fn bin_zsystem(nam: &str, args: &[String],                               // c:806
                    ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
     if args.is_empty() {
@@ -907,25 +915,27 @@ pub fn bin_zsystem(nam: &str, args: &[String],                               // 
 // Special-parameter callbacks (errnos + sysparams).
 // ---------------------------------------------------------------------------
 
-/// Port of `errnosgetfn(pm)` from `Src/Modules/system.c:832`. The
+/// Port of `errnosgetfn(UNUSED(Param pm))` from `Src/Modules/system.c:832`. The
 /// getter for the `${errnos}` special array. C body returns
 /// `arrdup((char **)sys_errnames)` — a fresh duplicate of the
 /// errno-name table. Rust port returns the names as `Vec<String>`.
 ///
 /// C signature: `static char **errnosgetfn(Param pm)`.
+/// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn errnosgetfn() -> Vec<String> {                                    // c:832
-    SYS_ERRNAMES.iter().map(|(n, _)| n.to_string()).collect()            // c:835 arrdup
+    SYS_ERRNAMES.iter().map(|(n, _)| n.to_string()).collect()            // c:846 arrdup
 }
 
-/// Port of `fillpmsysparams(pm, name)` from `Src/Modules/system.c:846`.
+/// Port of `fillpmsysparams(Param pm, const char *name)` from `Src/Modules/system.c:846`.
 /// Populates a synthesised Param node for one of the three
 /// `${sysparams[NAME]}` keys: `pid` / `ppid` / `procsubstpid`.
 ///
 /// C signature: `static void fillpmsysparams(Param pm, const char *name)`.
 /// Rust port returns the rendered string (or None for PM_UNSET) since
 /// zshrs's magic-assoc dispatcher reads the value directly.
+/// WARNING: param names don't match C — Rust=(name) vs C=(pm, name)
 pub fn fillpmsysparams(name: &str) -> Option<String> {                   // c:846
-    // c:854-862 — name dispatch.
+    // c:846-862 — name dispatch.
     let num: i32 = match name {
         "pid" => unsafe { libc::getpid() },                              // c:854-855
         "ppid" => unsafe { libc::getppid() },                            // c:856-857
@@ -934,30 +944,32 @@ pub fn fillpmsysparams(name: &str) -> Option<String> {                   // c:84
         // substitution path. Returns 0 as the documented "no proc
         // subst active" sentinel matching C's initial value.
         "procsubstpid" => 0,
-        _ => return None,                                                // c:861-863 PM_UNSET
+        _ => return None,                                                // c:873-863 PM_UNSET
     };
-    Some(format!("{}", num))                                             // c:866 sprintf %d
+    Some(format!("{}", num))                                             // c:873 sprintf %d
 }
 
-/// Port of `getpmsysparams(name)` from `Src/Modules/system.c:873`. The
+/// Port of `getpmsysparams(UNUSED(HashTable ht), const char *name)` from `Src/Modules/system.c:873`. The
 /// magic-assoc lookup callback for `${sysparams[name]}`.
 ///
 /// C signature: `static HashNode getpmsysparams(HashTable ht, const char *name)`.
 /// Rust port returns `Option<String>` since zshrs's magic-assoc
 /// dispatcher consumes the value, not a synthesised Param.
+/// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
 pub fn getpmsysparams(name: &str) -> Option<String> {                    // c:873
-    // c:875-879 — `pm = hcalloc(); fillpmsysparams(pm, name); return &pm->node;`
-    fillpmsysparams(name)                                                // c:878
+    // c:885-879 — `pm = hcalloc(); fillpmsysparams(pm, name); return &pm->node;`
+    fillpmsysparams(name)                                                // c:885
 }
 
-/// Port of `scanpmsysparams(func, flags)` from `Src/Modules/system.c:885`. The
+/// Port of `scanpmsysparams(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/system.c:885`. The
 /// magic-assoc scanner for `${(k)sysparams}`. Iterates the three
 /// fixed keys and returns each `(name, value)` pair.
 ///
 /// C signature: `static void scanpmsysparams(HashTable ht, ScanFunc func, int flags)`.
 /// Rust port returns the pairs as a Vec.
+/// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
 pub fn scanpmsysparams() -> Vec<(String, String)> {                      // c:885
-    // c:889-894 — fill + emit each of pid / ppid / procsubstpid.
+    // c:885-894 — fill + emit each of pid / ppid / procsubstpid.
     let mut out = Vec::new();
     for n in ["pid", "ppid", "procsubstpid"] {                           // c:889/891/893
         if let Some(v) = fillpmsysparams(n) {
@@ -991,27 +1003,27 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_(m)` from `Src/Modules/system.c:920`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/system.c:920`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                    // c:920
     // C body c:922-923 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/system.c:927`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/system.c:927`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     *features = featuresarray(m, module_features());
-    0                                                                    // c:930
+    0                                                                    // c:942
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/system.c:935`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/system.c:935`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
-    handlefeatures(m, module_features(), enables) // c:937
+    handlefeatures(m, module_features(), enables) // c:942
 }
 
-/// Port of `boot_(m)` from `Src/Modules/system.c:942`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/system.c:942`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:942
     // C body c:944-945 — `return 0`. Faithful empty-body port; the
@@ -1020,13 +1032,13 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
     0
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/system.c:950`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/system.c:950`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {
-    setfeatureenables(m, module_features(), None) // c:952
+    setfeatureenables(m, module_features(), None) // c:957
 }
 
-/// Port of `finish_(m)` from `Src/Modules/system.c:957`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/system.c:957`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:957
     // C body c:959-960 — `return 0`. Faithful empty-body port; the
@@ -1135,7 +1147,7 @@ mod tests {
         assert_eq!(getposint("abc", "test"), -1);   // garbage → -1
     }
 
-    /// Port of `bin_zsystem(nam, args, ops, func)` from `Src/Modules/system.c:806`.
+    /// Port of `bin_zsystem(char *nam, char **args, Options ops, int func)` from `Src/Modules/system.c:806`.
     /// Verifies `bin_zsystem_supports` per c:794-800.
     #[test]
     fn bin_zsystem_supports_self() {
@@ -1185,7 +1197,7 @@ mod tests {
         assert!(names.contains(&"EINVAL".to_string()));
     }
 
-    /// Port of `scanpmsysparams(func, flags)` from `Src/Modules/system.c:885`.
+    /// Port of `scanpmsysparams(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/system.c:885`.
     /// Verifies `fillpmsysparams` for the three known keys
     /// (c:854-862) and PM_UNSET fallback (c:861-863).
     #[test]
@@ -1226,7 +1238,7 @@ mod tests {
         options { ind: [0u8; MAX_OPS], args: Vec::new(),
                   argscount: 0, argsalloc: 0 }
     }
-    /// Port of `bin_sysopen(nam, args, ops)` from `Src/Modules/system.c:319`.
+    /// Port of `bin_sysopen(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/system.c:319`.
     fn ops_with(args: &[(u8, &str)]) -> crate::ported::zsh_h::options {
         // ind[c] encodes "set" in low 2 bits (1 = -X, 2 = +X) plus the
         // 1-based args[] slot shifted up by 2 (per zsh.h:1412 OPT_ARG
@@ -1270,7 +1282,7 @@ mod tests {
             &["ENOTAREALERROR".to_string()], &ops, 0), 2);
     }
 
-    /// Port of `bin_sysopen(nam, args, ops)` from `Src/Modules/system.c:319`.
+    /// Port of `bin_sysopen(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/system.c:319`.
     /// Verifies `bin_sysopen` opens a file and stores fd in the
     /// named variable (c:413-414) when -u is a non-digit identifier.
     #[test]
@@ -1294,7 +1306,7 @@ mod tests {
         unsafe { libc::close(fd); }
     }
 
-    /// Port of `bin_sysopen(nam, args, ops)` from `Src/Modules/system.c:319`.
+    /// Port of `bin_sysopen(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/system.c:319`.
     /// Verifies `bin_sysseek` lseek + return-code shape (c:461-462).
     #[test]
     #[cfg(unix)]

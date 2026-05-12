@@ -17,11 +17,12 @@ use super::zle_thingy::Thingy;
 ///   - `\\C-X` → control character
 ///   - everything else → literal byte
 ///
-/// Port of `getkeystring(s, len, how, misc)` from Src/utils.c:6915 — `bindkey` calls
+/// Port of `getkeystring(char *s, int *len, int how, int *misc)` from Src/utils.c:6915 — `bindkey` calls
 /// it at line 4111 with `GETKEYS_BINDKEY` to convert the user-typed
 /// key spec into the raw byte sequence the keymap trie indexes by.
 /// The C version mutates a buffer in place + writes length via out
 /// pointer; this Rust port returns a fresh `Vec<u8>`.
+/// WARNING: param names don't match C — Rust=(s) vs C=(s, len, how, misc)
 pub fn getkeystring(s: &str) -> Vec<u8> {                                    // c:utils.c:6915
     let mut result = Vec::new();
     let mut chars = s.chars().peekable();
@@ -118,10 +119,11 @@ pub fn getkeystring(s: &str) -> Vec<u8> {                                    // 
 }
 
 /// Format a raw key-sequence byte slice for human-readable display.
-/// Port of `printbind(str, stream)` from Src/Zle/zle_utils.c:1283 — used by
+/// Port of `printbind(char *str, FILE *stream)` from Src/Zle/zle_utils.c:1283 — used by
 /// `bindkey -L` and the `where-is` widget to show key bindings in the
 /// same `^X` / `\\eX` form `getkeystring` accepts. C signature writes
 /// to a `FILE*` stream; this Rust port returns the formatted `String`.
+/// WARNING: param names don't match C — Rust=(seq) vs C=(str, stream)
 pub fn printbind(seq: &[u8]) -> String {                                     // c:zle_utils.c:1283
     let mut result = String::new();
     let mut i = 0;

@@ -73,7 +73,7 @@ pub const T_NEXT:     u8 = 0x94;                                             // 
 /// (DA1, COLORTERM, OSC52) so script startup doesn't pay for the
 /// full 5+ probe round-trip.
 pub fn query_terminal() {                                                    // c:505
-    // c:506-509 — build TQ_BGCOLOR TQ_FGCOLOR TQ_CURSOR TQ_KITTYKB
+    // c:505-509 — build TQ_BGCOLOR TQ_FGCOLOR TQ_CURSOR TQ_KITTYKB
     // TQ_RGB TQ_XTVERSION TQ_DA, prime the state-machine matcher.
     // c:510-540 — read responses + dispatch through `handle_query()`
     // / `handle_color()` / `handle_paste()`.
@@ -93,9 +93,10 @@ pub fn query_terminal() {                                                    // 
 }
 
 /// Send an escape sequence query and read the response.
-/// Port of `probe_terminal(tquery, states, handle_seq, numbers, len, capture, clen, output)` from Src/Zle/termquery.c — the
+/// Port of `probe_terminal(const char *tquery, seqstate_t *states, void (*handle_seq) (int seq, int *numbers, int len, char *capture, int clen, void *output), void *output)` from Src/Zle/termquery.c — the
 /// raw-mode write+read+restore harness that drives all DA1/DA2/
 /// status-report probes.
+/// WARNING: param names don't match C — Rust=(query, timeout_ms) vs C=(tquery, states, handle_seq, numbers, len, capture, clen, output)
 fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
     #[cfg(unix)]
     {
@@ -166,6 +167,7 @@ fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
 /// Port of `url_encode(path, ulen)` from Src/Zle/termquery.c. Preserves the
 /// RFC 3986 unreserved set (`A-Za-z0-9-._~`) plus `/` so path-shaped
 /// input round-trips, percent-encodes everything else as `%XX`.
+/// WARNING: param names don't match C — Rust=(s) vs C=(path, ulen)
 pub fn url_encode(s: &str) -> String {
     let mut result = String::with_capacity(s.len() * 3);
     for b in s.bytes() {
@@ -182,7 +184,7 @@ pub fn url_encode(s: &str) -> String {
 }
 
 /// Direct port of `char *system_clipget(char clip)` from
-/// `Src/Zle/termquery.c:625-633`. Emits `ESC ] 52 ; <clip> ; ? ST` and
+/// `Src/Zle/termquery.c:625`. Emits `ESC ] 52 ; <clip> ; ? ST` and
 /// parses the terminal's `ESC ] 52 ; <clip> ; <base64> ST` reply,
 /// returning the decoded payload or None on timeout / malformed reply.
 ///
@@ -190,7 +192,7 @@ pub fn url_encode(s: &str) -> String {
 /// primary, `s` = selection); C source embeds it at `seq[5]` of the
 /// fixed template `\033]52;.;?\033\\`.
 pub fn system_clipget(clip: char) -> Option<String> {                        // c:625
-    let mut seq = String::from("\x1b]52;.;?\x1b\\");                         // c:628 fixed template
+    let mut seq = String::from("\x1b]52;.;?\x1b\\");                         // c:625 fixed template
     // c:631 — `seq[5] = clip` overwrites the placeholder '.'.
     unsafe { seq.as_bytes_mut()[5] = clip as u8; }                           // c:631
     // c:632 — probe_terminal(seq, osc52, &handle_paste, &contents).
@@ -204,14 +206,15 @@ pub fn system_clipget(clip: char) -> Option<String> {                        // 
     let payload_end = rest.find('\x1b').or_else(|| rest.find('\x07'))?;
     let b64 = &rest[..payload_end];
     let bytes = base64_decode(b64);
-    String::from_utf8(bytes).ok()                                            // c:633 return contents
+    String::from_utf8(bytes).ok()                                            // c:637 return contents
 }
 
 /// Encode `data` as an OSC-52 clipboard-set sequence.
-/// Port of `system_clipput(clip, content, clen)` from Src/Zle/termquery.c. Emits
+/// Port of `system_clipput(char clip, char *content, size_t clen)` from Src/Zle/termquery.c. Emits
 /// `ESC ] 52 ; c ; <base64> ST` so the terminal can populate the
 /// system clipboard — used by widgets that surface yanked text
 /// outside the editor's local kill ring.
+/// WARNING: param names don't match C — Rust=(data) vs C=(clip, content, clen)
 pub fn system_clipput(data: &str) -> String {
     use std::io::Write;
     let mut buf = Vec::new();
@@ -250,11 +253,12 @@ fn base64_encode(data: &[u8]) -> String {
 
 /// Test whether a named terminal extension is enabled in the current
 /// session.
-/// Port of `extension_enabled(class, ext, clen, def)` from Src/Zle/termquery.c. The C
+/// Port of `extension_enabled(const char *class, const char *ext, unsigned clen, int def)` from Src/Zle/termquery.c. The C
 /// source consults the cached probe state stored on the global
 /// `caps`; we re-derive each call from `$TERM` / `$COLORTERM` /
 /// `$TERM_PROGRAM` since the probe-once-cache machinery isn't wired
 /// through this crate yet.
+/// WARNING: param names don't match C — Rust=(name) vs C=(class, ext, clen, def)
 pub fn extension_enabled(name: &str) -> bool {
     match name {
         "bracketed-paste" => std::env::var("TERM")
@@ -271,15 +275,15 @@ pub fn extension_enabled(name: &str) -> bool {
 }
 
 /// Direct port of `void zle_set_cursorform(void)` from
-/// `Src/Zle/termquery.c:857`. C reads the `zle_cursorform` shell
+/// `Src/Zle/termquery.c:856`. C reads the `zle_cursorform` shell
 /// parameter and emits the CSI-q DECSCUSR sequence corresponding
 /// to the CURF_* bit-encoding (CURF_UNDERLINE/CURF_BAR/CURF_BLOCK
 /// + CURF_BLINK/CURF_STEADY/CURF_HIDDEN). Real body deferred —
 /// needs the param resolver wired through this call site. The
 /// previous Rust placeholder shipped a fake `CursorShape` enum
 /// param and 7-arm match that don't exist in C.
-pub fn zle_set_cursorform() {                                                // c:857
-    // c:858 — `char **atrs = getaparam("zle_cursorform");`
+pub fn zle_set_cursorform() {                                                // c:856
+    // c:856 — `char **atrs = getaparam("zle_cursorform");`
     // c:859 — pick the per-keymap-context entry via `cursor_forms[]`.
     // c:868-953 — emit CSI Ps SP q with CURF_* decode.
 }
@@ -289,6 +293,7 @@ pub fn zle_set_cursorform() {                                                // 
 /// and splits.
 /// Port of `notify_pwd()` from Src/Zle/termquery.c. The C source
 /// emits the same sequence at `chpwd` time.
+/// WARNING: param names don't match C — Rust=(path) vs C=()
 pub fn notify_pwd(path: &str) -> String {
     let hostname = crate::utils::gethostname();
     format!("\x1b]7;file://{}{}\x1b\\", hostname, url_encode(path))
@@ -406,7 +411,6 @@ mod tests {
 /// "current output byte" is reset to `n << (2 * (i % 4))` BEFORE
 /// `b++`, then later iterations OR-in the high bits. This mirrors
 /// the standard base64 decode but with an unusual write pattern.
-/// Port of `base64_decode` from `Src/Zle/termquery.c:570`.
 pub fn base64_decode(src: &str) -> Vec<u8> {                                 // c:570
     let bytes = src.as_bytes();
     let len = bytes.len();
@@ -450,7 +454,8 @@ pub fn base64_decode(src: &str) -> Vec<u8> {                                 // 
     buf                                                                      // c:591 return buf
 }
 
-/// Port of `collate_seq(sindex, dir)` from Src/Zle/termquery.c:676.
+/// Port of `collate_seq(int sindex, int dir)` from Src/Zle/termquery.c:676.
+/// WARNING: param names don't match C — Rust=(_seq) vs C=(sindex, dir)
 pub fn collate_seq(_seq: &str) -> Vec<u8> {                                  // c:676
     // C body c:678-722 — collates a UTF-8 byte sequence into a single
     //                    locale-aware key for sort comparison via
@@ -475,6 +480,7 @@ pub fn end_edit() -> i32 {                                                   // 
 }
 
 /// Port of `find_branch(pos)` from Src/Zle/termquery.c:170.
+/// WARNING: param names don't match C — Rust=(s, ch) vs C=(pos)
 pub fn find_branch(s: &str, ch: u8) -> Option<usize> {                       // c:170
     // C body c:172-183 — scans `s` for the matching paren/bracket/
     //                    brace branch open. We approximate by finding
@@ -483,6 +489,7 @@ pub fn find_branch(s: &str, ch: u8) -> Option<usize> {                       // 
 }
 
 /// Port of `find_matching(pos, direction)` from Src/Zle/termquery.c:185.
+/// WARNING: param names don't match C — Rust=(s, open, close) vs C=(pos, direction)
 pub fn find_matching(s: &str, open: u8, close: u8) -> Option<usize> {        // c:185
     // C body c:187-218 — paired-bracket finder; scans forward
     //                    counting opens until depth returns to 0.
@@ -507,7 +514,8 @@ pub fn free_cursor_forms() {                                                 // 
     //                    zfree+next walk. Drop covers it; no-op.
 }
 
-/// Port of `handle_color(bg, red, green, blue)` from Src/Zle/termquery.c:438.
+/// Port of `handle_color(int bg, int red, int green, int blue)` from Src/Zle/termquery.c:438.
+/// WARNING: param names don't match C — Rust=(_seq) vs C=(bg, red, green, blue)
 pub fn handle_color(_seq: &str) -> i32 {                                     // c:438
     // C body c:440-593 — parses iTerm2 OSC 4;<idx>;rgb response,
     //                    populates terminal color cache. Without
@@ -518,7 +526,7 @@ pub fn handle_color(_seq: &str) -> i32 {                                     // 
 /// Direct port of `static void handle_paste(int sequence, int *numbers,
 ///                                          int len, char *capture,
 ///                                          int clen, void *output)`
-/// from `Src/Zle/termquery.c:595-599`.
+/// from `Src/Zle/termquery.c:595`.
 ///
 /// C body: `*(char**)output = base64_decode(capture, clen);` — drops
 /// a decoded payload into the caller-supplied `output` pointer.
@@ -558,7 +566,8 @@ pub fn mark_output(start: bool) {                                            // 
     }
 }
 
-/// Port of `match_cursorform(teststr, cursor_form)` from Src/Zle/termquery.c:798.
+/// Port of `match_cursorform(const char *teststr, unsigned int *cursor_form)` from Src/Zle/termquery.c:798.
+/// WARNING: param names don't match C — Rust=(_name) vs C=(teststr, cursor_form)
 pub fn match_cursorform(_name: &str) -> Option<String> {                     // c:798
     // C body c:800-902 — looks up named cursor form (e.g. "block",
     //                    "underline", "bar") in cursor_form_list and
@@ -581,7 +590,7 @@ pub fn start_edit() -> i32 {                                                 // 
     0
 }
 
-/// Port of `write_urlencoded(path_components)` from Src/Zle/termquery.c:769.
+/// Port of `write_urlencoded(const char *path_components)` from Src/Zle/termquery.c:769.
 pub fn write_urlencoded(path_components: &str) -> String {                                 // c:769
     // C body c:771-796 — URL-encodes a string for OSC 8 hyperlink
     //                    emission. Real escape: convert non-printable

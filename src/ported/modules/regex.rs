@@ -21,7 +21,7 @@
 /// `zcond_regex_match` for the only currently-supported flavour.
 pub const ZREGEX_EXTENDED: i32 = 0;                                      // c:36
 
-/// Port of `zcond_regex_match(a, id)` from `Src/Modules/regex.c:54`.
+/// Port of `zcond_regex_match(char **a, int id)` from `Src/Modules/regex.c:54`.
 ///
 /// C signature: `static int zcond_regex_match(char **a, int id)`.
 /// Returns 1 on match, 0 on no match. The capture writeback into
@@ -162,14 +162,14 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {                       // 
 ///
 /// C signature: `static void zregex_regerrwarn(int r, regex_t *re, char *msg)`.
 pub fn zregex_regerrwarn(prefix: &str, err_msg: &str) {                  // c:40
-    crate::ported::utils::zwarnnam(prefix, err_msg);                     // c:48
+    crate::ported::utils::zwarnnam(prefix, err_msg);                     // c:40
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Port of `zcond_regex_match(a, id)` from `Src/Modules/regex.c:54`.
+    /// Port of `zcond_regex_match(char **a, int id)` from `Src/Modules/regex.c:54`.
     #[test]
     fn match_returns_one() {
         let r = zcond_regex_match(&["hello world", "wor.d"], ZREGEX_EXTENDED);
@@ -240,25 +240,25 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_(m)` from `Src/Modules/regex.c:229`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/regex.c:229`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                    // c:229
     // C body c:231-232 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/regex.c:236`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/regex.c:236`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/regex.c:244`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/regex.c:244`.
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_(m)` from `Src/Modules/regex.c:251`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/regex.c:251`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:251
     // C body c:253-254 — `return 0`. Faithful empty-body port; the
@@ -266,12 +266,12 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
     0
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/regex.c:258`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/regex.c:258`.
 pub fn cleanup_(m: *const module) -> i32 {
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_(m)` from `Src/Modules/regex.c:265`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/regex.c:265`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:265
     // C body c:267-268 — `return 0`. Faithful empty-body port.

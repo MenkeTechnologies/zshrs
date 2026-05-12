@@ -199,7 +199,7 @@ impl Keymap {
     }
 
     /// Install a multi-byte key sequence binding.
-    /// Direct port of `bindkey(km, seq, bind, str)` from Src/Zle/zle_keymap.c:566 for the
+    /// Direct port of `bindkey(Keymap km, const char *seq, Thingy bind, char *str)` from Src/Zle/zle_keymap.c:566 for the
     /// len > 1 path: marks every proper prefix of `seq` as a prefix
     /// node (prefixct increment) so getkeymapcmd's trie walk knows to
     /// keep reading bytes when it sees a partial match.
@@ -849,13 +849,13 @@ impl KeymapManager {
 }
 
 /// Direct port of `static int bin_bindkey(char *name, char **argv,
-/// Options ops, UNUSED(int func))` from `Src/Zle/zle_keymap.c:872`.
+/// Options ops, UNUSED(int func))` from `Src/Zle/zle_keymap.c:743`.
 /// Top-level dispatcher for the `bindkey` builtin. C body parses
 /// the -lLdrmNMp option flags via OPT_ISSET/OPT_ARG, then routes to
 /// the appropriate sub-handler (list / delete / new-keymap / link
 /// / bind). Real body deferred — needs options.rs wired through
 /// this call site. `BindkeyOpts` (Rust-invented bool-bundle) deleted.
-pub fn bin_bindkey(name: &str, args: &[String],                              // c:872
+pub fn bin_bindkey(name: &str, args: &[String],                              // c:743
                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     let _ = (name, args);
     0
@@ -1063,14 +1063,15 @@ mod tests {
     }
 }
 
-/// Port of `add_cursor_char(c)` from Src/Zle/zle_keymap.c:1248.
+/// Port of `add_cursor_char(int c)` from Src/Zle/zle_keymap.c:1248.
+/// WARNING: param names don't match C — Rust=(buf, c) vs C=(c)
 pub fn add_cursor_char(buf: &mut Vec<u8>, c: u8) {                           // c:1248
     // C body (c:1250): `*cursorptr++ = c`. Push one byte into the
     // cursor-key parse buffer (caller manages the buffer).
     buf.push(c);
 }
 
-/// Port of `add_cursor_key(km, tccode, thingy, defchar)` from Src/Zle/zle_keymap.c:1258.
+/// Port of `add_cursor_key(Keymap km, int tccode, Thingy thingy, int defchar)` from Src/Zle/zle_keymap.c:1258.
 #[allow(unused_variables)]
 pub fn add_cursor_key(km: &mut Keymap, tccode: i32, thingy: Thingy, defchar: i32) {  // c:1258
     // C body (c:1260-1300): looks up termcap cursor key string by
@@ -1082,8 +1083,9 @@ pub fn add_cursor_key(km: &mut Keymap, tccode: i32, thingy: Thingy, defchar: i32
     }
 }
 
-/// Port of `addkeybuf(c)` from Src/Zle/zle_keymap.c:1717.
-pub fn addkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) {      // c:1700
+/// Port of `addkeybuf(int c)` from Src/Zle/zle_keymap.c:1717.
+/// WARNING: param names don't match C — Rust=(zle, c) vs C=(c)
+pub fn addkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) {      // c:1717
     // C body (zle_keymap.c:1700):
     //   addkeybuf(int c) {
     //     if(keybuflen + 3 > keybufsz) keybuf = realloc(...);
@@ -1115,7 +1117,7 @@ pub fn addkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) {      // 
 /// Direct port of `static int bin_bindkey_bind(char *name, char *kmname,
 ///                                              char **argv, Options ops,
 ///                                              char func)`
-/// from `Src/Zle/zle_keymap.c:999-1098`. Walks `args` in (seq, cmd)
+/// from `Src/Zle/zle_keymap.c:999`. Walks `args` in (seq, cmd)
 /// pairs binding each in the named keymap. `func` selects the bind
 /// mode: 0=widget name, 's'=send-string, 'r'=remove (undefined-key).
 ///
@@ -1182,8 +1184,9 @@ pub fn bin_bindkey_bind(name: &str, args: &[String], func: char) -> i32 {    // 
     0                                                                        // c:1097
 }
 
-/// Port of `bin_bindkey_del(name, argv)` from Src/Zle/zle_keymap.c:902.
-pub fn bin_bindkey_del(args: &[String]) -> i32 {                             // c:825
+/// Port of `bin_bindkey_del(char *name, UNUSED(char *kmname), UNUSED(Keymap km), char **argv, UNUSED(Options ops), UNUSED(char func))` from Src/Zle/zle_keymap.c:902.
+/// WARNING: param names don't match C — Rust=(args) vs C=(name, kmname, km, argv, ops, func)
+pub fn bin_bindkey_del(args: &[String]) -> i32 {                             // c:902
     // C body (c:830-855): `do { unlinkkeymap(*args, 0) } while(*++args)`.
     // Returns 1 on first failure, else 0.
     if args.is_empty() {
@@ -1199,8 +1202,9 @@ pub fn bin_bindkey_del(args: &[String]) -> i32 {                             // 
     ret
 }
 
-/// Port of `bin_bindkey_delall(name, kmname, km, argv, ops, func)` from Src/Zle/zle_keymap.c:891.
-pub fn bin_bindkey_delall(name: &str) -> i32 {                               // c:880
+/// Port of `bin_bindkey_delall(UNUSED(char *name), UNUSED(char *kmname), UNUSED(Keymap km), UNUSED(char **argv), UNUSED(Options ops), UNUSED(char func))` from Src/Zle/zle_keymap.c:891.
+/// WARNING: param names don't match C — Rust=(name) vs C=(name, kmname, km, argv, ops, func)
+pub fn bin_bindkey_delall(name: &str) -> i32 {                               // c:891
     // C body (c:888-892): `km->flags & KM_IMMUTABLE → 1; else
     //                      walk km->multi + km->first[256] freeing all`.
     // Without &mut Keymap mutation through Arc shared shape, we
@@ -1211,8 +1215,9 @@ pub fn bin_bindkey_delall(name: &str) -> i32 {                               // 
     0
 }
 
-/// Port of `bin_bindkey_link(name, km, argv)` from Src/Zle/zle_keymap.c:921.
-pub fn bin_bindkey_link(args: &[String]) -> i32 {                            // c:903
+/// Port of `bin_bindkey_link(char *name, UNUSED(char *kmname), Keymap km, char **argv, UNUSED(Options ops), UNUSED(char func))` from Src/Zle/zle_keymap.c:921.
+/// WARNING: param names don't match C — Rust=(args) vs C=(name, kmname, km, argv, ops, func)
+pub fn bin_bindkey_link(args: &[String]) -> i32 {                            // c:921
     // C body (c:907-933): `km2 = openkeymap(args[0]); if (!km2) return 1;
     //                       linkkeymap(km2, args[1], 0)`.
     if args.len() < 2 {
@@ -1230,7 +1235,7 @@ pub fn bin_bindkey_link(args: &[String]) -> i32 {                            // 
 /// Direct port of `int bin_bindkey_list(char *name, char *kmname,
 ///                                       UNUSED(char **argv),
 ///                                       Options ops, UNUSED(char func))`
-/// from `Src/Zle/zle_keymap.c:1094-1175`. Emits each binding in the
+/// from `Src/Zle/zle_keymap.c:1094`. Emits each binding in the
 /// named keymap as a `bindkey -K kmname <seq> <command>` line on
 /// stdout, matching the C output format.
 pub fn bin_bindkey_list(name: &str, _ops: &[String]) -> i32 {                // c:1094
@@ -1282,8 +1287,9 @@ pub fn bin_bindkey_list(name: &str, _ops: &[String]) -> i32 {                // 
     0                                                                        // c:1173
 }
 
-/// Port of `bin_bindkey_lsmaps(name, argv, ops)` from Src/Zle/zle_keymap.c:834.
-pub fn bin_bindkey_lsmaps() -> Vec<String> {                                 // c:856
+/// Port of `bin_bindkey_lsmaps(char *name, UNUSED(char *kmname), UNUSED(Keymap km), char **argv, Options ops, UNUSED(char func))` from Src/Zle/zle_keymap.c:834.
+/// WARNING: param names don't match C — Rust=() vs C=(name, kmname, km, argv, ops, func)
+pub fn bin_bindkey_lsmaps() -> Vec<String> {                                 // c:834
     // C body (c:856-873): `scanhashtable(keymapnamtab, 1, ...,
     //                      scanlistmaps, 0)`. Format each as
     // `name (-> alias)` for entries that share a keymap.
@@ -1296,7 +1302,7 @@ pub fn bin_bindkey_lsmaps() -> Vec<String> {                                 // 
 /// Direct port of `static int bin_bindkey_meta(char *name, char *kmname,
 ///                                              Keymap km, char **argv,
 ///                                              Options ops, char func)`
-/// from `Src/Zle/zle_keymap.c:966-989`. Walks bytes 0x80..0xff,
+/// from `Src/Zle/zle_keymap.c:966`. Walks bytes 0x80..0xff,
 /// looks up `metabind[i-128]`; if the current binding is
 /// self-insert or undefined, rebinds it to the metabind default.
 ///
@@ -1308,7 +1314,7 @@ pub fn bin_bindkey_lsmaps() -> Vec<String> {                                 // 
 /// metabind table lands in `zle_bindings.rs` the inner loop can
 /// be uncommented to issue real bindkey calls.
 pub fn bin_bindkey_meta(name: &str, _argv: &[String]) -> i32 {               // c:966
-    // c:972 — KM_IMMUTABLE check: km->flags & KM_IMMUTABLE → return 1.
+    // c:966 — KM_IMMUTABLE check: km->flags & KM_IMMUTABLE → return 1.
     // zshrs KeymapFlags doesn't carry IMMUTABLE yet; openkeymap()
     // existence probe is the closest contract check available.
     if openkeymap(name).is_none() {
@@ -1321,9 +1327,10 @@ pub fn bin_bindkey_meta(name: &str, _argv: &[String]) -> i32 {               // 
     0                                                                        // c:988
 }
 
-/// Port of `bin_bindkey_new(name, km, argv)` from Src/Zle/zle_keymap.c:938.
-pub fn bin_bindkey_new(args: &[String]) -> i32 {                             // c:937
-    // c:940-955 — `kmn = keymapnamtab.getnode(args[0]); if (kmn->flags
+/// Port of `bin_bindkey_new(char *name, UNUSED(char *kmname), Keymap km, char **argv, UNUSED(Options ops), UNUSED(char func))` from Src/Zle/zle_keymap.c:938.
+/// WARNING: param names don't match C — Rust=(args) vs C=(name, kmname, km, argv, ops, func)
+pub fn bin_bindkey_new(args: &[String]) -> i32 {                             // c:938
+    // c:938-955 — `kmn = keymapnamtab.getnode(args[0]); if (kmn->flags
     //               & KMN_IMMORTAL) return 1; if (args[1]) km =
     //               openkeymap(args[1]) else NULL;
     //               linkkeymap(newkeymap(km, args[0]), args[0], 0)`.
@@ -1351,13 +1358,13 @@ pub fn bin_bindkey_new(args: &[String]) -> i32 {                             // 
 
 /// Port of `createkeymapnamtab()` from Src/Zle/zle_keymap.c:153.
 pub fn createkeymapnamtab() {                                                // c:153
-    // c:155 — `keymapnamtab = newhashtable(7, "keymapnamtab", NULL)`.
+    // c:153 — `keymapnamtab = newhashtable(7, "keymapnamtab", NULL)`.
     // OnceLock-init via accessor.
     let _ = keymapnamtab();
 }
 
 /// Direct port of `void default_bindings(void)` from
-/// `Src/Zle/zle_keymap.c:1309-1810`. Allocates the emacs / vicmd /
+/// `Src/Zle/zle_keymap.c:1309`. Allocates the emacs / vicmd /
 /// viins / menuselect / listscroll / .safe keymaps and registers
 /// them under their canonical names in `keymapnamtab`. The 330+
 /// per-key bindkey calls live in the C body; the Rust runtime
@@ -1367,7 +1374,7 @@ pub fn createkeymapnamtab() {                                                // 
 /// keymap names exist and resolve via `openkeymap()`. Without that,
 /// any later `bindkey -K emacs ...` user call fails.
 pub fn default_bindings() {                                                  // c:1309
-    // c:1325-1810 — alloc + link each named keymap; apply the per-key
+    // c:1309-1810 — alloc + link each named keymap; apply the per-key
     // bindkey defaults for emacs / viins / vicmd inline (mirroring
     // the C body which has all the bindkey calls inside this fn).
     let mgr = KeymapManager;
@@ -1393,10 +1400,10 @@ pub fn default_bindings() {                                                  // 
     *curkeymapname() = "main".to_string();                                   // c:513
 }
 
-/// Port of `deletekeymap(km)` from Src/Zle/zle_keymap.c:364.
+/// Port of `deletekeymap(Keymap km)` from Src/Zle/zle_keymap.c:364.
 #[allow(unused_variables)]
-pub fn deletekeymap(km: Arc<Keymap>) {                                      // c:363
-    // c:367-372 — `deletehashtable(km->multi); for(i=256;i--;)
+pub fn deletekeymap(km: Arc<Keymap>) {                                      // c:364
+    // c:364-372 — `deletehashtable(km->multi); for(i=256;i--;)
     //              unrefthingy(km->first[i]); zfree(km, sizeof(*km))`.
     // Arc<Keymap> drop cascade handles HashMap and array drops.
     // The unrefthingy walk is implicit: each Thingy in first[] gets
@@ -1404,22 +1411,23 @@ pub fn deletekeymap(km: Arc<Keymap>) {                                      // c
     // observe the drop on the LAST holder.
 }
 
-/// Port of `emptykeymapnamtab(ht)` from Src/Zle/zle_keymap.c:183.
-pub fn emptykeymapnamtab() {                                                 // c:182
-    // c:188-198 — walk all nodes, free name + unrefkeymap + zfree.
+/// Port of `emptykeymapnamtab(HashTable ht)` from Src/Zle/zle_keymap.c:183.
+/// WARNING: param names don't match C — Rust=() vs C=(ht)
+pub fn emptykeymapnamtab() {                                                 // c:183
+    // c:183-198 — walk all nodes, free name + unrefkeymap + zfree.
     // Rust drop cascade handles free; we just clear the table.
     keymapnamtab().lock().unwrap().clear();
 }
 
-/// Port of `freekeymapnamnode(hn)` from Src/Zle/zle_keymap.c:267.
-pub fn freekeymapnamnode(hn: &str) {                                       // c:266
-    // c:269-273 — `kmn = (KeymapName)hn; zsfree(kmn->nam);
+/// Port of `freekeymapnamnode(HashNode hn)` from Src/Zle/zle_keymap.c:267.
+pub fn freekeymapnamnode(hn: &str) {                                       // c:267
+    // c:267-273 — `kmn = (KeymapName)hn; zsfree(kmn->nam);
     //              unrefkeymap_by_name(kmn); zfree(kmn,...)`.
     keymapnamtab().lock().unwrap().remove(hn);
 }
 
-/// Port of `freekeynode(hn)` from Src/Zle/zle_keymap.c:312.
-pub fn freekeynode(hn: KeyBinding) {                                        // c:311
+/// Port of `freekeynode(HashNode hn)` from Src/Zle/zle_keymap.c:312.
+pub fn freekeynode(hn: KeyBinding) {                                        // c:312
     // C body (zle_keymap.c:312):
     //   freekeynode(HashNode hn) {
     //     Key k = (Key) hn;
@@ -1441,8 +1449,9 @@ pub fn freekeynode(hn: KeyBinding) {                                        // c
     // KeyBinding consumed; String/Option fields auto-drop.
 }
 
-/// Port of `getkeybuf(w)` from Src/Zle/zle_keymap.c:1744.
-pub fn getkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, w: i32) -> i32 {  // c:1656
+/// Port of `getkeybuf(int w)` from Src/Zle/zle_keymap.c:1744.
+/// WARNING: param names don't match C — Rust=(zle, w) vs C=(w)
+pub fn getkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, w: i32) -> i32 {  // c:1744
     // C body (c:1658-1664): `int c = getbyte((long)w, NULL, 1);
     //                       if (c < 0) return EOF; addkeybuf(c); return c`.
     // getbyte() needs the input substrate; without it, drain from
@@ -1457,6 +1466,7 @@ pub fn getkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, w: i32) -> i32 {  
 }
 
 /// Port of `getkeycmd()` from Src/Zle/zle_keymap.c:1768.
+/// WARNING: param names don't match C — Rust=(_zle) vs C=()
 pub fn getkeycmd(_zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:1768
     // C body c:1770-1804 — calls getkeymapcmd in a loop until a
     //                      non-prefix keymap entry is selected; sets
@@ -1466,7 +1476,8 @@ pub fn getkeycmd(_zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
     -1
 }
 
-/// Port of `getkeymapcmd(km, funcp, strp)` from Src/Zle/zle_keymap.c:1581.
+/// Port of `getkeymapcmd(Keymap km, Thingy *funcp, char **strp)` from Src/Zle/zle_keymap.c:1581.
+/// WARNING: param names don't match C — Rust=(_zle, _km) vs C=(km, funcp, strp)
 pub fn getkeymapcmd(_zle: &mut crate::ported::zle::zle_main::Zle, _km: i32) -> i32 { // c:1581
     // C body c:1583-1700 — reads bytes via getkeybuf and walks the
     //                      keymap multi-table; returns the matched
@@ -1475,13 +1486,14 @@ pub fn getkeymapcmd(_zle: &mut crate::ported::zle::zle_main::Zle, _km: i32) -> i
 }
 
 /// Port of `getrestchar_keybuf()` from Src/Zle/zle_keymap.c:1504.
-pub fn getrestchar_keybuf(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:1671
+/// WARNING: param names don't match C — Rust=(zle) vs C=()
+pub fn getrestchar_keybuf(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:1504
     // C body (c:1675): `return getrestchar(getkeybuf(0), NULL, NULL)`.
     let c = getkeybuf(zle, 0);
     crate::ported::zle::zle_main::getrestchar(zle, c)
 }
 
-/// Port of `keyisprefix(km, seq)` from `Src/Zle/zle_keymap.c:683`.
+/// Port of `keyisprefix(Keymap km, char *seq)` from `Src/Zle/zle_keymap.c:683`.
 /// ```c
 /// int
 /// keyisprefix(Keymap km, char *seq)
@@ -1501,9 +1513,8 @@ pub fn getrestchar_keybuf(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 { 
 /// Test whether `seq` is a strict prefix of some longer binding in
 /// `km`. Returns 1 if `seq` is a prefix (incl. empty input), 0 if
 /// `seq` is itself a complete binding or no match exists.
-/// Port of `keyisprefix(km, seq)` from `Src/Zle/zle_keymap.c:683`.
 pub fn keyisprefix(km: &Keymap, seq: &[u8]) -> i32 {                         // c:683
-    // c:687-688 — `if(!*seq) return 1`. Empty sequence → trivially prefix.
+    // c:683-688 — `if(!*seq) return 1`. Empty sequence → trivially prefix.
     if seq.is_empty() {
         return 1;
     }
@@ -1530,9 +1541,9 @@ pub fn keyisprefix(km: &Keymap, seq: &[u8]) -> i32 {                         // 
     }
 }
 
-/// Port of `linkkeymap(km, name, imm)` from Src/Zle/zle_keymap.c:449.
+/// Port of `linkkeymap(Keymap km, char *name, int imm)` from Src/Zle/zle_keymap.c:449.
 pub fn linkkeymap(km: Arc<Keymap>, name: &str, imm: i32) -> i32 {            // c:449
-    // c:451-466 — `n = keymapnamtab.getnode(name); if (n) { ... }
+    // c:449-466 — `n = keymapnamtab.getnode(name); if (n) { ... }
     //               else { n = makekeymapnamnode(km); ... addnode }
     //               refkeymap_by_name(n); return 0`.
     let mut tab = keymapnamtab().lock().unwrap();
@@ -1565,9 +1576,9 @@ pub fn linkkeymap(km: Arc<Keymap>, name: &str, imm: i32) -> i32 {            // 
     0                                                                        // c:466
 }
 
-/// Port of `makekeymapnamnode(keymap)` from Src/Zle/zle_keymap.c:173.
-pub fn makekeymapnamnode(keymap: Arc<Keymap>) -> KeymapName {                    // c:172
-    // c:175-178 — `kmn = zshcalloc; kmn->keymap = keymap; return kmn`.
+/// Port of `makekeymapnamnode(Keymap keymap)` from Src/Zle/zle_keymap.c:173.
+pub fn makekeymapnamnode(keymap: Arc<Keymap>) -> KeymapName {                    // c:173
+    // c:173-178 — `kmn = zshcalloc; kmn->keymap = keymap; return kmn`.
     KeymapName {
         nam: String::new(),
         flags: 0,
@@ -1575,9 +1586,9 @@ pub fn makekeymapnamnode(keymap: Arc<Keymap>) -> KeymapName {                   
     }
 }
 
-/// Port of `makekeynode(t, str)` from Src/Zle/zle_keymap.c:301.
-pub fn makekeynode(t: Thingy, str: String) -> KeyBinding {                     // c:300
-    // c:303-307 — `k = zshcalloc; k->bind = t; k->str = str`.
+/// Port of `makekeynode(Thingy t, char *str)` from Src/Zle/zle_keymap.c:301.
+pub fn makekeynode(t: Thingy, str: String) -> KeyBinding {                     // c:301
+    // c:301-307 — `k = zshcalloc; k->bind = t; k->str = str`.
     KeyBinding {
         bind: Some(t),
         str: Some(str),
@@ -1586,7 +1597,7 @@ pub fn makekeynode(t: Thingy, str: String) -> KeyBinding {                     /
 }
 
 /// Direct port of `Keymap newkeymap(Keymap tocopy, char *kmname)` from
-/// `Src/Zle/zle_keymap.c:330-345`.
+/// `Src/Zle/zle_keymap.c:330`.
 /// ```c
 /// km = zshcalloc(sizeof(*km));
 /// km->multi = newkeytab(7, kmname);
@@ -1612,24 +1623,25 @@ pub fn newkeymap(tocopy: Option<&Keymap>, _kmname: &str) -> Arc<Keymap> {    // 
     Arc::new(km)
 }
 
-/// Port of `newkeytab(kmname)` from Src/Zle/zle_keymap.c:278.
-pub fn newkeytab() -> HashMap<Vec<u8>, KeyBinding> {                         // c:277
-    // c:280-296 — `ht = newhashtable(7, kmname, NULL)`. zshrs's
+/// Port of `newkeytab(char *kmname)` from Src/Zle/zle_keymap.c:278.
+/// WARNING: param names don't match C — Rust=() vs C=(kmname)
+pub fn newkeytab() -> HashMap<Vec<u8>, KeyBinding> {                         // c:278
+    // c:278-296 — `ht = newhashtable(7, kmname, NULL)`. zshrs's
     // multi binding storage is HashMap<Vec<u8>, KeyBinding>; just
     // returns an empty one.
     HashMap::new()
 }
 
-/// Port of `openkeymap(name)` from Src/Zle/zle_keymap.c:428.
-pub fn openkeymap(name: &str) -> Option<Arc<Keymap>> {                       // c:427
-    // c:430-431 — `n = keymapnamtab.getnode(name); return n ? n->keymap : NULL`.
+/// Port of `openkeymap(char *name)` from Src/Zle/zle_keymap.c:428.
+pub fn openkeymap(name: &str) -> Option<Arc<Keymap>> {                       // c:428
+    // c:428-431 — `n = keymapnamtab.getnode(name); return n ? n->keymap : NULL`.
     keymapnamtab().lock().unwrap()
         .get(name)
         .map(|n| n.keymap.clone())
 }
 
 /// Direct port of `int readcommand(char **args)` from
-/// `Src/Zle/zle_keymap.c:1814-1821`.
+/// `Src/Zle/zle_keymap.c:1814`.
 /// ```c
 /// int readcommand(char **args) {
 ///     Thingy thingy = getkeycmd();
@@ -1651,7 +1663,7 @@ pub fn readcommand() -> i32 {                                                // 
     0                                                                        // c:1819
 }
 
-/// Port of `refkeymap(km)` from `Src/Zle/zle_keymap.c:470`.
+/// Port of `refkeymap(Keymap km)` from `Src/Zle/zle_keymap.c:471`.
 /// ```c
 /// void
 /// refkeymap(Keymap km)
@@ -1660,8 +1672,8 @@ pub fn readcommand() -> i32 {                                                // 
 /// }
 /// ```
 /// Bump the reference count on a keymap.
-pub fn refkeymap(km: &mut Keymap) {                                          // c:470
-    km.rc += 1;                                                              // c:473 km->rc++
+pub fn refkeymap(km: &mut Keymap) {                                          // c:471
+    km.rc += 1;                                                              // c:471 km->rc++
 }
 
 /// Direct port of `void refkeymap_by_name(char *name)` from
@@ -1685,13 +1697,14 @@ pub fn refkeymap(km: &mut Keymap) {                                          // 
 /// immutable; promotion only happens on the next `linkkeymap`).
 /// We keep the lookup as a contract check so callers see a working
 /// "did this name exist?" probe.
-/// Port of `refkeymap_by_name(kmn)` from `Src/Zle/zle_keymap.c:208`.
-pub fn refkeymap_by_name(kmn: &str) {                                       // c:208
-    let _ = keymapnamtab().lock().unwrap().get(kmn);                        // c:210 getnode probe
+/// Port of `refkeymap_by_name(KeymapName kmn)` from `Src/Zle/zle_keymap.c:209`.
+pub fn refkeymap_by_name(kmn: &str) {                                       // c:209
+    let _ = keymapnamtab().lock().unwrap().get(kmn);                        // c:209 getnode probe
 }
 
 /// Port of `reselectkeymap()` from Src/Zle/zle_keymap.c:549.
-pub fn reselectkeymap(zle: &crate::ported::zle::zle_main::Zle) {             // c:548
+/// WARNING: param names don't match C — Rust=(zle) vs C=()
+pub fn reselectkeymap(zle: &crate::ported::zle::zle_main::Zle) {             // c:549
     // C body (c:551): `selectkeymap(curkeymapname, 1)`.
     let _ = zle;
     let name = curkeymapname().clone();
@@ -1700,7 +1713,7 @@ pub fn reselectkeymap(zle: &crate::ported::zle::zle_main::Zle) {             // 
 
 /// Direct port of `static void scanbindlist(char *seq, Thingy bind,
 ///                                          char *str, void *magic)`
-/// from `Src/Zle/zle_keymap.c:1141-1170`. Per-binding callback used
+/// from `Src/Zle/zle_keymap.c:1141`. Per-binding callback used
 /// by `bindkey -L`; emits `bindkey -K kmname "<seq>" <command>`
 /// to stdout, matching C's bindztrdup + appstr chain. Rust returns
 /// the formatted line so callers can collect.
@@ -1730,7 +1743,7 @@ pub fn scanbindlist(kb: &KeyBinding) -> Option<String> {                     // 
 
 /// Direct port of `static void scancopykeys(char *s, Thingy bind,
 ///                                          char *str, void *magic)`
-/// from `Src/Zle/zle_keymap.c:351-359`. Per-node callback for
+/// from `Src/Zle/zle_keymap.c:351`. Per-node callback for
 /// `newkeymap` deep-copy.
 ///
 /// **Architectural divergence:** the C code dispatches via
@@ -1746,7 +1759,7 @@ pub fn scancopykeys(_kb: &KeyBinding) {                                      // 
 
 /// Direct port of `void scankeymap(Keymap km, int sort,
 ///                                  KeyScanFunc func, void *magic)`
-/// from `Src/Zle/zle_keymap.c:381-426`. Enumerates every binding
+/// from `Src/Zle/zle_keymap.c:381`. Enumerates every binding
 /// in `km` — single-byte `first[256]` entries first, then
 /// multi-byte `multi` entries. `sort != 0` lex-sorts the multi-byte
 /// keys before yielding. The Rust port returns a `Vec<Vec<u8>>` of
@@ -1759,16 +1772,17 @@ pub fn scankeymap(km: &Keymap, sort: i32) -> Vec<Vec<u8>> {                  // 
             seqs.push(vec![i as u8]);
         }
     }
-    // c:399-401 — multi-byte bindings via scanhashtable.
+    // c:404-401 — multi-byte bindings via scanhashtable.
     let mut multi_keys: Vec<Vec<u8>> = km.multi.keys().cloned().collect();
-    if sort != 0 {                                                           // c:399 sort flag
+    if sort != 0 {                                                           // c:404 sort flag
         multi_keys.sort();
     }
     seqs.extend(multi_keys);
     seqs
 }
 
-/// Port of `scankeys(hn)` from Src/Zle/zle_keymap.c:404.
+/// Port of `scankeys(HashNode hn, UNUSED(int flags))` from Src/Zle/zle_keymap.c:404.
+/// WARNING: param names don't match C — Rust=(_kb) vs C=(hn, flags)
 pub fn scankeys(_kb: &KeyBinding) -> Vec<u8> {                               // c:404
     // C body (c:406-426): per-node callback used by scankeymap; calls
     // skm_func per multi-byte binding. Returns the seq bytes here so
@@ -1776,7 +1790,8 @@ pub fn scankeys(_kb: &KeyBinding) -> Vec<u8> {                               // 
     Vec::new()
 }
 
-/// Port of `scanlistmaps(hn, list_verbose)` from Src/Zle/zle_keymap.c:856.
+/// Port of `scanlistmaps(HashNode hn, int list_verbose)` from Src/Zle/zle_keymap.c:856.
+/// WARNING: param names don't match C — Rust=() vs C=(hn, list_verbose)
 pub fn scanlistmaps() -> Vec<String> {                                       // c:856
     // C body (c:858-873): walk keymapnamtab printing each name with
     // primary-name annotation. Returns just the name list here.
@@ -1785,7 +1800,7 @@ pub fn scanlistmaps() -> Vec<String> {                                       // 
 
 /// Direct port of `static void scanprimaryname(HashNode hn,
 ///                                              UNUSED(int flags))` from
-/// `Src/Zle/zle_keymap.c:224-237`. Per-node callback used by
+/// `Src/Zle/zle_keymap.c:224`. Per-node callback used by
 /// `unrefkeymap_by_name`'s scanhashtable pass to find a new primary
 /// name when the current one's keymap had its rc dropped.
 ///
@@ -1801,7 +1816,8 @@ pub fn scanprimaryname(_name: &str) {                                        // 
     // No-op by design — see divergence note above.
 }
 
-/// Port of `scanremoveprefix(seq, magic)` from Src/Zle/zle_keymap.c:1078.
+/// Port of `scanremoveprefix(char *seq, UNUSED(Thingy bind), UNUSED(char *str), void *magic)` from Src/Zle/zle_keymap.c:1078.
+/// WARNING: param names don't match C — Rust=(km, prefix) vs C=(seq, bind, str, magic)
 pub fn scanremoveprefix(km: &mut Keymap, prefix: &[u8]) {                    // c:1078
     // C body (c:1080-1110): walks km->multi removing all bindings
     // whose key sequence starts with `prefix`. Used by `bindkey -rp`.
@@ -1814,10 +1830,10 @@ pub fn scanremoveprefix(km: &mut Keymap, prefix: &[u8]) {                    // 
     }
 }
 
-// Select a keymap as the current ZLE keymap.  Can optionally fall back    // c:490
-// on the guaranteed safe keymap if it fails.                              // c:491
-/// Port of `selectkeymap(name, fb)` from Src/Zle/zle_keymap.c:495.
-pub fn selectkeymap(name: &str, fb: i32) -> i32 {                            // c:494
+// Select a keymap as the current ZLE keymap.  Can optionally fall back    // c:495
+// on the guaranteed safe keymap if it fails.                              // c:495
+/// Port of `selectkeymap(char *name, int fb)` from Src/Zle/zle_keymap.c:495.
+pub fn selectkeymap(name: &str, fb: i32) -> i32 {                            // c:495
     // C body (c:497-521): `Keymap km = openkeymap(name); if (!km) {
     //   showmsg + if (!fb) return 1; km = openkeymap(".safe"); }
     //   if (name != curkeymapname) { ... curkeymapname = ztrdup(name);
@@ -1839,12 +1855,12 @@ pub fn selectkeymap(name: &str, fb: i32) -> i32 {                            // 
     *curkeymapname() = resolved;
     // c:518 — `curkeymap = km`.
     *curkeymap.lock().unwrap() = km;
-    0                                                                        // c:520
+    0                                                                        // c:527
 }
 
 
 /// Direct port of `void selectlocalmap(Keymap m)` from
-/// `Src/Zle/zle_keymap.c:527-547`.
+/// `Src/Zle/zle_keymap.c:527`.
 /// ```c
 /// Keymap oldm = localkeymap;
 /// localkeymap = m;
@@ -1867,21 +1883,22 @@ pub fn selectlocalmap(m: Option<Arc<Keymap>>) {                              // 
     }
 }
 
-/// File-scope `Keymap localkeymap` from `Src/Zle/zle_keymap.c:526`.
+/// File-scope `Keymap localkeymap` from `Src/Zle/zle_keymap.c:1759`.
 /// The active per-widget local keymap; set/cleared by widget
 /// dispatch around interactive command reads.
 pub static LOCALKEYMAP: Mutex<Option<Arc<Keymap>>> = Mutex::new(None);       // c:526
 
 /// Port of `ungetkeycmd()` from Src/Zle/zle_keymap.c:1759.
-pub fn ungetkeycmd(zle: &mut crate::ported::zle::zle_main::Zle) {            // c:1758
+/// WARNING: param names don't match C — Rust=(zle) vs C=()
+pub fn ungetkeycmd(zle: &mut crate::ported::zle::zle_main::Zle) {            // c:1759
     // C body (c:1761): `ungetbytes_unmeta(keybuf, keybuflen)`.
     let buf = keybuf.lock().unwrap().clone();
     crate::ported::zle::zle_main::ungetbytes_unmeta(zle, &buf);
 }
 
-/// Port of `unlinkkeymap(name, ignm)` from Src/Zle/zle_keymap.c:436.
-pub fn unlinkkeymap(name: &str, ignm: i32) -> i32 {                          // c:435
-    // c:438-444 — `n = keymapnamtab.getnode(name); if (!n) return 2;
+/// Port of `unlinkkeymap(char *name, int ignm)` from Src/Zle/zle_keymap.c:436.
+pub fn unlinkkeymap(name: &str, ignm: i32) -> i32 {                          // c:436
+    // c:436-444 — `n = keymapnamtab.getnode(name); if (!n) return 2;
     //               if (!ignm && (n->flags & KMN_IMMORTAL)) return 1;
     //               keymapnamtab.freenode(removenode(name)); return 0`.
     let mut tab = keymapnamtab().lock().unwrap();
@@ -1895,7 +1912,7 @@ pub fn unlinkkeymap(name: &str, ignm: i32) -> i32 {                          // 
     }
 }
 
-/// Port of `unrefkeymap(km)` from `Src/Zle/zle_keymap.c:479`.
+/// Port of `unrefkeymap(Keymap km)` from `Src/Zle/zle_keymap.c:479`.
 /// ```c
 /// int
 /// unrefkeymap(Keymap km)
@@ -1913,9 +1930,8 @@ pub fn unlinkkeymap(name: &str, ignm: i32) -> i32 {                          // 
 /// indicated via the `should_delete` out flag (the caller is expected
 /// to drop the Keymap; Rust ownership doesn't allow self-deletion
 /// from the &mut reference).
-/// Port of `unrefkeymap(km)` from `Src/Zle/zle_keymap.c:479`.
-pub fn unrefkeymap(km: &mut Keymap) -> i32 {                                 // c:479
-    km.rc -= 1;                                                              // c:482 --km->rc
+pub fn unrefkeymap(km: &mut Keymap) -> i32 {                                 // c:480
+    km.rc -= 1;                                                              // c:480 --km->rc
     if km.rc == 0 {
         // c:483 — `deletekeymap(km)`. Rust caller drops the Keymap;
         // we just signal by returning 0.
@@ -1925,7 +1941,7 @@ pub fn unrefkeymap(km: &mut Keymap) -> i32 {                                 // 
 }
 
 /// Direct port of `void unrefkeymap_by_name(char *name)` from
-/// `Src/Zle/zle_keymap.c:246-261`.
+/// `Src/Zle/zle_keymap.c:246`.
 /// ```c
 /// kmname = keymapnamtab.getnode(keymapnamtab, name);
 /// if (kmname && --kmname->keymap->rc == 0) {
@@ -1937,7 +1953,7 @@ pub fn unrefkeymap(km: &mut Keymap) -> i32 {                                 // 
 /// }
 /// ```
 pub fn unrefkeymap_by_name(name: &str) {                                     // c:246
-    // c:249 — `kmname = getnode(name)`. Lock the keymap name table
+    // c:246 — `kmname = getnode(name)`. Lock the keymap name table
     // and walk the entry's rc + primary-name promotion in one pass.
     let mut tab = match keymapnamtab().lock() {
         Ok(t) => t,
@@ -1965,8 +1981,8 @@ pub fn unrefkeymap_by_name(name: &str) {                                     // 
     // re-set via the existing promotion path in refkeymap_by_name.
 }
 
-/// Port of `zlesetkeymap(mode)` from Src/Zle/zle_keymap.c:1804.
-pub fn zlesetkeymap(mode: i32) {                                             // c:1818
+/// Port of `zlesetkeymap(int mode)` from Src/Zle/zle_keymap.c:1804.
+pub fn zlesetkeymap(mode: i32) {                                             // c:1804
     // C body (c:1820-1825): `Keymap km = openkeymap(mode==VIMODE?
     //                       "viins":"emacs"); if (!km) return;
     //                       linkkeymap(km, "main", 0)`.

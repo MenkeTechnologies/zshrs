@@ -1465,10 +1465,10 @@ pub fn prompt_width(s: &str) -> usize {
 // ---------------------------------------------------------------------------
 
 /// Truncate the prompt to a maximum width.
-/// Port of `prompttrunc(arg, truncchar, doprint, endchar)` from Src/prompt.c:1276 — the C source
+/// Port of `prompttrunc(int arg, int truncchar, int doprint, int endchar)` from Src/prompt.c:1276 — the C source
 /// implements the `%N>string>` (right-truncate) and `%N<string<`
 /// (left-truncate) sequences with a configurable indicator.
-/// Port of `countprompt(str, wp, hp, overf)` from `Src/prompt.c:1140`.
+/// Port of `countprompt(char *str, int *wp, int *hp, int overf)` from `Src/prompt.c:1140`.
 ///
 /// C signature:
 /// `void countprompt(char *str, int *wp, int *hp, int overf);`
@@ -1498,20 +1498,20 @@ pub fn prompt_width(s: &str) -> usize {
 // `pub struct CmdStack` + `impl CmdStack { new, push, pop, top,
 // depth, as_slice }` — DELETED per user directive. C source uses
 // `unsigned char *cmdstack` + `int cmdsp` flat globals
-// (`Src/prompt.c:55-58`) plus `cmdpush()`/`cmdpop()` functions
-// (`Src/prompt.c:1624-1632`). The Rust-only `CmdStack` wrapper had
+// (`Src/prompt.c:1915`) plus `cmdpush()`/`cmdpop()` functions
+// (`Src/prompt.c:1915`). The Rust-only `CmdStack` wrapper had
 // zero callers outside this file. The canonical port lives on
 // `prompt_tls::CMDSTACK` and `ShellExecutor.cmd_stack: Vec<u8>`.
 // `cmdpush()`/`cmdpop()` thread-local stack mirrors C file-statics.
 
 /// Resolve a color name to an ANSI base index.
-/// Port of `match_named_colour(teststrp)` from Src/prompt.c:1915 —
+/// Port of `match_named_colour(const char **teststrp)` from Src/prompt.c:1915 —
 /// walks `colour_names[]` (now `COLOUR_NAMES` at file head), then
 /// falls through to numeric parsing. Returns palette index 0-7
 /// for basic colours, 8 for "default" sentinel (per C:1909),
 /// numeric value for raw integers.
 pub fn match_named_colour(teststrp: &str) -> Option<u8> {                        // c:1915
-    let lower = teststrp.to_lowercase(); // c:1917
+    let lower = teststrp.to_lowercase(); // c:1915
     for (i, &n) in COLOUR_NAMES.iter().enumerate() { // c:1922
         if n == lower {
             return Some(i as u8); // c:1929
@@ -1521,7 +1521,8 @@ pub fn match_named_colour(teststrp: &str) -> Option<u8> {                       
 }
 
 /// Build an ANSI escape for an indexed colour.
-/// Port of `output_colour(colour, fg_bg, truecol, buf)` from Src/prompt.c:2136.
+/// Port of `output_colour(int colour, int fg_bg, int truecol, char *buf)` from Src/prompt.c:2136.
+/// WARNING: param names don't match C — Rust=(colour, is_fg) vs C=(colour, fg_bg, truecol, buf)
 pub fn output_colour(colour: u8, is_fg: bool) -> String {                    // c:2136
     let base = if is_fg { 30 } else { 40 };
     if colour < 8 {
@@ -1541,10 +1542,11 @@ pub fn output_truecolor(r: u8, g: u8, b: u8, is_fg: bool) -> String {
 }
 
 /// Parse a `,`-separated highlight specification.
-/// Port of `parsehighlight(arg, endchar, atr, mask)` from Src/prompt.c:285 — handles
-// Parse the argument for %H                                                // c:282
+/// Port of `parsehighlight(char *arg, char endchar, zattr *atr, zattr *mask)` from Src/prompt.c:285 — handles
+// Parse the argument for %H                                                // c:285
 /// `bold` / `underline` / `standout` / `none` plus `fg=NAME` and
 /// `bg=NAME` color targets.
+/// WARNING: param names don't match C — Rust=(spec) vs C=(arg, endchar, atr, mask)
 pub fn parsehighlight(spec: &str) -> zattr {                             // c:285
     let mut attrs: zattr = 0;
     for part in spec.split(',') {
@@ -1574,7 +1576,7 @@ pub fn parsehighlight(spec: &str) -> zattr {                             // c:28
 
 /// Apply text attributes as a single ANSI SGR escape.
 // functions for handling attributes                                        // c:1641
-/// Port of `applytextattributes(flags)` from Src/prompt.c:1645 —
+/// Port of `applytextattributes(int flags)` from Src/prompt.c:1645 —
 /// builds one SGR sequence with all active codes joined.
 pub fn apply_text_attributes(attrs: zattr) -> String {                   // c:1645
     let mut codes: Vec<String> = Vec::new();
@@ -1647,9 +1649,10 @@ pub fn transient_prompt(_original: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Get a prompt-friendly path with optional tilde substitution.
-/// Port of `promptpath(p, npath, tilde)` from Src/prompt.c:134 — used for `%~`,
+/// Port of `promptpath(char *p, int npath, int tilde)` from Src/prompt.c:134 — used for `%~`,
 /// `%/`, `%c`, etc. The `npath` argument trims to the last N
 /// components.
+/// WARNING: param names don't match C — Rust=(path, npath, tilde, home) vs C=(p, npath, tilde)
 pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String { // c:134
     let display = if tilde && !home.is_empty() && path.starts_with(home) {
         let rest = &path[home.len()..];
@@ -1682,7 +1685,7 @@ pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
 // returns a `(String, Option<usize>, Option<usize>)` tuple
 // matching C's outparam shape directly.
 
-/// Port of `promptexpand(s, ns, marker, rs, Rs)` from `Src/prompt.c:182`.
+/// Port of `promptexpand(char *s, int ns, const char *marker, char *rs, char *Rs)` from `Src/prompt.c:182`.
 ///
 /// C signature:
 /// `char *promptexpand(char *s, int ns, const char *marker,
@@ -1694,6 +1697,7 @@ pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
 /// receiving the byte offsets where the right-prompt anchor
 /// landed. Rust returns the four values as a tuple
 /// `(expanded, rs_offset, cap_rs_offset)`.
+/// WARNING: param names don't match C — Rust=(_ns, _marker) vs C=(s, ns, marker, rs, Rs)
 pub fn promptexpand(                                                         // c:182
     s: &str,
     _ns: i32,
@@ -1704,14 +1708,15 @@ pub fn promptexpand(                                                         // 
     // expander loses that metadata, so a second pass on `s` is the
     // closest approximation. Source-offset → expanded-offset is
     // 1:1 except where expansion lengthens.
-    let rs_offset = s.find("%E").or_else(|| s.find("%E)")); // c:Src/prompt.c:182
-    let cap_rs_offset = s.find("%>>"); // c:Src/prompt.c:182
+    let rs_offset = s.find("%E").or_else(|| s.find("%E)")); // c:Src/prompt.c:257
+    let cap_rs_offset = s.find("%>>"); // c:Src/prompt.c:257
     (expanded, rs_offset, cap_rs_offset)
 }
 
 /// Escape text attributes back to a `%`-prefixed prompt string.
-/// Port of `zattrescape(atr, len)` from Src/prompt.c:257 — inverse of
+/// Port of `zattrescape(zattr atr, int *len)` from Src/prompt.c:257 — inverse of
 /// `parsehighlight()`; used by the `print -P` output path.
+/// WARNING: param names don't match C — Rust=(attrs) vs C=(atr, len)
 pub fn zattrescape(attrs: zattr) -> String {                             // c:257
     let mut result = String::new();
     if attrs & TXTBOLDFACE != 0 { result.push_str("%B"); } // c:259
@@ -1746,40 +1751,44 @@ fn color_name(c: Color) -> String {
 }
 
 /// Parse a single colour character from a `%F{...}` argument.
-/// Port of `parsecolorchar(arg, is_fg)` from Src/prompt.c:318.
+/// Port of `parsecolorchar(zattr arg, int is_fg)` from Src/prompt.c:318.
 pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {   // c:318
-    let color = color_from_name(arg)?; // c:336 (match_colour)
+    let color = color_from_name(arg)?; // c:318 (match_colour)
     let ansi = color_to_ansi(color, is_fg); // c:2440
     Some((color, ansi))
 }
 
 /// Internal prompt char output.
-/// Port of `pputc(c)` from Src/prompt.c:976 — the C source's
+/// Port of `pputc(char c)` from Src/prompt.c:976 — the C source's
 /// per-character buffer-append helper. Rust's `String::push`
 /// covers it directly; this wrapper exists for call-site parity.
+/// WARNING: param names don't match C — Rust=(buf, c) vs C=(c)
 pub fn pputc(buf: &mut String, c: char) {                                    // c:976
     buf.push(c);
 }
 
-// Make sure there is room for `need' more characters in the buffer.       // c:987
+// Make sure there is room for `need' more characters in the buffer.       // c:991
 /// Ensure the prompt buffer has at least `need` bytes free.
-/// Port of `addbufspc(need)` from Src/prompt.c:991 — the C source
+/// Port of `addbufspc(int need)` from Src/prompt.c:991 — the C source
 /// reallocates the heap buffer; Rust's `String` does this
 /// automatically so this is a no-op.
+/// WARNING: param names don't match C — Rust=(_buf, _need) vs C=(need)
 pub fn addbufspc(_buf: &mut String, _need: usize) {                         // c:991
     // Rust String handles allocation automatically
 }
 
 /// Append a string to the prompt buffer.
-/// Port of `stradd(d)` from Src/prompt.c:1016.
+/// Port of `stradd(char *d)` from Src/prompt.c:1016.
+/// WARNING: param names don't match C — Rust=(buf, s) vs C=(d)
 pub fn stradd(buf: &mut String, s: &str) {                                   // c:1016
     buf.push_str(s);
 }
 
 /// Look up a terminal capability and emit its escape.
-/// Port of `tsetcap(cap, flags)` from Src/prompt.c:1083 — the C source
+/// Port of `tsetcap(int cap, int flags)` from Src/prompt.c:1083 — the C source
 /// resolves termcap/terminfo names; we map the most-common ones
 /// directly onto ANSI sequences.
+/// WARNING: param names don't match C — Rust=(cap) vs C=(cap, flags)
 pub fn tsetcap(cap: &str) -> String {                                        // c:1083
     // Map common capability names to ANSI sequences
     match cap {
@@ -1794,14 +1803,15 @@ pub fn tsetcap(cap: &str) -> String {                                        // 
 }
 
 /// Output a string from a terminal capability.
-/// Port of `putstr(d)` from Src/prompt.c:1121.
+/// Port of `putstr(int d)` from Src/prompt.c:1121.
 pub fn putstr(d: &str) -> String {
     tsetcap(d)
 }
 
 /// Replace one set of text attributes with another.
-/// Port of `treplaceattrs(newattrs)` from Src/prompt.c:1719 — emits the
+/// Port of `treplaceattrs(zattr newattrs)` from Src/prompt.c:1719 — emits the
 /// minimal SGR delta between two attribute states.
+/// WARNING: param names don't match C — Rust=(old, new) vs C=(newattrs)
 pub fn treplaceattrs(old: zattr, new: zattr) -> String {             // c:1719
     let mut result = String::new();
 
@@ -1852,13 +1862,13 @@ pub fn treplaceattrs(old: zattr, new: zattr) -> String {             // c:1719
 }
 
 /// Set text attributes (full apply).
-/// Port of `tsetattrs(newattrs)` from Src/prompt.c:1737.
+/// Port of `tsetattrs(zattr newattrs)` from Src/prompt.c:1737.
 pub fn tsetattrs(newattrs: zattr) -> String {                               // c:1737
     apply_text_attributes(newattrs)
 }
 
 /// Unset (clear) text attributes via SGR-22/24/27 + 39/49.
-/// Port of `tunsetattrs(newattrs)` from Src/prompt.c:1755.
+/// Port of `tunsetattrs(zattr newattrs)` from Src/prompt.c:1755.
 pub fn tunsetattrs(newattrs: zattr) -> String {                             // c:1755
     let mut result = String::new();
     if newattrs & TXTBOLDFACE != 0 { result.push_str("\x1b[22m"); }
@@ -1872,8 +1882,9 @@ pub fn tunsetattrs(newattrs: zattr) -> String {                             // c
 }
 
 /// Match a `%F`/`%K` argument as a colour spec.
-/// Port of `match_colour(teststrp, is_fg, colour)` from Src/prompt.c:1957 — accepts
+/// Port of `match_colour(const char **teststrp, int is_fg, int colour)` from Src/prompt.c:1957 — accepts
 /// named, numeric, and `#RRGGBB` truecolor forms.
+/// WARNING: param names don't match C — Rust=(spec, is_fg) vs C=(teststrp, is_fg, colour)
 pub fn match_colour(spec: &str, is_fg: bool) -> Option<String> {
     // Try named colour
     if let Some(code) = match_named_colour(spec) {
@@ -1894,13 +1905,14 @@ pub fn match_colour(spec: &str, is_fg: bool) -> Option<String> {
 }
 
 /// Match a highlight specification, returning attrs + mask.
-/// Port of `match_highlight(teststr, on_var, setmask, layer)` from Src/prompt.c:2031 — the
+/// Port of `match_highlight(const char *teststr, zattr *on_var, zattr *setmask, int *layer)` from Src/prompt.c:2031 — the
 /// mask records which fields were explicitly set so callers can
 /// merge against a default. Both values are canonical `zattr`
 /// bitfields (c:Src/zsh.h:2685); the mask carries the same
 /// attribute / TXT*COLOUR bits as `attrs` but zeroes out the
 /// actual colour indices so callers can detect "this bit was
 /// set vs default" by mask-and against `TXT_ATTR_*_MASK`.
+/// WARNING: param names don't match C — Rust=(spec) vs C=(teststr, on_var, setmask, layer)
 pub fn match_highlight(spec: &str) -> (zattr, zattr) {
     let attrs = parsehighlight(spec);
     let mut mask: zattr = 0;
@@ -1911,7 +1923,8 @@ pub fn match_highlight(spec: &str) -> (zattr, zattr) {
 }
 
 /// Emit highlight attributes as an ANSI escape string.
-/// Port of `output_highlight(atr, mask, buf)` from Src/prompt.c:2179.
+/// Port of `output_highlight(zattr atr, zattr mask, char *buf)` from Src/prompt.c:2179.
+/// WARNING: param names don't match C — Rust=(attrs) vs C=(atr, mask, buf)
 pub fn output_highlight(attrs: zattr) -> String {
     apply_text_attributes(attrs)
 }
@@ -1926,7 +1939,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
 }
 
 /// Mix two sets of text attributes through a mask.
-/// Port of `mixattrs(primary, mask, secondary)` from Src/prompt.c:1802 — primary wins
+/// Port of `mixattrs(zattr primary, zattr mask, zattr secondary)` from Src/prompt.c:1802 — primary wins
 /// where the mask says "set"; secondary fills the rest.
 pub fn mixattrs(primary: zattr, mask: zattr, secondary: zattr) -> zattr {
     // Bit-level mix: for each TXT* bit set in `mask`, take the
@@ -1962,7 +1975,8 @@ pub fn truecolor_terminal() -> bool {
 }
 
 /// Build a colour escape string from a specification.
-/// Port of `set_colour_code(str, var)` from Src/prompt.c:2353.
+/// Port of `set_colour_code(char *str, char **var)` from Src/prompt.c:2353.
+/// WARNING: param names don't match C — Rust=(spec) vs C=(str, var)
 pub fn set_colour_code(spec: &str) -> Option<String> {
     match_colour(spec, true)
 }
@@ -1982,7 +1996,8 @@ pub fn free_colour_buffer() {
 }
 
 /// Apply a parsed colour attribute as an ANSI escape.
-/// Port of `set_colour_attribute(atr, fg_bg, flags)` from Src/prompt.c:2440.
+/// Port of `set_colour_attribute(zattr atr, int fg_bg, int flags)` from Src/prompt.c:2440.
+/// WARNING: param names don't match C — Rust=(color, is_fg) vs C=(atr, fg_bg, flags)
 pub fn set_colour_attribute(color: Color, is_fg: bool) -> String {           // c:2440
 color_to_ansi(color, is_fg) // c:2440
 }
@@ -2033,7 +2048,7 @@ pub fn cmdpop() {
 }
 
 /// Promote the 256-color value embedded in `atr` to an explicit
-/// 24-bit RGB value. Port of `map256toRGB(atr, shift, set24)` from Src/prompt.c.
+/// 24-bit RGB value. Port of `map256toRGB(zattr *atr, int shift, zattr set24)` from Src/prompt.c.
 /// Used by the prompt-output path when the terminal supports
 /// truecolor and we want to emit RGB rather than the smaller
 /// 256-palette code.
@@ -2112,7 +2127,7 @@ pub fn set_pending_text_attrs(attrs: zattr) {
         .expect("pending_attrs poisoned") = attrs;
 }
 
-/// Port of `applytextattributes(flags)` from `Src/prompt.c:1645`.
+/// Port of `applytextattributes(int flags)` from `Src/prompt.c:1645`.
 ///
 /// C body diff-syncs `txtcurrentattrs` against `txtpendingattrs`
 /// and emits the minimal termcap-driven sequence to transition
@@ -2127,7 +2142,6 @@ pub fn set_pending_text_attrs(attrs: zattr) {
 ///
 /// `_flags` parameter (currently unused in zshrs port — C uses it
 /// to gate "force reset" mode).
-/// Port of `applytextattributes(flags)` from `Src/prompt.c:1645`.
 #[allow(unused_variables)]
 pub fn applytextattributes(flags: i32) -> String {
     let mut current = current_attrs_lock().lock().expect("current_attrs poisoned");
@@ -2141,7 +2155,7 @@ pub fn applytextattributes(flags: i32) -> String {
 }
 
 /// Handle `%>...>` / `%<...<` / `%[truncchar string]` truncation.
-/// Port of `prompttrunc(arg, truncchar, doprint, endchar)` from Src/prompt.c:1276.
+/// Port of `prompttrunc(int arg, int truncchar, int doprint, int endchar)` from Src/prompt.c:1276.
 ///
 /// The C implementation mutates `bv` (the `BufVars` scratch struct
 /// in zsh's prompt expander) to insert a truncation string and

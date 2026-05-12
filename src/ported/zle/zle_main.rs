@@ -437,7 +437,7 @@ impl Zle {
     /// output mapping plus VQUIT/VSUSP/VDSUSP so the keymap can rebind
     /// those control chars. Our Rust port covers the daily-driver
     /// subset: ICANON+ECHO off, VMIN/VTIME, and eofchar capture from
-    // set up terminal                                                       // c:206
+    // set up terminal                                                       // c:210
     /// VEOF. The flow-control + TAB3 + IXON disables and the
     /// fetchttyinfo/attachtty save state remain on the host side.
     pub fn zsetterm(&mut self) -> io::Result<()> {                           // c:210
@@ -462,7 +462,7 @@ impl Zle {
     }
 
     /// Push one byte back to the head of the input queue.
-    /// Port of `ungetbyte(ch)` from Src/Zle/zle_main.c:348. Used by
+    /// Port of `ungetbyte(int ch)` from Src/Zle/zle_main.c:348. Used by
     /// keymap-trie resolution and `quoted-insert` to put back a byte
     /// the loop already read but isn't ready to consume.
     pub fn ungetbyte(&mut self, ch: u8) {                                    // c:348
@@ -470,10 +470,11 @@ impl Zle {
     }
 
     /// Push a byte slice back onto the input queue, preserving order.
-    /// Port of `ungetbytes(s, len)` from Src/Zle/zle_main.c:357. Iterates
+    /// Port of `ungetbytes(char *s, int len)` from Src/Zle/zle_main.c:357. Iterates
     /// the slice in reverse so that a subsequent forward read returns
     /// `s[0]` first — matches the C source's `while(len--) ungetbyte(s[len])`
     /// pattern.
+    /// WARNING: param names don't match C — Rust=(s) vs C=(s, len)
     pub fn ungetbytes(&mut self, s: &[u8]) {
         for &b in s.iter().rev() {
             self.unget_buf.push_front(b);
@@ -503,11 +504,12 @@ impl Zle {
 
     /// Read one byte from the input queue (or stdin) with optional
     /// keymap-timeout semantics.
-    /// Port of `raw_getbyte(do_keytmout, cptr, full)` from Src/Zle/zle_main.c:506. The C
+    /// Port of `raw_getbyte(long do_keytmout, char *cptr, int full)` from Src/Zle/zle_main.c:506. The C
     /// source consults `kungetct`/`kungetbuf` (our `unget_buf`) first,
     /// then drops to a poll/select wait against SHTTY honouring
     /// `do_keytmout * KEYTIMEOUT`. Returns None on timeout/EOF — the
     /// C source uses EOF as the same sentinel.
+    /// WARNING: param names don't match C — Rust=(do_keytmout) vs C=(do_keytmout, cptr, full)
     pub fn raw_getbyte(&mut self, do_keytmout: bool) -> Option<u8> {
         // Check unget buffer first
         if let Some(b) = self.unget_buf.pop_front() {
@@ -606,12 +608,13 @@ impl Zle {
     }
 
     /// Read one byte from input with the kernel's CR/LF swap reversed.
-    /// Port of `getbyte(do_keytmout, timeout, full)` from Src/Zle/zle_main.c:861. The C source's
+    /// Port of `getbyte(long do_keytmout, int *timeout, int full)` from Src/Zle/zle_main.c:861. The C source's
     /// `\n` ↔ `\r` swap is the inverse of the IO mapping that
     /// zsetterm() installs (`tio.c_iflag |= INLCR | ICRNL`) so the
     /// keymap dispatcher always sees a consistent newline byte. The
     /// final byte is also stashed in `lastchar` for widgets that
     /// inspect what triggered them (digit-argument, vi-find-char).
+    /// WARNING: param names don't match C — Rust=(do_keytmout) vs C=(do_keytmout, timeout, full)
     pub fn getbyte(&mut self, do_keytmout: bool) -> Option<u8> {
         let b = self.raw_getbyte(do_keytmout)?;
 
@@ -630,7 +633,7 @@ impl Zle {
     }
 
     /// Read one complete (possibly multi-byte) character from input.
-    /// Port of `getfullchar(do_keytmout)` from Src/Zle/zle_main.c:967. The C
+    /// Port of `getfullchar(int do_keytmout)` from Src/Zle/zle_main.c:967. The C
     /// source delegates to `getrestchar()` (zle_main.c:990) for the
     /// wide-char assembly when the lead byte signals a UTF-8 sequence.
     /// Our Rust port reads continuation bytes directly until the UTF-8
@@ -785,7 +788,7 @@ impl Zle {
     /// Read a multi-byte key sequence from input and resolve it against
     /// the current keymap. Returns the bound `Thingy` or `None` on EOF.
     ///
-    /// Port of `getkeymapcmd(km, funcp, strp)` from Src/Zle/zle_keymap.c:1581 + the
+    /// Port of `getkeymapcmd(Keymap km, Thingy *funcp, char **strp)` from Src/Zle/zle_keymap.c:1581 + the
     /// thin `getkeycmd()` wrapper at zle_keymap.c:1768. The C source
     /// reads bytes into a `keybuf`, looks up the partial sequence after
     /// each byte, tracks the longest prefix that hit a binding, and
@@ -854,7 +857,7 @@ impl Zle {
         last_match
     }
 
-    /// Execute a widget. Port of `execzlefunc(func, args, set_bindk, set_lbindk)` from Src/Zle/zle_main.c:1420.
+    /// Execute a widget. Port of `execzlefunc(Thingy func, char **args, int set_bindk, int set_lbindk)` from Src/Zle/zle_main.c:1420.
     ///
     /// The C source manages a few per-widget side effects we replicate
     /// here:
@@ -926,15 +929,16 @@ impl Zle {
     }
 
     /// Run a line edit and return the user's accepted line.
-    /// Port of `zleread(lp, rp, flags, context, init, finish)` from Src/Zle/zle_main.c:1216 — the
+    /// Port of `zleread(char **lp, char **rp, int flags, int context, char *init, char *finish)` from Src/Zle/zle_main.c:1216 — the
     /// canonical entry point for "read one line interactively". The C
     /// source's full chain is: setup tty + signals → run zle-line-init
     /// hook → zlecore loop until done → run zle-line-finish hook →
     /// restore tty + return the line. Our Rust port stashes the
-    // - finish: "zle-line-finish"                                          // c:1211
+    // - finish: "zle-line-finish"                                          // c:1216
     /// prompt templates, expands them, sets the read flags + context,
     /// then enters zlecore; the host (bin) handles the line-init /
     /// line-finish hooks via pending_hooks.
+    /// WARNING: param names don't match C — Rust=(lprompt, rprompt, flags, context) vs C=(lp, rp, flags, context, init, finish)
     pub fn zleread(                                                          // c:1216
         &mut self,
         lprompt: &str,
@@ -1029,10 +1033,11 @@ impl Zle {
     }
 
     /// Mark the prompt as needing a re-expand on next refresh.
-    /// Port of `resetprompt(args)` from Src/Zle/zle_main.c:2048. The C
+    /// Port of `resetprompt(UNUSED(char **args))` from Src/Zle/zle_main.c:2048. The C
     /// source calls `zle_resetprompt()` which sets `resetneeded` and
     /// `clearflag`; our simplified version just flips `resetneeded`
     /// (clearflag's TCCLEAREOD path isn't wired through this crate).
+    /// WARNING: param names don't match C — Rust=() vs C=(args)
     pub fn resetprompt(&mut self) {
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
@@ -1055,7 +1060,7 @@ impl Zle {
     /// Run a nested edit session — used by user widgets to invoke the
     /// editor recursively (e.g. read a sub-line for completion search).
     ///
-    /// Port of `recursiveedit(args)` from Src/Zle/zle_main.c:1974. The C
+    /// Port of `recursiveedit(UNUSED(char **args))` from Src/Zle/zle_main.c:1974. The C
     /// source increments `zle_recursive`, calls `redrawhook()` +
     /// `zrefresh()` to ensure the screen reflects current state,
     /// re-enters `zlecore()`, then resets `errflag`/`done`/`eofsent`
@@ -1090,7 +1095,7 @@ impl Zle {
     }
 
     /// Mark the line as accepted; zlecore will exit on the next iteration.
-    /// Port of `acceptline(args)` from Src/Zle/zle_misc.c:401 — the C source
+    /// Port of `acceptline(UNUSED(char **args))` from Src/Zle/zle_misc.c:401 — the C source
     /// just sets the global `done` flag.
     pub fn finish_line(&mut self) {
         crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -1116,7 +1121,7 @@ impl Zle {
     // `localkeymap` globals directly inside the bindkey paths.
 
     /// Describe key briefly
-    /// Port of describekeybriefly(args) from zle_main.c
+    /// Port of describekeybriefly(UNUSED(char **args)) from zle_main.c
     pub fn describe_key_briefly(&mut self) {
         if let Some(c) = self.getfullchar(false) {
             let thingy = if c as u32 > 255 {
@@ -1140,7 +1145,7 @@ impl Zle {
     }
 
     /// Where is command
-    /// Port of whereis(args) from zle_main.c
+    /// Port of whereis(UNUSED(char **args)) from zle_main.c
     pub fn whereis(&self, widget_name: &str) -> Vec<String> {
         let mut bindings = Vec::new();
         let tab = crate::ported::zle::zle_keymap::keymapnamtab().lock().unwrap();
@@ -1169,36 +1174,43 @@ impl Zle {
     }
 
     /// Execute an immortal (built-in) function
-    /// Port of execimmortal(func, args) from zle_main.c
-    pub fn exec_immortal(&mut self, name: &str) -> bool {
+    /// Port of `execimmortal(Thingy func, char **args)` from `Src/Zle/zle_main.c`.
+    /// WARNING: param names don't match C — Rust=(name) vs C=(func, args)
+    #[allow(unused_variables)]
+    pub fn execimmortal(&mut self, name: &str) -> bool {
         let widget = Widget::builtin(name);
         self.execute_widget(&widget);
         true
     }
 
     /// Execute a ZLE function by name
-    /// Port of execzlefunc(func, args, set_bindk, set_lbindk) from zle_main.c
-    pub fn exec_zle_func(&mut self, name: &str, _args: &[String]) -> i32 {
+    /// Port of `execzlefunc(Thingy func, char **args, int set_bindk, int set_lbindk)` from `Src/Zle/zle_main.c`.
+    /// WARNING: param names don't match C — Rust=(name, _args) vs C=(func, args, set_bindk, set_lbindk)
+    #[allow(unused_variables)]
+    pub fn execzlefunc(&mut self, name: &str, _args: &[String]) -> i32 {
         let widget = Widget::builtin(name);
         self.execute_widget(&widget);
         0
     }
 
     /// Break read (for signals)
-    /// Port of breakread(fd, buf, n) from zle_main.c
-    pub fn break_read(&mut self) {
+    /// Port of `breakread(int fd, char *buf, int n)` from `Src/Zle/zle_main.c`.
+    /// WARNING: param names don't match C — Rust=() vs C=(fd, buf, n)
+    pub fn breakread(&mut self) {
         crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Handle before trap
-    /// Port of zlebeforetrap(dummy, dat) from zle_main.c
-    pub fn before_trap(&mut self) {
+    /// Port of `zlebeforetrap(UNUSED(Hookdef dummy), UNUSED(void *dat))` from `Src/Zle/zle_main.c`.
+    /// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
+    pub fn zlebeforetrap(&mut self) {
         // Save state before running trap
     }
 
     /// Handle after trap
-    /// Port of zleaftertrap(dummy, dat) from zle_main.c
-    pub fn after_trap(&mut self) {
+    /// Port of `zleaftertrap(UNUSED(Hookdef dummy), UNUSED(void *dat))` from `Src/Zle/zle_main.c`.
+    /// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
+    pub fn zleaftertrap(&mut self) {
         // Restore state after running trap
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
@@ -1287,10 +1299,11 @@ impl Zle {
 // fake helper had no callers and bundled a `VaredOpts` struct
 // (also deleted) that doesn't exist in C.
 
-/// Direct port of `bin_vared(name, args, ops)` from `Src/Zle/zle_main.c:1678`.
+/// Direct port of `bin_vared(char *name, char **args, Options ops, UNUSED(int func))` from `Src/Zle/zle_main.c:1678`.
 /// C signature: `static int bin_vared(char *name, char **args,
 /// Options ops, UNUSED(int func))`.
 /// BUILTIN spec at zle_main.c:2186 takes `"AaceghM:m:p:r:i:f:"`.
+/// WARNING: param names don't match C — Rust=(name, args, _func) vs C=(name, args, ops, func)
 pub fn bin_vared(name: &str, args: &[String],                                // c:1678
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG_SAFE, PM_SCALAR, PM_ARRAY, PM_HASHED};
@@ -1622,7 +1635,7 @@ mod tests {
 // END moved-from-exec-rs
 
 /// Direct port of `static int boot_(Module m)` from
-/// `Src/Zle/zle_main.c:2301-2310`.
+/// `Src/Zle/zle_main.c:2301`.
 /// ```c
 /// addhookfunc("before_trap", zlebeforetrap);
 /// addhookfunc("after_trap",  zleaftertrap);
@@ -1630,14 +1643,14 @@ mod tests {
 /// return 0;
 /// ```
 pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {               // c:2301
-    // c:2303-2304 — `addhookfunc("before_trap", zlebeforetrap);
+    // c:2301-2304 — `addhookfunc("before_trap", zlebeforetrap);
     //                addhookfunc("after_trap",  zleaftertrap);`
     crate::ported::module::addhookfunc("before_trap", "zlebeforetrap");      // c:2303
     crate::ported::module::addhookfunc("after_trap",  "zleaftertrap");       // c:2304
     0                                                                        // c:2309
 }
 
-/// Port of `breakread(fd, buf, n)` from Src/Zle/zle_main.c:381.
+/// Port of `breakread(int fd, char *buf, int n)` from Src/Zle/zle_main.c:381.
 pub fn breakread(fd: i32, buf: &mut [u8], n: usize) -> isize {               // c:381
     // C body (c:381-389): `#if defined(pyr) && defined(HAVE_SELECT)`
     // wrapper around select+read for the Pyramid (legacy) build.
@@ -1652,7 +1665,7 @@ pub fn breakread(fd: i32, buf: &mut [u8], n: usize) -> isize {               // 
 }
 
 /// Direct port of `static int cleanup_(Module m)` from
-/// `Src/Zle/zle_main.c:2312-2326`.
+/// `Src/Zle/zle_main.c:2312`.
 /// ```c
 /// if (zleactive) { zerrnam(...); return 1; }
 /// deletehookfunc("before_trap", zlebeforetrap);
@@ -1680,7 +1693,7 @@ pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {            // 
 }
 
 /// Direct port of `int describekeybriefly(char **args)` from
-/// `Src/Zle/zle_main.c:1892-1932`. Prompts for a key sequence,
+/// `Src/Zle/zle_main.c:1892`. Prompts for a key sequence,
 /// resolves it through the current keymap, and prints the bound
 /// widget name via `showmsg`.
 ///
@@ -1695,7 +1708,7 @@ pub fn describekeybriefly() -> i32 {                                         // 
     1                                                                        // c:1929 no-resolution path
 }
 
-/// Port of `enables_(m, enables)` from Src/Zle/zle_main.c:2294.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from Src/Zle/zle_main.c:2294.
 #[allow(unused_variables)]
 pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:zle_main.c enables_ — `return handlefeatures(m, &module_features, enables)`.
@@ -1704,8 +1717,8 @@ pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec
     0
 }
 
-/// Port of `execimmortal(func, args)` from Src/Zle/zle_main.c:1404.
-pub fn execimmortal(func: &str, args: &[String]) -> i32 {                    // c:1403
+/// Port of `execimmortal(Thingy func, char **args)` from Src/Zle/zle_main.c:1404.
+pub fn execimmortal(func: &str, args: &[String]) -> i32 {                    // c:1404
     // C body (c:1404-1410): `Thingy immortal = rthingy_nocreate(dyncat(".", func));
     //                       if (immortal) return execzlefunc(immortal, args, 0, 0);
     //                       return 1`.
@@ -1734,9 +1747,10 @@ pub fn execimmortal(func: &str, args: &[String]) -> i32 {                    // 
 ///   - lastcmd update from the widget's flag mask.
 /// Bindk/metafy boundary management lives on the per-thread Zle
 /// struct already.
-/// Port of `execzlefunc(func, args, set_bindk, set_lbindk)` from `Src/Zle/zle_main.c:1420`.
+/// Port of `execzlefunc(Thingy func, char **args, int set_bindk, int set_lbindk)` from `Src/Zle/zle_main.c:1420`.
+/// WARNING: param names don't match C — Rust=(name, args) vs C=(func, args, set_bindk, set_lbindk)
 pub fn execzlefunc(name: &str, args: &[String]) -> i32 {                     // c:1420
-    // c:1422 — `if (!func) return 1`.
+    // c:1420 — `if (!func) return 1`.
     if !crate::ported::zle::zle_thingy::rthingy_nocreate(name) {             // c:1422
         return 1;
     }
@@ -1764,7 +1778,7 @@ pub fn execzlefunc(name: &str, args: &[String]) -> i32 {                     // 
 }
 
 /// Direct port of `static int features_(Module m, char ***features)`
-/// from `Src/Zle/zle_main.c:2286-2289`. Returns the module's
+/// from `Src/Zle/zle_main.c:2286`. Returns the module's
 /// feature-name array via `featuresarray(m, &module_features)`,
 /// matching the C body line-for-line.
 pub fn features_(_m: *const crate::ported::zsh_h::module,
@@ -1808,7 +1822,7 @@ pub fn features_(_m: *const crate::ported::zsh_h::module,
     0                                                                        // c:2288
 }
 
-/// Port of `finish_(m)` from Src/Zle/zle_main.c:2327.
+/// Port of `finish_(UNUSED(Module m))` from Src/Zle/zle_main.c:2327.
 #[allow(unused_variables)]
 pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {             // c:zle_main.c finish_
     // C body: per-module dispose hook, runs after cleanup_; releases
@@ -1816,9 +1830,10 @@ pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {             // c
     0
 }
 
-/// Port of `getrestchar(inchar, outstr, outcount)` from Src/Zle/zle_main.c:990.
+/// Port of `getrestchar(int inchar, char *outstr, int *outcount)` from Src/Zle/zle_main.c:990.
+/// WARNING: param names don't match C — Rust=(zle, inchar) vs C=(inchar, outstr, outcount)
 pub fn getrestchar(zle: &mut Zle, inchar: i32) -> i32 {                      // c:990
-    // c:1002 — `lastchar_wide_valid = 1`. Mark wide cache as valid.
+    // c:990 — `lastchar_wide_valid = 1`. Mark wide cache as valid.
     crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
     // c:1006-1009 — `if (inchar == EOF) return WEOF (cached)`.
     if inchar < 0 {
@@ -1833,8 +1848,8 @@ pub fn getrestchar(zle: &mut Zle, inchar: i32) -> i32 {                      // 
     inchar
 }
 
-/// Port of `recursiveedit(args)` from Src/Zle/zle_main.c:1974.
-pub fn recursiveedit(args: &mut Zle) -> i32 {                                 // c:1973
+/// Port of `recursiveedit(UNUSED(char **args))` from Src/Zle/zle_main.c:1974.
+pub fn recursiveedit(args: &mut Zle) -> i32 {                                 // c:1974
     // C body (c:1976-1995): `++zle_recursive; redrawhook(); zrefresh();
     //                       zlecore(); --zle_recursive;
     //                       locerror = errflag ? 1 : 0;
@@ -1842,18 +1857,19 @@ pub fn recursiveedit(args: &mut Zle) -> i32 {                                 //
     // zlecore needs the editor mainloop substrate; we faithfully
     // bump/decrement zle_recursive and reset errflag/done.
     use std::sync::atomic::Ordering;
-    crate::ported::args::zle_main::ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     // c:1984-1986 — `redrawhook(); zrefresh(); zlecore()`. Deferred.
-    crate::ported::args::zle_main::ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     let cur_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed);
     let locerror = if cur_errflag != 0 { 1 } else { 0 };
     crate::ported::utils::errflag.store(0, Ordering::Relaxed);
-    crate::ported::args::zle_misc::DONE.store(0, Ordering::SeqCst);           // c:1993
+    crate::ported::zle::zle_misc::DONE.store(0, Ordering::SeqCst);           // c:1993
     locerror                                                                 // c:1995
 }
 
-/// Port of `restorekeymap(cmdname, oldname, newname, savemap)` from Src/Zle/zle_main.c:1656.
-pub fn restorekeymap(oldname: &str, savemap: Option<std::sync::Arc<crate::ported::zle::zle_keymap::Keymap>>) {  // c:1655
+/// Port of `restorekeymap(char *cmdname, char *oldname, char *newname, Keymap savemap)` from Src/Zle/zle_main.c:1656.
+/// WARNING: param names don't match C — Rust=(oldname, savemap) vs C=(cmdname, oldname, newname, savemap)
+pub fn restorekeymap(oldname: &str, savemap: Option<std::sync::Arc<crate::ported::zle::zle_keymap::Keymap>>) {  // c:1656
     // C body (c:1657-1666): `if (savemap) { linkkeymap(savemap,
     //                       oldname, 0); unrefkeymap(savemap); }
     //                       else if (newname) zwarnnam(...)`.
@@ -1862,7 +1878,8 @@ pub fn restorekeymap(oldname: &str, savemap: Option<std::sync::Arc<crate::ported
     }
 }
 
-/// Port of `savekeymap(cmdname, oldname, newname, savemapptr)` from Src/Zle/zle_main.c:1632.
+/// Port of `savekeymap(char *cmdname, char *oldname, char *newname, Keymap *savemapptr)` from Src/Zle/zle_main.c:1632.
+/// WARNING: param names don't match C — Rust=(oldname, newname) vs C=(cmdname, oldname, newname, savemapptr)
 pub fn savekeymap(oldname: &str, newname: &str) -> Option<std::sync::Arc<crate::ported::zle::zle_keymap::Keymap>> {  // c:1632
     // C body (c:1634-1651): `km = openkeymap(newname); if (km) {
     //                       *savemap = openkeymap(oldname);
@@ -1880,10 +1897,10 @@ pub fn savekeymap(oldname: &str, newname: &str) -> Option<std::sync::Arc<crate::
 
 /// Direct port of `static void scanfindfunc(char *seq, Thingy func,
 ///                                          char *str, void *magic)`
-/// from `Src/Zle/zle_main.c:1934-1949`. Per-keymap scan callback for
+/// from `Src/Zle/zle_main.c:1935`. Per-keymap scan callback for
 /// `describe-key-briefly`: when `func` matches the target in `ff`,
 /// appends `" <seq>"` to `ff.msg`, capped at MAXFOUND hits.
-pub fn scanfindfunc(seq: &str, func: &str, ff: &mut findfunc) {              // c:1934
+pub fn scanfindfunc(seq: &str, func: &str, ff: &mut findfunc) {              // c:1935
     const MAXFOUND: usize = 3;                                               // c:1957
     // c:1939 — `if (func != ff->func) return`. Compare by widget name.
     let want = ff.func.map(|i| i.to_string()).unwrap_or_default();
@@ -1897,7 +1914,7 @@ pub fn scanfindfunc(seq: &str, func: &str, ff: &mut findfunc) {              // 
     }
 }
 
-/// Port of `setup_(m)` from Src/Zle/zle_main.c:2243.
+/// Port of `setup_(UNUSED(Module m))` from Src/Zle/zle_main.c:2243.
 #[allow(unused_variables)]
 pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {              // c:zle_main.c setup_
     // C body: `bpaste = ... bracketed-paste arrays; set up editor
@@ -1905,7 +1922,7 @@ pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {              // c
     0
 }
 
-/// Port of `ungetbytes_unmeta(s, len)` from `Src/Zle/zle_main.c:365`.
+/// Port of `ungetbytes_unmeta(char *s, int len)` from `Src/Zle/zle_main.c:365`.
 /// ```c
 /// void
 /// ungetbytes_unmeta(char *s, int len)
@@ -1925,9 +1942,9 @@ pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {              // c
 /// XOR 0x20) sequences, decoding them as we go. C walks backward
 /// through `s` because `ungetbyte` is a stack push — to surface
 /// `s[0]` first on subsequent read, the last byte goes on first.
-/// Port of `ungetbytes_unmeta(s, len)` from `Src/Zle/zle_main.c:365`.
-pub fn ungetbytes_unmeta(zle: &mut Zle, s: &[u8]) {                          // c:365
-    let mut i = s.len();                                                     // c:368 s += len
+/// WARNING: param names don't match C — Rust=(zle, s) vs C=(s, len)
+pub fn ungetbytes_unmeta(zle: &mut Zle, s: &[u8]) {                          // c:366
+    let mut i = s.len();                                                     // c:366 s += len
     while i > 0 {                                                            // c:369 while (len--)
         // c:370 — `if (len && s[-2] == Meta)`. We check the byte
         // BEFORE the current s-1 position. After `*--s`, the index
@@ -1946,7 +1963,7 @@ pub fn ungetbytes_unmeta(zle: &mut Zle, s: &[u8]) {                          // 
 }
 
 /// Direct port of `void zle_resetprompt(void)` from
-/// `Src/Zle/zle_main.c:2058-2063`.
+/// `Src/Zle/zle_main.c:2058`.
 /// ```c
 /// reexpandprompt();
 /// if (zleactive)
@@ -2057,7 +2074,7 @@ pub static LASTCMD: std::sync::atomic::AtomicU32 =                           // 
 pub static WATCH_FDS: std::sync::Mutex<Vec<super::zle_h::watch_fd>> =        // c:204
     std::sync::Mutex::new(Vec::new());
 
-/// Port of `zleaftertrap(dummy, dat)` from `Src/Zle/zle_main.c:2113`.
+/// Port of `zleaftertrap(UNUSED(Hookdef dummy), UNUSED(void *dat))` from `Src/Zle/zle_main.c:2114`.
 /// ```c
 /// static int
 /// zleaftertrap(UNUSED(Hookdef dummy), UNUSED(void *dat))
@@ -2069,7 +2086,8 @@ pub static WATCH_FDS: std::sync::Mutex<Vec<super::zle_h::watch_fd>> =        // 
 /// ```
 /// Hook callback fired AFTER a trap handler runs — pops the
 /// param scope that `zlebeforetrap` pushed (if zle is active).
-pub fn zleaftertrap() -> i32 {                                               // c:2113
+/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
+pub fn zleaftertrap() -> i32 {                                               // c:2114
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2116
         crate::ported::params::endparamscope();                              // c:2117
@@ -2077,7 +2095,7 @@ pub fn zleaftertrap() -> i32 {                                               // 
     0                                                                        // c:2119 return 0
 }
 
-/// Port of `zlebeforetrap(dummy, dat)` from `Src/Zle/zle_main.c:2103`.
+/// Port of `zlebeforetrap(UNUSED(Hookdef dummy), UNUSED(void *dat))` from `Src/Zle/zle_main.c:2103`.
 /// ```c
 /// static int
 /// zlebeforetrap(UNUSED(Hookdef dummy), UNUSED(void *dat))
@@ -2092,8 +2110,8 @@ pub fn zleaftertrap() -> i32 {                                               // 
 /// Hook callback fired BEFORE a trap handler runs — pushes a
 /// param scope and exposes ZLE state to the trap function (when
 /// zle is active).
-/// Port of `zlebeforetrap(dummy, dat)` from `Src/Zle/zle_main.c:2103`.
-pub fn zlebeforetrap() -> i32 {                                              // c:2103
+/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
+pub fn zlebeforetrap() -> i32 {                                              // c:2104
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2106
         // c:2107 — `startparamscope()`. Push a param scope so trap

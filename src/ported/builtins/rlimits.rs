@@ -307,14 +307,15 @@ pub(crate) fn free_resinfo() {
 }
 
 // =====================================================================
-// Port of `find_resource(c)` from Src/Builtins/rlimits.c:239.
+// Port of `find_resource(char c)` from Src/Builtins/rlimits.c:239.
 // =====================================================================
 
-// Find resource by its option character                                    // c:235
-/// Port of `find_resource(c)` from `Src/Builtins/rlimits.c:239`.
+// Find resource by its option character                                    // c:239
+/// Port of `find_resource(char c)` from `Src/Builtins/rlimits.c:239`.
 ///
 /// Find a resource by its `ulimit` option character. Returns the
 /// `RLIMIT_*` index, or `-1` on miss.
+/// WARNING: param names don't match C — Rust=() vs C=(c)
 pub(crate) fn find_resource(c: char) -> i32 {
     set_resinfo();
     let lock = match RESINFO.get() {
@@ -334,25 +335,26 @@ pub(crate) fn find_resource(c: char) -> i32 {
 }
 
 // =====================================================================
-// Port of `printrlim(val, unit)` from Src/Builtins/rlimits.c:253.
+// Port of `printrlim(rlim_t val, const char *unit)` from Src/Builtins/rlimits.c:253.
 // =====================================================================
 
-// Print a value of type rlim_t                                             // c:249
-/// Port of `printrlim(val, unit)` from `Src/Builtins/rlimits.c:253`.
+// Print a value of type rlim_t                                             // c:253
+/// Port of `printrlim(rlim_t val, const char *unit)` from `Src/Builtins/rlimits.c:253`.
 ///
 /// Print a `rlim_t` value with the supplied unit suffix to stdout.
 /// C selects between `%qd` / `%lld` / `%lu` / `%ld` per
 /// `RLIM_T_IS_*` macro; Rust port uses unified `Display` since
 /// `rlim_t` is `u64` on macOS and Linux glibc.
+/// WARNING: param names don't match C — Rust=(unit) vs C=(val, unit)
 pub(crate) fn printrlim(val: rlim_t, unit: &str) {
     print!("{}{}", val, unit);
 }
 
 // =====================================================================
-// Port of `zstrtorlimt(s, t, base)` from Src/Builtins/rlimits.c:272.
+// Port of `zstrtorlimt(const char *s, char **t, int base)` from Src/Builtins/rlimits.c:272.
 // =====================================================================
 
-/// Port of `zstrtorlimt(s, t, base)` from `Src/Builtins/rlimits.c:272`.
+/// Port of `zstrtorlimt(const char *s, char **t, int base)` from `Src/Builtins/rlimits.c:272`.
 ///
 /// Parse a numeric limit string. Returns `(value, bytes_consumed)`.
 /// Recognises `unlimited` as `RLIM_INFINITY`; for digit input,
@@ -360,6 +362,7 @@ pub(crate) fn printrlim(val: rlim_t, unit: &str) {
 /// that C's `RLIM_T_IS_QUAD_T`/`RLIM_T_IS_LONG_LONG`/
 /// `RLIM_T_IS_UNSIGNED` paths do.
 #[cfg(unix)]
+/// WARNING: param names don't match C — Rust=(base) vs C=(s, t, base)
 pub(crate) fn zstrtorlimt(s: &str, base: i32) -> (rlim_t, usize) {
     if s == "unlimited" || s.starts_with("unlimited") {
         return (RLIM_INFINITY, "unlimited".len());
@@ -417,16 +420,17 @@ pub(crate) fn zstrtorlimt(_s: &str, _base: i32) -> (u64, usize) {
 }
 
 // =====================================================================
-// Port of `showlimitvalue(lim, val)` from Src/Builtins/rlimits.c:307.
+// Port of `showlimitvalue(int lim, rlim_t val)` from Src/Builtins/rlimits.c:307.
 // =====================================================================
 
-/// Port of `showlimitvalue(lim, val)` from `Src/Builtins/rlimits.c:307`.
+/// Port of `showlimitvalue(int lim, rlim_t val)` from `Src/Builtins/rlimits.c:307`.
 ///
 /// Print one limit row: 16-column-padded resource name, then the
 /// value formatted per the resource's `zlimtype` (time as
 /// `H:MM:SS`, microseconds as `Nus`, memory as `kB`/`MB`, plain
 /// numeric otherwise).
 #[cfg(unix)]
+/// WARNING: param names don't match C — Rust=(val) vs C=(lim, val)
 pub(crate) fn showlimitvalue(lim: i32, val: rlim_t) {
     set_resinfo();
     let info = lookup_resinfo(lim);
@@ -487,14 +491,15 @@ fn lookup_resinfo(lim: i32) -> Option<resinfo_T> {
 }
 
 // =====================================================================
-// Port of `showlimits(nam, hard, lim)` from Src/Builtins/rlimits.c:346.
+// Port of `showlimits(char *nam, int hard, int lim)` from Src/Builtins/rlimits.c:346.
 // =====================================================================
 
-/// Port of `showlimits(nam, hard, lim)` from `Src/Builtins/rlimits.c:346`.
+/// Port of `showlimits(char *nam, int hard, int lim)` from `Src/Builtins/rlimits.c:346`.
 ///
 /// `lim == -1` means show all; `lim >= RLIM_NLIMITS` falls back to a
 /// direct `getrlimit(2)` for resources the table doesn't know.
 #[cfg(unix)]
+/// WARNING: param names don't match C — Rust=(hard, lim) vs C=(nam, hard, lim)
 pub(crate) fn showlimits(nam: &str, hard: bool, lim: i32) -> i32 {          // c:346
     ensure_limits_initialized();
     if (lim as usize) >= nlimits() && lim != -1 {
@@ -534,15 +539,16 @@ pub(crate) fn showlimits(_nam: &str, _hard: bool, _lim: i32) -> i32 {
 }
 
 // =====================================================================
-// Port of `printulimit(nam, lim, hard, head)` from Src/Builtins/rlimits.c:386.
+// Port of `printulimit(char *nam, int lim, int hard, int head)` from Src/Builtins/rlimits.c:386.
 // =====================================================================
 
-/// Port of `printulimit(nam, lim, hard, head)` from `Src/Builtins/rlimits.c:386`.
+/// Port of `printulimit(char *nam, int lim, int hard, int head)` from `Src/Builtins/rlimits.c:386`.
 ///
 /// `ulimit`-style display. `head` controls whether to emit the
 /// `-X: descr` heading column. `lim >= RLIM_NLIMITS` falls back to
 /// a direct `getrlimit(2)`.
 #[cfg(unix)]
+/// WARNING: param names don't match C — Rust=(lim, hard, head) vs C=(nam, lim, hard, head)
 pub(crate) fn printulimit(nam: &str, lim: i32, hard: bool, head: bool) -> i32 { // c:386
     ensure_limits_initialized();
     let limit: rlim_t = if (lim as usize) >= nlimits() {
@@ -597,15 +603,16 @@ pub(crate) fn printulimit(_nam: &str, _lim: i32, _hard: bool, _head: bool) -> i3
 }
 
 // =====================================================================
-// Port of `do_limit(nam, lim, val, hard, soft, set)` from Src/Builtins/rlimits.c:431.
+// Port of `do_limit(char *nam, int lim, rlim_t val, int hard, int soft, int set)` from Src/Builtins/rlimits.c:431.
 // =====================================================================
 
-/// Port of `do_limit(nam, lim, val, hard, soft, set)` from `Src/Builtins/rlimits.c:431`.
+/// Port of `do_limit(char *nam, int lim, rlim_t val, int hard, int soft, int set)` from `Src/Builtins/rlimits.c:431`.
 ///
 /// Apply `val` to resource `lim` per the `hard`/`soft`/`set` flags.
 /// `set` corresponds to `OPT_ISSET(ops, 's')` — when false, the
 /// limits-array is updated but `setrlimit(2)` is not called.
 #[cfg(unix)]
+/// WARNING: param names don't match C — Rust=(lim, val, hard, soft, set) vs C=(nam, lim, val, hard, soft, set)
 pub(crate) fn do_limit(                                                     // c:431
     nam: &str,
     lim: i32,
@@ -774,10 +781,10 @@ fn setlimits(_nam: &str) -> i32 {
 }
 
 // =====================================================================
-// Port of `bin_limit(nam, argv, ops)` from Src/Builtins/rlimits.c:519.
+// Port of `bin_limit(char *nam, char **argv, Options ops, UNUSED(int func))` from Src/Builtins/rlimits.c:519.
 // =====================================================================
 
-/// Port of `bin_limit(nam, argv, ops)` from `Src/Builtins/rlimits.c:519`.
+/// Port of `bin_limit(char *nam, char **argv, Options ops, UNUSED(int func))` from `Src/Builtins/rlimits.c:519`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
@@ -788,8 +795,9 @@ fn setlimits(_nam: &str) -> i32 {
 /// `zsh.h:1396`); `char **argv` becomes `&[String]`; `UNUSED(int func)`
 /// keeps the parameter for callsite compatibility.
 #[cfg(unix)]
+/// WARNING: param names don't match C — Rust=(argv, ops, _func) vs C=(nam, argv, ops, func)
 pub(crate) fn bin_limit(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 { // c:519
-    // c:521-524 — locals
+    // c:519-524 — locals
     let hard: bool;
     let mut limnum: i32;
     let mut lim: i32;
@@ -933,11 +941,12 @@ pub(crate) fn bin_limit(_nam: &str, _argv: &[String], _ops: &options, _func: i32
 
 
 // =====================================================================
-// Port of `do_unlimit(nam, lim, hard, soft, set, euid)` from Src/Builtins/rlimits.c:622.
+// Port of `do_unlimit(char *nam, int lim, int hard, int soft, int set, int euid)` from Src/Builtins/rlimits.c:622.
 // =====================================================================
 
-/// Port of `do_unlimit(nam, lim, hard, soft, set, euid)` from `Src/Builtins/rlimits.c:622`.
+/// Port of `do_unlimit(char *nam, int lim, int hard, int soft, int set, int euid)` from `Src/Builtins/rlimits.c:622`.
 #[cfg(unix)]
+/// WARNING: param names don't match C — Rust=(lim, hard, soft, set, euid) vs C=(nam, lim, hard, soft, set, euid)
 pub(crate) fn do_unlimit(                                                   // c:622
     nam: &str,
     lim: i32,
@@ -1014,10 +1023,10 @@ pub(crate) fn do_unlimit(
 }
 
 // =====================================================================
-// Port of `bin_unlimit(nam, argv, ops)` from Src/Builtins/rlimits.c:670.
+// Port of `bin_unlimit(char *nam, char **argv, Options ops, UNUSED(int func))` from Src/Builtins/rlimits.c:670.
 // =====================================================================
 
-/// Port of `bin_unlimit(nam, argv, ops)` from `Src/Builtins/rlimits.c:670`.
+/// Port of `bin_unlimit(char *nam, char **argv, Options ops, UNUSED(int func))` from `Src/Builtins/rlimits.c:670`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
@@ -1025,8 +1034,9 @@ pub(crate) fn do_unlimit(
 /// bin_unlimit(char *nam, char **argv, Options ops, UNUSED(int func))
 /// ```
 #[cfg(unix)]
+/// WARNING: param names don't match C — Rust=(argv, ops, _func) vs C=(nam, argv, ops, func)
 pub(crate) fn bin_unlimit(nam: &str, argv: &[String], ops: &options, _func: i32) -> i32 { // c:670
-    // c:672-674 — locals
+    // c:670-674 — locals
     let hard: bool;
     let mut limnum: i32;
     let mut lim: i32;
@@ -1116,10 +1126,10 @@ pub(crate) fn bin_unlimit(_nam: &str, _argv: &[String], _ops: &options, _func: i
 }
 
 // =====================================================================
-// Port of `bin_ulimit(name, argv)` from Src/Builtins/rlimits.c:729.
+// Port of `bin_ulimit(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))` from Src/Builtins/rlimits.c:729.
 // =====================================================================
 
-/// Port of `bin_ulimit(name, argv)` from `Src/Builtins/rlimits.c:729`.
+/// Port of `bin_ulimit(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))` from `Src/Builtins/rlimits.c:729`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
@@ -1129,6 +1139,7 @@ pub(crate) fn bin_unlimit(_nam: &str, _argv: &[String], _ops: &options, _func: i
 /// `Options ops` and `int func` are UNUSED in C; kept as parameters
 /// for callsite compatibility.
 #[cfg(unix)]
+/// WARNING: param names don't match C — Rust=(argv, _ops, _func) vs C=(name, argv, ops, func)
 pub(crate) fn bin_ulimit(
     name: &str,
     argv: &[String],
@@ -1389,7 +1400,7 @@ fn module_features() -> &'static Mutex<features_t> {
             mf_size: 0,
             pd_list: None,                                                // c:877
             pd_size: 0,
-            n_abstract: 0,                                                // c:878
+            n_abstract: 0,                                                // c:883
         })
     })
 }
@@ -1398,44 +1409,44 @@ fn module_features() -> &'static Mutex<features_t> {
 // setup_(UNUSED(Module m))                                           c:881
 // =====================================================================
 
-/// Port of `setup_(m)` from `Src/Builtins/rlimits.c:883`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Builtins/rlimits.c:883`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {
-    0                                                                    // c:885
+    0                                                                    // c:898
 }
 
-/// Port of `features_(m, features)` from `Src/Builtins/rlimits.c:890`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Builtins/rlimits.c:890`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
-    *features = featuresarray(m, module_features());                     // c:892
-    0                                                                    // c:893
+    *features = featuresarray(m, module_features());                     // c:898
+    0                                                                    // c:905
 }
 
-/// Port of `enables_(m, enables)` from `Src/Builtins/rlimits.c:898`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Builtins/rlimits.c:898`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
-    handlefeatures(m, module_features(), enables)                        // c:900
+    handlefeatures(m, module_features(), enables)                        // c:905
 }
 
-/// Port of `boot_(m)` from `Src/Builtins/rlimits.c:905`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Builtins/rlimits.c:905`.
 /// C body: `set_resinfo(); return 0;`
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {
-    set_resinfo();                                                        // c:907
-    0                                                                    // c:908
+    set_resinfo();                                                        // c:913
+    0                                                                    // c:921
 }
 
-/// Port of `cleanup_(m)` from `Src/Builtins/rlimits.c:913`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Builtins/rlimits.c:913`.
 /// C body: `free_resinfo(); return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {
-    free_resinfo();                                                       // c:915
-    setfeatureenables(m, module_features(), None)                        // c:916
+    free_resinfo();                                                       // c:921
+    setfeatureenables(m, module_features(), None)                        // c:921
 }
 
-/// Port of `finish_(m)` from `Src/Builtins/rlimits.c:921`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Builtins/rlimits.c:921`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {
-    0                                                                    // c:923
+    0                                                                    // c:921
 }
 
 // =====================================================================
@@ -1444,7 +1455,7 @@ pub fn finish_(m: *const module) -> i32 {
 // (CamelCase Rust-native) to `*const module`/`&Mutex<features>`.
 // =====================================================================
 
-// `featuresarray` lives in `Src/module.c:3275`. C signature:
+// `featuresarray` lives in `Src/module.c:3279`. C signature:
 //   char **featuresarray(Module m, Features f);
 // Returns a NUL-terminated array of feature descriptors like "b:limit".
 // Stub builds the descriptor list inline since the existing
@@ -1453,7 +1464,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:limit".to_string(), "b:ulimit".to_string(), "b:unlimit".to_string()]
 }
 
-// `handlefeatures` lives in `Src/module.c:3370`. C signature:
+// `handlefeatures` lives in `Src/module.c:3388`. C signature:
 //   int handlefeatures(Module m, Features f, int **enables);
 // On NULL `*enables`, fills it with the current per-feature enable bits
 // via `getfeatureenables`. On non-NULL, calls `setfeatureenables`.
@@ -1475,7 +1486,7 @@ fn getfeatureenables(_m: *const module, f: &Mutex<features_t>) -> Vec<i32> {
     vec![0; total as usize]
 }
 
-// `setfeatureenables` lives in `Src/module.c:3445`. C disables every
+// `setfeatureenables` lives in `Src/module.c:3350`. C disables every
 // registered feature via `*_addbuiltin/_addparamdef/etc` reverse calls.
 // Stub: no-op since static-link path doesn't register through the
 // runtime module loader.

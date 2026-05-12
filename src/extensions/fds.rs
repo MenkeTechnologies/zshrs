@@ -135,7 +135,7 @@ pub fn make_fd_blocking(fd: RawFd) -> io::Result<()> {
 }
 
 /// Close a file descriptor, retrying on EINTR.
-/// Port of `zclose(fd)` from Src/utils.c — same `EINTR` retry loop;
+/// Port of `zclose(int fd)` from Src/utils.c — same `EINTR` retry loop;
 /// negative fds are treated as already-closed (no-op).
 pub fn close_fd(fd: RawFd) {
     if fd < 0 {
@@ -276,7 +276,7 @@ pub enum FdType {
 
 /// Move a file descriptor to >= `FIRST_HIGH_FD` so the low fds 0-9
 /// stay free for user redirection.
-/// Port of `movefd(fd)` from Src/utils.c (~lines 1980-2012). Uses
+/// Port of `movefd(int fd)` from Src/utils.c (~lines 1980-2012). Uses
 /// `fcntl(F_DUPFD_CLOEXEC)` to get the new fd in the high range
 /// then closes the original.
 pub fn movefd(fd: RawFd) -> RawFd {
@@ -295,7 +295,7 @@ pub fn movefd(fd: RawFd) -> RawFd {
 }
 
 /// Duplicate fd `x` to `y`. If `x == -1`, fd `y` is closed.
-/// Port of `redup(x, y)` from Src/utils.c (~lines 2019-2068) — the C
+/// Port of `redup(int x, int y)` from Src/utils.c (~lines 2019-2068) — the C
 /// source's "move fd x onto y, closing x" primitive that the
 /// pipeline-builder calls for every redirection.
 pub fn redup(x: RawFd, y: RawFd) -> RawFd {
@@ -318,7 +318,7 @@ pub fn redup(x: RawFd, y: RawFd) -> RawFd {
 }
 
 /// Close a file descriptor.
-/// Port of `zclose(fd)` from Src/utils.c (~lines 2126-2148) — the
+/// Port of `zclose(int fd)` from Src/utils.c (~lines 2126-2148) — the
 /// safe-close shim that no-ops on negative fds and clears the
 /// fdtable entry the C source maintains for `closem()` accounting.
 pub fn zclose(fd: RawFd) -> i32 {

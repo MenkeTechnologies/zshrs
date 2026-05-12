@@ -373,7 +373,7 @@ fn eval_subscript_expr(expr: &str, ksh_arrays: bool) -> i64 {
 }
 
 /// Parse an array index subscript.
-/// Port of `getindex(pptr, v, scanflags)` from Src/params.c:2001 — the C source's
+/// Port of `getindex(char **pptr, Value v, int scanflags)` from Src/params.c:2001 — the C source's
 /// top-level subscript parser. Handles the `@`/`*` all-elements
 /// shorthand, flag expressions like `(r)pat`, single indices,
 /// and `start,end` ranges. Returns a `SubscriptValue` with

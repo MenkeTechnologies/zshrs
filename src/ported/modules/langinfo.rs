@@ -26,7 +26,7 @@ pub static NL_NAMES: &[&str] = &[                                         // c:6
     "ERA", "ERA_D_FMT", "ERA_D_T_FMT", "ERA_T_FMT", "ALT_DIGITS",
 ];
 
-/// Port of `liitem(name)` from `Src/Modules/langinfo.c:379`. Walks the
+/// Port of `liitem(const char *name)` from `Src/Modules/langinfo.c:379`. Walks the
 /// parallel `nl_names[]` / `nl_vals[]` arrays looking for `name`;
 /// returns the nl_item integer when found, None otherwise.
 ///
@@ -96,11 +96,11 @@ pub fn liitem(name: &str) -> Option<libc::nl_item> {                     // c:37
         "ERA_D_T_FMT" => libc::ERA_D_T_FMT,
         "ERA_T_FMT"   => libc::ERA_T_FMT,
         "ALT_DIGITS"  => libc::ALT_DIGITS,
-        _ => return None,                                                // c:391 return NULL
+        _ => return None,                                                // c:379 return NULL
     })
 }
 
-/// Port of `liitem(name)` from `Src/Modules/langinfo.c:379`.
+/// Port of `liitem(const char *name)` from `Src/Modules/langinfo.c:379`.
 /// Non-Unix fallback for `liitem` — `nl_item` is POSIX-only.
 #[cfg(not(unix))]
 #[allow(unused_variables)]
@@ -108,7 +108,7 @@ pub fn liitem(name: &str) -> Option<i32> {                                  // c
     None
 }
 
-/// Port of `getlanginfo(name)` from `Src/Modules/langinfo.c:396`. The
+/// Port of `getlanginfo(UNUSED(HashTable ht), const char *name)` from `Src/Modules/langinfo.c:396`. The
 /// magic-assoc lookup callback for `${langinfo[NAME]}`. Looks up
 /// `name` via `liitem`, runs `nl_langinfo(*elem)`, and returns
 /// the resulting locale string (or `None` for unset).
@@ -118,6 +118,7 @@ pub fn liitem(name: &str) -> Option<i32> {                                  // c
 /// Rust port returns `Option<String>` matching the observable
 /// "u.str + PM_UNSET" duality C builds into the Param node.
 #[cfg(unix)]
+/// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
 pub fn getlanginfo(name: &str) -> Option<String> {                       // c:396
     use std::ffi::CStr;
     // c:403-404 — `nameu = dupstring(name); unmetafy(nameu, &len);`
@@ -141,15 +142,16 @@ pub fn getlanginfo(name: &str) -> Option<String> {                       // c:39
     }
 }
 
-/// Port of `getlanginfo(name)` from `Src/Modules/langinfo.c:396`.
+/// Port of `getlanginfo(UNUSED(HashTable ht), const char *name)` from `Src/Modules/langinfo.c:396`.
 /// Non-Unix fallback for `getlanginfo` — `nl_langinfo(3)` is
 /// POSIX-only.
 #[cfg(not(unix))]
+/// WARNING: param names don't match C — Rust=(_name) vs C=(ht, name)
 pub fn getlanginfo(_name: &str) -> Option<String> {                          // c:396
     None
 }
 
-/// Port of `scanlanginfo(func, flags)` from `Src/Modules/langinfo.c:430`. The
+/// Port of `scanlanginfo(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/langinfo.c:430`. The
 /// magic-assoc scan callback for `${(k)langinfo}` /
 /// `${(kv)langinfo}`. Walks the `nl_names[]` array, calls
 /// `nl_langinfo` for each entry, and yields every (name, value)
@@ -159,6 +161,7 @@ pub fn getlanginfo(_name: &str) -> Option<String> {                          // 
 ///                                         func, int flags)`.
 /// Rust port returns the (name, value) pairs as a Vec since the
 /// callback-driven C API doesn't translate cleanly.
+/// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
 pub fn scanlanginfo() -> Vec<(String, String)> {                         // c:430
     let mut out = Vec::new();
     for &name in NL_NAMES {                                              // c:444 walk nl_names
@@ -184,41 +187,41 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_(m)` from `Src/Modules/langinfo.c:472`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/langinfo.c:472`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                // c:472
-    0                                                                    // c:475
+    0                                                                    // c:487
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/langinfo.c:479`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/langinfo.c:479`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 { // c:479
     *features = featuresarray(m, module_features());
-    0                                                                    // c:483
+    0                                                                    // c:494
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/langinfo.c:487`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/langinfo.c:487`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:487
-    handlefeatures(m, module_features(), enables) // c:490
+    handlefeatures(m, module_features(), enables) // c:501
 }
 
-/// Port of `boot_(m)` from `Src/Modules/langinfo.c:494`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/langinfo.c:494`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                 // c:494
-    0                                                                    // c:497
+    0                                                                    // c:508
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/langinfo.c:501`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/langinfo.c:501`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                              // c:501
-    setfeatureenables(m, module_features(), None) // c:504
+    setfeatureenables(m, module_features(), None) // c:508
 }
 
-/// Port of `finish_(m)` from `Src/Modules/langinfo.c:508`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/langinfo.c:508`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                               // c:508
-    0                                                                    // c:511
+    0                                                                    // c:508
 }
 
 #[cfg(test)]

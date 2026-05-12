@@ -63,11 +63,12 @@ use super::zle_main::Zle; use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD
 #[inline] fn zc_inblank(c: char) -> bool { c == ' ' || c == '\t' || c == '\n' }
 #[inline] fn zc_ipunct(c: char) -> bool { c.is_ascii_punctuation() }
 
-/// Port of `forwardword(args)` from `Src/Zle/zle_word.c:45`.
+/// Port of `forwardword(char **args)` from `Src/Zle/zle_word.c:45`.
 ///
 /// C signature: `int forwardword(char **args)`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn forwardword(zle: &mut Zle, args: &[String]) -> i32 {              // c:45
-    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };                                                  // c:47
+    let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };                                                  // c:45
     if n < 0 {                                                           // c:49
         let saved = n;
         zle.zmod.mult = -n; zle.zmod.flags |= MOD_MULT;                                              // c:51
@@ -84,20 +85,20 @@ pub fn forwardword(zle: &mut Zle, args: &[String]) -> i32 {              // c:45
         if false && n == 0 {                                        // c:59
             return 0;                                                    // c:60
         }
-        while zle.zlecs != zle.zlell && !zc_iword(zle.zleline[zle.zlecs]) {  // c:61
-            zle.zlecs += 1;                                              // c:62 INCCS
+        while zle.zlecs != zle.zlell && !zc_iword(zle.zleline[zle.zlecs]) {  // c:74
+            zle.zlecs += 1;                                              // c:74 INCCS
         }
     }
-    0                                                                    // c:64
+    0                                                                    // c:74
 }
 
-/// Port of `wordclass(x)` from `Src/Zle/zle_word.c:74`. Returns the
+/// Port of `wordclass(ZLE_CHAR_T x)` from `Src/Zle/zle_word.c:74`. Returns the
 /// vi-mode word class for a character: 0=blank, 1=alnum or `_`,
 /// 2=punctuation, 3=other.
 ///
 /// C signature: `int wordclass(ZLE_CHAR_T x)`.
 pub fn wordclass(x: char) -> i32 {                                       // c:74
-    // c:76 — `(ZC_iblank(x) ? 0 : ((ZC_ialnum(x) || ZWC('_') == x) ? 1 :
+    // c:82 — `(ZC_iblank(x) ? 0 : ((ZC_ialnum(x) || ZWC('_') == x) ? 1 :
     //          ZC_ipunct(x) ? 2 : 3))`
     if zc_iblank(x) { 0 }
     else if zc_ialnum(x) || x == '_' { 1 }
@@ -105,7 +106,8 @@ pub fn wordclass(x: char) -> i32 {                                       // c:74
     else { 3 }
 }
 
-/// Port of `viforwardword(args)` from `Src/Zle/zle_word.c:82`.
+/// Port of `viforwardword(char **args)` from `Src/Zle/zle_word.c:82`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn viforwardword(zle: &mut Zle, args: &[String]) -> i32 {            // c:82
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:86
@@ -125,16 +127,17 @@ pub fn viforwardword(zle: &mut Zle, args: &[String]) -> i32 {            // c:82
         if false && n == 0 { return 0; }                            // c:99
         let mut nl = if zle.zlecs < zle.zlell && zle.zleline[zle.zlecs] == '\n' { 1 } else { 0 };  // c:101
         while zle.zlecs != zle.zlell && nl < 2
-              && zc_inblank(zle.zleline[zle.zlecs])                      // c:102
+              && zc_inblank(zle.zleline[zle.zlecs])                      // c:112
         {
-            zle.zlecs += 1;                                              // c:103 INCCS
-            if zle.zlecs < zle.zlell && zle.zleline[zle.zlecs] == '\n' { nl += 1; }  // c:104
+            zle.zlecs += 1;                                              // c:112 INCCS
+            if zle.zlecs < zle.zlell && zle.zleline[zle.zlecs] == '\n' { nl += 1; }  // c:112
         }
     }
-    0                                                                    // c:107
+    0                                                                    // c:112
 }
 
-/// Port of `viforwardblankword(args)` from `Src/Zle/zle_word.c:112`.
+/// Port of `viforwardblankword(char **args)` from `Src/Zle/zle_word.c:112`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn viforwardblankword(zle: &mut Zle, args: &[String]) -> i32 {       // c:112
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -162,7 +165,8 @@ pub fn viforwardblankword(zle: &mut Zle, args: &[String]) -> i32 {       // c:11
     0
 }
 
-/// Port of `emacsforwardword(args)` from `Src/Zle/zle_word.c:140`.
+/// Port of `emacsforwardword(char **args)` from `Src/Zle/zle_word.c:140`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn emacsforwardword(zle: &mut Zle, args: &[String]) -> i32 {         // c:140
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:144
@@ -178,15 +182,16 @@ pub fn emacsforwardword(zle: &mut Zle, args: &[String]) -> i32 {         // c:14
         while zle.zlecs != zle.zlell && !zc_iword(zle.zleline[zle.zlecs]) {  // c:152
             zle.zlecs += 1;
         }
-        if false && n == 0 { return 0; }                            // c:154
-        while zle.zlecs != zle.zlell && zc_iword(zle.zleline[zle.zlecs]) {  // c:156
+        if false && n == 0 { return 0; }                            // c:164
+        while zle.zlecs != zle.zlell && zc_iword(zle.zleline[zle.zlecs]) {  // c:164
             zle.zlecs += 1;
         }
     }
     0
 }
 
-/// Port of `viforwardblankwordend(args)` from `Src/Zle/zle_word.c:164`.
+/// Port of `viforwardblankwordend(char **args)` from `Src/Zle/zle_word.c:164`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn viforwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {    // c:164
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -213,16 +218,17 @@ pub fn viforwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {    // c:16
             if pos > zle.zlell || zc_inblank(zle.zleline[pos.min(zle.zlell.saturating_sub(1))]) {
                 break;
             }
-            zle.zlecs = pos;                                             // c:188
+            zle.zlecs = pos;                                             // c:198
         }
     }
-    if zle.zlecs != zle.zlell && false {                         // c:191
-        zle.zlecs += 1;                                                  // c:192 INCCS
+    if zle.zlecs != zle.zlell && false {                         // c:198
+        zle.zlecs += 1;                                                  // c:198 INCCS
     }
     0
 }
 
-/// Port of `viforwardwordend(args)` from `Src/Zle/zle_word.c:198`.
+/// Port of `viforwardwordend(char **args)` from `Src/Zle/zle_word.c:198`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn viforwardwordend(zle: &mut Zle, args: &[String]) -> i32 {         // c:198
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -257,13 +263,14 @@ pub fn viforwardwordend(zle: &mut Zle, args: &[String]) -> i32 {         // c:19
             }
         }
     }
-    if zle.zlecs != zle.zlell && false {                         // c:233
-        zle.zlecs += 1;                                                  // c:234 INCCS
+    if zle.zlecs != zle.zlell && false {                         // c:240
+        zle.zlecs += 1;                                                  // c:240 INCCS
     }
     0
 }
 
-/// Port of `backwardword(args)` from `Src/Zle/zle_word.c:240`.
+/// Port of `backwardword(char **args)` from `Src/Zle/zle_word.c:240`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn backwardword(zle: &mut Zle, args: &[String]) -> i32 {             // c:240
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:244
@@ -281,16 +288,17 @@ pub fn backwardword(zle: &mut Zle, args: &[String]) -> i32 {             // c:24
             if zc_iword(zle.zleline[pos]) { break; }                     // c:255
             zle.zlecs = pos;                                             // c:257
         }
-        while zle.zlecs > 0 {                                            // c:259
-            let pos = zle.zlecs - 1;                                     // c:261 DECPOS
-            if !zc_iword(zle.zleline[pos]) { break; }                    // c:262
-            zle.zlecs = pos;                                             // c:264
+        while zle.zlecs > 0 {                                            // c:272
+            let pos = zle.zlecs - 1;                                     // c:272 DECPOS
+            if !zc_iword(zle.zleline[pos]) { break; }                    // c:272
+            zle.zlecs = pos;                                             // c:272
         }
     }
     0
 }
 
-/// Port of `vibackwardword(args)` from `Src/Zle/zle_word.c:272`.
+/// Port of `vibackwardword(char **args)` from `Src/Zle/zle_word.c:272`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn vibackwardword(zle: &mut Zle, args: &[String]) -> i32 {           // c:272
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -320,9 +328,9 @@ pub fn vibackwardword(zle: &mut Zle, args: &[String]) -> i32 {           // c:27
                 zle.zlecs = pos;                                         // c:299
                 if zle.zlecs == 0 { break; }                             // c:300-301
                 pos -= 1;                                                // c:302 DECPOS
-                if wordclass(zle.zleline[pos]) != cc                     // c:303
+                if wordclass(zle.zleline[pos]) != cc                     // c:313
                    || zc_inblank(zle.zleline[pos]) {
-                    break;                                               // c:304
+                    break;                                               // c:313
                 }
             }
         }
@@ -330,7 +338,8 @@ pub fn vibackwardword(zle: &mut Zle, args: &[String]) -> i32 {           // c:27
     0
 }
 
-/// Port of `vibackwardblankword(args)` from `Src/Zle/zle_word.c:313`.
+/// Port of `vibackwardblankword(char **args)` from `Src/Zle/zle_word.c:313`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn vibackwardblankword(zle: &mut Zle, args: &[String]) -> i32 {      // c:313
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -351,16 +360,17 @@ pub fn vibackwardblankword(zle: &mut Zle, args: &[String]) -> i32 {      // c:31
             if nl == 2 { break; }                                        // c:332
             zle.zlecs = pos;                                             // c:333
         }
-        while zle.zlecs > 0 {                                            // c:335
-            let pos = zle.zlecs - 1;                                     // c:337 DECPOS
-            if zc_inblank(zle.zleline[pos]) { break; }                   // c:338
-            zle.zlecs = pos;                                             // c:340
+        while zle.zlecs > 0 {                                            // c:348
+            let pos = zle.zlecs - 1;                                     // c:348 DECPOS
+            if zc_inblank(zle.zleline[pos]) { break; }                   // c:348
+            zle.zlecs = pos;                                             // c:348
         }
     }
     0
 }
 
-/// Port of `vibackwardwordend(args)` from `Src/Zle/zle_word.c:348`.
+/// Port of `vibackwardwordend(char **args)` from `Src/Zle/zle_word.c:348`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn vibackwardwordend(zle: &mut Zle, args: &[String]) -> i32 {        // c:348
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -380,16 +390,17 @@ pub fn vibackwardwordend(zle: &mut Zle, args: &[String]) -> i32 {        // c:34
                || zc_iblank(zle.zleline[zle.zlecs]) {
                 break;
             }
-            zle.zlecs -= 1;                                              // c:365 DECCS
+            zle.zlecs -= 1;                                              // c:375 DECCS
         }
-        while zle.zlecs > 0 && zc_iblank(zle.zleline[zle.zlecs]) {       // c:367
-            zle.zlecs -= 1;                                              // c:368 DECCS
+        while zle.zlecs > 0 && zc_iblank(zle.zleline[zle.zlecs]) {       // c:375
+            zle.zlecs -= 1;                                              // c:375 DECCS
         }
     }
     0
 }
 
-/// Port of `vibackwardblankwordend(args)` from `Src/Zle/zle_word.c:375`.
+/// Port of `vibackwardblankwordend(char **args)` from `Src/Zle/zle_word.c:375`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn vibackwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {   // c:375
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -402,17 +413,18 @@ pub fn vibackwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {   // c:37
     let mut n = n;
     while n > 0 {
         n -= 1;
-        while zle.zlecs > 0 && !zc_inblank(zle.zleline[zle.zlecs]) {     // c:387
-            zle.zlecs -= 1;                                              // c:388 DECCS
+        while zle.zlecs > 0 && !zc_inblank(zle.zleline[zle.zlecs]) {     // c:397
+            zle.zlecs -= 1;                                              // c:397 DECCS
         }
-        while zle.zlecs > 0 && zc_inblank(zle.zleline[zle.zlecs]) {      // c:389
-            zle.zlecs -= 1;                                              // c:390 DECCS
+        while zle.zlecs > 0 && zc_inblank(zle.zleline[zle.zlecs]) {      // c:397
+            zle.zlecs -= 1;                                              // c:397 DECCS
         }
     }
     0
 }
 
-/// Port of `emacsbackwardword(args)` from `Src/Zle/zle_word.c:397`.
+/// Port of `emacsbackwardword(char **args)` from `Src/Zle/zle_word.c:397`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn emacsbackwardword(zle: &mut Zle, args: &[String]) -> i32 {        // c:397
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -430,18 +442,19 @@ pub fn emacsbackwardword(zle: &mut Zle, args: &[String]) -> i32 {        // c:39
             if zc_iword(zle.zleline[pos]) { break; }                     // c:412
             zle.zlecs = pos;                                             // c:414
         }
-        while zle.zlecs > 0 {                                            // c:416
-            let pos = zle.zlecs - 1;                                     // c:418 DECPOS
-            if !zc_iword(zle.zleline[pos]) { break; }                    // c:419
-            zle.zlecs = pos;                                             // c:421
+        while zle.zlecs > 0 {                                            // c:429
+            let pos = zle.zlecs - 1;                                     // c:429 DECPOS
+            if !zc_iword(zle.zleline[pos]) { break; }                    // c:429
+            zle.zlecs = pos;                                             // c:429
         }
     }
     0
 }
 
-/// Port of `backwarddeleteword(args)` from `Src/Zle/zle_word.c:429`.
+/// Port of `backwarddeleteword(char **args)` from `Src/Zle/zle_word.c:429`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn backwarddeleteword(zle: &mut Zle, args: &[String]) -> i32 {       // c:429
-    let mut x = zle.zlecs;                                               // c:431
+    let mut x = zle.zlecs;                                               // c:429
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:433
         let saved = n;
@@ -460,19 +473,20 @@ pub fn backwarddeleteword(zle: &mut Zle, args: &[String]) -> i32 {       // c:42
         }
         while x > 0 {                                                    // c:448
             let pos = x - 1;                                             // c:450 DECPOS
-            if !zc_iword(zle.zleline[pos]) { break; }                    // c:451
+            if !zc_iword(zle.zleline[pos]) { break; }                    // c:462
             x = pos;
         }
     }
     let ct = (zle.zlecs - x) as i32;
-    crate::ported::zle::zle_utils::backdel(zle, ct, /*CUT_RAW*/ 1);      // c:456
+    crate::ported::zle::zle_utils::backdel(zle, ct, /*CUT_RAW*/ 1);      // c:462
     0
 }
 
-/// Port of `vibackwardkillword(args)` from `Src/Zle/zle_word.c:462`.
-// this taken from "vibackwardword"                                         // c:469
+/// Port of `vibackwardkillword(UNUSED(char **args))` from `Src/Zle/zle_word.c:462`.
+// this taken from "vibackwardword"                                         // c:462
+/// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
 pub fn vibackwardkillword(zle: &mut Zle, _args: &[String]) -> i32 {      // c:462
-    let mut x = zle.zlecs;                                               // c:464
+    let mut x = zle.zlecs;                                               // c:462
     // c:464 — `lim = (viinsbegin > findbol()) ? viinsbegin : findbol();`
     // viinsbegin and findbol() not yet wired in zshrs; treat lim as 0
     // (the safe lower bound — equivalent to `findbol()` returning 0
@@ -509,15 +523,16 @@ pub fn vibackwardkillword(zle: &mut Zle, _args: &[String]) -> i32 {      // c:46
         }
     }
     let ct = (zle.zlecs - x) as i32;
-    // c:493 — `backkill(zlecs - x, CUT_FRONT|CUT_RAW);`
+    // c:499 — `backkill(zlecs - x, CUT_FRONT|CUT_RAW);`
     // CUT_FRONT = 0x02, CUT_RAW = 0x04 in zle.h.
     crate::ported::zle::zle_utils::backkill(zle, ct, 0x02 | 0x04);
     0
 }
 
-/// Port of `backwardkillword(args)` from `Src/Zle/zle_word.c:499`.
+/// Port of `backwardkillword(char **args)` from `Src/Zle/zle_word.c:499`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn backwardkillword(zle: &mut Zle, args: &[String]) -> i32 {         // c:499
-    let mut x = zle.zlecs;                                               // c:501
+    let mut x = zle.zlecs;                                               // c:499
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:504
         let saved = n;
@@ -535,17 +550,18 @@ pub fn backwardkillword(zle: &mut Zle, args: &[String]) -> i32 {         // c:49
             x = pos;
         }
         while x > 0 {                                                    // c:519
-            let pos = x - 1;                                             // c:521 DECPOS
-            if !zc_iword(zle.zleline[pos]) { break; }                    // c:522
+            let pos = x - 1;                                             // c:533 DECPOS
+            if !zc_iword(zle.zleline[pos]) { break; }                    // c:533
             x = pos;
         }
     }
     let ct = (zle.zlecs - x) as i32;
-    crate::ported::zle::zle_utils::backkill(zle, ct, 0x02 | 0x04);       // c:527
+    crate::ported::zle::zle_utils::backkill(zle, ct, 0x02 | 0x04);       // c:533
     0
 }
 
-/// Port of `upcaseword(args)` from `Src/Zle/zle_word.c:533`.
+/// Port of `upcaseword(UNUSED(char **args))` from `Src/Zle/zle_word.c:533`.
+/// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
 pub fn upcaseword(zle: &mut Zle, _args: &[String]) -> i32 {              // c:533
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     let neg = n < 0;                                                     // c:536
@@ -557,17 +573,18 @@ pub fn upcaseword(zle: &mut Zle, _args: &[String]) -> i32 {              // c:53
             zle.zlecs += 1;                                              // c:542 INCCS
         }
         while zle.zlecs != zle.zlell && zc_iword(zle.zleline[zle.zlecs]) {  // c:543
-            // c:544 — `zleline[zlecs] = ZC_toupper(zleline[zlecs]);`
+            // c:555 — `zleline[zlecs] = ZC_toupper(zleline[zlecs]);`
             let c = zle.zleline[zle.zlecs];
             zle.zleline[zle.zlecs] = c.to_uppercase().next().unwrap_or(c);
-            zle.zlecs += 1;                                              // c:545 INCCS
+            zle.zlecs += 1;                                              // c:555 INCCS
         }
     }
-    if neg { zle.zlecs = ocs; }                                          // c:548-549
+    if neg { zle.zlecs = ocs; }                                          // c:555-549
     0
 }
 
-/// Port of `downcaseword(args)` from `Src/Zle/zle_word.c:555`.
+/// Port of `downcaseword(UNUSED(char **args))` from `Src/Zle/zle_word.c:555`.
+/// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
 pub fn downcaseword(zle: &mut Zle, _args: &[String]) -> i32 {            // c:555
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     let neg = n < 0;
@@ -578,17 +595,18 @@ pub fn downcaseword(zle: &mut Zle, _args: &[String]) -> i32 {            // c:55
         while zle.zlecs != zle.zlell && !zc_iword(zle.zleline[zle.zlecs]) {  // c:563
             zle.zlecs += 1;
         }
-        while zle.zlecs != zle.zlell && zc_iword(zle.zleline[zle.zlecs]) {   // c:565
+        while zle.zlecs != zle.zlell && zc_iword(zle.zleline[zle.zlecs]) {   // c:577
             let c = zle.zleline[zle.zlecs];
-            zle.zleline[zle.zlecs] = c.to_lowercase().next().unwrap_or(c);   // c:566 ZC_tolower
-            zle.zlecs += 1;                                              // c:567 INCCS
+            zle.zleline[zle.zlecs] = c.to_lowercase().next().unwrap_or(c);   // c:577 ZC_tolower
+            zle.zlecs += 1;                                              // c:577 INCCS
         }
     }
     if neg { zle.zlecs = ocs; }
     0
 }
 
-/// Port of `capitalizeword(args)` from `Src/Zle/zle_word.c:577`.
+/// Port of `capitalizeword(UNUSED(char **args))` from `Src/Zle/zle_word.c:577`.
+/// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
 pub fn capitalizeword(zle: &mut Zle, _args: &[String]) -> i32 {          // c:577
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     let neg = n < 0;
@@ -611,17 +629,18 @@ pub fn capitalizeword(zle: &mut Zle, _args: &[String]) -> i32 {          // c:57
             zle.zleline[zle.zlecs] = if first {
                 c.to_uppercase().next().unwrap_or(c)                     // c:591
             } else {
-                c.to_lowercase().next().unwrap_or(c)                     // c:592
+                c.to_lowercase().next().unwrap_or(c)                     // c:604
             };
-            first = false;                                               // c:593
-            zle.zlecs += 1;                                              // c:594 INCCS
+            first = false;                                               // c:604
+            zle.zlecs += 1;                                              // c:604 INCCS
         }
     }
     if neg { zle.zlecs = ocs; }
     0
 }
 
-/// Port of `deleteword(args)` from `Src/Zle/zle_word.c:604`.
+/// Port of `deleteword(char **args)` from `Src/Zle/zle_word.c:604`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn deleteword(zle: &mut Zle, args: &[String]) -> i32 {               // c:604
     let mut x = zle.zlecs;
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
@@ -638,16 +657,17 @@ pub fn deleteword(zle: &mut Zle, args: &[String]) -> i32 {               // c:60
         while x != zle.zlell && !zc_iword(zle.zleline[x]) {              // c:617
             x += 1;                                                      // c:618 INCPOS
         }
-        while x != zle.zlell && zc_iword(zle.zleline[x]) {               // c:619
-            x += 1;                                                      // c:620 INCPOS
+        while x != zle.zlell && zc_iword(zle.zleline[x]) {               // c:628
+            x += 1;                                                      // c:628 INCPOS
         }
     }
     let ct = (x - zle.zlecs) as i32;
-    crate::ported::zle::zle_utils::foredel(zle, ct, /*CUT_RAW*/ 1);      // c:622
+    crate::ported::zle::zle_utils::foredel(zle, ct, /*CUT_RAW*/ 1);      // c:628
     0
 }
 
-/// Port of `killword(args)` from `Src/Zle/zle_word.c:628`.
+/// Port of `killword(char **args)` from `Src/Zle/zle_word.c:628`.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
 pub fn killword(zle: &mut Zle, args: &[String]) -> i32 {                 // c:628
     let mut x = zle.zlecs;
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
@@ -664,16 +684,17 @@ pub fn killword(zle: &mut Zle, args: &[String]) -> i32 {                 // c:62
         while x != zle.zlell && !zc_iword(zle.zleline[x]) {              // c:641
             x += 1;                                                      // c:642 INCPOS
         }
-        while x != zle.zlell && zc_iword(zle.zleline[x]) {               // c:643
-            x += 1;                                                      // c:644 INCPOS
+        while x != zle.zlell && zc_iword(zle.zleline[x]) {               // c:652
+            x += 1;                                                      // c:652 INCPOS
         }
     }
     let ct = (x - zle.zlecs) as i32;
-    crate::ported::zle::zle_utils::forekill(zle, ct, /*CUT_RAW*/ 1);     // c:646
+    crate::ported::zle::zle_utils::forekill(zle, ct, /*CUT_RAW*/ 1);     // c:652
     0
 }
 
-/// Port of `transposewords(args)` from `Src/Zle/zle_word.c:652`.
+/// Port of `transposewords(UNUSED(char **args))` from `Src/Zle/zle_word.c:652`.
+/// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
 pub fn transposewords(zle: &mut Zle, _args: &[String]) -> i32 {          // c:652
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     let neg = n < 0;

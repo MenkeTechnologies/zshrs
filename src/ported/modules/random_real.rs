@@ -39,12 +39,12 @@ pub fn clz64(x: u64) -> i32 {
 // _zclz64(uint64_t x)                                                c:48
 // =====================================================================
 
-/// Port of `_zclz64(x)` from `Src/Modules/random_real.c:48`.
+/// Port of `_zclz64(uint64_t x)` from `Src/Modules/random_real.c:49`.
 ///
 /// Binary-search clz fallback used when the compiler doesn't provide
 /// `__builtin_clzll`. C source body followed line-by-line.
 pub fn _zclz64(x: u64) -> i32 {
-    let mut n: i32 = 0;                                                   // c:50
+    let mut n: i32 = 0;                                                   // c:49
     let mut x = x;
 
     if x == 0 {                                                            // c:52
@@ -74,19 +74,19 @@ pub fn _zclz64(x: u64) -> i32 {
     if (x & 0x8000_0000_0000_0000) == 0 {                                  // c:75
         n += 1;                                                            // c:76
     }
-    n                                                                      // c:78
+    n                                                                      // c:84
 }
 
 // =====================================================================
 // random_64bit(void)                                                 c:83
 // =====================================================================
 
-/// Port of `random_64bit()` from `Src/Modules/random_real.c:83`.
+/// Port of `random_64bit()` from `Src/Modules/random_real.c:84`.
 ///
 /// C body returns `uint64_t`; failure path returns 1 (NOT 0 — the
 /// `random_real()` zero-detection loop would spin forever on 0).
 pub fn random_64bit() -> u64 {
-    let r: u64;                                                            // c:85
+    let r: u64;                                                            // c:84
     let mut buf = [0u8; 8];                                                // staging for &r
 
     // c:87 — `if (getrandom_buffer(&r, sizeof(r)) < 0)`
@@ -116,13 +116,13 @@ pub fn random_64bit() -> u64 {
  * random_real: Generate a stream of bits uniformly at random and
  * interpret it as the fractional part of the binary expansion of a
  * number in [0, 1], 0.00001010011111010100...; then round it.
- */                                                                      // c:139-143
+ */                                                                      // c:147-143
 // random_real(void)                                                    c:146
 // =====================================================================
 
 /// Port of `random_real()` from `Src/Modules/random_real.c:147`.
 pub fn random_real() -> f64 {
-    let mut exponent: i32 = 0;                                             // c:149
+    let mut exponent: i32 = 0;                                             // c:147
     let mut significand: u64 = 0;                                          // c:150
     let mut r: u64 = 0;                                                    // c:151
     let shift: u32;                                                        // c:152

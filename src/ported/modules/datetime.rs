@@ -19,15 +19,16 @@ use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use crate::ported::utils::zwarnnam;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Port of `getcurrentsecs(pm)` from `Src/Modules/datetime.c:206`.
+/// Port of `getcurrentsecs(UNUSED(Param pm))` from `Src/Modules/datetime.c:206`.
 /// Returns the current epoch seconds — backs `$EPOCHSECONDS`.
 /// C body: `return (zlong) time(NULL);`
+/// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn getcurrentsecs() -> i64 {                                         // c:206
-    // c:208 — `return (zlong) time(NULL);`
+    // c:206 — `return (zlong) time(NULL);`
     unsafe { libc::time(std::ptr::null_mut()) as i64 }
 }
 
-/// Port of `getcurrentrealtime(pm)` from `Src/Modules/datetime.c:212`.
+/// Port of `getcurrentrealtime(UNUSED(Param pm))` from `Src/Modules/datetime.c:212`.
 /// Returns the current high-resolution epoch time as f64 — backs
 /// `$EPOCHREALTIME`.
 ///
@@ -37,13 +38,14 @@ pub fn getcurrentsecs() -> i64 {                                         // c:20
 /// zgettime(&now);
 /// return (double)now.tv_sec + (double)now.tv_nsec * 1e-9;
 /// ```
+/// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn getcurrentrealtime() -> f64 {                                     // c:212
-    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() };          // c:213
+    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() };          // c:212
     crate::ported::compat::zgettime(&mut now);                            // c:215
     (now.tv_sec as f64) + (now.tv_nsec as f64) * 1e-9                    // c:216
 }
 
-/// Port of `getcurrenttime(pm)` from `Src/Modules/datetime.c:220`.
+/// Port of `getcurrenttime(UNUSED(Param pm))` from `Src/Modules/datetime.c:220`.
 /// Returns the current epoch as `(secs, nanos)` — backs the
 /// `$epochtime` two-element array param.
 ///
@@ -55,18 +57,20 @@ pub fn getcurrentrealtime() -> f64 {                                     // c:21
 /// arr[1] = sprintf "%ld" now.tv_nsec
 /// return arr;
 /// ```
+/// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn getcurrenttime() -> (i64, i64) {                                  // c:220
-    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() };          // c:222
+    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() };          // c:220
     crate::ported::compat::zgettime(&mut now);                            // c:226
     (now.tv_sec as i64, now.tv_nsec as i64)                              // c:228-231 sprintf %ld
 }
 
-/// Port of `reverse_strftime(nam, argv, scalar, quiet)` from `Src/Modules/datetime.c:42`.
+/// Port of `reverse_strftime(char *nam, char **argv, char *scalar, int quiet)` from `Src/Modules/datetime.c:42`.
 /// Parses a time string per the format string and assigns the
 /// resulting epoch seconds to `scalar` (or stdout if NULL).
 ///
 /// C signature: `static int reverse_strftime(char *nam, char **argv,
 ///                                            char *scalar, int quiet)`.
+/// WARNING: param names don't match C — Rust=(nam, argv, quiet) vs C=(nam, argv, scalar, quiet)
 pub fn reverse_strftime(nam: &str, argv: &[&str],                            // c:42
                         scalar: Option<&str>, quiet: i32) -> i32 {
     if argv.len() < 2 {                                                  // c:54 timestring expected
@@ -101,10 +105,10 @@ pub fn reverse_strftime(nam: &str, argv: &[&str],                            // 
     } else {                                                              // c:93
         println!("{}", secs);                                             // c:94 printf("%ld\n", ...)
     }
-    0                                                                     // c:96
+    0                                                                     // c:99
 }
 
-/// Port of `output_strftime(nam, argv, ops)` from `Src/Modules/datetime.c:99`.
+/// Port of `output_strftime(char *nam, char **argv, Options ops, UNUSED(int func))` from `Src/Modules/datetime.c:99`.
 /// The `output_strftime` builtin entry. Parses argv (format,
 /// timestamp, nanoseconds), calls `localtime(3)` to convert,
 /// formats via `ztrftime()` with retry-on-overflow, then writes
@@ -112,6 +116,7 @@ pub fn reverse_strftime(nam: &str, argv: &[&str],                            // 
 ///
 /// C signature: `static int output_strftime(char *nam, char **argv,
 ///                                           Options ops, int func)`.
+/// WARNING: param names don't match C — Rust=(nam, argv, _func) vs C=(nam, argv, ops, func)
 pub fn output_strftime(nam: &str, argv: &[&str],                             // c:99
                        ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
@@ -221,10 +226,10 @@ pub fn output_strftime(nam: &str, argv: &[&str],                             // 
         }
     }
 
-    0                                                                     // c:185
+    0                                                                     // c:187
 }
 
-/// Port of `bin_strftime(nam, argv, ops, func)` from `Src/Modules/datetime.c:187`. The
+/// Port of `bin_strftime(char *nam, char **argv, Options ops, int func)` from `Src/Modules/datetime.c:187`. The
 /// `strftime` builtin entry — wraps `output_strftime` in a local
 /// param-scope that copies `$TZ` so `output_strftime`'s
 /// `localtime(3)` calls see the user's timezone even if a function
@@ -232,6 +237,7 @@ pub fn output_strftime(nam: &str, argv: &[&str],                             // 
 ///
 /// C signature: `static int bin_strftime(char *nam, char **argv,
 ///                                         Options ops, int func)`.
+/// WARNING: param names don't match C — Rust=(nam, argv, func) vs C=(nam, argv, ops, func)
 pub fn bin_strftime(nam: &str, argv: &[&str],                                // c:187
                     ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
     // c:191 — `char *tz = getsparam("TZ");`
@@ -278,27 +284,27 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_(m)` from `Src/Modules/datetime.c:270`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/datetime.c:270`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                    // c:270
     // C body c:272-273 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/datetime.c:277`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/datetime.c:277`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {  // c:277
     *features = featuresarray(m, module_features());
-    0                                                                    // c:281
+    0                                                                    // c:292
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/datetime.c:285`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/datetime.c:285`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:285
-    handlefeatures(m, module_features(), enables) // c:288
+    handlefeatures(m, module_features(), enables) // c:292
 }
 
-/// Port of `boot_(m)` from `Src/Modules/datetime.c:292`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/datetime.c:292`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:292
     // C body c:294-295 — `return 0`. Faithful empty-body port; the
@@ -307,13 +313,13 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
     0
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/datetime.c:299`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/datetime.c:299`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                              // c:299
-    setfeatureenables(m, module_features(), None) // c:302
+    setfeatureenables(m, module_features(), None) // c:306
 }
 
-/// Port of `finish_(m)` from `Src/Modules/datetime.c:306`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/datetime.c:306`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:306
     // C body c:308-309 — `return 0`. Faithful empty-body port; the

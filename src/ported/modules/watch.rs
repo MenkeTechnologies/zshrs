@@ -240,8 +240,9 @@ pub fn check_entry(entry: &libc::utmpx, current_user: &str) -> bool {
 
 /// Check if a watch pattern matches an entry field
 /// Match a `$watch` pattern against an actual user/host/tty.
-/// Port of `watchlog_match(teststr, actual, buflen)` from Src/Modules/watch.c:434 — same
+/// Port of `watchlog_match(char *teststr, char *actual, size_t buflen)` from Src/Modules/watch.c:434 — same
 /// `user@host:tty` triple-component matching.
+/// WARNING: param names don't match C — Rust=(pattern, value) vs C=(teststr, actual, buflen)
 pub fn watchlog_match(pattern: &str, value: &str) -> bool {                  // c:434
     if pattern == value {
         return true;
@@ -256,9 +257,10 @@ pub fn watchlog_match(pattern: &str, value: &str) -> bool {                  // 
 
 /// Format a watch event
 /// Format a watch event line (login or logout).
-/// Port of `watch3ary(inout, u, fmt, prnt)` from Src/Modules/watch.c:206 (the
+/// Port of `watch3ary(int inout, WATCH_STRUCT_UTMP *u, char *fmt, int prnt)` from Src/Modules/watch.c:206 (the
 /// per-format-character branch of `watchlog2()` line 242) — same
 /// `%n`/`%M`/`%l`/`%a`/`%T`/`%t`/`%w`/`%W`/`%D` directives.
+/// WARNING: param names don't match C — Rust=(entry, logged_in, fmt) vs C=(inout, u, fmt, prnt)
 pub fn watch3ary(entry: &libc::utmpx, logged_in: bool, fmt: &str) -> String { // c:206
     let mut result = String::new();
     let mut chars = fmt.chars().peekable();
@@ -421,6 +423,7 @@ pub fn watch3ary(entry: &libc::utmpx, logged_in: bool, fmt: &str) -> String { //
 /// Port of `dowatch()` from Src/Modules/watch.c:597 — the C
 /// source diffs the cached `wtab` against a fresh utmp read and
 /// fires `watchlog()` for each new entry / departure.
+/// WARNING: param names don't match C — Rust=(current_user) vs C=()
 pub fn dowatch(current_user: &str) -> Vec<(libc::utmpx, bool)> {            // c:597
     let mut events: Vec<libc::utmpx> = Vec::new();
     // Inline utmp walk — direct port of the setutxent/getutxent/endutxent
@@ -498,10 +501,11 @@ pub fn dowatch(current_user: &str) -> Vec<(libc::utmpx, bool)> {            // c
 
 /// Log builtin - force immediate watch check
 /// `log` builtin entry point.
-/// Port of `bin_log(nam, argv, ops, func)` from Src/Modules/watch.c:681 — emits the
+/// Port of `bin_log(UNUSED(char *nam), UNUSED(char **argv), UNUSED(Options ops), UNUSED(int func))` from Src/Modules/watch.c:659 — emits the
 /// last seen watch events using the user's `$WATCHFMT` (or the
 /// supplied override).
-pub fn bin_log(current_user: &str, fmt: Option<&str>) -> String {            // c:681
+/// WARNING: param names don't match C — Rust=(current_user, fmt) vs C=(nam, argv, ops, func)
+pub fn bin_log(current_user: &str, fmt: Option<&str>) -> String {            // c:659
     let fmt_str = fmt
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
@@ -525,7 +529,7 @@ pub fn bin_log(current_user: &str, fmt: Option<&str>) -> String {            // 
 mod tests {
     use super::*;
 
-    /// Port of `boot_(m)` from `Src/Modules/watch.c:738`.
+    /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/watch.c:738`.
     #[test]
     fn test_watch_initial_empty() {
         // Fresh thread → thread_locals are zero-initialised; the `$watch`
@@ -646,7 +650,7 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_(m)` from `Src/Modules/watch.c:712`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/watch.c:712`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                    // c:712
     // C body c:714-718 — `partab[0].gsu = (void *)&colonarr_gsu;
@@ -657,20 +661,20 @@ pub fn setup_(m: *const module) -> i32 {                                    // c
     0
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/watch.c:723`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/watch.c:723`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:723
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/watch.c:731`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/watch.c:731`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:731
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_(m)` from `Src/Modules/watch.c:738`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/watch.c:738`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:738
     // C body c:740-770: ties $watch and $WATCH, creates empty `watch`
@@ -680,21 +684,21 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
     // distinction zsh makes between "unset" (no zmodload) and "set
     // to default" (after zmodload).
     if crate::ported::params::getsparam("WATCHFMT").is_none() {
-        crate::ported::params::setsparam("WATCHFMT", DEFAULT_WATCHFMT);     // c:758
+        crate::ported::params::setsparam("WATCHFMT", DEFAULT_WATCHFMT);     // c:768
     }
     if crate::ported::params::getsparam("LOGCHECK").is_none() {
-        crate::ported::params::setsparam("LOGCHECK", "60");                 // c:760
+        crate::ported::params::setsparam("LOGCHECK", "60");                 // c:768
     }
     0
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/watch.c:768`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/watch.c:768`.
 /// C body: `delprepromptfn(checksched); return setfeatureenables(...);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:768
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_(m)` from `Src/Modules/watch.c:776`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/watch.c:776`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:776
     // C body c:778-779 — `return 0`. Faithful empty-body port; the
@@ -703,7 +707,7 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     0
 }
 
-/// Port of `getlogtime(u, inout)` from `Src/Modules/watch.c:161`. For
+/// Port of `getlogtime(WATCH_STRUCT_UTMP *u, int inout)` from `Src/Modules/watch.c:161`. For
 /// login events (`inout` non-zero) returns the entry's `ut_time`
 /// directly. For logout events, walks `wtmp` backwards looking
 /// for the matching login record so the resulting time pairs the
@@ -718,7 +722,7 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 /// model the random-access wtmp seek in libc. Returns
 /// `time(NULL)` when scanning would be needed.
 pub fn getlogtime(u_line: &str, u_time: i64, inout: i32) -> i64 {        // c:161
-    if inout != 0 {                                                      // c:168
+    if inout != 0 {                                                      // c:161
         return u_time;                                                   // c:169 return u->ut_time
     }
     // c:170 — `if (!(in = fopen(WATCH_WTMP_FILE, "r"))) return time(NULL);`
@@ -728,15 +732,16 @@ pub fn getlogtime(u_line: &str, u_time: i64, inout: i32) -> i64 {        // c:16
     unsafe { libc::time(std::ptr::null_mut()) as i64 }                   // c:171/175/181/186 return time(NULL)
 }
 
-/// Port of `ucmp(u, v)` from `Src/Modules/watch.c:527`. The qsort
+/// Port of `ucmp(WATCH_STRUCT_UTMP *u, WATCH_STRUCT_UTMP *v)` from `Src/Modules/watch.c:527`. The qsort
 /// comparator for utmp records: by `ut_time` ascending, then by
 /// `ut_line` lexicographic.
 ///
 /// C signature: `static int ucmp(WATCH_STRUCT_UTMP *u, WATCH_STRUCT_UTMP *v)`.
 /// Rust port takes (time, line) tuples — the only fields the C
 /// body reads.
+/// WARNING: param names don't match C — Rust=(u_time, u_line, v_time, v_line) vs C=(u, v)
 pub fn ucmp(u_time: i64, u_line: &str, v_time: i64, v_line: &str) -> i32 {  // c:527
-    if u_time == v_time {                                                // c:529
+    if u_time == v_time {                                                // c:527
         // c:530 — `return strncmp(u->ut_line, v->ut_line, sizeof(u->ut_line));`
         return match u_line.cmp(v_line) {
             std::cmp::Ordering::Less => -1,
@@ -744,10 +749,10 @@ pub fn ucmp(u_time: i64, u_line: &str, v_time: i64, v_line: &str) -> i32 {  // c
             std::cmp::Ordering::Greater => 1,
         };
     }
-    (u_time - v_time) as i32                                             // c:531
+    (u_time - v_time) as i32                                             // c:537
 }
 
-/// Port of `readwtab(head, initial_sz)` from `Src/Modules/watch.c:537`. Reads the
+/// Port of `readwtab(WATCH_STRUCT_UTMP **head, int initial_sz)` from `Src/Modules/watch.c:537`. Reads the
 /// utmp file (`getutxent` on systems with it, otherwise raw
 /// `WATCH_UTMP_FILE`), filters out non-USER_PROCESS entries, and
 /// returns them sorted by `ucmp`.
@@ -755,8 +760,9 @@ pub fn ucmp(u_time: i64, u_line: &str, v_time: i64, v_line: &str) -> i32 {  // c
 /// C signature: `static int readwtab(WATCH_STRUCT_UTMP **head, int initial_sz)`.
 /// C writes the array to `*head` and returns the count. Rust port
 /// returns the Vec directly (count is `.len()`).
+/// WARNING: param names don't match C — Rust=() vs C=(head, initial_sz)
 pub fn readwtab() -> Vec<libc::utmpx> {                                  // c:537
-    let mut entries: Vec<libc::utmpx> = Vec::new();                      // c:551 zalloc
+    let mut entries: Vec<libc::utmpx> = Vec::new();                      // c:537 zalloc
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     unsafe {
         libc::setutxent();                                               // c:553 setutent
@@ -783,7 +789,7 @@ pub fn readwtab() -> Vec<libc::utmpx> {                                  // c:53
     entries                                                              // c:589 return sz
 }
 
-/// Port of `watchlog(inout, u, w, fmt)` from `Src/Modules/watch.c:458`. Top-level
+/// Port of `watchlog(int inout, WATCH_STRUCT_UTMP *u, char **w, char *fmt)` from `Src/Modules/watch.c:458`. Top-level
 /// per-event dispatcher: for each entry in the `$watch` array,
 /// run pattern-match against the user/host/line of the changed
 /// utmp entry; on match, format via `watch3ary` (or print
@@ -791,7 +797,7 @@ pub fn readwtab() -> Vec<libc::utmpx> {                                  // c:53
 ///
 /// C signature: `static void watchlog(int inout, WATCH_STRUCT_UTMP *u, char **w, char *fmt)`.
 pub fn watchlog(inout: i32, u: &libc::utmpx, w: &[String], fmt: &str) {  // c:458
-    // c:460 — `*str` and `*p` locals. Rust port walks `w` directly.
+    // c:458 — `*str` and `*p` locals. Rust port walks `w` directly.
     let current_user = std::env::var("USER").unwrap_or_default();
     if !check_entry(u, &current_user) {                                  // c:474 watchlog_match
         return;
@@ -802,7 +808,7 @@ pub fn watchlog(inout: i32, u: &libc::utmpx, w: &[String], fmt: &str) {  // c:45
     eprintln!("{}", line);                                               // c:520 fputs(stderr) + putc
 }
 
-/// Port of `watchlog2(inout, u, fmt, prnt, fini)` from `Src/Modules/watch.c:242`. The
+/// Port of `watchlog2(int inout, WATCH_STRUCT_UTMP *u, char *fmt, int prnt, int fini)` from `Src/Modules/watch.c:242`. The
 /// mutually-recursive ternary handler for `$WATCHFMT` parsing.
 /// C body walks the format string handling `%(c.true.false)`
 /// ternaries (where `c` is one of `n`/`m`/`l`/`a` etc.) by
@@ -831,7 +837,7 @@ pub fn watchlog2(_inout: i32, _u: &libc::utmpx, fmt: &str, _prnt: i32, _fini: i3
 ///     dowatch();
 /// ```
 pub fn checksched() {                                                    // c:650
-    // c:653 — `if (watch && difftime(...) > getiparam("LOGCHECK"))`
+    // c:650 — `if (watch && difftime(...) > getiparam("LOGCHECK"))`
     let watch_set = WATCH.with(|w| !w.borrow().is_empty());
     if !watch_set { return; }
     let now = unsafe { libc::time(std::ptr::null_mut()) as i64 };        // c:654 time(NULL)

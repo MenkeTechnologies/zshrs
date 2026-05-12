@@ -4013,7 +4013,7 @@ impl ZshCompiler {
             "=~" => self.builder.emit(Op::RegexMatch, 0),
             // `-regex-match` is the named-condition form provided by
             // the zsh/regex module (Src/Modules/regex.c:213). Direct
-            // port of `zcond_regex_match(a, id)` (regex.c:60-210): same
+            // port of `zcond_regex_match(char **a, int id)` (regex.c:60-210): same
             // semantics as `=~` — populates `$MATCH`, `$MBEGIN`,
             // `$MEND`, `$match[1..N]`, `$mbegin[]`, `$mend[]` on a
             // successful regexec; status 0 on match, 1 otherwise.

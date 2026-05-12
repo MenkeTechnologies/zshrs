@@ -281,7 +281,7 @@ fn ring_latest() -> Option<histent> {
 /// Port of `void hist_context_save(struct hist_stack *hs, int toplevel)`
 /// from Src/hist.c:248.
 pub fn hist_context_save(hs: &mut crate::ported::zsh_h::hist_stack, toplevel: i32) { // c:248
-    if toplevel != 0 {                                                       // c:250
+    if toplevel != 0 {                                                       // c:248
         // top level, make this version visible to ZLE                       // c:251
         *zle_chline.lock().unwrap() = Some(chline.lock().unwrap().clone());  // c:252
         // ensure line stored is NULL-terminated — implicit in String        // c:253-255
@@ -300,20 +300,20 @@ pub fn hist_context_save(hs: &mut crate::ported::zsh_h::hist_stack, toplevel: i3
     hs.hlinesz = hlinesz.load(Ordering::SeqCst);                             // c:272
     hs.defev = defev.load(Ordering::SeqCst);                                 // c:273
     hs.hist_keep_comment = hist_keep_comment.load(Ordering::SeqCst);         // c:274
-    // hs->cstack = cmdstack; hs->csp = cmdsp;                               // c:281-282
+    // hs->cstack = cmdstack; hs->csp = cmdsp;                               // c:296-282
     hs.csp = 0;
 
-    stophist.store(0, Ordering::SeqCst);                                     // c:284
-    chline.lock().unwrap().clear();                                          // c:285
-    hptr.store(0, Ordering::SeqCst);                                         // c:286
-    histactive.store(0, Ordering::SeqCst);                                   // c:287
-    // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:288-289
+    stophist.store(0, Ordering::SeqCst);                                     // c:296
+    chline.lock().unwrap().clear();                                          // c:296
+    hptr.store(0, Ordering::SeqCst);                                         // c:296
+    histactive.store(0, Ordering::SeqCst);                                   // c:296
+    // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:296-289
 }
 
 /// Port of `void hist_context_restore(const struct hist_stack *hs, int toplevel)`
 /// from Src/hist.c:296.
 pub fn hist_context_restore(hs: &crate::ported::zsh_h::hist_stack, toplevel: i32) { // c:296
-    if toplevel != 0 {                                                       // c:298
+    if toplevel != 0 {                                                       // c:296
         // Back to top level: don't need special ZLE value                   // c:299
         // DPUTS(hs->hline != zle_chline, "BUG: Ouch, wrong chline for ZLE") // c:300
         *zle_chline.lock().unwrap() = None;                                  // c:301
@@ -329,9 +329,9 @@ pub fn hist_context_restore(hs: &crate::ported::zsh_h::hist_stack, toplevel: i32
     chwordpos.store(hs.chwordpos, Ordering::SeqCst);                         // c:310
     // hgetc / hungetc / hwaddc / hwbegin / hwabort / hwend / addtoline      // c:311-317
     hlinesz.store(hs.hlinesz, Ordering::SeqCst);                             // c:318
-    defev.store(hs.defev, Ordering::SeqCst);                                 // c:319
-    hist_keep_comment.store(hs.hist_keep_comment, Ordering::SeqCst);         // c:320
-    // cmdstack = hs->cstack; cmdsp = hs->csp;                               // c:323-324
+    defev.store(hs.defev, Ordering::SeqCst);                                 // c:339
+    hist_keep_comment.store(hs.hist_keep_comment, Ordering::SeqCst);         // c:339
+    // cmdstack = hs->cstack; cmdsp = hs->csp;                               // c:339-324
 }
 
 /// Port of `void hist_in_word(int yesno)` from Src/hist.c.
@@ -542,9 +542,9 @@ pub fn resizehistents() {
 
 /// Port of `static void linkcurline(void)` from Src/hist.c:1079.
 pub fn linkcurline() {                                                       // c:1079
-    let new_hist = curhist.fetch_add(1, Ordering::SeqCst) + 1;               // c:1089 ++curhist
+    let new_hist = curhist.fetch_add(1, Ordering::SeqCst) + 1;               // c:1093 ++curhist
     let mut cur = curline.lock().unwrap();
-    *cur = Some(make_histent(new_hist, String::new()));                      // c:1089 curline.histnum
+    *cur = Some(make_histent(new_hist, String::new()));                      // c:1093 curline.histnum
     // Splicing into the ring (c:1081-1088) is encoded by the Vec::insert
     // at hist_ring index 0 done by hend() on commit. The sentinel itself
     // lives in `curline` until then.
@@ -552,7 +552,7 @@ pub fn linkcurline() {                                                       // 
 
 /// Port of `static void unlinkcurline(void)` from Src/hist.c:1093.
 pub fn unlinkcurline() {                                                     // c:1093
-    *curline.lock().unwrap() = None;                                         // c:1095-1102
+    *curline.lock().unwrap() = None;                                         // c:1093-1102
     curhist.fetch_sub(1, Ordering::SeqCst);                                  // c:1103
 }
 
@@ -748,16 +748,16 @@ fn should_ignore_line(prog: Option<&[u8]>) -> i32 {                          // 
                 && rest.chars().take_while(|c| c.is_ascii_alphabetic())
                        .any(|c| c == 'l')
             {
-                return 1;                                                    // c:1462
+                return 1;                                                    // c:1474
             }
         }
     }
-    0                                                                        // c:1467
+    0                                                                        // c:1474
 }
 
 /// Port of `int hend(Eprog prog)` from Src/hist.c:1474.
 pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // c:1474
-    let stack_pos = histsave_stack_pos.load(Ordering::SeqCst);               // c:1476
+    let stack_pos = histsave_stack_pos.load(Ordering::SeqCst);               // c:1474
     let mut save: i32 = 1;                                                   // c:1484
     let mut hookret: i32 = 0;
 
@@ -1004,9 +1004,9 @@ pub fn inithist() {                                                          // 
     histlinect.store(0, Ordering::SeqCst);
 }
 
-/// Port of `int lockhistfile(char *fn, int keep_trying)` from Src/hist.c:3181.
-pub fn lockhistfile(fn_path: Option<&str>, keep_trying: i32) -> i32 {        // c:3181
-    let path: String = match fn_path {                                       // c:3188
+/// Port of `int lockhistfile(char *fn, int keep_trying)` from Src/hist.c:3182.
+pub fn lockhistfile(fn_path: Option<&str>, keep_trying: i32) -> i32 {        // c:3182
+    let path: String = match fn_path {                                       // c:3182
         Some(p) => p.to_string(),
         None => match resolve_histfile() {
             Some(p) => p,
@@ -1217,8 +1217,8 @@ fn make_histent(num: i64, text: String) -> histent {
     }
 }
 
-/// Port of `int pushhiststack(char *hf, zlong hs, zlong shs, int level)` from Src/hist.c:3865.
-pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) {      // c:3865
+/// Port of `int pushhiststack(char *hf, zlong hs, zlong shs, int level)` from Src/hist.c:3845.
+pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) {      // c:3845
     let snap = histsave {                                                    // c:3870
         lasthist: histfile_stats {
             text: None, stim: 0, mtim: 0, fpos: 0, fsiz: 0,
@@ -1232,18 +1232,18 @@ pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) {      // 
         savehistsiz: savehistsiz.load(Ordering::SeqCst),                     // c:3878
         locallevel: level,                                                   // c:3879
     };
-    histsave_stack.lock().unwrap().push(snap);                               // c:3884
+    histsave_stack.lock().unwrap().push(snap);                               // c:3901
     histsave_stack_size.fetch_add(1, Ordering::SeqCst);
     histsave_stack_pos.fetch_add(1, Ordering::SeqCst);
-    histsiz.store(hs, Ordering::SeqCst);                                     // c:3886
-    savehistsiz.store(shs, Ordering::SeqCst);                                // c:3887
-    curhist.store(0, Ordering::SeqCst);                                      // c:3885 curhist = histlinect = 0
+    histsiz.store(hs, Ordering::SeqCst);                                     // c:3901
+    savehistsiz.store(shs, Ordering::SeqCst);                                // c:3901
+    curhist.store(0, Ordering::SeqCst);                                      // c:3901 curhist = histlinect = 0
     histlinect.store(0, Ordering::SeqCst);
     let _ = hf;
 }
 
-/// Port of `int pophiststack(void)` from Src/hist.c:3902.
-pub fn pophiststack() {                                                      // c:3902
+/// Port of `int pophiststack(void)` from Src/hist.c:3901.
+pub fn pophiststack() {                                                      // c:3901
     if let Some(snap) = histsave_stack.lock().unwrap().pop() {
         *hist_ring.lock().unwrap() = snap.hist_ring;
         curhist.store(snap.curhist, Ordering::SeqCst);
@@ -1574,7 +1574,7 @@ pub fn hgetline(entry: &histent) -> String {
 
 /// Port of `zlong addhistnum(zlong hl, int n, int xflags)` from Src/hist.c:1266.
 pub fn addhistnum(hl: i64, mut n: i32, xflags: i32) -> i64 {                 // c:1266
-    let dir: i32 = if n < 0 { -1 } else if n > 0 { 1 } else { 0 };           // c:1268
+    let dir: i32 = if n < 0 { -1 } else if n > 0 { 1 } else { 0 };           // c:1266
     let he = gethistent(hl, dir);                                            // c:1269
     let he = match he {
         None => return 0,                                                    // c:1271-1272

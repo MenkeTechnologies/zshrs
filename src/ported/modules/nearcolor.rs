@@ -37,20 +37,20 @@ use crate::ported::zsh_h::{color_rgb, hookdef, module};
 #[derive(Debug, Clone, Copy, Default)]
 pub struct cielab {                                                  // c:35
     pub L: f64,                                                      // c:36
-    pub a: f64,                                                      // c:36
-    pub b: f64,                                                      // c:36
+    pub a: f64,                                                      // c:41
+    pub b: f64,                                                      // c:41
 }
 
-/// Port of `typedef struct cielab *Cielab;` from `Src/Modules/nearcolor.c:38`.
-pub type Cielab = Box<cielab>;                                       // c:38
+/// Port of `typedef struct cielab *Cielab;` from `Src/Modules/nearcolor.c:41`.
+pub type Cielab = Box<cielab>;                                       // c:41
 
 // =====================================================================
 // deltae(Cielab lab1, Cielab lab2)                                   c:41
 // =====================================================================
 
-/// Port of `deltae(lab1, lab2)` from `Src/Modules/nearcolor.c:41`.
+/// Port of `deltae(Cielab lab1, Cielab lab2)` from `Src/Modules/nearcolor.c:41`.
 pub fn deltae(lab1: &cielab, lab2: &cielab) -> f64 {                  // c:41
-    /* taking square root unnecessary as we're just comparing values */ // c:43
+    /* taking square root unnecessary as we're just comparing values */ // c:41
     // c:44-46 — `pow(L1-L2, 2) + pow(a1-a2, 2) + pow(b1-b2, 2)`
     (lab1.L - lab2.L).powi(2)                                         // c:44
         + (lab1.a - lab2.a).powi(2)                                   // c:45
@@ -61,7 +61,7 @@ pub fn deltae(lab1: &cielab, lab2: &cielab) -> f64 {                  // c:41
 // RGBtoLAB(int red, int green, int blue, Cielab lab)                 c:50
 // =====================================================================
 
-/// Port of `RGBtoLAB(red, green, blue, lab)` from `Src/Modules/nearcolor.c:50`.
+/// Port of `RGBtoLAB(int red, int green, int blue, Cielab lab)` from `Src/Modules/nearcolor.c:50`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
@@ -69,7 +69,7 @@ pub fn deltae(lab1: &cielab, lab2: &cielab) -> f64 {                  // c:41
 /// RGBtoLAB(int red, int green, int blue, Cielab lab)
 /// ```
 pub fn RGBtoLAB(red: i32, green: i32, blue: i32, lab: &mut cielab) {  // c:50
-    let mut R: f64 = red as f64 / 255.0;                              // c:52
+    let mut R: f64 = red as f64 / 255.0;                              // c:50
     let mut G: f64 = green as f64 / 255.0;                            // c:53
     let mut B: f64 = blue as f64 / 255.0;                             // c:54
     R = 100.0 * if R > 0.04045 { ((R + 0.055) / 1.055).powf(2.4) }    // c:55
@@ -91,18 +91,18 @@ pub fn RGBtoLAB(red: i32, green: i32, blue: i32, lab: &mut cielab) {  // c:50
     Z = if Z > 0.008856 { Z.powf(1.0 / 3.0) }                         // c:66
         else { 7.787 * Z + 16.0 / 116.0 };
 
-    lab.L = 116.0 * Y - 16.0;                                         // c:68
-    lab.a = 500.0 * (X - Y);                                          // c:69
-    lab.b = 200.0 * (Y - Z);                                          // c:70
+    lab.L = 116.0 * Y - 16.0;                                         // c:74
+    lab.a = 500.0 * (X - Y);                                          // c:74
+    lab.b = 200.0 * (Y - Z);                                          // c:74
 }
 
 // =====================================================================
 // mapRGBto88(int red, int green, int blue)                           c:74
 // =====================================================================
 
-/// Port of `mapRGBto88(red, green, blue)` from `Src/Modules/nearcolor.c:74`.
+/// Port of `mapRGBto88(int red, int green, int blue)` from `Src/Modules/nearcolor.c:74`.
 pub fn mapRGBto88(red: i32, green: i32, blue: i32) -> i32 {           // c:74
-    // c:76 — palette ramp: 4 RGB levels + 7 grey levels.
+    // c:74 — palette ramp: 4 RGB levels + 7 grey levels.
     let component: [i32; 11] = [
         0, 0x8b, 0xcd, 0xff, 0x2e, 0x5c, 0x8b, 0xa2, 0xb9, 0xd0, 0xe7,
     ];                                                                // c:76
@@ -153,7 +153,7 @@ pub fn mapRGBto88(red: i32, green: i32, blue: i32) -> i32 {           // c:74
     if comp_r > 3 {                                                   // c:102
         77 + comp_r                                                   // c:102
     } else {
-        16 + (comp_r * 16) + (comp_g * 4) + comp_b                    // c:103
+        16 + (comp_r * 16) + (comp_g * 4) + comp_b                    // c:110
     }
 }
 
@@ -164,9 +164,9 @@ pub fn mapRGBto88(red: i32, green: i32, blue: i32) -> i32 {           // c:74
 // mapRGBto256(int red, int green, int blue)                          c:110
 // =====================================================================
 
-/// Port of `mapRGBto256(red, green, blue)` from `Src/Modules/nearcolor.c:110`.
+/// Port of `mapRGBto256(int red, int green, int blue)` from `Src/Modules/nearcolor.c:110`.
 pub fn mapRGBto256(red: i32, green: i32, blue: i32) -> i32 {          // c:110
-    // c:112-117 — 6-step RGB ramp (216 colours) + 24-step greyscale.
+    // c:110-117 — 6-step RGB ramp (216 colours) + 24-step greyscale.
     let component: [i32; 30] = [
         0,    0x5f, 0x87, 0xaf, 0xd7, 0xff,                           // c:113
         0x8,  0x12, 0x1c, 0x26, 0x30, 0x3a, 0x44, 0x4e,               // c:114
@@ -227,7 +227,7 @@ pub fn mapRGBto256(red: i32, green: i32, blue: i32) -> i32 {          // c:110
 // getnearestcolor(UNUSED(Hookdef dummy), Color_rgb col)              c:147
 // =====================================================================
 
-/// Port of `getnearestcolor(col)` from `Src/Modules/nearcolor.c:147`.
+/// Port of `getnearestcolor(UNUSED(Hookdef dummy), Color_rgb col)` from `Src/Modules/nearcolor.c:147`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
@@ -273,44 +273,44 @@ pub fn getnearestcolor(dummy: *const hookdef, col: *const color_rgb) -> i32 { //
 // setup_(UNUSED(Module m))                                           c:168
 // =====================================================================
 
-/// Port of `setup_(m)` from `Src/Modules/nearcolor.c:169`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/nearcolor.c:169`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                    // c:169
-    0                                                                  // c:171
+    0                                                                  // c:184
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/nearcolor.c:176`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/nearcolor.c:176`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:176
     *features = featuresarray(m, module_features());
-    0                                                                  // c:179
+    0                                                                  // c:191
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/nearcolor.c:184`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/nearcolor.c:184`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:184
-    handlefeatures(m, module_features(), enables) // c:186
+    handlefeatures(m, module_features(), enables) // c:191
 }
 
-/// Port of `boot_(m)` from `Src/Modules/nearcolor.c:191`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/nearcolor.c:191`.
 /// C body: `addhookfunc("get_color_attr", (Hookfn) getnearestcolor); return 0;`
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:191
-    addhookfunc("get_color_attr", getnearestcolor);              // c:193
-    0                                                                  // c:194
+    addhookfunc("get_color_attr", getnearestcolor);              // c:199
+    0                                                                  // c:207
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/nearcolor.c:199`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/nearcolor.c:199`.
 /// C body: `deletehookfunc("get_color_attr", ...); return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:199
-    deletehookfunc("get_color_attr", getnearestcolor);            // c:201
-    setfeatureenables(m, module_features(), None) // c:202
+    deletehookfunc("get_color_attr", getnearestcolor);            // c:207
+    setfeatureenables(m, module_features(), None) // c:207
 }
 
-/// Port of `finish_(m)` from `Src/Modules/nearcolor.c:207`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/nearcolor.c:207`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:207
-    0                                                                  // c:209
+    0                                                                  // c:207
 }
 
 // =====================================================================
@@ -323,11 +323,11 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 
 
 
-// Port of `addhookfunc(n, f)` from Src/module.c:948.
+// Port of `addhookfunc(char *n, Hookfn f)` from Src/module.c:948.
 // C: `int addhookfunc(char *n, Hookfn f)` →
 //   `Hookdef h = gethookdef(n); if (h) return addhookdeffunc(h, f); return 1;`
 fn addhookfunc(n: &str, f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 { // c:948
-    // c:951 — `Hookdef h = gethookdef(n);`
+    // c:948 — `Hookdef h = gethookdef(n);`
     let h = gethookdef(n);
     if let Some(h) = h {                                                     // c:953
         return addhookdeffunc(h, f);                                         // c:954
@@ -335,39 +335,41 @@ fn addhookfunc(n: &str, f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 {
     1                                                                        // c:955
 }
 
-// Port of `deletehookfunc(n, f)` from Src/module.c:977.
+// Port of `deletehookfunc(const char *n, Hookfn f)` from Src/module.c:977.
 // C: `int deletehookfunc(const char *n, Hookfn f)` →
 //   `Hookdef h = gethookdef(n); if (h) return deletehookdeffunc(h, f); return 1;`
 fn deletehookfunc(n: &str, f: fn(*const hookdef, *const color_rgb) -> i32) {  // c:977
-    let h = gethookdef(n);                                                   // c:980
+    let h = gethookdef(n);                                                   // c:977
     if let Some(h) = h {                                                     // c:982
         let _ = deletehookdeffunc(h, f);                                     // c:983
     }
 }
 
-// Port of `gethookdef(n)` from Src/module.c:912 — looks up a Hookdef by
+// Port of `gethookdef(const char *n)` from Src/module.c:849 — looks up a Hookdef by
 // name in the static-link `HOOKDEFS` registry.
-fn gethookdef(_n: &str) -> Option<*const hookdef> {                          // c:912
+/// WARNING: param names don't match C — Rust=(_n) vs C=(funcs, NULL)
+fn gethookdef(_n: &str) -> Option<*const hookdef> {                          // c:849
     // Static-link path: hookdefs registry lives in src/ported/module.rs;
     // until that exposes a typed lookup, return None.
     None
 }
 
-// Port of `addhookdeffunc(h, f)` from Src/module.c:939.
+// Port of `addhookdeffunc(Hookdef h, Hookfn f)` from Src/module.c:939.
 // C: `int addhookdeffunc(Hookdef h, Hookfn f)` →
 //   `addlinknode(h->funcs, (void *)f); return 0;`
 #[allow(unused_variables)]
 fn addhookdeffunc(h: *const hookdef,
                   f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 {  // c:939
-    // c:941 — addlinknode(h->funcs, f). Static-link path: registry is static.
-    0                                                                        // c:942
+    // c:961 — addlinknode(h->funcs, f). Static-link path: registry is static.
+    0                                                                        // c:961
 }
 
-// Port of `deletehookdeffunc(h, f)` from Src/module.c:962.
+// Port of `deletehookdeffunc(Hookdef h, Hookfn f)` from Src/module.c:961.
 // C: `int deletehookdeffunc(Hookdef h, Hookfn f)` — walk h->funcs,
 // remove the matching entry; returns 0 on success, 1 if not found.
+/// WARNING: param names don't match C — Rust=(_h, _f) vs C=()
 fn deletehookdeffunc(_h: *const hookdef,
-                     _f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 { // c:962
+                     _f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 { // c:961
     // c:966-971 — walks h->funcs list; static-link path: nothing to remove.
     1                                                                        // c:972
 }
@@ -418,7 +420,7 @@ mod tests {
         assert!((16..=87).contains(&idx) || idx >= 77);
     }
 
-    /// Port of `getnearestcolor(col)` from `Src/Modules/nearcolor.c:147`.
+    /// Port of `getnearestcolor(UNUSED(Hookdef dummy), Color_rgb col)` from `Src/Modules/nearcolor.c:147`.
     /// Verifies `getnearestcolor` dispatches on the `tccolours` global
     /// per c:152-156: 256→`mapRGBto256+1`, 88→`mapRGBto88+1`, otherwise -1.
     #[test]

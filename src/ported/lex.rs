@@ -526,7 +526,7 @@ pub fn lex_init(input: &str) {
 }
 
 /// Append a char to the raw-input capture buffer. Direct port of
-/// zsh/Src/lex.c:2024-2039 `zshlex_raw_add`. Called from hgetc
+/// zsh/Src/lex.c:2025 `zshlex_raw_add`. Called from hgetc
 /// when `lex_add_raw` is nonzero so cmd-sub bodies (`$(...)`,
 /// `<(...)`, `>(...)`) can be replayed verbatim without re-lexing.
 pub fn zshlex_raw_add(c: char) {
@@ -665,6 +665,7 @@ pub fn exalias() -> bool {
 /// if the lookup matched (regular or suffix alias) AND the alias
 /// text was successfully injected back into the input stream for
 /// re-lexing.
+/// WARNING: param names don't match C — Rust=(lextext) vs C=()
 fn checkalias(lextext: &str) -> bool {
     // lex.c:1906-1907 — guard on null lextext.
     if lextext.is_empty() {
@@ -771,7 +772,7 @@ fn inject_alias_text(text: &str) {
 }
 
 /// Pop the last char from the raw-input capture buffer. Direct
-/// port of zsh/Src/lex.c:2042-2049 `zshlex_raw_back`. Called when
+/// port of zsh/Src/lex.c:2043 `zshlex_raw_back`. Called when
 /// the lexer ungets a char that was just captured raw — the raw
 /// buffer must mirror the live input so this undoes the last add.
 pub fn zshlex_raw_back() {
@@ -784,7 +785,7 @@ pub fn zshlex_raw_back() {
 }
 
 /// Mark the current raw-buffer offset (for restore later). Direct
-/// port of zsh/Src/lex.c:2052-2058 `zshlex_raw_mark`. Returns
+/// port of zsh/Src/lex.c:2053 `zshlex_raw_mark`. Returns
 /// `len + offset` so callers can restore via `back_to_mark`.
 pub fn zshlex_raw_mark(offset: i64) -> i64 {
     // lex.c:2055-2056 — guard.
@@ -796,7 +797,7 @@ pub fn zshlex_raw_mark(offset: i64) -> i64 {
 }
 
 /// Restore raw-buffer offset to a previously-saved mark. Direct
-/// port of zsh/Src/lex.c:2061-2068 `zshlex_raw_back_to_mark`.
+/// port of zsh/Src/lex.c:2062 `zshlex_raw_back_to_mark`.
 /// Truncates the raw buffer to `mark` bytes — undoes any captures
 /// since the mark was taken (used when a speculative parse fails
 /// and the lexer rolls back).
@@ -828,7 +829,7 @@ pub fn take_raw_buf() -> String {
     })
 }
 
-/// zsh/Src/lex.c:215-239 `lex_context_save`. After save, the lexer
+/// zsh/Src/lex.c:216 `lex_context_save`. After save, the lexer
 /// is in a clean state suitable for parsing a nested input (command
 /// substitution body, here-doc terminator, eval'd string).
 pub fn lex_context_save(ls: &mut lex_stack) {
@@ -867,7 +868,7 @@ pub fn lex_context_save(ls: &mut lex_stack) {
     });
 }
 
-/// zsh/Src/lex.c:244-262 `lex_context_restore`. Inverse of
+/// zsh/Src/lex.c:245 `lex_context_restore`. Inverse of
 /// `lex_context_save`. Called after the nested parse completes.
 pub fn lex_context_restore(ls: &mut lex_stack) {
     // lex.c:249-261 — copy stack state back into live fields.
@@ -887,7 +888,7 @@ pub fn lex_context_restore(ls: &mut lex_stack) {
     LEX_TOKLINENO.set(ls.toklineno as u64);
 }
 
-/// Initialize lexical state. Direct port of zsh/Src/lex.c:440-445
+/// Initialize lexical state. Direct port of zsh/Src/lex.c:441
 /// `lexinit`. Resets dbparens / nocorrect / lexstop and sets `tok`
 /// to ENDINPUT so the next gettok starts from a known baseline.
 /// Note: `lex_init(input)` already sets equivalent defaults; this
@@ -993,7 +994,7 @@ fn peek() -> Option<char> {
 }
 
 /// Add character to token buffer
-/// Port of `add(c)` from `Src/lex.c:451`.
+/// Port of `add(int c)` from `Src/lex.c:451`.
 fn add(c: char) {
     LEX_LEXBUF.with_borrow_mut(|b| b.add(c));
 }
@@ -1069,7 +1070,7 @@ fn is_ident(c: char) -> bool {
 }
 
 /// Main lexer entry point — fetch the next token. Direct port of
-/// zsh/Src/lex.c:265-313 `zshlex`. Loop body matches the C source
+/// zsh/Src/lex.c:266 `zshlex`. Loop body matches the C source
 /// `do { ... } while (tok != ENDINPUT && exalias())` at lex.c:270-276,
 /// followed by here-doc draining (lex.c:278-306), newline tracking
 /// (lex.c:307-310), and SEMI/NEWLIN→SEPER folding (lex.c:311-312).
@@ -1990,7 +1991,7 @@ fn lex_outang() -> lextok {
 }
 
 /// Get rest of token string
-/// Port of `gettokstr(c, sub)` from `Src/lex.c:937`.
+/// Port of `gettokstr(int c, int sub)` from `Src/lex.c:937`.
 fn gettokstr(c: char, sub: bool) -> lextok {
     let mut bct = 0; // brace count
     let mut pct = 0; // parenthesis count
@@ -2584,7 +2585,7 @@ fn is_valid_assignment_target(s: &str) -> bool {
 
 /// Parse the body of a double-quoted string (or any context that
 /// uses double-quote tokenization — `(( ))`, `${...}`, `$( ( ) )`).
-/// Direct port of zsh/Src/lex.c:1486-1693 `dquote_parse`. Reads
+/// Direct port of zsh/Src/lex.c:1486 `dquote_parse`. Reads
 /// chars until `endchar` is seen at depth 0, handling escapes,
 /// `${...}` parameter substitutions, `$(...)` and backtick command
 /// substitutions, `$((...))` arithmetic, and inner double-quoted
@@ -2789,7 +2790,7 @@ fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
 /// Determine if (( is arithmetic or command
 /// Decide whether `( ... )` after a `$` is a math expression
 /// `$((...))` or a command substitution `$(...)`. Direct port of
-/// zsh/Src/lex.c:495-532 `cmd_or_math`. Tries dquote_parse first;
+/// zsh/Src/lex.c:495 `cmd_or_math`. Tries dquote_parse first;
 /// if it succeeds AND the next char is `)` (closing the second
 /// paren of `(( ))`), it's math. Otherwise rewinds and treats as
 /// a command substitution.
@@ -2847,7 +2848,7 @@ fn cmd_or_math() -> i32 {
 }
 
 /// Parse `$(...)` or `$((...))` after the `$` has been consumed.
-/// Direct port of zsh/Src/lex.c:540-573 `cmd_or_math_sub`. Reads
+/// Direct port of zsh/Src/lex.c:540 `cmd_or_math_sub`. Reads
 /// the next char to discriminate: a leading `(` plus successful
 /// math parse via `cmd_or_math` → arithmetic substitution (with
 /// the open-paren retroactively rewritten to Inparmath); else
@@ -3071,7 +3072,7 @@ fn skip_command_sub() -> Result<(), ()> {
 }
 
 /// Lex next token AND update per-context flags. Direct port of
-/// zsh/Src/lex.c:316-369 `ctxtlex`. The post-token state machine
+/// zsh/Src/lex.c:317 `ctxtlex`. The post-token state machine
 /// at lex.c:322-358 sets `incmdpos` based on the token shape:
 /// list separators / pipes / control keywords reset to cmd-pos;
 /// word-shaped tokens leave cmd-pos. Redirections (lex.c:361-368)
@@ -3143,7 +3144,7 @@ pub fn ctxtlex() {
 }
 
 /// Mark the current word as the one ZLE was looking for. Direct
-/// port of zsh/Src/lex.c:1881-1897 `gotword`. Only meaningful
+/// port of zsh/Src/lex.c:1882 `gotword`. Only meaningful
 /// when the lexer was started with LEXFLAGS_ZLE for completion;
 /// after this call `lexflags` is cleared so subsequent tokens
 /// don't re-trigger word tracking.
@@ -3243,7 +3244,7 @@ pub const CMD_OR_MATH_ERR: i32 = 2;
 /// opening `<`. Leaves the input position unchanged, returning true
 /// or false.
 ///
-/// Direct port of zsh/Src/lex.c:580-610 `isnumglob`. C source uses
+/// Direct port of zsh/Src/lex.c:581 `isnumglob`. C source uses
 /// hgetc/hungetc against the input stream and a temp buffer to
 /// remember consumed chars; zshrs takes a `(input, pos)` slice and
 /// scans without consumption. Same predicate, different I/O model.
@@ -3271,7 +3272,7 @@ pub fn isnumglob(input: &str, pos: usize) -> bool {
 
 /// Tokenize a string as if in double quotes (error-tolerant variant).
 ///
-/// Direct port of zsh/Src/lex.c:1713-1733 `parsestrnoerr`. The C
+/// Direct port of zsh/Src/lex.c:1713 `parsestrnoerr`. The C
 /// source: zcontext_save → untokenize → inpush → strinbeg →
 /// `lexbuf.ptr = tokstr = *s; lexbuf.siz = l + 1` →
 /// `err = dquote_parse('\0', 1)` → strinend → inpop → zcontext_restore.
@@ -3285,14 +3286,14 @@ pub fn isnumglob(input: &str, pos: usize) -> bool {
 /// lexer — same output for typical bodies. Documented divergence:
 /// nested cmd-sub `$(...)` and arith `$((...))` aren't lexed
 /// recursively; the runtime handles them at expansion time.
-/// Port of `parsestrnoerr(s)` from `Src/lex.c:1713`.
+/// Port of `parsestrnoerr(char **s)` from `Src/lex.c:1713`.
 pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     parsestr_inner(s)
 }
 
 /// Tokenize a string as if in double quotes (error-reporting variant).
 ///
-/// Direct port of zsh/Src/lex.c:1693-1709 `parsestr`. C source:
+/// Direct port of zsh/Src/lex.c:1694 `parsestr`. C source:
 /// `if ((err = parsestrnoerr(s))) { untokenize(*s); ... zerr("parse
 /// error near `%c'", err); tok = LEXERR; }`. zshrs's wrapper
 /// returns the same Result and lets the caller emit the diagnostic.
@@ -3361,7 +3362,7 @@ fn parsestr_inner(s: &str) -> Result<String, String> {
 /// Parse a subscript in string s. Return the position after the
 /// closing bracket, or None on error.
 ///
-/// Direct port of zsh/Src/lex.c:1742-1788 `parse_subscript`. The C
+/// Direct port of zsh/Src/lex.c:1743 `parse_subscript`. The C
 /// source uses dupstring_wlen + inpush + dquote_parse to lex the
 /// subscript through the main lexer; zshrs implements a focused
 /// bracket-balancing walker that handles the same nesting rules
@@ -3440,7 +3441,7 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
 /// Tokenize a string as if it were a normal command-line argument
 /// but it may contain separators. Used for ${...%...} substitutions.
 ///
-/// Direct port of zsh/Src/lex.c:1796-1880 `parse_subst_string`.
+/// Direct port of zsh/Src/lex.c:1796 `parse_subst_string`.
 /// zsh's version sets `noaliases = 1` + `lexflags = 0` + uses
 /// zcontext_save/inpush/strinbeg → dquote_parse('\0', 1) →
 /// strinend/inpop/zcontext_restore. zshrs's standalone walker
@@ -3532,7 +3533,7 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
 
 /// Untokenize a string - convert tokenized chars back to original
 ///
-/// Port of untokenize(s) from exec.c (but used by lexer too)
+/// Port of untokenize(char *s) from exec.c (but used by lexer too)
 /// Like `untokenize`, but maps SNULL → `'` and DNULL → `"` instead of
 /// stripping them. Used by callers that need the source form including
 /// quoting (e.g. arithmetic-substitution detection in compile_zsh).
@@ -3587,7 +3588,7 @@ pub fn untokenize_preserve_quotes(s: &str) -> String {
 }
 
 /// Decode `\X` escape sequences for `$'...'` content.
-/// Port of `getkeystring(s, len, how, misc)` from Src/utils.c:6915 with the
+/// Port of `getkeystring(char *s, int *len, int how, int *misc)` from Src/utils.c:6915 with the
 /// `GETKEYS_DOLLARS_QUOTE` flag — handles the `\n`/`\t`/`\r`/`\e`/
 /// `\E`/`\a`/`\b`/`\f`/`\v`/`\xNN`/`\uNNNN`/`\UNNNNNNNN`/octal/`\\`/`\'`
 /// arms the C source recognizes inside dollar-single-quoted

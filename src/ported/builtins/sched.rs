@@ -115,7 +115,7 @@ fn schedcmdtimed_lock() -> &'static Mutex<i32> {
 // schedaddtimed(void)                                                c:60
 // =====================================================================
 
-// Use addtimedfn() to add a timed event for sched's use                  // c:57
+// Use addtimedfn() to add a timed event for sched's use                  // c:61
 /// Port of `schedaddtimed()` from `Src/Builtins/sched.c:61`.
 pub(crate) fn schedaddtimed() {                                             // c:61
     /*
@@ -151,7 +151,7 @@ fn checksched_thunk() {
 
 /// Port of `scheddeltimed()` from `Src/Builtins/sched.c:79`.
 pub(crate) fn scheddeltimed() {                                             // c:79
-    if *schedcmdtimed_lock().lock().unwrap() != 0 {                  // c:81
+    if *schedcmdtimed_lock().lock().unwrap() != 0 {                  // c:79
         deltimedfn(checksched_thunk);                                 // c:83
         *schedcmdtimed_lock().lock().unwrap() = 0;                   // c:84
     }
@@ -162,14 +162,14 @@ pub(crate) fn scheddeltimed() {                                             // c
 // checksched(void)                                                   c:92
 // =====================================================================
 
-// Check scheduled commands; call this function from time to time.        // c:89
+// Check scheduled commands; call this function from time to time.        // c:93
 /// Port of `checksched()` from `Src/Builtins/sched.c:93`.
 ///
 /// C returns void; Rust port returns `i32` so the module entry-points
 /// can propagate the status. Bridged through `checksched_thunk()` above
 /// when called via `addtimedfn`.
 pub(crate) fn checksched() -> i32 {                                         // c:93
-    let t: time_t;                                                    // c:95
+    let t: time_t;                                                    // c:93
     // sch declared at body scope per C (c:96).
     if schedcmds_lock().lock().unwrap().is_none() {                  // c:98  if(!schedcmds)
         return 0;                                                     // c:99  return;
@@ -247,15 +247,16 @@ pub(crate) fn checksched() -> i32 {                                         // c
 // bin_sched(char *nam, char **argv, Options ops, UNUSED(int func))   c:149
 // =====================================================================
 
-/// Port of `bin_sched(nam, argv)` from `Src/Builtins/sched.c:150`.
+/// Port of `bin_sched(char *nam, char **argv, UNUSED(Options ops), UNUSED(int func))` from `Src/Builtins/sched.c:150`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
 /// static int
 /// bin_sched(char *nam, char **argv, UNUSED(Options ops), UNUSED(int func))
 /// ```
+/// WARNING: param names don't match C — Rust=(argv, _ops, _func) vs C=(nam, argv, ops, func)
 pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 { // c:150
-    // c:152-157 — locals (one block at top, mirroring C declaration)
+    // c:150-157 — locals (one block at top, mirroring C declaration)
     let s: &str;
     let mut argptr: usize;
     let mut t: time_t;
@@ -522,14 +523,15 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
 // schedgetfn(UNUSED(Param pm))                                       c:340
 // =====================================================================
 
-/// Port of `schedgetfn(pm)` from `Src/Builtins/sched.c:341`.
+/// Port of `schedgetfn(UNUSED(Param pm))` from `Src/Builtins/sched.c:341`.
 ///
 /// `getfn` for the `$zsh_scheduled_events` array parameter. C signature
 /// mirrored: `static char ** schedgetfn(UNUSED(Param pm))`. `Param` is
 /// `struct param *` (zsh.h:539); ported as `*const param` to keep the
 /// pointer shape (the param is UNUSED in C — pointer is never dereffed).
+/// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub(crate) fn schedgetfn(_pm: *const crate::ported::zsh_h::param) -> Vec<String> {
-    let mut i: usize;                                                    // c:343
+    let mut i: usize;                                                    // c:341
     // C: int i; struct schedcmd *sch; char **ret, **aptr;
     // for (i = 0, sch = schedcmds; sch; sch = sch->next, i++);          // c:347-348
     let head = schedcmds_lock().lock().unwrap();
@@ -585,9 +587,9 @@ fn module_features() -> &'static Mutex<features_t> {
         cd_size: 0,
         mf_list: None,                                                    // c:389
         mf_size: 0,
-        pd_list: None,                                                    // c:390 partab
+        pd_list: None,                                                    // c:396 partab
         pd_size: 1,                                                       // sizeof(partab)/sizeof(*partab) — zsh_scheduled_events
-        n_abstract: 0,                                                    // c:391
+        n_abstract: 0,                                                    // c:396
     }))
 }
 
@@ -595,33 +597,33 @@ fn module_features() -> &'static Mutex<features_t> {
 // Module entry points                                                c:394-446
 // =====================================================================
 
-/// Port of `setup_(m)` from `Src/Builtins/sched.c:396`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Builtins/sched.c:396`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {              // c:396
-    0                                                                    // c:398
+    0                                                                    // c:411
 }
 
-/// Port of `features_(m, features)` from `Src/Builtins/sched.c:403`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Builtins/sched.c:403`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 { // c:403
-    *features = featuresarray(m, module_features());                     // c:405
-    0                                                                    // c:406
+    *features = featuresarray(m, module_features());                     // c:418
+    0                                                                    // c:418
 }
 
-/// Port of `enables_(m, enables)` from `Src/Builtins/sched.c:411`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Builtins/sched.c:411`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 { // c:411
-    handlefeatures(m, module_features(), enables)                        // c:413
+    handlefeatures(m, module_features(), enables)                        // c:418
 }
 
-/// Port of `boot_(m)` from `Src/Builtins/sched.c:418`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Builtins/sched.c:418`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {               // c:418
-    addprepromptfn(checksched_thunk);                                    // c:420 addprepromptfn(&checksched);
-    0                                                                    // c:421
+    addprepromptfn(checksched_thunk);                                    // c:426 addprepromptfn(&checksched);
+    0                                                                    // c:426
 }
 
-/// Port of `cleanup_(m)` from `Src/Builtins/sched.c:426`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Builtins/sched.c:426`.
 /// C body (c:428-438):
 ///   struct schedcmd *sch, *schn;
 ///   if (schedcmds) scheddeltimed();
@@ -629,23 +631,23 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {               // c
 ///   delprepromptfn(&checksched);
 ///   return setfeatureenables(m, &module_features, NULL);
 pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {             // c:426
-    // struct schedcmd *sch, *schn;                                       // c:428
+    // struct schedcmd *sch, *schn;                                       // c:426
     if schedcmds_lock().lock().unwrap().is_some() {                       // c:430 if (schedcmds)
         scheddeltimed();                                                  // c:431
     }
-    // c:432-436 — for (sch = schedcmds; sch; sch = schn) { ... }
+    // c:443-436 — for (sch = schedcmds; sch; sch = schn) { ... }
     // Box drop chain reclaims `cmd` and the node both.
     let mut head = schedcmds_lock().lock().unwrap();
     *head = None;
     drop(head);
-    delprepromptfn(checksched_thunk);                                     // c:437 delprepromptfn(&checksched);
-    setfeatureenables(m, module_features(), None)                        // c:438
+    delprepromptfn(checksched_thunk);                                     // c:443 delprepromptfn(&checksched);
+    setfeatureenables(m, module_features(), None)                        // c:443
 }
 
-/// Port of `finish_(m)` from `Src/Builtins/sched.c:443`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Builtins/sched.c:443`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {             // c:443
-    0                                                                    // c:445
+    0                                                                    // c:443
 }
 
 // =====================================================================
@@ -653,12 +655,12 @@ pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {             // c
 // signatures pending the module.c port to `*const module` types.
 // =====================================================================
 
-// `featuresarray` lives in `Src/module.c:3275`.
+// `featuresarray` lives in `Src/module.c:3279`.
 fn featuresarray(_m: *const crate::ported::zsh_h::module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:sched".to_string(), "p:zsh_scheduled_events".to_string()]
 }
 
-// `handlefeatures` lives in `Src/module.c:3370`.
+// `handlefeatures` lives in `Src/module.c:3388`.
 fn handlefeatures(m: *const crate::ported::zsh_h::module, f: &Mutex<features_t>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(getfeatureenables(m, f));
@@ -675,7 +677,7 @@ fn getfeatureenables(_m: *const crate::ported::zsh_h::module, f: &Mutex<features
     vec![0; total as usize]
 }
 
-// `setfeatureenables` lives in `Src/module.c:3445`.
+// `setfeatureenables` lives in `Src/module.c:3350`.
 fn setfeatureenables(_m: *const crate::ported::zsh_h::module, _f: &Mutex<features_t>, _e: Option<&Vec<i32>>) -> i32 {
     0
 }
@@ -696,7 +698,7 @@ const ZLE_CMD_TRASH: i32 = 3;                                                // 
 // (matches C's BSS-zero startup).
 pub static zleactive: AtomicI32 = AtomicI32::new(0);
 
-// `execstring` lives in `Src/exec.c:5078` — feeds a string through the
+// `execstring` lives in `Src/exec.c:1228` — feeds a string through the
 // parser/exec pipeline. Stubbed locally; the ShellExecutor bridge in
 // `src/extensions/ext_builtins.rs` wires real bytecode-VM execution
 // when `checksched` runs from the eval loop.
