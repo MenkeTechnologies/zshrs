@@ -985,11 +985,11 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {                     // 
     if offs > bytes.len() || offs == 0 {
         return None;
     }
-    // c:526 — `for (p = s + offs; p > s && *p != String && *p != Qstring; p--)`.
+    // c:526 — `for (p = s + offs; p > s && *p != Stringg && *p != Qstring; p--)`.
     let mut p = offs.min(bytes.len()) - 1;
     loop {
         if bytes[p] == b'$' {
-            // c:529-530 — `while (p > s && (p[-1] == String ...)) p--`.
+            // c:529-530 — `while (p > s && (p[-1] == Stringg ...)) p--`.
             while p > 0 && bytes[p - 1] == b'$' {
                 p -= 1;
             }

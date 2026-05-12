@@ -1715,7 +1715,7 @@ pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {      // 
 /// Port of `testlex()` from Src/builtin.c:7200.
 /// C: `void testlex(void)` — advance the test-builtin lexer one token
 ///   from `testargs` into `tok`/`tokstr`. Maps `-o`→DBAR, `-a`→DAMPER,
-///   `!`→BANG, `(`→INPAR, `)`→OUTPAR, otherwise STRING.
+///   `!`→Bang, `(`→Inpar, `)`→Outpar, otherwise STRING.
 pub fn testlex() {                                                           // c:7200
     use std::sync::atomic::Ordering;
     // c:7203 — `if (tok == LEXERR) return;`

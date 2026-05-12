@@ -4946,12 +4946,12 @@ pub fn arrhashsetfn(                                                         // 
     val: Vec<String>,
     _flags: i32,
 ) {
-    use crate::ported::zsh_h::MARKER;
+    use crate::ported::zsh_h::Marker;
 
     // c:4124-4127 — count non-Marker entries.
     let alen: usize = val
         .iter()
-        .filter(|s| !s.starts_with(MARKER as char))
+        .filter(|s| !s.starts_with(Marker as char))
         .count();
 
     // c:4129-4131 — odd count → error.
@@ -6550,7 +6550,7 @@ pub fn fetchvalue<'a>(                                                       // 
         // `v.scanflags` and advances `pptr`.
         if bracks > 0
             && (pptr.starts_with('[')
-                || pptr.starts_with(crate::ported::zsh_h::INBRACK))
+                || pptr.starts_with(crate::ported::zsh_h::Inbrack))
         {
             if getindex(pptr, v, scanflags) != 0 {                           // c:2290
                 return Some(v);                                              // c:2292

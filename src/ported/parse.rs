@@ -16,20 +16,18 @@ use super::lex::{
     STRING_LEX, THEN, TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND,
 };
 use super::zsh_h::{
-    redir, wc_code, wordcode, DASH, EQUALS, IS_DASH, REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW,
-    REDIR_ERRAPP, REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_HEREDOC,
-    REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE,
-    REDIR_READ, REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW, WC_REDIR, WC_REDIR_FROM_HEREDOC,
-    WC_REDIR_TYPE, WC_REDIR_VARID,
+    redir, wc_code, wordcode, Bang, Dash, Equals, Inang, Inpar, Outang, Outpar, IS_DASH,
+    REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP, REDIR_ERRAPPNOW,
+    REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HEREDOCDASH, REDIR_HERESTR,
+    REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ, REDIR_READWRITE,
+    REDIR_WRITE, REDIR_WRITENOW, WC_REDIR, WC_REDIR_FROM_HEREDOC, WC_REDIR_TYPE,
+    WC_REDIR_VARID, eprog, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_NT, COND_REGEX,
+    COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ, EC_DUP, EC_NODUP,
+    EF_HEAP, EF_REAL, OPT_ISSET, PM_UNDEFINED, WC_SUBLIST_COPROC, WC_SUBLIST_NOT, WCB_COND,
+    Stringg,
 };
-use crate::zsh_h::{BANG, COND_AND, COND_NOT, COND_STRGTR, COND_STRLT, EC_DUP, EC_NODUP, INANG, INPAR, OUTANG, OUTPAR, WCB_COND};
 use crate::ported::lex::set_tok;
 use crate::ported::utils::{zerr, zwarnnam};
-use crate::ported::zsh_h::{
-    eprog, COND_MOD, COND_MODI, COND_NT, COND_REGEX, COND_STRDEQ, COND_STREQ,
-    COND_STRNEQ, EF_HEAP, EF_REAL, OPT_ISSET, PM_UNDEFINED, WC_SUBLIST_COPROC,
-    WC_SUBLIST_NOT,
-};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -382,7 +380,7 @@ fn resolve_redir(r: &mut ZshRedir, bodies: &[HereDocInfo]) {
 }
 
 /// If `list` is a Simple containing one word that ends in the
-/// `<INPAR><OUTPAR>` token pair (the lexer-port encoding of `()`),
+/// `<Inpar><Outpar>` token pair (the lexer-port encoding of `()`),
 /// return the bare name. Used by `parse_program_until` to detect
 /// `name() {body}` style function definitions where the lexer
 /// hasn't split the `()` from the name.
@@ -405,7 +403,7 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>
     if simple.words.is_empty() || !simple.assigns.is_empty() {
         return None;
     }
-    let suffix = "\u{88}\u{8a}"; // INPAR + OUTPAR
+    let suffix = "\u{88}\u{8a}"; // Inpar + Outpar
                                  // Find the FIRST word ending in `()`. zsh accepts the
                                  // multi-name shorthand `fna fnb fnc() { body }` (parse.c:
                                  // par_funcdef wordlist) — words[0..i-1] are extra names,
@@ -1532,7 +1530,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                 // Synthesize a FuncDef for the `name() { body }` shape
                 // at parse time so body_source is captured while the
                 // lexer still has the input. The lexer port emits
-                // `name(` as a single Word ending in `<INPAR><OUTPAR>`,
+                // `name(` as a single Word ending in `<Inpar><Outpar>`,
                 // so the Simple list is followed by an Inbrace once
                 // separators are skipped. For `name() cmd args` the
                 // body has already been swallowed into the same
@@ -1847,7 +1845,7 @@ fn par_pline() -> Option<ZshPipe> {
 /// Parse a command
 /// Parse a command — dispatches by leading token (FOR / CASE /
 /// IF / WHILE / UNTIL / REPEAT / FUNC / DINBRACK / DINPAR /
-/// INPAR subshell / INBRACE current-shell / TIME / NOCORRECT,
+/// Inpar subshell / Inbrace current-shell / TIME / NOCORRECT,
 /// else simple). Direct port of zsh/Src/parse.c:958 `par_cmd`.
 fn par_cmd() -> Option<ZshCommand> {
     // Parse leading redirections
@@ -2033,36 +2031,36 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
 /// (parse.c:1842-2000ish); zshrs splits it out to a dedicated
 /// helper for clarity.
 fn parse_assign() -> Option<ZshAssign> {
-    // Helper: locate the EQUALS-marker that delimits NAME from
+    // Helper: locate the Equals-marker that delimits NAME from
     // VALUE in an assignment-shaped tokstr. The lexer META-encodes
     // EVERY `=` (including those inside `${var%%=foo}` strip
     // patterns or `[idx]=...` subscripts), so a naive
-    // `tokstr.find(EQUALS)` would split at the first inner `=`
+    // `tokstr.find(Equals)` would split at the first inner `=`
     // and break the whole assignment. Walk the string skipping
     // brace and bracket depth so the assignment's `=` (the one
     // after the last `]` of the LHS subscript / or after the
     // bare name) is the one we land on.
     fn find_assign_equals(s: &str) -> Option<usize> {
-        let target = crate::ported::zsh_h::EQUALS;
+        let target = crate::ported::zsh_h::Equals;
         let mut brace = 0i32;
         let mut bracket = 0i32;
         let mut paren = 0i32;
         for (i, c) in s.char_indices() {
             match c {
-                    '{' | '\u{8f}' /* INBRACE */ => brace += 1,
-                    '}' | '\u{90}' /* OUTBRACE */ => {
+                    '{' | '\u{8f}' /* Inbrace */ => brace += 1,
+                    '}' | '\u{90}' /* Outbrace */ => {
                         if brace > 0 {
                             brace -= 1;
                         }
                     }
-                    '[' | '\u{91}' /* INBRACK */ => bracket += 1,
-                    ']' | '\u{92}' /* OUTBRACK */ => {
+                    '[' | '\u{91}' /* Inbrack */ => bracket += 1,
+                    ']' | '\u{92}' /* Outbrack */ => {
                         if bracket > 0 {
                             bracket -= 1;
                         }
                     }
-                    '(' | '\u{88}' /* INPAR */ => paren += 1,
-                    ')' | '\u{8a}' /* OUTPAR */ => {
+                    '(' | '\u{88}' /* Inpar */ => paren += 1,
+                    ')' | '\u{8a}' /* Outpar */ => {
                         if paren > 0 {
                             paren -= 1;
                         }
@@ -2096,7 +2094,7 @@ fn parse_assign() -> Option<ZshAssign> {
         };
         (
             name.to_string(),
-            tokstr[pos + EQUALS.len_utf8()..].to_string(),
+            tokstr[pos + Equals.len_utf8()..].to_string(),
             append,
         )
     } else if let Some(pos) = tokstr.find('=') {
@@ -2134,7 +2132,7 @@ fn parse_assign() -> Option<ZshAssign> {
             crate::ported::lex::zshlex();
         }
 
-        // The closing OUTPAR is consumed here. The outer par_simple
+        // The closing Outpar is consumed here. The outer par_simple
         // loop will then `zshlex()` past whatever follows (typically
         // a separator or the next word) — calling zshlex twice in
         // tandem (here AND in par_simple) over-advances and merges
@@ -2287,7 +2285,7 @@ fn par_for() -> Option<ZshCommand> {
 
     // Get list. The lexer-port quirk: `for x (a b c)` arrives as a
     // single String token with the parens lexed-as-content
-    // (`<INPAR>a b c<OUTPAR>`) instead of as separate Inpar/String/
+    // (`<Inpar>a b c<Outpar>`) instead of as separate Inpar/String/
     // Outpar tokens. Detect that shape and split it manually.
     let list = if crate::ported::lex::tok() == STRING_LEX
         && crate::ported::lex::tokstr()
@@ -2295,7 +2293,7 @@ fn par_for() -> Option<ZshCommand> {
             .unwrap_or(false)
     {
         let raw = crate::ported::lex::tokstr().unwrap_or_default();
-        // Strip leading INPAR + trailing OUTPAR, then untokenize the
+        // Strip leading Inpar + trailing Outpar, then untokenize the
         // inner content and split on whitespace for the word list.
         let inner = &raw[raw.char_indices().nth(1).map(|(i, _)| i).unwrap_or(0)
             ..raw
@@ -2353,7 +2351,7 @@ fn par_for() -> Option<ZshCommand> {
             // body opener — `do`/`{`. zsh's lexer needs incmdpos
             // set so `{` lexes as Inbrace (not as a literal). C
             // analogue: parse.c::par_for sets `incmdpos = 1`
-            // after consuming the OUTPAR before the body parse.
+            // after consuming the Outpar before the body parse.
             crate::ported::lex::set_incmdpos(true);
             crate::ported::lex::zshlex();
         }
@@ -2921,7 +2919,7 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
 
 /// Parse {...} cursh
 /// Parse a current-shell brace block `{ BODY }`. C source
-/// par_cmd at parse.c:958-1085 handles INBRACE → emit WC_CURSH
+/// par_cmd at parse.c:958-1085 handles Inbrace → emit WC_CURSH
 /// and recurses into the list. zshrs's parse_cursh extracts that
 /// arm into a dedicated method.
 fn parse_cursh() -> Option<ZshCommand> {
@@ -2931,9 +2929,9 @@ fn parse_cursh() -> Option<ZshCommand> {
     // Check for { ... } always { ... }. Direct port of zsh's
     // par_subsh at parse.c:1612-1660 — note the two `incmdpos = 1`
     // forces (parse.c:1632, 1637): after consuming the closing
-    // OUTBRACE AND after matching the `always` keyword, the parser
+    // Outbrace AND after matching the `always` keyword, the parser
     // explicitly resets command position so the next `{` lexes as
-    // INBRACE. Without these resets the lexer's String-clears-cmdpos
+    // Inbrace. Without these resets the lexer's String-clears-cmdpos
     // rule (lex.rs:976-983) leaves the second `{` in word position,
     // turning `always { ... }` into a Simple `{` `echo` … and the
     // try/always pairing is silently lost.
@@ -2982,7 +2980,7 @@ fn par_funcdef() -> Option<ZshCommand> {
     // Handle options like -T and function names. Two subtleties:
     //
     //   1. Flags: zsh's lexer encodes a leading `-` as
-    //      `zsh_h::DASH` (`\u{9b}`, `Src/zsh.h:182`) inside the String tokstr.
+    //      `zsh_h::Dash` (`\u{9b}`, `Src/zsh.h:182`) inside the String tokstr.
     //      The previous `s.starts_with('-')` check failed for
     //      `\u{9b}T`, so `function -T NAME { body }` slipped the
     //      `-T` token into `names` and the function got registered
@@ -3009,7 +3007,7 @@ fn par_funcdef() -> Option<ZshCommand> {
                     break;
                 }
                 let first = s.chars().next();
-                if matches!(first, Some('-') | Some('+')) || matches!(first, Some(c) if c == DASH) {
+                if matches!(first, Some('-') | Some('+')) || matches!(first, Some(c) if c == Dash) {
                     if s.contains('T') {
                         tracing = true;
                     }
@@ -3275,7 +3273,7 @@ fn parse_cond_and() -> Option<ZshCond> {
 }
 
 /// Cond-expression `!` negation level. C: handled inside
-/// par_cond_2 at parse.c:2476-2625 via the BANG token check.
+/// par_cond_2 at parse.c:2476-2625 via the Bang token check.
 fn parse_cond_not() -> Option<ZshCond> {
     PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
     if check_recursion() {
@@ -3345,9 +3343,9 @@ fn parse_cond_primary() -> Option<ZshCond> {
     skip_cond_separators();
 
     // Check for unary operator. zsh's lexer tokenizes leading `-` as
-    // `zsh_h::DASH` (`\u{9b}`, `Src/zsh.h:182`) inside gettokstr (lex.c:1390-1400
+    // `zsh_h::Dash` (`\u{9b}`, `Src/zsh.h:182`) inside gettokstr (lex.c:1390-1400
     // LX2_DASH — `-` always becomes Dash, untokenized later). Match
-    // either form here, and use char-count not byte-count since DASH
+    // either form here, and use char-count not byte-count since Dash
     // is 2 UTF-8 bytes (`\xc2\x9b`).
     let s1_chars: Vec<char> = s1.chars().collect();
     if s1_chars.len() == 2 && IS_DASH(s1_chars[0]) {
@@ -3367,7 +3365,7 @@ fn parse_cond_primary() -> Option<ZshCond> {
     //   do condlex(); while (COND_SEP());
     //   incond--;  /* parentheses do grouping */
     // The bump makes the lexer treat `(` as a literal character inside
-    // the RHS word (e.g. `[[ x =~ (foo) ]]`) instead of returning INPAR
+    // the RHS word (e.g. `[[ x =~ (foo) ]]`) instead of returning Inpar
     // and splitting the regex into multiple tokens.
     let op = match crate::ported::lex::tok() {
         STRING_LEX => {
@@ -4166,7 +4164,7 @@ pub fn parse_cond() -> Option<crate::ported::zsh_h::eprog> {                  //
 }
 
 /// Port of `par_sublist2(int *cmplx)` from `Src/parse.c:869`.
-/// Secondary-sublist arm: handles the `COPROC`/`BANG` prefix
+/// Secondary-sublist arm: handles the `COPROC`/`Bang` prefix
 /// in front of a pline. Returns the WC_SUBLIST flag word added.
 pub fn par_sublist2(cmplx: &mut i32) -> Option<i32> {                         // c:869
     let mut f = 0i32;

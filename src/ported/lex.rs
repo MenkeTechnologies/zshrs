@@ -18,19 +18,19 @@ use std::collections::VecDeque;
 // =============================================================================
 // Lexer-domain types — `enum lextok` (lextok), reserved-word table. These
 // belong in lex.rs because they describe the lexer's output. Char tokens
-// (POUND/STRING_TOK/INPAR/…), REDIR_* and COND_* constants live as flat
+// (Pound/Stringg/Inpar/…), REDIR_* and COND_* constants live as flat
 // `pub const`s in `super::zsh_h` per `Src/zsh.h:144-679` and are used from
 // here directly — do NOT wrap them in Rust enums or sub-modules.
 // =============================================================================
 
 // Character tokens — port of `Src/zsh.h:144-224` `#define Pound … #define
-// Marker`. Imported with the zsh_h.rs disambiguation (STRING_TOK → STRING_TOK,
-// OUTANG_PROC → OUTANG_PROC) so the lex.rs body keeps the original C-style
+// Marker`. Imported with the zsh_h.rs disambiguation (Stringg → Stringg,
+// OutangProc → OutangProc) so the lex.rs body keeps the original C-style
 // short names without colliding with `STRING_LEX` (the lextok=34 constant).
 use crate::ported::zsh_h::{
-    BANG, BAR, BNULL, BNULLKEEP, COMMA, DASH, DNULL, EQUALS, HAT, INANG, INBRACE, INBRACK, INPAR,
-    INPARMATH, MARKER, META, NULARG, OUTANG, OUTANG_PROC, OUTBRACE, OUTBRACK, OUTPAR, OUTPARMATH,
-    POUND, QSTRING, QTICK, QUEST, SNULL, STAR, STRING_TOK, TICK, TILDE,
+    Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals, Hat, Inang, Inbrace, Inbrack, Inpar,
+    Inparmath, Marker, META, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath,
+    Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde,
 };
 use crate::zsh_h::lex_stack;
 use crate::ztype_h::itok;
@@ -40,27 +40,27 @@ use crate::ztype_h::itok;
 /// Bnull/etc.). Distinct from the string-level `untokenize(&str)` below.
 pub fn untokenize_char(c: char) -> Option<char> {
     match c {
-        POUND => Some('#'),
-        STRING_TOK | QSTRING => Some('$'),
-        HAT => Some('^'),
-        STAR => Some('*'),
-        INPAR | INPARMATH => Some('('),
-        OUTPAR | OUTPARMATH => Some(')'),
-        EQUALS => Some('='),
-        BAR => Some('|'),
-        INBRACE => Some('{'),
-        OUTBRACE => Some('}'),
-        INBRACK => Some('['),
-        OUTBRACK => Some(']'),
-        TICK | QTICK => Some('`'),
-        INANG => Some('<'),
-        OUTANG | OUTANG_PROC => Some('>'),
-        QUEST => Some('?'),
-        TILDE => Some('~'),
-        COMMA => Some(','),
-        DASH => Some('-'),
-        BANG => Some('!'),
-        SNULL | DNULL | BNULL | BNULLKEEP | NULARG | MARKER => None,
+        Pound => Some('#'),
+        Stringg | Qstring => Some('$'),
+        Hat => Some('^'),
+        Star => Some('*'),
+        Inpar | Inparmath => Some('('),
+        Outpar | Outparmath => Some(')'),
+        Equals => Some('='),
+        Bar => Some('|'),
+        Inbrace => Some('{'),
+        Outbrace => Some('}'),
+        Inbrack => Some('['),
+        Outbrack => Some(']'),
+        Tick | Qtick => Some('`'),
+        Inang => Some('<'),
+        Outang | OutangProc => Some('>'),
+        Quest => Some('?'),
+        Tilde => Some('~'),
+        Comma => Some(','),
+        Dash => Some('-'),
+        Bang => Some('!'),
+        Snull | Dnull | Bnull | Bnullkeep | Nularg | Marker => None,
         _ => None,
     }
 }
@@ -108,14 +108,14 @@ pub use super::zsh_h::{
 mod tokens_tests {
     use crate::ported::hashtable::reswdtab_lock;
     use crate::ported::zsh_h::{
-        BNULL, DINANG, DNULL, IF, IS_REDIROP, OUTANG_TOK, SNULL, STRING_LEX, THEN,
+        Bnull, DINANG, Dnull, IF, IS_REDIROP, OUTANG_TOK, Snull, STRING_LEX, THEN,
     };
 
     #[test]
     fn test_token_values() {
-        assert_eq!(SNULL as u32, 0x9d);
-        assert_eq!(DNULL as u32, 0x9e);
-        assert_eq!(BNULL as u32, 0x9f);
+        assert_eq!(Snull as u32, 0x9d);
+        assert_eq!(Dnull as u32, 0x9e);
+        assert_eq!(Bnull as u32, 0x9f);
     }
 
     #[test]
@@ -553,7 +553,7 @@ pub fn zshlex_raw_add(c: char) {
 ///      1971-1980).
 ///   4. ZLE word-tracking: call gotword() if LEXFLAGS_ZLE
 ///      (lex.c:1982-1991).
-///   5. STRING_TOK tokens: try checkalias, then reservation lookup
+///   5. Stringg tokens: try checkalias, then reservation lookup
 ///      (lex.c:1993-2015).
 ///   6. Clear inalmore (lex.c:2016).
 ///
@@ -610,7 +610,7 @@ pub fn exalias() -> bool {
         }
     }
 
-    // lex.c:1993-2015 — STRING_TOK-token alias / reswd check.
+    // lex.c:1993-2015 — Stringg-token alias / reswd check.
     if tok() == STRING_LEX {
         // lex.c:1995 — `checkalias()`. POSIX-aliases gate skipped
         // here (zshrs doesn't have the option flag wired).
@@ -643,7 +643,7 @@ pub fn exalias() -> bool {
             set_tok(DOUTBRACK);
             LEX_INCOND.set(0);
         } else if LEX_INCOND.get() == 1 && lextext == "!" {
-            // lex.c:2013-2014 — `!` inside `[[ ]]` is the BANG
+            // lex.c:2013-2014 — `!` inside `[[ ]]` is the Bang
             // negation, not a literal.
             set_tok(BANG_TOK);
         }
@@ -673,7 +673,7 @@ fn checkalias(lextext: &str) -> bool {
     }
 
     // lex.c:1909-1911 — guard: alias expansion is disabled, or
-    // POSIX aliases require the token to be a STRING_TOK and not a
+    // POSIX aliases require the token to be a Stringg and not a
     // reserved word.
     if LEX_NOALIASES.get() {
         return false;
@@ -1143,8 +1143,8 @@ pub fn zshlex() {
     }
 
     // Reserved-word promotion. Per lex.c:2002-2005 in `exalias`:
-    //   - `{` only promotes to INBRACE in command position
-    //   - `}` promotes to OUTBRACE either in cmdpos OR via the
+    //   - `{` only promotes to Inbrace in command position
+    //   - `}` promotes to Outbrace either in cmdpos OR via the
     //     special `closing-brace-special` rule (IGNOREBRACES unset
     //     — assumed since zshrs doesn't expose that option yet)
     //   - other reserved words: only when incmdpos (or `}` exception)
@@ -1171,14 +1171,14 @@ pub fn zshlex() {
             let strip_tabs = LEX_HEREDOC_PENDING.get() == 2;
             // Detect originally-quoted terminator (`<<'EOF'`,
             // `<<"EOF"`). The lexer wraps single-quoted text in
-            // SNULL (`\u{9d}`) and double-quoted text in DNULL
+            // Snull (`\u{9d}`) and double-quoted text in Dnull
             // (`\u{9e}`); plain `EOF` has neither. Quoted-terminator
             // heredocs disable variable / command-sub / arithmetic
             // expansion in the body — see `compile_redir` for the
             // expansion side.
             // Quoted terminators (`<<'EOF'`, `<<"EOF"`, `<<\EOF`)
-            // disable expansion in the body. SNULL/DNULL mark
-            // single/double-quoted spans; BNULL (`\u{9f}`) marks
+            // disable expansion in the body. Snull/Dnull mark
+            // single/double-quoted spans; Bnull (`\u{9f}`) marks
             // any backslash-escaped char — its presence alone is
             // enough to flag the terminator as quoted (zsh's
             // `<<\EOF` shorthand for `<<'EOF'`).
@@ -1327,7 +1327,7 @@ pub fn zshlex() {
     // `LEX_OLDPOS.get()` (struct field) so it survives across zshlex
     // calls — the previous local `let oldpos = LEX_INCMDPOS.get()`
     // captured the JUST-updated value (always wrong) and lost the
-    // pre-FOR incmdpos. With the field, FOR x → STRING_TOK x → INPAR
+    // pre-FOR incmdpos. With the field, FOR x → Stringg x → Inpar
     // sequence correctly restores incmdpos=1 before the `(`.
     if IS_REDIROP(tok()) || tok() == FOR || tok() == FOREACH || tok() == SELECT {
         LEX_INREDIR.set(true);
@@ -1716,13 +1716,13 @@ fn lex_initial(c: char) -> lextok {
                     }
                     LEX_LEXSTOP.set(false);
                     // Per lex.c:822 LX1_INPAR — at word boundary `(`
-                    // tokenizes as INPAR when SHGLOB || incond==1 ||
+                    // tokenizes as Inpar when SHGLOB || incond==1 ||
                     // incmdpos. Otherwise falls through to gettokstr
-                    // (the `(` becomes start of a STRING_TOK — typical
+                    // (the `(` becomes start of a Stringg — typical
                     // for unquoted glob args like `ls (^foo)*`).
                     // For `for x ( ... )` form, incmdpos is restored
                     // to 1 via the oldpos-save-after-FOR mechanism,
-                    // so the next-token `(` correctly INPAR-izes.
+                    // so the next-token `(` correctly Inpar-izes.
                     if LEX_INCOND.get() == 1 || LEX_INCMDPOS.get() || LEX_INCASEPAT.get() >= 1 {
                         INPAR_TOK
                     } else {
@@ -2028,10 +2028,10 @@ fn gettokstr(c: char, sub: bool) -> lextok {
             // Whitespace is handled above for most cases
             ')' => {
                 if in_brace_param > 0 || sub {
-                    add(OUTPAR);
+                    add(Outpar);
                 } else if pct > 0 {
                     pct -= 1;
-                    add(OUTPAR);
+                    add(Outpar);
                 } else {
                     break;
                 }
@@ -2045,7 +2045,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         break;
                     }
                 } else {
-                    add(BAR);
+                    add(Bar);
                 }
             }
 
@@ -2059,7 +2059,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                                 hungetc(f);
                             }
                             hungetc('\\');
-                            add(STRING_TOK);
+                            add(Stringg);
                         } else {
                             // Line continuation after $
                             continue;
@@ -2067,20 +2067,20 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     }
                     Some('[') => {
                         // $[...] arithmetic
-                        add(STRING_TOK);
-                        add(INBRACK);
+                        add(Stringg);
+                        add(Inbrack);
                         if dquote_parse(']', sub).is_err() {
                             peek = LEXERR;
                             break;
                         }
-                        add(OUTBRACK);
+                        add(Outbrack);
                     }
                     Some('(') => {
                         // $(...) or $((...))
-                        add(STRING_TOK);
+                        add(Stringg);
                         match cmd_or_math_sub() {
-                            CMD_OR_MATH_CMD => add(OUTPAR),
-                            CMD_OR_MATH_MATH => add(OUTPARMATH),
+                            CMD_OR_MATH_CMD => add(Outpar),
+                            CMD_OR_MATH_MATH => add(Outparmath),
                             CMD_OR_MATH_ERR | _ => {
                                 peek = LEXERR;
                                 break;
@@ -2089,7 +2089,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     }
                     Some('{') => {
                         add(c);
-                        add(INBRACE);
+                        add(Inbrace);
                         bct += 1;
                         if in_brace_param == 0 {
                             in_brace_param = bct;
@@ -2106,8 +2106,8 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         // following char so getkeystring's
                         // standard `\n`/`\x`/`\u`/... decoding
                         // can fire.
-                        add(QSTRING);
-                        add(SNULL);
+                        add(Qstring);
+                        add(Snull);
                         loop {
                             let ch = hgetc();
                             match ch {
@@ -2117,7 +2117,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                                     match next {
                                         Some(n) => {
                                             if n == '\\' || n == '\'' {
-                                                add(BNULL);
+                                                add(Bnull);
                                             } else {
                                                 add('\\');
                                             }
@@ -2143,26 +2143,26 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         if unmatched != '\0' {
                             break;
                         }
-                        add(SNULL);
+                        add(Snull);
                     }
                     Some('"') => {
                         // $"..." localized string. Same shape as a
-                        // plain "..." but flagged via QSTRING+DNULL
+                        // plain "..." but flagged via Qstring+Dnull
                         // so post-lex translation can substitute.
-                        add(QSTRING);
-                        add(DNULL);
+                        add(Qstring);
+                        add(Dnull);
                         if dquote_parse('"', sub).is_err() {
                             peek = LEXERR;
                             break;
                         }
-                        add(DNULL);
+                        add(Dnull);
                     }
                     _ => {
                         if let Some(e) = e {
                             hungetc(e);
                         }
                         LEX_LEXSTOP.set(false);
-                        add(STRING_TOK);
+                        add(Stringg);
                     }
                 }
             }
@@ -2171,23 +2171,23 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 if in_brace_param == 0 {
                     brct += 1;
                 }
-                add(INBRACK);
+                add(Inbrack);
             }
 
             ']' => {
                 if in_brace_param == 0 && brct > 0 {
                     brct -= 1;
                 }
-                add(OUTBRACK);
+                add(Outbrack);
             }
 
             '(' => {
                 // lex.c:1078-1135 LX2_INPAR — when `(` appears inside
-                // a STRING_TOK and is immediately followed by `)`, the
+                // a Stringg and is immediately followed by `)`, the
                 // string terminates at the `(`. The `()` is then
                 // re-lexed as a separate INOUTPAR token. This handles
-                // function definitions: `name()` lexes as STRING_TOK `name`
-                // + INOUTPAR `()`, not STRING_TOK `name()`.
+                // function definitions: `name()` lexes as Stringg `name`
+                // + INOUTPAR `()`, not Stringg `name()`.
                 //
                 // Also (lex.c:1109-1112): under SHGLOB, a `(` followed
                 // by whitespace at the start of a command-position word
@@ -2200,7 +2200,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     }
                     LEX_LEXSTOP.set(false);
                     if e == Some(')') {
-                        // `name()` — terminate STRING_TOK at `(` so the
+                        // `name()` — terminate Stringg at `(` so the
                         // following `()` re-lexes as INOUTPAR. The
                         // loop's exit guard at line 2067 will
                         // `hungetc(c)` to push the `(` back; we only
@@ -2215,7 +2215,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 if in_brace_param == 0 {
                     pct += 1;
                 }
-                add(INPAR);
+                add(Inpar);
             }
 
             '{' => {
@@ -2230,7 +2230,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         in_brace_param = 0;
                     }
                     bct -= 1;
-                    add(OUTBRACE);
+                    add(Outbrace);
                 } else if bct > 0 {
                     // Closing a brace expansion like {a,b}
                     bct -= 1;
@@ -2254,12 +2254,12 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         break;
                     }
                     // >(...)
-                    add(OUTANG_PROC);
+                    add(OutangProc);
                     if skip_command_sub().is_err() {
                         peek = LEXERR;
                         break;
                     }
-                    add(OUTPAR);
+                    add(Outpar);
                 }
             }
 
@@ -2286,12 +2286,12 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         break;
                     }
                     // <(...)
-                    add(INANG);
+                    add(Inang);
                     if skip_command_sub().is_err() {
                         peek = LEXERR;
                         break;
                     }
-                    add(OUTPAR);
+                    add(Outpar);
                 }
             }
 
@@ -2301,18 +2301,18 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         // At start of token, check for =(...) process substitution
                         let e = hgetc();
                         if e == Some('(') {
-                            add(EQUALS);
+                            add(Equals);
                             if skip_command_sub().is_err() {
                                 peek = LEXERR;
                                 break;
                             }
-                            add(OUTPAR);
+                            add(Outpar);
                         } else {
                             if let Some(e) = e {
                                 hungetc(e);
                             }
                             LEX_LEXSTOP.set(false);
-                            add(EQUALS);
+                            add(Equals);
                         }
                     } else if peek != ENVSTRING
                         && (LEX_INCMDPOS.get() || LEX_INTYPESET.get())
@@ -2344,15 +2344,15 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             LEX_LEXSTOP.set(false);
                             peek = ENVSTRING;
                             intpos = 2;
-                            add(EQUALS);
+                            add(Equals);
                         } else {
-                            add(EQUALS);
+                            add(Equals);
                         }
                     } else {
-                        add(EQUALS);
+                        add(Equals);
                     }
                 } else {
-                    add(EQUALS);
+                    add(Equals);
                 }
             }
 
@@ -2367,7 +2367,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     }
                     break;
                 } else {
-                    add(BNULL);
+                    add(Bnull);
                     if let Some(next) = next {
                         add(next);
                     }
@@ -2376,7 +2376,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
 
             '\'' => {
                 // Single quoted string - everything literal until '
-                add(SNULL);
+                add(Snull);
                 loop {
                     let ch = hgetc();
                     match ch {
@@ -2393,12 +2393,12 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 if unmatched != '\0' {
                     break;
                 }
-                add(SNULL);
+                add(Snull);
             }
 
             '"' => {
                 // Double quoted string
-                add(DNULL);
+                add(Dnull);
                 if dquote_parse('"', sub).is_err() {
                     unmatched = '"';
                     if LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE == 0 {
@@ -2406,12 +2406,12 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     }
                     break;
                 }
-                add(DNULL);
+                add(Dnull);
             }
 
             '`' => {
                 // Backtick command substitution
-                add(TICK);
+                add(Tick);
                 loop {
                     let ch = hgetc();
                     match ch {
@@ -2421,7 +2421,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             match next {
                                 Some('\n') => continue, // Line continuation
                                 Some(c) if c == '`' || c == '\\' || c == '$' => {
-                                    add(BNULL);
+                                    add(Bnull);
                                     add(c);
                                 }
                                 Some(c) => {
@@ -2443,39 +2443,39 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 if unmatched != '\0' {
                     break;
                 }
-                add(TICK);
+                add(Tick);
             }
 
             '~' => {
-                add(TILDE);
+                add(Tilde);
             }
 
             '#' => {
-                add(POUND);
+                add(Pound);
             }
 
             '^' => {
-                add(HAT);
+                add(Hat);
             }
 
             '*' => {
-                add(STAR);
+                add(Star);
             }
 
             '?' => {
-                add(QUEST);
+                add(Quest);
             }
 
             ',' if bct > in_brace_param => {
-                add(COMMA);
+                add(Comma);
             }
 
             '-' => {
-                add(DASH);
+                add(Dash);
             }
 
             '!' if brct > 0 => {
-                add(BANG);
+                add(Bang);
             }
 
             // Terminators — but only when we're at the top level of
@@ -2535,7 +2535,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
 /// `if c.is_ascii_digit()` below — array index expressions like `arr[2]`
 /// are caught by the subscript handler, not here). And the first char
 /// must NOT be a zsh internal token byte — `$=foo` (where `$` becomes
-/// the STRING_TOK token 0x85) is parameter substitution with the `=` flag,
+/// the Stringg token 0x85) is parameter substitution with the `=` flag,
 /// NOT an envstring assignment.
 fn is_valid_assignment_target(s: &str) -> bool {
     let mut chars = s.chars().peekable();
@@ -2565,7 +2565,7 @@ fn is_valid_assignment_target(s: &str) -> bool {
     // Check identifier
     let mut has_ident = false;
     while let Some(&c) = chars.peek() {
-        if c == INBRACK || c == '[' {
+        if c == Inbrack || c == '[' {
             break;
         }
         if c == '+' {
@@ -2573,7 +2573,7 @@ fn is_valid_assignment_target(s: &str) -> bool {
             chars.next();
             return chars.peek().is_none() || chars.peek() == Some(&'=');
         }
-        if !is_ident(c) && c != STRING_TOK && !itok(c as u8) {
+        if !is_ident(c) && c != Stringg && !itok(c as u8) {
             return false;
         }
         has_ident = true;
@@ -2666,7 +2666,7 @@ fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
                                     || c == '}'
                                     || (c == '"' && sub))) =>
                     {
-                        add(BNULL);
+                        add(Bnull);
                         add(c);
                     }
                     Some(c) => {
@@ -2688,26 +2688,26 @@ fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
                 let next = hgetc();
                 match next {
                     Some('(') => {
-                        add(QSTRING);
+                        add(Qstring);
                         match cmd_or_math_sub() {
-                            CMD_OR_MATH_CMD => add(OUTPAR),
-                            CMD_OR_MATH_MATH => add(OUTPARMATH),
+                            CMD_OR_MATH_CMD => add(Outpar),
+                            CMD_OR_MATH_MATH => add(Outparmath),
                             CMD_OR_MATH_ERR | _ => return Err(()),
                         }
                     }
                     Some('[') => {
-                        add(STRING_TOK);
-                        add(INBRACK);
+                        add(Stringg);
+                        add(Inbrack);
                         dquote_parse(']', sub)?;
-                        add(OUTBRACK);
+                        add(Outbrack);
                     }
                     Some('{') => {
-                        add(QSTRING);
-                        add(INBRACE);
+                        add(Qstring);
+                        add(Inbrace);
                         bct += 1;
                     }
                     Some('$') => {
-                        add(QSTRING);
+                        add(Qstring);
                         add('$');
                     }
                     _ => {
@@ -2715,7 +2715,7 @@ fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
                             hungetc(next);
                         }
                         LEX_LEXSTOP.set(false);
-                        add(QSTRING);
+                        add(Qstring);
                     }
                 }
             }
@@ -2724,13 +2724,13 @@ fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
                 if intick || bct == 0 {
                     add(c);
                 } else {
-                    add(OUTBRACE);
+                    add(Outbrace);
                     bct -= 1;
                 }
             }
 
             '`' => {
-                add(QTICK);
+                add(Qtick);
                 intick = !intick;
             }
 
@@ -2772,9 +2772,9 @@ fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
                 if intick || (endchar != '"' && bct == 0) {
                     add(c);
                 } else if bct > 0 {
-                    add(DNULL);
+                    add(Dnull);
                     dquote_parse('"', sub)?;
-                    add(DNULL);
+                    add(Dnull);
                 } else {
                     return Err(());
                 }
@@ -2800,7 +2800,7 @@ fn cmd_or_math() -> i32 {
     // Per lex.c:498-518 — `cmd_or_math` calls `dquote_parse(')')`
     // which fills lexbuf with ONLY the inner expression, then checks
     // for the closing `)`. The surrounding `((` / `))` are NOT added
-    // to lexbuf. zshrs previously added INPAR + '(' before dquote and
+    // to lexbuf. zshrs previously added Inpar + '(' before dquote and
     // ')' after, polluting DINPAR's tokstr with the literal parens.
     // Removed to match C exactly.
     if dquote_parse(')', false).is_err() {
@@ -2889,7 +2889,7 @@ fn cmd_or_math_sub() -> i32 {
         if c == Some('(') {
             // Might be $((...))
             let lexpos = LEX_LEXBUF.with_borrow(|b| b.buf_len());
-            add(INPAR);
+            add(Inpar);
             add('(');
 
             if dquote_parse(')', false).is_ok() {
@@ -2944,7 +2944,7 @@ fn skip_command_sub() -> Result<(), ()> {
     const MAX_ITERATIONS: usize = 100_000;
     let mut iterations = 0;
 
-    add(INPAR);
+    add(Inpar);
 
     loop {
         iterations += 1;
@@ -3175,7 +3175,7 @@ pub fn register_heredoc(terminator: String, strip_tabs: bool) {
 
 /// Check for reserved word — mirrors lex.c:2002-2015 in `exalias`,
 /// but reachable from the bare `zshlex` path (without going
-/// through `exalias`'s alias-expansion first). Promotes STRING_TOK
+/// through `exalias`'s alias-expansion first). Promotes Stringg
 /// tokens to keyword tokens when:
 ///   - incmdpos is set (or text is `}` ending a brace block)
 ///   - text is `]]` and we're inside `[[ ]]` (incond > 0)
@@ -3282,7 +3282,7 @@ pub fn isnumglob(input: &str, pos: usize) -> bool {
 ///
 /// zshrs port: the C version drives the lexer's dquote_parse method
 /// against the input string. zshrs's standalone walker produces the
-/// same BNULL/QSTRING/QTICK token markers without re-entering the
+/// same Bnull/Qstring/Qtick token markers without re-entering the
 /// lexer — same output for typical bodies. Documented divergence:
 /// nested cmd-sub `$(...)` and arith `$((...))` aren't lexed
 /// recursively; the runtime handles them at expansion time.
@@ -3321,7 +3321,7 @@ fn parsestr_inner(s: &str) -> Result<String, String> {
                     let next = chars[i];
                     match next {
                         '$' | '\\' | '`' | '"' | '\n' => {
-                            result.push(BNULL);
+                            result.push(Bnull);
                             result.push(next);
                         }
                         _ => {
@@ -3334,20 +3334,20 @@ fn parsestr_inner(s: &str) -> Result<String, String> {
                 }
             }
             '$' => {
-                result.push(QSTRING);
+                result.push(Qstring);
                 if i + 1 < chars.len() {
                     let next = chars[i + 1];
                     if next == '{' {
-                        result.push(INBRACE);
+                        result.push(Inbrace);
                         i += 1;
                     } else if next == '(' {
-                        result.push(INPAR);
+                        result.push(Inpar);
                         i += 1;
                     }
                 }
             }
             '`' => {
-                result.push(QTICK);
+                result.push(Qtick);
             }
             _ => {
                 result.push(c);
@@ -3445,7 +3445,7 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
 /// zsh's version sets `noaliases = 1` + `lexflags = 0` + uses
 /// zcontext_save/inpush/strinbeg → dquote_parse('\0', 1) →
 /// strinend/inpop/zcontext_restore. zshrs's standalone walker
-/// produces the same BNULL/SNULL/DNULL/INPAR/INBRACK markers
+/// produces the same Bnull/Snull/Dnull/Inpar/Inbrack markers
 /// without re-entering the lexer.
 ///
 /// zshrs port note: the C source returns int (0=ok, char value =
@@ -3466,63 +3466,63 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
         let c = chars[i];
         match c {
             '\\' => {
-                result.push(BNULL);
+                result.push(Bnull);
                 i += 1;
                 if i < chars.len() {
                     result.push(chars[i]);
                 }
             }
             '\'' => {
-                result.push(SNULL);
+                result.push(Snull);
                 i += 1;
                 while i < chars.len() && chars[i] != '\'' {
                     result.push(chars[i]);
                     i += 1;
                 }
-                result.push(SNULL);
+                result.push(Snull);
             }
             '"' => {
-                result.push(DNULL);
+                result.push(Dnull);
                 i += 1;
                 while i < chars.len() && chars[i] != '"' {
                     if chars[i] == '\\' && i + 1 < chars.len() {
-                        result.push(BNULL);
+                        result.push(Bnull);
                         i += 1;
                         result.push(chars[i]);
                     } else if chars[i] == '$' {
-                        result.push(QSTRING);
+                        result.push(Qstring);
                     } else {
                         result.push(chars[i]);
                     }
                     i += 1;
                 }
-                result.push(DNULL);
+                result.push(Dnull);
             }
             '$' => {
-                result.push(STRING_TOK);
+                result.push(Stringg);
                 if i + 1 < chars.len() {
                     match chars[i + 1] {
                         '{' => {
-                            result.push(INBRACE);
+                            result.push(Inbrace);
                             i += 1;
                         }
                         '(' => {
-                            result.push(INPAR);
+                            result.push(Inpar);
                             i += 1;
                         }
                         _ => {}
                     }
                 }
             }
-            '*' => result.push(STAR),
-            '?' => result.push(QUEST),
-            '[' => result.push(INBRACK),
-            ']' => result.push(OUTBRACK),
-            '{' => result.push(INBRACE),
-            '}' => result.push(OUTBRACE),
-            '~' => result.push(TILDE),
-            '#' => result.push(POUND),
-            '^' => result.push(HAT),
+            '*' => result.push(Star),
+            '?' => result.push(Quest),
+            '[' => result.push(Inbrack),
+            ']' => result.push(Outbrack),
+            '{' => result.push(Inbrace),
+            '}' => result.push(Outbrace),
+            '~' => result.push(Tilde),
+            '#' => result.push(Pound),
+            '^' => result.push(Hat),
             _ => result.push(c),
         }
         i += 1;
@@ -3534,7 +3534,7 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
 /// Untokenize a string - convert tokenized chars back to original
 ///
 /// Port of untokenize(char *s) from exec.c (but used by lexer too)
-/// Like `untokenize`, but maps SNULL → `'` and DNULL → `"` instead of
+/// Like `untokenize`, but maps Snull → `'` and Dnull → `"` instead of
 /// stripping them. Used by callers that need the source form including
 /// quoting (e.g. arithmetic-substitution detection in compile_zsh).
 pub fn untokenize_preserve_quotes(s: &str) -> String {
@@ -3543,34 +3543,34 @@ pub fn untokenize_preserve_quotes(s: &str) -> String {
         let cu = c as u32;
         if (0x83..=0x9f).contains(&cu) {
             match c {
-                c if c == POUND => result.push('#'),
-                c if c == STRING_TOK => result.push('$'),
-                c if c == HAT => result.push('^'),
-                c if c == STAR => result.push('*'),
-                c if c == INPAR => result.push('('),
-                c if c == OUTPAR => result.push(')'),
-                c if c == INPARMATH => result.push('('),
-                c if c == OUTPARMATH => result.push(')'),
-                c if c == QSTRING => result.push('$'),
-                c if c == EQUALS => result.push('='),
-                c if c == BAR => result.push('|'),
-                c if c == INBRACE => result.push('{'),
-                c if c == OUTBRACE => result.push('}'),
-                c if c == INBRACK => result.push('['),
-                c if c == OUTBRACK => result.push(']'),
-                c if c == TICK => result.push('`'),
-                c if c == INANG => result.push('<'),
-                c if c == OUTANG => result.push('>'),
-                c if c == OUTANG_PROC => result.push('>'),
-                c if c == QUEST => result.push('?'),
-                c if c == TILDE => result.push('~'),
-                c if c == QTICK => result.push('`'),
-                c if c == COMMA => result.push(','),
-                c if c == DASH => result.push('-'),
-                c if c == BANG => result.push('!'),
-                c if c == SNULL => result.push('\''),
-                c if c == DNULL => result.push('"'),
-                c if c == BNULL => result.push('\\'),
+                c if c == Pound => result.push('#'),
+                c if c == Stringg => result.push('$'),
+                c if c == Hat => result.push('^'),
+                c if c == Star => result.push('*'),
+                c if c == Inpar => result.push('('),
+                c if c == Outpar => result.push(')'),
+                c if c == Inparmath => result.push('('),
+                c if c == Outparmath => result.push(')'),
+                c if c == Qstring => result.push('$'),
+                c if c == Equals => result.push('='),
+                c if c == Bar => result.push('|'),
+                c if c == Inbrace => result.push('{'),
+                c if c == Outbrace => result.push('}'),
+                c if c == Inbrack => result.push('['),
+                c if c == Outbrack => result.push(']'),
+                c if c == Tick => result.push('`'),
+                c if c == Inang => result.push('<'),
+                c if c == Outang => result.push('>'),
+                c if c == OutangProc => result.push('>'),
+                c if c == Quest => result.push('?'),
+                c if c == Tilde => result.push('~'),
+                c if c == Qtick => result.push('`'),
+                c if c == Comma => result.push(','),
+                c if c == Dash => result.push('-'),
+                c if c == Bang => result.push('!'),
+                c if c == Snull => result.push('\''),
+                c if c == Dnull => result.push('"'),
+                c if c == Bnull => result.push('\\'),
                 _ => {
                     let idx = c as usize;
                     if idx < ztokens.len() {
@@ -3601,10 +3601,10 @@ fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
     let mut i = start;
     while i < chars.len() {
         let c = chars[i];
-        if c == SNULL {
+        if c == Snull {
             return (out, i);
         }
-        if c == BNULL {
+        if c == Bnull {
             // Bnull marks a user-literal `\\` or `\'` per
             // Src/lex.c:1303-1306. The next char is the literal.
             i += 1;
@@ -3742,7 +3742,7 @@ pub fn untokenize(s: &str) -> String {
     while i < chars.len() {
         let c = chars[i];
         // Token chars live in zsh's META range (0x83 = META through 0x9f =
-        // BNULL). Anything in that range needs un-mapping before display
+        // Bnull). Anything in that range needs un-mapping before display
         // or downstream consumption. The original `< 32` test was wrong —
         // none of zsh's tokens land in that range.
         let cu = c as u32;
@@ -3757,7 +3757,7 @@ pub fn untokenize(s: &str) -> String {
             // decoding inline here. Result: the entire `$'...'`
             // region is replaced by its decoded content with no
             // `$`/`'`/marker remnants.
-            if c == QSTRING && i + 1 < chars.len() && chars[i + 1] == SNULL {
+            if c == Qstring && i + 1 < chars.len() && chars[i + 1] == Snull {
                 let (decoded, end) = getkeystring_dollar_quote(&chars, i + 2);
                 result.push_str(&decoded);
                 // `end` points at the closing `Snull` (or end of
@@ -3767,32 +3767,32 @@ pub fn untokenize(s: &str) -> String {
             }
             // Convert token back to original character
             match c {
-                c if c == POUND => result.push('#'),
-                c if c == STRING_TOK => result.push('$'),
-                c if c == HAT => result.push('^'),
-                c if c == STAR => result.push('*'),
-                c if c == INPAR => result.push('('),
-                c if c == OUTPAR => result.push(')'),
-                c if c == INPARMATH => result.push('('),
-                c if c == OUTPARMATH => result.push(')'),
-                c if c == QSTRING => result.push('$'),
-                c if c == EQUALS => result.push('='),
-                c if c == BAR => result.push('|'),
-                c if c == INBRACE => result.push('{'),
-                c if c == OUTBRACE => result.push('}'),
-                c if c == INBRACK => result.push('['),
-                c if c == OUTBRACK => result.push(']'),
-                c if c == TICK => result.push('`'),
-                c if c == INANG => result.push('<'),
-                c if c == OUTANG => result.push('>'),
-                c if c == OUTANG_PROC => result.push('>'),
-                c if c == QUEST => result.push('?'),
-                c if c == TILDE => result.push('~'),
-                c if c == QTICK => result.push('`'),
-                c if c == COMMA => result.push(','),
-                c if c == DASH => result.push('-'),
-                c if c == BANG => result.push('!'),
-                c if c == SNULL || c == DNULL || c == BNULL => {
+                c if c == Pound => result.push('#'),
+                c if c == Stringg => result.push('$'),
+                c if c == Hat => result.push('^'),
+                c if c == Star => result.push('*'),
+                c if c == Inpar => result.push('('),
+                c if c == Outpar => result.push(')'),
+                c if c == Inparmath => result.push('('),
+                c if c == Outparmath => result.push(')'),
+                c if c == Qstring => result.push('$'),
+                c if c == Equals => result.push('='),
+                c if c == Bar => result.push('|'),
+                c if c == Inbrace => result.push('{'),
+                c if c == Outbrace => result.push('}'),
+                c if c == Inbrack => result.push('['),
+                c if c == Outbrack => result.push(']'),
+                c if c == Tick => result.push('`'),
+                c if c == Inang => result.push('<'),
+                c if c == Outang => result.push('>'),
+                c if c == OutangProc => result.push('>'),
+                c if c == Quest => result.push('?'),
+                c if c == Tilde => result.push('~'),
+                c if c == Qtick => result.push('`'),
+                c if c == Comma => result.push(','),
+                c if c == Dash => result.push('-'),
+                c if c == Bang => result.push('!'),
+                c if c == Snull || c == Dnull || c == Bnull => {
                     // Null markers - skip
                 }
                 _ => {

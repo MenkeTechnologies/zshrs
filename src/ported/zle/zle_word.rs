@@ -832,10 +832,10 @@ mod tests {
     /// Verifies `downcaseword` mutates next word in place (c:562-569).
     #[test]
     fn downcaseword_lowercases_next_word() {
-        let mut z = line("FOO BAR");
+        let mut z = line("FOO Bar");
         downcaseword(&mut z, &[]);
         let s: String = z.zleline.iter().collect();
-        assert_eq!(s, "foo BAR");
+        assert_eq!(s, "foo Bar");
     }
 
     /// Verifies `capitalizeword` upcases first letter, lowercases

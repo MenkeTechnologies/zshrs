@@ -103,19 +103,19 @@ fn errflag_set_error() {
 // `pub mod tokens { … }` — DELETED per user directive. Was a
 // Rust-only duplicate of the canonical token table in
 // `crate::ported::zsh_h` (port of `Src/zsh.h:159-224`). Two names
-// drifted: local `STRING` → canonical `STRING_TOK`, local
-// `OUTANGPROC` → canonical `OUTANG_PROC`. All other constants
+// drifted: local `STRING` → canonical `Stringg`, local
+// `OUTANGPROC` → canonical `OutangProc`. All other constants
 // matched bit-for-bit but living in two places invited future drift.
 use crate::ported::zsh_h::{
-    BNULL, DNULL, EQUALS, INANG, INBRACE, INBRACK, INPAR, INPARMATH, MARKER,
-    NULARG, OUTANG, OUTANG_PROC, OUTBRACE, OUTBRACK, OUTPAR, OUTPARMATH, POUND,
-    QSTRING, QTICK, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS, SNULL,
-    STRING_TOK, TICK,
+    Bnull, Dnull, Equals, Inang, Inbrace, Inbrack, Inpar, Inparmath, Marker,
+    Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath, Pound,
+    Qstring, Qtick, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS, Snull,
+    Stringg, Tick,
 }; // c:zsh.h:159-224 + scan flags c:1953-1973
 // Aliases for the two names that diverged in the local module.
-// Cite c:zsh.h:160 (`STRING`) and c:zsh.h:177 (`OUTANG`+proc-sub).
-const STRING: char = STRING_TOK; // c:zsh.h:160
-const OUTANGPROC: char = OUTANG_PROC; // c:zsh.h:177
+// Cite c:zsh.h:160 (`STRING`) and c:zsh.h:177 (`Outang`+proc-sub).
+const STRING: char = Stringg; // c:zsh.h:160
+const OUTANGPROC: char = OutangProc; // c:zsh.h:177
 
 /// Port of `LF_ARRAY` from `Src/subst.c:33`.
 /// `#define LF_ARRAY 1`. Linked-list flag the substitution-result
@@ -588,7 +588,7 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
 
     // C: `start[0] == Inbrack` — must lead with `[` (or token).
     if chars.is_empty()                                     // c:54
-        || (chars[0] != INBRACK && chars[0] != '[')
+        || (chars[0] != Inbrack && chars[0] != '[')
     // c:54
     {
         return None; // c:54
@@ -598,7 +598,7 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
     let mut end_pos: Option<usize> = None; // c:55
     for (i, &c) in chars.iter().enumerate().skip(1) {
         // c:55
-        if c == OUTBRACK || c == ']' {
+        if c == Outbrack || c == ']' {
             // c:55
             end_pos = Some(i); // c:55
             break; // c:55
@@ -613,10 +613,10 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
         return None; // c:57
     }
     let is_append = chars.get(end_pos + 1) == Some(&'+')    // c:58
-        && (chars.get(end_pos + 2) == Some(&EQUALS)
+        && (chars.get(end_pos + 2) == Some(&Equals)
             || chars.get(end_pos + 2) == Some(&'='));
     let is_assign = !is_append                              // c:57
-        && (chars.get(end_pos + 1) == Some(&EQUALS)
+        && (chars.get(end_pos + 1) == Some(&Equals)
             || chars.get(end_pos + 1) == Some(&'='));
     if !is_assign && !is_append {
         // c:60
@@ -638,10 +638,10 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
 
     let marker = if is_append {
         // c:67
-        format!("{}+", MARKER) // c:67
+        format!("{}+", Marker) // c:67
     } else {
         // c:71
-        MARKER.to_string() // c:71
+        Marker.to_string() // c:71
     };
 
     list.setdata(node_idx, marker); // c:72
@@ -916,7 +916,7 @@ fn stringsubstquote(strstart: &str, pstrdpos: usize) -> (String, usize) {
     };
 
     // C: empty `$''` special case — `strret = dupstring(nulstring);`
-    // returns the NULARG sentinel string so the empty bslashquote doesn't
+    // returns the Nularg sentinel string so the empty bslashquote doesn't
     // get elided by stringsubst's word-walk.
     let strret = if strsub.is_empty() && prefix.is_empty() && suffix.is_empty() {
         // c:226
@@ -980,8 +980,8 @@ fn stringsubst(
         let c = chars[pos]; // c:237
 
         // Check for <(...), >(...), =(...)
-        if (c == INANG || c == OUTANGPROC || (pos == 0 && c == EQUALS)) // c:237
-            && chars.get(pos + 1) == Some(&INPAR)
+        if (c == Inang || c == OUTANGPROC || (pos == 0 && c == Equals)) // c:237
+            && chars.get(pos + 1) == Some(&Inpar)
         // c:237
         {
             // c:237
@@ -999,18 +999,18 @@ fn stringsubst(
             } // c:237
               // Walk the matching close paren — depth-tracked so
               // nested `<(echo $(...))` skips correctly. Includes the
-              // INANG/OUTANGPROC/EQUALS marker char itself.
+              // Inang/OUTANGPROC/Equals marker char itself.
             let start = pos; // c:237
-            pos += 2; // c:237 (skip marker + INPAR)
+            pos += 2; // c:237 (skip marker + Inpar)
             let mut depth = 1_i32; // c:237
             while pos < chars.len() && depth > 0 {
                 // c:237
                 let ch = chars[pos]; // c:237
-                if ch == INPAR {
+                if ch == Inpar {
                     depth += 1;
                 }
                 // c:237
-                else if ch == OUTPAR {
+                else if ch == Outpar {
                     depth -= 1;
                 } // c:237
                 pos += 1; // c:237
@@ -1056,7 +1056,7 @@ fn stringsubst(
         let c = chars[pos]; // c:237
 
         // Lexer-emitted single-bslashquote marker (`\u{9d}`, parse/src/tokens.rs
-        // SNULL) encloses literal `'…'` regions. Inside, no parameter /
+        // Snull) encloses literal `'…'` regions. Inside, no parameter /
         // command substitution / glob fires — content is verbatim.
         // Strip both markers and leave the body intact. Without this, a
         // `${var/pat/'~'$match[1]}` replacement yielded
@@ -1064,7 +1064,7 @@ fn stringsubst(
         // string).
         if c == '\u{9d}' {
             // c:237
-            // Find matching close-SNULL.
+            // Find matching close-Snull.
             let mut end = pos + 1; // c:237
             while end < chars.len() && chars[end] != '\u{9d}' {
                 // c:237
@@ -1085,9 +1085,9 @@ fn stringsubst(
             list.setdata(node_idx, str3.clone()); // c:237
             continue; // c:237
         } // c:237
-          // Lexer-emitted double-bslashquote marker (`\u{9e}`, DNULL) — strip;
+          // Lexer-emitted double-bslashquote marker (`\u{9e}`, Dnull) — strip;
           // contents inside DQ already had `$`/`${…}` tokenized to STRING
-          // / QSTRING by the lexer, so the surrounding pass picks them
+          // / Qstring by the lexer, so the surrounding pass picks them
           // up. The markers themselves are noise for substitution.
         if c == '\u{9e}' {
             // c:237
@@ -1103,7 +1103,7 @@ fn stringsubst(
             list.setdata(node_idx, str3.clone()); // c:237
             continue; // c:237
         } // c:237
-          // Lexer BNULL (`\u{9f}`) escapes the next char as literal.
+          // Lexer Bnull (`\u{9f}`) escapes the next char as literal.
           // Drop the marker, keep the next char verbatim, and skip past
           // it without further processing this iteration.
         if c == '\u{9f}' && pos + 1 < chars.len() {
@@ -1155,7 +1155,7 @@ fn stringsubst(
             continue; // c:237
         } // c:237
 
-        let qt = c == QSTRING; // c:237
+        let qt = c == Qstring; // c:237
                                // C zsh's stringsubst gates on the lexer-tokenized `String` /
                                // `Qstring` markers (Src/subst.c:265 in the case-arms within
                                // the per-char loop). zshrs's input strings sometimes carry
@@ -1169,8 +1169,8 @@ fn stringsubst(
         if qt || c == STRING || c == '$' {
             // c:237
             let next_c = chars.get(pos + 1).copied(); // c:237
-                                                      // Accept either tokenized `INPAR` / `INPARMATH` / `INBRACK`
-                                                      // / `INBRACE` / `SNULL` OR their literal `(` / `[` / `{`
+                                                      // Accept either tokenized `Inpar` / `Inparmath` / `Inbrack`
+                                                      // / `Inbrace` / `Snull` OR their literal `(` / `[` / `{`
                                                       // / `'` counterparts.
             let next_is = |tok: char, lit: char| {
                 // c:237
@@ -1180,12 +1180,12 @@ fn stringsubst(
             // Detect `$((expr))` arith form FIRST — it's
             // `$(` + `(expr)` + `)` so naive cmd-subst dispatch
             // would try to execute `((expr))` as a command. Either
-            // the lexer-tokenized INPARMATH or the literal `((`
+            // the lexer-tokenized Inparmath or the literal `((`
             // sequence routes through the arith path. Direct port
-            // of subst.c's INPARMATH arm at c:237 (see C lines
+            // of subst.c's Inparmath arm at c:237 (see C lines
             // around 320-360 which check `*++s == Inpar` after
-            // `*s == String`).
-            if next_c == Some(INPARMATH)                    // c:237
+            // `*s == Stringg`).
+            if next_c == Some(Inparmath)                    // c:237
                 || (next_c == Some('(') && chars.get(pos + 2).copied() == Some('('))
             // c:237
             {
@@ -1199,11 +1199,11 @@ fn stringsubst(
                 while p < chars.len() {
                     // c:237
                     let ch = chars[p]; // c:237
-                    if ch == '(' || ch == INPAR {
+                    if ch == '(' || ch == Inpar {
                         depth += 1;
                     }
                     // c:237
-                    else if ch == ')' || ch == OUTPAR {
+                    else if ch == ')' || ch == Outpar {
                         // c:237
                         depth -= 1; // c:237
                         if depth == 0 {
@@ -1236,7 +1236,7 @@ fn stringsubst(
                 } // c:237
             } // c:237
 
-            if next_is(INPAR, '(') || next_is(INPARMATH, '\0') {
+            if next_is(Inpar, '(') || next_is(Inparmath, '\0') {
                 // c:237
                 if !qt {
                     // c:237
@@ -1255,11 +1255,11 @@ fn stringsubst(
                 while end < chars.len() {
                     // c:237
                     let ch = chars[end]; // c:237
-                    if ch == '(' || ch == INPAR {
+                    if ch == '(' || ch == Inpar {
                         depth += 1;
                     }
                     // c:237
-                    else if ch == ')' || ch == OUTPAR {
+                    else if ch == ')' || ch == Outpar {
                         // c:237
                         depth -= 1; // c:237
                         if depth == 0 {
@@ -1300,18 +1300,18 @@ fn stringsubst(
                     pos += 1; // c:237
                 } // c:237
                 continue; // c:237
-            } else if next_is(INBRACK, '[') {
+            } else if next_is(Inbrack, '[') {
                 // c:237
                 // $[...] arithmetic
                 // $[...] arith substitution. Walk to matching ]
                 // tracking depth so $[$[a+b]+c] nests correctly.
                 let start = pos + 2; // c:237
-                let open = if next_c == Some(INBRACK) {
-                    INBRACK
+                let open = if next_c == Some(Inbrack) {
+                    Inbrack
                 } else {
                     '['
                 }; // c:237
-                let close = if open == INBRACK { OUTBRACK } else { ']' }; // c:237
+                let close = if open == Inbrack { Outbrack } else { ']' }; // c:237
                 let chars: Vec<char> = str3.chars().collect(); // c:237
                 let mut depth = 1_i32; // c:237
                 let mut end_off: Option<usize> = None; // c:237
@@ -1360,10 +1360,10 @@ fn stringsubst(
                     zerr("closing bracket missing"); // c:237
                     return None; // c:237
                 } // c:237
-            } else if next_c == Some(SNULL) || next_c == Some('\'') {
+            } else if next_c == Some(Snull) || next_c == Some('\'') {
                 // c:237
                 // $'...' ANSI-C quoting. Accept either the lexer-
-                // tokenized SNULL marker OR the raw `'` — recursive
+                // tokenized Snull marker OR the raw `'` — recursive
                 // operator-operand paths (e.g. multsub on a `:=`
                 // operand) hand us the literal text without prior
                 // tokenization, so dispatch on the literal too.
@@ -1444,11 +1444,11 @@ fn stringsubst(
         // Backtick command substitution `cmd` — same engine as
         // `$(cmd)` per subst.c:237. Find the matching backtick,
         // capture cmd text, delegate to run_command_substitution.
-        // The bridge's BUILTIN_EXPAND_TEXT untokenizes TICK/QTICK
+        // The bridge's BUILTIN_EXPAND_TEXT untokenizes Tick/Qtick
         // back to a raw `` ` `` before calling singsub, so accept
         // any of the three forms as the open/close delimiter.
-        let qt = c == QTICK; // c:237
-        if qt || c == TICK || c == '`' {
+        let qt = c == Qtick; // c:237
+        if qt || c == Tick || c == '`' {
             // c:237
             if !qt {
                 // c:237
@@ -1458,8 +1458,8 @@ fn stringsubst(
             let cmd_start = pos + 1; // c:237
             let mut end = cmd_start; // c:237
             while end < chars.len()
-                && chars[end] != TICK
-                && chars[end] != QTICK
+                && chars[end] != Tick
+                && chars[end] != Qtick
                 && chars[end] != '`'
             {
                 if chars[end] == '\\' && end + 1 < chars.len() {
@@ -1491,7 +1491,7 @@ fn stringsubst(
         } // c:237
 
         // Assignment context
-        if asssub && (c == '=' || c == EQUALS) && pos > 0 { // c:237
+        if asssub && (c == '=' || c == Equals) && pos > 0 { // c:237
              // We're in assignment context, apply SINGLE flag
              // (handled by caller typically)
         } // c:237
@@ -1535,7 +1535,7 @@ pub fn paramsubst(
     // length, :- :+ := :? defaults, # ## % %% strip, / // replace
     // with anchored # / % variants, :N:M slice, plus a permissive
     // (...)-flag prefix swallow.
-    if c == INBRACE || c == '{' {
+    if c == Inbrace || c == '{' {
         // c:1885
         pos += 1; // c:1885 (skip {)
                   // Find matching `}` — track brace depth for nested ${...}
@@ -1544,11 +1544,11 @@ pub fn paramsubst(
         while end < chars.len() && depth > 0 {
             // c:1885
             let ch = chars[end]; // c:1885
-            if ch == '{' || ch == INBRACE {
+            if ch == '{' || ch == Inbrace {
                 depth += 1;
             }
             // c:1885
-            else if ch == '}' || ch == OUTBRACE {
+            else if ch == '}' || ch == Outbrace {
                 // c:1885
                 depth -= 1; // c:1885
                 if depth == 0 {
@@ -2156,9 +2156,9 @@ pub fn paramsubst(
                         true
                     }
                     Some(':') if after_next == Some('-') => true,
-                    Some(ch) if ch == STRING || ch == QSTRING => matches!(
+                    Some(ch) if ch == STRING || ch == Qstring => matches!(
                         body_chars.get(idx + 2).copied(),
-                        Some(b) if b == INBRACE || b == '{' || b == INPAR || b == '('
+                        Some(b) if b == Inbrace || b == '{' || b == Inpar || b == '('
                     ),
                     Some('#') if after_next.is_none() => true,
                     _ => false,
@@ -2190,10 +2190,10 @@ pub fn paramsubst(
                     || nxt == '_'
                     || matches!(nxt, '@' | '*' | '#' | '?')
                     || (aspar
-                        && (nxt == STRING || nxt == QSTRING)
+                        && (nxt == STRING || nxt == Qstring)
                         && matches!(
                             body_chars.get(idx + 2).copied(),
-                            Some(b) if b == INBRACE || b == '{' || b == INPAR || b == '('
+                            Some(b) if b == Inbrace || b == '{' || b == Inpar || b == '('
                         ));
                 if ok {
                     chkset = true;
@@ -2204,7 +2204,7 @@ pub fn paramsubst(
                 errflag_set_error();
                 return (String::new(), new_pos, vec![]);
             }
-            if matches!(c, SNULL | DNULL | STRING | QSTRING) {
+            if matches!(c, Snull | Dnull | STRING | Qstring) {
                 idx += 1;
                 continue;
             }
@@ -2234,7 +2234,7 @@ pub fn paramsubst(
             // c:2649
             // Find matching close bslashquote (depth-tracked over $(...)
             // and ${...} so nested DQs don't fool us). Direct port
-            // of zsh's QSTRING/STRING dual-pass at subst.c:282.
+            // of zsh's Qstring/STRING dual-pass at subst.c:282.
             let mut p = idx + 1; // c:2649
             let mut paren_depth = 0_i32; // c:2649
             let mut brace_depth = 0_i32; // c:2649
@@ -3246,7 +3246,7 @@ pub fn paramsubst(
                 }
             } else if let Some(rep) = r.strip_prefix("//") {
                 // c:3870 (global replace)
-                // Same NUL/BNULL-aware split as before. NUL/BNULL +
+                // Same NUL/Bnull-aware split as before. NUL/Bnull +
                 // X → `\X` for the pat side (glob meta literal).
                 // `\` + `/` → `/` (literal `/`, not separator).
                 // Direct port of Src/subst.c:3884.
@@ -3283,7 +3283,7 @@ pub fn paramsubst(
                 // — tilde / file expansion is suppressed in the
                 // replacement (so `\~` lands as literal `~`, not
                 // `$HOME`). Same `\X` → `X` strip emulates C's
-                // untokenize on the BNULL→`\` form the bridge upstream
+                // untokenize on the Bnull→`\` form the bridge upstream
                 // produces.
                 let repl = {
                     let saved_skip = SKIP_FILESUB.with(|c| c.get());
@@ -3438,18 +3438,18 @@ pub fn paramsubst(
                 };
                 let (raw_pat, raw_repl) = split_unescaped(rep);
                 // Pattern: keep \X for glob meta literals (untokenize
-                // drops BNULL but pat still carries `\X` from the
+                // drops Bnull but pat still carries `\X` from the
                 // split-walk above for the "match this literal X"
                 // form).
                 let pat = singsub(&raw_pat);
                 // Replacement: per Src/glob.c::compgetmatch:2687-2688,
                 // C runs `singsub(replstrp); untokenize(*replstrp);`.
-                // The C untokenize drops BNULL markers (the lexer's
+                // The C untokenize drops Bnull markers (the lexer's
                 // form for `\X` escapes). zshrs's bridge upstream
-                // already untokenized BNULL → literal `\`, so the
+                // already untokenized Bnull → literal `\`, so the
                 // `\X` arrives here as raw chars. Strip a literal
                 // backslash before each non-`\` char to mirror the C
-                // BNULL-drop semantics (kept as a separate strip pass
+                // Bnull-drop semantics (kept as a separate strip pass
                 // so the existing untokenize call still handles any
                 // surviving meta-tokens).
                 let repl = {
@@ -5596,7 +5596,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
     }
 
     // `=cmd` — PATH lookup via equalsubstr. C:
-    // `if (*str == Equals && isset(EQUALS) && str[1] && str[1] != Inpar)`.
+    // `if (*str == Equals && isset(Equals) && str[1] && str[1] != Inpar)`.
     if (first == '=' || first == '\u{86}'/* Equals */) && chars.len() > 1 && chars[1] != '\u{85}'
     /* Inpar */
     {
@@ -5739,7 +5739,7 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     // positional-count (`$#`) followed by literal `NAME`, which mangles
     // `$#parts` to `0parts`. zsh's parser binds `$#NAME` as length-of
     // (parameter-name length form) when NAME is an identifier. Direct
-    // port of zsh's `prefork()` BNULL-aware `$#` arm — Src/subst.c
+    // port of zsh's `prefork()` Bnull-aware `$#` arm — Src/subst.c
     // around line 1860 dispatches via the param-name lookahead before
     // the math evaluator sees the expression.
     let expr = {
@@ -6636,8 +6636,8 @@ pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {                       // 
 /// The C body:
 ///   1. `*sp = s = dupstring(*sp);`           — clone for in-place mutation
 ///   2. parsestr / parsestrnoerr depending on `err` flag — fails → return 1
-///   3. If !single, walk buffer: outside DNULL (`"`) regions convert
-///      `Qstring` → `String` and `Qtick` → `Tick`. DNULL toggles qt.
+///   3. If !single, walk buffer: outside Dnull (`"`) regions convert
+///      `Qstring` → `String` and `Qtick` → `Tick`. Dnull toggles qt.
 /// Port of `subst_parse_str(char **sp, int single, int err)` from `Src/subst.c:1460`.
 pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> { // c:1460
     // c:1460
@@ -6658,26 +6658,26 @@ pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> { //
         let mut qt = false; // c:1470
                             // C constant references — these are the token bytes the
                             // lexer emits. Authoritative values from src/ported/subst.rs
-                            // tokens module: STRING=\u{81}, QSTRING=\u{82},
-                            // TICK=\u{83}, QTICK=\u{84}, DNULL=\u{97}.
+                            // tokens module: STRING=\u{81}, Qstring=\u{82},
+                            // Tick=\u{83}, Qtick=\u{84}, Dnull=\u{97}.
         for c in chars.iter_mut() {
             // c:1472
             if !qt {
                 // c:1473
                 if *c == '\u{82}'
-                /* QSTRING */
+                /* Qstring */
                 {
                     // c:1474
                     *c = '\u{81}' /* STRING */; // c:1475
                 } else if *c == '\u{84}'
-                /* QTICK */
+                /* Qtick */
                 {
                     // c:1476
-                    *c = '\u{83}' /* TICK */; // c:1477
+                    *c = '\u{83}' /* Tick */; // c:1477
                 }
             }
             if *c == '\u{97}'
-            /* DNULL */
+            /* Dnull */
             {
                 // c:1480
                 qt = !qt; // c:1481
@@ -6956,10 +6956,10 @@ pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {                 // 
         '[' => ']',          // c:1348
         '{' => '}',          // c:1348
         '<' => '>',          // c:1348
-        INPAR => OUTPAR,     // c:1348
-        INBRACK => OUTBRACK, // c:1348
-        INBRACE => OUTBRACE, // c:1348
-        INANG => OUTANG,     // c:1348
+        Inpar => Outpar,     // c:1348
+        Inbrack => Outbrack, // c:1348
+        Inbrace => Outbrace, // c:1348
+        Inang => Outang,     // c:1348
         _ => del,            // c:1348
     }; // c:1348
 
@@ -7052,7 +7052,7 @@ pub fn quotesubst(str: &str) -> String {              // c:463
     let mut result = str.to_string(); // c:465
     let mut pos = 0_usize; // c:466
 
-    // C: `while (*str) { if (*str == String && str[1] == Snull) …
+    // C: `while (*str) { if (*str == Stringg && str[1] == Snull) …
     //               else str++; }`
     loop {
         // c:467
@@ -7064,7 +7064,7 @@ pub fn quotesubst(str: &str) -> String {              // c:463
           // stringsubstquote.
         if pos + 1 < chars.len()                            // c:468
             && chars[pos] == STRING                         // c:468
-            && chars[pos + 1] == SNULL
+            && chars[pos + 1] == Snull
         // c:468
         {
             let (new_str, new_pos) = stringsubstquote(&result, pos); // c:469
@@ -7114,7 +7114,7 @@ pub fn globlist(list: &mut LinkList, flags: i32) {   // c:489
         // C: `if ((flags & PREFORK_KEY_VALUE) && *data == Marker)`
         // — assoc-array key/value pair; skip 3 nodes (Marker, Key,
         // Value).
-        if flags & PREFORK_KEY_VALUE != 0 && data.chars().next() == Some(MARKER) {
+        if flags & PREFORK_KEY_VALUE != 0 && data.chars().next() == Some(Marker) {
             // c:497
             // Advance past Marker + Key + Value.
             node_idx += 3; // c:499
@@ -7357,7 +7357,7 @@ mod tests {
         // Src/hist.c:CASMOD_CAPS — uppercase first letter of each word,
         // lowercase the rest. zsh treats whitespace as a word boundary.
         assert_eq!(casemodify("hello world", CASMOD_CAPS), "Hello World"); // utils.c:6915
-        assert_eq!(casemodify("FOO BAR", CASMOD_CAPS), "Foo Bar"); // utils.c:6915
+        assert_eq!(casemodify("FOO Bar", CASMOD_CAPS), "Foo Bar"); // utils.c:6915
     } // utils.c:6915
 
     #[test] // utils.c:6915
@@ -7617,7 +7617,7 @@ mod tests {
 // ============================================================================
 
 /// Null string constant (matches C: char nulstring[] = {Nularg, '\0'})
-pub static NULSTRING_BYTES: [char; 2] = [NULARG, '\0']; // c:3193
+pub static NULSTRING_BYTES: [char; 2] = [Nularg, '\0']; // c:3193
 
 
 /// Evaluate character from number (for (#) flag)
@@ -7761,10 +7761,10 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
     // c:1528
     let mut dst: Option<String> = None; // c:1531
 
-    // C: `if (escapes && (*s == String || *s == Qstring) && s[1])`
+    // C: `if (escapes && (*s == Stringg || *s == Qstring) && s[1])`
     let chars: Vec<char> = s.chars().collect(); // c:1533
     if escapes && chars.len() >= 2                          // c:1533
-        && (chars[0] == STRING || chars[0] == QSTRING)
+        && (chars[0] == STRING || chars[0] == Qstring)
     {
         // Walk identifier chars after the leading $/Qstring.
         let mut pend = 1_usize; // c:1534
@@ -7822,15 +7822,15 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
 // Final functions for complete subst.c coverage
 // ============================================================================
 
-// Local `DNULL` / `BNULLKEEP` constants — DELETED per user
+// Local `Dnull` / `Bnullkeep` constants — DELETED per user
 // directive. Both were WRONG values masquerading as canonical
-// tokens: local `DNULL = '\u{97}'` is actually `QUEST` (zsh.h:178);
-// local `BNULLKEEP = '\u{95}'` is actually `OUTANG` (zsh.h:176).
-// Canonical values from `Src/zsh.h:194,200` are `DNULL = '\u{9e}'`
-// and `BNULLKEEP = '\u{a0}'`. Both already imported from
-// `crate::ported::zsh_h` at the top of this file (DNULL) and
-// available there (BNULLKEEP). Bringing BNULLKEEP into scope.
-use crate::ported::zsh_h::BNULLKEEP;
+// tokens: local `Dnull = '\u{97}'` is actually `Quest` (zsh.h:178);
+// local `Bnullkeep = '\u{95}'` is actually `Outang` (zsh.h:176).
+// Canonical values from `Src/zsh.h:194,200` are `Dnull = '\u{9e}'`
+// and `Bnullkeep = '\u{a0}'`. Both already imported from
+// `crate::ported::zsh_h` at the top of this file (Dnull) and
+// available there (Bnullkeep). Bringing Bnullkeep into scope.
+use crate::ported::zsh_h::Bnullkeep;
 use crate::zsh_h::{isset, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED};
 // c:zsh.h:200
 
@@ -7859,7 +7859,7 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
         .take_while(|&c| {
             // c:719
             c != '\0'                                       // c:719
-                && c != INPAR                               // c:719
+                && c != Inpar                               // c:719
                 && c != '\u{85}'                            // c:719 (Inpar token)
                 && !(assign && c == ':') // c:719
         })

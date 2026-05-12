@@ -206,7 +206,7 @@ use crate::ported::zsh_h::{
     TXT_ATTR_FG_MASK, TXT_ATTR_BG_MASK,
     zattr,
 };
-use crate::zsh_h::{INPAR, NULARG, OUTPAR};
+use crate::zsh_h::{Inpar, Nularg, Outpar};
 // c:zsh.h:2685-2741
 
 // `Color` is the colour slot lifted out of `zattr` so callers can
@@ -549,7 +549,7 @@ impl buf_vars {
                 }
                 continue;
             }
-            if b == INPAR as u8 || b == OUTPAR as u8 || b == NULARG as u8 {
+            if b == Inpar as u8 || b == Outpar as u8 || b == Nularg as u8 {
                 i += 1;
                 continue;
             }
