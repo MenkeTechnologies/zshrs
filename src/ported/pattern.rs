@@ -191,7 +191,7 @@ pub static patout: Mutex<Vec<u8>> = Mutex::new(Vec::new());     // c:267
 /// `zpc_special`, `patstrcache` as file-scope statics that the compile
 /// mutates in sequence; zsh-the-program is single-threaded so the C
 /// source is safe under that invariant. zshrs callers (zutil's
-/// `StyleTable::get` via `crate::ported::pattern::patmatch`, params.rs,
+/// `style_table::get` via `crate::ported::pattern::patmatch`, params.rs,
 /// subst.rs, options.rs) can invoke `patcompile` from concurrent test
 /// threads, so the lock restores the single-writer invariant. Held
 /// only for the compile phase; the matcher (`pattry`/`patmatch_internal`)

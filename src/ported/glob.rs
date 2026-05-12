@@ -2946,165 +2946,155 @@ pub fn set_pat_end(p: &str, null_me: usize) -> String {
 // Tokenization (from glob.c tokenize family)
 // ============================================================================
 
-/// Token types for glob tokenization
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GlobToken {
-    Literal(char),
-    Star,         // *
-    Question,     // ?
-    BracketOpen,  // [
-    BracketClose, // ]
-    ParenOpen,    // (
-    ParenClose,   // )
-    Pipe,         // |
-    Hash,         // # (extended)
-    Tilde,        // ~ (extended)
-    Caret,        // ^ (extended)
-    BraceOpen,    // {
-    BraceClose,   // }
-    Comma,        // , (in braces)
-    Range,        // .. (in braces)
-}
+// `enum GlobToken` deleted — C uses the byte-token constants
+// (`Star`/`Quest`/`Inpar`/...) from `Src/zsh.h:159-200`, mirrored in
+// the Rust port at `zsh_h.rs:128-160`. `tokenize()` (`Src/glob.c:3548`
+// → `zshtokenize`) mutates the input string in place, replacing each
+// glob-metacharacter with its high-bit byte token; the Rust port now
+// matches.
 
 // This function tokenizes a zsh glob pattern                               // c:706
-/// Tokenize a glob pattern (from glob.c tokenize line 3548)
-pub fn tokenize(s: &str) -> Vec<GlobToken> {
-    let mut tokens = Vec::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        let token = match c {
-            '\\' => {
-                // Escaped character
-                if let Some(next) = chars.next() {
-                    GlobToken::Literal(next)
-                } else {
-                    GlobToken::Literal('\\')
-                }
-            }
-            '*' => GlobToken::Star,
-            '?' => GlobToken::Question,
-            '[' => GlobToken::BracketOpen,
-            ']' => GlobToken::BracketClose,
-            '(' => GlobToken::ParenOpen,
-            ')' => GlobToken::ParenClose,
-            '|' => GlobToken::Pipe,
-            '#' => GlobToken::Hash,
-            '~' => GlobToken::Tilde,
-            '^' => GlobToken::Caret,
-            '{' => GlobToken::BraceOpen,
-            '}' => GlobToken::BraceClose,
-            ',' => GlobToken::Comma,
-            '.' if chars.peek() == Some(&'.') => {
-                chars.next();
-                GlobToken::Range
-            }
-            _ => GlobToken::Literal(c),
-        };
-        tokens.push(token);
-    }
-
-    tokens
-}
-
-/// Tokenize for shell (from glob.c shtokenize line 3565)
-/// Handles shell-specific quoting
-/// Port of `shtokenize(char *s)` from `Src/glob.c:3565`.
-pub fn shtokenize(s: &str) -> Vec<GlobToken> {
-    let mut tokens = Vec::new();
-    let mut chars = s.chars().peekable();
-    let mut in_single_quote = false;
-    let mut in_double_quote = false;
-
-    while let Some(c) = chars.next() {
-        if in_single_quote {
-            if c == '\'' {
-                in_single_quote = false;
-            } else {
-                tokens.push(GlobToken::Literal(c));
-            }
-            continue;
-        }
-
-        if in_double_quote {
-            if c == '"' {
-                in_double_quote = false;
-            } else if c == '\\' {
-                if let Some(next) = chars.next() {
-                    tokens.push(GlobToken::Literal(next));
-                }
-            } else {
-                tokens.push(GlobToken::Literal(c));
-            }
-            continue;
-        }
-
+/// Tokenize a glob pattern in place — port of `tokenize(char *s)` from
+/// `Src/glob.c:3548` (which calls `zshtokenize(s, 0)`).
+pub fn tokenize(s: &mut String) {
+    use crate::ported::zsh_h::{
+        BAR, COMMA, HAT, INBRACE, INBRACK, INPAR, OUTBRACE, OUTBRACK, OUTPAR, POUND, QUEST, STAR,
+        TILDE,
+    };
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
         match c {
-            '\'' => in_single_quote = true,
-            '"' => in_double_quote = true,
             '\\' => {
-                if let Some(next) = chars.next() {
-                    tokens.push(GlobToken::Literal(next));
-                }
-            }
-            '*' => tokens.push(GlobToken::Star),
-            '?' => tokens.push(GlobToken::Question),
-            '[' => tokens.push(GlobToken::BracketOpen),
-            ']' => tokens.push(GlobToken::BracketClose),
-            _ => tokens.push(GlobToken::Literal(c)),
-        }
-    }
-
-    tokens
-}
-
-/// Tokenize with zsh-specific flags (from glob.c zshtokenize line 3575)
-/// Port of `zshtokenize(char *s, int flags)` from `Src/glob.c:3575`.
-/// WARNING: param names don't match C — Rust=(s, extended_glob, sh_glob) vs C=(s, flags)
-pub fn zshtokenize(s: &str, extended_glob: bool, sh_glob: bool) -> Vec<GlobToken> {
-    let mut tokens = Vec::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        let token = match c {
-            '\\' => {
-                if let Some(next) = chars.next() {
-                    GlobToken::Literal(next)
+                if i + 1 < chars.len() {
+                    out.push(chars[i + 1]);
+                    i += 2;
+                    continue;
                 } else {
-                    GlobToken::Literal('\\')
+                    out.push('\\');
                 }
             }
-            '*' => GlobToken::Star,
-            '?' => GlobToken::Question,
-            '[' => GlobToken::BracketOpen,
-            ']' => GlobToken::BracketClose,
-            '#' if extended_glob => GlobToken::Hash,
-            '^' if extended_glob => GlobToken::Caret,
-            '~' if extended_glob => GlobToken::Tilde,
-            '(' if extended_glob => GlobToken::ParenOpen,
-            ')' if extended_glob => GlobToken::ParenClose,
-            '|' if extended_glob => GlobToken::Pipe,
-            '{' if !sh_glob => GlobToken::BraceOpen,
-            '}' if !sh_glob => GlobToken::BraceClose,
-            ',' if !sh_glob => GlobToken::Comma,
-            _ => GlobToken::Literal(c),
-        };
-        tokens.push(token);
+            '*' => out.push(STAR),
+            '?' => out.push(QUEST),
+            '[' => out.push(INBRACK),
+            ']' => out.push(OUTBRACK),
+            '(' => out.push(INPAR),
+            ')' => out.push(OUTPAR),
+            '|' => out.push(BAR),
+            '#' => out.push(POUND),
+            '~' => out.push(TILDE),
+            '^' => out.push(HAT),
+            '{' => out.push(INBRACE),
+            '}' => out.push(OUTBRACE),
+            ',' => out.push(COMMA),
+            _ => out.push(c),
+        }
+        i += 1;
     }
-
-    tokens
+    *s = out;
 }
 
-/// Remove null arguments from token list (from glob.c remnulargs line 3649)
-/// Port of `remnulargs(char *s)` from `Src/glob.c:3649`.
-pub fn remnulargs(s: &mut Vec<GlobToken>) {
-    s.retain(|t| {
-        if let GlobToken::Literal(c) = t {
-            *c != '\0'
-        } else {
-            true
+/// Tokenize for shell (from glob.c shtokenize line 3565). Mutates
+/// `s` in place, replacing glob metacharacters with their high-bit
+/// byte tokens — `shtokenize` is `zshtokenize(s, ZSHTOK_SUBST | ...)`
+/// at `Src/glob.c:3565`.
+pub fn shtokenize(s: &mut String) {
+    use crate::ported::zsh_h::{INBRACK, OUTBRACK, QUEST, STAR};
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    let mut in_sq = false;
+    let mut in_dq = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_sq {
+            if c == '\'' { in_sq = false; } else { out.push(c); }
+            i += 1;
+            continue;
         }
-    });
+        if in_dq {
+            if c == '"' {
+                in_dq = false;
+            } else if c == '\\' && i + 1 < chars.len() {
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            } else {
+                out.push(c);
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '\'' => in_sq = true,
+            '"' => in_dq = true,
+            '\\' => {
+                if i + 1 < chars.len() {
+                    out.push(chars[i + 1]);
+                    i += 2;
+                    continue;
+                }
+            }
+            '*' => out.push(STAR),
+            '?' => out.push(QUEST),
+            '[' => out.push(INBRACK),
+            ']' => out.push(OUTBRACK),
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+    *s = out;
+}
+
+/// Tokenize with zsh-specific flags. Port of `zshtokenize(char *s, int flags)`
+/// from `Src/glob.c:3575` — mutates `s` in place.
+pub fn zshtokenize(s: &mut String, extended_glob: bool, sh_glob: bool) {
+    use crate::ported::zsh_h::{
+        BAR, COMMA, HAT, INBRACE, INBRACK, INPAR, OUTBRACE, OUTBRACK, OUTPAR, POUND, QUEST, STAR,
+        TILDE,
+    };
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\\' => {
+                if i + 1 < chars.len() {
+                    out.push(chars[i + 1]);
+                    i += 2;
+                    continue;
+                } else {
+                    out.push('\\');
+                }
+            }
+            '*' => out.push(STAR),
+            '?' => out.push(QUEST),
+            '[' => out.push(INBRACK),
+            ']' => out.push(OUTBRACK),
+            '#' if extended_glob => out.push(POUND),
+            '^' if extended_glob => out.push(HAT),
+            '~' if extended_glob => out.push(TILDE),
+            '(' if extended_glob => out.push(INPAR),
+            ')' if extended_glob => out.push(OUTPAR),
+            '|' if extended_glob => out.push(BAR),
+            '{' if !sh_glob => out.push(INBRACE),
+            '}' if !sh_glob => out.push(OUTBRACE),
+            ',' if !sh_glob => out.push(COMMA),
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+    *s = out;
+}
+
+/// Port of `remnulargs(char *s)` from `Src/glob.c:3649` — strip
+/// `Bnullkeep` (`\0xa0`) markers from a string. Mutates in place.
+pub fn remnulargs(s: &mut String) {
+    use crate::ported::zsh_h::BNULLKEEP;
+    s.retain(|c| c != '\0' && c != BNULLKEEP);
 }
 
 // ============================================================================
