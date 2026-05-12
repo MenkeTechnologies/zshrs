@@ -2279,10 +2279,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // attribute string per hlgroup.c:96-99 (var =
                     // GROUPVAR i.e. ".zle.hlgroups").
                     let attr = exec
-                        .assoc_arrays
-                        .get(".zle.hlgroups")
-                        .and_then(|m| m.get(idx))
-                        .cloned()
+                        .assoc(".zle.hlgroups")
+                        .and_then(|m| m.get(idx).cloned())
                         .unwrap_or_default();
                     if attr.is_empty() {
                         // Per hlgroup.c:101-103, missing/unset entry
@@ -5037,10 +5035,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let ctx = exec.recorder_ctx();
                 let attrs = exec.recorder_attrs_for(&name);
                 let new_val = exec
-                    .assoc_arrays
-                    .get(&name)
-                    .and_then(|m| m.get(&key))
-                    .cloned()
+                    .assoc(&name)
+                    .and_then(|m| m.get(&key).cloned())
                     .unwrap_or_default();
                 crate::recorder::emit_assoc_assign(
                     &name,
@@ -8997,7 +8993,6 @@ impl fusevm::ShellHost for ZshrsHost {
                 .map(|m| m.clone())
                 .unwrap_or_default();
             exec.subshell_snapshots.push(SubshellSnapshot {
-                assoc_arrays: exec.assoc_arrays.clone(),
                 paramtab: paramtab_snap,
                 paramtab_hashed_storage: paramtab_hashed_snap,
                 positional_params: exec.pparams(),
@@ -9047,7 +9042,6 @@ impl fusevm::ShellHost for ZshrsHost {
         }
         with_executor(|exec| {
             if let Some(snap) = exec.subshell_snapshots.pop() {
-                exec.assoc_arrays = snap.assoc_arrays;
                 // Restore paramtab + hashed storage so subshell-scoped
                 // writes via setsparam/setaparam/sethparam don't leak
                 // to the parent via paramtab readers.
@@ -9531,7 +9525,7 @@ impl fusevm::ShellHost for ZshrsHost {
                             exec.set_assoc(assoc_name, map);
                         }
                         None => {
-                            exec.assoc_arrays.remove(&assoc_name);
+                            exec.unset_assoc(&assoc_name);
                         }
                     }
                 }

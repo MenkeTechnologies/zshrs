@@ -31,8 +31,7 @@ impl crate::ported::exec::ShellExecutor {
             match rx.try_recv() {
                 Ok(bg) => {
                     let comps = bg.result.comps.len();
-                    self.assoc_arrays
-                        .insert("_comps".to_string(), bg.result.comps.into_iter().collect());
+                    self.set_assoc("_comps".to_string(), bg.result.comps.into_iter().collect());
                     self.set_assoc(
                         "_services".to_string(),
                         bg.result.services.into_iter().collect(),

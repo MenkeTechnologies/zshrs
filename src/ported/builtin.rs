@@ -4713,8 +4713,9 @@ pub fn bin_unset(name: &str, argv: &[String],                                // 
                 let key_owned = key.to_string();
                 crate::fusevm_bridge::with_executor(|exec| {
                     // c:3893 assoc subscript: `m[key]` delete.
-                    if let Some(map) = exec.assoc_arrays.get_mut(&nm_owned) {
+                    if let Some(mut map) = exec.assoc(&nm_owned) {
                         map.shift_remove(&key_owned);                        // c:3893
+                        exec.set_assoc(nm_owned.clone(), map);
                     } else if let Some(mut arr) = exec.array(&nm_owned) {
                         // c:3895 array subscript: `arr[N]` set to empty.
                         if let Ok(i) = key_owned.parse::<i32>() {
@@ -4734,7 +4735,7 @@ pub fn bin_unset(name: &str, argv: &[String],                                // 
                 crate::fusevm_bridge::with_executor(|exec| {
                     exec.unset_scalar(&nm_owned);
                     exec.unset_array(&nm_owned);
-                    exec.assoc_arrays.remove(&nm_owned);
+                    exec.unset_assoc(&nm_owned);
                 });
                 let _ = crate::ported::params::paramtab()
                     .lock().ok().as_deref_mut()

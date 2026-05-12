@@ -192,7 +192,7 @@ impl ShellExecutor {
         println!("  suffix:      {} aliases", self.suffix_aliases.len());
         println!("  variables:   {}", crate::ported::params::paramtab().lock().map(|t| t.iter().filter(|(_, p)| p.u_arr.is_none()).count()).unwrap_or(0));
         println!("  arrays:      {}", crate::ported::params::paramtab().lock().map(|t| t.iter().filter(|(_, p)| p.u_arr.is_some()).count()).unwrap_or(0));
-        println!("  assoc:       {}", self.assoc_arrays.len());
+        println!("  assoc:       {}", crate::ported::params::paramtab_hashed_storage().lock().map(|m| m.len()).unwrap_or(0));
         println!(
             "  options:     {} set",
             self.options.iter().filter(|(_, v)| **v).count()
@@ -1786,8 +1786,7 @@ impl ShellExecutor {
                                 "compinit: using cached completions"
                             );
                         }
-                        self.assoc_arrays
-                            .insert("_comps".to_string(), result.comps.into_iter().collect());
+                        self.set_assoc("_comps".to_string(), result.comps.into_iter().collect());
                         self.set_assoc(
                             "_services".to_string(),
                             result.services.into_iter().collect(),
