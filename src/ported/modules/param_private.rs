@@ -55,7 +55,7 @@ use crate::ported::utils::zwarnnam;
 /// The `gsu_*` types ARE ported in zsh_h.rs (gsu_scalar at c:802,
 /// gsu_integer c:810, gsu_float c:818, gsu_array c:826, gsu_hash
 /// c:834, with their `Box<T>` aliases GsuScalar/GsuInteger/etc. at
-/// c:794-798). `Gsu_closure` keeps the type-erased `(kind, raw_ptr)`
+/// c:794-798). `gsu_closure` keeps the type-erased `(kind, raw_ptr)`
 /// shape because the underlying gsu vtable function-pointers
 /// (`Option<GsuFn>`) can't be const-initialised in a `static`. The
 /// closure records which GSU variant fires via `kind` (0..=4 for
@@ -63,7 +63,7 @@ use crate::ported::utils::zwarnnam;
 /// type static table; consumers cast back at call time.
 #[derive(Debug, Clone, Copy)]
 #[allow(non_camel_case_types)]
-pub struct Gsu_closure {                                                 // c:34
+pub struct gsu_closure {                                                 // c:34
     pub kind: u8,                                                        // c:35-41 union tag
     pub g: usize,                                                        // c:42 void *g
 }

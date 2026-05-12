@@ -177,7 +177,7 @@ impl zc_win {
 
 /// Hash-table node mapping a color-pair name to its allocated short.
 /// C uses `struct hashnode` as the first field to support direct
-/// HashTable insertion; Rust uses (name → ColorPairNode) HashMap so
+/// HashTable insertion; Rust uses (name → colorpairnode) HashMap so
 /// the node carries only the colorpair short here.
 ///
 /// C definition (c:76-79):
@@ -189,7 +189,7 @@ impl zc_win {
 /// typedef struct colorpairnode *Colorpairnode;
 /// ```
 #[derive(Debug, Clone, Copy)]
-pub struct ColorPairNode {                                                   // c:76
+pub struct colorpairnode {                                                   // c:76
     /// Color pair index (libncurses `init_pair` slot).
     pub colorpair: i16,                                                      // c:78
 }
@@ -215,7 +215,7 @@ pub const ZCME_TRIPLE_CLICKED:  i32 = 4;                                     // 
 /// };
 /// ```
 #[derive(Debug, Clone, Copy)]
-pub struct ZcursesMouseEvent {                                               // c:163
+pub struct zcurses_mouse_event {                                               // c:163
     /// Mouse button number (1..=5).
     pub button: i32,                                                         // c:164
     /// Event kind (`ZCME_*` from above).

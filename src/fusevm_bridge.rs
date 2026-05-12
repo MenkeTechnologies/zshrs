@@ -15,7 +15,7 @@ use crate::history::HistoryEngine;
 // MathState is private to math.rs (no public state struct in math.c).
 use crate::options::ZSH_OPTIONS_SET;
 // TcpSessions struct deleted — modules/tcp.rs uses ZTCP_SESSIONS thread_local.
-use crate::zftp::Zftp;
+use crate::zftp::zftp_globals;
 // `Profiler` deleted — zprof state is module-level statics now.
 use crate::zutil::StyleTable;
 use compsys::cache::CompsysCache;
@@ -3721,11 +3721,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // and lowercases mid-word uppercase letters.
                     state = match state {
                         St::S(s) => {
-                            St::S(crate::ported::hist::casemodify(&s, crate::ported::hist::CaseMod::CASMOD_CAPS))
+                            St::S(crate::ported::hist::casemodify(&s, crate::ported::hist::CASMOD_CAPS))
                         }
                         St::A(a) => St::A(
                             a.into_iter()
-                                .map(|s| crate::ported::hist::casemodify(&s, crate::ported::hist::CaseMod::CASMOD_CAPS))
+                                .map(|s| crate::ported::hist::casemodify(&s, crate::ported::hist::CASMOD_CAPS))
                                 .collect(),
                         ),
                     };

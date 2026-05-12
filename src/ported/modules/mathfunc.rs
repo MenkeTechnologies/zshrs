@@ -11,7 +11,7 @@
 
 #![allow(clippy::approx_constant)]
 
-use crate::ported::math::{Mnumber, MN_FLOAT, MN_INTEGER};
+use crate::ported::math::{mnumber, MN_FLOAT, MN_INTEGER};
 
 // libm bindings used by the math-function dispatcher. Direct port
 // of the calls C's `math_func()` (Src/Modules/mathfunc.c:172-436)
@@ -129,8 +129,8 @@ pub const fn tflag(x: i32) -> i32 { x << 8 }                             // c:11
 /// type flags in its high byte.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_name, argc, argv, id) vs C=(name, argc, argv, id)
-pub fn math_func(_name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber {  // c:173
-    let mut ret = Mnumber { l: 0, d: 0.0, type_: MN_FLOAT };             // c:173,193
+pub fn math_func(_name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber {  // c:173
+    let mut ret = mnumber { l: 0, d: 0.0, type_: MN_FLOAT };             // c:173,193
     let mut argd: f64 = 0.0;                                             // c:175
     let mut argd2: f64 = 0.0;                                            // c:175
     let mut argi: i32 = 0;                                               // c:176
@@ -272,7 +272,7 @@ pub fn math_func(_name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber {
 /// `crate::ported::modules::random_real`. Returns `zero_mnumber`
 /// for unrecognised ids (matching C's pre-init `ret = zero_mnumber`).
 #[allow(unused_variables)]
-pub fn math_string(name: &str, arg: &str, id: i32) -> Mnumber {         // c:439
+pub fn math_string(name: &str, arg: &str, id: i32) -> mnumber {         // c:439
     let trimmed = arg.trim_matches(|c: char| c == ' ' || c == '\t');     // c:439-451 iblank
     match id {
         MS_RAND48 => {                                                   // c:457
@@ -282,13 +282,13 @@ pub fn math_string(name: &str, arg: &str, id: i32) -> Mnumber {         // c:439
             // path; the seed-from-param wiring is pending param-
             // table integration.
             let _ = trimmed;
-            Mnumber {
+            mnumber {
                 l: 0,
                 d: crate::ported::modules::random_real::random_real(),
                 type_: MN_FLOAT,
             }
         }
-        _ => Mnumber { l: 0, d: 0.0, type_: MN_INTEGER },                                         // zero_mnumber
+        _ => mnumber { l: 0, d: 0.0, type_: MN_INTEGER },                                         // zero_mnumber
     }
 }
 
@@ -299,7 +299,7 @@ mod tests {
     /// Port of `math_func(UNUSED(char *name), int argc, mnumber *argv, int id)` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_acos() {
-        let argv = [Mnumber { l: 0, d: 1.0, type_: MN_FLOAT }];
+        let argv = [mnumber { l: 0, d: 1.0, type_: MN_FLOAT }];
         let r = math_func("acos", 1, &argv, MF_ACOS);
         assert!((r.type_ == MN_FLOAT));
         assert!((r.d - 0.0).abs() < 1e-9);
@@ -308,7 +308,7 @@ mod tests {
     /// Port of `math_func(UNUSED(char *name), int argc, mnumber *argv, int id)` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_atan_two_args() {
-        let argv = [Mnumber { l: 0, d: 1.0, type_: MN_FLOAT }, Mnumber { l: 0, d: 1.0, type_: MN_FLOAT }];
+        let argv = [mnumber { l: 0, d: 1.0, type_: MN_FLOAT }, mnumber { l: 0, d: 1.0, type_: MN_FLOAT }];
         let r = math_func("atan", 2, &argv, MF_ATAN);
         assert!((r.type_ == MN_FLOAT));
         assert!((r.d - std::f64::consts::FRAC_PI_4).abs() < 1e-9);
@@ -317,7 +317,7 @@ mod tests {
     /// Port of `math_func(UNUSED(char *name), int argc, mnumber *argv, int id)` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_abs_int_preserves_type() {
-        let argv = [Mnumber { l: -7, d: 0.0, type_: MN_INTEGER }];
+        let argv = [mnumber { l: -7, d: 0.0, type_: MN_INTEGER }];
         let r = math_func("abs", 1, &argv, MF_ABS | tflag(TF_NOCONV | TF_NOASS));
         assert!((r.type_ == MN_INTEGER));
         assert_eq!(r.l, 7);
@@ -326,7 +326,7 @@ mod tests {
     /// Port of `math_func(UNUSED(char *name), int argc, mnumber *argv, int id)` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_int_truncates() {
-        let argv = [Mnumber { l: 0, d: 3.7, type_: MN_FLOAT }];
+        let argv = [mnumber { l: 0, d: 3.7, type_: MN_FLOAT }];
         let r = math_func("int", 1, &argv, MF_INT | tflag(TF_NOASS));
         assert!((r.type_ == MN_INTEGER));
         assert_eq!(r.l, 3);
@@ -335,7 +335,7 @@ mod tests {
     /// Port of `math_func(UNUSED(char *name), int argc, mnumber *argv, int id)` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_isnan() {
-        let argv = [Mnumber { l: 0, d: f64::NAN, type_: MN_FLOAT }];
+        let argv = [mnumber { l: 0, d: f64::NAN, type_: MN_FLOAT }];
         let r = math_func("isnan", 1, &argv, MF_ISNAN | tflag(TF_NOASS));
         assert_eq!(r.l, 1);
     }

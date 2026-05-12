@@ -36,7 +36,7 @@ use crate::ported::zsh_h::{
     isset, unset,
 };
 #[allow(unused_imports)]
-use crate::ported::math::{Mnumber, MN_INTEGER, MN_FLOAT};
+use crate::ported::math::{mnumber, MN_INTEGER, MN_FLOAT};
 #[allow(unused_imports)]
 use crate::ported::utils::errflag;
 #[allow(unused_imports)]
@@ -1152,31 +1152,31 @@ pub fn gethkparam(s: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<Str
 }
 
 /// Port of `getnumvalue(Value v)` from `Src/params.c:2624`. Returns an
-/// `Mnumber` (tagged int/float). C body dispatches on `valflags &
+/// `mnumber` (tagged int/float). C body dispatches on `valflags &
 /// VALFLAG_INV` (returns start as int), `scanflags` (sepjoin →
 /// matheval), then PM_TYPE: PM_INTEGER → mn.l = pm->gsu.i->getfn,
 /// PM_EFLOAT|PM_FFLOAT → mn.type=MN_FLOAT; mn.d = pm->gsu.f->getfn,
 /// else matheval(getstrvalue(v)).
-pub fn getnumvalue(v: Option<&mut crate::ported::zsh_h::value>) -> crate::ported::math::Mnumber {
-    let v = match v { Some(v) => v, None => return Mnumber { l: 0, d: 0.0, type_: MN_INTEGER } };
+pub fn getnumvalue(v: Option<&mut crate::ported::zsh_h::value>) -> crate::ported::math::mnumber {
+    let v = match v { Some(v) => v, None => return mnumber { l: 0, d: 0.0, type_: MN_INTEGER } };
     if (v.valflags & VALFLAG_INV) != 0 {
-        return Mnumber { l: v.start as i64, d: 0.0, type_: MN_INTEGER };
+        return mnumber { l: v.start as i64, d: 0.0, type_: MN_INTEGER };
     }
     if v.scanflags != 0 {
-        return Mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
+        return mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
     }
-    let pm = match v.pm.as_mut() { Some(p) => p, None => return Mnumber { l: 0, d: 0.0, type_: MN_INTEGER } };
+    let pm = match v.pm.as_mut() { Some(p) => p, None => return mnumber { l: 0, d: 0.0, type_: MN_INTEGER } };
     let t = PM_TYPE(pm.node.flags as u32);
     if t == PM_INTEGER {
-        return Mnumber { l: intgetfn(pm), d: 0.0, type_: MN_INTEGER };
+        return mnumber { l: intgetfn(pm), d: 0.0, type_: MN_INTEGER };
     }
     if t == PM_EFLOAT || t == PM_FFLOAT {
-        return Mnumber { l: 0, d: floatgetfn(pm), type_: MN_FLOAT };
+        return mnumber { l: 0, d: floatgetfn(pm), type_: MN_FLOAT };
     }
     let s = strgetfn(pm);
-    if let Ok(i) = s.parse::<i64>() { return Mnumber { l: i, d: 0.0, type_: MN_INTEGER }; }
-    if let Ok(f) = s.parse::<f64>() { return Mnumber { l: 0, d: f, type_: MN_FLOAT }; }
-    Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+    if let Ok(i) = s.parse::<i64>() { return mnumber { l: i, d: 0.0, type_: MN_INTEGER }; }
+    if let Ok(f) = s.parse::<f64>() { return mnumber { l: 0, d: f, type_: MN_FLOAT }; }
+    mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
 }
 
 /// Port of `setstrvalue(Value v, char *val)` from `Src/params.c:2685`. C body is a
@@ -1191,7 +1191,7 @@ pub fn setstrvalue(v: Option<&mut crate::ported::zsh_h::value>, val: &str) {
 /// builds an `mnumber{ .type = MN_INTEGER, .u.l = val }` and
 /// calls `assignnparam(s, mn, ASSPM_WARN)`.
 pub fn assigniparam(vbuf: &str, t: i64) {
-    assignnparam(vbuf, crate::ported::math::Mnumber { l: t, d: 0.0, type_: MN_INTEGER }, crate::ported::zsh_h::ASSPM_WARN);
+    assignnparam(vbuf, crate::ported::math::mnumber { l: t, d: 0.0, type_: MN_INTEGER }, crate::ported::zsh_h::ASSPM_WARN);
 }
 
 /// Set array parameter.
@@ -5162,7 +5162,7 @@ pub fn tiedarrunsetfn(pm: &mut crate::ported::zsh_h::param, _exp: i32) {     // 
 /// None until `createparam` lands.
 pub fn assignnparam(
     s: &str,
-    val: crate::ported::math::Mnumber,
+    val: crate::ported::math::mnumber,
     flags: i32,
 ) -> Option<Box<crate::ported::zsh_h::param>> {
     // c:3666 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
@@ -5361,9 +5361,9 @@ pub fn assignstrvalue(
         t if t == PM_EFLOAT || t == PM_FFLOAT => {
             if let Some(ref s) = val {
                 let mn = if (flags & ASSPM_ENV_IMPORT) != 0 {
-                    crate::ported::math::Mnumber { l: 0, d: s.parse::<f64>().unwrap_or(0.0), type_: MN_FLOAT }
+                    crate::ported::math::mnumber { l: 0, d: s.parse::<f64>().unwrap_or(0.0), type_: MN_FLOAT }
                 } else {
-                    crate::ported::math::matheval(s).unwrap_or(crate::ported::math::Mnumber { l: 0, d: 0.0, type_: MN_FLOAT })
+                    crate::ported::math::matheval(s).unwrap_or(crate::ported::math::mnumber { l: 0, d: 0.0, type_: MN_FLOAT })
                 };
                 let d = if (mn.type_ & MN_FLOAT) != 0 { mn.d } else { mn.l as f64 };
                 floatsetfn(pm, d);
@@ -7474,7 +7474,7 @@ pub fn setloopvar(name: &str, value: &str) {
 /// `return assignnparam(s, val, ASSPM_WARN);` — single-line
 /// wrapper. Stub until `assignnparam` is implemented.
 pub fn setnparam(s: &str, val: f64) {
-    assignnparam(s, crate::ported::math::Mnumber { l: 0, d: val, type_: MN_FLOAT }, crate::ported::zsh_h::ASSPM_WARN);
+    assignnparam(s, crate::ported::math::mnumber { l: 0, d: val, type_: MN_FLOAT }, crate::ported::zsh_h::ASSPM_WARN);
 }
 
 /// Port of `setnumvalue(Value v, mnumber val)` from `Src/params.c:2856`. C body
@@ -7484,7 +7484,7 @@ pub fn setnparam(s: &str, val: f64) {
 /// `pm->gsu.i->setfn(pm, val.u.l)`; PM_EFLOAT|PM_FFLOAT →
 /// `pm->gsu.f->setfn(pm, val.u.d)`. EXECOPT/PM_READONLY checks
 /// at top.
-pub fn setnumvalue(v: Option<&mut crate::ported::zsh_h::value>, val: crate::ported::math::Mnumber) {
+pub fn setnumvalue(v: Option<&mut crate::ported::zsh_h::value>, val: crate::ported::math::mnumber) {
     let v = match v { Some(v) => v, None => return };
     let pm = match v.pm.as_mut() { Some(p) => p, None => return };
     if (pm.node.flags as u32 & PM_READONLY) != 0 {

@@ -17,7 +17,13 @@ use std::cell::RefCell;
 /// `popheap` semantics for shell-lifetime allocations; in Rust we
 /// stack `Vec<String>`/`Vec<Vec<u8>>` per generation and let normal
 /// drop semantics handle the actual frees.
-pub struct HeapArena {
+///
+/// `heap_arena` is the Rust port's wrapper around what C tracks via
+/// the module-static `Heap heaps` chain + `HeapStack heapstack` —
+/// there is no `struct heap_arena` in zsh C. Canonical C `struct heap`
+/// (the chunk header) is at `zsh_h.rs:1039`.
+#[allow(non_camel_case_types)]
+pub struct heap_arena {
     /// Stack of arena generations
     generations: Vec<Generation>,
 }
@@ -29,15 +35,15 @@ struct Generation {
     buffers: Vec<Vec<u8>>,
 }
 
-impl Default for HeapArena {
+impl Default for heap_arena {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl HeapArena {
+impl heap_arena {
     pub fn new() -> Self {
-        HeapArena {
+        heap_arena {
             generations: vec![Generation {
                 strings: Vec::new(),
                 buffers: Vec::new(),
@@ -110,7 +116,7 @@ impl HeapArena {
 }
 
 thread_local! {
-    static HEAP: RefCell<HeapArena> = RefCell::new(HeapArena::new());
+    static HEAP: RefCell<heap_arena> = RefCell::new(heap_arena::new());
 }
 
 /// Push heap state.
@@ -390,7 +396,7 @@ mod tests {
 
     #[test]
     fn test_heap_push_pop() {
-        let mut arena = HeapArena::new();
+        let mut arena = heap_arena::new();
         assert_eq!(arena.depth(), 1);
 
         arena.push();
@@ -404,7 +410,7 @@ mod tests {
 
     #[test]
     fn test_heap_free_current() {
-        let mut arena = HeapArena::new();
+        let mut arena = heap_arena::new();
 
         arena.alloc_string("test1".to_string());
         arena.alloc_bytes(vec![1, 2, 3]);
@@ -416,7 +422,7 @@ mod tests {
 
     #[test]
     fn test_nested_generations() {
-        let mut arena = HeapArena::new();
+        let mut arena = heap_arena::new();
 
         arena.alloc_string("level1".to_string());
 
@@ -506,7 +512,7 @@ pub fn old_heaps(old: *mut std::ffi::c_void) {                               // 
     queue_signals();                                                         // c:220
     // c:226-264 — walk current heaps freeing each (DPUTS guards against
     // pushed-but-not-popped frames). Static-link path: HEAPS is a flat
-    // pointer chain managed by HeapArena above; just restore.
+    // pointer chain managed by heap_arena above; just restore.
     HEAPS.store(old, std::sync::atomic::Ordering::Relaxed);                  // c:267
     unqueue_signals();                                                       // c:267
 }

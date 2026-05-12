@@ -2632,9 +2632,9 @@ pub static PPARAMS: std::sync::Mutex<Vec<String>> =
 /// WARNING: param names don't match C — Rust=(_name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_let(_name: &str, argv: &[String],                                 // c:7469
                _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::math::{matheval, Mnumber, MN_INTEGER};
+    use crate::ported::math::{matheval, mnumber, MN_INTEGER};
     // c:7472 — `mnumber val = zero_mnumber;`
-    let mut val: Mnumber = Mnumber { l: 0, d: 0.0, type_: MN_INTEGER };                               // c:7472
+    let mut val: mnumber = mnumber { l: 0, d: 0.0, type_: MN_INTEGER };                               // c:7472
     let mut had_error = false;
     // c:7474-7475 — `while (*argv) val = matheval(*argv++);`
     for expr in argv {                                                       // c:7474

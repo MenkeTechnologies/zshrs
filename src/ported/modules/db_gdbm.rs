@@ -128,14 +128,19 @@ extern "C" {
 /// stores in `myfreeparamnode()` (line 45) — the C source threads
 /// the live `GDBM_FILE *` through every `gdbmgetfn`/`gdbmsetfn` call
 /// (lines 282/347). Same shape on the Rust side.
+// `GdbmDatabase` renamed to `gdbm_database`. C has no `struct
+// gdbm_database`; the equivalent C state is the bare `GDBM_FILE *`
+// stored in `myfreeparamnode()` (`Src/Modules/db_gdbm.c:45`). Rust
+// wraps it in a struct for RAII Drop + Send/Sync impls.
+#[allow(non_camel_case_types)]
 #[derive(Debug)]
-pub struct GdbmDatabase {
+pub struct gdbm_database {
     dbf: GdbmFile,
     path: PathBuf,
     readonly: bool,
 }
 
-impl GdbmDatabase {
+impl gdbm_database {
     /// Port of `bin_ztie(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/db_gdbm.c:109`.
     #[cfg(feature = "gdbm")]
     pub fn open(path: &Path, readonly: bool) -> Result<Self, String> {
@@ -161,7 +166,7 @@ impl GdbmDatabase {
             ));
         }
 
-        Ok(GdbmDatabase {
+        Ok(gdbm_database {
             dbf,
             path: path.to_path_buf(),
             readonly,
@@ -382,7 +387,7 @@ impl GdbmDatabase {
 }
 
 #[cfg(feature = "gdbm")]
-impl Drop for GdbmDatabase {
+impl Drop for gdbm_database {
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
     /// of any function in `Src/Modules/db_gdbm.c`.
     fn drop(&mut self) {
@@ -394,33 +399,35 @@ impl Drop for GdbmDatabase {
 }
 
 #[cfg(not(feature = "gdbm"))]
-impl Drop for GdbmDatabase {
+impl Drop for gdbm_database {
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
     /// of any function in `Src/Modules/db_gdbm.c`.
     fn drop(&mut self) {}
 }
 
-unsafe impl Send for GdbmDatabase {}
-unsafe impl Sync for GdbmDatabase {}
+unsafe impl Send for gdbm_database {}
+unsafe impl Sync for gdbm_database {}
 
 /// A parameter tied to a GDBM database.
-/// Port of the `Param` shape Src/Modules/db_gdbm.c installs via
-/// `bin_ztie()` (line 109) — the C source builds a special hash
-/// `Param` whose `getfn`/`setfn`/`unsetfn` route every read/write
-/// through `gdbmgetfn` (line 282) / `gdbmsetfn` (line 347) /
-/// `gdbmunsetfn` (line 399). The Rust struct holds the live db
-/// handle plus a small per-key cache.
-pub struct TiedGdbmParam {
+/// `TiedGdbmParam` renamed to `tied_gdbm_param`. C has no struct of
+/// this shape — instead the C source builds a special hash `Param`
+/// whose `getfn`/`setfn`/`unsetfn` route every read/write through
+/// `gdbmgetfn` (line 282) / `gdbmsetfn` (line 347) / `gdbmunsetfn`
+/// (line 399) of `Src/Modules/db_gdbm.c`. The Rust struct bundles
+/// the live db handle plus a small per-key cache; it is a Rust
+/// extension matching C's per-param hidden state via `pm->u.hash`.
+#[allow(non_camel_case_types)]
+pub struct tied_gdbm_param {
     pub name: String,
-    pub db: Arc<GdbmDatabase>,
+    pub db: Arc<gdbm_database>,
     pub cache: RwLock<HashMap<String, String>>,
 }
 
-impl TiedGdbmParam {
+impl tied_gdbm_param {
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
     /// of any function in `Src/Modules/db_gdbm.c`.
-    pub fn new(name: String, db: Arc<GdbmDatabase>) -> Self {
-        TiedGdbmParam {
+    pub fn new(name: String, db: Arc<gdbm_database>) -> Self {
+        tied_gdbm_param {
             name,
             db,
             cache: RwLock::new(HashMap::new()),
@@ -499,7 +506,7 @@ impl TiedGdbmParam {
 }
 
 /// Global registry of tied GDBM parameters
-pub(crate) static TIED_PARAMS: Lazy<Mutex<HashMap<String, Arc<TiedGdbmParam>>>> =
+pub(crate) static TIED_PARAMS: Lazy<Mutex<HashMap<String, Arc<tied_gdbm_param>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// List currently-tied GDBM parameter names — backs the
@@ -633,7 +640,7 @@ pub fn bin_ztie(nam: &str, args: &[String], ops: &crate::ported::zsh_h::options,
     }
 
     // c:162 — `dbf = gdbm_open(resource_name, 0, read_write, 0666, 0);`
-    let db = match GdbmDatabase::open(&path, readonly) {
+    let db = match gdbm_database::open(&path, readonly) {
         Ok(d) => d,
         Err(e) => {
             crate::ported::utils::zwarnnam(nam, &format!("error opening database file {} ({})", resource_name, e));
@@ -643,7 +650,7 @@ pub fn bin_ztie(nam: &str, args: &[String], ops: &crate::ported::zsh_h::options,
     let db = Arc::new(db);
 
     // c:168 — `tied_param = createhash(pmname, pmflags);`
-    let tied = Arc::new(TiedGdbmParam::new(pmname.to_string(), db));
+    let tied = Arc::new(tied_gdbm_param::new(pmname.to_string(), db));
 
     {
         let mut params = match TIED_PARAMS.lock() {
@@ -692,8 +699,8 @@ pub fn bin_zuntie(nam: &str, args: &[String], ops: &crate::ported::zsh_h::option
         crate::ported::signals_h::queue_signals();
         if crate::ported::zsh_h::OPT_ISSET(ops, b'u') {                  // c:221
             // c:222 — `pm->node.flags &= ~PM_READONLY;`
-            // Static-link path: TiedGdbmParam doesn't carry a flags
-            // field separately; readonly is on GdbmDatabase.readonly.
+            // Static-link path: tied_gdbm_param doesn't carry a flags
+            // field separately; readonly is on gdbm_database.readonly.
         }
         // c:224 — `if (unsetparam_pm(pm, 0, 1))` — registry remove
         match TIED_PARAMS.lock() {
@@ -768,7 +775,7 @@ pub fn bin_zgdbmpath(nam: &str, args: &[String], ops: &crate::ported::zsh_h::opt
 /// `return "";` on miss.
 /// WARNING: param names don't match C — Rust=(param_name, key) vs C=(pm)
 pub fn gdbmgetfn(param_name: &str, key: &str) -> String {                // c:282
-    // c:282-300 — PM_UPTODATE shortcut. zshrs's TiedGdbmParam doesn't
+    // c:282-300 — PM_UPTODATE shortcut. zshrs's tied_gdbm_param doesn't
     // cache so always fetches fresh.
     let params = match TIED_PARAMS.lock() { Ok(p) => p, Err(_) => return String::new() };
     let tied = match params.get(param_name) { Some(t) => t.clone(), None => return String::new() };
@@ -858,7 +865,7 @@ mod tests {
         let db_path = dir.path().join("test.gdbm");
 
         // Open database
-        let db = GdbmDatabase::open(&db_path, false).unwrap();
+        let db = gdbm_database::open(&db_path, false).unwrap();
 
         // Set and get
         db.set("key1", "value1").unwrap();
@@ -894,8 +901,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("tied.gdbm");
 
-        let db = Arc::new(GdbmDatabase::open(&db_path, false).unwrap());
-        let tied = TiedGdbmParam::new("mydb".to_string(), db);
+        let db = Arc::new(gdbm_database::open(&db_path, false).unwrap());
+        let tied = tied_gdbm_param::new("mydb".to_string(), db);
 
         tied.set("foo", "bar").unwrap();
         assert_eq!(tied.get("foo"), Some("bar".to_string()));
@@ -1025,7 +1032,7 @@ pub fn myfreeparamnode(param_name: &str, key: &str) {                    // c:45
     gdbmunsetfn(param_name, key, 1);                                     // c:810 pm->gsu.s->unsetfn(pm, 1)
     // c:812 — zsfree(pm->node.nam); — Rust drop on TIED_PARAMS remove.
     // c:814-817 — `if (!(pm->node.flags & PM_SPECIAL) && pm->ename)`
-    //              `zsfree(pm->ename); pm->ename = NULL;` — TiedGdbmParam
+    //              `zsfree(pm->ename); pm->ename = NULL;` — tied_gdbm_param
     //              doesn't carry an `ename` slot; the registry remove
     //              below frees the equivalent.
     // c:818 — `zfree(pm, sizeof(struct param));` — Drop on remove.
@@ -1058,7 +1065,7 @@ pub fn myfreeparamnode(param_name: &str, key: &str) {                    // c:45
 ///
 /// Returns `true` iff the key was already present, `false` if a
 /// fresh placeholder was created. Static-link path uses the
-/// `TiedGdbmParam` registry as the equivalent of `ht`.
+/// `tied_gdbm_param` registry as the equivalent of `ht`.
 pub fn getgdbmnode(ht: &str, name: &str) -> bool {               // c:407
     let params = match TIED_PARAMS.lock() {
         Ok(p) => p,
@@ -1089,7 +1096,7 @@ pub fn getgdbmnode(ht: &str, name: &str) -> bool {               // c:407
 ///
 /// Rust port: walks `entries` and dispatches each to the existing
 /// `gdbmsetfn(param_name, key, value)` which delegates to
-/// `TiedGdbmParam::set` → `GdbmDatabase::set` → `gdbm_store`.
+/// `tied_gdbm_param::set` → `gdbm_database::set` → `gdbm_store`.
 pub fn gdbmhashsetfn(pm: &str, ht: &[(String, String)]) {   // c:476
     // c:476 — for ((Param) (he = ht->nodes[i]); he; he = he->next)
     let param = match TIED_PARAMS.lock().ok().and_then(|m| m.get(pm).cloned()) {
@@ -1105,8 +1112,8 @@ pub fn gdbmhashsetfn(pm: &str, ht: &[(String, String)]) {   // c:476
 ///
 /// C body: `gdbm_close(dbf); pm->u.hash->tmpdata = NULL;`
 /// Removes the tied param from the registry, dropping the
-/// `Arc<TiedGdbmParam>` which closes the underlying GDBM handle
-/// (via `Drop` on `GdbmDatabase`).
+/// `Arc<tied_gdbm_param>` which closes the underlying GDBM handle
+/// (via `Drop` on `gdbm_database`).
 pub fn gdbmuntie(pm: &str) {                                     // c:555
     if let Ok(mut params) = TIED_PARAMS.lock() {
         params.remove(pm);                                        // c:560 gdbm_close + clear

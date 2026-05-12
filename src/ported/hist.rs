@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicUsize
 use std::sync::Mutex;
 
 use crate::ported::zsh_h::histent;
-pub use crate::ported::zsh_h::CaseMod;
+pub use crate::zsh_h::{CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE, CASMOD_UPPER};
 use crate::zsh_h::{
     isset,
     BANGHIST, HFILE_FAST, HFILE_USE_OPTIONS,
@@ -1407,14 +1407,15 @@ fn convamps(out: &str, in_pattern: &str) -> String {
 }
 
 /// Port of `char *casemodify(char *str, int how)` from Src/hist.c:2196.
-pub fn casemodify(s: &str, how: CaseMod) -> String {                         // c:2196
+pub fn casemodify(s: &str, how: i32) -> String {                              // c:2196
+    use crate::ported::zsh_h::{CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE, CASMOD_UPPER};
     let mut result = String::with_capacity(s.len());
     let mut nextupper = true;
     for c in s.chars() {
         let modified = match how {
-            CaseMod::CASMOD_LOWER => c.to_lowercase().collect::<String>(),
-            CaseMod::CASMOD_UPPER => c.to_uppercase().collect::<String>(),
-            CaseMod::CASMOD_CAPS => {
+            x if x == CASMOD_LOWER => c.to_lowercase().collect::<String>(),
+            x if x == CASMOD_UPPER => c.to_uppercase().collect::<String>(),
+            x if x == CASMOD_CAPS => {
                 if !c.is_alphanumeric() {
                     nextupper = true;
                     c.to_string()
@@ -1425,8 +1426,9 @@ pub fn casemodify(s: &str, how: CaseMod) -> String {                         // 
                     c.to_lowercase().collect::<String>()
                 }
             }
-            CaseMod::CASMOD_NONE => c.to_string(),
+            _ /* CASMOD_NONE */ => c.to_string(),
         };
+        let _ = CASMOD_NONE; // silence unused
         result.push_str(&modified);
     }
     result
@@ -1827,11 +1829,11 @@ pub fn apply_history_modifiers(val: &str, modifiers: &str) -> String {
                 // with CASMOD_LOWER. Use the faithful
                 // casemodify port instead of plain to_lowercase
                 // for Unicode-correct multibyte handling.
-                result = casemodify(&result, CaseMod::CASMOD_LOWER);
+                result = casemodify(&result, CASMOD_LOWER);
             }
             'u' => {
                 // `:u` uppercase. Port of src/zsh/Src/hist.c:934-936.
-                result = casemodify(&result, CaseMod::CASMOD_UPPER);
+                result = casemodify(&result, CASMOD_UPPER);
             }
             'C' => {
                 // `:C` capitalize. zsh-only modifier per
@@ -1841,7 +1843,7 @@ pub fn apply_history_modifiers(val: &str, modifiers: &str) -> String {
                 // `(C)` parameter flag did. Same semantics:
                 // word-aware capitalization with mid-word
                 // lowercase enforcement.
-                result = casemodify(&result, CaseMod::CASMOD_CAPS);
+                result = casemodify(&result, CASMOD_CAPS);
             }
             'q' => {
                 // zsh `:q` uses backslash quoting, not single-bslashquote

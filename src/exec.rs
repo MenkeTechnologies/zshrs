@@ -16,10 +16,10 @@
 
 use crate::history::HistoryEngine;
 // MathState is private to math.rs (per math.c — no public state struct);
-// math API surface is matheval/mathevali/Mnumber.
+// math API surface is matheval/mathevali/mnumber.
 use crate::options::ZSH_OPTIONS_SET;
 // TcpSessions struct deleted — see modules/tcp.rs ZTCP_SESSIONS thread_local.
-use crate::zftp::Zftp;
+use crate::zftp::zftp_globals;
 // `Profiler`/`ProfileEntry` deleted in the zprof.rs strict-rules
 // rewrite — zprof state now lives in module-level statics
 // (`CALLS`/`NCALLS`/`ARCS`/`NARCS`/`STACK`/`ZPROF_MODULE`) matching
@@ -493,7 +493,7 @@ pub struct ShellExecutor {
     // New module state — TcpSessions struct dissolved into the
     // thread_local ZTCP_SESSIONS in modules/tcp.rs (matches C's
     // file-static `ztcp_sessions` linked list).
-    pub zftp: Zftp,
+    pub zftp: zftp_globals,
     // `profiler: Profiler` deleted — see comment above.
     pub style_table: StyleTable,
     // termcap state dissolved per strict-rules audit — no Rust-only
@@ -1151,7 +1151,7 @@ impl ShellExecutor {
             returning: None,
             breaking: 0,
             continuing: 0,
-            zftp: Zftp::new(),
+            zftp: zftp_globals::new(),
             style_table: StyleTable::new(),
             zsh_compat: false,
             bash_compat: false,
