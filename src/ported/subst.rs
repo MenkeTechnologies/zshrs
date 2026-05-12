@@ -172,153 +172,221 @@ pub const NULSTRING: &str = "\u{8F}"; // c:100
 // "pass" while exercising no parameter machinery at all.
 // =====================================================================
 
-/// Splice (`[@]`/`[*]`) walk for the zsh/parameter magic-assoc
-/// names. Mirrors the `scanpm<X>` walkers in
-/// `Src/Modules/parameter.c` — each scanner iterates its backing
-/// table and the splice reads them all. Returns the values joined
-/// with a single space (mirrors the `j: :` C `sepjoin` default).
+// `splice_magic_assoc` deleted — was one big string-dispatcher
+// that collapsed C's per-magic-assoc `scanpm<X>` walkers
+// (`Src/Modules/parameter.c`) into a single switch. C dispatches
+// each magic-assoc Param through its own `gsu->scantab` callback
+// (set at module init); the per-Param scantab plumbing is a
+// follow-up, but the body is now decomposed into individual
+// `scanpm*` fns matching C's names, plus a `splice_magic_assoc`
+// dispatcher that routes name → fn.
+
+/// `scanpmraliases` — port of `Src/Modules/parameter.c:1990`.
+/// Walks `aliastab` for regular (non-global, non-suffix) aliases.
+fn scanpmraliases() -> String {
+    use crate::ported::hashtable::flags::{ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED};
+    crate::ported::hashtable::aliastab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, a)| {
+                let f = a.node.flags;
+                (f & ALIAS_GLOBAL as i32) == 0
+                    && (f & ALIAS_SUFFIX as i32) == 0
+                    && (f & DISABLED as i32) == 0
+            })
+            .map(|(_, a)| a.text.clone())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmgaliases` — port of `Src/Modules/parameter.c:1990` (global arm).
+fn scanpmgaliases() -> String {
+    use crate::ported::hashtable::flags::{ALIAS_GLOBAL, DISABLED};
+    crate::ported::hashtable::aliastab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, a)| {
+                let f = a.node.flags;
+                (f & ALIAS_GLOBAL as i32) != 0 && (f & DISABLED as i32) == 0
+            })
+            .map(|(_, a)| a.text.clone())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmsaliases` — port of `Src/Modules/parameter.c` (suffix arm).
+fn scanpmsaliases() -> String {
+    use crate::ported::hashtable::flags::DISABLED;
+    crate::ported::hashtable::sufaliastab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, a)| (a.node.flags & DISABLED as i32) == 0)
+            .map(|(_, a)| a.text.clone())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmdisraliases` — port of `Src/Modules/parameter.c:1998`.
+/// Disabled regular-aliases arm.
+fn scanpmdisraliases() -> String {
+    use crate::ported::hashtable::flags::{ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED};
+    crate::ported::hashtable::aliastab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, a)| {
+                let f = a.node.flags;
+                (f & ALIAS_GLOBAL as i32) == 0
+                    && (f & ALIAS_SUFFIX as i32) == 0
+                    && (f & DISABLED as i32) != 0
+            })
+            .map(|(_, a)| a.text.clone())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmdisgaliases` — disabled-global-aliases arm.
+fn scanpmdisgaliases() -> String {
+    use crate::ported::hashtable::flags::{ALIAS_GLOBAL, DISABLED};
+    crate::ported::hashtable::aliastab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, a)| {
+                let f = a.node.flags;
+                (f & ALIAS_GLOBAL as i32) != 0 && (f & DISABLED as i32) != 0
+            })
+            .map(|(_, a)| a.text.clone())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmdissaliases` — disabled-suffix-aliases arm.
+fn scanpmdissaliases() -> String {
+    use crate::ported::hashtable::flags::DISABLED;
+    crate::ported::hashtable::sufaliastab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, a)| (a.node.flags & DISABLED as i32) != 0)
+            .map(|(_, a)| a.text.clone())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmcommands` — port of `Src/Modules/parameter.c:245`.
+/// HASHED arm reads `cmd` (resolved path); unhashed reads first
+/// path segment in `name` (Vec<String>) joined with the cmd name.
+fn scanpmcommands() -> String {
+    use crate::ported::hashtable::flags::HASHED;
+    crate::ported::hashtable::cmdnamtab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter_map(|(nm, c)| {
+                let hashed = (c.node.flags & HASHED as i32) != 0;
+                if hashed {
+                    c.cmd.clone()
+                } else {
+                    c.name.as_ref()
+                        .and_then(|v| v.first())
+                        .map(|seg| format!("{}/{}", seg, nm))
+                }
+            })
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmfunctions` — port of `Src/Modules/parameter.c:519`.
+fn scanpmfunctions() -> String {
+    use crate::ported::hashtable::flags::DISABLED;
+    crate::ported::hashtable::shfunctab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
+            .map(|(_, f)| f.body.clone().unwrap_or_default())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmdisfunctions` — disabled-functions arm.
+fn scanpmdisfunctions() -> String {
+    use crate::ported::hashtable::flags::DISABLED;
+    crate::ported::hashtable::shfunctab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
+            .map(|(_, f)| f.body.clone().unwrap_or_default())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmfunction_source` — port of `Src/Modules/parameter.c:609`.
+/// `$functions_source` magic-assoc walker (paths where each
+/// function was loaded from). C delegates to `scanfunctions_source`
+/// with `dis=0`; the Rust port inlines the filtered iteration.
+fn scanpmfunction_source() -> String {
+    use crate::ported::hashtable::flags::DISABLED;
+    crate::ported::hashtable::shfunctab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
+            .map(|(_, f)| f.filename.clone().unwrap_or_default())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmdisfunction_source` — port of `Src/Modules/parameter.c:618`.
+/// `$dis_functions_source` arm (delegates to `scanfunctions_source`
+/// with `dis=DISABLED` in C).
+fn scanpmdisfunction_source() -> String {
+    use crate::ported::hashtable::flags::DISABLED;
+    crate::ported::hashtable::shfunctab_lock().read().ok()
+        .map(|t| t.iter()
+            .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
+            .map(|(_, f)| f.filename.clone().unwrap_or_default())
+            .collect::<Vec<_>>().join(" ")
+        ).unwrap_or_default()
+}
+
+/// `scanpmnameddirs` — port of `Src/Modules/parameter.c:1618`.
+fn scanpmnameddirs() -> String {
+    crate::ported::hashnameddir::nameddirtab().lock().ok()
+        .map(|t| t.iter().map(|(_, d)| d.dir.clone()).collect::<Vec<_>>().join(" "))
+        .unwrap_or_default()
+}
+
+/// `scanpmbuiltins` — port of `Src/Modules/parameter.c:843`.
+fn scanpmbuiltins() -> String {
+    crate::ported::builtin::createbuiltintable().keys().cloned()
+        .collect::<Vec<_>>().join(" ")
+}
+
+/// `scanpmparameters` — port of `Src/Modules/parameter.c:124`.
+fn scanpmparameters() -> String {
+    crate::ported::params::paramtab().read().ok()
+        .map(|t| t.keys().cloned().collect::<Vec<_>>().join(" "))
+        .unwrap_or_default()
+}
+
+/// `scanpmoptions` — port of `Src/Modules/parameter.c:1016`.
+fn scanpmoptions() -> String {
+    crate::ported::options::ZSH_OPTIONS_SET.iter()
+        .map(|s| s.to_string()).collect::<Vec<_>>().join(" ")
+}
+
+/// Dispatcher routing magic-assoc parameter name → `scanpm*` fn.
+/// Rust-side stand-in for C's `param->gsu->scantab` callback
+/// dispatch (`Src/Modules/parameter.c` per-param init at e.g.
+/// `add_parameters()` line 2143). Returns `None` for names with no
+/// ported scanner (history/modules/jobdirs/jobstates/jobtexts/
+/// usergroups/userdirs/...).
 fn splice_magic_assoc(name: &str) -> Option<String> {
-    let join = |v: Vec<String>| -> String { v.join(" ") };
-    match name {
-        // c:Src/Modules/parameter.c:1990 scanpmraliases — aliastab.
-        // Flag checks inline against `node.flags` matching C's
-        // `(a->node.flags & ALIAS_GLOBAL)` etc. style.
-        "aliases" => crate::ported::hashtable::aliastab_lock().read().ok()
-            .map(|t| join(
-                t.iter()
-                    .filter(|(_, a)| {
-                        let f = a.node.flags;
-                        (f & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) == 0
-                            && (f & crate::ported::hashtable::flags::ALIAS_SUFFIX as i32) == 0
-                            && (f & crate::ported::hashtable::flags::DISABLED as i32) == 0
-                    })
-                    .map(|(_, a)| a.text.clone())
-                    .collect()
-            )),
-        "galiases" => crate::ported::hashtable::aliastab_lock().read().ok()
-            .map(|t| join(
-                t.iter()
-                    .filter(|(_, a)| {
-                        let f = a.node.flags;
-                        (f & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) != 0
-                            && (f & crate::ported::hashtable::flags::DISABLED as i32) == 0
-                    })
-                    .map(|(_, a)| a.text.clone())
-                    .collect()
-            )),
-        "saliases" => crate::ported::hashtable::sufaliastab_lock().read().ok()
-            .map(|t| join(
-                t.iter()
-                    .filter(|(_, a)| {
-                        (a.node.flags & crate::ported::hashtable::flags::DISABLED as i32) == 0
-                    })
-                    .map(|(_, a)| a.text.clone())
-                    .collect()
-            )),
-        "dis_aliases" => crate::ported::hashtable::aliastab_lock().read().ok()
-            .map(|t| join(
-                t.iter()
-                    .filter(|(_, a)| {
-                        let f = a.node.flags;
-                        (f & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) == 0
-                            && (f & crate::ported::hashtable::flags::ALIAS_SUFFIX as i32) == 0
-                            && (f & crate::ported::hashtable::flags::DISABLED as i32) != 0
-                    })
-                    .map(|(_, a)| a.text.clone())
-                    .collect()
-            )),
-        "dis_galiases" => crate::ported::hashtable::aliastab_lock().read().ok()
-            .map(|t| join(
-                t.iter()
-                    .filter(|(_, a)| {
-                        let f = a.node.flags;
-                        (f & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) != 0
-                            && (f & crate::ported::hashtable::flags::DISABLED as i32) != 0
-                    })
-                    .map(|(_, a)| a.text.clone())
-                    .collect()
-            )),
-        "dis_saliases" => crate::ported::hashtable::sufaliastab_lock().read().ok()
-            .map(|t| join(
-                t.iter()
-                    .filter(|(_, a)| {
-                        (a.node.flags & crate::ported::hashtable::flags::DISABLED as i32) != 0
-                    })
-                    .map(|(_, a)| a.text.clone())
-                    .collect()
-            )),
-        // c:Src/Modules/parameter.c:245 scanpmcommands — cmdnamtab.
-        // For each cmdnam: HASHED arm reads `cmd` (resolved path);
-        // unhashed reads first path segment in `name` (Vec<String>)
-        // joined with the command name.
-        "commands" => crate::ported::hashtable::cmdnamtab_lock().read().ok()
-            .map(|t| join(
-                t.iter()
-                    .filter_map(|(nm, c)| {
-                        let hashed = (c.node.flags
-                            & crate::ported::hashtable::flags::HASHED as i32) != 0;
-                        if hashed {
-                            c.cmd.clone()
-                        } else {
-                            c.name.as_ref()
-                                .and_then(|v| v.first())
-                                .map(|seg| format!("{}/{}", seg, nm))
-                        }
-                    })
-                    .collect()
-            )),
-        // c:Src/Modules/parameter.c:519 scanpmfunctions — shfunctab.
-        "functions" => crate::ported::hashtable::shfunctab_lock().read().ok()
-            .map(|t| join(
-                t.iter()
-                    .filter(|(_, f)| (f.node.flags & crate::ported::hashtable::flags::DISABLED as i32) == 0)
-                    .map(|(_, f)| f.body.clone().unwrap_or_default())
-                    .collect()
-            )),
-        "dis_functions" => crate::ported::hashtable::shfunctab_lock().read().ok()
-            .map(|t| join(
-                t.iter()
-                    .filter(|(_, f)| (f.node.flags & crate::ported::hashtable::flags::DISABLED as i32) != 0)
-                    .map(|(_, f)| f.body.clone().unwrap_or_default())
-                    .collect()
-            )),
-        "functions_source" => crate::ported::hashtable::shfunctab_lock().read().ok()
-            .map(|t| join(
-                t.iter()
-                    .filter(|(_, f)| (f.node.flags & crate::ported::hashtable::flags::DISABLED as i32) == 0)
-                    .map(|(_, f)| f.filename.clone().unwrap_or_default())
-                    .collect()
-            )),
-        "dis_functions_source" => crate::ported::hashtable::shfunctab_lock().read().ok()
-            .map(|t| join(
-                t.iter()
-                    .filter(|(_, f)| (f.node.flags & crate::ported::hashtable::flags::DISABLED as i32) != 0)
-                    .map(|(_, f)| f.filename.clone().unwrap_or_default())
-                    .collect()
-            )),
-        // c:Src/Modules/parameter.c:1618 scanpmnameddirs — nameddirtab.
-        "nameddirs" => crate::ported::hashnameddir::nameddirtab().lock().ok()
-            .map(|t| join(
-                t.iter().map(|(_, d)| d.dir.clone()).collect()
-            )),
-        // c:Src/Modules/parameter.c:843 scanpmbuiltins — builtintab.
-        "builtins" => Some(join(
-            crate::ported::builtin::createbuiltintable()
-                .keys().cloned().collect()
-        )),
-        // c:Src/Modules/parameter.c:124 scanpmparameters — paramtab.
-        "parameters" => crate::ported::params::paramtab().read().ok()
-            .map(|t| join(t.keys().cloned().collect())),
-        // c:Src/Modules/parameter.c:1016 scanpmoptions — optiontab.
-        "options" => Some(join(
-            crate::ported::options::ZSH_OPTIONS_SET.iter()
-                .map(|s| s.to_string())
-                .collect()
-        )),
-        // Names without ported splice walkers (history/modules/
-        // jobdirs/jobstates/jobtexts/usergroups/userdirs/...).
-        _ => None,
-    }
+    let v = match name {
+        "aliases"               => scanpmraliases(),         // c:parameter.c:1990
+        "galiases"              => scanpmgaliases(),
+        "saliases"              => scanpmsaliases(),
+        "dis_aliases"           => scanpmdisraliases(),
+        "dis_galiases"          => scanpmdisgaliases(),
+        "dis_saliases"          => scanpmdissaliases(),
+        "commands"              => scanpmcommands(),         // c:parameter.c:245
+        "functions"             => scanpmfunctions(),        // c:parameter.c:519
+        "dis_functions"         => scanpmdisfunctions(),
+        "functions_source"      => scanpmfunction_source(),
+        "dis_functions_source"  => scanpmdisfunction_source(),
+        "nameddirs"             => scanpmnameddirs(),        // c:parameter.c:1618
+        "builtins"              => scanpmbuiltins(),         // c:parameter.c:843
+        "parameters"            => scanpmparameters(),       // c:parameter.c:124
+        "options"               => scanpmoptions(),          // c:parameter.c:1016
+        _ => return None,
+    };
+    Some(v)
 }
 
 /// Read a scalar variable from `paramtab`. Equivalent to C's
