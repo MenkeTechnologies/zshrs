@@ -585,7 +585,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // through `execbuiltin` so the correct funcid + optstr propagate
     // — earlier wiring passed funcid=0 unconditionally and `unalias`
     // silently no-op'd on the cmdnamtab path.
-    fn unhash_via_execbuiltin(name: &str, args: Vec<String>) -> i32 {
+    fn unhash_via_execbuiltin(name: &str,    args: Vec<String>) -> i32 {
         let bn_idx = crate::ported::builtin::BUILTINS.iter()
             .position(|b| b.node.nam == name);
         if let Some(idx) = bn_idx {
@@ -789,6 +789,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
+    //WARNING FAKE AND MUST BE DELETED
     vm.register_builtin(BUILTIN_MKDIR, |vm, argc| {
         let args = pop_args(vm, argc);
         // Canonical bin_mkdir per files.c:63 — parses -m/-p inline
@@ -3704,7 +3705,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                     // digits-vs-non-digits so "file10"
                                     // sorts after "file2".
                                     a.sort_by(|x, y| {
-                                        let cmp = natural_cmp(x, y);
+                                        let cmp = crate::extensions::stringsort::natural_cmp(x, y);
                                         if descending {
                                             cmp.reverse()
                                         } else {
