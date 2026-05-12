@@ -1276,13 +1276,63 @@ mod zmodload_builtin {
 mod zcompile_builtin {
     use super::*;
 
-    /// `zcompile -t FILE.zwc` checks whether a `.zwc` is valid.
-    /// Direct port of bin_zcompile() in Src/parse.c. With no FILE
-    /// it errors.
+    /// `zcompile` with no args errors. Direct port of
+    /// `bin_zcompile()` (`Src/parse.c:3225`) — "too few arguments".
     #[test]
     fn zcompile_no_args_errors() {
-        let z = run_zsh("zcompile 2>/dev/null; echo $?");
-        let r = run_zshrs("zcompile 2>/dev/null; echo $?");
+        let z = run_zsh("zcompile 2>&1; echo $?");
+        let r = run_zshrs("zcompile 2>&1; echo $?");
+        assert_eq!(z.stdout, r.stdout);
+    }
+
+    /// `zcompile -k -z FILE` — illegal combination of options
+    /// (`Src/parse.c:3185-3192`). Both ksh-style and zsh-style
+    /// autoload flags can't coexist.
+    #[test]
+    fn zcompile_k_and_z_illegal() {
+        let z = run_zsh("zcompile -k -z /tmp/zshrs-test-zc 2>&1; echo $?");
+        let r = run_zshrs("zcompile -k -z /tmp/zshrs-test-zc 2>&1; echo $?");
+        assert_eq!(z.stdout, r.stdout);
+    }
+
+    /// `zcompile -R -M FILE` — illegal combination
+    /// (`Src/parse.c:3186`). Read-only and memory-map modes are
+    /// mutually exclusive.
+    #[test]
+    #[allow(non_snake_case)]
+    fn zcompile_R_and_M_illegal() {
+        let z = run_zsh("zcompile -R -M /tmp/zshrs-test-zc 2>&1; echo $?");
+        let r = run_zshrs("zcompile -R -M /tmp/zshrs-test-zc 2>&1; echo $?");
+        assert_eq!(z.stdout, r.stdout);
+    }
+
+    /// `zcompile -c -U FILE` — illegal combination (`Src/parse.c:3187-3188`).
+    /// `-c` (compile current functions) can't combine with `-U`
+    /// (no-alias) since alias-expansion only matters at source-read.
+    #[test]
+    #[allow(non_snake_case)]
+    fn zcompile_c_and_U_illegal() {
+        let z = run_zsh("zcompile -c -U /tmp/zshrs-test-zc 2>&1; echo $?");
+        let r = run_zshrs("zcompile -c -U /tmp/zshrs-test-zc 2>&1; echo $?");
+        assert_eq!(z.stdout, r.stdout);
+    }
+
+    /// `zcompile -m FILE` (without `-c` or `-a`) is illegal
+    /// (`Src/parse.c:3189-3190`). `-m` is a pattern-match flag that
+    /// only makes sense alongside the dump-current modes.
+    #[test]
+    fn zcompile_m_without_c_or_a_illegal() {
+        let z = run_zsh("zcompile -m /tmp/zshrs-test-zc 2>&1; echo $?");
+        let r = run_zshrs("zcompile -m /tmp/zshrs-test-zc 2>&1; echo $?");
+        assert_eq!(z.stdout, r.stdout);
+    }
+
+    /// `zcompile -t` with no args errors with "too few arguments"
+    /// (`Src/parse.c:3201-3203`).
+    #[test]
+    fn zcompile_t_no_args_errors() {
+        let z = run_zsh("zcompile -t 2>&1; echo $?");
+        let r = run_zshrs("zcompile -t 2>&1; echo $?");
         assert_eq!(z.stdout, r.stdout);
     }
 }

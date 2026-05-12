@@ -3449,6 +3449,187 @@ fn error(msg: &str) {
     crate::ported::utils::zerr(msg);
 }
 
+// =====================================================================
+// `bin_zcompile` and wordcode-dump helpers — port of `Src/parse.c:3104+`.
+//
+// The wordcode dump format (`.zwc`) is a serialized parse tree zsh can
+// `mmap()` and dispatch from without re-parsing on every shell start.
+// `bin_zcompile` writes one (default mode) or inspects/lists one
+// (`-t` mode). The supporting helpers (`load_dump_header`,
+// `dump_find_func`, `build_dump`, `build_cur_dump`) are stubs until
+// the wordcode emitter side lands; the option-validation / dispatch
+// shape is faithfully ported so call sites get C-identical errors.
+// =====================================================================
+
+/// `#define FD_EXT ".zwc"` from `Src/parse.c:3104`.
+pub const FD_EXT: &str = ".zwc";
+
+/// `#define FDF_MAP 1` from `Src/parse.c:3111`. Bit set when the
+/// dump should be `mmap()`-ed (`-M` flag) vs read normally (`-R`).
+pub const FDF_MAP: u32 = 1;
+
+/// `#define FDHF_KSHLOAD 1` from `Src/parse.c:3149`. Function-header
+/// flag word — `-k` ksh-style autoload marker.
+pub const FDHF_KSHLOAD: u32 = 1;
+
+/// `#define FDHF_ZSHLOAD 2` from `Src/parse.c:3150`. `-z` zsh-style
+/// autoload marker.
+pub const FDHF_ZSHLOAD: u32 = 2;
+
+/// Port of `dump_find_func(Wordcode h, char *name)` from
+/// `Src/parse.c:3167`. Scans a loaded dump header for a function by
+/// name; returns true on hit. Stub until the wordcode emitter port
+/// lands.
+pub fn dump_find_func(_h: *const u32, _name: &str) -> bool { // c:3167
+    false
+}
+
+/// Port of `load_dump_header(char *nam, char *name, int err)` from
+/// `Src/parse.c:3258`. Reads + validates a `.zwc` header; returns
+/// `Some(buf)` on success or `None` on bad-magic / version mismatch.
+/// Stub: emits the same `not a wordcode file` warning C does on
+/// failure and returns None.
+pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> { // c:3258
+    if err != 0 {
+        crate::ported::utils::zwarnnam(nam, &format!("{}: not a wordcode file", name));
+    }
+    None
+}
+
+/// Port of `build_dump(char *nam, char *dump, char **files, int ali, int map, int flags)`
+/// from `Src/parse.c:3397`. Compiles a list of source files into a
+/// single `.zwc` dump. Stub returns 1 (error) until the wordcode
+/// emitter port lands; matches C's failure return on I/O error.
+pub fn build_dump(nam: &str,                                                  // c:3397
+                  dump: &str,
+                  _files: &[String],
+                  _ali: i32,
+                  _map: i32,
+                  _flags: u32) -> i32 {
+    crate::ported::utils::zwarnnam(nam, &format!("{}: wordcode dump emit not yet ported", dump));
+    1
+}
+
+/// Port of `build_cur_dump(char *nam, char *dump, char **names, int match, int map, int what)`
+/// from `Src/parse.c:3536`. Compiles currently-loaded functions
+/// (`-c` for functions, `-a` for aliases) into a `.zwc` dump.
+/// Stub: returns 1 like `build_dump` does.
+pub fn build_cur_dump(nam: &str,                                              // c:3536
+                      dump: &str,
+                      _names: &[String],
+                      _match_: i32,
+                      _map: i32,
+                      _what: i32) -> i32 {
+    crate::ported::utils::zwarnnam(nam, &format!("{}: wordcode dump-current emit not yet ported", dump));
+    1
+}
+
+/// Port of `bin_zcompile(char *nam, char **args, Options ops, UNUSED(int func))`
+/// from `Src/parse.c:3180`. Validates the option set, then dispatches
+/// to one of: `-t` (test/list), `-c`/`-a` (dump current functions),
+/// or the default (compile source files to `.zwc`).
+pub fn bin_zcompile(nam: &str,                                                // c:3180
+                    args: &[String],
+                    ops: &crate::ported::zsh_h::options,
+                    _func: i32) -> i32 {
+    use crate::ported::zsh_h::OPT_ISSET;
+    use crate::ported::utils::zwarnnam;
+
+    // c:3185-3192 — illegal-combination guard.
+    let bad_combo = (OPT_ISSET(ops, b'k') && OPT_ISSET(ops, b'z'))
+        || (OPT_ISSET(ops, b'R') && OPT_ISSET(ops, b'M'))
+        || (OPT_ISSET(ops, b'c')
+            && (OPT_ISSET(ops, b'U') || OPT_ISSET(ops, b'k') || OPT_ISSET(ops, b'z')))
+        || (!(OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'a'))
+            && OPT_ISSET(ops, b'm'));
+    if bad_combo {
+        zwarnnam(nam, "illegal combination of options");                      // c:3192
+        return 1;
+    }
+
+    // c:3194 — `-c`/`-a` + KSHAUTOLOAD warning.
+    if (OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'a'))
+        && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHAUTOLOAD)
+    {
+        zwarnnam(nam, "functions will use zsh style autoloading");            // c:3195
+    }
+
+    // c:3196-3197 — flag word from `-k` / `-z`.
+    let flags: u32 = if OPT_ISSET(ops, b'k') {
+        FDHF_KSHLOAD
+    } else if OPT_ISSET(ops, b'z') {
+        FDHF_ZSHLOAD
+    } else {
+        0
+    };
+
+    // c:3199 — `-t` test/list mode.
+    if OPT_ISSET(ops, b't') {                                                 // c:3199
+        if args.is_empty() {
+            zwarnnam(nam, "too few arguments");                               // c:3202
+            return 1;
+        }
+        let dump_name = if args[0].ends_with(FD_EXT) {
+            args[0].clone()
+        } else {
+            format!("{}{}", args[0], FD_EXT)
+        };
+        let f = match load_dump_header(nam, &dump_name, 1) {                  // c:3206
+            Some(buf) => buf,
+            None => return 1,
+        };
+        // c:3209 — per-function check.
+        if args.len() > 1 {
+            for name in &args[1..] {                                          // c:3210
+                if !dump_find_func(f.as_ptr(), name) {                        // c:3212
+                    return 1;
+                }
+            }
+            return 0;
+        }
+        // c:3215-3221 — listing arm. Stub prints what we have.
+        println!("zwc file ({}) for zsh-{}",
+                 "read",
+                 env!("CARGO_PKG_VERSION"));
+        return 0;
+    }
+
+    if args.is_empty() {
+        zwarnnam(nam, "too few arguments");                                   // c:3226
+        return 1;
+    }
+
+    // c:3228 — map mode discriminant.
+    let map: i32 = if OPT_ISSET(ops, b'M') {
+        2
+    } else if OPT_ISSET(ops, b'R') {
+        0
+    } else {
+        1
+    };
+
+    // c:3230-3236 — single-file default-mode short path.
+    if args.len() == 1 && !(OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'a')) {
+        let dump = format!("{}{}", args[0], FD_EXT);
+        return build_dump(nam, &dump, args, OPT_ISSET(ops, b'U') as i32, map, flags);
+    }
+
+    // c:3239-3247 — multi-file or `-c`/`-a` mode.
+    let dump = if args[0].ends_with(FD_EXT) {
+        args[0].clone()
+    } else {
+        format!("{}{}", args[0], FD_EXT)
+    };
+    let rest = &args[1..];
+    if OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'a') {
+        let what = (if OPT_ISSET(ops, b'c') { 1 } else { 0 })
+            | (if OPT_ISSET(ops, b'a') { 2 } else { 0 });
+        build_cur_dump(nam, &dump, rest, OPT_ISSET(ops, b'm') as i32, map, what)
+    } else {
+        build_dump(nam, &dump, rest, OPT_ISSET(ops, b'U') as i32, map, flags)
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
