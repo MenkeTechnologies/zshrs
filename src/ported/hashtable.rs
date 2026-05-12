@@ -4,12 +4,16 @@
 //! and history. Uses Rust's HashMap internally but maintains zsh-compatible APIs.
 //!
 //! `cmdnam_table` / `shfunc_table` / `reswd_table` / `alias_table` are
-//! Rust extensions — C uses one polymorphic `struct hashtable`
-//! (`Src/zsh.h:1175-1235`) with function-pointer callbacks for every
-//! per-table operation; each Rust struct here typed-wraps a
-//! `HashMap` for compile-time safety while the full polymorphic
-//! `hashtable` port lands. The canonical layer will dissolve these
-//! into typed views over a single shared `hashtable` storage.
+//! Rust-side typed wrappers. C uses one polymorphic `struct hashtable`
+//! (`Src/zsh.h:1175-1235`) with function-pointer callbacks per table
+//! kind; the canonical Rust port of that struct lives at
+//! `zsh_h.rs:532`. These typed wrappers add fields that aren't part
+//! of `struct hashtable` (e.g. `cmdnam_table` carries
+//! `path_checked_index` + `path` + `hash_executables_only` for the
+//! `PATH`-walk fast-rehash that C tracks via the file-scope
+//! `pathchecked` / `hashed_anything` statics in `Src/hashtable.c`).
+//! Lowercase naming reflects that the wrappers are co-located with
+//! the canonical `hashtable` rather than mirror it 1:1.
 
 #![allow(non_camel_case_types)]
 
