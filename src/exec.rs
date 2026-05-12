@@ -2007,6 +2007,7 @@ impl ShellExecutor {
 /// runs of digits as integer chunks. So "file2" < "file10" < "file20".
 /// Used by the `(n)` / `(on)` / `(On)` parameter flag for human-friendly
 /// sort. Falls back to byte-cmp for non-digit segments.
+/// WARNING FAKE AND MUST BE DELETED
 pub(crate) fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let a_bytes = a.as_bytes();
@@ -3923,6 +3924,7 @@ impl crate::ported::exec::ShellExecutor {
     /// the `[…]` becomes orphan text). Recognises both bare-numeric
     /// keys and zsh subscript-flag forms `(I)pat`, `(R)pat`, etc.
     /// Direct support for zinit's `(( $@[(I)-*] ))` pattern.
+    /// WARNING FAKE AND MUST BE DELETED
     pub(crate) fn pre_resolve_dollar_subscripts(&self, expr: &str) -> String {
         let bytes: Vec<char> = expr.chars().collect();
         let mut out = String::with_capacity(expr.len());
@@ -4231,6 +4233,7 @@ impl crate::ported::exec::ShellExecutor {
     /// honors PM_FFLOAT/PM_EFLOAT + the declared precision before
     /// store. Without this, `typeset -F 3 x; (( x = 2.5 ))` stored
     /// the f64::to_string default instead of the expected `2.500`.
+    /// WARNING FAKE AND MUST BE DELETED
     pub(crate) fn format_for_var_attr(&self, name: &str, value: &str) -> String {
         // Read PM_FFLOAT/PM_EFLOAT + Param.base (float precision)
         // directly from canonical paramtab. Mirrors C `floatpf` /
@@ -4406,240 +4409,6 @@ impl crate::ported::exec::ShellExecutor {
             (None, None, i)
         }
     }
-    /// Apply zsh history-style modifiers to a value
-    /// Modifiers can be chained: :A:h:h
-    pub(crate) fn apply_history_modifiers(&self, val: &str, modifiers: &str) -> String {
-        let mut result = val.to_string();
-        let mut chars = modifiers.chars().peekable();
-
-        while let Some(c) = chars.next() {
-            match c {
-                ':' => continue,
-                'A' => {
-                    if let Ok(abs) = std::fs::canonicalize(&result) {
-                        result = abs.to_string_lossy().to_string();
-                    } else {
-                        // canonicalize() requires the path to exist. For
-                        // non-existent paths zsh still removes `./` and
-                        // resolves `..` lexically — `./foo` → `<cwd>/foo`,
-                        // not `<cwd>/./foo`. Without this normalization,
-                        // `${a:A}` for `a=./foo` left the `./` segment in
-                        // the output even after the cwd-prefix.
-                        let joined = if result.starts_with('/') {
-                            std::path::PathBuf::from(&result)
-                        } else if let Ok(cwd) = std::env::current_dir() {
-                            cwd.join(&result)
-                        } else {
-                            std::path::PathBuf::from(&result)
-                        };
-                        let mut parts: Vec<String> = Vec::new();
-                        for comp in joined.components() {
-                            use std::path::Component::*;
-                            match comp {
-                                CurDir => {}
-                                ParentDir => {
-                                    parts.pop();
-                                }
-                                Normal(s) => parts.push(s.to_string_lossy().to_string()),
-                                RootDir => parts.insert(0, String::new()),
-                                Prefix(p) => {
-                                    parts.insert(0, p.as_os_str().to_string_lossy().to_string())
-                                }
-                            }
-                        }
-                        result = parts.join("/");
-                        if result.is_empty() {
-                            result = "/".to_string();
-                        }
-                    }
-                }
-                'a' => {
-                    if !result.starts_with('/') {
-                        if let Ok(cwd) = std::env::current_dir() {
-                            result = cwd.join(&result).to_string_lossy().to_string();
-                        }
-                    }
-                }
-                'h' => {
-                    // zsh strips trailing slashes BEFORE applying head:
-                    // `/tmp/` :h is `/`, not `/tmp`. Repeatedly trim
-                    // trailing `/` first, then drop the last segment.
-                    let trimmed = result.trim_end_matches('/');
-                    if trimmed.is_empty() {
-                        // Pure-slash input (`/`, `//`, …) — head is `/`.
-                        result = "/".to_string();
-                    } else if let Some(pos) = trimmed.rfind('/') {
-                        if pos == 0 {
-                            result = "/".to_string();
-                        } else {
-                            result = trimmed[..pos].to_string();
-                        }
-                    } else {
-                        result = ".".to_string();
-                    }
-                }
-                't' => {
-                    // Mirror zsh: strip trailing slashes before tail
-                    // extraction so `foo/` :t is `foo`, not the empty
-                    // segment after the slash.
-                    let trimmed = result.trim_end_matches('/');
-                    if let Some(pos) = trimmed.rfind('/') {
-                        result = trimmed[pos + 1..].to_string();
-                    } else {
-                        result = trimmed.to_string();
-                    }
-                }
-                'r' => {
-                    if let Some(dot_pos) = result.rfind('.') {
-                        let slash_pos = result.rfind('/').map(|p| p + 1).unwrap_or(0);
-                        if dot_pos > slash_pos {
-                            result = result[..dot_pos].to_string();
-                        }
-                    }
-                }
-                'e' => {
-                    if let Some(dot_pos) = result.rfind('.') {
-                        let slash_pos = result.rfind('/').map(|p| p + 1).unwrap_or(0);
-                        if dot_pos > slash_pos {
-                            result = result[dot_pos + 1..].to_string();
-                        } else {
-                            result = String::new();
-                        }
-                    } else {
-                        result = String::new();
-                    }
-                }
-                'l' => {
-                    // `:l` lowercase. Direct port of
-                    // src/zsh/Src/hist.c:931-933 — calls casemodify
-                    // with CASMOD_LOWER. Use the faithful
-                    // casemodify port instead of plain to_lowercase
-                    // for Unicode-correct multibyte handling.
-                    result = casemodify(&result, CaseMod::CASMOD_LOWER);
-                }
-                'u' => {
-                    // `:u` uppercase. Port of src/zsh/Src/hist.c:934-936.
-                    result = casemodify(&result, CaseMod::CASMOD_UPPER);
-                }
-                'C' => {
-                    // `:C` capitalize. zsh-only modifier per
-                    // hist.c (see CASMOD_CAPS dispatch via
-                    // casemodify). The history-modifier loop's
-                    // legacy path didn't recognize `:C` — only the
-                    // `(C)` parameter flag did. Same semantics:
-                    // word-aware capitalization with mid-word
-                    // lowercase enforcement.
-                    result = casemodify(&result, CaseMod::CASMOD_CAPS);
-                }
-                'q' => {
-                    // zsh `:q` uses backslash quoting, not single-bslashquote
-                    // wrapping. Each shell-meta char gets a `\` prefix.
-                    let mut out = String::with_capacity(result.len() + 8);
-                    for ch in result.chars() {
-                        if " \t\n'\"\\$`;|&<>()[]{}*?#~!".contains(ch) {
-                            out.push('\\');
-                        }
-                        out.push(ch);
-                    }
-                    result = out;
-                }
-                'x' => {
-                    // `:x` bslashquote with word breaks. Direct port of
-                    // src/zsh/Src/hist.c:2527-2556 quotebreak —
-                    // wraps the value in single quotes, escapes
-                    // internal `'` as `'\''`, AND closes-then-reopens
-                    // SQ around each whitespace char (so `hello world`
-                    // becomes `'hello' 'world'`). Already ported as a
-                    // standalone helper in zle_hist.
-                    result = crate::hist::quotebreak(&result);
-                }
-                'Q' => {
-                    // Same shell-bslashquote-remove as the other :Q path
-                    // (hist.c remquote): strips matching `'`/`"` pairs
-                    // AND backslash escapes inside or unquoted.
-                    let bytes: Vec<char> = result.chars().collect();
-                    let mut out = String::with_capacity(result.len());
-                    let mut j = 0;
-                    let mut in_dq = false;
-                    let mut in_sq = false;
-                    while j < bytes.len() {
-                        let c = bytes[j];
-                        if in_sq {
-                            if c == '\'' {
-                                in_sq = false;
-                            } else {
-                                out.push(c);
-                            }
-                            j += 1;
-                            continue;
-                        }
-                        if in_dq {
-                            if c == '"' {
-                                in_dq = false;
-                            } else if c == '\\' && j + 1 < bytes.len() {
-                                j += 1;
-                                out.push(bytes[j]);
-                            } else {
-                                out.push(c);
-                            }
-                            j += 1;
-                            continue;
-                        }
-                        match c {
-                            '\'' => in_sq = true,
-                            '"' => in_dq = true,
-                            '\\' if j + 1 < bytes.len() => {
-                                j += 1;
-                                out.push(bytes[j]);
-                            }
-                            _ => out.push(c),
-                        }
-                        j += 1;
-                    }
-                    result = out;
-                }
-                'P' => {
-                    if let Ok(real) = std::fs::canonicalize(&result) {
-                        result = real.to_string_lossy().to_string();
-                    }
-                }
-                'g' => {
-                    // `:g` is a prefix to `:s` (or `:&`) meaning "global
-                    // substitution". Peek next char — if `s` or `&`,
-                    // route through the substitution arm with global=true.
-                    let global = true;
-                    let next = chars.next();
-                    match next {
-                        Some('s') => {
-                            /* :g substitute — stubbed pending faithful subst.c modify() port */ let _ = global;
-                        }
-                        _ => {
-                            // Stray `:g` without `:s`/`:&` follow-up —
-                            // unrecognized in zsh, exit modifier loop.
-                            break;
-                        }
-                    }
-                }
-                's' => {
-                    // `:s/old/new/` — single substitution. Delimiter is
-                    // the char after `s` (typically `/`). Final delim
-                    // optional.
-                    /* :s/old/new/ — stubbed pending faithful subst.c modify() port */
-                }
-                // Bash-only modifiers — zsh rejects with "unrecognized
-                // modifier". Match that error format. Without these arms,
-                // unknown modifiers silently terminated the loop and the
-                // caller saw the previous-stage value (often empty).
-                'U' | 'L' | 'V' | 'X' => {
-                    zerr(&format!("unrecognized modifier `{}'", c));
-                    result = String::new();
-                    break;
-                }
-                _ => break,
-            }
-        }
-        result
-    }
 }
 
 // =====================================================================
@@ -4693,552 +4462,10 @@ impl crate::ported::exec::ShellExecutor {
 }
 
 // =====================================================================
-// MOVED FROM: src/ported/math.rs
-// =====================================================================
-
-impl crate::ported::exec::ShellExecutor {
-
-}
-
-// =====================================================================
-// MOVED FROM: src/ported/subst.rs
-// =====================================================================
-
-impl crate::ported::exec::ShellExecutor {
-}
-
-// =====================================================================
-// MOVED FROM: src/ported/jobs.rs
-// =====================================================================
-
-impl crate::ported::exec::ShellExecutor {
-
-}
-
-// =====================================================================
 // MOVED FROM: src/ported/glob.rs
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
-    /// Static glob match — same logic as glob_match but callable without &self,
-    /// needed for Rayon parallel iterators that can't capture &self.
-    ///
-    /// FAKE DUP DEFERRED — duplicates `crate::ported::pattern::patmatch`
-    /// plus extendedglob preprocessing (`^pat` negation, `(a|b)~(x)`
-    /// exclusion). The preprocessing is shell-canonical but lives here
-    /// in exec.rs instead of inside patcompile or a wrapper. To dissolve:
-    /// move the extendedglob `^` / `~` arm into patcompile (or a thin
-    /// canonical pre-walker) so callers use patmatch directly.
-    pub fn glob_match_static(s: &str, pattern: &str) -> bool {
-        // Extendedglob `^pat` negation: when extendedglob is on AND
-        // the pattern starts with a literal `^`, strip it and invert
-        // the match of the remainder. Already done in
-        // `extendedglob_match` for the param-filter path; do it here
-        // too so `[[ str = ^pat ]]` works via the cond `=` matcher.
-        let extendedglob_on =
-            with_executor(|e| e.options.get("extendedglob").copied().unwrap_or(false));
-        if extendedglob_on {
-            if let Some(rest) = pattern.strip_prefix('^') {
-                return !ShellExecutor::glob_match_static(s, rest);
-            }
-            // Extendedglob `~` exclusion: `pat1~pat2` matches strings
-            // matching `pat1` AND NOT matching `pat2`. Direct port of
-            // zsh's pattern.c P_EXCLUDE handling (line 155 onward) for
-            // the top-level case — the canonical implementation also
-            // handles nested exclusions (`(a~b)c`) but the top-level
-            // form is what `*.txt~README*` and similar idioms produce.
-            // Walk the pattern looking for a `~` that's NOT inside
-            // `[...]` or `(...)` so nested specials stay literal.
-            if let Some(idx) = find_top_level_tilde(pattern) {
-                let lhs = &pattern[..idx];
-                let rhs = &pattern[idx + 1..];
-                return ShellExecutor::glob_match_static(s, lhs)
-                    && !ShellExecutor::glob_match_static(s, rhs);
-            }
-        }
-
-        // ksh-style negation `!(p)` (gated on `setopt kshglob`): when
-        // the entire pattern is `!(<body>)`, match anything that does
-        // NOT match `<body>`. This handles the standalone case (the
-        // overwhelmingly common form); embedded `!()` inside a larger
-        // pattern still falls through and is left literal — full
-        // zsh-style negation needs lookahead which `regex` lacks.
-        let kshglob_on = with_executor(|e| e.options.get("kshglob").copied().unwrap_or(false));
-        if kshglob_on {
-            if let Some(body) = pattern.strip_prefix("!(").and_then(|r| r.strip_suffix(')')) {
-                // Don't recurse if body itself contains an unmatched
-                // `(` that would change the meaning.
-                let mut depth = 0;
-                let mut balanced = true;
-                for c in body.chars() {
-                    match c {
-                        '(' => depth += 1,
-                        ')' => {
-                            if depth == 0 {
-                                balanced = false;
-                                break;
-                            }
-                            depth -= 1;
-                        }
-                        _ => {}
-                    }
-                }
-                if balanced && depth == 0 {
-                    return !ShellExecutor::glob_match_static(s, body);
-                }
-            }
-        }
-
-        // Inline pattern flags `(#i)` / `(#I)` / `(#l)` / `(#a<n>)` per
-        // zshexpn(1) "Globbing Flags". They prefix a pattern and modify
-        // matching semantics for the rest.
-        //   (#i) — case insensitive
-        //   (#I) — case sensitive (turn (#i) back off)
-        //   (#l) — lowercase pattern char matches both cases in input;
-        //          uppercase pattern char is exact-match
-        //   (#a<n>) — approximate match: up to <n> errors (Levenshtein
-        //          distance, insert/delete/substitute)
-        let (pattern, case_insensitive, l_flag, approx_n, _) = PatternFlags::parse(pattern);
-
-        if let Some(n) = approx_n {
-            // Inline (#aN) approximate-match — direct port of the
-            // Levenshtein-distance check inside patmatch (Src/pattern.c)
-            // when PAT_APPROX is set. m/k bound check skips early when
-            // the strings differ in length by more than the budget;
-            // otherwise standard 2-row DP table.
-            let s_chars: Vec<char> = s.chars().collect();
-            let p_chars: Vec<char> = pattern.chars().collect();
-            let m = s_chars.len();
-            let k = p_chars.len();
-            if m.abs_diff(k) as u32 > n {
-                return false;
-            }
-            let mut prev: Vec<usize> = (0..=k).collect();
-            let mut curr: Vec<usize> = vec![0; k + 1];
-            for i in 1..=m {
-                curr[0] = i;
-                for j in 1..=k {
-                    let cost = if s_chars[i - 1] == p_chars[j - 1] { 0 } else { 1 };
-                    curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
-                }
-                std::mem::swap(&mut prev, &mut curr);
-            }
-            return prev[k] as u32 <= n;
-        }
-
-        // Build the regex. For (#l) we need to inflate lowercase chars
-        // to character classes that match either case. Also detect
-        // zsh's numeric-range glob `<a-b>` (or `<->` for any number,
-        // `<a->` / `<-b>` for one-sided ranges) — translate to a
-        // capture group and remember the bounds for a post-match check.
-        let mut regex_pattern = String::from("^");
-        // Numeric ranges paired with the regex capture-group index they
-        // correspond to. Required because user-written `(...)` groups
-        // in the pattern (esp. alternation `(a|b)`) shift capture
-        // indices, so we can't assume each `<N-M>` is at numeric_ranges
-        // index + 1. Direct port of the bookkeeping zsh's pattern.c
-        // does via `pat_captures` — each numeric atom remembers its
-        // own group offset. Without this, `[[ 5.9 == (5.<1->*|<6->.*) ]]`
-        // applied the lo/hi check against the OUTER alternation's
-        // capture (the literal "5.9") and parse-as-int failed.
-        let mut numeric_ranges: Vec<(usize, Option<i64>, Option<i64>)> = Vec::new();
-        // Track the capture-group index. Increments on every `(` that
-        // OPENS a new group in the emitted regex. Starts at 0 because
-        // the outer `^...$` anchors don't add a group.
-        let mut capture_group_count: usize = 0;
-        let mut chars = pattern.chars().peekable();
-        // Helper: after emitting any atom, check for zsh extendedglob
-        // postfix `#` (zero-or-more) / `##` (one-or-more) and append
-        // the equivalent regex quantifier. Direct port of zsh's
-        // pattern.c (`POUND` / `POUND2` cases in `patcompswitch`).
-        // Only fires when extendedglob is enabled.
-        let consume_extglob_postfix =
-            |chars: &mut std::iter::Peekable<std::str::Chars>| -> Option<&'static str> {
-                if !extendedglob_on {
-                    return None;
-                }
-                if chars.peek() != Some(&'#') {
-                    return None;
-                }
-                chars.next();
-                if chars.peek() == Some(&'#') {
-                    chars.next();
-                    Some("+")
-                } else {
-                    Some("*")
-                }
-            };
-        while let Some(c) = chars.next() {
-            match c {
-                // ksh-style extglob: ?(p) *(p) +(p) @(p) — translate to
-                // (?:p)? (?:p)* (?:p)+ (?:p) respectively. Gated on
-                // the `kshglob` option (zsh's default is off). The
-                // !(p) (negative) form needs lookahead which the
-                // `regex` crate doesn't support; left literal.
-                '?' | '*' | '+' | '@'
-                    if chars.peek() == Some(&'(')
-                        && with_executor(|e| {
-                            e.options.get("kshglob").copied().unwrap_or(false)
-                        }) =>
-                {
-                    let op = c;
-                    chars.next(); // consume '('
-                                  // Capture body until matching ')'. Track depth so
-                                  // nested parens work.
-                    let mut depth = 1;
-                    let mut body = String::new();
-                    while let Some(&pc) = chars.peek() {
-                        chars.next();
-                        if pc == '(' {
-                            depth += 1;
-                            body.push(pc);
-                        } else if pc == ')' {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                            body.push(pc);
-                        } else {
-                            body.push(pc);
-                        }
-                    }
-                    // Inline ksh-extglob body -> regex translator.
-                    // Direct port of the tiny per-char dispatch zsh's
-                    // pattern.c does inside its extglob handler — no
-                    // anchors, no (#flags), just glob -> regex chars.
-                    let body_re = {
-                        let mut out = String::new();
-                        let mut chars = body.chars().peekable();
-                        while let Some(c) = chars.next() {
-                            match c {
-                                '|' => out.push('|'),
-                                '*' => out.push_str(".*"),
-                                '?' => out.push('.'),
-                                '[' => {
-                                    out.push('[');
-                                    for cc in chars.by_ref() {
-                                        if cc == ']' {
-                                            out.push(']');
-                                            break;
-                                        }
-                                        out.push(cc);
-                                    }
-                                }
-                                '.' | '+' | '^' | '$' | '\\' | '{' | '}' | '(' | ')' => {
-                                    out.push('\\');
-                                    out.push(c);
-                                }
-                                _ => out.push(c),
-                            }
-                        }
-                        out
-                    };
-                    let suffix = match op {
-                        '?' => "?",
-                        '*' => "*",
-                        '+' => "+",
-                        '@' => "",
-                        _ => "",
-                    };
-                    regex_pattern.push_str(&format!("(?:{}){}", body_re, suffix));
-                }
-                '*' => regex_pattern.push_str(".*"),
-                '?' => {
-                    regex_pattern.push('.');
-                    if let Some(q) = consume_extglob_postfix(&mut chars) {
-                        regex_pattern.push_str(q);
-                    }
-                }
-                '<' => {
-                    // Try to parse `<lo-hi>`. If the form doesn't
-                    // match, fall back to literal `<`. Direct port of
-                    // zsh's numeric-range glob handler — speculative
-                    // scan for the closing `>`, split on `-`, parse
-                    // optional bounds. Matches `<5-10>`, `<5->`,
-                    // `<-10>`, `<->`.
-                    let parsed: Option<(Option<i64>, Option<i64>, usize)> = (|| {
-                        let mut buf = String::new();
-                        let peek_iter = chars.clone();
-                        for c in peek_iter {
-                            buf.push(c);
-                            if c == '>' { break; }
-                            if buf.len() > 64 { return None; }
-                        }
-                        if !buf.ends_with('>') {
-                            return None;
-                        }
-                        let inner = &buf[..buf.len() - 1];
-                        let (lo_str, hi_str) = inner.split_once('-')?;
-                        let lo: Option<i64> = if lo_str.is_empty() {
-                            None
-                        } else {
-                            Some(lo_str.parse().ok()?)
-                        };
-                        let hi: Option<i64> = if hi_str.is_empty() {
-                            None
-                        } else {
-                            Some(hi_str.parse().ok()?)
-                        };
-                        let n = buf.chars().count();
-                        for _ in 0..n { chars.next(); }
-                        Some((lo, hi, n))
-                    })();
-                    if let Some((lo, hi, consumed)) = parsed {
-                        regex_pattern.push_str("(\\d+)");
-                        capture_group_count += 1;
-                        numeric_ranges.push((capture_group_count, lo, hi));
-                        let _ = consumed;
-                    } else {
-                        regex_pattern.push('<');
-                    }
-                }
-                '[' => {
-                    // Direct port of zsh's character-class compile
-                    // (pattern.c, see `patcompcls` and the `[`
-                    // handling in `patcompswitch`):
-                    //   - `[!...]` and `[^...]` both negate (POSIX +
-                    //     zsh both accept; only `^` is canonical
-                    //     regex). Translate `!` -> `^` so the regex
-                    //     crate sees the right form. Was being
-                    //     copied verbatim, so `[!a]` matched `!` or
-                    //     `a` instead of "anything but a".
-                    //   - POSIX character classes `[:alpha:]` /
-                    //     `[:digit:]` etc. inside `[...]` already
-                    //     pass through the regex crate, but the
-                    //     trailing `]` of the class would be misread
-                    //     as the closing of the outer bracket. Walk
-                    //     past `[:NAME:]` as a unit so the next `]`
-                    //     after the class isn't taken as the close.
-                    //   - Backslash-escaped `]` (`[\\]]`) keeps the
-                    //     `]` as a literal class member.
-                    regex_pattern.push('[');
-                    let mut first = true;
-                    while let Some(cc) = chars.next() {
-                        if first && cc == '!' {
-                            regex_pattern.push('^');
-                            first = false;
-                            continue;
-                        }
-                        first = false;
-                        if cc == ']' {
-                            regex_pattern.push(']');
-                            break;
-                        }
-                        if cc == '\\' {
-                            // Pass escape + next char through.
-                            regex_pattern.push('\\');
-                            if let Some(nx) = chars.next() {
-                                regex_pattern.push(nx);
-                            }
-                            continue;
-                        }
-                        if cc == '[' && chars.peek() == Some(&':') {
-                            // POSIX class `[:NAME:]`. Read until
-                            // `:]` then push the class verbatim.
-                            regex_pattern.push('[');
-                            let mut prev_colon = false;
-                            for ic in chars.by_ref() {
-                                regex_pattern.push(ic);
-                                if prev_colon && ic == ']' {
-                                    break;
-                                }
-                                prev_colon = ic == ':';
-                            }
-                            continue;
-                        }
-                        regex_pattern.push(cc);
-                    }
-                    // After a closed `[...]`, the bracket is a single
-                    // regex atom — apply extendedglob `#`/`##`
-                    // postfix as `*`/`+` directly.
-                    if let Some(q) = consume_extglob_postfix(&mut chars) {
-                        regex_pattern.push_str(q);
-                    }
-                }
-                '(' => {
-                    // `(#cN)` and `(#cN,M)` post-subpattern repetition
-                    // qualifiers: the previous element gets a `{N}` or
-                    // `{N,M}` regex quantifier. Detect by peeking for
-                    // `#c` after the opening `(`.
-                    let peek_iter = chars.clone();
-                    let mut probe: Vec<char> = Vec::new();
-                    let p = peek_iter;
-                    for pc in p {
-                        probe.push(pc);
-                        if pc == ')' || probe.len() > 32 {
-                            break;
-                        }
-                    }
-                    let probe_str: String = probe.iter().collect();
-                    if probe_str.starts_with("#c") && probe_str.ends_with(')') {
-                        let body = &probe_str[2..probe_str.len() - 1];
-                        let quant = if let Some((lo, hi)) = body.split_once(',') {
-                            format!("{{{},{}}}", lo, hi)
-                        } else {
-                            format!("{{{}}}", body)
-                        };
-                        regex_pattern.push_str(&quant);
-                        // Advance the real iterator past the consumed chars.
-                        for _ in 0..probe.len() {
-                            chars.next();
-                        }
-                    } else if probe_str == "#e)" {
-                        // `(#e)` — match end-of-string anchor. Direct
-                        // port of zsh's pattern.c P_EOL token (zsh's
-                        // "globbing flag" `(#e)` per zshexpn(1)).
-                        // Emits regex `$` to anchor the match at the
-                        // end of the input. Used by zinit's
-                        // `(#b)((*)\\(#e)|(*))` to detect a trailing
-                        // `\` in each element.
-                        regex_pattern.push('$');
-                        for _ in 0..probe.len() {
-                            chars.next();
-                        }
-                    } else if probe_str == "#s)" {
-                        // `(#s)` — match start-of-string anchor.
-                        // zshexpn(1): "matches at the start of the
-                        // test string". Emits regex `^`.
-                        regex_pattern.push('^');
-                        for _ in 0..probe.len() {
-                            chars.next();
-                        }
-                    } else {
-                        regex_pattern.push('(');
-                        capture_group_count += 1;
-                    }
-                }
-                ')' => {
-                    regex_pattern.push(')');
-                    // Closed group is an atom — extendedglob `#`/`##`
-                    // postfix applies to the whole group.
-                    if let Some(q) = consume_extglob_postfix(&mut chars) {
-                        regex_pattern.push_str(q);
-                    }
-                }
-                '|' => regex_pattern.push('|'),
-                '\\' => {
-                    // Special-case: `\(#e)` / `\(#s)` — literal
-                    // backslash followed by extendedglob end/start
-                    // anchor. Emit `\\$` / `\\^` so the pattern matches
-                    // a literal trailing/leading `\`. Without this the
-                    // `(` of `(#e)` got consumed as the escaped char,
-                    // dropping the anchor entirely. Direct port of
-                    // pattern.c P_EOL/P_BOL recognition after a `\`.
-                    // Only fires under extendedglob — without the
-                    // option, `(#e)` is not a token at all.
-                    if extendedglob_on {
-                        let mut peek = chars.clone();
-                        let p1 = peek.next();
-                        let p2 = peek.next();
-                        let p3 = peek.next();
-                        let p4 = peek.next();
-                        if p1 == Some('(')
-                            && p2 == Some('#')
-                            && (p3 == Some('e') || p3 == Some('s'))
-                            && p4 == Some(')')
-                        {
-                            regex_pattern.push_str("\\\\");
-                            regex_pattern.push(if p3 == Some('e') { '$' } else { '^' });
-                            chars.next(); chars.next(); chars.next(); chars.next();
-                            continue;
-                        }
-                    }
-                    // Backslash escapes the next char — treat literally.
-                    if let Some(next) = chars.next() {
-                        if matches!(
-                            next,
-                            '.' | '+'
-                                | '^'
-                                | '$'
-                                | '\\'
-                                | '{'
-                                | '}'
-                                | '*'
-                                | '?'
-                                | '('
-                                | ')'
-                                | '|'
-                                | '['
-                                | ']'
-                        ) {
-                            regex_pattern.push('\\');
-                        }
-                        regex_pattern.push(next);
-                    } else {
-                        regex_pattern.push_str("\\\\");
-                    }
-                }
-                '.' | '+' | '^' | '$' | '{' | '}' => {
-                    regex_pattern.push('\\');
-                    regex_pattern.push(c);
-                }
-                _ => {
-                    if l_flag && c.is_ascii_lowercase() {
-                        regex_pattern.push('[');
-                        regex_pattern.push(c);
-                        regex_pattern.push(c.to_ascii_uppercase());
-                        regex_pattern.push(']');
-                    } else {
-                        regex_pattern.push(c);
-                    }
-                    // After a literal/(#l)-class atom, extendedglob
-                    // `#`/`##` postfix maps to regex `*`/`+` and
-                    // binds to that single atom. Same as zsh's
-                    // pattern.c POUND/POUND2 handling on the atom
-                    // just compiled.
-                    if let Some(q) = consume_extglob_postfix(&mut chars) {
-                        regex_pattern.push_str(q);
-                    }
-                }
-            }
-        }
-        regex_pattern.push('$');
-        let final_pattern = if case_insensitive {
-            format!("(?i){}", regex_pattern)
-        } else {
-            regex_pattern
-        };
-        if !numeric_ranges.is_empty() {
-            // Need captures + per-group numeric range checks.
-            let re = match regex::Regex::new(&final_pattern) {
-                Ok(re) => re,
-                Err(_) => return false,
-            };
-            let caps = match re.captures(s) {
-                Some(c) => c,
-                None => return false,
-            };
-            for (group_idx, lo, hi) in numeric_ranges.iter() {
-                // A numeric-range `<N-M>` inside an alternation branch
-                // that didn't fire (e.g. branch B of `(A|B)` when A
-                // matched) won't have a populated capture. Skip the
-                // bounds check for those — the alternation's match
-                // already commits to the branch that DID fire.
-                let cap_str = match caps.get(*group_idx) {
-                    Some(m) => m.as_str(),
-                    None => continue,
-                };
-                let n: i64 = match cap_str.parse() {
-                    Ok(n) => n,
-                    Err(_) => return false,
-                };
-                if let Some(l) = lo {
-                    if n < *l {
-                        return false;
-                    }
-                }
-                if let Some(h) = hi {
-                    if n > *h {
-                        return false;
-                    }
-                }
-            }
-            return true;
-        }
-        regex::Regex::new(&final_pattern)
-            .map(|re| re.is_match(s))
-            .unwrap_or(false)
-    }
     /// Expand glob pattern to matching files
     pub fn expand_glob(&self, pattern: &str) -> Vec<String> {
         // Glob alternation `(a|b|c)` is a primary zsh feature
@@ -5316,7 +4543,7 @@ impl crate::ported::exec::ShellExecutor {
                         if name.starts_with('.') {
                             continue;
                         }
-                        if !ShellExecutor::glob_match_static(&name, neg) {
+                        if !crate::exec::glob_match_static(&name, neg) {
                             let path = if prefix.is_empty() {
                                 name
                             } else {
@@ -5373,8 +4600,8 @@ impl crate::ported::exec::ShellExecutor {
                     .into_iter()
                     .filter(|p| {
                         let basename = p.rsplit('/').next().unwrap_or(p);
-                        !ShellExecutor::glob_match_static(basename, &rhs)
-                            && !ShellExecutor::glob_match_static(p, &rhs)
+                        !crate::exec::glob_match_static(basename, &rhs)
+                            && !crate::exec::glob_match_static(p, &rhs)
                     })
                     .collect();
                 if !filtered.is_empty() {
@@ -6273,7 +5500,7 @@ impl crate::ported::exec::ShellExecutor {
                     let modref = mods.as_str();
                     result = result
                         .into_iter()
-                        .map(|p| self.apply_history_modifiers(&p, modref))
+                        .map(|p| crate::ported::hist::apply_history_modifiers(&p, modref))
                         .collect();
                 }
 
@@ -7280,3 +6507,527 @@ impl crate::ported::exec::ShellExecutor {
             &["ksh".to_string(), "-R".to_string()], &ops, 0);
     }
 }
+
+// ─────────────────────────────────────────────────────────
+// Static glob match — module-level free fn (no executor state).
+// Extracted from impl ShellExecutor per the FAKE DUP audit.
+// ─────────────────────────────────────────────────────────
+/// Static glob match — same logic as glob_match but callable without &self,
+/// needed for Rayon parallel iterators that can't capture &self.
+///
+/// plus extendedglob preprocessing (`^pat` negation, `(a|b)~(x)`
+/// exclusion). The preprocessing is shell-canonical but lives here
+/// in exec.rs instead of inside patcompile or a wrapper. To dissolve:
+/// move the extendedglob `^` / `~` arm into patcompile (or a thin
+/// canonical pre-walker) so callers use patmatch directly.
+pub fn glob_match_static(s: &str, pattern: &str) -> bool {
+    // Extendedglob `^pat` negation: when extendedglob is on AND
+    // the pattern starts with a literal `^`, strip it and invert
+    // the match of the remainder. Already done in
+    // `extendedglob_match` for the param-filter path; do it here
+    // too so `[[ str = ^pat ]]` works via the cond `=` matcher.
+    let extendedglob_on =
+        with_executor(|e| e.options.get("extendedglob").copied().unwrap_or(false));
+    if extendedglob_on {
+        if let Some(rest) = pattern.strip_prefix('^') {
+            return !crate::exec::glob_match_static(s, rest);
+        }
+        // Extendedglob `~` exclusion: `pat1~pat2` matches strings
+        // matching `pat1` AND NOT matching `pat2`. Direct port of
+        // zsh's pattern.c P_EXCLUDE handling (line 155 onward) for
+        // the top-level case — the canonical implementation also
+        // handles nested exclusions (`(a~b)c`) but the top-level
+        // form is what `*.txt~README*` and similar idioms produce.
+        // Walk the pattern looking for a `~` that's NOT inside
+        // `[...]` or `(...)` so nested specials stay literal.
+        if let Some(idx) = find_top_level_tilde(pattern) {
+            let lhs = &pattern[..idx];
+            let rhs = &pattern[idx + 1..];
+            return crate::exec::glob_match_static(s, lhs)
+                && !crate::exec::glob_match_static(s, rhs);
+        }
+    }
+
+    // ksh-style negation `!(p)` (gated on `setopt kshglob`): when
+    // the entire pattern is `!(<body>)`, match anything that does
+    // NOT match `<body>`. This handles the standalone case (the
+    // overwhelmingly common form); embedded `!()` inside a larger
+    // pattern still falls through and is left literal — full
+    // zsh-style negation needs lookahead which `regex` lacks.
+    let kshglob_on = with_executor(|e| e.options.get("kshglob").copied().unwrap_or(false));
+    if kshglob_on {
+        if let Some(body) = pattern.strip_prefix("!(").and_then(|r| r.strip_suffix(')')) {
+            // Don't recurse if body itself contains an unmatched
+            // `(` that would change the meaning.
+            let mut depth = 0;
+            let mut balanced = true;
+            for c in body.chars() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        if depth == 0 {
+                            balanced = false;
+                            break;
+                        }
+                        depth -= 1;
+                    }
+                    _ => {}
+                }
+            }
+            if balanced && depth == 0 {
+                return !crate::exec::glob_match_static(s, body);
+            }
+        }
+    }
+
+    // Inline pattern flags `(#i)` / `(#I)` / `(#l)` / `(#a<n>)` per
+    // zshexpn(1) "Globbing Flags". They prefix a pattern and modify
+    // matching semantics for the rest.
+    //   (#i) — case insensitive
+    //   (#I) — case sensitive (turn (#i) back off)
+    //   (#l) — lowercase pattern char matches both cases in input;
+    //          uppercase pattern char is exact-match
+    //   (#a<n>) — approximate match: up to <n> errors (Levenshtein
+    //          distance, insert/delete/substitute)
+    let (pattern, case_insensitive, l_flag, approx_n, _) = PatternFlags::parse(pattern);
+
+    if let Some(n) = approx_n {
+        // Inline (#aN) approximate-match — direct port of the
+        // Levenshtein-distance check inside patmatch (Src/pattern.c)
+        // when PAT_APPROX is set. m/k bound check skips early when
+        // the strings differ in length by more than the budget;
+        // otherwise standard 2-row DP table.
+        let s_chars: Vec<char> = s.chars().collect();
+        let p_chars: Vec<char> = pattern.chars().collect();
+        let m = s_chars.len();
+        let k = p_chars.len();
+        if m.abs_diff(k) as u32 > n {
+            return false;
+        }
+        let mut prev: Vec<usize> = (0..=k).collect();
+        let mut curr: Vec<usize> = vec![0; k + 1];
+        for i in 1..=m {
+            curr[0] = i;
+            for j in 1..=k {
+                let cost = if s_chars[i - 1] == p_chars[j - 1] { 0 } else { 1 };
+                curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+            }
+            std::mem::swap(&mut prev, &mut curr);
+        }
+        return prev[k] as u32 <= n;
+    }
+
+    // Build the regex. For (#l) we need to inflate lowercase chars
+    // to character classes that match either case. Also detect
+    // zsh's numeric-range glob `<a-b>` (or `<->` for any number,
+    // `<a->` / `<-b>` for one-sided ranges) — translate to a
+    // capture group and remember the bounds for a post-match check.
+    let mut regex_pattern = String::from("^");
+    // Numeric ranges paired with the regex capture-group index they
+    // correspond to. Required because user-written `(...)` groups
+    // in the pattern (esp. alternation `(a|b)`) shift capture
+    // indices, so we can't assume each `<N-M>` is at numeric_ranges
+    // index + 1. Direct port of the bookkeeping zsh's pattern.c
+    // does via `pat_captures` — each numeric atom remembers its
+    // own group offset. Without this, `[[ 5.9 == (5.<1->*|<6->.*) ]]`
+    // applied the lo/hi check against the OUTER alternation's
+    // capture (the literal "5.9") and parse-as-int failed.
+    let mut numeric_ranges: Vec<(usize, Option<i64>, Option<i64>)> = Vec::new();
+    // Track the capture-group index. Increments on every `(` that
+    // OPENS a new group in the emitted regex. Starts at 0 because
+    // the outer `^...$` anchors don't add a group.
+    let mut capture_group_count: usize = 0;
+    let mut chars = pattern.chars().peekable();
+    // Helper: after emitting any atom, check for zsh extendedglob
+    // postfix `#` (zero-or-more) / `##` (one-or-more) and append
+    // the equivalent regex quantifier. Direct port of zsh's
+    // pattern.c (`POUND` / `POUND2` cases in `patcompswitch`).
+    // Only fires when extendedglob is enabled.
+    let consume_extglob_postfix =
+        |chars: &mut std::iter::Peekable<std::str::Chars>| -> Option<&'static str> {
+            if !extendedglob_on {
+                return None;
+            }
+            if chars.peek() != Some(&'#') {
+                return None;
+            }
+            chars.next();
+            if chars.peek() == Some(&'#') {
+                chars.next();
+                Some("+")
+            } else {
+                Some("*")
+            }
+        };
+    while let Some(c) = chars.next() {
+        match c {
+            // ksh-style extglob: ?(p) *(p) +(p) @(p) — translate to
+            // (?:p)? (?:p)* (?:p)+ (?:p) respectively. Gated on
+            // the `kshglob` option (zsh's default is off). The
+            // !(p) (negative) form needs lookahead which the
+            // `regex` crate doesn't support; left literal.
+            '?' | '*' | '+' | '@'
+                if chars.peek() == Some(&'(')
+                    && with_executor(|e| {
+                        e.options.get("kshglob").copied().unwrap_or(false)
+                    }) =>
+            {
+                let op = c;
+                chars.next(); // consume '('
+                              // Capture body until matching ')'. Track depth so
+                              // nested parens work.
+                let mut depth = 1;
+                let mut body = String::new();
+                while let Some(&pc) = chars.peek() {
+                    chars.next();
+                    if pc == '(' {
+                        depth += 1;
+                        body.push(pc);
+                    } else if pc == ')' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        body.push(pc);
+                    } else {
+                        body.push(pc);
+                    }
+                }
+                // Inline ksh-extglob body -> regex translator.
+                // Direct port of the tiny per-char dispatch zsh's
+                // pattern.c does inside its extglob handler — no
+                // anchors, no (#flags), just glob -> regex chars.
+                let body_re = {
+                    let mut out = String::new();
+                    let mut chars = body.chars().peekable();
+                    while let Some(c) = chars.next() {
+                        match c {
+                            '|' => out.push('|'),
+                            '*' => out.push_str(".*"),
+                            '?' => out.push('.'),
+                            '[' => {
+                                out.push('[');
+                                for cc in chars.by_ref() {
+                                    if cc == ']' {
+                                        out.push(']');
+                                        break;
+                                    }
+                                    out.push(cc);
+                                }
+                            }
+                            '.' | '+' | '^' | '$' | '\\' | '{' | '}' | '(' | ')' => {
+                                out.push('\\');
+                                out.push(c);
+                            }
+                            _ => out.push(c),
+                        }
+                    }
+                    out
+                };
+                let suffix = match op {
+                    '?' => "?",
+                    '*' => "*",
+                    '+' => "+",
+                    '@' => "",
+                    _ => "",
+                };
+                regex_pattern.push_str(&format!("(?:{}){}", body_re, suffix));
+            }
+            '*' => regex_pattern.push_str(".*"),
+            '?' => {
+                regex_pattern.push('.');
+                if let Some(q) = consume_extglob_postfix(&mut chars) {
+                    regex_pattern.push_str(q);
+                }
+            }
+            '<' => {
+                // Try to parse `<lo-hi>`. If the form doesn't
+                // match, fall back to literal `<`. Direct port of
+                // zsh's numeric-range glob handler — speculative
+                // scan for the closing `>`, split on `-`, parse
+                // optional bounds. Matches `<5-10>`, `<5->`,
+                // `<-10>`, `<->`.
+                let parsed: Option<(Option<i64>, Option<i64>, usize)> = (|| {
+                    let mut buf = String::new();
+                    let peek_iter = chars.clone();
+                    for c in peek_iter {
+                        buf.push(c);
+                        if c == '>' { break; }
+                        if buf.len() > 64 { return None; }
+                    }
+                    if !buf.ends_with('>') {
+                        return None;
+                    }
+                    let inner = &buf[..buf.len() - 1];
+                    let (lo_str, hi_str) = inner.split_once('-')?;
+                    let lo: Option<i64> = if lo_str.is_empty() {
+                        None
+                    } else {
+                        Some(lo_str.parse().ok()?)
+                    };
+                    let hi: Option<i64> = if hi_str.is_empty() {
+                        None
+                    } else {
+                        Some(hi_str.parse().ok()?)
+                    };
+                    let n = buf.chars().count();
+                    for _ in 0..n { chars.next(); }
+                    Some((lo, hi, n))
+                })();
+                if let Some((lo, hi, consumed)) = parsed {
+                    regex_pattern.push_str("(\\d+)");
+                    capture_group_count += 1;
+                    numeric_ranges.push((capture_group_count, lo, hi));
+                    let _ = consumed;
+                } else {
+                    regex_pattern.push('<');
+                }
+            }
+            '[' => {
+                // Direct port of zsh's character-class compile
+                // (pattern.c, see `patcompcls` and the `[`
+                // handling in `patcompswitch`):
+                //   - `[!...]` and `[^...]` both negate (POSIX +
+                //     zsh both accept; only `^` is canonical
+                //     regex). Translate `!` -> `^` so the regex
+                //     crate sees the right form. Was being
+                //     copied verbatim, so `[!a]` matched `!` or
+                //     `a` instead of "anything but a".
+                //   - POSIX character classes `[:alpha:]` /
+                //     `[:digit:]` etc. inside `[...]` already
+                //     pass through the regex crate, but the
+                //     trailing `]` of the class would be misread
+                //     as the closing of the outer bracket. Walk
+                //     past `[:NAME:]` as a unit so the next `]`
+                //     after the class isn't taken as the close.
+                //   - Backslash-escaped `]` (`[\\]]`) keeps the
+                //     `]` as a literal class member.
+                regex_pattern.push('[');
+                let mut first = true;
+                while let Some(cc) = chars.next() {
+                    if first && cc == '!' {
+                        regex_pattern.push('^');
+                        first = false;
+                        continue;
+                    }
+                    first = false;
+                    if cc == ']' {
+                        regex_pattern.push(']');
+                        break;
+                    }
+                    if cc == '\\' {
+                        // Pass escape + next char through.
+                        regex_pattern.push('\\');
+                        if let Some(nx) = chars.next() {
+                            regex_pattern.push(nx);
+                        }
+                        continue;
+                    }
+                    if cc == '[' && chars.peek() == Some(&':') {
+                        // POSIX class `[:NAME:]`. Read until
+                        // `:]` then push the class verbatim.
+                        regex_pattern.push('[');
+                        let mut prev_colon = false;
+                        for ic in chars.by_ref() {
+                            regex_pattern.push(ic);
+                            if prev_colon && ic == ']' {
+                                break;
+                            }
+                            prev_colon = ic == ':';
+                        }
+                        continue;
+                    }
+                    regex_pattern.push(cc);
+                }
+                // After a closed `[...]`, the bracket is a single
+                // regex atom — apply extendedglob `#`/`##`
+                // postfix as `*`/`+` directly.
+                if let Some(q) = consume_extglob_postfix(&mut chars) {
+                    regex_pattern.push_str(q);
+                }
+            }
+            '(' => {
+                // `(#cN)` and `(#cN,M)` post-subpattern repetition
+                // qualifiers: the previous element gets a `{N}` or
+                // `{N,M}` regex quantifier. Detect by peeking for
+                // `#c` after the opening `(`.
+                let peek_iter = chars.clone();
+                let mut probe: Vec<char> = Vec::new();
+                let p = peek_iter;
+                for pc in p {
+                    probe.push(pc);
+                    if pc == ')' || probe.len() > 32 {
+                        break;
+                    }
+                }
+                let probe_str: String = probe.iter().collect();
+                if probe_str.starts_with("#c") && probe_str.ends_with(')') {
+                    let body = &probe_str[2..probe_str.len() - 1];
+                    let quant = if let Some((lo, hi)) = body.split_once(',') {
+                        format!("{{{},{}}}", lo, hi)
+                    } else {
+                        format!("{{{}}}", body)
+                    };
+                    regex_pattern.push_str(&quant);
+                    // Advance the real iterator past the consumed chars.
+                    for _ in 0..probe.len() {
+                        chars.next();
+                    }
+                } else if probe_str == "#e)" {
+                    // `(#e)` — match end-of-string anchor. Direct
+                    // port of zsh's pattern.c P_EOL token (zsh's
+                    // "globbing flag" `(#e)` per zshexpn(1)).
+                    // Emits regex `$` to anchor the match at the
+                    // end of the input. Used by zinit's
+                    // `(#b)((*)\\(#e)|(*))` to detect a trailing
+                    // `\` in each element.
+                    regex_pattern.push('$');
+                    for _ in 0..probe.len() {
+                        chars.next();
+                    }
+                } else if probe_str == "#s)" {
+                    // `(#s)` — match start-of-string anchor.
+                    // zshexpn(1): "matches at the start of the
+                    // test string". Emits regex `^`.
+                    regex_pattern.push('^');
+                    for _ in 0..probe.len() {
+                        chars.next();
+                    }
+                } else {
+                    regex_pattern.push('(');
+                    capture_group_count += 1;
+                }
+            }
+            ')' => {
+                regex_pattern.push(')');
+                // Closed group is an atom — extendedglob `#`/`##`
+                // postfix applies to the whole group.
+                if let Some(q) = consume_extglob_postfix(&mut chars) {
+                    regex_pattern.push_str(q);
+                }
+            }
+            '|' => regex_pattern.push('|'),
+            '\\' => {
+                // Special-case: `\(#e)` / `\(#s)` — literal
+                // backslash followed by extendedglob end/start
+                // anchor. Emit `\\$` / `\\^` so the pattern matches
+                // a literal trailing/leading `\`. Without this the
+                // `(` of `(#e)` got consumed as the escaped char,
+                // dropping the anchor entirely. Direct port of
+                // pattern.c P_EOL/P_BOL recognition after a `\`.
+                // Only fires under extendedglob — without the
+                // option, `(#e)` is not a token at all.
+                if extendedglob_on {
+                    let mut peek = chars.clone();
+                    let p1 = peek.next();
+                    let p2 = peek.next();
+                    let p3 = peek.next();
+                    let p4 = peek.next();
+                    if p1 == Some('(')
+                        && p2 == Some('#')
+                        && (p3 == Some('e') || p3 == Some('s'))
+                        && p4 == Some(')')
+                    {
+                        regex_pattern.push_str("\\\\");
+                        regex_pattern.push(if p3 == Some('e') { '$' } else { '^' });
+                        chars.next(); chars.next(); chars.next(); chars.next();
+                        continue;
+                    }
+                }
+                // Backslash escapes the next char — treat literally.
+                if let Some(next) = chars.next() {
+                    if matches!(
+                        next,
+                        '.' | '+'
+                            | '^'
+                            | '$'
+                            | '\\'
+                            | '{'
+                            | '}'
+                            | '*'
+                            | '?'
+                            | '('
+                            | ')'
+                            | '|'
+                            | '['
+                            | ']'
+                    ) {
+                        regex_pattern.push('\\');
+                    }
+                    regex_pattern.push(next);
+                } else {
+                    regex_pattern.push_str("\\\\");
+                }
+            }
+            '.' | '+' | '^' | '$' | '{' | '}' => {
+                regex_pattern.push('\\');
+                regex_pattern.push(c);
+            }
+            _ => {
+                if l_flag && c.is_ascii_lowercase() {
+                    regex_pattern.push('[');
+                    regex_pattern.push(c);
+                    regex_pattern.push(c.to_ascii_uppercase());
+                    regex_pattern.push(']');
+                } else {
+                    regex_pattern.push(c);
+                }
+                // After a literal/(#l)-class atom, extendedglob
+                // `#`/`##` postfix maps to regex `*`/`+` and
+                // binds to that single atom. Same as zsh's
+                // pattern.c POUND/POUND2 handling on the atom
+                // just compiled.
+                if let Some(q) = consume_extglob_postfix(&mut chars) {
+                    regex_pattern.push_str(q);
+                }
+            }
+        }
+    }
+    regex_pattern.push('$');
+    let final_pattern = if case_insensitive {
+        format!("(?i){}", regex_pattern)
+    } else {
+        regex_pattern
+    };
+    if !numeric_ranges.is_empty() {
+        // Need captures + per-group numeric range checks.
+        let re = match regex::Regex::new(&final_pattern) {
+            Ok(re) => re,
+            Err(_) => return false,
+        };
+        let caps = match re.captures(s) {
+            Some(c) => c,
+            None => return false,
+        };
+        for (group_idx, lo, hi) in numeric_ranges.iter() {
+            // A numeric-range `<N-M>` inside an alternation branch
+            // that didn't fire (e.g. branch B of `(A|B)` when A
+            // matched) won't have a populated capture. Skip the
+            // bounds check for those — the alternation's match
+            // already commits to the branch that DID fire.
+            let cap_str = match caps.get(*group_idx) {
+                Some(m) => m.as_str(),
+                None => continue,
+            };
+            let n: i64 = match cap_str.parse() {
+                Ok(n) => n,
+                Err(_) => return false,
+            };
+            if let Some(l) = lo {
+                if n < *l {
+                    return false;
+                }
+            }
+            if let Some(h) = hi {
+                if n > *h {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+    regex::Regex::new(&final_pattern)
+        .map(|re| re.is_match(s))
+        .unwrap_or(false)
+}
+
