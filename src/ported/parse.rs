@@ -22,7 +22,17 @@ use super::zsh_h::{
     REDIR_READ, REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW, WC_REDIR, WC_REDIR_FROM_HEREDOC,
     WC_REDIR_TYPE, WC_REDIR_VARID,
 };
-use crate::zsh_h::{EC_DUP, EC_NODUP};
+use crate::zsh_h::{BANG, COND_AND, COND_NOT, COND_STRGTR, COND_STRLT, EC_DUP, EC_NODUP, INANG, INPAR, OUTANG, OUTPAR, WCB_COND};
+use crate::ported::lex::set_tok;
+use crate::ported::utils::{zerr, zwarnnam};
+use crate::ported::zsh_h::{
+    eprog, COND_MOD, COND_MODI, COND_NT, COND_REGEX, COND_STRDEQ, COND_STREQ,
+    COND_STRNEQ, EF_HEAP, EF_REAL, OPT_ISSET, PM_UNDEFINED, WC_SUBLIST_COPROC,
+    WC_SUBLIST_NOT,
+};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use serde::{Deserialize, Serialize};
 
 // Wordcode-buffer thread-locals — direct port of `Src/parse.c:269-285`
@@ -212,7 +222,7 @@ pub use crate::extensions::zsh_ast::{
     ZshIf, ZshList, ZshParamFlag, ZshPipe, ZshProgram, ZshRedir, ZshRepeat, ZshSimple, ZshSublist,
     ZshTry, ZshWhile,
 };
-use crate::lex::{set_incmdpos, set_incond};
+use crate::lex::{set_incmdpos, set_incond, tok, tokstr, zshlex};
 // === end AST relocation ===
 
 // Parser state lives in file-scope thread_locals:
@@ -2897,7 +2907,6 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
     // Generate a unique name. Module-level static would be cleaner but
     // a thread-local atomic is enough — anonymous functions are
     // ephemeral and the name isn't user-visible.
-    use std::sync::atomic::{AtomicUsize, Ordering};
     static ANON_COUNTER: AtomicUsize = AtomicUsize::new(0);
     let n = ANON_COUNTER.fetch_add(1, Ordering::Relaxed);
     let name = format!("_zshrs_anon_{}", n);
@@ -3720,9 +3729,6 @@ pub fn dump_find_func(h: &[u32], name: &str) -> bool {                        //
 /// Returns the header u32-array on success or None on any failure
 /// (emitting C-shaped warnings when `err != 0`).
 pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> { // c:3258
-    use std::fs::File;
-    use std::io::{Read, Seek, SeekFrom};
-    use crate::ported::utils::zwarnnam;
 
     let mut f = match File::open(name) {                                      // c:3263
         Ok(h) => h,
@@ -3856,8 +3862,6 @@ pub fn load_dump_file(dump: &str,                                             //
                       _sbuf: &std::fs::Metadata,
                       other: i32,
                       _len: usize) -> Option<Vec<u32>> {
-    use std::fs::File;
-    use std::io::{Read, Seek, SeekFrom};
     let mut f = File::open(dump).ok()?;
     if other != 0 {
         f.seek(SeekFrom::Start(other as u64)).ok()?;
@@ -3932,8 +3936,6 @@ pub fn bin_zcompile(nam: &str,                                                //
                     args: &[String],
                     ops: &crate::ported::zsh_h::options,
                     _func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
-    use crate::ported::utils::zwarnnam;
 
     // c:3185-3192 — illegal-combination guard.
     let bad_combo = (OPT_ISSET(ops, b'k') && OPT_ISSET(ops, b'z'))
@@ -4069,7 +4071,6 @@ pub fn condlex() {
 /// `&`). C uses it to skip optional whitespace between cond terms.
 #[inline]
 pub fn COND_SEP() -> bool {
-    use crate::ported::lex::{tok, AMPER, NEWLIN, SEMI};
     matches!(tok(), NEWLIN | SEMI | AMPER)
 }
 
@@ -4095,7 +4096,6 @@ pub fn copy_ecstr(table: &std::collections::HashMap<u32, String>, p: &mut [u8]) 
 /// the in-build `ECBUF`/`ECSTRS`/`ECNPATS` state into an `Eprog`.
 /// Resets the build state so a new parse can start.
 pub fn bld_eprog(heap: bool) -> crate::ported::zsh_h::eprog {                 // c:547
-    use crate::ported::zsh_h::{eprog, EF_HEAP, EF_REAL};
 
     // c:555 — emit WC_END opcode. `WCB_END` is `WC_END_DEFAULT` (0).
     ecadd(0);
@@ -4140,7 +4140,6 @@ pub fn bld_eprog(heap: bool) -> crate::ported::zsh_h::eprog {                 //
 /// point: drives `par_list` and finalizes via `bld_eprog`. Returns
 /// `None` on syntax error.
 pub fn parse_list() -> Option<crate::ported::zsh_h::eprog> {                  // c:697
-    use crate::ported::lex::{tok, set_tok, ENDINPUT, LEXERR, zshlex};
     set_tok(ENDINPUT);
     init_parse();
     zshlex();
@@ -4170,13 +4169,12 @@ pub fn parse_cond() -> Option<crate::ported::zsh_h::eprog> {                  //
 /// Secondary-sublist arm: handles the `COPROC`/`BANG` prefix
 /// in front of a pline. Returns the WC_SUBLIST flag word added.
 pub fn par_sublist2(cmplx: &mut i32) -> Option<i32> {                         // c:869
-    use crate::ported::lex::{tok, zshlex, BANG_TOK as BANG, COPROC};
     let mut f = 0i32;
     if tok() == COPROC {
         *cmplx = 1;
         f |= crate::ported::zsh_h::WC_SUBLIST_COPROC as i32;
         zshlex();
-    } else if tok() == BANG {
+    } else if tok() == BANG_TOK {
         *cmplx = 1;
         f |= crate::ported::zsh_h::WC_SUBLIST_NOT as i32;
         zshlex();
@@ -4211,8 +4209,6 @@ pub fn par_dinbrack() -> Option<()> {                                         //
 /// `||`-separated cond expression. Emits `WCB_COND(COND_AND, …)`
 /// when an `&&` is found and recurses.
 pub fn par_cond_1() -> i32 {                                                  // c:2434
-    use crate::ported::lex::{tok, DAMPER};
-    use crate::ported::zsh_h::{COND_AND, WCB_COND};
 
     let p = ECUSED.with(|c| c.get()) as usize;
     let r = par_cond_2();
@@ -4239,14 +4235,6 @@ pub fn par_cond_1() -> i32 {                                                  //
 /// cond-term parser: handles `! cond`, `(cond)`, unary `[ -X arg ]`,
 /// binary `[ A op B ]`, and `[ A op1 B op2 C … ]` n-ary chains.
 pub fn par_cond_2() -> i32 {                                                  // c:2476
-    use crate::ported::lex::{
-        tok, tokstr, BANG_TOK as BANG, INANG_TOK as INANG, INPAR_TOK as INPAR,
-        LEXERR, OUTANG_TOK as OUTANG, OUTPAR_TOK as OUTPAR, STRING_LEX,
-    };
-    use crate::ported::zsh_h::{COND_NOT, COND_STRGTR, COND_STRLT, WCB_COND};
-    // Local alias so the body reads like C parse.c's `tok == STRING`.
-    let STRING_TOK = STRING_LEX;
-
     // `n_testargs` only applies in `testlex` mode (=== /bin/test
     // compat). zshrs has no testlex yet, so always 0.
     let n_testargs: i32 = 0;
@@ -4257,19 +4245,19 @@ pub fn par_cond_2() -> i32 {                                                  //
     while COND_SEP() {
         condlex();
     }
-    if tok() == BANG {
+    if tok() == BANG_TOK {
         // c:2522 — `[[ ! cond ]]`
         condlex();
         ecadd(WCB_COND(COND_NOT as u32, 0));
         return par_cond_2();
     }
-    if tok() == INPAR {
+    if tok() == INPAR_TOK {
         // c:2533 — `[[ (cond) ]]`
         condlex();
         while COND_SEP() { condlex(); }
         let r = par_cond();
         while COND_SEP() { condlex(); }
-        if tok() != OUTPAR {
+        if tok() != OUTPAR_TOK {
             yyerror("missing )");
             return 0;
         }
@@ -4280,7 +4268,7 @@ pub fn par_cond_2() -> i32 {                                                  //
     let dble = s1.starts_with('-')
         && s1.len() == 2
         && "abcdefghknoprstuvwxzLONGS".contains(s1.chars().nth(1).unwrap_or('?'));
-    if tok() != STRING_TOK {
+    if tok() != STRING_LEX {
         if !s1.is_empty() && tok() != LEXERR && (!dble || n_testargs != 0) {
             // c:2557 — `[[ STRING ]]` re-interpreted as `[[ -n STRING ]]`.
             condlex(); while COND_SEP() { condlex(); }
@@ -4291,25 +4279,25 @@ pub fn par_cond_2() -> i32 {                                                  //
     }
     condlex();
     while COND_SEP() { condlex(); }
-    if tok() == INANG || tok() == OUTANG {
+    if tok() == INANG_TOK || tok() == OUTANG_TOK {
         // c:2576 — `<` / `>` string compare.
         let xtok = tok();
         condlex();
         while COND_SEP() { condlex(); }
-        if tok() != STRING_TOK {
+        if tok() != STRING_LEX {
             yyerror("string expected");
             return 0;
         }
         let s3 = tokstr().unwrap_or_default();
         condlex();
         while COND_SEP() { condlex(); }
-        let op = if xtok == INANG { COND_STRLT } else { COND_STRGTR };
+        let op = if xtok == INANG_TOK { COND_STRLT } else { COND_STRGTR };
         ecadd(WCB_COND(op as u32, 0));
         ecstr(&s1);
         ecstr(&s3);
         return 1;
     }
-    if tok() != STRING_TOK {
+    if tok() != STRING_LEX {
         // c:2592 — only one operand seen → `[ -n s1 ]`.
         if tok() != LEXERR {
             if !dble || n_testargs != 0 {
@@ -4324,13 +4312,13 @@ pub fn par_cond_2() -> i32 {                                                  //
     crate::ported::lex::set_incond(crate::ported::lex::incond() + 1);
     condlex(); while COND_SEP() { condlex(); }
     crate::ported::lex::set_incond(crate::ported::lex::incond() - 1);
-    if tok() == STRING_TOK && !dble {
+    if tok() == STRING_LEX && !dble {
         let s3 = tokstr().unwrap_or_default();
         condlex(); while COND_SEP() { condlex(); }
-        if tok() == STRING_TOK {
+        if tok() == STRING_LEX {
             // c:2615 — n-ary `[ A op B C D ... ]`.
             let mut l: Vec<String> = vec![s2, s3];
-            while tok() == STRING_TOK {
+            while tok() == STRING_LEX {
                 l.push(tokstr().unwrap_or_default());
                 condlex(); while COND_SEP() { condlex(); }
             }
@@ -4344,7 +4332,6 @@ pub fn par_cond_2() -> i32 {                                                  //
 /// Port of `par_cond_double(char *a, char *b)` from `Src/parse.c:2626`.
 /// Emits wordcode for unary cond `[ -X b ]` or modular `[ -mod b ]`.
 pub fn par_cond_double(a: &str, b: &str) -> i32 {                             // c:2626
-    use crate::ported::zsh_h::{COND_MOD, WCB_COND};
     if !a.starts_with('-') || a.len() < 2 {
         crate::ported::utils::zerr(&format!("parse error: condition expected: {}", a));
         return 1;
@@ -4365,10 +4352,7 @@ pub fn par_cond_double(a: &str, b: &str) -> i32 {                             //
 /// `Src/parse.c:2659`. Emits wordcode for the binary forms
 /// `[ A op B ]` — `=` / `==` / `!=` / `<` / `>` / `=~` / `-X`.
 pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {                    // c:2659
-    use crate::ported::zsh_h::{
-        COND_MOD, COND_MODI, COND_NT, COND_REGEX, COND_STRDEQ, COND_STREQ,
-        COND_STRGTR, COND_STRLT, COND_STRNEQ, WCB_COND,
-    };
+
 
     let bb = b.as_bytes();
     if (bb == b"=" || bb == b"==") && bb.len() <= 2 {
@@ -4432,7 +4416,6 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {                    //
 /// Port of `par_cond_multi(char *a, LinkList l)` from `Src/parse.c:2716`.
 /// Emits wordcode for `[ -OP A B C … ]` n-ary cond (alternation).
 pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {                         // c:2716
-    use crate::ported::zsh_h::{COND_MOD, WCB_COND};
     if !a.starts_with('-') || a.len() < 2 {
         crate::ported::utils::zerr(&format!("condition expected: {}", a));
         return 1;
@@ -4457,8 +4440,6 @@ pub fn cur_add_func(nam: &str,                                                //
                     hlen: &mut i32,
                     tlen: &mut i32,
                     what: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
-    use crate::ported::zsh_h::PM_UNDEFINED;
 
     let is_undef = (shf_flags as u32 & PM_UNDEFINED) != 0;
     if is_undef {
@@ -4502,7 +4483,6 @@ pub fn write_dump(dfd: &mut std::fs::File,                                    //
                   mut map: i32,
                   hlen: i32,
                   tlen: i32) -> std::io::Result<()> {
-    use std::io::Write;
     if map == 1 && (tlen as usize) >= FD_MINMAP {                             // c:3344
         map = 1;
     } else if map == 1 {
@@ -4587,14 +4567,19 @@ pub fn write_dump(dfd: &mut std::fs::File,                                    //
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+    use std::fs;
+    use std::path::Path;
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     /// Test helper. Mirrors zsh's `errflag` save/clear/check pattern
     /// around a parse — see `Src/init.c:loop` which clears errflag
     /// before parse_event() and tests it after. Returns `Err` if the
     /// parse set `ERRFLAG_ERROR`; otherwise `Ok(program)`.
     fn parse(input: &str) -> Result<ZshProgram, String> {
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use std::sync::atomic::Ordering;
         let saved = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
         crate::ported::parse::parse_init(input);
@@ -4861,11 +4846,6 @@ esac"#;
 
     #[test]
     fn test_parse_zpwr_scripts() {
-        use std::fs;
-        use std::path::Path;
-        use std::sync::mpsc;
-        use std::thread;
-        use std::time::{Duration, Instant};
 
         let scripts_dir = Path::new("/Users/wizard/.zpwr/scripts");
         if !scripts_dir.exists() {
@@ -4946,11 +4926,6 @@ esac"#;
     #[test]
     #[ignore] // Uses threads that can't be killed on timeout; use integration test instead
     fn test_parse_zsh_stdlib_functions() {
-        use std::fs;
-        use std::path::Path;
-        use std::sync::mpsc;
-        use std::thread;
-        use std::time::Duration;
 
         let functions_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/zsh_functions");
         if !functions_dir.exists() {
