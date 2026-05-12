@@ -2654,6 +2654,14 @@ pub fn bin_shift(name: &str, argv: &[String],                                // 
         } else {
             pp.drain(..num as usize);                                        // c:5646-5650
         }
+        // Mirror to exec.positional_params so `$1`/`$@`/`$#` readers
+        // in fusevm see the shift. Without this, `set -- a b c; shift;
+        // echo $1` still printed `a`.
+        let snapshot = pp.clone();
+        drop(pp);
+        let _ = crate::fusevm_bridge::try_with_executor(|exec| {
+            exec.positional_params = snapshot;
+        });
     }
     crate::ported::mem::unqueue_signals();                                   // c:5658
     ret                                                                      // c:5659
