@@ -57,6 +57,13 @@ const EC_INIT_SIZE: i32 = 256;
 const EC_DOUBLE_THRESHOLD: i32 = 32768;
 const EC_INCREMENT: i32 = 1024;
 
+// P8: ZshParser recursion + iteration safety counters as file-scope
+// thread_locals (Rust-only — no C analog; C uses OS stack overflow).
+thread_local! {
+    pub static PARSER_RECURSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub static PARSER_GLOBAL_ITERATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 // =============================================================================
 // Wordcode read helpers — used by text.rs's `gettext2` and exec dispatch
 // to walk a compiled Eprog without re-running the parser. These are the
@@ -618,13 +625,23 @@ pub enum CaseTerminator {
     Continue,
 }
 
-/// The Zsh Parser
+/// The Zsh Parser.
+///
+/// All state lives in:
+///   - ZshLexer (unit struct, state in LEX_* thread_locals matching
+///     Src/lex.c file-statics).
+///   - ECBUF / ECLEN / ECUSED / ... (P9b wordcode-emission state,
+///     matching Src/parse.c file-statics).
+///   - PARSER_RECURSION_DEPTH / PARSER_GLOBAL_ITERATIONS (Rust-only
+///     safety counters above).
+///
+/// The `lexer` field is kept as a unit-struct holder so callers can
+/// still write `parser.lexer.X()` for the lexer accessor methods —
+/// dropping the field would mean every callsite manually constructs
+/// a `ZshLexer` value, with no semantic benefit since ZshLexer is
+/// zero-sized.
 pub struct ZshParser {
     lexer: ZshLexer,
-    /// Global iteration counter to prevent infinite loops
-    global_iterations: usize,
-    /// Recursion depth counter to prevent stack overflow
-    recursion_depth: usize,
 }
 
 const MAX_RECURSION_DEPTH: usize = 500;
@@ -832,27 +849,28 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>
     Some((names, rest))
 }
 
-impl<'a> ZshParser {
+impl ZshParser {
     /// Create a new parser
     pub fn new(input: &str) -> Self {
+        // P8: reset Rust-only safety counters at parser construction.
+        PARSER_GLOBAL_ITERATIONS.set(0);
+        PARSER_RECURSION_DEPTH.set(0);
         ZshParser {
             lexer: ZshLexer::new(input),
-            global_iterations: 0,
-            recursion_depth: 0,
         }
     }
 
     /// Check iteration limit; returns true if exceeded
     #[inline]
     fn check_limit(&mut self) -> bool {
-        self.global_iterations += 1;
-        self.global_iterations > 10_000
+        PARSER_GLOBAL_ITERATIONS.set(PARSER_GLOBAL_ITERATIONS.get() + 1);
+        PARSER_GLOBAL_ITERATIONS.get() > 10_000
     }
 
     /// Check recursion depth; returns true if exceeded
     #[inline]
     fn check_recursion(&mut self) -> bool {
-        self.recursion_depth > MAX_RECURSION_DEPTH
+        PARSER_RECURSION_DEPTH.get() > MAX_RECURSION_DEPTH
     }
 
     /// Direct port of `parse_context_save` at `Src/parse.c:295-320`.
@@ -887,12 +905,12 @@ impl<'a> ZshParser {
         ps.ecssub = 0;
         ps.ecnfunc = 0;
         // Rust-only safety nets — round-trip the counters.
-        ps.recursion_depth = self.recursion_depth;
-        ps.global_iterations = self.global_iterations;
+        ps.recursion_depth = PARSER_RECURSION_DEPTH.get();
+        ps.global_iterations = PARSER_GLOBAL_ITERATIONS.get();
         // parse.c:318-319 — clear the lexer/parser state so a nested
         // parse starts from a clean slate.
-        self.recursion_depth = 0;
-        self.global_iterations = 0;
+        PARSER_RECURSION_DEPTH.set(0);
+        PARSER_GLOBAL_ITERATIONS.set(0);
         self.lexer.set_incmdpos(true);
         self.lexer.set_incond(0);
         self.lexer.set_inredir(false);
@@ -925,8 +943,8 @@ impl<'a> ZshParser {
         self.lexer.set_intypeset(ps.intypeset);
         // ecbuf/eclen/ecused/ecnpats/ecstrs/ecsoffs/ecssub/ecnfunc
         // STUB until Phase 9b.
-        self.recursion_depth = ps.recursion_depth;
-        self.global_iterations = ps.global_iterations;
+        PARSER_RECURSION_DEPTH.set(ps.recursion_depth);
+        PARSER_GLOBAL_ITERATIONS.set(ps.global_iterations);
 
         // parse.c:354 — `errflag &= ~ERRFLAG_ERROR;` — clear the
         // error flag so the outer parse sees a clean state.
@@ -977,8 +995,8 @@ impl<'a> ZshParser {
         ECNFUNC.set(0);
         ECSTRS_INDEX.with_borrow_mut(|m| m.clear());
 
-        self.recursion_depth = 0;
-        self.global_iterations = 0;
+        PARSER_RECURSION_DEPTH.set(0);
+        PARSER_GLOBAL_ITERATIONS.set(0);
         // parse.c:522 — `init_parse_status();`
         self.init_parse_status();
     }
@@ -1777,10 +1795,10 @@ impl<'a> ZshParser {
     /// is a Vec<(ConjOp, ZshSublist)> for chained && / ||. C uses
     /// flat wordcode with WC_SUBLIST_AND / WC_SUBLIST_OR markers.
     fn parse_sublist(&mut self) -> Option<ZshSublist> {
-        self.recursion_depth += 1;
+        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
         if self.check_recursion() {
             self.error("parse_sublist: max recursion depth exceeded");
-            self.recursion_depth -= 1;
+            PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
             return None;
         }
 
@@ -1798,7 +1816,7 @@ impl<'a> ZshParser {
         let pipe = match self.parse_pipe() {
             Some(p) => p,
             None => {
-                self.recursion_depth -= 1;
+                PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
                 return None;
             }
         };
@@ -1818,7 +1836,7 @@ impl<'a> ZshParser {
             _ => None,
         };
 
-        self.recursion_depth -= 1;
+        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
         Some(ZshSublist { pipe, next, flags })
     }
 
@@ -1827,10 +1845,10 @@ impl<'a> ZshParser {
     /// zsh/Src/parse.c:894-956 `par_pline`. AST: ZshPipe { cmds: Vec<ZshCommand> }.
     /// C emits WC_PIPE wordcodes per command; same flow.
     fn parse_pipe(&mut self) -> Option<ZshPipe> {
-        self.recursion_depth += 1;
+        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
         if self.check_recursion() {
             self.error("parse_pipe: max recursion depth exceeded");
-            self.recursion_depth -= 1;
+            PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
             return None;
         }
 
@@ -1838,7 +1856,7 @@ impl<'a> ZshParser {
         let cmd = match self.parse_cmd() {
             Some(c) => c,
             None => {
-                self.recursion_depth -= 1;
+                PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
                 return None;
             }
         };
@@ -1855,7 +1873,7 @@ impl<'a> ZshParser {
             _ => None,
         };
 
-        self.recursion_depth -= 1;
+        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
         Some(ZshPipe {
             cmd,
             next,
@@ -3246,17 +3264,17 @@ impl<'a> ZshParser {
     /// Cond-expression `||` level. C: inside par_cond_1 at
     /// parse.c:2434-2475 (the `cond_or` ladder).
     fn parse_cond_or(&mut self) -> Option<ZshCond> {
-        self.recursion_depth += 1;
+        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
         if self.check_recursion() {
             self.error("parse_cond_or: max recursion depth exceeded");
-            self.recursion_depth -= 1;
+            PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
             return None;
         }
 
         let left = match self.parse_cond_and() {
             Some(l) => l,
             None => {
-                self.recursion_depth -= 1;
+                PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
                 return None;
             }
         };
@@ -3272,23 +3290,23 @@ impl<'a> ZshParser {
             Some(left)
         };
 
-        self.recursion_depth -= 1;
+        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
         result
     }
 
     /// Cond-expression `&&` level. C: par_cond_2 at parse.c:2476-2625.
     fn parse_cond_and(&mut self) -> Option<ZshCond> {
-        self.recursion_depth += 1;
+        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
         if self.check_recursion() {
             self.error("parse_cond_and: max recursion depth exceeded");
-            self.recursion_depth -= 1;
+            PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
             return None;
         }
 
         let left = match self.parse_cond_not() {
             Some(l) => l,
             None => {
-                self.recursion_depth -= 1;
+                PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
                 return None;
             }
         };
@@ -3304,17 +3322,17 @@ impl<'a> ZshParser {
             Some(left)
         };
 
-        self.recursion_depth -= 1;
+        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
         result
     }
 
     /// Cond-expression `!` negation level. C: handled inside
     /// par_cond_2 at parse.c:2476-2625 via the BANG token check.
     fn parse_cond_not(&mut self) -> Option<ZshCond> {
-        self.recursion_depth += 1;
+        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
         if self.check_recursion() {
             self.error("parse_cond_not: max recursion depth exceeded");
-            self.recursion_depth -= 1;
+            PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
             return None;
         }
 
@@ -3333,11 +3351,11 @@ impl<'a> ZshParser {
             let inner = match self.parse_cond_not() {
                 Some(i) => i,
                 None => {
-                    self.recursion_depth -= 1;
+                    PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
                     return None;
                 }
             };
-            self.recursion_depth -= 1;
+            PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
             return Some(ZshCond::Not(Box::new(inner)));
         }
 
@@ -3347,7 +3365,7 @@ impl<'a> ZshParser {
             let inner = match self.parse_cond_expr() {
                 Some(i) => i,
                 None => {
-                    self.recursion_depth -= 1;
+                    PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
                     return None;
                 }
             };
@@ -3355,12 +3373,12 @@ impl<'a> ZshParser {
             if self.lexer.tok() == OUTPAR_TOK {
                 self.lexer.zshlex();
             }
-            self.recursion_depth -= 1;
+            PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
             return Some(inner);
         }
 
         let result = self.parse_cond_primary();
-        self.recursion_depth -= 1;
+        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
         result
     }
 
