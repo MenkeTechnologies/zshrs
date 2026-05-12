@@ -1317,8 +1317,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // Refuse to mutate read-only arrays (declare -ra / typeset
             // -ra). zsh prints `read-only variable: NAME` and exits 1
             // in -c mode. Mirror that fatal behavior.
-            let is_ro = exec.readonly_vars.contains(&name)
-                || exec.is_readonly_param(&name);
+            let is_ro = exec.is_readonly_param(&name);
             if is_ro {
                 eprintln!("zshrs:1: read-only variable: {}", name);
                 std::process::exit(1);
@@ -1417,8 +1416,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         with_executor(|exec| {
             // Refuse appends on read-only arrays (declare -ra).
-            let is_ro = exec.readonly_vars.contains(&name)
-                || exec.is_readonly_param(&name);
+            let is_ro = exec.is_readonly_param(&name);
             if is_ro {
                 eprintln!("zshrs:1: read-only variable: {}", name);
                 std::process::exit(1);
@@ -5431,9 +5429,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 name.as_str(),
                 "PPID" | "LINENO" | "argv0" | "ARGC"
             );
-            let is_ro = is_intrinsic_ro
-                || exec.readonly_vars.contains(&name)
-                || exec.is_readonly_param(&name);
+            let is_ro = is_intrinsic_ro || exec.is_readonly_param(&name);
             if is_ro {
                 eprintln!("zshrs:1: read-only variable: {}", name);
                 // Mirror zsh -c: read-only assignment failure aborts

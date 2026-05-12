@@ -668,7 +668,6 @@ pub fn getpmcommand(ht: *mut HashTable, name: &str) -> Option<Param> {      // c
     let g = crate::ported::hashtable::cmdnamtab_lock().read().ok()?;
     let entry = g.get(name);                                                 // c:218 cmdnamtab->getnode
     let (value, found) = if let Some(cmd) = entry {                          // c:227
-        use crate::ported::hashtable::flags::HASHED;
         let v = if (cmd.node.flags & HASHED as i32) != 0 {                  // c:229 HASHED
             cmd.cmd.clone().unwrap_or_default()                              // c:230 cn->u.cmd
         } else {
@@ -1311,7 +1310,6 @@ pub fn scanpmcommands(_ht: *mut HashTable, func: Option<ScanFunc>,           // 
     let cmds: Vec<(String, bool, String)> = {
         let g = crate::ported::hashtable::cmdnamtab_lock().read().unwrap();
         g.iter().map(|(name, cmd)| {                                        // c:259-260
-            use crate::ported::hashtable::flags::HASHED;
             let hashed = (cmd.node.flags & HASHED as i32) != 0;
             // c:266-274 — pm.u.str: HASHED → cmd->u.cmd (real path);
             // unhashed → first $PATH dir + "/" + name.
@@ -2138,6 +2136,7 @@ pub fn unsetpmsalias(pm: Param, exp: i32) {                                 // c
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
+use crate::zsh_h::HASHED;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 

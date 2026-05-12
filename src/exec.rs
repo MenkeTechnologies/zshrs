@@ -388,7 +388,10 @@ pub struct ShellExecutor {
     pub comp_suffix: String,          // SUFFIX parameter
     pub comp_iprefix: String,         // IPREFIX parameter
     pub comp_isuffix: String,         // ISUFFIX parameter
-    pub readonly_vars: std::collections::HashSet<String>, // Read-only variables
+    // `readonly_vars` deleted — was a never-populated HashSet
+    // duplicating the canonical `PM_READONLY` flag check on Param
+    // (`zsh_h::PM_READONLY` bit on `Param.node.flags`). Callers go
+    // through `is_readonly_param(name)`.
     // `last_subst` deleted — 0 callers. Canonical `hsubl`/`hsubr`
     // globals live in `Src/hist.c` and are ported on demand when
     // `:&` history-modifier replay arrives in zshrs.
@@ -737,7 +740,7 @@ impl ShellExecutor {
     pub fn alias(&self, name: &str) -> Option<String> {
         let tab = crate::ported::hashtable::aliastab_lock().read().ok()?;
         let a = tab.get(name)?;
-        if (a.node.flags & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) != 0 {
+        if (a.node.flags & crate::ported::zsh_h::ALIAS_GLOBAL as i32) != 0 {
             None
         } else {
             Some(a.text.clone())
@@ -749,7 +752,7 @@ impl ShellExecutor {
     pub fn global_alias(&self, name: &str) -> Option<String> {
         let tab = crate::ported::hashtable::aliastab_lock().read().ok()?;
         let a = tab.get(name)?;
-        if (a.node.flags & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) != 0 {
+        if (a.node.flags & crate::ported::zsh_h::ALIAS_GLOBAL as i32) != 0 {
             Some(a.text.clone())
         } else {
             None
@@ -776,7 +779,7 @@ impl ShellExecutor {
     pub fn set_global_alias(&mut self, name: String, value: String) {
         if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
             tab.add(crate::ported::hashtable::createaliasnode(
-                &name, &value, crate::ported::hashtable::flags::ALIAS_GLOBAL,
+                &name, &value, crate::ported::zsh_h::ALIAS_GLOBAL as u32,
             ));
         }
     }
@@ -811,7 +814,7 @@ impl ShellExecutor {
             tab.iter_sorted()
                 .into_iter()
                 .filter(|(_, a)| (a.node.flags
-                    & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) == 0)
+                    & crate::ported::zsh_h::ALIAS_GLOBAL as i32) == 0)
                 .map(|(k, a)| (k.clone(), a.text.clone()))
                 .collect()
         } else {
@@ -825,7 +828,7 @@ impl ShellExecutor {
             tab.iter_sorted()
                 .into_iter()
                 .filter(|(_, a)| (a.node.flags
-                    & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) != 0)
+                    & crate::ported::zsh_h::ALIAS_GLOBAL as i32) != 0)
                 .map(|(k, a)| (k.clone(), a.text.clone()))
                 .collect()
         } else {
@@ -1070,7 +1073,6 @@ impl ShellExecutor {
             comp_suffix: String::new(),
             comp_iprefix: String::new(),
             comp_isuffix: String::new(),
-            readonly_vars: std::collections::HashSet::new(),
             local_scope_depth: 0,
             pending_underscore: None,
             in_dq_context: 0,

@@ -46,7 +46,7 @@ impl crate::ported::exec::ShellExecutor {
         if flags & PM_UNIQUE != 0 {
             a.set(crate::recorder::ParamAttrs::UNIQUE);
         }
-        if self.readonly_vars.contains(name) {
+        if self.is_readonly_param(name) {
             a.set(crate::recorder::ParamAttrs::READONLY);
         }
         if std::env::var_os(name).is_some() {
