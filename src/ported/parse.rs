@@ -619,8 +619,8 @@ pub enum CaseTerminator {
 }
 
 /// The Zsh Parser
-pub struct ZshParser<'a> {
-    lexer: ZshLexer<'a>,
+pub struct ZshParser {
+    lexer: ZshLexer,
     /// Global iteration counter to prevent infinite loops
     global_iterations: usize,
     /// Recursion depth counter to prevent stack overflow
@@ -832,9 +832,9 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>
     Some((names, rest))
 }
 
-impl<'a> ZshParser<'a> {
+impl<'a> ZshParser {
     /// Create a new parser
-    pub fn new(input: &'a str) -> Self {
+    pub fn new(input: &str) -> Self {
         ZshParser {
             lexer: ZshLexer::new(input),
             global_iterations: 0,
@@ -1625,18 +1625,17 @@ impl<'a> ZshParser<'a> {
                             // printed `a; echo b` instead of
                             // `echo a; echo b` for `f() { echo a;
                             // echo b }`.
-                            let body_start = self.lexer.pos;
+                            let body_start = self.lexer.pos();
                             self.lexer.zshlex();
                             let body = self.parse_program();
                             let body_end = if self.lexer.tok() == OUTBRACE_TOK {
-                                self.lexer.pos.saturating_sub(1)
+                                self.lexer.pos().saturating_sub(1)
                             } else {
-                                self.lexer.pos
+                                self.lexer.pos()
                             };
                             let body_source = self
                                 .lexer
-                                .input
-                                .get(body_start..body_end)
+                                .input_slice(body_start, body_end)
                                 .map(|s| s.trim().to_string())
                                 .filter(|s| !s.is_empty());
                             if self.lexer.tok() == OUTBRACE_TOK {
@@ -3081,22 +3080,17 @@ impl<'a> ZshParser<'a> {
             // past the first token (`echo`), making body_start land
             // mid-body and lose the first word — `typeset -f f` would
             // print `a; echo b` for `{ echo a; echo b }`.
-            let body_start = self.lexer.pos;
+            let body_start = self.lexer.pos();
             self.lexer.zshlex();
             let body = self.parse_program();
             let body_end = if self.lexer.tok() == OUTBRACE_TOK {
                 // Lexer has just consumed `}`; pos is past it. Body content
                 // ends one byte before pos.
-                self.lexer.pos.saturating_sub(1)
+                self.lexer.pos().saturating_sub(1)
             } else {
-                self.lexer.pos
+                self.lexer.pos()
             };
-            let body_source = self
-                .lexer
-                .input
-                .get(body_start..body_end)
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
+            let body_source = self.lexer.input_slice(body_start, body_end).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
             if self.lexer.tok() == OUTBRACE_TOK {
                 self.lexer.zshlex();
             }
@@ -3166,20 +3160,15 @@ impl<'a> ZshParser<'a> {
         // Parse body
         if self.lexer.tok() == INBRACE_TOK {
             // Same body_start-before-zshlex fix as parse_funcdef.
-            let body_start = self.lexer.pos;
+            let body_start = self.lexer.pos();
             self.lexer.zshlex();
             let body = self.parse_program();
             let body_end = if self.lexer.tok() == OUTBRACE_TOK {
-                self.lexer.pos.saturating_sub(1)
+                self.lexer.pos().saturating_sub(1)
             } else {
-                self.lexer.pos
+                self.lexer.pos()
             };
-            let body_source = self
-                .lexer
-                .input
-                .get(body_start..body_end)
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
+            let body_source = self.lexer.input_slice(body_start, body_end).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
             if self.lexer.tok() == OUTBRACE_TOK {
                 self.lexer.zshlex();
             }

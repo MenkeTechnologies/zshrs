@@ -34,8 +34,8 @@ static cstack: Mutex<Option<Box<context_stack>>> = Mutex::new(None);         // 
 #[allow(non_snake_case)]
 pub fn zcontext_save_partial(                                                // c:52
     parts: i32,
-    lexer: Option<&mut ZshLexer<'_>>,
-    parser: Option<&mut ZshParser<'_>>,
+    lexer: Option<&mut ZshLexer>,
+    parser: Option<&mut ZshParser>,
 ) {
     crate::ported::signals::queue_signals();                                 // c:56
 
@@ -77,8 +77,8 @@ pub fn zcontext_save_partial(                                                // 
 ///
 /// Save context in full.
 pub fn zcontext_save(                                                        // c:80
-    lexer: Option<&mut ZshLexer<'_>>,
-    parser: Option<&mut ZshParser<'_>>,
+    lexer: Option<&mut ZshLexer>,
+    parser: Option<&mut ZshParser>,
 ) {
     zcontext_save_partial(                                                   // c:82
         ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE,
@@ -90,8 +90,8 @@ pub fn zcontext_save(                                                        // 
 /// Port of `void zcontext_restore_partial(int parts)` from Src/context.c:89.
 pub fn zcontext_restore_partial(                                             // c:89
     parts: i32,
-    lexer: Option<&mut ZshLexer<'_>>,
-    parser: Option<&mut ZshParser<'_>>,
+    lexer: Option<&mut ZshLexer>,
+    parser: Option<&mut ZshParser>,
 ) {
     let mut head = cstack.lock().unwrap();
     let mut cs = match head.take() {                                         // c:91
@@ -127,8 +127,8 @@ pub fn zcontext_restore_partial(                                             // 
 
 /// Port of `void zcontext_restore(void)` from Src/context.c:117.
 pub fn zcontext_restore(                                                     // c:117
-    lexer: Option<&mut ZshLexer<'_>>,
-    parser: Option<&mut ZshParser<'_>>,
+    lexer: Option<&mut ZshLexer>,
+    parser: Option<&mut ZshParser>,
 ) {
     zcontext_restore_partial(                                                // c:119
         ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE,
