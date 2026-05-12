@@ -629,7 +629,7 @@ pub fn bin_private(nam: &str, args: &[String],                               // 
     // assignments made during bin_typeset. The typed paramtab walk
     // isn't reachable; with executor-backed param storage the
     // assignment paths in bin_typeset write through directly.
-    crate::ported::params::endparamscope(&mut paramscope_buf);                // c:253
+    crate::ported::params::endparamscope();                                   // c:253
     FAKELEVEL.store(ofake, Ordering::Relaxed);                                // c:254
     crate::ported::mem::unqueue_signals();                                    // c:255
 
