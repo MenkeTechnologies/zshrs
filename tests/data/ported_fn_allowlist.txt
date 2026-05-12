@@ -859,6 +859,13 @@ expand_glob_alternation
 mv_rename
 mv_symlink
 mv_link
+# read_cond_num — AST-walker helper to pull a numeric literal from
+# the current lex position. C parser inlines this via `atoi(tokstr)`
+# everywhere; the Rust helper exists to localize the i64-parse
+# error path. The C-named `get_cond_num(s)` (parse.c:2643 string
+# lookup) is the separate, faithful port that takes a precomputed
+# string.
+read_cond_num
 
 # Pre-existing zsh.h macro-shaped helpers (Src/zsh.h is a header,
 # not in zsh_c_fn_names.txt which only lists fns from .c files).
