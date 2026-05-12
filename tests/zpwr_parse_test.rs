@@ -7,7 +7,6 @@
 //!       ZPWR_VERBOSE=1 cargo test -p zsh --test zpwr_parse_test
 
 use std::path::{Path, PathBuf};
-use zsh::parse::ZshParser;
 
 fn zpwr_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/wizard".to_string());
@@ -41,8 +40,8 @@ fn parse_file(path: &Path) -> Result<(), String> {
         .name("parse-guard".into())
         .spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut parser = ZshParser::new(&content);
-                parser.parse().map(|_| ()).map_err(|errs| {
+                zsh::parse::parse_init(&content);
+                zsh::parse::parse().map(|_| ()).map_err(|errs| {
                     errs.into_iter()
                         .map(|e| format!("{:?}", e))
                         .collect::<Vec<_>>()

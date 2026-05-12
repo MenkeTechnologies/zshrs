@@ -6,19 +6,18 @@
 use std::fs;
 use std::path::Path;
 
-use zsh::ZshParser;
-
 fn parse_zsh(input: &str) -> Result<(), String> {
-    let mut parser = ZshParser::new(input);
-    match parser.parse() {
-        Ok(_) => Ok(()),
-        Err(errors) => {
-            let msgs: Vec<String> = errors
-                .iter()
-                .map(|e| format!("line {}: {}", e.line, e.message))
-                .collect();
-            Err(msgs.join("; "))
-        }
+    use std::sync::atomic::Ordering;
+    let saved = zsh::utils::errflag.load(Ordering::Relaxed);
+    zsh::utils::errflag.fetch_and(!zsh::utils::ERRFLAG_ERROR, Ordering::Relaxed);
+    zsh::parse::parse_init(input);
+    let _prog = zsh::parse::parse();
+    let had_err = (zsh::utils::errflag.load(Ordering::Relaxed) & zsh::utils::ERRFLAG_ERROR) != 0;
+    zsh::utils::errflag.store(saved, Ordering::Relaxed);
+    if had_err {
+        Err("parse error".to_string())
+    } else {
+        Ok(())
     }
 }
 
