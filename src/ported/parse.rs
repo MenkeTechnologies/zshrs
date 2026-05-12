@@ -263,7 +263,7 @@ pub struct ZshRedir {
 // home is `src/extensions/heredoc_ast.rs`. Dies in Phase 9e (PORT_PLAN.md)
 // when bodies land directly in the wordcode stream at the redirection's
 // pc slot.
-pub use crate::extensions::heredoc_ast::HereDocInfo;
+pub use crate::extensions::heredoc_ast::{HereDoc, HereDocInfo};
 
 // `enum RedirType` — port of `Src/zsh.h:377-408` `#define REDIR_WRITE …
 // REDIR_OUTPIPE`. The flat constants live in `super::zsh_h:268-285`. No
@@ -594,22 +594,64 @@ pub struct ZshParser<'a> {
 
 const MAX_RECURSION_DEPTH: usize = 500;
 
-/// Saved parse context. Direct port of zsh's `struct parse_stack`
-/// declared in zsh/Src/zsh.h and used by parse.c:295-355
-/// (`parse_context_save` / `parse_context_restore`). Pushes per-
-/// parse-call state so a nested parse (e.g. inside command
-/// substitution) doesn't clobber the outer parse.
-///
-/// zshrs port note: zsh's parse_stack tracks wordcode-buffer state
-/// (ecbuf, eclen, ecused, ecnpats, ecstrs, ecsoffs, ecssub, ecnfunc).
-/// zshrs builds AST trees instead so those fields collapse to a
-/// recursion_depth + global_iterations save. The lexer-side fields
-/// (incmdpos, incond, etc.) live on ZshLexer here so they get saved
+/// Direct port of `struct parse_stack` at `Src/zsh.h:3099-3109`.
+/// Used by `parse_context_save` / `parse_context_restore`
+/// (parse.c:295-355) to snapshot per-parse-call state so a nested
+/// parse (e.g. inside command substitution) doesn't clobber the
+/// outer parse.
+#[allow(non_camel_case_types)]
 #[derive(Debug, Default, Clone)]
-pub struct ParseStack {
+pub struct parse_stack {
+    // ── Direct port of struct parse_stack at zsh.h:3099-3109 ──
+    /// Pending heredocs awaiting body collection. C: `struct heredocs
+    /// *hdocs` (zsh.h:3100). zshrs uses Vec<HereDoc> until Phase 9b
+    /// (PORT_PLAN.md) reinstates C's linked-list shape.
+    pub hdocs: Vec<HereDoc>,
+    /// C: `int incmdpos` (zsh.h:3102).
+    pub incmdpos: bool,
+    /// C: `int aliasspaceflag` (zsh.h:3103).
+    pub aliasspaceflag: i32,
+    /// C: `int incond` (zsh.h:3104).
+    pub incond: i32,
+    /// C: `int inredir` (zsh.h:3105).
+    pub inredir: bool,
+    /// C: `int incasepat` (zsh.h:3106).
+    pub incasepat: i32,
+    /// C: `int isnewlin` (zsh.h:3107).
+    pub isnewlin: i32,
+    /// C: `int infor` (zsh.h:3108).
+    pub infor: i32,
+    /// C: `int inrepeat_` (zsh.h:3109).
+    pub inrepeat_: i32,
+    /// C: `int intypeset` (zsh.h:3110).
+    pub intypeset: bool,
+    // ── Wordcode-buffer state — STUB until Phase 9b ──
+    // C `Wordcode ecbuf` (zsh.h:3112) + `Eccstr ecstrs` (zsh.h:3113) +
+    // `int eclen/ecused/ecnpats/ecsoffs/ecssub/ecnfunc` (zsh.h:3112-3114).
+    // zshrs hasn't emitted wordcode yet — these fields exist to
+    // preserve the C shape but read/write nothing until P9b lands.
+    pub eclen: i32,
+    pub ecused: i32,
+    pub ecnpats: i32,
+    pub ecbuf: Option<Vec<u32>>,
+    pub ecstrs: Option<Vec<u8>>,
+    pub ecsoffs: i32,
+    pub ecssub: i32,
+    pub ecnfunc: i32,
+    // ── Rust-only safety nets — NOT in C struct parse_stack ──
+    // C catches runaway recursion via OS stack overflow + segfault.
+    // Rust catches it via these counters; round-tripping through
+    // parse_stack so a nested parse gets a fresh limit while the
+    // outer parse's count survives the nested call.
     pub recursion_depth: usize,
     pub global_iterations: usize,
 }
+
+// Old uppercase Rust-only `ParseStack` is gone. Compat alias so
+// existing call sites (context.rs) keep resolving until the
+// rename ripples through.
+#[allow(non_camel_case_types)]
+pub type ParseStack = parse_stack;
 
 /// Walk every ZshRedir in the program and, for any with a `heredoc_idx`,
 /// pull the body+terminator out of `bodies` and stuff into `heredoc`.
@@ -770,34 +812,76 @@ impl<'a> ZshParser<'a> {
         self.recursion_depth > MAX_RECURSION_DEPTH
     }
 
-    /// Save parse context onto a `ParseStack`. Direct port of
-    /// zsh/Src/parse.c:295-320 `parse_context_save`. Pushes
-    /// recursion_depth + global_iterations and resets to zero so
-    /// a nested parse can't trigger the outer parse's limits.
-    /// Lexer-side state (incmdpos / incond / etc.) saves via the
-    pub fn parse_context_save(&mut self, ps: &mut ParseStack) {
-        // parse.c:299-317 — save parser state. zshrs collapses zsh's
-        // wordcode-buffer fields (ecbuf/eclen/ecused/ecnpats/ecstrs/
-        // ecsoffs/ecssub/ecnfunc) into the recursion+iteration pair
-        // since the AST builder doesn't use a flat wordcode buffer.
+    /// Direct port of `parse_context_save` at `Src/parse.c:295-320`.
+    /// Snapshots the lexer-side file-statics (which currently live on
+    /// `self.lexer` until Phase 7 dissolution makes them file-scope
+    /// thread_local!s) plus the pending heredoc list, plus the
+    /// wordcode-buffer state (STUB until Phase 9b). Saves Rust-only
+    /// recursion counters too so nested parses get fresh limits.
+    pub fn parse_context_save(&mut self, ps: &mut parse_stack) {
+        // parse.c:299 — `ps->hdocs = hdocs; hdocs = NULL;`
+        ps.hdocs = std::mem::take(&mut self.lexer.heredocs);
+        // parse.c:302-310 — save lexer-side state.
+        ps.incmdpos = self.lexer.incmdpos;
+        // parse.c:303 — aliasspaceflag — not yet a field on ZshLexer.
+        // STUB; Phase 7 wires it. Same for the few below marked STUB.
+        ps.aliasspaceflag = 0;
+        ps.incond = self.lexer.incond;
+        ps.inredir = self.lexer.inredir;
+        ps.incasepat = self.lexer.incasepat;
+        ps.isnewlin = self.lexer.isnewlin;
+        ps.infor = self.lexer.infor;
+        ps.inrepeat_ = self.lexer.inrepeat;
+        ps.intypeset = self.lexer.intypeset;
+        // parse.c:312-317 — wordcode buffer state. STUB until Phase 9b
+        // (zshrs has no ecbuf yet).
+        ps.eclen = 0;
+        ps.ecused = 0;
+        ps.ecnpats = 0;
+        ps.ecbuf = None;
+        ps.ecstrs = None;
+        ps.ecsoffs = 0;
+        ps.ecssub = 0;
+        ps.ecnfunc = 0;
+        // Rust-only safety nets — round-trip the counters.
         ps.recursion_depth = self.recursion_depth;
         ps.global_iterations = self.global_iterations;
-        // parse.c:318-319 — clear the buffer + heredoc list so a
-        // nested parse starts from a clean slate.
+        // parse.c:318-319 — clear the lexer/parser state so a nested
+        // parse starts from a clean slate.
         self.recursion_depth = 0;
         self.global_iterations = 0;
+        self.lexer.incmdpos = true;
+        self.lexer.incond = 0;
+        self.lexer.inredir = false;
+        self.lexer.incasepat = 0;
+        self.lexer.infor = 0;
+        self.lexer.inrepeat = 0;
+        self.lexer.intypeset = false;
     }
 
-    /// Restore parse context from a `ParseStack`. Direct port of
-    /// zsh/Src/parse.c:326-355 `parse_context_restore`. Inverse of
-    /// `parse_context_save`. Also clears any half-built AST state
-    /// to prevent leaking into the outer parse.
-    pub fn parse_context_restore(&mut self, ps: &ParseStack) {
+    /// Direct port of `parse_context_restore` at `Src/parse.c:326-355`.
+    /// Inverse of `parse_context_save`. Restores lexer-side state +
+    /// pending heredocs + Rust-only counters from `ps`, then clears
+    /// `errflag & ERRFLAG_ERROR` per parse.c:354.
+    pub fn parse_context_restore(&mut self, ps: &parse_stack) {
         // parse.c:330-331 — free any in-progress wordcode buffer.
-        // zshrs has no equivalent — AST nodes are owned by their
-        // parent so dropping the parser frees them.
+        // zshrs has no wordcode yet (STUB until Phase 9b); the AST
+        // nodes are owned by their parent so dropping the parser
+        // frees them.
 
         // parse.c:333-352 — restore saved state.
+        self.lexer.heredocs = ps.hdocs.clone();
+        self.lexer.incmdpos = ps.incmdpos;
+        // aliasspaceflag STUB until Phase 7.
+        self.lexer.incond = ps.incond;
+        self.lexer.inredir = ps.inredir;
+        self.lexer.incasepat = ps.incasepat;
+        self.lexer.isnewlin = ps.isnewlin;
+        self.lexer.infor = ps.infor;
+        self.lexer.inrepeat = ps.inrepeat_;
+        self.lexer.intypeset = ps.intypeset;
+        // ecbuf/eclen/ecused/ecnpats/ecstrs/ecsoffs/ecssub/ecnfunc
+        // STUB until Phase 9b.
         self.recursion_depth = ps.recursion_depth;
         self.global_iterations = ps.global_iterations;
 

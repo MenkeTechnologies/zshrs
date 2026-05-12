@@ -254,7 +254,7 @@ pub struct ZshLexer<'a> {
     /// After 'for' keyword
     pub infor: i32,
     /// After 'repeat' keyword
-    inrepeat: i32,
+    pub inrepeat: i32,
     /// Parsing typeset arguments
     pub intypeset: bool,
     /// Inside (( ... )) arithmetic
