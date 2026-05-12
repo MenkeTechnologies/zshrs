@@ -241,14 +241,105 @@ impl lexbufstate {
 // `gethere()` deferred body collection.
 pub use crate::extensions::heredoc_ast::HereDoc;
 
-/// The Zsh Lexer
+// =============================================================================
+// ZshLexer state — thread-local file-statics matching zsh's lex.c file-statics.
+// Each field maps to a `static` in `Src/lex.c` (or `Src/zsh.h` for the few
+// `extern`-declared ones). Per-evaluator: each worker thread tokenizing its
+// own input needs its own state (bucket-1 per PORT_PLAN.md).
+// =============================================================================
+thread_local! {
+    /// Input source (owned). C uses input-stack `struct inputstack` +
+    /// `hgetc()` (lex.c:input.c); zshrs P7 collapses to an owned String
+    /// until the inputstack subsystem is ported.
+    static LEX_INPUT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    static LEX_POS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static LEX_UNGET_BUF: std::cell::RefCell<std::collections::VecDeque<char>>
+        = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+    /// `char *tokstr` (lex.c:170).
+    static LEX_TOKSTR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// `enum lextok tok` (lex.c:180).
+    static LEX_TOK: std::cell::Cell<lextok> = const { std::cell::Cell::new(ENDINPUT) };
+    /// `int tokfd` (lex.c:191).
+    static LEX_TOKFD: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
+    /// `zlong toklineno` (lex.c:198).
+    static LEX_TOKLINENO: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+    static LEX_LINENO: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+    /// `int lexstop` (lex.c:175).
+    static LEX_LEXSTOP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// `int incmdpos` (lex.c:122 + extern in zsh.h).
+    static LEX_INCMDPOS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    /// `int incond` (lex.c:127).
+    static LEX_INCOND: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// In pattern context (RHS of == != =~ in [[ ]]) — zshrs extension
+    /// over the bare incond state.
+    static LEX_INCONDPAT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// `int incasepat` (lex.c:130).
+    static LEX_INCASEPAT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// `int inredir` (lex.c:126).
+    static LEX_INREDIR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Saved incmdpos from before a redirop/for/foreach/select. Mirrors
+    /// `static int oldpos` in ctxtlex (lex.c:319).
+    static LEX_OLDPOS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    /// `int infor` (lex.c:128).
+    static LEX_INFOR: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// `int inrepeat_` (lex.c:129).
+    static LEX_INREPEAT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// `int intypeset` (lex.c:131).
+    static LEX_INTYPESET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// `int dbparens` (lex.c:141).
+    static LEX_DBPARENS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// `int noaliases` (lex.c:135).
+    static LEX_NOALIASES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// `int nocorrect` (lex.c:144).
+    static LEX_NOCORRECT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// `int nocomments` (lex.c:148).
+    static LEX_NOCOMMENTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// `int lexflags` (lex.c:118).
+    static LEX_LEXFLAGS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// `int isfirstln` (lex.c:114).
+    static LEX_ISFIRSTLN: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    /// `int isfirstch` (lex.c:116).
+    static LEX_ISFIRSTCH: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    /// Pending heredocs — Rust-only working set until P9c reinstates
+    /// the C `struct heredocs` linked-list shape (zsh.h:1152).
+    static LEX_HEREDOCS: std::cell::RefCell<Vec<HereDoc>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Heredoc-terminator-expected flag (0/1/2 for none / `<<` / `<<-`).
+    static LEX_HEREDOC_PENDING: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    /// `struct lexbufstate lexbuf` (lex.c:210).
+    static LEX_LEXBUF: std::cell::RefCell<lexbufstate> = const { std::cell::RefCell::new(
+        lexbufstate { ptr: None, siz: 0, len: 0 }
+    )};
+    /// `int isnewlin` (lex.c:119).
+    static LEX_ISNEWLIN: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// Last-error message — zshrs working state, not in C.
+    static LEX_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// Safety counter for runaway iterations.
+    static LEX_GLOBAL_ITERATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Safety counter for runaway recursion.
+    static LEX_RECURSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// `int lex_add_raw` (lex.c:161).
+    static LEX_LEX_ADD_RAW: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// `struct lexbufstate lexbuf_raw` (lex.c:166).
+    static LEX_LEXBUF_RAW: std::cell::RefCell<lexbufstate> = const { std::cell::RefCell::new(
+        lexbufstate { ptr: None, siz: 0, len: 0 }
+    )};
+}
+
+/// The Zsh Lexer.
+///
+/// Migration in progress (Phase 7 of PORT_PLAN.md): the file-scope
+/// `LEX_*` thread-local statics above are the eventual home for every
+/// field below — each one maps to a `static` in `Src/lex.c`. Methods
+/// on `impl ZshLexer` currently read/write the struct fields; future
+/// commits migrate them to read/write the thread-locals so the struct
+/// can collapse to a unit type and external `lexer.X` accesses become
+/// `lexer.X()` method calls or free-fn calls.
 pub struct ZshLexer<'a> {
     /// Input source
     pub(crate) input: &'a str,
     /// Current position in input
     pub(crate) pos: usize,
-    /// Look-ahead buffer for ungotten characters
-    unget_buf: VecDeque<char>,
+    // `unget_buf` migrated to LEX_UNGET_BUF thread_local.
     /// Current token string
     pub tokstr: Option<String>,
     /// Current token type
@@ -296,23 +387,23 @@ pub struct ZshLexer<'a> {
     pub lexflags: i32,
     /// Whether this is the first line
     pub isfirstln: bool,
-    /// Whether this is the first char of command
-    #[allow(dead_code)]
-    isfirstch: bool,
+    // `isfirstch` field DELETED — never read for any logic (was
+    // `#[allow(dead_code)]`); the save/restore round-trip through
+    // lex_stack stores a constant zero now.
     /// Pending here-documents
     pub heredocs: Vec<HereDoc>,
-    /// Expecting heredoc terminator (0 = no, 1 = <<, 2 = <<-)
-    heredoc_pending: u8,
+    // `heredoc_pending: u8` migrated to LEX_HEREDOC_PENDING thread_local
+    // (file-static parity with C). Access via LEX_HEREDOC_PENDING.get()/set().
     /// Token buffer
     lexbuf: lexbufstate,
     /// After newline
     pub isnewlin: i32,
     /// Error message if any
     pub error: Option<String>,
-    /// Global iteration counter for infinite loop detection
-    global_iterations: usize,
-    /// Recursion depth counter
-    recursion_depth: usize,
+    // `global_iterations` + `recursion_depth` migrated to
+    // LEX_GLOBAL_ITERATIONS + LEX_RECURSION_DEPTH thread_locals. These
+    // are Rust-only safety nets (not in C), but they belong at file
+    // scope per the bucket-1 dissolution pattern in PORT_PLAN.md.
     /// Raw-input capture flag — when nonzero, every char read through
     /// `hgetc` is also appended to `tokstr_raw` via zshlex_raw_add.
     /// Direct mirror of zsh/Src/lex.c:161 `lex_add_raw`. Used by
@@ -332,10 +423,16 @@ const MAX_LEXER_RECURSION: usize = 200;
 impl<'a> ZshLexer<'a> {
     /// Create a new lexer for the given input
     pub fn new(input: &'a str) -> Self {
+        // Reset migrated thread-locals so a fresh lexer instance
+        // starts from a clean slate (same as the C source's
+        // file-static initializers in lex.c).
+        LEX_UNGET_BUF.with_borrow_mut(|b| b.clear());
+        LEX_HEREDOC_PENDING.set(0);
+        LEX_GLOBAL_ITERATIONS.set(0);
+        LEX_RECURSION_DEPTH.set(0);
         ZshLexer {
             input,
             pos: 0,
-            unget_buf: VecDeque::new(),
             tokstr: None,
             tok: ENDINPUT,
             tokfd: -1,
@@ -357,14 +454,10 @@ impl<'a> ZshLexer<'a> {
             nocomments: false,
             lexflags: 0,
             isfirstln: true,
-            isfirstch: true,
             heredocs: Vec::new(),
-            heredoc_pending: 0,
             lexbuf: lexbufstate::new(),
             isnewlin: 0,
             error: None,
-            global_iterations: 0,
-            recursion_depth: 0,
             lex_add_raw: 0,
             lexbuf_raw: lexbufstate::new(),
         }
@@ -612,9 +705,11 @@ impl<'a> ZshLexer<'a> {
     fn inject_alias_text(&mut self, text: &str) {
         // Insert at front in reverse so the first char of `text`
         // comes out first.
-        for c in text.chars().rev() {
-            self.unget_buf.push_front(c);
-        }
+        LEX_UNGET_BUF.with_borrow_mut(|buf| {
+            for c in text.chars().rev() {
+                buf.push_front(c);
+            }
+        });
     }
 
     /// Pop the last char from the raw-input capture buffer. Direct
@@ -681,7 +776,9 @@ impl<'a> ZshLexer<'a> {
         // i32 / i64 / lexbufstate — convert at the boundary.
         ls.dbparens = self.dbparens as i32;
         ls.isfirstln = self.isfirstln as i32;
-        ls.isfirstch = self.isfirstch as i32;
+        // isfirstch — field deleted (was unused). Stash 0; canonical
+        // C tracks this for spell-correction which zshrs doesn't run.
+        ls.isfirstch = 0;
         ls.lexflags = self.lexflags;
         ls.tok = self.tok;
         ls.tokstr = self.tokstr.take();
@@ -711,7 +808,8 @@ impl<'a> ZshLexer<'a> {
         // lex.c:249-261 — copy stack state back into live fields.
         self.dbparens = ls.dbparens != 0;
         self.isfirstln = ls.isfirstln != 0;
-        self.isfirstch = ls.isfirstch != 0;
+        // isfirstch — field deleted (was unused); discard ls.isfirstch.
+        let _ = ls.isfirstch;
         self.lexflags = ls.lexflags;
         self.tok = ls.tok;
         self.tokstr = ls.tokstr.take();
@@ -740,7 +838,7 @@ impl<'a> ZshLexer<'a> {
     /// Check recursion depth; returns true if exceeded
     #[inline]
     fn check_recursion(&mut self) -> bool {
-        if self.recursion_depth > MAX_LEXER_RECURSION {
+        if LEX_RECURSION_DEPTH.get() > MAX_LEXER_RECURSION {
             self.error = Some("lexer exceeded max recursion depth".to_string());
             self.lexstop = true;
             true
@@ -762,8 +860,9 @@ impl<'a> ZshLexer<'a> {
 
     #[inline]
     fn check_iterations(&mut self) -> bool {
-        self.global_iterations += 1;
-        if self.global_iterations as u64 > Self::LEXER_HGETC_CAP {
+        let next = LEX_GLOBAL_ITERATIONS.get() + 1;
+        LEX_GLOBAL_ITERATIONS.set(next);
+        if next as u64 > Self::LEXER_HGETC_CAP {
             self.error = Some(format!(
                 "lexer exceeded {} hgetc iterations — possible infinite loop",
                 Self::LEXER_HGETC_CAP
@@ -789,7 +888,7 @@ impl<'a> ZshLexer<'a> {
         // permanently one short. Symptom: $LINENO stuck at 1 in
         // every script statement because the parser ungets the
         // separating newline once between statements.
-        if let Some(c) = self.unget_buf.pop_front() {
+        if let Some(c) = LEX_UNGET_BUF.with_borrow_mut(|b| b.pop_front()) {
             if c == '\n' {
                 self.lineno += 1;
             }
@@ -808,7 +907,7 @@ impl<'a> ZshLexer<'a> {
 
     /// Put character back into input
     fn hungetc(&mut self, c: char) {
-        self.unget_buf.push_front(c);
+        LEX_UNGET_BUF.with_borrow_mut(|b| b.push_front(c));
         if c == '\n' && self.lineno > 1 {
             self.lineno -= 1;
         }
@@ -818,7 +917,7 @@ impl<'a> ZshLexer<'a> {
     /// Peek at next character without consuming
     #[allow(dead_code)]
     fn peek(&mut self) -> Option<char> {
-        if let Some(&c) = self.unget_buf.front() {
+        if let Some(c) = LEX_UNGET_BUF.with_borrow(|b| b.front().copied()) {
             return Some(c);
         }
         self.input[self.pos..].chars().next()
@@ -989,9 +1088,9 @@ impl<'a> ZshLexer<'a> {
         }
 
         // If we were expecting a heredoc terminator, register it now
-        if self.heredoc_pending > 0 && self.tok == STRING_LEX {
+        if LEX_HEREDOC_PENDING.get() > 0 && self.tok == STRING_LEX {
             if let Some(ref terminator) = self.tokstr {
-                let strip_tabs = self.heredoc_pending == 2;
+                let strip_tabs = LEX_HEREDOC_PENDING.get() == 2;
                 // Detect originally-quoted terminator (`<<'EOF'`,
                 // `<<"EOF"`). The lexer wraps single-quoted text in
                 // SNULL (`\u{9d}`) and double-quoted text in DNULL
@@ -1028,7 +1127,7 @@ impl<'a> ZshLexer<'a> {
                     processed: false,
                 });
             }
-            self.heredoc_pending = 0;
+            LEX_HEREDOC_PENDING.set(0);
         }
 
         // Track pattern context inside [[ ... ]] - after = == != =~ the RHS is a pattern
@@ -1721,7 +1820,7 @@ impl<'a> ZshLexer<'a> {
                     }
                     Some('<') => TRINANG,
                     Some('-') => {
-                        self.heredoc_pending = 2; // <<- expects terminator next
+                        LEX_HEREDOC_PENDING.set(2); // <<- expects terminator next
                         DINANGDASH
                     }
                     _ => {
@@ -1729,7 +1828,7 @@ impl<'a> ZshLexer<'a> {
                             self.hungetc(e);
                         }
                         self.lexstop = false;
-                        self.heredoc_pending = 1; // << expects terminator next
+                        LEX_HEREDOC_PENDING.set(1); // << expects terminator next
                         DINANG
                     }
                 }
@@ -2412,14 +2511,14 @@ impl<'a> ZshLexer<'a> {
     /// logic delegates to `dquote_parse_inner` which holds the actual
     /// per-char state machine matching lex.c:1495-1692.
     fn dquote_parse(&mut self, endchar: char, sub: bool) -> Result<(), ()> {
-        self.recursion_depth += 1;
+        LEX_RECURSION_DEPTH.set(LEX_RECURSION_DEPTH.get() + 1);
         if self.check_recursion() {
-            self.recursion_depth -= 1;
+            LEX_RECURSION_DEPTH.set(LEX_RECURSION_DEPTH.get() - 1);
             return Err(());
         }
 
         let result = self.dquote_parse_inner(endchar, sub);
-        self.recursion_depth -= 1;
+        LEX_RECURSION_DEPTH.set(LEX_RECURSION_DEPTH.get() - 1);
         result
     }
 
