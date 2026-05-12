@@ -3947,7 +3947,7 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
                     let n_owned = n.to_string();
                     crate::fusevm_bridge::with_executor(|exec| {
                         exec.set_assoc(n_owned.clone(), map.clone());
-                        exec.variables.remove(&n_owned);
+                        exec.unset_scalar(&n_owned);
                     });
                 } else {
                     // c:2980-2995 — plain array.
@@ -3955,7 +3955,7 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
                     let elems_owned = elems.clone();
                     crate::fusevm_bridge::with_executor(|exec| {
                         exec.set_array(n_owned.clone(), elems_owned.clone());
-                        exec.variables.remove(&n_owned);
+                        exec.unset_scalar(&n_owned);
                     });
                 }
             } else {
@@ -4729,7 +4729,7 @@ pub fn bin_unset(name: &str, argv: &[String],                                // 
                 // c:3900-3905 — whole-param unset.
                 let nm_owned = nm.to_string();
                 crate::fusevm_bridge::with_executor(|exec| {
-                    exec.variables.remove(&nm_owned);
+                    exec.unset_scalar(&nm_owned);
                     exec.arrays.remove(&nm_owned);
                     exec.assoc_arrays.remove(&nm_owned);
                 });

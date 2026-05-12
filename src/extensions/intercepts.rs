@@ -81,12 +81,9 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         // Set INTERCEPT_NAME and INTERCEPT_ARGS for advice code
-        self.variables
-            .insert("INTERCEPT_NAME".to_string(), cmd_name.to_string());
-        self.variables
-            .insert("INTERCEPT_ARGS".to_string(), args.join(" "));
-        self.variables
-            .insert("INTERCEPT_CMD".to_string(), full_cmd.to_string());
+        self.set_scalar("INTERCEPT_NAME".to_string(), cmd_name.to_string());
+        self.set_scalar("INTERCEPT_ARGS".to_string(), args.join(" "));
+        self.set_scalar("INTERCEPT_CMD".to_string(), full_cmd.to_string());
 
         // Run before advice
         for advice in matching
@@ -106,14 +103,12 @@ impl crate::ported::exec::ShellExecutor {
         let result = if let Some(advice) = around {
             // Around advice: set INTERCEPT_PROCEED flag, run advice code.
             // If advice calls `intercept_proceed`, the original command runs.
-            self.variables
-                .insert("__intercept_proceed".to_string(), "0".to_string());
+            self.set_scalar("__intercept_proceed".to_string(), "0".to_string());
             let advice_result = self.execute_advice(&advice.code);
 
             // Check if intercept_proceed was called
             let proceeded = self
-                .variables
-                .get("__intercept_proceed")
+                .scalar("__intercept_proceed")
                 .map(|v| v == "1")
                 .unwrap_or(false);
 
@@ -143,10 +138,8 @@ impl crate::ported::exec::ShellExecutor {
 
         // Set timing variable for after advice
         let ms = elapsed.as_secs_f64() * 1000.0;
-        self.variables
-            .insert("INTERCEPT_MS".to_string(), format!("{:.3}", ms));
-        self.variables
-            .insert("INTERCEPT_US".to_string(), format!("{:.0}", ms * 1000.0));
+        self.set_scalar("INTERCEPT_MS".to_string(), format!("{:.3}", ms));
+        self.set_scalar("INTERCEPT_US".to_string(), format!("{:.0}", ms * 1000.0));
 
         // Run after advice
         for advice in matching
@@ -157,12 +150,12 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         // Clean up
-        self.variables.remove("INTERCEPT_NAME");
-        self.variables.remove("INTERCEPT_ARGS");
-        self.variables.remove("INTERCEPT_CMD");
-        self.variables.remove("INTERCEPT_MS");
-        self.variables.remove("INTERCEPT_US");
-        self.variables.remove("__intercept_proceed");
+        self.unset_scalar("INTERCEPT_NAME");
+        self.unset_scalar("INTERCEPT_ARGS");
+        self.unset_scalar("INTERCEPT_CMD");
+        self.unset_scalar("INTERCEPT_MS");
+        self.unset_scalar("INTERCEPT_US");
+        self.unset_scalar("__intercept_proceed");
 
         Some(result)
     }

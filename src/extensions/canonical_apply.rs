@@ -133,13 +133,13 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     // Exported env: mirror to process env so child commands inherit.
     for (n, v) in shard.env_exports {
         std::env::set_var(&n, &v);
-        executor.variables.insert(n, v);
+        executor.set_scalar(n, v);
         total += 1;
     }
 
     // Non-exported shell params.
     for (n, v) in shard.params {
-        executor.variables.insert(n, v);
+        executor.set_scalar(n, v);
         total += 1;
     }
 
@@ -157,14 +157,14 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     if !shard.path.is_empty() {
         let joined = shard.path.join(":");
         std::env::set_var("PATH", &joined);
-        executor.variables.insert("PATH".to_string(), joined);
+        executor.set_scalar("PATH".to_string(), joined);
         total += shard.path.len();
         executor.arrays.insert("path".to_string(), shard.path);
     }
     if !shard.fpath.is_empty() {
         let joined = shard.fpath.join(":");
         std::env::set_var("FPATH", &joined);
-        executor.variables.insert("FPATH".to_string(), joined);
+        executor.set_scalar("FPATH".to_string(), joined);
         total += shard.fpath.len();
         executor.fpath = shard.fpath.iter().map(PathBuf::from).collect();
         executor.arrays.insert("fpath".to_string(), shard.fpath);

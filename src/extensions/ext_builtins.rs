@@ -190,7 +190,7 @@ impl ShellExecutor {
         println!("  aliases:     {}", self.aliases.len());
         println!("  global:      {} aliases", self.global_aliases.len());
         println!("  suffix:      {} aliases", self.suffix_aliases.len());
-        println!("  variables:   {}", self.variables.len());
+        println!("  variables:   {}", crate::ported::params::paramtab().lock().map(|t| t.iter().filter(|(_, p)| p.u_arr.is_none()).count()).unwrap_or(0));
         println!("  arrays:      {}", self.arrays.len());
         println!("  assoc:       {}", self.assoc_arrays.len());
         println!(
@@ -817,19 +817,10 @@ impl ShellExecutor {
 
     /// intercept_proceed — called from around advice to execute the original command.
     pub(crate) fn builtin_intercept_proceed(&mut self, _args: &[String]) -> i32 {
-        self.variables
-            .insert("__intercept_proceed".to_string(), "1".to_string());
+        self.set_scalar("__intercept_proceed".to_string(), "1".to_string());
         // Run the original command using saved INTERCEPT_NAME/INTERCEPT_ARGS
-        let cmd_name = self
-            .variables
-            .get("INTERCEPT_NAME")
-            .cloned()
-            .unwrap_or_default();
-        let args_str = self
-            .variables
-            .get("INTERCEPT_ARGS")
-            .cloned()
-            .unwrap_or_default();
+        let cmd_name = self.scalar("INTERCEPT_NAME").unwrap_or_default();
+        let args_str = self.scalar("INTERCEPT_ARGS").unwrap_or_default();
         let args: Vec<String> = if args_str.is_empty() {
             Vec::new()
         } else {
@@ -1513,7 +1504,15 @@ impl ShellExecutor {
                     // Sort for deterministic completion-candidate
                     // order (was HashMap iteration random, so
                     // \`compgen -v\` listings flickered).
-                    let mut names: Vec<String> = self.variables.keys().cloned().collect();
+                    let mut names: Vec<String> =
+                        if let Ok(tab) = crate::ported::params::paramtab().lock() {
+                            tab.iter()
+                                .filter(|(_, pm)| pm.u_arr.is_none())
+                                .map(|(k, _)| k.clone())
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
                     names.sort();
                     for name in names {
                         if name.starts_with(&prefix) {
@@ -2673,8 +2672,7 @@ impl ShellExecutor {
                 "zefram".to_string(),
             ],
         );
-        self.variables
-            .insert("prompt_theme".to_string(), "default".to_string());
+        self.set_scalar("prompt_theme".to_string(), "default".to_string());
         0
     }
 
@@ -2682,9 +2680,7 @@ impl ShellExecutor {
     pub(crate) fn builtin_prompt(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
             let theme = self
-                .variables
-                .get("prompt_theme")
-                .cloned()
+                .scalar("prompt_theme")
                 .unwrap_or_else(|| "default".to_string());
             println!("Current prompt theme: {}", theme);
             return 0;

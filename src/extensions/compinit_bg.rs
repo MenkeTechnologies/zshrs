@@ -68,9 +68,7 @@ impl crate::ported::exec::ShellExecutor {
         use_cache: bool,
     ) -> i32 {
         let zdotdir = self
-            .variables
-            .get("ZDOTDIR")
-            .cloned()
+            .scalar("ZDOTDIR")
             .or_else(|| std::env::var("ZDOTDIR").ok())
             .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()));
 
