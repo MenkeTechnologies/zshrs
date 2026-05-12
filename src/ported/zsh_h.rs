@@ -1014,6 +1014,7 @@ pub struct emulation_options {
 /// Rust port stores the raw libc `termios` (the path taken on every
 /// modern host).
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
 pub struct ttyinfo {
     // c:2593
     #[cfg(unix)]
@@ -1162,32 +1163,58 @@ pub struct execstack {
 }
 
 /// Port of `struct process` from `Src/zsh.h:1117-1125`.
+///
+/// Field-shape deviations from the C struct (documented for the
+/// `zsh.h ↔ zsh_h.rs` audit):
+/// - `text`: `String` instead of `char text[JOBTEXTSIZE]`. The
+///   `JOBTEXTSIZE` cap in C is a buffer-overflow guard; Rust's owned
+///   String removes the cap without losing the field's semantic.
+/// - `bgtime` / `endtime`: `Option<std::time::Instant>` instead of
+///   `struct timespec`. C uses timespec for monotonic-clock points;
+///   Rust's `Instant` is the equivalent abstraction.
+/// - `next` removed: C threads `struct process *next` for the
+///   in-job singly-linked list; Rust port owns the list externally
+///   via `job.procs: Vec<process>` so callers don't carry the chain
+///   pointer per node.
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
 pub struct process {
     // c:1117
-    pub next: Option<Process>,   // c:1118
-    pub pid: i32,                // c:1119 pid_t
-    pub text: [u8; JOBTEXTSIZE], // c:1120
-    pub status: i32,             // c:1121
-    pub bgtime_sec: i64,         // c:1123 timespec
-    pub bgtime_nsec: i64,        // c:1123
-    pub endtime_sec: i64,        // c:1124
-    pub endtime_nsec: i64,       // c:1124
+    pub pid: i32,                                // c:1119 pid_t
+    pub text: String,                            // c:1120 char text[JOBTEXTSIZE]
+    pub status: i32,                             // c:1121
+    pub ti: crate::ported::zsh_h::timeinfo,      // c:1122 child_times_t ti
+    pub bgtime: Option<std::time::Instant>,      // c:1123 struct timespec bgtime
+    pub endtime: Option<std::time::Instant>,     // c:1124 struct timespec endtime
 }
 
 /// Port of `struct job` from `Src/zsh.h:1058-1071`.
+///
+/// Field-shape deviations from the C struct:
+/// - `procs` / `auxprocs`: `Vec<process>` instead of singly-linked
+///   `struct process *procs`. Equivalent semantics; Rust owns the
+///   list ergonomically rather than threading `next` pointers.
+/// - `filelist`: `Vec<String>` instead of `LinkList` of `char *`.
+///   Same reasoning.
+/// - `text`: added (Rust extension). C reconstructs job-display text
+///   on demand by walking `procs->text`; the Rust port caches the
+///   composed text here so display paths don't re-walk per call.
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Default)]
 pub struct job {
     // c:1058
-    pub gleader: i32,               // c:1059 pid_t
-    pub other: i32,                 // c:1060
-    pub stat: i32,                  // c:1062 STAT_*
-    pub pwd: Option<String>,        // c:1063
-    pub procs: Option<Process>,     // c:1065
-    pub auxprocs: Option<Process>,  // c:1066
-    pub filelist: Option<LinkList>, // c:1067
-    pub stty_in_env: i32,           // c:1069
-    pub ty: Option<Box<ttyinfo>>,   // c:1070
+    pub gleader: i32,             // c:1059 pid_t
+    pub other: i32,               // c:1060
+    pub stat: i32,                // c:1062 STAT_*
+    pub pwd: Option<String>,      // c:1063
+    pub procs: Vec<process>,      // c:1065 struct process *procs
+    pub auxprocs: Vec<process>,   // c:1066 struct process *auxprocs
+    pub filelist: Vec<String>,    // c:1067 LinkList filelist
+    pub stty_in_env: i32,         // c:1069
+    pub ty: Option<Box<ttyinfo>>, // c:1070
+    /// Rust extension: cached job-display text. C re-derives via
+    /// `procs` walks in `printjob()` (`Src/jobs.c:1244+`).
+    pub text: String,
 }
 
 /// Port of `struct funcdump` from `Src/zsh.h:776-786`.
