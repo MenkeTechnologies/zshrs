@@ -1366,24 +1366,103 @@ impl ShellExecutor {
     /// can walk a buffer P9c emitted into.
     pub fn exec_wordcode(&mut self) -> i32 {
         use crate::ported::parse::ECBUF;
-        use crate::ported::zsh_h::{wc_code, WC_END};
         let buf = ECBUF.with_borrow(|b| b.clone());
-        let mut pc = 0usize;
+        let (status, _next) = self.exec_list_wordcode(&buf, 0);
+        self.set_last_status(status);
+        status
+    }
+
+    /// P9d stub: direct port of `execlist(Estate state, int dont_change_job,
+    /// int exiting)` from `Src/exec.c:1551-1671`. Walks WC_LIST entries,
+    /// dispatches each sublist payload to exec_pline_wordcode. Real
+    /// implementation handles fork/wait + signal-trap dispatch.
+    /// Returns (last_status, pc_after_walk).
+    pub fn exec_list_wordcode(&mut self, buf: &[u32], mut pc: usize) -> (i32, usize) {
+        use crate::ported::zsh_h::{wc_code, wc_data, WC_END, WC_LIST};
         let mut last_status: i32 = 0;
         while pc < buf.len() {
             let code = wc_code(buf[pc]);
-            // parse.c:712 — `WCB_END()` terminates every parse_event.
-            // exec.c:1551-1671 `execlist` walks until WC_END.
             if code == WC_END {
+                pc += 1;
                 break;
             }
-            // Full WC_KIND dispatch tree lives in Src/exec.c; this stub
-            // just advances past unrecognized opcodes so the loop
-            // terminates instead of hanging.
+            if code != WC_LIST {
+                pc += 1;
+                continue;
+            }
+            let header = buf[pc];
+            let skip = (wc_data(header)
+                >> crate::ported::zsh_h::WC_LIST_FREE) as usize;
             pc += 1;
+            let (s, _) = self.exec_sublist_wordcode(buf, pc);
+            last_status = s;
+            pc += skip;
         }
-        self.set_last_status(last_status);
-        last_status
+        (last_status, pc)
+    }
+
+    /// P9d stub: direct port of `execsublist` from
+    /// `Src/exec.c:1672-1810`. Walks WC_SUBLIST + pipeline payload.
+    pub fn exec_sublist_wordcode(&mut self, buf: &[u32], mut pc: usize) -> (i32, usize) {
+        use crate::ported::zsh_h::{wc_code, wc_data, WC_SUBLIST};
+        let mut last_status: i32 = 0;
+        if pc < buf.len() && wc_code(buf[pc]) == WC_SUBLIST {
+            let header = buf[pc];
+            let skip = (wc_data(header) >> 7) as usize;
+            pc += 1;
+            let (s, _) = self.exec_pline_wordcode(buf, pc);
+            last_status = s;
+            pc += skip;
+        }
+        (last_status, pc)
+    }
+
+    /// P9d stub: direct port of `execpline` from
+    /// `Src/exec.c:1812-1980`. Walks WC_PIPE chain + cmd payloads.
+    pub fn exec_pline_wordcode(&mut self, buf: &[u32], mut pc: usize) -> (i32, usize) {
+        use crate::ported::zsh_h::{wc_code, wc_data, WC_PIPE};
+        let mut last_status: i32 = 0;
+        if pc < buf.len() && wc_code(buf[pc]) == WC_PIPE {
+            let header = buf[pc];
+            let skip = ((wc_data(header) >> 1) & 0xffff) as usize;
+            pc += 1;
+            let (s, _) = self.exec_cmd_wordcode(buf, pc);
+            last_status = s;
+            pc += skip;
+        }
+        (last_status, pc)
+    }
+
+    /// P9d stub: direct port of `execcmd_exec` /
+    /// `execcmd_analyze` from `Src/exec.c:2700-3700`. Reads the cmd
+    /// header (WC_SIMPLE / WC_SUBSH / WC_FOR / WC_CASE / ...) and
+    /// dispatches accordingly. Real implementation has the full
+    /// command-form switch (~15 forms); this stub falls through to
+    /// exec_simple_wordcode for every shape.
+    pub fn exec_cmd_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.exec_simple_wordcode(buf, pc)
+    }
+
+    /// P9d stub: direct port of `execsimple` from
+    /// `Src/exec.c:3702-4100`. Walks WC_SIMPLE header + word slots,
+    /// decodes the interned strings via `ecgetstr`, and invokes the
+    /// command. Real implementation handles assignments, redirections,
+    /// builtin/function dispatch, fork/exec; this stub just decodes
+    /// the WC_SIMPLE word count + returns the count as a status proxy
+    /// (so the wordcode walk completes without invoking commands).
+    pub fn exec_simple_wordcode(&mut self, buf: &[u32], mut pc: usize) -> (i32, usize) {
+        use crate::ported::zsh_h::{wc_code, wc_data, WC_SIMPLE};
+        let mut last_status: i32 = 0;
+        if pc < buf.len() && wc_code(buf[pc]) == WC_SIMPLE {
+            let header = buf[pc];
+            let nwords = wc_data(header) as usize;
+            pc += 1;
+            // Skip the nwords interned-string slots — real exec would
+            // call ecgetstr() for each and invoke the resolved command.
+            pc += nwords;
+            last_status = 0;
+        }
+        (last_status, pc)
     }
 
     /// Execute via the ZshLexer + ZshParser + ZshCompiler pipeline.
