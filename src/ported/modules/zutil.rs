@@ -1126,7 +1126,7 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
     let params_src = paramsname.clone().unwrap_or_else(|| "argv".to_string());
     let mut params: Vec<String> = crate::fusevm_bridge::with_executor(|exec| {
         if params_src == "argv" {
-            exec.positional_params.clone()
+            exec.pparams()
         } else {
             exec.arrays.get(&params_src).cloned().unwrap_or_default()
         }
@@ -1314,7 +1314,7 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
     if del {
         if params_src == "argv" {
             crate::fusevm_bridge::with_executor(|exec| {
-                exec.positional_params = new_params.clone();
+                exec.set_pparams(new_params.clone());
             });
             if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
                 *pp = new_params;

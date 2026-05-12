@@ -355,7 +355,6 @@ pub struct ShellExecutor {
     /// Without this, `(x=inner; …); echo $x` shows `inner` instead of the
     /// outer-scope value.
     pub subshell_snapshots: Vec<SubshellSnapshot>,
-    pub last_status: i32,
     /// Stack of inline-assignment scopes — `X=foo Y=bar cmd` pushes
     /// a frame at the start, the assigns run inside it, and `cmd`
     /// returns into END_INLINE_ENV which restores both shell-vars
@@ -380,7 +379,6 @@ pub struct ShellExecutor {
     pub jobs: JobTable,
     pub fpath: Vec<PathBuf>,
     pub zwc_cache: HashMap<PathBuf, ZwcFile>,
-    pub positional_params: Vec<String>,
     pub history: Option<HistoryEngine>,
     /// Session-relative history line counter. Starts at 0; incremented
     /// when an interactive command is recorded. Used by `%h`/`%!` in
@@ -630,26 +628,20 @@ impl ShellExecutor {
         self.variables.insert(name, value);
     }
 
-    /// Read positional parameters from the canonical `PPARAMS`
-    /// Mutex<Vec<String>> (Src/init.c:pparams). The `exec.
-    /// positional_params` field is the legacy mirror; reads should
-    /// prefer this accessor so canonical writes (bin_shift, bin_set
-    /// via paramtab) are visible. Returns an owned clone.
+    /// Read positional parameters from canonical `PPARAMS`
+    /// `Mutex<Vec<String>>` (Src/init.c:pparams). The single store.
     pub fn pparams(&self) -> Vec<String> {
         crate::ported::builtin::PPARAMS
             .lock()
             .map(|p| p.clone())
-            .unwrap_or_else(|_| self.positional_params.clone())
+            .unwrap_or_default()
     }
 
-    /// Write positional parameters through both stores. Canonical
-    /// `PPARAMS` is the source of truth; `exec.positional_params`
-    /// mirror stays for the field reads that haven't migrated yet.
+    /// Write positional parameters to canonical `PPARAMS`.
     pub fn set_pparams(&mut self, params: Vec<String>) {
         if let Ok(mut p) = crate::ported::builtin::PPARAMS.lock() {
-            *p = params.clone();
+            *p = params;
         }
-        self.positional_params = params;
     }
 
     /// Read PM_* type flags from the paramtab Param entry. Used by
@@ -692,13 +684,17 @@ impl ShellExecutor {
         (self.param_flags(name) as u32 & crate::ported::zsh_h::PM_READONLY) != 0
     }
 
-    /// Set the most-recent-command exit status. Writes through to the
-    /// canonical `builtin::LASTVAL` AtomicI32 (`Src/builtin.c:6443`).
-    /// Use this instead of `self.last_status = X` so the global stays
-    /// current for prompt expansion (`%?`, `%(?…)`), `$?` reads via
-    /// `lookup_special_var`, ZERR trap firing, errexit, etc.
-    pub(crate) fn set_last_status(&mut self, status: i32) {
-        self.last_status = status;
+    /// Most-recent-command exit status. Reads canonical
+    /// `builtin::LASTVAL` AtomicI32 (`Src/builtin.c:6443`).
+    pub fn last_status(&self) -> i32 {
+        crate::ported::builtin::LASTVAL
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Write the most-recent-command exit status. The canonical
+    /// store is `builtin::LASTVAL`; this is the single setter.
+    /// Used everywhere `$?` / `%?` / errexit / ZERR trap read.
+    pub fn set_last_status(&mut self, status: i32) {
         crate::ported::builtin::LASTVAL
             .store(status, std::sync::atomic::Ordering::Relaxed);
     }
@@ -972,7 +968,6 @@ impl ShellExecutor {
             expanding_aliases: std::collections::HashSet::new(),
             loop_signal: None,
             subshell_snapshots: Vec::new(),
-            last_status: 0,
             inline_env_stack: Vec::new(),
             current_command_glob_failed: std::cell::Cell::new(false),
             variables,
@@ -999,7 +994,6 @@ impl ShellExecutor {
             jobs: JobTable::new(),
             fpath,
             zwc_cache: HashMap::new(),
-            positional_params: Vec::new(),
             history,
             session_histnum: 0,
             completions: HashMap::new(),
@@ -1232,7 +1226,7 @@ impl ShellExecutor {
                             return Err(format!("VM error: {}", e));
                         }
                     }
-                    return Ok(self.last_status);
+                    return Ok(self.last_status());
                 }
             }
         }
@@ -1282,7 +1276,7 @@ impl ShellExecutor {
             }
         }
 
-        Ok(self.last_status)
+        Ok(self.last_status())
     }
 
     /// Execute via the ZshLexer + ZshParser + ZshCompiler pipeline.
@@ -1309,7 +1303,7 @@ impl ShellExecutor {
         let chunk = compiler.compile(&program);
 
         if chunk.ops.is_empty() {
-            return Ok(self.last_status);
+            return Ok(self.last_status());
         }
 
         let mut vm = fusevm::VM::new(chunk);
@@ -1331,7 +1325,7 @@ impl ShellExecutor {
             let _ = self.execute_script_zsh_pipeline(&action);
         }
 
-        Ok(self.last_status)
+        Ok(self.last_status())
     }
 
     #[tracing::instrument(skip(self, script), fields(len = script.len()))]
@@ -1413,7 +1407,8 @@ impl ShellExecutor {
         // Save and replace positional params + local-scope save/restore,
         // mirroring the legacy `call_function(&ShellCommand, args)` and
         // ZshrsHost::call_function.
-        let saved_params = std::mem::replace(&mut self.positional_params, args.to_vec());
+        let saved_params = self.pparams();
+        self.set_pparams(args.to_vec());
         let saved_local_count = self.local_save_stack.len();
         let saved_local_arr_count = self.local_array_save_stack.len();
         let saved_local_assoc_count = self.local_assoc_save_stack.len();
@@ -1449,7 +1444,7 @@ impl ShellExecutor {
         let status = vm.last_status;
         drop(_ctx);
 
-        self.positional_params = saved_params;
+        self.set_pparams(saved_params);
         self.prompt_funcstack.pop();
         self.local_scope_depth -= 1;
         match saved_zero {
@@ -1881,7 +1876,7 @@ impl ShellExecutor {
                 // sub-VM default. Without this, every cmd-subst
                 // started with $?==0 regardless of the parent's
                 // last command.
-                vm.last_status = self.last_status;
+                vm.last_status = self.last_status();
                 let _ctx = ExecutorContext::enter(self);
                 let _ = vm.run();
                 cmd_status = Some(vm.last_status);
@@ -3939,7 +3934,7 @@ impl crate::ported::exec::ShellExecutor {
             "#" | "#@" | "#*" => self.pparams().len().to_string(),
             // zsh alias: $ARGC also equals $#.
             "ARGC" => self.pparams().len().to_string(),
-            "?" | "status" => self.last_status.to_string(),
+            "?" | "status" => self.last_status().to_string(),
             "!" => self
                 .variables
                 .get("!")
@@ -4313,7 +4308,7 @@ impl crate::ported::exec::ShellExecutor {
                     } else if let Some(assoc) = self.assoc_arrays.get(&name) {
                         assoc.len()
                     } else if name == "@" || name == "*" {
-                        self.positional_params.len()
+                        self.pparams().len()
                     } else if let Some(s) = crate::ported::params::getsparam(&name) {
                         s.chars().count()
                     } else {
@@ -4380,7 +4375,7 @@ impl crate::ported::exec::ShellExecutor {
                 let result = if let Some(assoc) = self.assoc_arrays.get(&name) {
                     getarg(trimmed_key, None, Some(assoc), None)
                 } else if name == "@" || name == "*" {
-                    let pos = self.positional_params.clone();
+                    let pos = self.pparams();
                     getarg(trimmed_key, Some(&pos), None, None)
                 } else if let Some(arr) = self.arrays.get(&name).cloned() {
                     getarg(trimmed_key, Some(&arr), None, None)
@@ -4533,7 +4528,7 @@ impl crate::ported::exec::ShellExecutor {
                         let result = if let Some(assoc) = self.assoc_arrays.get(&name) {
                             getarg(trimmed_key, None, Some(assoc), None)
                         } else if name == "@" || name == "*" {
-                            let pos = self.positional_params.clone();
+                            let pos = self.pparams();
                             getarg(trimmed_key, Some(&pos), None, None)
                         } else if let Some(arr) = self.arrays.get(&name).cloned() {
                             getarg(trimmed_key, Some(&arr), None, None)

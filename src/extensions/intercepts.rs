@@ -174,7 +174,7 @@ impl crate::ported::exec::ShellExecutor {
         if code.starts_with('@') {
             let stryke_code = code.trim_start_matches('@').trim();
             if let Some(status) = crate::try_stryke_dispatch(stryke_code) {
-                self.last_status = status;
+                self.set_last_status(status);
                 return Ok(status);
             }
             // No stryke handler (thin binary) — fall through to shell

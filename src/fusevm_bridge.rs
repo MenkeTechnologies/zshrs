@@ -2378,7 +2378,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if name == "pipestatus" || name == "PIPESTATUS" {
             let arr = with_executor(|exec| {
                 let cached = exec.array(&name);
-                let last = exec.last_status.to_string();
+                let last = exec.last_status().to_string();
                 match cached {
                     Some(arr)
                         if arr.last().map(|s| s.as_str()) == Some(last.as_str()) =>
@@ -6667,7 +6667,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // Run the trap. Don't recurse on the trap's own failure
             // (clear last_status during the run).
             with_executor(|exec| {
-                let saved = exec.last_status;
+                let saved = exec.last_status();
                 exec.set_last_status(0);
                 let _ = exec.execute_script(&body);
                 exec.set_last_status(saved);
@@ -7243,7 +7243,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     return StripResult::Scalar(strip_one(&joined, op, &pattern));
                 }
                 let stripped: Vec<String> = exec
-                    .positional_params
+                    .pparams()
                     .iter()
                     .map(|e| strip_one(e, op, &pattern))
                     .collect();
@@ -7305,7 +7305,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // compile_assign's prelude SetStatus, and run_cmd_subst only
         // updated exec.last_status). Pull the value back through
         // exec since it owns the canonical post-subst record.
-        let cs_status = with_executor(|exec| exec.last_status);
+        let cs_status = with_executor(|exec| exec.last_status());
         vm.last_status = cs_status;
         fusevm::Value::str(result)
     });
@@ -9451,7 +9451,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // NOT reset `$?`. Without this, `false; foo() { echo $?; }; foo`
         // printed 0 instead of 1 because the fresh VM defaulted
         // last_status to 0.
-        vm.last_status = with_executor(|exec| exec.last_status);
+        vm.last_status = with_executor(|exec| exec.last_status());
         let _ = vm.run();
         let status = vm.last_status;
 
@@ -9594,9 +9594,8 @@ impl crate::ported::exec::ShellExecutor {
         fd: i32,
         result: std::io::Result<std::fs::File>,
         target: &str,
-        last_status: &mut i32,
         redirect_failed: &mut bool,
-    ) {
+    ) -> bool {
         use std::os::unix::io::IntoRawFd;
         match result {
             Ok(file) => {
@@ -9605,6 +9604,7 @@ impl crate::ported::exec::ShellExecutor {
                     libc::dup2(new_fd, fd);
                     libc::close(new_fd);
                 }
+                true
             }
             Err(e) => {
                 let msg = match e.kind() {
@@ -9614,7 +9614,6 @@ impl crate::ported::exec::ShellExecutor {
                     _ => "redirect failed",
                 };
                 eprintln!("zshrs:1: {}: {}", msg, target);
-                *last_status = 1;
                 *redirect_failed = true;
                 if let Ok(devnull) = std::fs::OpenOptions::new()
                     .read(true)
@@ -9627,6 +9626,7 @@ impl crate::ported::exec::ShellExecutor {
                         libc::close(new_fd);
                     }
                 }
+                false
             }
         }
     }
@@ -9676,7 +9676,7 @@ impl crate::ported::exec::ShellExecutor {
                     || !self.options.get("clobber").copied().unwrap_or(true);
                 if noclobber && std::path::Path::new(target).exists() {
                     eprintln!("zshrs:1: file exists: {}", target);
-                    self.last_status = 1;
+                    self.set_last_status(1);
                     // Sink the upcoming command's stdout to /dev/null
                     // so we don't leak its output to the terminal.
                     // zsh skips the command entirely; we approximate by
@@ -9693,43 +9693,47 @@ impl crate::ported::exec::ShellExecutor {
                     }
                     return;
                 }
-                Self::redir_open_or_fail(
+                if !Self::redir_open_or_fail(
                     fd,
                     std::fs::File::create(target),
                     target,
-                    &mut self.last_status,
                     &mut self.redirect_failed,
-                );
+                ) {
+                    self.set_last_status(1);
+                }
             }
             r::CLOBBER => {
-                Self::redir_open_or_fail(
+                if !Self::redir_open_or_fail(
                     fd,
                     std::fs::File::create(target),
                     target,
-                    &mut self.last_status,
                     &mut self.redirect_failed,
-                );
+                ) {
+                    self.set_last_status(1);
+                }
             }
             r::APPEND => {
-                Self::redir_open_or_fail(
+                if !Self::redir_open_or_fail(
                     fd,
                     std::fs::OpenOptions::new()
                         .create(true)
                         .append(true)
                         .open(target),
                     target,
-                    &mut self.last_status,
                     &mut self.redirect_failed,
-                );
+                ) {
+                    self.set_last_status(1);
+                }
             }
             r::READ => {
-                Self::redir_open_or_fail(
+                if !Self::redir_open_or_fail(
                     fd,
                     std::fs::File::open(target),
                     target,
-                    &mut self.last_status,
                     &mut self.redirect_failed,
-                );
+                ) {
+                    self.set_last_status(1);
+                }
             }
             r::READ_WRITE => {
                 if let Ok(file) = std::fs::OpenOptions::new()
@@ -9851,7 +9855,7 @@ impl crate::ported::exec::ShellExecutor {
         // command starts clean.
         if self.current_command_glob_failed.get() {
             self.current_command_glob_failed.set(false);
-            self.last_status = 1;
+            self.set_last_status(1);
             return 1;
         }
         let Some((cmd, rest)) = args.split_first() else {
@@ -9862,7 +9866,7 @@ impl crate::ported::exec::ShellExecutor {
         // exit status preserved from prior step. Was hitting the
         // "command not found: " path with empty name.
         if cmd.is_empty() && rest.is_empty() {
-            return self.last_status;
+            return self.last_status();
         }
         let rest_vec: Vec<String> = rest.to_vec();
         // Update `$_` with the just-arriving argv so the next command

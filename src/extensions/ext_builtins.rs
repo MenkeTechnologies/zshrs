@@ -924,7 +924,7 @@ impl ShellExecutor {
                 if !stdout.is_empty() {
                     print!("{}", stdout);
                 }
-                self.last_status = status;
+                self.set_last_status(status);
                 status
             }
             Err(_) => {
@@ -1156,7 +1156,7 @@ impl ShellExecutor {
             }
         }
 
-        self.last_status = worst;
+        self.set_last_status(worst);
         worst
     }
 
