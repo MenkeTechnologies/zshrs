@@ -300,12 +300,16 @@ pub fn LCIPDEF(name: &str) -> paramdef {                                     // 
 // Special parameter definitions table (mirrors special_params[] in C)
 // ---------------------------------------------------------------------------
 
+/// Special-parameter definition — Rust extension paralleling the
+/// `IPDEF*` macro entries in `Src/params.c:297-392`. C uses
+/// `struct paramdef` (`Src/zsh.h:2082`, mirrored at `zsh_h.rs:950`)
+/// with `var` + `gsu` pointers; the Rust port carries a trimmed
+/// shape with `pm_type`/`pm_flags`/`tied_name` until the full
+/// `gsu`-callback plumbing lands. Canonical `paramdef` is the
+/// long-term target.
+#[allow(non_camel_case_types)]
 #[derive(Clone, Debug)]
-/// Special-parameter definition.
-/// Mirrors the `IPDEF*` macro entries in Src/params.c:297-... —
-/// each special parameter (e.g. `RANDOM`, `EPOCHSECONDS`,
-/// `HISTFILE`) provides a `gsu` (get/set/unset) callback set.
-pub struct SpecialParamDef {
+pub struct special_paramdef {
     pub name: &'static str,
     pub pm_type: u32,  // PM_INTEGER | PM_SCALAR | PM_ARRAY
     pub pm_flags: u32, // PM_READONLY_SPECIAL, PM_DONTIMPORT, etc.
@@ -321,326 +325,326 @@ pub struct SpecialParamDef {
 pub const SPECIAL_PARAMS_ZSH_START: usize = 54;                              // c:392
 
 /// All special parameters from params.c special_params[]
-pub const special_params: &[SpecialParamDef] = &[
+pub const special_params: &[special_paramdef] = &[
     // Integer specials with custom GSU
-    SpecialParamDef {
+    special_paramdef {
         name: "#",
         pm_type: PM_INTEGER,
         pm_flags: PM_READONLY,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "ERRNO",
         pm_type: PM_INTEGER,
         pm_flags: PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "GID",
         pm_type: PM_INTEGER,
         pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "EGID",
         pm_type: PM_INTEGER,
         pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "HISTSIZE",
         pm_type: PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "RANDOM",
         pm_type: PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "SAVEHIST",
         pm_type: PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "SECONDS",
         pm_type: PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "UID",
         pm_type: PM_INTEGER,
         pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "EUID",
         pm_type: PM_INTEGER,
         pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "TTYIDLE",
         pm_type: PM_INTEGER,
         pm_flags: PM_READONLY,
         tied_name: None,
     },
     // Scalar specials with custom GSU
-    SpecialParamDef {
+    special_paramdef {
         name: "USERNAME",
         pm_type: PM_SCALAR,
         pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "-",
         pm_type: PM_SCALAR,
         pm_flags: PM_READONLY,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "histchars",
         pm_type: PM_SCALAR,
         pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "HOME",
         pm_type: PM_SCALAR,
         pm_flags: PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "TERM",
         pm_type: PM_SCALAR,
         pm_flags: PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "TERMINFO",
         pm_type: PM_SCALAR,
         pm_flags: PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "TERMINFO_DIRS",
         pm_type: PM_SCALAR,
         pm_flags: PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "WORDCHARS",
         pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "IFS",
         pm_type: PM_SCALAR,
         pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "_",
         pm_type: PM_SCALAR,
         pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "KEYBOARD_HACK",
         pm_type: PM_SCALAR,
         pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "0",
         pm_type: PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     // Readonly integer variables bound to C globals
-    SpecialParamDef {
+    special_paramdef {
         name: "!",
         pm_type: PM_INTEGER,
         pm_flags: PM_READONLY,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "$",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "?",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "HISTCMD",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "LINENO",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "PPID",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "ZSH_SUBSHELL",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
     // Settable integer variables
-    SpecialParamDef {
+    special_paramdef {
         name: "COLUMNS",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "LINES",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "ZLE_RPROMPT_INDENT",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "SHLVL",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "FUNCNEST",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "OPTIND",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "TRY_BLOCK_ERROR",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "TRY_BLOCK_INTERRUPT",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
     // Scalar variables bound to C globals
-    SpecialParamDef {
+    special_paramdef {
         name: "OPTARG",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "NULLCMD",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "POSTEDIT",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "READNULLCMD",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "PS1",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "RPS1",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "RPROMPT",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "PS2",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "RPS2",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "RPROMPT2",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "PS3",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "PS4",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_DONTIMPORT_SUID,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "SPROMPT",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
     // Readonly arrays
-    SpecialParamDef {
+    special_paramdef {
         name: "*",
         pm_type: crate::ported::zsh_h::PM_ARRAY,
         pm_flags: crate::ported::zsh_h::PM_READONLY | crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "@",
         pm_type: crate::ported::zsh_h::PM_ARRAY,
         pm_flags: crate::ported::zsh_h::PM_READONLY | crate::ported::zsh_h::PM_DONTIMPORT,
@@ -655,160 +659,160 @@ pub const special_params: &[SpecialParamDef] = &[
     // SPECIAL_PARAMS_ZSH_START tracks this section boundary.
     // ===================================================================
     // Tied colon-separated/array pairs
-    SpecialParamDef {
+    special_paramdef {
         name: "CDPATH",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("cdpath"),
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "FIGNORE",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("fignore"),
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "FPATH",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("fpath"),
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "MAILPATH",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("mailpath"),
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "PATH",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("path"),
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "PSVAR",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("psvar"),
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "ZSH_EVAL_CONTEXT",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_READONLY | crate::ported::zsh_h::PM_TIED,
         tied_name: Some("zsh_eval_context"),
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "MODULE_PATH",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_DONTIMPORT | crate::ported::zsh_h::PM_TIED,
         tied_name: Some("module_path"),
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "MANPATH",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_TIED,
         tied_name: Some("manpath"),
     },
     // Locale
-    SpecialParamDef {
+    special_paramdef {
         name: "LANG",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "LC_ALL",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "LC_COLLATE",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "LC_CTYPE",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "LC_MESSAGES",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "LC_NUMERIC",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "LC_TIME",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_UNSET,
         tied_name: None,
     },
     // Zsh-only aliases
-    SpecialParamDef {
+    special_paramdef {
         name: "ARGC",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "HISTCHARS",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "status",
         pm_type: crate::ported::zsh_h::PM_INTEGER,
         pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "prompt",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "PROMPT",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "PROMPT2",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "PROMPT3",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "PROMPT4",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {
+    special_paramdef {
         name: "argv",
         pm_type: crate::ported::zsh_h::PM_ARRAY,
         pm_flags: 0,
         tied_name: None,
     },
     // pipestatus array
-    SpecialParamDef {
+    special_paramdef {
         name: "pipestatus",
         pm_type: crate::ported::zsh_h::PM_ARRAY,
         pm_flags: 0,
@@ -825,50 +829,50 @@ pub const special_params: &[SpecialParamDef] = &[
 /// (`IPDEF8` macro adds `PM_SCALAR|PM_SPECIAL`); the C-side
 /// `tied_name` is NULL so these aren't tied to lowercase array
 /// counterparts.
-pub const special_params_sh: &[SpecialParamDef] = &[
-    SpecialParamDef {                                                        // c:448
+pub const special_params_sh: &[special_paramdef] = &[
+    special_paramdef {                                                        // c:448
         name: "CDPATH",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {                                                        // c:449
+    special_paramdef {                                                        // c:449
         name: "FIGNORE",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {                                                        // c:450
+    special_paramdef {                                                        // c:450
         name: "FPATH",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {                                                        // c:451
+    special_paramdef {                                                        // c:451
         name: "MAILPATH",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {                                                        // c:452
+    special_paramdef {                                                        // c:452
         name: "PATH",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {                                                        // c:453
+    special_paramdef {                                                        // c:453
         name: "PSVAR",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: 0,
         tied_name: None,
     },
-    SpecialParamDef {                                                        // c:454
+    special_paramdef {                                                        // c:454
         name: "ZSH_EVAL_CONTEXT",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_READONLY,
         tied_name: None,
     },
-    SpecialParamDef {                                                        // c:457 (security comment)
+    special_paramdef {                                                        // c:457 (security comment)
         name: "MODULE_PATH",
         pm_type: crate::ported::zsh_h::PM_SCALAR,
         pm_flags: crate::ported::zsh_h::PM_DONTIMPORT,
@@ -2650,10 +2654,10 @@ mod tests {
         assert_eq!(s, "1_234_567");
     }
 
-    fn val_str(v: GetargOut<'_>) -> String {
+    fn val_str(v: getarg_out<'_>) -> String {
         match v {
-            GetargOut::Value(v) => v.to_str(),
-            GetargOut::Flags { .. } => panic!("expected Value, got Flags"),
+            getarg_out::Value(v) => v.to_str(),
+            getarg_out::Flags { .. } => panic!("expected Value, got Flags"),
         }
     }
 
@@ -2925,7 +2929,17 @@ mod tests {
 /// search itself. `Value` is the result of an in-getarg array/hash
 /// pattern search — direct port of getarg's pprog/pattry arm at
 /// Src/params.c:1672-1719 (array) and 1581-1660 (hash).
-pub enum GetargOut<'a> {
+// `enum getarg_out` is a Rust extension to express the dual-mode
+// return of `getarg`. C `getarg` (`Src/params.c:1367`) writes back
+// via out-pointers (`int *inv`, `Value v`, `zlong *w`, ...) and
+// returns `int`. The Rust port collapses those into one sum-typed
+// return: `Flags` carries the parsed flag chars + remaining
+// subscript when no search ran; `Value` carries the search result
+// from the pprog/pattry arms at c:1581-1660 (hash) / c:1672-1719
+// (array). Naming kept lowercase to mark this as a port-shape helper
+// rather than a C-mirrored struct.
+#[allow(non_camel_case_types)]
+pub enum getarg_out<'a> {
     Flags { flags: &'a str, rest: &'a str },
     Value(fusevm::Value),
 }
@@ -2952,7 +2966,7 @@ pub(crate) fn getarg<'a>(
     arr: Option<&[String]>,
     assoc: Option<&indexmap::IndexMap<String, String>>,
     scalar: Option<&str>,
-) -> Option<GetargOut<'a>> {
+) -> Option<getarg_out<'a>> {
     let rest = idx.strip_prefix('(')?;
     // Reject anything that looks like a char-class subscript: `[abc]`
     // doesn't match this prefix, but `(...)` containing brackets is
@@ -3024,7 +3038,7 @@ pub(crate) fn getarg<'a>(
                     None => return None,
                 };
                 let flags = &rest[flags_start..close];
-                return Some(GetargOut::Flags { flags, rest: &rest[close + 1..] });
+                return Some(getarg_out::Flags { flags, rest: &rest[close + 1..] });
             }
             _ => {
                 bad = true;
@@ -3080,7 +3094,7 @@ pub(crate) fn getarg<'a>(
             start += len;
         }
         if !return_all && start >= len {
-            return Some(GetargOut::Value(Value::str("")));
+            return Some(getarg_out::Value(Value::str("")));
         }
         let skip = if start < 0 { 0 } else { start as usize };
 
@@ -3114,7 +3128,7 @@ pub(crate) fn getarg<'a>(
                     });
                 }
             }
-            return Some(GetargOut::Value(Value::str(out.join(" "))));
+            return Some(getarg_out::Value(Value::str(out.join(" "))));
         }
         // c:1753 — `!--num` skips matches until the Nth.
         let mut remaining = num;
@@ -3123,7 +3137,7 @@ pub(crate) fn getarg<'a>(
             if key_compare(target) {
                 remaining -= 1;
                 if remaining == 0 {
-                    return Some(GetargOut::Value(Value::str(if key_match {
+                    return Some(getarg_out::Value(Value::str(if key_match {
                         v.clone()
                     } else if return_index {
                         k.clone()
@@ -3133,7 +3147,7 @@ pub(crate) fn getarg<'a>(
                 }
             }
         }
-        return Some(GetargOut::Value(Value::str("")));
+        return Some(getarg_out::Value(Value::str("")));
     }
 
     // Phase 2 — array pattern search arm (c:1672-1719). The C body
@@ -3166,13 +3180,13 @@ pub(crate) fn getarg<'a>(
                 } else if n < 0 {
                     let off = len + n;
                     if off < 0 {
-                        return Some(GetargOut::Value(Value::str("")));
+                        return Some(getarg_out::Value(Value::str("")));
                     }
                     off as usize
                 } else {
-                    return Some(GetargOut::Value(Value::str("")));
+                    return Some(getarg_out::Value(Value::str("")));
                 };
-                return Some(GetargOut::Value(
+                return Some(getarg_out::Value(
                     Value::str(words.get(idx_into).map(|s| s.to_string()).unwrap_or_default())
                 ));
             }
@@ -3215,14 +3229,14 @@ pub(crate) fn getarg<'a>(
         // c:1743-1747 — out-of-bounds returns.
         if reverse {
             if start < 0 {
-                return Some(GetargOut::Value(if return_index {
+                return Some(getarg_out::Value(if return_index {
                     Value::str("0")
                 } else {
                     Value::str("")
                 }));
             }
         } else if start >= len {
-            return Some(GetargOut::Value(if return_index {
+            return Some(getarg_out::Value(if return_index {
                 Value::str((arr.len() + 1).to_string())
             } else {
                 Value::str("")
@@ -3255,7 +3269,7 @@ pub(crate) fn getarg<'a>(
             if hit {
                 remaining -= 1;
                 if remaining == 0 {
-                    return Some(GetargOut::Value(if return_index {
+                    return Some(getarg_out::Value(if return_index {
                         Value::str((i + 1).to_string())
                     } else {
                         Value::str(s.clone())
@@ -3263,7 +3277,7 @@ pub(crate) fn getarg<'a>(
                 }
             }
         }
-        return Some(GetargOut::Value(if return_index {
+        return Some(getarg_out::Value(if return_index {
             // zsh: `i` returns len+1 if not found, `I` returns 0.
             if flags.contains('I') {
                 Value::str("0")
@@ -3299,13 +3313,13 @@ pub(crate) fn getarg<'a>(
                 } else if n < 0 {
                     let off = len + n;
                     if off < 0 {
-                        return Some(GetargOut::Value(Value::str("")));
+                        return Some(getarg_out::Value(Value::str("")));
                     }
                     off as usize
                 } else {
-                    return Some(GetargOut::Value(Value::str("")));
+                    return Some(getarg_out::Value(Value::str("")));
                 };
-                return Some(GetargOut::Value(
+                return Some(getarg_out::Value(
                     Value::str(words.get(idx_into).map(|s| s.to_string()).unwrap_or_default()),
                 ));
             }
@@ -3377,7 +3391,7 @@ pub(crate) fn getarg<'a>(
                     }
                 }
             }
-            return Some(GetargOut::Value(match (found, return_index) {
+            return Some(getarg_out::Value(match (found, return_index) {
                 (Some((s_pos, _)), true) => Value::str((s_pos + 1).to_string()),
                 // C params.c:1798-1980 char-search returns the char AT
                 // the match position, not the full matched substring.
@@ -3397,7 +3411,7 @@ pub(crate) fn getarg<'a>(
     }
 
     // No search context — return parsed flags for caller dispatch.
-    Some(GetargOut::Flags { flags, rest: pat })
+    Some(getarg_out::Flags { flags, rest: pat })
 }
 
 // `VarAttr` struct + `VarKind` enum + `impl VarAttr::format_zsh`
@@ -5675,7 +5689,7 @@ pub fn createparamtable() {                                                  // 
 
     // Helper closure (single definition; mirrors the C
     // `paramtab->addnode(paramtab, ztrdup(name), ip)` site).
-    let add_special = |ip: &SpecialParamDef,
+    let add_special = |ip: &special_paramdef,
                        tab: &mut std::collections::HashMap<
         String,
         crate::ported::zsh_h::Param,
@@ -6625,7 +6639,7 @@ pub fn getindex(pptr: &mut &str, v: &mut crate::ported::zsh_h::value, scanflags:
     let _ = scanflags;
     // c:2035-2040 — general path: getarg() would parse the start
     // index. The Rust `getarg` has a different signature (flag
-    // dispatcher returning GetargOut, not C's char**+int*+zlong
+    // dispatcher returning getarg_out, not C's char**+int*+zlong
     // out-params), so the bracket-subscript here inline-parses
     // the simple cases: `N`, `N,M`, `-N`. Flag-based subscripts
     // (`[(I)pat]`, `[(r)val]`) still route through getarg

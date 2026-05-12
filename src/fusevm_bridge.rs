@@ -2394,7 +2394,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // getarg with positional_params as the array. Matches
             // zsh's `${@[(I)pat]}` / `${@[(r)pat]}` semantics.
             if idx.starts_with('(') {
-                if let Some(crate::ported::params::GetargOut::Value(v)) =
+                if let Some(crate::ported::params::getarg_out::Value(v)) =
                     crate::ported::params::getarg(&idx, Some(&arr), None, None)
                 {
                     return v;
@@ -2519,7 +2519,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // Default flag handling — route to getarg's
                         // hash-search arm (params.c:1581-1660).
                         match crate::ported::params::getarg(&idx, None, Some(&map), None) {
-                            Some(crate::ported::params::GetargOut::Value(v)) => return v,
+                            Some(crate::ported::params::getarg_out::Value(v)) => return v,
                             _ => {}
                         }
                     }
@@ -2608,7 +2608,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // duplicated drift.
                             if flags.chars().all(|c| matches!(c, 'i' | 'I' | 'r' | 'R' | 'e')) {
                                 let _ = &pat;
-                                if let Some(crate::ported::params::GetargOut::Value(v)) =
+                                if let Some(crate::ported::params::getarg_out::Value(v)) =
                                     crate::ported::params::getarg(&idx, None, None, Some(&scalar))
                                 {
                                     return v;
@@ -2658,7 +2658,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // (params.c:1672-1719).
                     let _ = (&flags, &pat); // silence unused if any
                     match crate::ported::params::getarg(&idx, Some(&arr), None, None) {
-                        Some(crate::ported::params::GetargOut::Value(v)) => return v,
+                        Some(crate::ported::params::getarg_out::Value(v)) => return v,
                         _ => {}
                     }
                     return Value::str("");
