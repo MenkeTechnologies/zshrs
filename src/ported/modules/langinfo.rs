@@ -26,7 +26,7 @@ pub static NL_NAMES: &[&str] = &[                                         // c:6
     "ERA", "ERA_D_FMT", "ERA_D_T_FMT", "ERA_T_FMT", "ALT_DIGITS",
 ];
 
-/// Port of `liitem()` from `Src/Modules/langinfo.c:379`. Walks the
+/// Port of `liitem(name)` from `Src/Modules/langinfo.c:379`. Walks the
 /// parallel `nl_names[]` / `nl_vals[]` arrays looking for `name`;
 /// returns the nl_item integer when found, None otherwise.
 ///
@@ -100,14 +100,14 @@ pub fn liitem(name: &str) -> Option<libc::nl_item> {                     // c:37
     })
 }
 
-/// Port of `liitem()` from `Src/Modules/langinfo.c:379`.
+/// Port of `liitem(name)` from `Src/Modules/langinfo.c:379`.
 /// Non-Unix fallback for `liitem` — `nl_item` is POSIX-only.
 #[cfg(not(unix))]
 pub fn liitem(_name: &str) -> Option<i32> {                                  // c:379
     None
 }
 
-/// Port of `getlanginfo()` from `Src/Modules/langinfo.c:396`. The
+/// Port of `getlanginfo(name)` from `Src/Modules/langinfo.c:396`. The
 /// magic-assoc lookup callback for `${langinfo[NAME]}`. Looks up
 /// `name` via `liitem`, runs `nl_langinfo(*elem)`, and returns
 /// the resulting locale string (or `None` for unset).
@@ -140,7 +140,7 @@ pub fn getlanginfo(name: &str) -> Option<String> {                       // c:39
     }
 }
 
-/// Port of `getlanginfo()` from `Src/Modules/langinfo.c:396`.
+/// Port of `getlanginfo(name)` from `Src/Modules/langinfo.c:396`.
 /// Non-Unix fallback for `getlanginfo` — `nl_langinfo(3)` is
 /// POSIX-only.
 #[cfg(not(unix))]
@@ -148,7 +148,7 @@ pub fn getlanginfo(_name: &str) -> Option<String> {                          // 
     None
 }
 
-/// Port of `scanlanginfo()` from `Src/Modules/langinfo.c:430`. The
+/// Port of `scanlanginfo(func, flags)` from `Src/Modules/langinfo.c:430`. The
 /// magic-assoc scan callback for `${(k)langinfo}` /
 /// `${(kv)langinfo}`. Walks the `nl_names[]` array, calls
 /// `nl_langinfo` for each entry, and yields every (name, value)
@@ -183,36 +183,36 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/langinfo.c:472`.
+/// Port of `setup_(m)` from `Src/Modules/langinfo.c:472`.
 pub fn setup_(_m: *const module) -> i32 {                                // c:472
     0                                                                    // c:475
 }
 
-/// Port of `features_()` from `Src/Modules/langinfo.c:479`.
+/// Port of `features_(m, features)` from `Src/Modules/langinfo.c:479`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 { // c:479
     *features = featuresarray(m, module_features());
     0                                                                    // c:483
 }
 
-/// Port of `enables_()` from `Src/Modules/langinfo.c:487`.
+/// Port of `enables_(m, enables)` from `Src/Modules/langinfo.c:487`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:487
     handlefeatures(m, module_features(), enables) // c:490
 }
 
-/// Port of `boot_()` from `Src/Modules/langinfo.c:494`.
+/// Port of `boot_(m)` from `Src/Modules/langinfo.c:494`.
 pub fn boot_(_m: *const module) -> i32 {                                 // c:494
     0                                                                    // c:497
 }
 
-/// Port of `cleanup_()` from `Src/Modules/langinfo.c:501`.
+/// Port of `cleanup_(m)` from `Src/Modules/langinfo.c:501`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                              // c:501
     setfeatureenables(m, module_features(), None) // c:504
 }
 
-/// Port of `finish_()` from `Src/Modules/langinfo.c:508`.
+/// Port of `finish_(m)` from `Src/Modules/langinfo.c:508`.
 pub fn finish_(_m: *const module) -> i32 {                               // c:508
     0                                                                    // c:511
 }

@@ -163,7 +163,7 @@ fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
 // `TermCapabilities` struct that didn't exist in C.
 
 /// Percent-encode a string for OSC-7 / OSC-8 URLs.
-/// Port of `url_encode()` from Src/Zle/termquery.c. Preserves the
+/// Port of `url_encode(path, ulen)` from Src/Zle/termquery.c. Preserves the
 /// RFC 3986 unreserved set (`A-Za-z0-9-._~`) plus `/` so path-shaped
 /// input round-trips, percent-encodes everything else as `%XX`.
 pub fn url_encode(s: &str) -> String {
@@ -208,7 +208,7 @@ pub fn system_clipget(clip: char) -> Option<String> {                        // 
 }
 
 /// Encode `data` as an OSC-52 clipboard-set sequence.
-/// Port of `system_clipput()` from Src/Zle/termquery.c. Emits
+/// Port of `system_clipput(clip, content, clen)` from Src/Zle/termquery.c. Emits
 /// `ESC ] 52 ; c ; <base64> ST` so the terminal can populate the
 /// system clipboard — used by widgets that surface yanked text
 /// outside the editor's local kill ring.
@@ -250,7 +250,7 @@ fn base64_encode(data: &[u8]) -> String {
 
 /// Test whether a named terminal extension is enabled in the current
 /// session.
-/// Port of `extension_enabled()` from Src/Zle/termquery.c. The C
+/// Port of `extension_enabled(class, ext, clen, def)` from Src/Zle/termquery.c. The C
 /// source consults the cached probe state stored on the global
 /// `caps`; we re-derive each call from `$TERM` / `$COLORTERM` /
 /// `$TERM_PROGRAM` since the probe-once-cache machinery isn't wired
@@ -371,7 +371,7 @@ mod tests {
     }
 }
 
-/// Port of `base64_decode()` from `Src/Zle/termquery.c:570`.
+/// Port of `base64_decode(src, len)` from `Src/Zle/termquery.c:570`.
 /// ```c
 /// static char*
 /// base64_decode(const char *src, size_t len)
@@ -450,7 +450,7 @@ pub fn base64_decode(src: &str) -> Vec<u8> {                                 // 
     buf                                                                      // c:591 return buf
 }
 
-/// Port of `collate_seq()` from Src/Zle/termquery.c:676.
+/// Port of `collate_seq(sindex, dir)` from Src/Zle/termquery.c:676.
 pub fn collate_seq(_seq: &str) -> Vec<u8> {                                  // c:676
     // C body c:678-722 — collates a UTF-8 byte sequence into a single
     //                    locale-aware key for sort comparison via
@@ -474,7 +474,7 @@ pub fn end_edit() -> i32 {                                                   // 
     0
 }
 
-/// Port of `find_branch()` from Src/Zle/termquery.c:170.
+/// Port of `find_branch(pos)` from Src/Zle/termquery.c:170.
 pub fn find_branch(s: &str, ch: u8) -> Option<usize> {                       // c:170
     // C body c:172-183 — scans `s` for the matching paren/bracket/
     //                    brace branch open. We approximate by finding
@@ -482,7 +482,7 @@ pub fn find_branch(s: &str, ch: u8) -> Option<usize> {                       // 
     s.bytes().position(|b| b == ch)
 }
 
-/// Port of `find_matching()` from Src/Zle/termquery.c:185.
+/// Port of `find_matching(pos, direction)` from Src/Zle/termquery.c:185.
 pub fn find_matching(s: &str, open: u8, close: u8) -> Option<usize> {        // c:185
     // C body c:187-218 — paired-bracket finder; scans forward
     //                    counting opens until depth returns to 0.
@@ -507,7 +507,7 @@ pub fn free_cursor_forms() {                                                 // 
     //                    zfree+next walk. Drop covers it; no-op.
 }
 
-/// Port of `handle_color()` from Src/Zle/termquery.c:438.
+/// Port of `handle_color(bg, red, green, blue)` from Src/Zle/termquery.c:438.
 pub fn handle_color(_seq: &str) -> i32 {                                     // c:438
     // C body c:440-593 — parses iTerm2 OSC 4;<idx>;rgb response,
     //                    populates terminal color cache. Without
@@ -558,7 +558,7 @@ pub fn mark_output(start: bool) {                                            // 
     }
 }
 
-/// Port of `match_cursorform()` from Src/Zle/termquery.c:798.
+/// Port of `match_cursorform(teststr, cursor_form)` from Src/Zle/termquery.c:798.
 pub fn match_cursorform(_name: &str) -> Option<String> {                     // c:798
     // C body c:800-902 — looks up named cursor form (e.g. "block",
     //                    "underline", "bar") in cursor_form_list and
@@ -581,7 +581,7 @@ pub fn start_edit() -> i32 {                                                 // 
     0
 }
 
-/// Port of `write_urlencoded()` from Src/Zle/termquery.c:769.
+/// Port of `write_urlencoded(path_components)` from Src/Zle/termquery.c:769.
 pub fn write_urlencoded(s: &str) -> String {                                 // c:769
     // C body c:771-796 — URL-encodes a string for OSC 8 hyperlink
     //                    emission. Real escape: convert non-printable

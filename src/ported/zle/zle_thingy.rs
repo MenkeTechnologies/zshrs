@@ -143,7 +143,7 @@ pub fn createthingytab() {                                                   // 
     let _ = thingytab();                                                     // c:62 newhashtable
 }
 
-/// Port of `emptythingytab()` from `Src/Zle/zle_thingy.c:78`.
+/// Port of `emptythingytab(ht)` from `Src/Zle/zle_thingy.c:78`.
 /// ```c
 /// static void
 /// emptythingytab(UNUSED(HashTable ht))
@@ -175,7 +175,7 @@ pub fn emptythingytab() {                                                    // 
     }
 }
 
-/// Port of `scanemptythingies()` from `Src/Zle/zle_thingy.c:94`.
+/// Port of `scanemptythingies(hn)` from `Src/Zle/zle_thingy.c:94`.
 /// ```c
 /// static void
 /// scanemptythingies(HashNode hn, UNUSED(int flags))
@@ -218,7 +218,7 @@ pub fn makethingynode() -> Thingy {                                          // 
     t                                                                        // c:113 return t
 }
 
-/// Port of `freethingynode()` from `Src/Zle/zle_thingy.c:116`.
+/// Port of `freethingynode(hn)` from `Src/Zle/zle_thingy.c:116`.
 /// ```c
 /// static void
 /// freethingynode(HashNode hn)
@@ -240,7 +240,7 @@ pub fn freethingynode(name: &str) {                                          // 
 // reference counting — `Src/Zle/zle_thingy.c:130-176`.
 // =====================================================================
 
-/// Port of `refthingy()` from `Src/Zle/zle_thingy.c:136`.
+/// Port of `refthingy(th)` from `Src/Zle/zle_thingy.c:136`.
 /// ```c
 /// mod_export Thingy
 /// refthingy(Thingy th)
@@ -259,7 +259,7 @@ pub fn refthingy(name: &str) {                                               // 
     }
 }
 
-/// Port of `unrefthingy()` from `Src/Zle/zle_thingy.c:145`.
+/// Port of `unrefthingy(th)` from `Src/Zle/zle_thingy.c:145`.
 /// ```c
 /// void
 /// unrefthingy(Thingy th)
@@ -285,7 +285,7 @@ pub fn unrefthingy(name: &str) {                                             // 
     }
 }
 
-/// Port of `rthingy()` from `Src/Zle/zle_thingy.c:156`.
+/// Port of `rthingy(nam)` from `Src/Zle/zle_thingy.c:156`.
 /// ```c
 /// Thingy
 /// rthingy(char *nam)
@@ -311,7 +311,7 @@ pub fn rthingy(name: &str) {                                                 // 
     refthingy(name);                                                         // c:164 return refthingy(t)
 }
 
-/// Port of `rthingy_nocreate()` from `Src/Zle/zle_thingy.c:167`.
+/// Port of `rthingy_nocreate(nam)` from `Src/Zle/zle_thingy.c:167`.
 /// ```c
 /// Thingy
 /// rthingy_nocreate(char *nam)
@@ -336,7 +336,7 @@ pub fn rthingy_nocreate(name: &str) -> bool {                                // 
 // widget binding — `Src/Zle/zle_thingy.c:178-270`.
 // =====================================================================
 
-/// Port of `bindwidget()` from `Src/Zle/zle_thingy.c:197`.
+/// Port of `bindwidget(w, t)` from `Src/Zle/zle_thingy.c:197`.
 /// ```c
 /// static int
 /// bindwidget(Widget w, Thingy t)
@@ -401,7 +401,7 @@ pub fn bindwidget(w: Arc<Widget>, t_name: &str) -> i32 {                     // 
     0                                                                        // c:219 return 0
 }
 
-/// Port of `unbindwidget()` from `Src/Zle/zle_thingy.c:228`.
+/// Port of `unbindwidget(t, override)` from `Src/Zle/zle_thingy.c:228`.
 /// ```c
 /// static int
 /// unbindwidget(Thingy t, int override)
@@ -471,7 +471,7 @@ pub fn unbindwidget(t_name: &str, override_: i32) -> i32 {                   // 
     0                                                                        // c:250 return 0
 }
 
-/// Port of `freewidget()` from `Src/Zle/zle_thingy.c:255`.
+/// Port of `freewidget(w)` from `Src/Zle/zle_thingy.c:255`.
 /// ```c
 /// void
 /// freewidget(Widget w)
@@ -520,7 +520,7 @@ pub fn freewidget(w: Arc<Widget>) {                                          // 
     drop(w);                                                                 // c:269 zfree(w, ...)
 }
 
-/// Port of `addzlefunction()` from `Src/Zle/zle_thingy.c:279`.
+/// Port of `addzlefunction(name, ifunc, flags)` from `Src/Zle/zle_thingy.c:279`.
 /// ```c
 /// mod_export Widget
 /// addzlefunction(char *name, ZleIntFunc ifunc, int flags)
@@ -589,7 +589,7 @@ pub fn addzlefunction(                                                       // 
     Some(w)                                                                  // c:302 return w
 }
 
-/// Port of `deletezlefunction()` from `Src/Zle/zle_thingy.c:308`.
+/// Port of `deletezlefunction(w)` from `Src/Zle/zle_thingy.c:308`.
 /// ```c
 /// mod_export void
 /// deletezlefunction(Widget w)
@@ -640,7 +640,7 @@ pub fn deletezlefunction(w: &Arc<Widget>) {                                  // 
 // per-method Zle ports. Each fn's docstring cites its C source line
 // and the substrate path it uses.
 
-/// Port of `bin_zle()` from `Src/Zle/zle_thingy.c:342`. Top-level
+/// Port of `bin_zle(name, args, ops)` from `Src/Zle/zle_thingy.c:342`. Top-level
 /// `zle` builtin dispatcher — selects per-flag handler from opns[]
 /// table (-l/-D/-A/-N/-C/-R/-M/-U/-K/-I/-f/-F/-T) or falls through
 /// to bin_zle_call when no flag is set.
@@ -653,7 +653,7 @@ pub fn bin_zle(_nam: &str, args: &[String],                                  // 
     bin_zle_call(args)
 }
 
-/// Port of `bin_zle_call()` from `Src/Zle/zle_thingy.c:702`.
+/// Port of `bin_zle_call(name, args)` from `Src/Zle/zle_thingy.c:702`.
 /// ```c
 /// static int
 /// bin_zle_call(...) {
@@ -685,7 +685,7 @@ pub fn bin_zle_call(args: &[String]) -> i32 {                                // 
     0
 }
 
-/// Port of `bin_zle_complete()` from `Src/Zle/zle_thingy.c:599`.
+/// Port of `bin_zle_complete(name, args)` from `Src/Zle/zle_thingy.c:599`.
 /// ```c
 /// static int
 /// bin_zle_complete(...) {
@@ -744,7 +744,7 @@ pub fn bin_zle_complete(args: &[String]) -> i32 {                            // 
     0                                                                        // c:629
 }
 
-/// Port of `bin_zle_del()` from `Src/Zle/zle_thingy.c:547`.
+/// Port of `bin_zle_del(name, args)` from `Src/Zle/zle_thingy.c:547`.
 /// ```c
 /// static int
 /// bin_zle_del(char *name, char **args, ...) {
@@ -776,7 +776,7 @@ pub fn bin_zle_del(args: &[String]) -> i32 {                                 // 
     ret                                                                      // c:562
 }
 
-/// Port of `bin_zle_fd()` from `Src/Zle/zle_thingy.c:856`.
+/// Port of `bin_zle_fd(name, args, ops)` from `Src/Zle/zle_thingy.c:856`.
 /// `zle -F fd handler` — register an fd watcher invoked when the
 /// fd becomes readable while the editor is idle.
 /// Direct port of `int bin_zle_fd(char *name, char **args, Options ops,
@@ -816,7 +816,7 @@ pub fn bin_zle_fd(args: &[String]) -> i32 {                                  // 
     0                                                                        // c:952
 }
 
-/// Port of `bin_zle_flags()` from `Src/Zle/zle_thingy.c:650`.
+/// Port of `bin_zle_flags(name, args)` from `Src/Zle/zle_thingy.c:650`.
 /// ```c
 /// static int
 /// bin_zle_flags(...) {
@@ -891,7 +891,7 @@ pub fn bin_zle_invalidate() -> i32 {                                         // 
     }
 }
 
-/// Port of `bin_zle_keymap()` from `Src/Zle/zle_thingy.c:487`.
+/// Port of `bin_zle_keymap(name, args)` from `Src/Zle/zle_thingy.c:487`.
 /// ```c
 /// static int
 /// bin_zle_keymap(...) {
@@ -913,7 +913,7 @@ pub fn bin_zle_keymap(args: &[String]) -> i32 {                              // 
     0                                                                        // c:494
 }
 
-/// Port of `bin_zle_link()` from `Src/Zle/zle_thingy.c:566`.
+/// Port of `bin_zle_link(name, args)` from `Src/Zle/zle_thingy.c:566`.
 /// ```c
 /// static int
 /// bin_zle_link(char *name, char **args, ...) {
@@ -950,7 +950,7 @@ pub fn bin_zle_link(args: &[String]) -> i32 {                                // 
     0                                                                        // c:578
 }
 
-/// Port of `bin_zle_list()` from `Src/Zle/zle_thingy.c:392`.
+/// Port of `bin_zle_list(args, ops)` from `Src/Zle/zle_thingy.c:392`.
 /// ```c
 /// static int
 /// bin_zle_list(...) {
@@ -985,7 +985,7 @@ pub fn bin_zle_list(args: &[String]) -> i32 {                                // 
     ret                                                                      // c:412
 }
 
-/// Port of `bin_zle_mesg()` from `Src/Zle/zle_thingy.c:458`.
+/// Port of `bin_zle_mesg(name, args)` from `Src/Zle/zle_thingy.c:458`.
 /// ```c
 /// static int
 /// bin_zle_mesg(...) {
@@ -1009,7 +1009,7 @@ pub fn bin_zle_mesg(args: &[String]) -> i32 {                                // 
     0                                                                        // c:468
 }
 
-/// Port of `bin_zle_new()` from `Src/Zle/zle_thingy.c:583`.
+/// Port of `bin_zle_new(name, args)` from `Src/Zle/zle_thingy.c:583`.
 /// ```c
 /// static int
 /// bin_zle_new(char *name, char **args, ...) {
@@ -1116,7 +1116,7 @@ pub fn bin_zle_transform(args: &[String]) -> i32 {                           // 
     0
 }
 
-/// Port of `bin_zle_unget()` from `Src/Zle/zle_thingy.c:472`.
+/// Port of `bin_zle_unget(name, args)` from `Src/Zle/zle_thingy.c:472`.
 /// ```c
 /// static int
 /// bin_zle_unget(char *name, char **args, ...) {
@@ -1159,7 +1159,7 @@ pub fn init_thingies() -> i32 {                                              // 
     0
 }
 
-/// Port of `scanlistwidgets()` from `Src/Zle/zle_thingy.c:503`.
+/// Port of `scanlistwidgets(hn, list)` from `Src/Zle/zle_thingy.c:503`.
 pub fn scanlistwidgets() -> i32 {                                            // c:503
     // c:507-543 — pretty-print one Thingy: WIDGET_INT skipped (built-in,
     // not user-visible). User widgets print as either `zle -N name [fn]`

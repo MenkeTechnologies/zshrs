@@ -248,7 +248,7 @@ pub const Marker: u8 = 0x80;
 // 8. Bytecode write helpers — pattern.c:412-1856
 // =====================================================================
 
-/// Port of `patadd()` from `Src/pattern.c:412`.
+/// Port of `patadd(add, ch, n, paflags)` from `Src/pattern.c:412`.
 ///
 /// C signature: `static long patadd(char *add, int ch, long n, int paflags)`.
 /// Adds `n` bytes (or repeats `ch`) to patout, growing if needed.
@@ -267,7 +267,7 @@ fn patadd(add: Option<&[u8]>, ch: u8, n: i64, _paflags: i32) -> i64 {        // 
     start
 }
 
-/// Port of `patnode()` from `Src/pattern.c:1790`.
+/// Port of `patnode(op)` from `Src/pattern.c:1790`.
 ///
 /// C: `static long patnode(long op)` — writes a 1-byte opcode plus a
 /// 4-byte zeroed next-offset. Returns the offset of the opcode byte.
@@ -279,7 +279,7 @@ fn patnode(op: u8) -> usize {                                                 //
     off
 }
 
-/// Port of `patinsert()` from `Src/pattern.c:1807`.
+/// Port of `patinsert(op, opnd, xtra, sz)` from `Src/pattern.c:1807`.
 ///
 /// C: `static void patinsert(long op, int opnd, char *xtra, int sz)`.
 /// Inserts an opcode (+ next slot) at position `opnd`, shifting bytes
@@ -371,7 +371,7 @@ fn set_next(pos: usize, val: usize) {
     }
 }
 
-/// Port of `pattail()` from `Src/pattern.c:1834`.
+/// Port of `pattail(p, val)` from `Src/pattern.c:1834`.
 ///
 /// C: `static void pattail(long p, long val)` — patches the next-offset
 /// field of the opcode at offset `p` to point to `val`. Walks any
@@ -392,7 +392,7 @@ fn pattail(p: usize, val: usize) {                                            //
     }
 }
 
-/// Port of `patoptail()` from `Src/pattern.c:1856`.
+/// Port of `patoptail(p, val)` from `Src/pattern.c:1856`.
 ///
 /// C: `static void patoptail(long p, long val)` — like pattail but
 /// only patches branches (P_BRANCH/P_WBRANCH).
@@ -454,7 +454,7 @@ pub fn patcompstart() {                                                       //
 // 9. Compiler entry points — pattern.c:540
 // =====================================================================
 
-/// Port of `patcompile()` from `Src/pattern.c:540`.
+/// Port of `patcompile(exp, inflags, endexp)` from `Src/pattern.c:540`.
 ///
 /// C signature: `Patprog patcompile(char *exp, int inflags, char **endexp)`.
 /// Compiles pattern `exp` under flags `inflags`, returns a `Patprog`
@@ -535,7 +535,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>)   //
     )))
 }
 
-/// Port of `patcompswitch()` from `Src/pattern.c:765`.
+/// Port of `patcompswitch(paren, flagp)` from `Src/pattern.c:765`.
 ///
 /// C: `static long patcompswitch(int paren, int *flagp)`. Parses an
 /// alternation (`a|b|c`), emitting a chain of P_BRANCH nodes. Returns
@@ -603,7 +603,7 @@ fn chain_branches_to(starter: usize, target: usize) {
     }
 }
 
-/// Port of `patcompbranch()` from `Src/pattern.c:942`.
+/// Port of `patcompbranch(flagp, paren)` from `Src/pattern.c:942`.
 ///
 /// C: `static long patcompbranch(int *flagp, int paren)`. Parses a
 /// single branch — a sequence of pieces. Returns offset of the first
@@ -732,7 +732,7 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {                    //
     chain_start
 }
 
-/// Port of `patcomppiece()` from `Src/pattern.c:1261`.
+/// Port of `patcomppiece(flagp, paren)` from `Src/pattern.c:1261`.
 ///
 /// C: `static long patcomppiece(int *flagp, int paren)`. Parses a
 /// single atom + optional quantifier. Returns offset of compiled node.
@@ -1009,7 +1009,7 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 { 
     atom
 }
 
-/// Port of `patcompnot()` from `Src/pattern.c:1760`.
+/// Port of `patcompnot(paren, flagsp)` from `Src/pattern.c:1760`.
 ///
 /// C: `static long patcompnot(int paren, int *flagsp)`. Implements
 /// the `^pat` extended-glob negation by emitting P_EXCLUDE.
@@ -1025,7 +1025,7 @@ pub fn patcompnot(_paren: i32, _flagsp: &mut i32) -> i64 {                    //
 // 10. Glob-flag parser — pattern.c:1037
 // =====================================================================
 
-/// Port of `patgetglobflags()` from `Src/pattern.c:1037`.
+/// Port of `patgetglobflags(strp, assertp, ignore)` from `Src/pattern.c:1037`.
 ///
 /// C signature: `int patgetglobflags(char **strp, long *assertp,
 /// int *ignore)`. Parses the `(#...)` glob-flag specifier and writes
@@ -1085,14 +1085,14 @@ pub fn patgetglobflags(s: &str) -> Option<(i32, i64, usize)> {                //
 // 11. Range helpers — pattern.c:1148, :1179
 // =====================================================================
 
-/// Port of `range_type()` from `Src/pattern.c:1148`. Looks up the
+/// Port of `range_type(start, len)` from `Src/pattern.c:1148`. Looks up the
 /// integer code for a POSIX character class name (e.g. "alpha" → 1).
 /// Returns None for unknown names.
 pub fn range_type(name: &str) -> Option<usize> {                              // c:1148
     POSIX_CLASS_NAMES.iter().position(|n| *n == name).map(|i| i + 1)
 }
 
-/// Port of `pattern_range_to_string()` from `Src/pattern.c:1179`.
+/// Port of `pattern_range_to_string(rangestr, outstr)` from `Src/pattern.c:1179`.
 /// Reverse of range_type: given an index, return the class name.
 pub fn pattern_range_to_string(idx: usize) -> Option<String> {                // c:1179
     if idx == 0 { return None; }
@@ -1113,25 +1113,25 @@ const POSIX_CLASS_NAMES: &[&str] = &[
 /// state to clear.
 pub fn clear_shiftstate() {}                                                  // c:327
 
-/// Port of `metacharinc()` from `Src/pattern.c:336`. Advances past
+/// Port of `metacharinc(x)` from `Src/pattern.c:336`. Advances past
 /// the next char (Meta-escape aware in C; UTF-8-byte-len in Rust).
 pub fn metacharinc(s: &str, pos: usize) -> usize {                            // c:336
     s[pos..].chars().next().map(|c| pos + c.len_utf8()).unwrap_or(pos)
 }
 
-/// Port of `charref()` from `Src/pattern.c:1909`. Decode the char at
+/// Port of `charref(x, y, zmb_ind)` from `Src/pattern.c:1909`. Decode the char at
 /// `pos` without advancing.
 pub fn charref(s: &str, pos: usize) -> Option<char> {                         // c:1909
     s[pos..].chars().next()
 }
 
-/// Port of `charnext()` from `Src/pattern.c:1936`. Advance past the
+/// Port of `charnext(x, y)` from `Src/pattern.c:1936`. Advance past the
 /// char at `pos`.
 pub fn charnext(s: &str, pos: usize) -> usize {                               // c:1936
     metacharinc(s, pos)
 }
 
-/// Port of `charrefinc()` from `Src/pattern.c:1964`. Decode and
+/// Port of `charrefinc(x, y, z)` from `Src/pattern.c:1964`. Decode and
 /// advance: returns the char, mutates `pos` to point past it.
 pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {                 // c:1964
     let c = s[*pos..].chars().next()?;
@@ -1139,7 +1139,7 @@ pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {                 //
     Some(c)
 }
 
-/// Port of `charsub()` from `Src/pattern.c:1997`. Returns the byte
+/// Port of `charsub(x, y)` from `Src/pattern.c:1997`. Returns the byte
 /// offset of the char before `pos` (useful for stepping back).
 pub fn charsub(s: &str, pos: usize) -> usize {                                // c:1997
     if pos == 0 { return 0; }
@@ -1177,7 +1177,7 @@ impl rpat {
     }
 }
 
-/// Port of `pattry()` from `Src/pattern.c:2223`.
+/// Port of `pattry(prog, string)` from `Src/pattern.c:2223`.
 ///
 /// C signature: `int pattry(Patprog prog, char *string)`. Returns
 /// non-zero on match, 0 on no-match.
@@ -1230,7 +1230,7 @@ pub fn patmatchlen(prog: &Patprog, string: &str) -> Option<usize> {           //
     patmatch_internal(&prog.1, 0, string, 0, &mut state, prog.0.flags)
 }
 
-/// Port of `patmatch()` from `Src/pattern.c:2694`. The interpreter.
+/// Port of `patmatch(prog)` from `Src/pattern.c:2694`. The interpreter.
 ///
 /// Returns `Some(end_pos)` on successful match (end_pos = byte offset
 /// in `string` where match ended), `None` on no-match. The state
@@ -1572,7 +1572,7 @@ fn patmatch_internal(
 // 15. Range matching — pattern.c:3856, :4004, :3610, :3767
 // =====================================================================
 
-/// Port of `patmatchrange()` from `Src/pattern.c:3856`. Test whether
+/// Port of `patmatchrange(range, ch, indptr, mtp)` from `Src/pattern.c:3856`. Test whether
 /// `ch` matches the bracket-range expression `range`.
 ///
 /// `range` is the bytes between `[...]` in the original pattern.
@@ -1600,7 +1600,7 @@ pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {       //
     false
 }
 
-/// Port of `patmatchindex()` from `Src/pattern.c:4004`. Return the
+/// Port of `patmatchindex(range, ind, chr, mtp)` from `Src/pattern.c:4004`. Return the
 /// `idx`-th character that matches `range` (used by `${arr:#pat}`).
 pub fn patmatchindex(range: &[char], idx: usize) -> Option<char> {            // c:4004
     let mut n = 0;
@@ -1623,13 +1623,13 @@ pub fn patmatchindex(range: &[char], idx: usize) -> Option<char> {            //
     None
 }
 
-/// Port of `mb_patmatchrange()` from `Src/pattern.c:3610`. Multibyte
+/// Port of `mb_patmatchrange(range, ch, zmb_ind, indptr, mtp)` from `Src/pattern.c:3610`. Multibyte
 /// variant — same as patmatchrange in Rust's UTF-8 world.
 pub fn mb_patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {    // c:3610
     patmatchrange(range, ch, igncase)
 }
 
-/// Port of `mb_patmatchindex()` from `Src/pattern.c:3767`.
+/// Port of `mb_patmatchindex(range, ind, chr, mtp)` from `Src/pattern.c:3767`.
 pub fn mb_patmatchindex(range: &[char], idx: usize) -> Option<char> {         // c:3767
     patmatchindex(range, idx)
 }
@@ -1642,7 +1642,7 @@ pub fn mb_patmatchindex(range: &[char], idx: usize) -> Option<char> {         //
 /// match state globals; Rust state is per-call so no-op.
 pub fn pattrystart() {}                                                       // c:2063
 
-/// Port of `patmungestring()` from `Src/pattern.c:2080`. Un-metafies
+/// Port of `patmungestring(string, stringlen, unmetalenin)` from `Src/pattern.c:2080`. Un-metafies
 /// in C; UTF-8 needs no munging.
 pub fn patmungestring(s: &str) -> String {                                    // c:2080
     s.to_string()
@@ -1696,7 +1696,7 @@ pub fn savepatterndisables() -> Vec<String> {                                 //
     patterndisables.lock().unwrap().clone()
 }
 
-/// Port of `restorepatterndisables()` from `Src/pattern.c:4258`.
+/// Port of `restorepatterndisables(disables)` from `Src/pattern.c:4258`.
 pub fn restorepatterndisables(saved: Vec<String>) {                           // c:4258
     *patterndisables.lock().unwrap() = saved;
 }
@@ -1706,12 +1706,12 @@ pub fn clearpatterndisables() {                                               //
     patterndisables.lock().unwrap().clear();
 }
 
-/// Port of `freepatprog()` from `Src/pattern.c:4161`. Frees a Patprog.
+/// Port of `freepatprog(prog)` from `Src/pattern.c:4161`. Frees a Patprog.
 /// Rust's `Drop` on `Box<patprog>` handles this; the explicit fn
 /// exists for C parity (Rule A).
 pub fn freepatprog(_prog: Patprog) {}                                         // c:4161
 
-/// Port of `pat_enables()` from `Src/pattern.c:4171`. Implements
+/// Port of `pat_enables(cmd, patp, enable)` from `Src/pattern.c:4171`. Implements
 /// `enable -p` / `disable -p` for named patterns.
 pub fn pat_enables(_cmd: &str, patterns: &[&str], enable: bool) -> i32 {      // c:4171
     let mut disables = patterndisables.lock().unwrap();
@@ -1743,7 +1743,7 @@ pub fn patmatch(pattern: &str, text: &str) -> bool {
     }
 }
 
-/// Port of `patrepeat()` from `Src/pattern.c:4096`. Counts how many
+/// Port of `patrepeat(p, charstart)` from `Src/pattern.c:4096`. Counts how many
 /// times the pattern matches consecutively at the start of `s`.
 pub fn patrepeat(prog: &Patprog, s: &str, max: Option<usize>) -> usize {      // c:4096
     let mut pos = 0;
@@ -1762,7 +1762,7 @@ pub fn patrepeat(prog: &Patprog, s: &str, max: Option<usize>) -> usize {      //
     count
 }
 
-/// Port of `haswilds()` from `Src/pattern.c:4306`. Quick check whether
+/// Port of `haswilds(str)` from `Src/pattern.c:4306`. Quick check whether
 /// `s` contains any wildcard characters.
 pub fn haswilds(s: &str) -> bool {                                            // c:4306
     s.chars().any(|c| matches!(c, '*' | '?' | '[' | '\\' | '(' | '|' | '<' | '#' | '^'))

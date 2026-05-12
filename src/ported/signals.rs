@@ -204,7 +204,7 @@ pub fn unqueue_traps() {                                                     // 
     }
 }
 
-/// Port of `signal_block()` from `Src/signals.c:175`.
+/// Port of `signal_block(set)` from `Src/signals.c:175`.
 ///
 /// C body:
 /// ```c
@@ -224,7 +224,7 @@ pub fn signal_block(set: &libc::sigset_t) -> libc::sigset_t {                // 
     oset
 }
 
-/// Port of `signal_unblock()` from `Src/signals.c:189`.
+/// Port of `signal_unblock(set)` from `Src/signals.c:189`.
 ///
 /// C body: `sigprocmask(SIG_UNBLOCK, &set, &oset); return oset;`
 #[cfg(unix)]
@@ -343,7 +343,7 @@ pub fn is_interact() -> bool {
     interact_lock().load(std::sync::atomic::Ordering::SeqCst)
 }
 
-/// Port of `install_handler()` from `Src/signals.c:100`.
+/// Port of `install_handler(sig)` from `Src/signals.c:100`.
 ///
 /// C body:
 /// ```c
@@ -462,7 +462,7 @@ pub fn endtrapscope() {                                                      // 
 /// Total trap count including EXIT and ERR
 
 
-/// Port of `signal_suspend()` from `Src/signals.c:214`.
+/// Port of `signal_suspend(wait_cmd)` from `Src/signals.c:214`.
 ///
 /// C body:
 /// ```c
@@ -604,7 +604,7 @@ pub fn noholdintr() {                                                        // 
     }
 }
 
-/// Port of `signal_mask()` from `Src/signals.c:160`.
+/// Port of `signal_mask(sig)` from `Src/signals.c:160`.
 ///
 /// C body:
 /// ```c
@@ -630,7 +630,7 @@ pub fn signal_mask(sig: i32) -> libc::sigset_t {
     set
 }
 
-/// Port of `signal_setmask()` from `Src/signals.c:203`.
+/// Port of `signal_setmask(set)` from `Src/signals.c:203`.
 ///
 /// C body: `sigprocmask(SIG_SETMASK, &set, &oset); return oset;`
 ///
@@ -813,7 +813,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
 }
 
 /// Kill all running jobs with the given signal.
-/// Port of `killrunjobs()` from Src/signals.c:506.
+/// Port of `killrunjobs(from_signal)` from Src/signals.c:506.
 // SIGHUP any jobs left running                                             // c:502
 #[cfg(unix)]
 pub fn killrunjobs(sig: i32) {
@@ -823,7 +823,7 @@ pub fn killrunjobs(sig: i32) {
 }
 
 /// Kill a specific job by process group.
-/// Port of `killjb()` from Src/signals.c:529.
+/// Port of `killjb(jn, sig)` from Src/signals.c:529.
 // send a signal to a job (simply involves kill if monitoring is on)       // c:525
 #[cfg(unix)]
 pub fn killjb(pgrp: i32, sig: i32) -> i32 {                                 // c:529
@@ -1062,7 +1062,7 @@ pub fn dotrap(sig: i32) -> i32 {                                             // 
 }
 
 /// Remove a trap completely and reset to default disposition.
-/// Port of `removetrap()` from Src/signals.c:772.
+/// Port of `removetrap(sig)` from Src/signals.c:772.
 pub fn removetrap(sig: i32) {
     unsettrap(sig);
     // Also restore default handler
@@ -1073,7 +1073,7 @@ pub fn removetrap(sig: i32) {
 }
 
 /// Resolve a real-time signal name to its number.
-/// Port of `rtsigno()` from Src/signals.c:1291 — Linux-only;
+/// Port of `rtsigno(signame)` from Src/signals.c:1291 — Linux-only;
 /// macOS lacks `SIGRTMIN`/`SIGRTMAX`.
 ///
 /// SIGRTMIN is typically 34 on Linux, not available on macOS
@@ -1098,7 +1098,7 @@ pub fn rtsigno(offset: i32) -> Option<i32> {
 }
 
 /// Resolve a real-time signal number to its `RTMIN+N` name.
-/// Port of `rtsigname()` from Src/signals.c:1317.
+/// Port of `rtsigname(signo, alt)` from Src/signals.c:1317.
 pub fn rtsigname(sig: i32) -> String {
     #[cfg(target_os = "linux")]
     {

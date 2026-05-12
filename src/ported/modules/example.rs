@@ -60,7 +60,7 @@ pub static arrparam: Mutex<Option<Vec<String>>> = Mutex::new(None);  // c:37
 // bin_example(char *nam, char **args, Options ops, UNUSED(int func))  c:42
 // =====================================================================
 
-/// Port of `bin_example()` from `Src/Modules/example.c:42`.
+/// Port of `bin_example(nam, args, ops)` from `Src/Modules/example.c:42`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
@@ -141,7 +141,7 @@ pub fn bin_example(nam: &str, args: &[String], ops: &options, _func: i32) -> i32
 // cond_p_len(char **a, UNUSED(int id))                               c:80
 // =====================================================================
 
-/// Port of `cond_p_len()` from `Src/Modules/example.c:80`.
+/// Port of `cond_p_len(a)` from `Src/Modules/example.c:80`.
 pub fn cond_p_len(a: &[String], _id: i32) -> i32 {                           // c:80
     // c:82 — `char *s1 = cond_str(a, 0, 0);`
     let s1: String = cond_str(a, 0, false);                            // c:82
@@ -159,7 +159,7 @@ pub fn cond_p_len(a: &[String], _id: i32) -> i32 {                           // 
 // cond_i_ex(char **a, UNUSED(int id))                                c:95
 // =====================================================================
 
-/// Port of `cond_i_ex()` from `Src/Modules/example.c:95`.
+/// Port of `cond_i_ex(a)` from `Src/Modules/example.c:95`.
 pub fn cond_i_ex(a: &[String], _id: i32) -> i32 {                            // c:95
     // c:97 — `char *s1 = cond_str(a, 0, 0), *s2 = cond_str(a, 1, 0);`
     let s1: String = cond_str(a, 0, false);                            // c:97
@@ -172,7 +172,7 @@ pub fn cond_i_ex(a: &[String], _id: i32) -> i32 {                            // 
 // math_sum(UNUSED(char *name), int argc, mnumber *argv, UNUSED(int id))  c:104
 // =====================================================================
 
-/// Port of `math_sum()` from `Src/Modules/example.c:104`.
+/// Port of `math_sum(argc, argv)` from `Src/Modules/example.c:104`.
 pub fn math_sum(_name: &str, argc: i32, argv: &[Mnumber], _id: i32) -> Mnumber { // c:104
     // c:106 — `mnumber ret;`
     let mut ret = Mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
@@ -212,7 +212,7 @@ pub fn math_sum(_name: &str, argc: i32, argv: &[Mnumber], _id: i32) -> Mnumber {
 // math_length(UNUSED(char *name), char *arg, UNUSED(int id))         c:133
 // =====================================================================
 
-/// Port of `math_length()` from `Src/Modules/example.c:133`.
+/// Port of `math_length(arg)` from `Src/Modules/example.c:133`.
 pub fn math_length(_name: &str, arg: &str, _id: i32) -> Mnumber {            // c:133
     // c:135 — `mnumber ret;`
     // c:137 — `ret.type = MN_INTEGER;`
@@ -228,7 +228,7 @@ pub fn math_length(_name: &str, arg: &str, _id: i32) -> Mnumber {            // 
 // ex_wrapper(Eprog prog, FuncWrap w, char *name)                     c:145
 // =====================================================================
 
-/// Port of `ex_wrapper()` from `Src/Modules/example.c:145`.
+/// Port of `ex_wrapper(prog, w, name)` from `Src/Modules/example.c:145`.
 ///
 /// `Eprog` and `FuncWrap` are `Box<eprog>` / `Box<funcwrap>` per
 /// zsh.h:774 / 522. Pointer-shape preserved as `*const eprog` /
@@ -275,7 +275,7 @@ pub fn ex_wrapper(prog: *const crate::ported::zsh_h::eprog,                  // 
 // setup_(UNUSED(Module m))                                           c:198
 // =====================================================================
 
-/// Port of `setup_()` from `Src/Modules/example.c:198`.
+/// Port of `setup_(m)` from `Src/Modules/example.c:198`.
 pub fn setup_(_m: *const module) -> i32 {
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "The example module has now been set up."); // c:200
@@ -287,7 +287,7 @@ pub fn setup_(_m: *const module) -> i32 {
 // features_(Module m, char ***features)                              c:207
 // =====================================================================
 
-/// Port of `features_()` from `Src/Modules/example.c:207`.
+/// Port of `features_(m, features)` from `Src/Modules/example.c:207`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     *features = featuresarray(m, module_features());
@@ -298,7 +298,7 @@ pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
 // enables_(Module m, int **enables)                                  c:215
 // =====================================================================
 
-/// Port of `enables_()` from `Src/Modules/example.c:215`.
+/// Port of `enables_(m, enables)` from `Src/Modules/example.c:215`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     handlefeatures(m, module_features(), enables) // c:217
@@ -308,7 +308,7 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 // boot_(Module m)                                                    c:222
 // =====================================================================
 
-/// Port of `boot_()` from `Src/Modules/example.c:222`.
+/// Port of `boot_(m)` from `Src/Modules/example.c:222`.
 /// C body sets the demo paramdef-bound statics then calls
 /// `addwrapper(m, wrapper)`.
 pub fn boot_(m: *const module) -> i32 {
@@ -331,7 +331,7 @@ pub fn boot_(m: *const module) -> i32 {
 // cleanup_(Module m)                                                 c:235
 // =====================================================================
 
-/// Port of `cleanup_()` from `Src/Modules/example.c:235`.
+/// Port of `cleanup_(m)` from `Src/Modules/example.c:235`.
 /// C body: `deletewrapper(m, wrapper); return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {
     // c:237 — deletewrapper(m, wrapper); paired with c:230 addwrapper,
@@ -343,7 +343,7 @@ pub fn cleanup_(m: *const module) -> i32 {
 // finish_(UNUSED(Module m))                                          c:243
 // =====================================================================
 
-/// Port of `finish_()` from `Src/Modules/example.c:243`.
+/// Port of `finish_(m)` from `Src/Modules/example.c:243`.
 pub fn finish_(_m: *const module) -> i32 {
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(
@@ -404,7 +404,7 @@ mod tests {
     /// lock restores the single-writer assumption for the test phase.
     static EXAMPLE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// Port of `boot_()` from `Src/Modules/example.c:222`.
+    /// Port of `boot_(m)` from `Src/Modules/example.c:222`.
     /// Verifies `boot_()` populates the three paramdef-bound statics
     /// per c:224-228: intparam=42, strparam="example",
     /// arrparam=["example","array"].
@@ -482,7 +482,7 @@ mod tests {
         assert_eq!(ex_wrapper(std::ptr::null(), std::ptr::null(), "example_func"), 0);
     }
 
-    /// Port of `bin_example()` from `Src/Modules/example.c:42`.
+    /// Port of `bin_example(nam, args, ops)` from `Src/Modules/example.c:42`.
     /// Verifies `bin_example` reads `OPT_ISSET(ops, c)` and prints flagged
     /// option letters — c:49-51.
     #[test]

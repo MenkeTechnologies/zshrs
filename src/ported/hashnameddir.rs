@@ -61,7 +61,7 @@ pub fn createnameddirtable() {                                             // c:
 
 /* Empty the named directories table */                                    // c:80
 
-/// Port of `emptynameddirtable()` from `Src/hashnameddir.c:83`.
+/// Port of `emptynameddirtable(ht)` from `Src/hashnameddir.c:83`.
 pub fn emptynameddirtable() {                                              // c:84
     if let Ok(mut t) = nameddirtab().lock() {                              // c:86
         t.clear();                                                         // c:86 emptyhashtable
@@ -73,7 +73,7 @@ pub fn emptynameddirtable() {                                              // c:
 /* Add all the usernames in the password file/database *
  * to the named directories table.                     */                  // c:91-92
 
-/// Port of `fillnameddirtable()` from `Src/hashnameddir.c:95`.
+/// Port of `fillnameddirtable(ht)` from `Src/hashnameddir.c:95`.
 /// C signature is `static void fillnameddirtable(UNUSED(HashTable ht))`;
 /// Rust drops the unused parameter since `nameddirtab` is the only
 /// table this is wired to.
@@ -112,7 +112,7 @@ pub fn fillnameddirtable() {                                               // c:
  * table, clearing the finddir() cache and  *
  * initialising the `diff' member.          */                             // c:115-117
 
-/// Port of `addnameddirnode()` from `Src/hashnameddir.c:120`.
+/// Port of `addnameddirnode(ht, nam, nodeptr)` from `Src/hashnameddir.c:120`.
 /// C: `static void addnameddirnode(HashTable ht, char *nam, void *nodeptr)`.
 /// Caller constructs the `nameddir` (with `dir` + `flags` already
 /// set); this fn computes `diff`, clears the finddir cache, then
@@ -132,7 +132,7 @@ pub fn addnameddirnode(nam: &str, mut nd: nameddir) {                      // c:
 /* Remove an entry from the named directory  *
  * hash table, clearing the finddir() cache. */                            // c:130-131
 
-/// Port of `removenameddirnode()` from `Src/hashnameddir.c:133`.
+/// Port of `removenameddirnode(ht, nam)` from `Src/hashnameddir.c:133`.
 /// C: `static HashNode removenameddirnode(HashTable ht, const char *nam)`.
 pub fn removenameddirnode(nam: &str) -> Option<nameddir> {                 // c:135
     // c:137 — `HashNode hn = removehashnode(ht, nam);`
@@ -145,7 +145,7 @@ pub fn removenameddirnode(nam: &str) -> Option<nameddir> {                 // c:
 
 /* Free up the memory used by a named directory hash node. */              // c:144
 
-/// Port of `freenameddirnode()` from `Src/hashnameddir.c:147`.
+/// Port of `freenameddirnode(hn)` from `Src/hashnameddir.c:147`.
 /// C frees the two embedded `char*`s plus the struct; in Rust the
 /// `Drop` impl for `nameddir` (which owns its `String`s) covers
 /// the same teardown.
@@ -156,7 +156,7 @@ pub fn freenameddirnode(_nd: nameddir) {                                   // c:
 
 /* Print a named directory */                                              // c:157
 
-/// Port of `printnameddirnode()` from `Src/hashnameddir.c:160`.
+/// Port of `printnameddirnode(hn, printflags)` from `Src/hashnameddir.c:160`.
 pub fn printnameddirnode(nd: &nameddir, printflags: i32) {                 // c:161
     let stdout = std::io::stdout();
     let mut out = stdout.lock();

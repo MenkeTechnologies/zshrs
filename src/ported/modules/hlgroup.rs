@@ -23,7 +23,7 @@ use std::fmt::Write;
 /// strings. Read by `getgroup` (c:82) + `scangroup` (c:117).
 pub const GROUPVAR: &str = ".zle.hlgroups";                                  // c:33
 
-/// Port of `convertattr()` from `Src/Modules/hlgroup.c:40`.
+/// Port of `convertattr(attrstr, sgr)` from `Src/Modules/hlgroup.c:40`.
 ///
 /// C body (c:42-77):
 /// ```c
@@ -187,7 +187,7 @@ pub fn convertattr(attrstr: &str, sgr: bool) -> String {                 // c:40
     }
 }
 
-/// Port of `getgroup()` from `Src/Modules/hlgroup.c:82`. The shared
+/// Port of `getgroup(name, sgr)` from `Src/Modules/hlgroup.c:82`. The shared
 /// magic-assoc lookup behind both `${.zle.esc[name]}` and
 /// `${.zle.sgr[name]}`. Reads `$.zle.hlgroups` (the `GROUPVAR`
 /// `#define` at c:33), looks up `name`, runs `convertattr` on the
@@ -213,7 +213,7 @@ pub fn getgroup(_name: &str, _sgr: bool) -> Option<String> {             // c:82
     None                                                                 // c:103 PM_UNSET
 }
 
-/// Port of `scangroup()` from `Src/Modules/hlgroup.c:113`. The
+/// Port of `scangroup(func, flags, sgr)` from `Src/Modules/hlgroup.c:113`. The
 /// shared magic-assoc scanner behind `${(k).zle.esc}` /
 /// `${(kv).zle.esc}` (and the `.zle.sgr` variants). Walks the
 /// `$.zle.hlgroups` hash and yields each entry as
@@ -238,25 +238,25 @@ pub fn scangroup(_sgr: bool) -> Vec<(String, String)> {                  // c:11
     Vec::new()                                                           // c:124-125 empty exit
 }
 
-/// Port of `getpmesc()` from `Src/Modules/hlgroup.c:141`.
+/// Port of `getpmesc(name)` from `Src/Modules/hlgroup.c:141`.
 /// C body is `return getgroup(name, 0);` — escape-form variant.
 pub fn getpmesc(name: &str) -> Option<String> {                          // c:141
     getgroup(name, false)                                                // c:143
 }
 
-/// Port of `scanpmesc()` from `Src/Modules/hlgroup.c:148`.
+/// Port of `scanpmesc(func, flags)` from `Src/Modules/hlgroup.c:148`.
 /// C body is `scangroup(func, flags, 0);` — escape-form scanner.
 pub fn scanpmesc() -> Vec<(String, String)> {                            // c:148
     scangroup(false)                                                     // c:150
 }
 
-/// Port of `getpmsgr()` from `Src/Modules/hlgroup.c:155`.
+/// Port of `getpmsgr(name)` from `Src/Modules/hlgroup.c:155`.
 /// C body is `return getgroup(name, 1);` — SGR-form variant.
 pub fn getpmsgr(name: &str) -> Option<String> {                          // c:155
     getgroup(name, true)                                                 // c:157
 }
 
-/// Port of `scanpmsgr()` from `Src/Modules/hlgroup.c:162`.
+/// Port of `scanpmsgr(func, flags)` from `Src/Modules/hlgroup.c:162`.
 /// C body is `scangroup(func, flags, 1);` — SGR-form scanner.
 pub fn scanpmsgr() -> Vec<(String, String)> {                            // c:162
     scangroup(true)                                                      // c:164
@@ -276,36 +276,36 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/hlgroup.c:182`.
+/// Port of `setup_(m)` from `Src/Modules/hlgroup.c:182`.
 pub fn setup_(_m: *const module) -> i32 {                                // c:182
     0                                                                    // c:184
 }
 
-/// Port of `features_()` from `Src/Modules/hlgroup.c:189`.
+/// Port of `features_(m, features)` from `Src/Modules/hlgroup.c:189`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 { // c:189
     *features = featuresarray(m, module_features());
     0                                                                    // c:192
 }
 
-/// Port of `enables_()` from `Src/Modules/hlgroup.c:197`.
+/// Port of `enables_(m, enables)` from `Src/Modules/hlgroup.c:197`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:197
     handlefeatures(m, module_features(), enables) // c:199
 }
 
-/// Port of `boot_()` from `Src/Modules/hlgroup.c:204`.
+/// Port of `boot_(m)` from `Src/Modules/hlgroup.c:204`.
 pub fn boot_(_m: *const module) -> i32 {                                 // c:204
     0                                                                    // c:206
 }
 
-/// Port of `cleanup_()` from `Src/Modules/hlgroup.c:211`.
+/// Port of `cleanup_(m)` from `Src/Modules/hlgroup.c:211`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                              // c:211
     setfeatureenables(m, module_features(), None) // c:213
 }
 
-/// Port of `finish_()` from `Src/Modules/hlgroup.c:218`.
+/// Port of `finish_(m)` from `Src/Modules/hlgroup.c:218`.
 pub fn finish_(_m: *const module) -> i32 {                               // c:218
     0                                                                    // c:220
 }

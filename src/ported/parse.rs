@@ -79,7 +79,7 @@ thread_local! {
 // below as free fns at module scope.
 // =============================================================================
 
-/// Port of `ecgetstr()` from `Src/parse.c:2854`.
+/// Port of `ecgetstr(s, dup, tokflag)` from `Src/parse.c:2854`.
 ///
 /// `strs` must be the **current** string pool tail (`s->strs` in C); it advances
 /// separately via `estate.strs_offset` in `text.c` callers.
@@ -123,7 +123,7 @@ pub fn ecgetstr(
     r
 }
 
-/// Port of `ecgetredirs()` from `Src/parse.c:2959-2991`.
+/// Port of `ecgetredirs(s)` from `Src/parse.c:2959-2991`.
 ///
 /// `strs` must be the same tail `ecgetstr` uses (`s->strs` / `estate.strs` from offset).
 pub fn ecgetredirs(prog: &[wordcode], strs: &[u8], pc: &mut usize) -> Vec<redir> {

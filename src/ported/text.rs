@@ -39,7 +39,7 @@ static COND_BINARY_OPS: &[&str] = &[
     "=", "==", "!=", "<", ">", "-nt", "-ot", "-ef", "-eq", "-ne", "-lt", "-gt", "-le", "-ge", "=~",
 ];
 
-/// Port of `is_cond_binary_op()` from `Src/text.c:58`.
+/// Port of `is_cond_binary_op(str)` from `Src/text.c:58`.
 pub fn is_cond_binary_op(s: &str) -> i32 {
     COND_BINARY_OPS.iter().any(|&op| op == s) as i32
 }
@@ -59,7 +59,7 @@ thread_local! {
     static tjob: RefCell<bool> = RefCell::new(false);
 }
 
-/// Port of `tpush()` from `Src/text.c:127` (append byte to `tbuf`, honour `tlim`).
+/// Port of `tpush(code, pop)` from `Src/text.c:127` (append byte to `tbuf`, honour `tlim`).
 fn tpush(c: i32) {
     let b = c as u8;
     tbuf.with(|tb| {
@@ -113,11 +113,11 @@ struct tstack {
 }
 
 /// Port of `taddassign` from `Src/text.c:184`.
-fn taddassign(code: wordcode, st: &mut estate, typeset: i32) {
-    taddstr(&ecgetstr(st, EC_NODUP, None));
+fn taddassign(code: wordcode, state: &mut estate, typeset: i32) {
+    taddstr(&ecgetstr(state, EC_NODUP, None));
     if zsh_h::WC_ASSIGN_TYPE2(code) == zsh_h::WC_ASSIGN_INC {
         if typeset != 0 {
-            let _ = ecgetstr(st, EC_NODUP, None);
+            let _ = ecgetstr(state, EC_NODUP, None);
             tpush(b' ' as i32);
             return;
         }
@@ -126,22 +126,22 @@ fn taddassign(code: wordcode, st: &mut estate, typeset: i32) {
     tpush(b'=' as i32);
     if zsh_h::WC_ASSIGN_TYPE(code) == WC_ASSIGN_ARRAY {
         tpush(b'(' as i32);
-        taddlist(st, zsh_h::WC_ASSIGN_NUM(code) as i32);
+        taddlist(state, zsh_h::WC_ASSIGN_NUM(code) as i32);
         taddstr(") ");
     } else {
-        taddstr(&ecgetstr(st, EC_NODUP, None));
+        taddstr(&ecgetstr(state, EC_NODUP, None));
         tpush(b' ' as i32);
     }
 }
 
 /// Port of `taddlist` from `Src/text.c:170`.
-fn taddlist(st: &mut estate, num: i32) {
+fn taddlist(state: &mut estate, num: i32) {
     if num == 0 {
         return;
     }
     let mut n = num;
     while n > 0 {
-        taddstr(&ecgetstr(st, EC_NODUP, None));
+        taddstr(&ecgetstr(state, EC_NODUP, None));
         tpush(b' ' as i32);
         n -= 1;
     }
@@ -151,18 +151,18 @@ fn taddlist(st: &mut estate, num: i32) {
 }
 
 /// Port of `taddassignlist` from `Src/text.c:213`.
-fn taddassignlist(st: &mut estate, count: wordcode) {
+fn taddassignlist(state: &mut estate, count: wordcode) {
     if count != 0 {
         tpush(b' ' as i32);
     }
     let mut c = count;
     while c > 0 {
-        if st.pc >= st.prog.prog.len() {
+        if state.pc >= state.prog.prog.len() {
             break;
         }
-        let acode = st.prog.prog[st.pc];
-        st.pc += 1;
-        taddassign(acode, st, 1);
+        let acode = state.prog.prog[state.pc];
+        state.pc += 1;
+        taddassign(acode, state, 1);
         c -= 1;
     }
 }
@@ -255,7 +255,7 @@ const FSTR: [&str; 18] = [
 ];
 
 /// Port of `gettext2` from `Src/text.c:415`.
-pub fn gettext2(st: &mut estate) {
+pub fn gettext2(state: &mut estate) {
     let mut tstack: Vec<tstack> = Vec::new();
     let mut stack: i32 = 0;
 
@@ -277,11 +277,11 @@ pub fn gettext2(st: &mut estate) {
                     (code, None, Some(idx))
                 }
             } else {
-                if st.pc >= st.prog.prog.len() {
+                if state.pc >= state.prog.prog.len() {
                     break;
                 }
-                let code = st.prog.prog[st.pc];
-                st.pc += 1;
+                let code = state.prog.prog[state.pc];
+                state.pc += 1;
                 (code, None, None)
             };
 
@@ -322,11 +322,11 @@ pub fn gettext2(st: &mut estate) {
                         } else {
                             taddstr(if (lty & Z_ASYNC) != 0 { " " } else { "; " });
                         }
-                        if st.pc >= st.prog.prog.len() {
+                        if state.pc >= state.prog.prog.len() {
                             break;
                         }
-                        fr.code = st.prog.prog[st.pc];
-                        st.pc += 1;
+                        fr.code = state.prog.prog[state.pc];
+                        state.pc += 1;
                         fr.pop = ((WC_LIST_TYPE(fr.code) as i32) & Z_END) as i32;
                         stack = 0;
                     } else {
@@ -342,17 +342,17 @@ pub fn gettext2(st: &mut estate) {
                         tstack.last().map(|t| t.code).unwrap_or(code)
                     };
                     if (WC_LIST_TYPE(sc) as i32 & Z_SIMPLE) != 0 {
-                        st.pc = st.pc.saturating_add(1);
+                        state.pc = state.pc.saturating_add(1);
                     }
                 }
             }
             WC_SUBLIST => {
                 if !s_active && spopped.is_none() {
-                    let p = st.pc;
+                    let p = state.pc;
                     let mut pre = 0;
                     if (WC_SUBLIST_FLAGS(code) as i32 & WC_SUBLIST_SIMPLE as i32) == 0
-                        && p < st.prog.prog.len()
-                        && wc_code(st.prog.prog[p]) != WC_PIPE
+                        && p < state.prog.prog.len()
+                        && wc_code(state.prog.prog[p]) != WC_PIPE
                     {
                         pre = -1;
                     }
@@ -376,11 +376,11 @@ pub fn gettext2(st: &mut estate) {
                         } else {
                             " && "
                         });
-                        if st.pc >= st.prog.prog.len() {
+                        if state.pc >= state.prog.prog.len() {
                             break;
                         }
-                        fr.code = st.prog.prog[st.pc];
-                        st.pc += 1;
+                        fr.code = state.prog.prog[state.pc];
+                        state.pc += 1;
                         fr.pop = if WC_SUBLIST_TYPE(fr.code) == WC_SUBLIST_END {
                             1
                         } else {
@@ -392,9 +392,9 @@ pub fn gettext2(st: &mut estate) {
                             } else {
                                 0
                             };
-                            let p = st.pc;
-                            let pipe_chk = if p < st.prog.prog.len() {
-                                wc_code(st.prog.prog[p])
+                            let p = state.pc;
+                            let pipe_chk = if p < state.prog.prog.len() {
+                                wc_code(state.prog.prog[p])
                             } else {
                                 WC_COUNT
                             };
@@ -422,7 +422,7 @@ pub fn gettext2(st: &mut estate) {
                         tstack.last().map(|x| x.code).unwrap_or(code)
                     };
                     if (WC_SUBLIST_FLAGS(scode) as i32 & WC_SUBLIST_SIMPLE as i32) != 0 {
-                        st.pc = st.pc.saturating_add(1);
+                        state.pc = state.pc.saturating_add(1);
                     }
                 }
             }
@@ -434,20 +434,20 @@ pub fn gettext2(st: &mut estate) {
                         u: tstack_u::None,
                     });
                     if WC_PIPE_TYPE(code) == WC_PIPE_MID {
-                        st.pc = st.pc.saturating_add(1);
+                        state.pc = state.pc.saturating_add(1);
                     }
                 } else if let Some(fr) = s_mut!() {
                     if !(WC_PIPE_TYPE(code) == WC_PIPE_END) {
                         taddstr(" | ");
-                        if st.pc >= st.prog.prog.len() {
+                        if state.pc >= state.prog.prog.len() {
                             break;
                         }
-                        fr.code = st.prog.prog[st.pc];
-                        st.pc += 1;
+                        fr.code = state.prog.prog[state.pc];
+                        state.pc += 1;
                         let end_next = WC_PIPE_TYPE(fr.code) == WC_PIPE_END;
                         fr.pop = if end_next { 1 } else { 0 };
                         if !end_next {
-                            st.pc += 1;
+                            state.pc += 1;
                         }
                         stack = 0;
                     } else {
@@ -457,10 +457,10 @@ pub fn gettext2(st: &mut estate) {
             }
             WC_REDIR => {
                 if !s_active && spopped.is_none() {
-                    st.pc = st.pc.saturating_sub(1); // c:505
-                    let pool = st.prog.strs.as_deref().map(|s| s.as_bytes()).unwrap_or(&[]);
-                    let tail = pool.get(st.strs_offset..).unwrap_or(&[]);
-                    let rows = parse::ecgetredirs(&st.prog.prog, tail, &mut st.pc); // c:507
+                    state.pc = state.pc.saturating_sub(1); // c:505
+                    let pool = state.prog.strs.as_deref().map(|s| s.as_bytes()).unwrap_or(&[]);
+                    let tail = pool.get(state.strs_offset..).unwrap_or(&[]);
+                    let rows = parse::ecgetredirs(&state.prog.prog, tail, &mut state.pc); // c:507
                     let mut lst = LinkList::new();
                     for pr in rows {
                         lst.push_back(redir {
@@ -487,18 +487,18 @@ pub fn gettext2(st: &mut estate) {
                 }
             }
             WC_ASSIGN => {
-                taddassign(code, st, 0);
+                taddassign(code, state, 0);
             }
             WC_SIMPLE => {
-                taddlist(st, WC_SIMPLE_ARGC(code) as i32);
+                taddlist(state, WC_SIMPLE_ARGC(code) as i32);
                 stack = 1;
             }
             WC_TYPESET => {
-                taddlist(st, WC_TYPESET_ARGC(code) as i32);
-                if st.pc < st.prog.prog.len() {
-                    let cnt = st.prog.prog[st.pc];
-                    st.pc += 1;
-                    taddassignlist(st, cnt);
+                taddlist(state, WC_TYPESET_ARGC(code) as i32);
+                if state.pc < state.prog.prog.len() {
+                    let cnt = state.prog.prog[state.pc];
+                    state.pc += 1;
+                    taddassignlist(state, cnt);
                 }
                 stack = 1;
             }
@@ -507,16 +507,16 @@ pub fn gettext2(st: &mut estate) {
                     taddstr("(");
                     tindent.with(|t| *t.borrow_mut() += 1);
                     taddnl(1);
-                    let end_pc = st.pc + WC_SUBSH_SKIP(code) as usize;
+                    let end_pc = state.pc + WC_SUBSH_SKIP(code) as usize;
                     tstack.push(tstack {
                         code,
                         pop: 1,
                         u: tstack_u::Subsh { end_pc },
                     });
-                    st.pc += 1;
+                    state.pc += 1;
                 } else if let Some(fr) = s_mut!() {
                     if let tstack_u::Subsh { end_pc } = fr.u {
-                        st.pc = end_pc;
+                        state.pc = end_pc;
                     }
                     dec_tindent();
                     taddnl(0);
@@ -529,16 +529,16 @@ pub fn gettext2(st: &mut estate) {
                     taddstr("{");
                     tindent.with(|t| *t.borrow_mut() += 1);
                     taddnl(1);
-                    let end_pc = st.pc + WC_CURSH_SKIP(code) as usize;
+                    let end_pc = state.pc + WC_CURSH_SKIP(code) as usize;
                     tstack.push(tstack {
                         code,
                         pop: 1,
                         u: tstack_u::Subsh { end_pc },
                     });
-                    st.pc += 1;
+                    state.pc += 1;
                 } else if let Some(fr) = s_mut!() {
                     if let tstack_u::Subsh { end_pc } = fr.u {
-                        st.pc = end_pc;
+                        state.pc = end_pc;
                     }
                     dec_tindent();
                     taddnl(0);
@@ -567,11 +567,11 @@ pub fn gettext2(st: &mut estate) {
             }
             WC_FUNCDEF => {
                 if !s_active && spopped.is_none() {
-                    let p = st.pc;
+                    let p = state.pc;
                     let end_pc = p + WC_FUNCDEF_SKIP(code) as usize;
-                    let nargs = if p < st.prog.prog.len() {
-                        let n = st.prog.prog[p] as i32;
-                        st.pc += 1;
+                    let nargs = if p < state.prog.prog.len() {
+                        let n = state.prog.prog[p] as i32;
+                        state.pc += 1;
                         n
                     } else {
                         0
@@ -579,7 +579,7 @@ pub fn gettext2(st: &mut estate) {
                     if nargs > 1 {
                         taddstr("function ");
                     }
-                    taddlist(st, nargs);
+                    taddlist(state, nargs);
                     if nargs > 0 {
                         taddstr(" ");
                     }
@@ -589,9 +589,9 @@ pub fn gettext2(st: &mut estate) {
                         } else {
                             taddstr("() { ... }");
                         }
-                        st.pc = end_pc;
-                        if nargs == 0 && end_pc < st.prog.prog.len() {
-                            st.pc += st.prog.prog[end_pc] as usize;
+                        state.pc = end_pc;
+                        if nargs == 0 && end_pc < state.prog.prog.len() {
+                            state.pc += state.prog.prog[end_pc] as usize;
                         }
                         stack = 1;
                     } else {
@@ -602,11 +602,11 @@ pub fn gettext2(st: &mut estate) {
                         }
                         tindent.with(|t| *t.borrow_mut() += 1);
                         taddnl(1);
-                        let soff = st.strs_offset;
-                        if st.pc < st.prog.prog.len() {
-                            let bump = st.prog.prog[st.pc] as usize;
-                            st.strs_offset += bump;
-                            st.pc += 4;
+                        let soff = state.strs_offset;
+                        if state.pc < state.prog.prog.len() {
+                            let bump = state.prog.prog[state.pc] as usize;
+                            state.strs_offset += bump;
+                            state.pc += 4;
                         }
                         tstack.push(tstack {
                             code,
@@ -625,8 +625,8 @@ pub fn gettext2(st: &mut estate) {
                         nargs,
                     } = &mut fr.u
                     {
-                        st.strs_offset = *strs_off;
-                        st.pc = *end_pc;
+                        state.strs_offset = *strs_off;
+                        state.pc = *end_pc;
                         let nargs_copy = *nargs;
                         let end_copy = *end_pc;
                         dec_tindent();
@@ -634,22 +634,22 @@ pub fn gettext2(st: &mut estate) {
                         taddstr("}");
                         if nargs_copy == 0 {
                             let mut epc = end_copy;
-                            if st.pc < st.prog.prog.len() {
-                                epc += st.prog.prog[st.pc] as usize;
-                                st.pc += 1;
+                            if state.pc < state.prog.prog.len() {
+                                epc += state.prog.prog[state.pc] as usize;
+                                state.pc += 1;
                             }
-                            let n2 = if st.pc < st.prog.prog.len() {
-                                let v = st.prog.prog[st.pc] as i32;
-                                st.pc += 1;
+                            let n2 = if state.pc < state.prog.prog.len() {
+                                let v = state.prog.prog[state.pc] as i32;
+                                state.pc += 1;
                                 v
                             } else {
                                 0
                             };
                             if n2 != 0 {
                                 tpush(b' ' as i32);
-                                taddlist(st, n2);
+                                taddlist(state, n2);
                             }
-                            st.pc = epc;
+                            state.pc = epc;
                         }
                     }
                     stack = 1;
@@ -660,24 +660,24 @@ pub fn gettext2(st: &mut estate) {
                     taddstr("for ");
                     if WC_FOR_TYPE(code) == WC_FOR_COND {
                         taddstr("((");
-                        taddstr(&ecgetstr(st, EC_NODUP, None));
+                        taddstr(&ecgetstr(state, EC_NODUP, None));
                         taddstr("; ");
-                        taddstr(&ecgetstr(st, EC_NODUP, None));
+                        taddstr(&ecgetstr(state, EC_NODUP, None));
                         taddstr("; ");
-                        taddstr(&ecgetstr(st, EC_NODUP, None));
+                        taddstr(&ecgetstr(state, EC_NODUP, None));
                         taddstr(")) do");
                     } else {
-                        if st.pc < st.prog.prog.len() {
-                            let a = st.prog.prog[st.pc];
-                            st.pc += 1;
-                            taddlist(st, a as i32);
+                        if state.pc < state.prog.prog.len() {
+                            let a = state.prog.prog[state.pc];
+                            state.pc += 1;
+                            taddlist(state, a as i32);
                         }
                         if WC_FOR_TYPE(code) == WC_FOR_LIST {
                             taddstr(" in ");
-                            if st.pc < st.prog.prog.len() {
-                                let a = st.prog.prog[st.pc];
-                                st.pc += 1;
-                                taddlist(st, a as i32);
+                            if state.pc < state.prog.prog.len() {
+                                let a = state.prog.prog[state.pc];
+                                state.pc += 1;
+                                taddlist(state, a as i32);
                             }
                         }
                         taddnl(0);
@@ -700,13 +700,13 @@ pub fn gettext2(st: &mut estate) {
             WC_SELECT => {
                 if !s_active && spopped.is_none() {
                     taddstr("select ");
-                    taddstr(&ecgetstr(st, EC_NODUP, None));
+                    taddstr(&ecgetstr(state, EC_NODUP, None));
                     if WC_SELECT_TYPE(code) == WC_SELECT_LIST {
                         taddstr(" in ");
-                        if st.pc < st.prog.prog.len() {
-                            let a = st.prog.prog[st.pc];
-                            st.pc += 1;
-                            taddlist(st, a as i32);
+                        if state.pc < state.prog.prog.len() {
+                            let a = state.prog.prog[state.pc];
+                            state.pc += 1;
+                            taddlist(state, a as i32);
                         }
                     }
                     taddnl(0);
@@ -757,7 +757,7 @@ pub fn gettext2(st: &mut estate) {
             WC_REPEAT => {
                 if !s_active && spopped.is_none() {
                     taddstr("repeat ");
-                    taddstr(&ecgetstr(st, EC_NODUP, None));
+                    taddstr(&ecgetstr(state, EC_NODUP, None));
                     taddnl(0);
                     taddstr("do");
                     tindent.with(|t| *t.borrow_mut() += 1);
@@ -776,11 +776,11 @@ pub fn gettext2(st: &mut estate) {
             }
             WC_CASE => {
                 if !s_active && spopped.is_none() {
-                    let end_pc = st.pc + WC_CASE_SKIP(code) as usize;
+                    let end_pc = state.pc + WC_CASE_SKIP(code) as usize;
                     taddstr("case ");
-                    taddstr(&ecgetstr(st, EC_NODUP, None));
+                    taddstr(&ecgetstr(state, EC_NODUP, None));
                     taddstr(" in");
-                    if st.pc >= end_pc {
+                    if state.pc >= end_pc {
                         if tnewlins.with(|c| *c.borrow()) {
                             taddnl(0);
                         } else {
@@ -796,21 +796,21 @@ pub fn gettext2(st: &mut estate) {
                             tpush(b' ' as i32);
                         }
                         taddstr("(");
-                        if st.pc >= st.prog.prog.len() {
+                        if state.pc >= state.prog.prog.len() {
                             break;
                         }
-                        let c2 = st.prog.prog[st.pc];
-                        st.pc += 1;
-                        if st.pc >= st.prog.prog.len() {
+                        let c2 = state.prog.prog[state.pc];
+                        state.pc += 1;
+                        if state.pc >= state.prog.prog.len() {
                             break;
                         }
-                        let prev_pc = st.pc;
-                        let ialts = st.prog.prog[st.pc];
-                        st.pc += 1;
+                        let prev_pc = state.pc;
+                        let ialts = state.prog.prog[state.pc];
+                        state.pc += 1;
                         let mut ial = ialts;
                         while ial > 0 {
-                            taddstr(&ecgetstr(st, EC_NODUP, None));
-                            st.pc = st.pc.saturating_add(1);
+                            taddstr(&ecgetstr(state, EC_NODUP, None));
+                            state.pc = state.pc.saturating_add(1);
                             ial -= 1;
                             if ial > 0 {
                                 taddstr(" | ");
@@ -831,7 +831,7 @@ pub fn gettext2(st: &mut estate) {
                     }
                 } else if let Some(fr) = s_mut!() {
                     if let tstack_u::Case { end_pc } = fr.u {
-                        if st.pc < end_pc {
+                        if state.pc < end_pc {
                             dec_tindent();
                             match WC_CASE_TYPE(code) {
                                 x if x == WC_CASE_OR => taddstr(" ;;"),
@@ -844,21 +844,21 @@ pub fn gettext2(st: &mut estate) {
                                 tpush(b' ' as i32);
                             }
                             taddstr("(");
-                            if st.pc >= st.prog.prog.len() {
+                            if state.pc >= state.prog.prog.len() {
                                 break;
                             }
-                            let c2 = st.prog.prog[st.pc];
-                            st.pc += 1;
-                            if st.pc >= st.prog.prog.len() {
+                            let c2 = state.prog.prog[state.pc];
+                            state.pc += 1;
+                            if state.pc >= state.prog.prog.len() {
                                 break;
                             }
-                            let prev_pc = st.pc;
-                            let ialts = st.prog.prog[st.pc];
-                            st.pc += 1;
+                            let prev_pc = state.pc;
+                            let ialts = state.prog.prog[state.pc];
+                            state.pc += 1;
                             let mut ial = ialts;
                             while ial > 0 {
-                                taddstr(&ecgetstr(st, EC_NODUP, None));
-                                st.pc = st.pc.saturating_add(1);
+                                taddstr(&ecgetstr(state, EC_NODUP, None));
+                                state.pc = state.pc.saturating_add(1);
                                 ial -= 1;
                                 if ial > 0 {
                                     taddstr(" | ");
@@ -893,10 +893,10 @@ pub fn gettext2(st: &mut estate) {
             }
             WC_IF => {
                 if !s_active && spopped.is_none() {
-                    let end_pc = st.pc + WC_IF_SKIP(code) as usize;
+                    let end_pc = state.pc + WC_IF_SKIP(code) as usize;
                     taddstr("if ");
                     tindent.with(|t| *t.borrow_mut() += 1);
-                    st.pc += 1;
+                    state.pc += 1;
                     tstack.push(tstack {
                         code,
                         pop: 0,
@@ -917,14 +917,14 @@ pub fn gettext2(st: &mut estate) {
                             tindent.with(|t| *t.borrow_mut() += 1);
                             taddnl(0);
                             *cond = 0;
-                        } else if st.pc < end_pc {
+                        } else if state.pc < end_pc {
                             dec_tindent();
                             taddnl(0);
-                            if st.pc >= st.prog.prog.len() {
+                            if state.pc >= state.prog.prog.len() {
                                 break;
                             }
-                            let c2 = st.prog.prog[st.pc];
-                            st.pc += 1;
+                            let c2 = state.prog.prog[state.pc];
+                            state.pc += 1;
                             if WC_IF_TYPE(c2) == WC_IF_ELIF {
                                 taddstr("elif ");
                                 tindent.with(|t| *t.borrow_mut() += 1);
@@ -985,11 +985,11 @@ pub fn gettext2(st: &mut estate) {
                         let oct = WC_COND_TYPE(scode);
                         if oct == COND_AND as wordcode {
                             taddstr(" && "); // c:878
-                            if st.pc >= st.prog.prog.len() {
+                            if state.pc >= state.prog.prog.len() {
                                 return 1;
                             }
-                            code = st.prog.prog[st.pc];
-                            st.pc += 1; // c:879
+                            code = state.prog.prog[state.pc];
+                            state.pc += 1; // c:879
                             if WC_COND_TYPE(code) == COND_OR as wordcode {
                                 taddstr("( "); // c:881
                                 tstack.push(tstack {
@@ -1000,11 +1000,11 @@ pub fn gettext2(st: &mut estate) {
                             }
                         } else if oct == COND_OR as wordcode {
                             taddstr(" || "); // c:886
-                            if st.pc >= st.prog.prog.len() {
+                            if state.pc >= state.prog.prog.len() {
                                 return 1;
                             }
-                            code = st.prog.prog[st.pc];
-                            st.pc += 1; // c:887
+                            code = state.prog.prog[state.pc];
+                            state.pc += 1; // c:887
                             if WC_COND_TYPE(code) == COND_AND as wordcode {
                                 taddstr("( "); // c:889
                                 tstack.push(tstack {
@@ -1021,12 +1021,12 @@ pub fn gettext2(st: &mut estate) {
                         match ctype {
                             c if c == COND_NOT => {
                                 taddstr("! "); // c:897
-                                if st.pc >= st.prog.prog.len() {
+                                if state.pc >= state.prog.prog.len() {
                                     stack_out = 1;
                                     continue;
                                 }
-                                code = st.prog.prog[st.pc];
-                                st.pc += 1; // c:898
+                                code = state.prog.prog[state.pc];
+                                state.pc += 1; // c:898
                                 if WC_COND_TYPE(code) <= COND_OR as wordcode {
                                     taddstr("( "); // c:900
                                     tstack.push(tstack {
@@ -1042,12 +1042,12 @@ pub fn gettext2(st: &mut estate) {
                                     pop: 1,
                                     u: tstack_u::Cond { par: 0 },
                                 }); // c:906-907
-                                if st.pc >= st.prog.prog.len() {
+                                if state.pc >= state.prog.prog.len() {
                                     stack_out = 1;
                                     continue;
                                 }
-                                code = st.prog.prog[st.pc];
-                                st.pc += 1; // c:908
+                                code = state.prog.prog[state.pc];
+                                state.pc += 1; // c:908
                                 if WC_COND_TYPE(code) == COND_OR as wordcode {
                                     taddstr("( "); // c:910
                                     tstack.push(tstack {
@@ -1063,12 +1063,12 @@ pub fn gettext2(st: &mut estate) {
                                     pop: 1,
                                     u: tstack_u::Cond { par: 0 },
                                 }); // c:916-917
-                                if st.pc >= st.prog.prog.len() {
+                                if state.pc >= state.prog.prog.len() {
                                     stack_out = 1;
                                     continue;
                                 }
-                                code = st.prog.prog[st.pc];
-                                st.pc += 1; // c:918
+                                code = state.prog.prog[state.pc];
+                                state.pc += 1; // c:918
                                 if WC_COND_TYPE(code) == COND_AND as wordcode {
                                     taddstr("( "); // c:920
                                     tstack.push(tstack {
@@ -1079,33 +1079,33 @@ pub fn gettext2(st: &mut estate) {
                                 }
                             }
                             c if c == COND_MOD => {
-                                taddstr(&ecgetstr(st, EC_NODUP, None)); // c:926
+                                taddstr(&ecgetstr(state, EC_NODUP, None)); // c:926
                                 tpush(b' ' as i32); // c:927
-                                taddlist(st, WC_COND_SKIP(code) as i32); // c:928
+                                taddlist(state, WC_COND_SKIP(code) as i32); // c:928
                                 stack_out = 1; // c:929
                             }
                             c if c == COND_MODI => {
-                                let n = ecgetstr(st, EC_NODUP, None); // c:933
-                                taddstr(&ecgetstr(st, EC_NODUP, None)); // c:935
+                                let n = ecgetstr(state, EC_NODUP, None); // c:933
+                                taddstr(&ecgetstr(state, EC_NODUP, None)); // c:935
                                 tpush(b' ' as i32); // c:936
                                 taddstr(&n); // c:937
                                 tpush(b' ' as i32); // c:938
-                                taddstr(&ecgetstr(st, EC_NODUP, None)); // c:939
+                                taddstr(&ecgetstr(state, EC_NODUP, None)); // c:939
                                 stack_out = 1; // c:940
                             }
                             _ => {
                                 if ctype < COND_MOD {
                                     // c:944-954 binary test branch
-                                    taddstr(&ecgetstr(st, EC_NODUP, None)); // c:946
+                                    taddstr(&ecgetstr(state, EC_NODUP, None)); // c:946
                                     taddstr(" "); // c:947
                                     let op_i = (ctype - COND_STREQ) as usize;
                                     if op_i < COND_BINARY_OPS.len() {
                                         taddstr(COND_BINARY_OPS[op_i]); // c:948 `cond_binary_ops[...]`
                                     }
                                     taddstr(" "); // c:949
-                                    taddstr(&ecgetstr(st, EC_NODUP, None)); // c:950
+                                    taddstr(&ecgetstr(state, EC_NODUP, None)); // c:950
                                     if ctype == COND_STREQ || ctype == COND_STRDEQ || ctype == COND_STRNEQ {
-                                        st.pc += 1; // c:951-954
+                                        state.pc += 1; // c:951-954
                                     }
                                 } else {
                                     // c:956-965 unary `-X` tests
@@ -1114,7 +1114,7 @@ pub fn gettext2(st: &mut estate) {
                                     c2[1] = ctype as u8; // c:960
                                     c2[2] = b' '; // c:961
                                     taddstr(&String::from_utf8_lossy(&c2[..3])); // c:963 `taddstr(c2)`
-                                    taddstr(&ecgetstr(st, EC_NODUP, None)); // c:964
+                                    taddstr(&ecgetstr(state, EC_NODUP, None)); // c:964
                                 }
                                 stack_out = 1; // c:966
                             }
@@ -1125,7 +1125,7 @@ pub fn gettext2(st: &mut estate) {
             }
             WC_ARITH => {
                 taddstr("((");
-                taddstr(&ecgetstr(st, EC_NODUP, None));
+                taddstr(&ecgetstr(state, EC_NODUP, None));
                 taddstr("))");
                 stack = 1;
             }
@@ -1138,14 +1138,14 @@ pub fn gettext2(st: &mut estate) {
                     taddstr("{");
                     tindent.with(|t| *t.borrow_mut() += 1);
                     taddnl(0);
-                    if st.pc < st.prog.prog.len() {
-                        st.pc += 1;
-                        let w = if st.pc > 0 {
-                            st.prog.prog[st.pc - 1]
+                    if state.pc < state.prog.prog.len() {
+                        state.pc += 1;
+                        let w = if state.pc > 0 {
+                            state.prog.prog[state.pc - 1]
                         } else {
                             0
                         };
-                        let end_pc = st.pc + WC_CURSH_SKIP(w) as usize;
+                        let end_pc = state.pc + WC_CURSH_SKIP(w) as usize;
                         tstack.push(tstack {
                             code,
                             pop: 0,
@@ -1155,7 +1155,7 @@ pub fn gettext2(st: &mut estate) {
                 } else if let Some(fr) = s_mut!() {
                     if fr.pop == 0 {
                         if let tstack_u::Subsh { end_pc } = fr.u {
-                            st.pc = end_pc;
+                            state.pc = end_pc;
                         }
                         dec_tindent();
                         taddnl(0);
@@ -1188,7 +1188,7 @@ fn useeprog(_p: &Eprog) {}
 #[inline]
 fn freeeprog(_p: &Eprog) {}
 
-/// Port of `zoutputtab()` from `Src/text.c:263`.
+/// Port of `zoutputtab(outf)` from `Src/text.c:263`.
 pub fn zoutputtab<W: std::io::Write>(outf: &mut W) -> std::io::Result<()> {
     let expand_tabs = TEXT_EXPAND_TABS.load(Ordering::Relaxed);
     if expand_tabs < 0 {
@@ -1202,11 +1202,11 @@ pub fn zoutputtab<W: std::io::Write>(outf: &mut W) -> std::io::Result<()> {
     }
 }
 
-/// Port of `getpermtext()` from `Src/text.c:279`.
+/// Port of `getpermtext(prog, c, start_indent)` from `Src/text.c:279`.
 pub fn getpermtext(prog: Eprog, start_pc: Option<usize>, start_indent: i32) -> String {
     queue_signals();
     useeprog(&prog);
-    let mut st = estate {
+    let mut state = estate {
         prog,
         pc: start_pc.unwrap_or(0),
         strs: None,
@@ -1218,24 +1218,24 @@ pub fn getpermtext(prog: Eprog, start_pc: Option<usize>, start_indent: i32) -> S
     tindent.with(|t| *t.borrow_mut() = start_indent);
     tnewlins.with(|n| *n.borrow_mut() = true);
     tjob.with(|j| *j.borrow_mut() = false);
-    if st.prog.len != 0 {
-        gettext2(&mut st);
+    if state.prog.len != 0 {
+        gettext2(&mut state);
     }
     let raw = tbuf.with(|tb| {
         let mut v = tb.borrow_mut();
         String::from_utf8_lossy(&std::mem::take(&mut *v)).into_owned()
     });
-    let p = st.prog;
+    let p = state.prog;
     freeeprog(&p);
     unqueue_signals();
     lex::untokenize(&raw)
 }
 
-/// Port of `getjobtext()` from `Src/text.c:315`.
+/// Port of `getjobtext(prog, c)` from `Src/text.c:315`.
 pub fn getjobtext(prog: Eprog, start_pc: Option<usize>) -> String {
     queue_signals();
     useeprog(&prog);
-    let mut st = estate {
+    let mut state = estate {
         prog,
         pc: start_pc.unwrap_or(0),
         strs: None,
@@ -1247,8 +1247,8 @@ pub fn getjobtext(prog: Eprog, start_pc: Option<usize>) -> String {
     tindent.with(|t| *t.borrow_mut() = 0);
     tnewlins.with(|n| *n.borrow_mut() = true);
     tjob.with(|j| *j.borrow_mut() = true);
-    if st.prog.len != 0 {
-        gettext2(&mut st);
+    if state.prog.len != 0 {
+        gettext2(&mut state);
     }
     let mut raw = tbuf.with(|tb| {
         let mut v = tb.borrow_mut();
@@ -1257,13 +1257,13 @@ pub fn getjobtext(prog: Eprog, start_pc: Option<usize>) -> String {
     if raw.ends_with(META) {
         raw.pop();
     }
-    let p = st.prog;
+    let p = state.prog;
     freeeprog(&p);
     unqueue_signals();
     lex::untokenize(&raw)
 }
 
-/// Port of `getredirs()` from `Src/text.c:1019`.
+/// Port of `getredirs(redirs)` from `Src/text.c:1019`.
 pub fn getredirs(redirs: &LinkList<redir>) {
     queue_signals(); // c:1028
     tpush(b' ' as i32); // c:1030

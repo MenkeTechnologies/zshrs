@@ -61,7 +61,7 @@ pub fn ask() -> i32 {                                                        // 
 // bin_sync — `Src/Modules/files.c:53`.
 // =====================================================================
 
-/// Direct port of `bin_sync()` from `Src/Modules/files.c:53`.
+/// Direct port of `bin_sync(nam, args, ops, func)` from `Src/Modules/files.c:53`.
 /// C body (c:55-57): `sync(); return 0;`.
 // sync builtin                                                             // c:49
 pub fn bin_sync(_nam: &str, _args: &[String],                                // c:53
@@ -74,7 +74,7 @@ pub fn bin_sync(_nam: &str, _args: &[String],                                // 
 // bin_mkdir + domkdir — `Src/Modules/files.c:63`, `:115`.
 // =====================================================================
 
-/// Direct port of `bin_mkdir()` from `Src/Modules/files.c:63`.
+/// Direct port of `bin_mkdir(nam, args, ops)` from `Src/Modules/files.c:63`.
 /// C body (c:65-110): default mode = 0777 & ~umask; parse -m; for
 /// each arg, strip trailing slashes; with -p walk each `/` segment.
 // mkdir builtin                                                            // c:59
@@ -128,7 +128,7 @@ pub fn bin_mkdir(nam: &str, args: &[String],                                 // 
     err                                                                      // c:109
 }
 
-/// Direct port of `domkdir()` from `Src/Modules/files.c:115`.
+/// Direct port of `domkdir(nam, path, mode, p)` from `Src/Modules/files.c:115`.
 /// C body (c:120-141): retry up to 8 times if EEXIST + p && stat
 /// shows existing entry is itself a directory.
 pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {            // c:115
@@ -167,7 +167,7 @@ pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {            // 
 // bin_rmdir — `Src/Modules/files.c:150`.
 // =====================================================================
 
-/// Direct port of `bin_rmdir()` from `Src/Modules/files.c:150`.
+/// Direct port of `bin_rmdir(nam, args)` from `Src/Modules/files.c:150`.
 /// C body (c:154-164): for each arg, call rmdir(2); accumulate err.
 // rmdir builtin                                                            // c:146
 pub fn bin_rmdir(nam: &str, args: &[String],                                 // c:150
@@ -208,7 +208,7 @@ pub enum MoveFunc {
     Rename,                                                                  // c:213
 }
 
-/// Direct port of `bin_ln()` from `Src/Modules/files.c:200`.
+/// Direct port of `bin_ln(nam, args, ops, func)` from `Src/Modules/files.c:200`.
 /// C body (c:209-296):
 ///   - func == BIN_MV → movefn = rename, MV_ASKNW unless -f, MV_ATOMIC
 ///   - else → MV_FORCE if -f; -h/-n adds MV_NOCHASETARGET; -s →
@@ -307,7 +307,7 @@ pub fn bin_ln(nam: &str, args: &[String],                                    // 
     domove(nam, &movefn, &src, &dest, flags)                                 // c:275
 }
 
-/// Direct port of `domove()` from `Src/Modules/files.c:298`.
+/// Direct port of `domove(nam, movefn, p, q, flags)` from `Src/Modules/files.c:298`.
 /// C body (c:300-360): if MV_NODIRS, refuse src that is dir; if dest
 /// exists, force/interactive/asknw checks; unlink dest if not atomic;
 /// then call movefn(src, dest) and report errno on failure.
@@ -490,7 +490,7 @@ where
     err | (reccmd.dirpost_func)(arg, rp, Some(sp))                           // c:524
 }
 
-/// Direct port of `recurse_donothing()` from `Src/Modules/files.c:530`.
+/// Direct port of `recurse_donothing(arg, rp, sp, magic)` from `Src/Modules/files.c:530`.
 /// C body: `return 0;`.
 pub fn recurse_donothing(_arg: &str, _rp: &str,                              // c:530
                          _sp: Option<&std::fs::Metadata>) -> i32 {
@@ -509,7 +509,7 @@ pub struct rmmagic<'a> {
     pub opt_unlinkdir: i32,                                                  // c:541
 }
 
-/// Direct port of `rm_leaf()` from `Src/Modules/files.c:546`.
+/// Direct port of `rm_leaf(arg, rp, sp, magic)` from `Src/Modules/files.c:546`.
 /// C body (c:551-589):
 ///   - if !opt_unlinkdir || !opt_force: lstat (if not provided);
 ///     refuse directories; ask if interactive; warn if read-only
@@ -559,7 +559,7 @@ pub fn rm_leaf(arg: &str, rp: &str, sp: Option<&std::fs::Metadata>,          // 
     0                                                                        // c:589
 }
 
-/// Direct port of `rm_dirpost()` from `Src/Modules/files.c:594`.
+/// Direct port of `rm_dirpost(arg, rp, magic)` from `Src/Modules/files.c:594`.
 /// C body (c:599-613): rmdir(rp); error path returns 1 unless -f.
 pub fn rm_dirpost(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,      // c:594
                   rmm: &rmmagic) -> i32 {
@@ -575,7 +575,7 @@ pub fn rm_dirpost(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,      // 
     0                                                                        // c:612
 }
 
-/// Direct port of `bin_rm()` from `Src/Modules/files.c:616`.
+/// Direct port of `bin_rm(nam, args, ops)` from `Src/Modules/files.c:616`.
 /// C body (c:621-633): build rmmagic; recursivecmd with rm_dirpost
 /// + rm_leaf; -f swallows the err code.
 // rm builtin                                                               // c:535
@@ -609,7 +609,7 @@ pub struct chmodmagic<'a> {
     pub mode: u32,                                                           // c:637
 }
 
-/// Direct port of `chmod_dochmod()` from `Src/Modules/files.c:642`.
+/// Direct port of `chmod_dochmod(arg, rp, magic)` from `Src/Modules/files.c:642`.
 /// C body (c:646-652): `chmod(rp, mode)`; warn + return 1 on failure.
 pub fn chmod_dochmod(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // c:642
                      chm: &chmodmagic) -> i32 {
@@ -625,7 +625,7 @@ pub fn chmod_dochmod(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // 
     0                                                                        // c:650
 }
 
-/// Direct port of `bin_chmod()` from `Src/Modules/files.c:655`.
+/// Direct port of `bin_chmod(nam, args, ops)` from `Src/Modules/files.c:655`.
 /// C body (c:659-672): parse `args[0]` as octal mode; recursivecmd
 /// over `args[1..]` applying chmod_dochmod.
 // chmod builtin                                                            // c:633
@@ -663,7 +663,7 @@ pub struct chownmagic<'a> {
     pub gid: i64,                                                            // c:677
 }
 
-/// Direct port of `chown_dochown()` from `Src/Modules/files.c:682`.
+/// Direct port of `chown_dochown(arg, rp, magic)` from `Src/Modules/files.c:682`.
 /// C body (c:686-692): `chown(rp, uid, gid)`; warn + return 1 on failure.
 pub fn chown_dochown(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // c:682
                      chm: &chownmagic) -> i32 {
@@ -681,7 +681,7 @@ pub fn chown_dochown(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // 
     0                                                                        // c:690
 }
 
-/// Direct port of `chown_dolchown()` from `Src/Modules/files.c:695`.
+/// Direct port of `chown_dolchown(arg, rp, magic)` from `Src/Modules/files.c:695`.
 /// C body (c:699-705): `lchown(rp, uid, gid)`.
 pub fn chown_dolchown(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,  // c:695
                       chm: &chownmagic) -> i32 {
@@ -699,7 +699,7 @@ pub fn chown_dolchown(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,  // 
     0                                                                        // c:703
 }
 
-/// Direct port of `getnumeric()` from `Src/Modules/files.c:708`.
+/// Direct port of `getnumeric(p, errp)` from `Src/Modules/files.c:708`.
 /// C body (c:712-719): parse leading digits as base-10 unsigned long;
 /// `*errp = !!*p` after parse — set when there are trailing non-digits.
 pub fn getnumeric(p: &str, errp: &mut i32) -> u64 {                          // c:708
@@ -713,7 +713,7 @@ pub fn getnumeric(p: &str, errp: &mut i32) -> u64 {                          // 
     ret                                                                      // c:718
 }
 
-/// Direct port of `bin_chown()` from `Src/Modules/files.c:725`.
+/// Direct port of `bin_chown(nam, args, ops, func)` from `Src/Modules/files.c:725`.
 /// C body (c:729-797): parse `user[:group]` spec; for chgrp, skip the
 /// user half; getpwnam / getnumeric / getgrnam fallbacks; recursivecmd
 /// with chown_dochown or chown_dolchown for `-h`.
@@ -849,24 +849,24 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/files.c:838`.
+/// Port of `setup_(m)` from `Src/Modules/files.c:838`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:838
     // C body c:840-841 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_()` from `Src/Modules/files.c:845`.
+/// Port of `features_(m, features)` from `Src/Modules/files.c:845`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:845
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_()` from `Src/Modules/files.c:853`.
+/// Port of `enables_(m, enables)` from `Src/Modules/files.c:853`.
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:853
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_()` from `Src/Modules/files.c:860`.
+/// Port of `boot_(m)` from `Src/Modules/files.c:860`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:860
     // C body c:862-863 — `return 0`. Faithful empty-body port; the
     //                    chmod/chown/chgrp/sync/etc. builtins register
@@ -874,12 +874,12 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/files.c:867`.
+/// Port of `cleanup_(m)` from `Src/Modules/files.c:867`.
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:867
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_()` from `Src/Modules/files.c:874`.
+/// Port of `finish_(m)` from `Src/Modules/files.c:874`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:874
     // C body c:876-877 — `return 0`. Faithful empty-body port; the
     //                    builtins unregister via cleanup_'s setfeatureenables.

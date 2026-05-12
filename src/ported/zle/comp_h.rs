@@ -255,7 +255,7 @@ pub struct Cexpl {                                                       // c:40
     /// Display even without matches.
     pub always: i32,                                                     // c:41
     /// The string itself.
-    pub str_: Option<String>,                                            // c:42 (Rust keyword `str`)
+    pub str: Option<String>,                                            // c:42 (Rust keyword `str`)
     /// Number of matches.
     pub count: i32,                                                      // c:43
     /// Number of matches with fignore ignored.
@@ -333,7 +333,7 @@ pub struct Cmgroup {                                                     // c:49
 #[allow(non_camel_case_types)]
 pub struct Cmatch {                                                      // c:99
     /// The match itself.
-    pub str_: Option<String>,                                            // c:100 (Rust keyword)
+    pub str: Option<String>,                                            // c:100 (Rust keyword)
     /// The match string unquoted.
     pub orig: Option<String>,                                            // c:101
     /// Ignored prefix, has to be re-inserted.
@@ -394,7 +394,7 @@ pub struct Cmlist {                                                      // c:14
     /// The matcher definition.
     pub matcher: Box<Cmatcher>,                                          // c:149
     /// The string for it.
-    pub str_: String,                                                    // c:150
+    pub str: String,                                                    // c:150
 }
 
 /// Port of `struct cmatcher` from `Src/Zle/comp.h:153-167`. Matcher
@@ -447,7 +447,7 @@ pub struct Cpattern {                                                    // c:19
     /// If a character class (CPAT_CCLASS/CPAT_NCLASS/CPAT_EQUIV),
     /// the objects in it as a metafied string with tokens. Note the
     /// C allocated length may exceed the null-terminated string.
-    pub str_: Option<String>,                                            // c:201 union.u.str
+    pub str: Option<String>,                                            // c:201 union.u.str
     /// If a single character (CPAT_CHAR), it.
     pub chr: u32,                                                        // c:208 union.u.chr (convchar_t)
 }
@@ -537,7 +537,7 @@ pub struct Menuinfo {                                                    // c:28
 #[allow(non_camel_case_types)]
 pub struct Ccmakedat {                                                   // c:455
     /// String passed to the hook.
-    pub str_: Option<String>,                                            // c:456
+    pub str: Option<String>,                                            // c:456
     /// Whether we're in a command position.
     pub incmd: i32,                                                      // c:457
     /// List flag.

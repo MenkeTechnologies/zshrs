@@ -45,7 +45,7 @@ struct Datum {
 }
 
 impl From<&[u8]> for Datum {
-    /// Port of `gdbmgetfn()` from `Src/Modules/db_gdbm.c:282`.
+    /// Port of `gdbmgetfn(pm)` from `Src/Modules/db_gdbm.c:282`.
     fn from(data: &[u8]) -> Self {
         let ptr = unsafe { libc::malloc(data.len()) as *mut c_char };
         if !ptr.is_null() {
@@ -136,7 +136,7 @@ pub struct GdbmDatabase {
 }
 
 impl GdbmDatabase {
-    /// Port of `bin_ztie()` from `Src/Modules/db_gdbm.c:109`.
+    /// Port of `bin_ztie(nam, args, ops)` from `Src/Modules/db_gdbm.c:109`.
     #[cfg(feature = "gdbm")]
     pub fn open(path: &Path, readonly: bool) -> Result<Self, String> {
         let c_path = CString::new(path.to_string_lossy().as_bytes()).map_err(|_| "Invalid path")?;
@@ -175,7 +175,7 @@ impl GdbmDatabase {
         Err("GDBM support not compiled in".to_string())
     }
 
-    /// Port of `gdbmgetfn()` from `Src/Modules/db_gdbm.c:282`.
+    /// Port of `gdbmgetfn(pm)` from `Src/Modules/db_gdbm.c:282`.
     #[cfg(feature = "gdbm")]
     pub fn get(&self, key: &str) -> Option<String> {                        // c:282
         let key_bytes = key.as_bytes();
@@ -223,7 +223,7 @@ impl GdbmDatabase {
         None
     }
 
-    /// Port of `gdbmhashsetfn()` from `Src/Modules/db_gdbm.c:476`.
+    /// Port of `gdbmhashsetfn(pm, ht)` from `Src/Modules/db_gdbm.c:476`.
     #[cfg(feature = "gdbm")]
     pub fn set(&self, key: &str, value: &str) -> Result<(), String> {       // c:476
         if self.readonly {
@@ -267,7 +267,7 @@ impl GdbmDatabase {
         Err("GDBM support not compiled in".to_string())
     }
 
-    // Port of `gdbmunsetfn()` from `Src/Modules/db_gdbm.c:399`.
+    // Port of `gdbmunsetfn(pm)` from `Src/Modules/db_gdbm.c:399`.
     #[cfg(feature = "gdbm")]
     pub fn delete(&self, key: &str) -> Result<(), String> {                 // c:399
         if self.readonly {
@@ -302,7 +302,7 @@ impl GdbmDatabase {
         Err("GDBM support not compiled in".to_string())
     }
 
-    /// Port of `scangdbmkeys()` from `Src/Modules/db_gdbm.c:442`.
+    /// Port of `scangdbmkeys(ht, func, flags)` from `Src/Modules/db_gdbm.c:442`.
     #[cfg(feature = "gdbm")]
     pub fn keys(&self) -> Vec<String> {
         let mut keys = Vec::new();
@@ -337,7 +337,7 @@ impl GdbmDatabase {
         Vec::new()
     }
 
-    /// Port of `scangdbmkeys()` from `Src/Modules/db_gdbm.c:442`.
+    /// Port of `scangdbmkeys(ht, func, flags)` from `Src/Modules/db_gdbm.c:442`.
     #[cfg(feature = "gdbm")]
     pub fn clear(&self) -> Result<(), String> {
         if self.readonly {
@@ -505,7 +505,7 @@ pub(crate) static TIED_PARAMS: Lazy<Mutex<HashMap<String, Arc<TiedGdbmParam>>>> 
 /// List currently-tied GDBM parameter names — backs the
 /// `${gdbm_tied}` magic-assoc reader.
 /// Port of `append_tied_name()` / `remove_tied_name()` (the
-/// Port of `append_tied_name()` from `Src/Modules/db_gdbm.c:695`.
+/// Port of `append_tied_name(name)` from `Src/Modules/db_gdbm.c:695`.
 ///
 /// C body:
 /// ```c
@@ -533,7 +533,7 @@ pub fn append_tied_name(name: &str) -> i32 {                             // c:69
     0                                                                    // c:713
 }
 
-/// Port of `remove_tied_name()` from `Src/Modules/db_gdbm.c:720`.
+/// Port of `remove_tied_name(name)` from `Src/Modules/db_gdbm.c:720`.
 ///
 /// C body removes `name` from the `zgdbm_tied` array via in-place
 /// shift-down, frees the popped slot.
@@ -552,7 +552,7 @@ pub fn remove_tied_name(name: &str) -> i32 {                             // c:72
 pub static ZGDBM_TIED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
 /// `ztie` builtin entry point — bind a parameter to a GDBM file.
-/// Port of `bin_ztie()` from Src/Modules/db_gdbm.c:109 — the C
+/// Port of `bin_ztie(nam, args, ops)` from Src/Modules/db_gdbm.c:109 — the C
 /// source opens the GDBM file via `gdbm_open()`, allocates a hash
 /// `Param`, wires the per-key getter/setter slots, and inserts
 /// the param name into the tied-list.
@@ -658,7 +658,7 @@ pub fn bin_ztie(nam: &str, args: &[String], ops: &crate::ported::zsh_h::options,
 }
 
 /// `zuntie` builtin entry point — release a tied parameter.
-/// Port of `bin_zuntie()` from Src/Modules/db_gdbm.c:201 — the C
+/// Port of `bin_zuntie(nam, args, ops)` from Src/Modules/db_gdbm.c:201 — the C
 /// source's `gdbmuntie()` (line 555) closes the database, frees
 /// the hash table, and removes the entry from the tied-list.
 ///
@@ -708,7 +708,7 @@ pub fn bin_zuntie(nam: &str, args: &[String], ops: &crate::ported::zsh_h::option
     ret                                                                   // c:231
 }
 
-/// Port of `bin_zgdbmpath()` from `Src/Modules/db_gdbm.c:236`.
+/// Port of `bin_zgdbmpath(nam, args)` from `Src/Modules/db_gdbm.c:236`.
 /// `zgdbmpath` builtin entry point — write tied parameter's path to $REPLY.
 ///
 /// C signature mirrored verbatim:
@@ -754,7 +754,7 @@ pub fn bin_zgdbmpath(nam: &str, args: &[String], _ops: &crate::ported::zsh_h::op
     0                                                                    // c:265
 }
 
-/// Port of `gdbmgetfn()` from `Src/Modules/db_gdbm.c:282`.
+/// Port of `gdbmgetfn(pm)` from `Src/Modules/db_gdbm.c:282`.
 ///
 /// C signature mirrored: `static char * gdbmgetfn(Param pm)`.
 /// Returns the (Meta-encoded) value of `pm->node.nam` from the
@@ -778,7 +778,7 @@ pub fn gdbmgetfn(param_name: &str, key: &str) -> String {                // c:28
     }
 }
 
-/// Port of `gdbmsetfn()` from `Src/Modules/db_gdbm.c:347`.
+/// Port of `gdbmsetfn(pm, val)` from `Src/Modules/db_gdbm.c:347`.
 ///
 /// C signature mirrored: `static void gdbmsetfn(Param pm, char *val)`.
 /// Writes (Meta-decoded) `val` to the gdbm database under
@@ -795,7 +795,7 @@ pub fn gdbmsetfn(param_name: &str, key: &str, val: Option<&str>) {       // c:34
     }
 }
 
-/// Port of `gdbmunsetfn()` from `Src/Modules/db_gdbm.c:399`.
+/// Port of `gdbmunsetfn(pm)` from `Src/Modules/db_gdbm.c:399`.
 ///
 /// C signature mirrored: `static void gdbmunsetfn(Param pm, UNUSED(int um))`.
 /// Calls `gdbmsetfn(pm, NULL)` to delete the key.
@@ -804,7 +804,7 @@ pub fn gdbmunsetfn(param_name: &str, key: &str, _um: i32) {              // c:39
     gdbmsetfn(param_name, key, None);
 }
 
-/// Port of `scangdbmkeys()` from `Src/Modules/db_gdbm.c:442`.
+/// Port of `scangdbmkeys(ht, func, flags)` from `Src/Modules/db_gdbm.c:442`.
 ///
 /// C body:
 /// ```c
@@ -847,7 +847,7 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-    /// Port of `bin_ztie()` from `Src/Modules/db_gdbm.c:109`.
+    /// Port of `bin_ztie(nam, args, ops)` from `Src/Modules/db_gdbm.c:109`.
     #[test]
     #[cfg(feature = "gdbm")]
     fn test_gdbm_basic_operations() {
@@ -884,7 +884,7 @@ mod tests {
         assert_eq!(db.keys().len(), 0);
     }
 
-    /// Port of `bin_ztie()` from `Src/Modules/db_gdbm.c:109`.
+    /// Port of `bin_ztie(nam, args, ops)` from `Src/Modules/db_gdbm.c:109`.
     #[test]
     #[cfg(feature = "gdbm")]
     fn test_tied_param() {
@@ -931,24 +931,24 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/db_gdbm.c:613`.
+/// Port of `setup_(m)` from `Src/Modules/db_gdbm.c:613`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:613
     // C body c:615-616 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_()` from `Src/Modules/db_gdbm.c:620`.
+/// Port of `features_(m, features)` from `Src/Modules/db_gdbm.c:620`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_()` from `Src/Modules/db_gdbm.c:628`.
+/// Port of `enables_(m, enables)` from `Src/Modules/db_gdbm.c:628`.
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_()` from `Src/Modules/db_gdbm.c:635`.
+/// Port of `boot_(m)` from `Src/Modules/db_gdbm.c:635`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:635
     // C body c:637-638 — `zgdbm_tied = zshcalloc((1) * sizeof(char *));
     //                     return 0`. Initializes the tied-DB names
@@ -959,19 +959,19 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/db_gdbm.c:643`.
+/// Port of `cleanup_(m)` from `Src/Modules/db_gdbm.c:643`.
 pub fn cleanup_(m: *const module) -> i32 {
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_()` from `Src/Modules/db_gdbm.c:651`.
+/// Port of `finish_(m)` from `Src/Modules/db_gdbm.c:651`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:651
     // C body c:653-654 — `return 0`. Faithful empty-body port; tied-DB
     //                     teardown happens in cleanup_ via untie+free.
     0
 }
 
-/// Port of `unmetafy_zalloc()` from `Src/Modules/db_gdbm.c:776`.
+/// Port of `unmetafy_zalloc(to_copy, new_len)` from `Src/Modules/db_gdbm.c:776`.
 /// Allocates a copy of `to_copy`, unmetafies it, and writes the
 /// new length to `*new_len`. Returns the unmetafied buffer.
 ///
@@ -983,11 +983,11 @@ pub fn unmetafy_zalloc(to_copy: &str) -> (String, usize) {               // c:77
     (s, len)
 }
 
-/// Port of `myfreeparamnode()` from `Src/Modules/db_gdbm.c:799`. The
+/// Port of `myfreeparamnode(hn)` from `Src/Modules/db_gdbm.c:799`. The
 /// per-element free callback for the gdbm-tied hash. Frees the
 /// param's name + str fields.
 ///
-/// Port of `myfreeparamnode()` from `Src/Modules/db_gdbm.c:799`.
+/// Port of `myfreeparamnode(hn)` from `Src/Modules/db_gdbm.c:799`.
 ///
 /// C body:
 /// ```c
@@ -1025,11 +1025,11 @@ pub fn myfreeparamnode(param_name: &str, key: &str) {                    // c:79
     // c:818 — `zfree(pm, sizeof(struct param));` — Drop on remove.
 }
 
-/// Port of `getgdbmnode()` from `Src/Modules/db_gdbm.c:407`. The
+/// Port of `getgdbmnode(ht, name)` from `Src/Modules/db_gdbm.c:407`. The
 /// magic-assoc lookup callback for `${gdbm_param[key]}`. Reads
 /// from the underlying gdbm database.
 ///
-/// Port of `getgdbmnode()` from `Src/Modules/db_gdbm.c:407`.
+/// Port of `getgdbmnode(ht, name)` from `Src/Modules/db_gdbm.c:407`.
 ///
 /// C body:
 /// ```c
@@ -1078,7 +1078,7 @@ pub fn getgdbmnode(param_name: &str, name: &str) -> bool {               // c:40
     exists                                                                // c:437 return val_pm
 }
 
-/// Port of `gdbmhashsetfn()` from `Src/Modules/db_gdbm.c:476`.
+/// Port of `gdbmhashsetfn(pm, ht)` from `Src/Modules/db_gdbm.c:476`.
 ///
 /// C body iterates the assigned `HashTable ht` and `gdbm_store`s each
 /// (key, value) pair into the tied param's underlying gdbm DB.
@@ -1097,7 +1097,7 @@ pub fn gdbmhashsetfn(param_name: &str, entries: &[(String, String)]) {   // c:47
     }
 }
 
-/// Port of `gdbmuntie()` from `Src/Modules/db_gdbm.c:555`.
+/// Port of `gdbmuntie(pm)` from `Src/Modules/db_gdbm.c:555`.
 ///
 /// C body: `gdbm_close(dbf); pm->u.hash->tmpdata = NULL;`
 /// Removes the tied param from the registry, dropping the
@@ -1109,7 +1109,7 @@ pub fn gdbmuntie(param_name: &str) {                                     // c:55
     }
 }
 
-/// Port of `gdbmhashunsetfn()` from `Src/Modules/db_gdbm.c:581`.
+/// Port of `gdbmhashunsetfn(pm)` from `Src/Modules/db_gdbm.c:581`.
 ///
 /// C body:
 /// ```c

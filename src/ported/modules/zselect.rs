@@ -44,7 +44,7 @@ pub fn handle_digits(                                                    // c:40
     0                                                                    // c:58
 }
 
-/// Port of `bin_zselect()` from `Src/Modules/zselect.c:65`. The
+/// Port of `bin_zselect(nam, args)` from `Src/Modules/zselect.c:65`. The
 /// `zselect` builtin: parses a `[-r|-w|-e] FD ...` argv with an
 /// optional `-t TIMEOUT` (hundredths of a second) and an optional
 /// `-a NAME` / `-A NAME` for a custom output array / hash, then
@@ -275,36 +275,36 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/zselect.c:288`.
+/// Port of `setup_(m)` from `Src/Modules/zselect.c:288`.
 pub fn setup_(_m: *const module) -> i32 {                                // c:288
     0                                                                    // c:291
 }
 
-/// Port of `features_()` from `Src/Modules/zselect.c:295`.
+/// Port of `features_(m, features)` from `Src/Modules/zselect.c:295`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 { // c:295
     *features = featuresarray(m, module_features());
     0                                                                    // c:299
 }
 
-/// Port of `enables_()` from `Src/Modules/zselect.c:303`.
+/// Port of `enables_(m, enables)` from `Src/Modules/zselect.c:303`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:303
     handlefeatures(m, module_features(), enables) // c:306
 }
 
-/// Port of `boot_()` from `Src/Modules/zselect.c:310`.
+/// Port of `boot_(m)` from `Src/Modules/zselect.c:310`.
 pub fn boot_(_m: *const module) -> i32 {                                 // c:310
     0                                                                    // c:313
 }
 
-/// Port of `cleanup_()` from `Src/Modules/zselect.c:318`.
+/// Port of `cleanup_(m)` from `Src/Modules/zselect.c:318`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                              // c:318
     setfeatureenables(m, module_features(), None) // c:321
 }
 
-/// Port of `finish_()` from `Src/Modules/zselect.c:325`.
+/// Port of `finish_(m)` from `Src/Modules/zselect.c:325`.
 pub fn finish_(_m: *const module) -> i32 {                               // c:325
     0                                                                    // c:328
 }
@@ -326,7 +326,7 @@ mod tests {
         args.iter().map(|a| a.to_string()).collect()
     }
 
-    /// Port of `bin_zselect()` from `Src/Modules/zselect.c:65`.
+    /// Port of `bin_zselect(nam, args)` from `Src/Modules/zselect.c:65`.
     #[test]
     fn empty_args_with_zero_timeout_returns_one() {
         // C zsh body: with `-t 0` and no fds, select() returns 0
@@ -366,7 +366,7 @@ mod tests {
         assert_eq!(r, 1);
     }
 
-    /// Port of `bin_zselect()` from `Src/Modules/zselect.c:65`.
+    /// Port of `bin_zselect(nam, args)` from `Src/Modules/zselect.c:65`.
     #[test]
     fn handle_digits_invalid_input() {
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
@@ -376,7 +376,7 @@ mod tests {
         assert_eq!(handle_digits("zselect", "12abc", &mut fdset, &mut fdmax), 1);
     }
 
-    /// Port of `bin_zselect()` from `Src/Modules/zselect.c:65`.
+    /// Port of `bin_zselect(nam, args)` from `Src/Modules/zselect.c:65`.
     #[test]
     fn handle_digits_sets_fd_and_fdmax() {
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };

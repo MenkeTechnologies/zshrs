@@ -40,309 +40,24 @@ use crate::ported::zsh_h::{
 // `evalcond`'s integer return values are documented in the C source
 // at cond.c:62-66; we use bare i32 throughout (no enum wrapper).
 
-// ===========================================================
-// CondExpr / CondParser — Rust-only scaffold (NOT in C).
-//
-// The C parser (par_cond_* in parse.c) emits wordcode bytecode.
-// This Rust scaffold builds a tagged AST instead. Operator codes
-// reuse the canonical `COND_*` i32 constants from zsh_h.rs:1199
-// (which mirror zsh.h:660-679) so the AST discriminator at least
-// matches C wire values.
-// ===========================================================
+// `CondExpr` enum + `CondParser` struct DELETED. The Rust port no
+// longer builds an intermediate AST: `evalcond` below is a single-
+// pass recursive-descent walker that parses AND evaluates the argv
+// stream in one go. C's `evalcond` at `Src/cond.c:70` walks
+// pre-compiled wordcode (`Estate state` + `WC_COND_TYPE` opcode
+// dispatch) — when the wordcode pipeline is wired through this
+// builtin's call site, `evalcond` should be re-shaped to match
+// the C signature `int evalcond(Estate, char *fromtest)` and walk
+// `WC_COND_*` opcodes directly. Until then, the streaming evaluator
+// here gives equivalent runtime behaviour without an AST type.
 
-/// Parsed expression tree.
+/// Argv-form `[[ … ]]` / `test … ]` driver. C signature differs:
+/// `int evalcond(Estate state, char *fromtest)` at cond.c:70 walks
+/// wordcode; this argv-form is a Rust-side adaptation pending the
+/// wordcode pipeline wiring.
 ///
-/// **WARNING — NOT IN C.** zsh's parser emits wordcode bytecode,
-/// not a typed AST. Will be deleted when the wordcode path lands.
-#[derive(Debug, Clone)]
-pub enum CondExpr {
-    Not(Box<CondExpr>),
-    And(Box<CondExpr>, Box<CondExpr>),
-    Or(Box<CondExpr>, Box<CondExpr>),
-    /// One-letter unary test (`-e file`, `-z str`, …).
-    Unary(char, String),
-    /// Binary test, op = one of `crate::ported::zsh_h::COND_*` values.
-    Binary(i32, String, String),
-    /// Three-operand variant (unused by builtin/test path; reserved
-    /// for future module-defined infix operators).
-    Ternary(i32, String, String, String),
-}
-
-/// Recursive-descent parser for argv-form conditional expressions.
-///
-/// **WARNING — NOT IN C.** Real port goes via `par_cond_*` in parse.c
-/// emitting wordcode. Will be deleted when the wordcode path lands.
-pub struct CondParser<'a> {
-    tokens: Vec<&'a str>,
-    pos: usize,
-    #[allow(dead_code)]
-    posix_mode: bool,
-}
-
-impl<'a> CondParser<'a> {
-    pub fn new(tokens: Vec<&'a str>, posix_mode: bool) -> Self {
-        CondParser { tokens, pos: 0, posix_mode }
-    }
-
-    pub fn parse(&mut self) -> Result<CondExpr, String> {
-        self.parse_or()
-    }
-
-    fn parse_or(&mut self) -> Result<CondExpr, String> {
-        let mut left = self.parse_and()?;
-        while self.match_token("||") || self.match_token("-o") {
-            let right = self.parse_and()?;
-            left = CondExpr::Or(Box::new(left), Box::new(right));
-        }
-        Ok(left)
-    }
-
-    fn parse_and(&mut self) -> Result<CondExpr, String> {
-        let mut left = self.parse_not()?;
-        while self.match_token("&&") || self.match_token("-a") {
-            let right = self.parse_not()?;
-            left = CondExpr::And(Box::new(left), Box::new(right));
-        }
-        Ok(left)
-    }
-
-    fn parse_not(&mut self) -> Result<CondExpr, String> {
-        if self.match_token("!") {
-            let inner = self.parse_not()?;
-            Ok(CondExpr::Not(Box::new(inner)))
-        } else {
-            self.parse_primary()
-        }
-    }
-
-    fn parse_primary(&mut self) -> Result<CondExpr, String> {
-        if self.match_token("(") {
-            let expr = self.parse_or()?;
-            if !self.match_token(")") {
-                return Err("missing )".to_string());
-            }
-            return Ok(expr);
-        }
-        // Unary `-X arg`.
-        if let Some(tok) = self.peek() {
-            if tok.starts_with('-') && tok.len() == 2 {
-                let op = tok.chars().nth(1).unwrap();
-                if matches!(op,
-                    'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h'
-                    | 'k' | 'L' | 'n' | 'o' | 'p' | 'r' | 's' | 'S'
-                    | 't' | 'u' | 'v' | 'w' | 'x' | 'z'
-                    | 'G' | 'N' | 'O'
-                ) {
-                    self.advance();
-                    let arg = self.expect_arg()?;
-                    return Ok(CondExpr::Unary(op, arg.to_string()));
-                }
-            }
-        }
-        // Binary `left op right`. Operator → COND_* code mapping
-        // mirrors cond.c:70 dispatch and zsh.h:660-679 constants.
-        let left = self.expect_arg()?;
-        if let Some(op_tok) = self.peek() {
-            let code: Option<i32> = match op_tok {
-                "="   => Some(COND_STREQ),
-                "=="  => Some(COND_STRDEQ),
-                "!="  => Some(COND_STRNEQ),
-                "<"   => Some(COND_STRLT),
-                ">"   => Some(COND_STRGTR),
-                "-eq" => Some(COND_EQ),
-                "-ne" => Some(COND_NE),
-                "-lt" => Some(COND_LT),
-                "-gt" => Some(COND_GT),
-                "-le" => Some(COND_LE),
-                "-ge" => Some(COND_GE),
-                "-nt" => Some(COND_NT),
-                "-ot" => Some(COND_OT),
-                "-ef" => Some(COND_EF),
-                "=~" | "-regex-match" => Some(COND_REGEX),
-                _ => None,
-            };
-            if let Some(code) = code {
-                self.advance();
-                let right = self.expect_arg()?;
-                return Ok(CondExpr::Binary(code, left.to_string(), right.to_string()));
-            }
-        }
-        // Implicit -n (non-empty) test.
-        Ok(CondExpr::Unary('n', left.to_string()))
-    }
-
-    fn peek(&self) -> Option<&'a str> { self.tokens.get(self.pos).copied() }
-    fn advance(&mut self) -> Option<&'a str> {
-        let t = self.tokens.get(self.pos).copied();
-        self.pos += 1;
-        t
-    }
-    fn match_token(&mut self, expected: &str) -> bool {
-        if self.peek() == Some(expected) { self.advance(); true } else { false }
-    }
-    fn expect_arg(&mut self) -> Result<&'a str, String> {
-        self.advance().ok_or_else(|| "expected argument".to_string())
-    }
-}
-
-// ===========================================================
-// Tree-walking evaluator — implemented as `impl CondExpr`
-// methods (NOT free fns) because the AST itself is Rust-only;
-// the eval logic stays scoped to the type rather than leaking
-// into module-level free fns with no C counterpart.
-//
-// All eval methods return i32 in the convention C's evalcond
-// uses (0=true, 1=false, 2=error, 3=opt-not-found, cond.c:62-66).
-// ===========================================================
-
-impl CondExpr {
-    /// Evaluate this AST node against the given option/variable
-    /// tables. Mirrors C's evalcond switch (cond.c:81+ for
-    /// NOT/AND/OR, c:179+ for the per-opcode default arm).
-    pub fn eval(
-        &self,
-        options: &HashMap<String, bool>,
-        variables: &HashMap<String, String>,
-        posix_mode: bool,
-    ) -> i32 {
-        // Rust-only `bool → i32` helper. Inlined as a closure
-        // so it doesn't surface as a free fn (no C counterpart).
-        let b2i = |b: bool| -> i32 { if b { 0 } else { 1 } };
-
-        match self {
-            CondExpr::Not(inner) => {                                        // c:81 COND_NOT
-                let r = inner.eval(options, variables, posix_mode);
-                if r < 2 { if r == 0 { 1 } else { 0 } } else { r }
-            }
-            CondExpr::And(l, r) => {                                         // c:88 COND_AND
-                let lr = l.eval(options, variables, posix_mode);
-                if lr != 0 { lr } else { r.eval(options, variables, posix_mode) }
-            }
-            CondExpr::Or(l, r) => {                                          // c:96 COND_OR
-                let lr = l.eval(options, variables, posix_mode);
-                if lr == 0 { 0 }
-                else if lr >= 2 { lr }
-                else { r.eval(options, variables, posix_mode) }
-            }
-            CondExpr::Unary(op, arg) => match *op {
-                'a' | 'e' => b2i(Path::new(arg).exists()),                   // c:179-180
-                'b' => b2i(dostat(arg) & libc::S_IFMT as u32 == libc::S_IFBLK as u32),
-                'c' => b2i(dostat(arg) & libc::S_IFMT as u32 == libc::S_IFCHR as u32),
-                'd' => b2i(Path::new(arg).is_dir()),
-                'f' => b2i(Path::new(arg).is_file()),
-                'g' => b2i(dostat(arg) & libc::S_ISGID as u32 != 0),
-                'h' | 'L' => b2i(dolstat(arg) & libc::S_IFMT as u32 == libc::S_IFLNK as u32),
-                'k' => b2i(dostat(arg) & libc::S_ISVTX as u32 != 0),
-                'p' => b2i(dostat(arg) & libc::S_IFMT as u32 == libc::S_IFIFO as u32),
-                'r' => b2i(doaccess(arg, 4) != 0),                           // c:438
-                's' => b2i(getstat(arg).map(|m| m.len() > 0).unwrap_or(false)),
-                'S' => b2i(dostat(arg) & libc::S_IFMT as u32 == libc::S_IFSOCK as u32),
-                'u' => b2i(dostat(arg) & libc::S_ISUID as u32 != 0),
-                'w' => b2i(doaccess(arg, 2) != 0),                           // c:438
-                'x' => b2i(doaccess(arg, 1) != 0
-                           || getstat(arg)
-                                  .map(|m| m.mode() & libc::S_IFMT as u32 == libc::S_IFDIR as u32)
-                                  .unwrap_or(false)),
-                'O' => b2i(getstat(arg).map(|m| m.uid() == unsafe { libc::geteuid() })
-                           .unwrap_or(false)),
-                'G' => b2i(getstat(arg).map(|m| m.gid() == unsafe { libc::getegid() })
-                           .unwrap_or(false)),
-                'N' => b2i(getstat(arg).map(|m| m.mtime() >= m.atime()).unwrap_or(false)),
-                'n' => b2i(!arg.is_empty()),
-                'z' => b2i(arg.is_empty()),
-                'o' => {
-                    // Route through canonical optison (cond.c:502);
-                    // fall back to the per-call HashMap so tests
-                    // without the global option table see what
-                    // they explicitly set.
-                    let r = optison("test", arg);
-                    if r != 3 { r }
-                    else if options.contains_key(arg) { b2i(options[arg]) }
-                    else { 3 }
-                }
-                'v' => b2i(variables.contains_key(arg)),
-                't' => arg.parse::<i32>()
-                       .map(|fd| b2i(unsafe { libc::isatty(fd) } != 0))
-                       .unwrap_or(2),
-                _ => 2,
-            },
-            CondExpr::Binary(code, left, right) => {
-                // Parse a number with POSIX-mode integer-only
-                // restriction. Inlined per Rule A — no C analog
-                // for "parse_number with posix toggle".
-                let parse_num = |s: &str| -> Option<f64> {
-                    let t = s.trim();
-                    if posix_mode {
-                        t.parse::<i64>().ok().map(|i| i as f64)
-                    } else {
-                        t.parse::<i64>().map(|i| i as f64)
-                            .or_else(|_| t.parse::<f64>()).ok()
-                    }
-                };
-                let num_cmp = |l: &str, r: &str, f: fn(f64, f64) -> bool| -> i32 {
-                    match (parse_num(l), parse_num(r)) {
-                        (Some(a), Some(b)) => b2i(f(a, b)),
-                        _ => 2,
-                    }
-                };
-                let mtime_cmp = |l: &str, r: &str, f: fn(i64, i64) -> bool| -> i32 {
-                    let lm = match getstat(l) { Some(m) => m, None => return 1 };
-                    let rm = match getstat(r) { Some(m) => m, None => return 1 };
-                    b2i(f(lm.mtime(), rm.mtime()))
-                };
-                let strpat = |pat: &str, text: &str| -> bool {
-                    if posix_mode { text == pat } else { matchpat(pat, text, true, true) }
-                };
-                match *code {
-                    c if c == COND_STREQ || c == COND_STRDEQ => b2i(strpat(right, left)),
-                    c if c == COND_STRNEQ => b2i(!strpat(right, left)),
-                    c if c == COND_STRLT  => b2i(left.as_str() < right.as_str()),
-                    c if c == COND_STRGTR => b2i(left.as_str() > right.as_str()),
-                    c if c == COND_EQ => num_cmp(left, right, |a, b| a == b),
-                    c if c == COND_NE => num_cmp(left, right, |a, b| a != b),
-                    c if c == COND_LT => num_cmp(left, right, |a, b| a <  b),
-                    c if c == COND_GT => num_cmp(left, right, |a, b| a >  b),
-                    c if c == COND_LE => num_cmp(left, right, |a, b| a <= b),
-                    c if c == COND_GE => num_cmp(left, right, |a, b| a >= b),
-                    c if c == COND_NT => mtime_cmp(left, right, |a, b| a >  b),
-                    c if c == COND_OT => mtime_cmp(left, right, |a, b| a <  b),
-                    c if c == COND_EF => {
-                        let lm = match getstat(left)  { Some(m) => m, None => return 1 };
-                        let rm = match getstat(right) { Some(m) => m, None => return 1 };
-                        b2i(lm.dev() == rm.dev() && lm.ino() == rm.ino())
-                    }
-                    c if c == COND_REGEX => {
-                        #[cfg(feature = "regex")]
-                        {
-                            match regex::Regex::new(right) {
-                                Ok(re) => b2i(re.is_match(left)),
-                                Err(_) => 2,
-                            }
-                        }
-                        #[cfg(not(feature = "regex"))]
-                        {
-                            b2i(matchpat(right, left, true, true))
-                        }
-                    }
-                    _ => 2,
-                }
-            }
-            CondExpr::Ternary(..) => 2,
-        }
-    }
-}
-
-// ===========================================================
-// evalcond — argv entry point.
-//
-// **WARNING — NOT C-FAITHFUL SHAPE.** C signature is
-// `int evalcond(Estate state, char *fromtest)` (cond.c:70); the C
-// source walks pre-built wordcode. This Rust function takes argv
-// directly because the parse-cond-to-wordcode + Estate machinery
-// isn't wired into the test/[ builtin callsite yet.
-// ===========================================================
-
-/// Argv-form `[[ … ]]` / `test … ]` driver.
+/// Returns C's convention (cond.c:62-66): 0=true, 1=false, 2=syntax
+/// error, 3=option-tested-with-`-o`-not-found.
 pub fn evalcond(                                                             // c:70
     args: &[&str],
     options: &HashMap<String, bool>,
@@ -350,17 +65,219 @@ pub fn evalcond(                                                             // 
     posix_mode: bool,
 ) -> i32 {
     if args.is_empty() { return 1; }
-    let filt: Vec<&str> = args
+    let toks: Vec<&str> = args
         .iter()
         .filter(|s| !matches!(**s, "[" | "]" | "[[" | "]]"))
         .copied()
         .collect();
-    if filt.is_empty() { return 1; }
-    let mut parser = CondParser::new(filt, posix_mode);
-    match parser.parse() {
-        Ok(expr) => expr.eval(options, variables, posix_mode),
-        Err(_) => 2,
+    if toks.is_empty() { return 1; }
+
+    // Inner walker — the entire cond.c:81-185 switch collapsed into
+    // one fn. `prec` selects the recursion level (0=OR, 1=AND,
+    // 2=NOT, 3=primary). This is the one Rust adaptation: C's
+    // `evalcond` walks a single wordcode stream; we walk argv via
+    // operator-precedence climbing. No helper fns / no AST.
+    fn walk(
+        toks: &[&str],
+        pos: &mut usize,
+        opts: &HashMap<String, bool>,
+        vars: &HashMap<String, String>,
+        posix: bool,
+        prec: u8,
+    ) -> i32 {
+        let b2i = |b: bool| -> i32 { if b { 0 } else { 1 } };
+        let peek = |i: usize| -> Option<&str> { toks.get(i).copied() };
+
+        match prec {
+            // OR — c:96 COND_OR.
+            0 => {
+                let mut left = walk(toks, pos, opts, vars, posix, 1);
+                while peek(*pos) == Some("||") || peek(*pos) == Some("-o") {
+                    *pos += 1;
+                    let right = walk(toks, pos, opts, vars, posix, 1);
+                    left = if left == 0 { 0 } else if left >= 2 { left } else { right };
+                }
+                left
+            }
+            // AND — c:88 COND_AND.
+            1 => {
+                let mut left = walk(toks, pos, opts, vars, posix, 2);
+                while peek(*pos) == Some("&&") || peek(*pos) == Some("-a") {
+                    *pos += 1;
+                    let right = walk(toks, pos, opts, vars, posix, 2);
+                    left = if left != 0 { left } else { right };
+                }
+                left
+            }
+            // NOT — c:81 COND_NOT.
+            2 => {
+                if peek(*pos) == Some("!") {
+                    *pos += 1;
+                    let r = walk(toks, pos, opts, vars, posix, 2);
+                    if r < 2 { if r == 0 { 1 } else { 0 } } else { r }
+                } else {
+                    walk(toks, pos, opts, vars, posix, 3)
+                }
+            }
+            // Primary — c:179+ default arm. Parenthesised group,
+            // unary `-X arg`, binary `l OP r`, or bare arg.
+            _ => {
+                if peek(*pos) == Some("(") {
+                    *pos += 1;
+                    let r = walk(toks, pos, opts, vars, posix, 0);
+                    if peek(*pos) != Some(")") { return 2; }
+                    *pos += 1;
+                    return r;
+                }
+                // Unary `-X arg`.
+                if let Some(tok) = peek(*pos) {
+                    if tok.starts_with('-') && tok.len() == 2 {
+                        let op = tok.chars().nth(1).unwrap();
+                        if matches!(op,
+                            'a'|'b'|'c'|'d'|'e'|'f'|'g'|'h'|'k'|'L'|'n'|'o'
+                            |'p'|'r'|'s'|'S'|'t'|'u'|'v'|'w'|'x'|'z'|'G'|'N'|'O'
+                        ) {
+                            *pos += 1;
+                            let arg = match peek(*pos) {
+                                Some(a) => { *pos += 1; a.to_string() }
+                                None => return 2,
+                            };
+                            return match op {
+                                'a' | 'e' => b2i(Path::new(&arg).exists()),  // c:179-180
+                                'b' => b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFBLK as u32),
+                                'c' => b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFCHR as u32),
+                                'd' => b2i(Path::new(&arg).is_dir()),
+                                'f' => b2i(Path::new(&arg).is_file()),
+                                'g' => b2i(dostat(&arg) & libc::S_ISGID as u32 != 0),
+                                'h' | 'L' => b2i(dolstat(&arg) & libc::S_IFMT as u32 == libc::S_IFLNK as u32),
+                                'k' => b2i(dostat(&arg) & libc::S_ISVTX as u32 != 0),
+                                'p' => b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFIFO as u32),
+                                'r' => b2i(doaccess(&arg, 4) != 0),          // c:438
+                                's' => b2i(getstat(&arg).map(|m| m.len() > 0).unwrap_or(false)),
+                                'S' => b2i(dostat(&arg) & libc::S_IFMT as u32 == libc::S_IFSOCK as u32),
+                                'u' => b2i(dostat(&arg) & libc::S_ISUID as u32 != 0),
+                                'w' => b2i(doaccess(&arg, 2) != 0),          // c:438
+                                'x' => b2i(doaccess(&arg, 1) != 0
+                                           || getstat(&arg)
+                                                  .map(|m| m.mode() & libc::S_IFMT as u32 == libc::S_IFDIR as u32)
+                                                  .unwrap_or(false)),
+                                'O' => b2i(getstat(&arg).map(|m| m.uid() == unsafe { libc::geteuid() })
+                                           .unwrap_or(false)),
+                                'G' => b2i(getstat(&arg).map(|m| m.gid() == unsafe { libc::getegid() })
+                                           .unwrap_or(false)),
+                                'N' => b2i(getstat(&arg).map(|m| m.mtime() >= m.atime()).unwrap_or(false)),
+                                'n' => b2i(!arg.is_empty()),
+                                'z' => b2i(arg.is_empty()),
+                                'o' => {
+                                    let r = optison("test", &arg);           // c:502
+                                    if r != 3 { r }
+                                    else if opts.contains_key(&arg) { b2i(opts[&arg]) }
+                                    else { 3 }
+                                }
+                                'v' => b2i(vars.contains_key(&arg)),
+                                't' => arg.parse::<i32>()
+                                       .map(|fd| b2i(unsafe { libc::isatty(fd) } != 0))
+                                       .unwrap_or(2),
+                                _ => 2,
+                            };
+                        }
+                    }
+                }
+                // Binary `left OP right` or bare `left` (implicit `-n`).
+                let left = match peek(*pos) {
+                    Some(a) => { *pos += 1; a.to_string() }
+                    None => return 2,
+                };
+                let code: Option<i32> = peek(*pos).and_then(|t| match t {
+                    "="   => Some(COND_STREQ),
+                    "=="  => Some(COND_STRDEQ),
+                    "!="  => Some(COND_STRNEQ),
+                    "<"   => Some(COND_STRLT),
+                    ">"   => Some(COND_STRGTR),
+                    "-eq" => Some(COND_EQ),
+                    "-ne" => Some(COND_NE),
+                    "-lt" => Some(COND_LT),
+                    "-gt" => Some(COND_GT),
+                    "-le" => Some(COND_LE),
+                    "-ge" => Some(COND_GE),
+                    "-nt" => Some(COND_NT),
+                    "-ot" => Some(COND_OT),
+                    "-ef" => Some(COND_EF),
+                    "=~" | "-regex-match" => Some(COND_REGEX),
+                    _ => None,
+                });
+                if let Some(code) = code {
+                    *pos += 1;
+                    let right = match peek(*pos) {
+                        Some(a) => { *pos += 1; a.to_string() }
+                        None => return 2,
+                    };
+                    let parse_num = |s: &str| -> Option<f64> {
+                        let t = s.trim();
+                        if posix {
+                            t.parse::<i64>().ok().map(|i| i as f64)
+                        } else {
+                            t.parse::<i64>().map(|i| i as f64)
+                                .or_else(|_| t.parse::<f64>()).ok()
+                        }
+                    };
+                    let num_cmp = |l: &str, r: &str, f: fn(f64, f64) -> bool| -> i32 {
+                        match (parse_num(l), parse_num(r)) {
+                            (Some(a), Some(b)) => b2i(f(a, b)),
+                            _ => 2,
+                        }
+                    };
+                    let mtime_cmp = |l: &str, r: &str, f: fn(i64, i64) -> bool| -> i32 {
+                        let lm = match getstat(l) { Some(m) => m, None => return 1 };
+                        let rm = match getstat(r) { Some(m) => m, None => return 1 };
+                        b2i(f(lm.mtime(), rm.mtime()))
+                    };
+                    let strpat = |pat: &str, text: &str| -> bool {
+                        if posix { text == pat } else { matchpat(pat, text, true, true) }
+                    };
+                    return match code {
+                        c if c == COND_STREQ || c == COND_STRDEQ => b2i(strpat(&right, &left)),
+                        c if c == COND_STRNEQ => b2i(!strpat(&right, &left)),
+                        c if c == COND_STRLT  => b2i(left.as_str() < right.as_str()),
+                        c if c == COND_STRGTR => b2i(left.as_str() > right.as_str()),
+                        c if c == COND_EQ => num_cmp(&left, &right, |a, b| a == b),
+                        c if c == COND_NE => num_cmp(&left, &right, |a, b| a != b),
+                        c if c == COND_LT => num_cmp(&left, &right, |a, b| a <  b),
+                        c if c == COND_GT => num_cmp(&left, &right, |a, b| a >  b),
+                        c if c == COND_LE => num_cmp(&left, &right, |a, b| a <= b),
+                        c if c == COND_GE => num_cmp(&left, &right, |a, b| a >= b),
+                        c if c == COND_NT => mtime_cmp(&left, &right, |a, b| a >  b),
+                        c if c == COND_OT => mtime_cmp(&left, &right, |a, b| a <  b),
+                        c if c == COND_EF => {
+                            let lm = match getstat(&left)  { Some(m) => m, None => return 1 };
+                            let rm = match getstat(&right) { Some(m) => m, None => return 1 };
+                            b2i(lm.dev() == rm.dev() && lm.ino() == rm.ino())
+                        }
+                        c if c == COND_REGEX => {
+                            #[cfg(feature = "regex")]
+                            {
+                                match regex::Regex::new(&right) {
+                                    Ok(re) => b2i(re.is_match(&left)),
+                                    Err(_) => 2,
+                                }
+                            }
+                            #[cfg(not(feature = "regex"))]
+                            {
+                                b2i(matchpat(&right, &left, true, true))
+                            }
+                        }
+                        _ => 2,
+                    };
+                }
+                // Implicit `-n` (non-empty).
+                b2i(!left.is_empty())
+            }
+        }
     }
+
+    let mut pos = 0usize;
+    let r = walk(&toks, &mut pos, options, variables, posix_mode, 0);
+    if pos != toks.len() { 2 } else { r }
 }
 
 // ===========================================================
@@ -369,7 +286,7 @@ pub fn evalcond(                                                             // 
 // and the cond_str/cond_val/cond_match argument-coercion trio.
 // ===========================================================
 
-/// Port of `doaccess()` from Src/cond.c:438 — `[[ -r/-w/-x ]]` test.
+/// Port of `doaccess(s, c)` from Src/cond.c:438 — `[[ -r/-w/-x ]]` test.
 /// Returns true (non-zero) when `access(2)` reports the file is
 /// reachable for the requested mode. The C source special-cases
 /// `/dev/fd/N` to use `faccessat` against the descriptor; we do the
@@ -398,7 +315,7 @@ pub fn doaccess(s: &str, c: i32) -> i32 {                                    // 
     }
 }
 
-/// Port of `getstat()` from Src/cond.c:452 — `stat(2)` wrapper that
+/// Port of `getstat(s)` from Src/cond.c:452 — `stat(2)` wrapper that
 /// special-cases `/dev/fd/N` with `fstat()`. Returns the metadata or
 /// `None` on error. Replaces the C global `static struct stat st`
 /// with a returned `Metadata` value (Rust avoids globals here).
@@ -413,21 +330,21 @@ pub fn getstat(s: &str) -> Option<Metadata> {                                // 
     fs::metadata(s).ok()
 }
 
-/// Port of `dostat()` from Src/cond.c:474 — returns the file's
+/// Port of `dostat(s)` from Src/cond.c:474 — returns the file's
 /// `st_mode` or 0 on error. Used by `[[ -b/-c/-d/-f/-g/-h/-k/-p
 /// /-S/-u/-w/-x ]]` to inspect mode bits.
 pub fn dostat(s: &str) -> u32 {                                              // c:474
     getstat(s).map(|m| m.mode()).unwrap_or(0)
 }
 
-/// Port of `dolstat()` from Src/cond.c:488 — like `dostat()` but
+/// Port of `dolstat(s)` from Src/cond.c:488 — like `dostat()` but
 /// uses `lstat(2)` so symlinks are *not* followed. Underpins
 /// `[[ -h ]]` / `[[ -L ]]`.
 pub fn dolstat(s: &str) -> u32 {                                             // c:488
     fs::symlink_metadata(s).map(|m| m.mode()).unwrap_or(0)
 }
 
-/// Port of `optison()` from Src/cond.c:502 — `[[ -o NAME ]]` shell-
+/// Port of `optison(name, s)` from Src/cond.c:502 — `[[ -o NAME ]]` shell-
 /// option test. Returns 0 (true) when the option is set, 1 (false)
 /// when unset, 3 (error) when the name is unrecognised. Routes
 /// through the canonical option table via `optlookup` /
@@ -456,7 +373,7 @@ pub fn optison(name: &str, s: &str) -> i32 {                                 // 
 // (the latter returns defaults and would be wrong).
 use crate::ported::zsh_h::{isset, unset};
 
-/// Port of `cond_str()` from Src/cond.c:525 — return `arg[num]` after
+/// Port of `cond_str(args, num, raw)` from Src/cond.c:525 — return `arg[num]` after
 /// running it through `singsub()` if it contains shell tokens, then
 /// optionally `untokenize()`. The Rust port stores already-expanded
 /// argument strings in the cond evaluator, so this collapses to an
@@ -465,7 +382,7 @@ pub fn cond_str(args: &[String], num: usize, _raw: bool) -> String {         // 
     args.get(num).cloned().unwrap_or_default()
 }
 
-/// Port of `cond_val()` from Src/cond.c:539 — like `cond_str()` but
+/// Port of `cond_val(args, num)` from Src/cond.c:539 — like `cond_str()` but
 /// then runs `mathevali()` to coerce the result to an integer. The
 /// Rust port handles math evaluation through `crate::math::eval`;
 /// here we parse the trimmed argument as a base-10 integer.
@@ -475,16 +392,16 @@ pub fn cond_val(args: &[String], num: usize) -> i64 {                        // 
         .unwrap_or(0)
 }
 
-/// Port of `cond_match()` from Src/cond.c:552 — `[[ str = pat ]]`
+/// Port of `cond_match(args, num, str)` from Src/cond.c:552 — `[[ str = pat ]]`
 /// pattern test. Runs `singsub()` on the pattern, then defers to
 /// `matchpat()` (Src/glob.c).
-pub fn cond_match(args: &[String], num: usize, str_: &str) -> bool {         // c:552
+pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {         // c:552
     args.get(num)
-        .map(|p| matchpat(str_, p, true, true))
+        .map(|p| matchpat(str, p, true, true))
         .unwrap_or(false)
 }
 
-/// Port of `tracemodcond()` from Src/cond.c:562 — `xtrace`-mode
+/// Port of `tracemodcond(name, args, inf)` from Src/cond.c:562 — `xtrace`-mode
 /// pretty-printer for module-defined cond operators. Emits the
 /// op + args to stderr in the same shape the C source uses (infix
 /// for binary, prefix for unary). Used only when the `XTRACE`

@@ -52,7 +52,7 @@ impl PtyCmd {
 
 
 /// Open a pseudo-terminal master/slave pair.
-/// Port of `get_pty()` from Src/Modules/zpty.c:191 (or :255 for
+/// Port of `get_pty(master, retfd)` from Src/Modules/zpty.c:191 (or :255 for
 /// the fallback path on systems without `posix_openpt`). Wraps
 /// `posix_openpt` + `grantpt` + `unlockpt` + `ptsname` + `open`.
 #[cfg(unix)]
@@ -93,7 +93,7 @@ pub fn get_pty() -> io::Result<(RawFd, RawFd)> {                            // c
 }
 
 /// Set non-blocking mode on a file descriptor.
-/// Port of `ptynonblock()` from Src/Modules/zpty.c:65 — wraps
+/// Port of `ptynonblock(fd)` from Src/Modules/zpty.c:65 — wraps
 /// `fcntl(F_GETFL)` + `fcntl(F_SETFL, |O_NONBLOCK)`.
 #[cfg(unix)]
 pub fn ptynonblock(fd: RawFd) -> io::Result<()> {                           // c:65
@@ -111,7 +111,7 @@ pub fn ptynonblock(fd: RawFd) -> io::Result<()> {                           // c
 }
 
 /// Read from a pty, optionally matching a pattern.
-/// Port of `ptyread()` from Src/Modules/zpty.c:548 — `poll(2)` +
+/// Port of `ptyread(nam, cmd, args, noblock, mustmatch)` from Src/Modules/zpty.c:548 — `poll(2)` +
 /// `read(2)` loop that bails when `pattern` is found in the
 /// accumulated buffer or when EOF/timeout fires.
 pub fn ptyread(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io::Result<String> { // c:548
@@ -172,7 +172,7 @@ pub fn ptyread(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io:
 }
 
 /// Write a string to a pty's master end.
-/// Port of `ptywritestr()` from Src/Modules/zpty.c:714 (which
+/// Port of `ptywritestr(cmd, s, len)` from Src/Modules/zpty.c:714 (which
 /// `ptywrite()` line 743 wraps with `-n` newline handling).
 pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {            // c:714
     #[cfg(unix)]
@@ -192,7 +192,7 @@ pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {            // c
     }
 }
 
-/// Port of `bin_zpty()` from `Src/Modules/zpty.c:773`.
+/// Port of `bin_zpty(nam, args, ops)` from `Src/Modules/zpty.c:773`.
 /// `zpty` builtin entry point — C-faithful signature matching
 /// `static int bin_zpty(char *nam, char **args, Options ops, int func)`
 /// from Src/Modules/zpty.c:773. Reads `-d/-L/-w/-r/-t/-b/-e/-T/-m`
@@ -551,19 +551,19 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/zpty.c:896`.
+/// Port of `setup_(m)` from `Src/Modules/zpty.c:896`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:896
     // C body c:898-899 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_()` from `Src/Modules/zpty.c:903`.
+/// Port of `features_(m, features)` from `Src/Modules/zpty.c:903`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:903
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_()` from `Src/Modules/zpty.c:911`.
+/// Port of `enables_(m, enables)` from `Src/Modules/zpty.c:911`.
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:911
     handlefeatures(m, module_features(), enables)
 }
@@ -579,7 +579,7 @@ fn ptycmds() -> &'static Mutex<HashMap<String, PtyCmd>> {
     PTYCMDS.get_or_init(|| Mutex::new(HashMap::<String, PtyCmd>::new()))
 }
 
-/// Port of `boot_()` from `Src/Modules/zpty.c:918`.
+/// Port of `boot_(m)` from `Src/Modules/zpty.c:918`.
 pub fn boot_(_m: *const module) -> i32 {                                 // c:918
     // C body c:921-922 — `ptycmds = NULL; addhookfunc("exit", ptyhook)`.
     *ptycmds().lock().unwrap() = HashMap::<String, PtyCmd>::new();
@@ -587,7 +587,7 @@ pub fn boot_(_m: *const module) -> i32 {                                 // c:91
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/zpty.c:928`.
+/// Port of `cleanup_(m)` from `Src/Modules/zpty.c:928`.
 pub fn cleanup_(m: *const module) -> i32 {                              // c:928
     // c:930 — `deletehookfunc("exit", ptyhook)`. We have no live hook
     //          registry, so this is a no-op.
@@ -597,7 +597,7 @@ pub fn cleanup_(m: *const module) -> i32 {                              // c:928
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_()` from `Src/Modules/zpty.c:937`.
+/// Port of `finish_(m)` from `Src/Modules/zpty.c:937`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:937
     // C body c:939-940 — `return 0`. Faithful empty-body port; the
     //                    pty session teardown happens in cleanup_.
@@ -605,7 +605,7 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
 }
 
 // === auto-generated stubs ===
-/// Port of `getptycmd()` from `Src/Modules/zpty.c:153`. Linear
+/// Port of `getptycmd(name)` from `Src/Modules/zpty.c:153`. Linear
 /// scan over the `ptycmds` linked list looking for one matching
 /// `name`.
 ///
@@ -615,7 +615,7 @@ pub fn getptycmd<'a>(cmds: &'a HashMap<String, PtyCmd>, name: &str) -> Option<&'
     cmds.get(name)                                                       // c:158-160 strcmp loop
 }
 
-/// Port of `deleteptycmd()` from `Src/Modules/zpty.c:490`. Removes
+/// Port of `deleteptycmd(cmd)` from `Src/Modules/zpty.c:490`. Removes
 /// `cmd` from the `ptycmds` linked list, frees its name + args,
 /// closes the master fd, and kills the process group via
 /// `kill(-pid, SIGHUP)`.
@@ -645,7 +645,7 @@ pub fn deleteallptycmds(cmds: &mut HashMap<String, PtyCmd>) {                   
     }
 }
 
-/// Port of `checkptycmd()` from `Src/Modules/zpty.c:530`. Polls
+/// Port of `checkptycmd(cmd)` from `Src/Modules/zpty.c:530`. Polls
 /// the master fd with a 1-byte non-blocking read; if read fails
 /// AND `kill(pid, 0)` confirms the process is gone, marks the
 /// command as finished and closes the fd.
@@ -670,7 +670,7 @@ pub fn checkptycmd(cmd: &mut PtyCmd) {                                   // c:53
     cmd.buffer.push(c);
 }
 
-/// Port of `ptygettyinfo()` from `Src/Modules/zpty.c:97`. Calls
+/// Port of `ptygettyinfo(fd, ti)` from `Src/Modules/zpty.c:97`. Calls
 /// `tcgetattr(fd, &ti->tio)` to capture the pty's termios state.
 /// Returns 0 on success, 1 on failure or when fd == -1.
 ///
@@ -689,7 +689,7 @@ pub fn ptygettyinfo(fd: i32, ti: &mut libc::termios) -> i32 {            // c:97
     0                                                                    // c:117
 }
 
-/// Port of `ptysettyinfo()` from `Src/Modules/zpty.c:124`. Calls
+/// Port of `ptysettyinfo(fd, ti)` from `Src/Modules/zpty.c:124`. Calls
 /// `tcsetattr(fd, TCSADRAIN, &ti->tio)` to install the captured
 /// termios state on the pty.
 ///
@@ -702,7 +702,7 @@ pub fn ptysettyinfo(fd: i32, ti: &libc::termios) {                       // c:12
     unsafe { libc::tcsetattr(fd, libc::TCSADRAIN, ti as *const libc::termios); }
 }
 
-/// Port of `ptywrite()` from `Src/Modules/zpty.c:743`. Writes
+/// Port of `ptywrite(cmd, args, nonl)` from `Src/Modules/zpty.c:743`. Writes
 /// the joined argv to the pty master fd (or copies stdin to the
 /// pty when argv is empty). `nonl` suppresses the trailing
 /// newline.
@@ -740,7 +740,7 @@ pub fn ptywrite(cmd: &PtyCmd, args: &[&str], nonl: i32) -> i32 {         // c:74
     0                                                                    // c:771
 }
 
-/// Port of `ptyhook()` from `Src/Modules/zpty.c:874`. The cleanup
+/// Port of `ptyhook(d, dummy)` from `Src/Modules/zpty.c:874`. The cleanup
 /// hook installed at `boot_()` time — runs `deleteallptycmds()`
 /// when the shell is exiting (via the `before_trap` hook).
 ///
@@ -750,7 +750,7 @@ pub fn ptyhook(cmds: &mut HashMap<String, PtyCmd>) -> i32 {                     
     0                                                                    // c:879
 }
 
-/// Port of `newptycmd()` from `Src/Modules/zpty.c:310`. Forks a
+/// Port of `newptycmd(nam, pname, args, echo, nblock)` from `Src/Modules/zpty.c:310`. Forks a
 /// new pty session, exec'ing `args` in the child. Allocates a
 /// fresh `Ptycmd` record, configures the master fd, sets up the
 /// echo / nonblock flags, and links it into `ptycmds`.

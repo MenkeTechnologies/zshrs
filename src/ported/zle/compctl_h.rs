@@ -209,7 +209,7 @@ pub struct Compctl {                                                     // c:93
     /// `-g` glob pattern.
     pub glob: Option<String>,                                            // c:98
     /// `-s` expansion string.
-    pub str_: Option<String>,                                            // c:99 (Rust keyword `str`)
+    pub str: Option<String>,                                            // c:99 (Rust keyword `str`)
     /// `-K` function name.
     pub func: Option<String>,                                            // c:100
     /// `-X` explanation.

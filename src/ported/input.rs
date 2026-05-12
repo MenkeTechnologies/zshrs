@@ -302,7 +302,7 @@ pub fn ingetc() -> Option<char> {                                            // 
 }
 
 /// Push a character back onto the input stream.
-/// Port of `inungetc()` from Src/input.c:546.
+/// Port of `inungetc(c)` from Src/input.c:546.
 pub fn inungetc(c: char) {                                                   // c:546
     if lexstop.with(|c| c.get()) {
         return;
@@ -325,7 +325,7 @@ pub fn inungetc(c: char) {                                                   // 
 
 // Set some new input onto a new element of the input stack                  // c:671
 /// Push a new input source onto the stack.
-/// Port of `inpush()` from Src/input.c:675 — used for `eval`/
+/// Port of `inpush(str, flags, inalias)` from Src/input.c:675 — used for `eval`/
 /// `source`, alias expansion, and process substitution to layer a
 /// new input on top of the current one.
 pub fn inpush(s: &str, new_flags: i32, alias: Option<String>) {              // c:675
@@ -403,7 +403,7 @@ pub fn inpopalias() {                                                        // 
 }
 
 /// Replace the current input line.
-/// Port of `inputsetline()` from Src/input.c:510.
+/// Port of `inputsetline(str, flags)` from Src/input.c:510.
 pub fn inputsetline(s: &str, new_flags: i32) {                               // c:510
     inbuf.with(|b| *b.borrow_mut() = s.to_string());
     inbufpos.with(|p| p.set(0));
@@ -444,7 +444,7 @@ pub fn ingetptr() -> String {                                                // 
 // for history accumulates through `chline` / `addtoline`).
 
 /// Stuff a whole file into the input queue.
-/// Port of `stuff()` from Src/input.c:647 — read the file, echo
+/// Port of `stuff(fn)` from Src/input.c:647 — read the file, echo
 /// it to stderr, push onto the input stack.
 pub fn stuff(filename: &str) -> i32 {                                        // c:647
     use std::io::Write;
@@ -469,7 +469,7 @@ fn imeta(c: char) -> bool {
 
 /// Read entire file into memory
 /// Read a file as a string for `source`/`stuff` semantics.
-/// Port of `zstuff()` from Src/input.c:614 — the C source uses
+/// Port of `zstuff(out, fn)` from Src/input.c:614 — the C source uses
 /// it for `Functions/Misc/run-help` and similar autoload paths.
 pub fn zstuff(path: &str) -> io::Result<String> {                            // c:614
     std::fs::read_to_string(path)

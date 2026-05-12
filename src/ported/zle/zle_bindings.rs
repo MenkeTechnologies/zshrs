@@ -17,7 +17,7 @@ use super::zle_thingy::Thingy;
 ///   - `\\C-X` → control character
 ///   - everything else → literal byte
 ///
-/// Port of `getkeystring()` from Src/utils.c:6915 — `bindkey` calls
+/// Port of `getkeystring(s, len, how, misc)` from Src/utils.c:6915 — `bindkey` calls
 /// it at line 4111 with `GETKEYS_BINDKEY` to convert the user-typed
 /// key spec into the raw byte sequence the keymap trie indexes by.
 /// The C version mutates a buffer in place + writes length via out
@@ -118,7 +118,7 @@ pub fn getkeystring(s: &str) -> Vec<u8> {                                    // 
 }
 
 /// Format a raw key-sequence byte slice for human-readable display.
-/// Port of `printbind()` from Src/Zle/zle_utils.c:1283 — used by
+/// Port of `printbind(str, stream)` from Src/Zle/zle_utils.c:1283 — used by
 /// `bindkey -L` and the `where-is` widget to show key bindings in the
 /// same `^X` / `\\eX` form `getkeystring` accepts. C signature writes
 /// to a `FILE*` stream; this Rust port returns the formatted `String`.

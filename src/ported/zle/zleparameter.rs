@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 /// Format a widget's type label as `$widgets[name]` would show it.
-/// Port of `widgetstr()` from Src/Zle/zleparameter.c. The C source
+/// Port of `widgetstr(w)` from Src/Zle/zleparameter.c. The C source
 /// emits "builtin" for `iwidgets.list` entries, "user:fnname" for
 /// `zle -N` widgets, and "completion:fnname" for `zle -C` ones —
 /// matched here verbatim so shell scripts that grep `$widgets`
@@ -29,7 +29,7 @@ pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String { // 
 // Functions for the zlewidgets special parameter.                          // c:33
 /// Build the `$widgets` associative array — the snapshot consulted by
 /// shell-side `${(k)widgets}` enumeration.
-/// Port of `getpmwidgets()` from Src/Zle/zleparameter.c. The C source
+/// Port of `getpmwidgets(name)` from Src/Zle/zleparameter.c. The C source
 /// walks `thingytab` (zle_thingy.c:60 `createthingytab`); we union
 /// the static built-in slice with the user + completion widget maps
 /// and emit the same per-entry type label widgetstr() produces.
@@ -57,7 +57,7 @@ pub fn getpmwidgets(                                                         // 
 
 /// Iterate over every widget for the parameter scan path (used by
 /// `${(kv)widgets}` and zsh's `print -l ${(k)widgets}`).
-/// Port of `scanpmwidgets()` from Src/Zle/zleparameter.c. The C
+/// Port of `scanpmwidgets(func, flags)` from Src/Zle/zleparameter.c. The C
 /// source walks the same thingytab the getpmwidgets path uses but
 /// invokes the parameter-scan callback on each entry instead of
 /// allocating the full hash.
@@ -82,7 +82,7 @@ pub fn scanpmwidgets<F>(                                                     // 
 
 // Functions for the zlekeymaps special parameter.                          // c:102
 /// Build the `$keymaps` array — list of every named keymap.
-/// Port of `keymapsgetfn()` from Src/Zle/zleparameter.c. The C
+/// Port of `keymapsgetfn(pm)` from Src/Zle/zleparameter.c. The C
 /// source walks `keymapnamtab` (zle_keymap.c:153
 /// `createkeymapnamtab`); we surface the host-supplied slice
 /// directly since our keymap registry already exposes a Vec view.
@@ -299,40 +299,40 @@ mod tests {
     }
 }
 
-/// Port of `setup_()` from `Src/Zle/zleparameter.c:147`. C body
+/// Port of `setup_(m)` from `Src/Zle/zleparameter.c:147`. C body
 /// is `return 0;` (UNUSED `Module m`).
 pub fn setup_() -> i32 {                                                 // c:147
     0                                                                    // c:150
 }
 
-/// Port of `features_()` from `Src/Zle/zleparameter.c:154`. C body
+/// Port of `features_(m, features)` from `Src/Zle/zleparameter.c:154`. C body
 /// is `*features = featuresarray(m, &module_features); return 0;`.
 /// Static-link path: 0.
 pub fn features_() -> i32 {                                              // c:154
     0                                                                    // c:158
 }
 
-/// Port of `enables_()` from `Src/Zle/zleparameter.c:162`. C body
+/// Port of `enables_(m, enables)` from `Src/Zle/zleparameter.c:162`. C body
 /// is `return handlefeatures(m, &module_features, enables);`.
 /// Static-link path: 0.
 pub fn enables_() -> i32 {                                               // c:162
     0                                                                    // c:165
 }
 
-/// Port of `boot_()` from `Src/Zle/zleparameter.c:169`. C body is
+/// Port of `boot_(m)` from `Src/Zle/zleparameter.c:169`. C body is
 /// `return 0;` (UNUSED `Module m`).
 pub fn boot_() -> i32 {                                                  // c:169
     0                                                                    // c:172
 }
 
-/// Port of `cleanup_()` from `Src/Zle/zleparameter.c:176`. C body
+/// Port of `cleanup_(m)` from `Src/Zle/zleparameter.c:176`. C body
 /// is `return setfeatureenables(m, &module_features, NULL);`.
 /// Static-link path: 0.
 pub fn cleanup_() -> i32 {                                               // c:176
     0                                                                    // c:179
 }
 
-/// Port of `finish_()` from `Src/Zle/zleparameter.c:183`. C body
+/// Port of `finish_(m)` from `Src/Zle/zleparameter.c:183`. C body
 /// is `return 0;` (UNUSED `Module m`).
 pub fn finish_() -> i32 {                                                // c:183
     0                                                                    // c:186

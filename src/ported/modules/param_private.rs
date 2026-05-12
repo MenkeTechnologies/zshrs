@@ -72,7 +72,7 @@ pub struct Gsu_closure {                                                 // c:34
 // `makeprivate` and the per-type GSU callbacks (c:79-377).
 // ---------------------------------------------------------------------------
 
-/// Port of `makeprivate()` from `Src/Modules/param_private.c:80`.
+/// Port of `makeprivate(hn)` from `Src/Modules/param_private.c:80`.
 ///
 /// C body (~100 lines): walks every param at the current `locallevel`,
 /// promoting it (with its GSU swapped to the per-type private
@@ -148,7 +148,7 @@ pub fn makeprivate(pm: *mut crate::ported::zsh_h::param, _flags: i32) {  // c:80
 pub static MAKEPRIVATE_ERROR: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 
-/// Port of `is_private()` from `Src/Modules/param_private.c:181`.
+/// Port of `is_private(pm)` from `Src/Modules/param_private.c:181`.
 ///
 /// C body:
 /// ```c
@@ -192,7 +192,7 @@ pub fn is_private(pm: *const crate::ported::zsh_h::param) -> i32 {       // c:18
     }
 }
 
-/// Port of `setfn_error()` from `Src/Modules/param_private.c:260`.
+/// Port of `setfn_error(pm)` from `Src/Modules/param_private.c:260`.
 ///
 /// C body:
 /// ```c
@@ -238,7 +238,7 @@ pub static private_wraplevel: std::sync::atomic::AtomicI32
 // `crate::ported::params::locallevel: AtomicI32`. Read inline
 // at every call site below — `ksh93::locallevel.load(Relaxed)`.
 
-/// Port of `printprivatenode()` from `Src/Modules/param_private.c:632`.
+/// Port of `printprivatenode(hn, printflags)` from `Src/Modules/param_private.c:632`.
 ///
 /// C body:
 /// ```c
@@ -287,7 +287,7 @@ pub fn printprivatenode(pm: *mut crate::ported::zsh_h::param, _printflags: i32) 
 pub static FAKELEVEL: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 
-/// Port of `pps_getfn()` from `Src/Modules/param_private.c:287`.
+/// Port of `pps_getfn(pm)` from `Src/Modules/param_private.c:287`.
 ///
 /// C body:
 /// ```c
@@ -317,7 +317,7 @@ pub fn pps_getfn(pm: *mut crate::ported::zsh_h::param) -> String {       // c:28
     }
 }
 
-/// Port of `pps_setfn()` from `Src/Modules/param_private.c:300`.
+/// Port of `pps_setfn(pm, x)` from `Src/Modules/param_private.c:300`.
 ///
 /// C body:
 /// ```c
@@ -342,7 +342,7 @@ pub fn pps_setfn(pm: *mut crate::ported::zsh_h::param, x: &str) {        // c:30
     }
 }
 
-/// Port of `pps_unsetfn()` from `Src/Modules/param_private.c:312`.
+/// Port of `pps_unsetfn(pm, explicit)` from `Src/Modules/param_private.c:312`.
 ///
 /// C body:
 /// ```c
@@ -377,7 +377,7 @@ pub fn pps_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
     }
 }
 
-/// Port of `ppi_getfn()` from `Src/Modules/param_private.c:328`.
+/// Port of `ppi_getfn(pm)` from `Src/Modules/param_private.c:328`.
 pub fn ppi_getfn(pm: *mut crate::ported::zsh_h::param) -> i64 {          // c:328
     if pm.is_null() { return 0; }
     let pm_level = unsafe { (*pm).level };
@@ -388,7 +388,7 @@ pub fn ppi_getfn(pm: *mut crate::ported::zsh_h::param) -> i64 {          // c:32
     }
 }
 
-/// Port of `ppi_setfn()` from `Src/Modules/param_private.c:340`.
+/// Port of `ppi_setfn(pm, x)` from `Src/Modules/param_private.c:340`.
 pub fn ppi_setfn(pm: *mut crate::ported::zsh_h::param, x: i64) {         // c:340
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
@@ -400,7 +400,7 @@ pub fn ppi_setfn(pm: *mut crate::ported::zsh_h::param, x: i64) {         // c:34
     }
 }
 
-/// Port of `ppi_unsetfn()` from `Src/Modules/param_private.c:352`.
+/// Port of `ppi_unsetfn(pm, explicit)` from `Src/Modules/param_private.c:352`.
 pub fn ppi_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:352
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
@@ -416,7 +416,7 @@ pub fn ppi_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
     }
 }
 
-/// Port of `ppf_getfn()` from `Src/Modules/param_private.c:368`.
+/// Port of `ppf_getfn(pm)` from `Src/Modules/param_private.c:368`.
 pub fn ppf_getfn(pm: *mut crate::ported::zsh_h::param) -> f64 {          // c:368
     if pm.is_null() { return 0.0; }
     let pm_level = unsafe { (*pm).level };
@@ -427,7 +427,7 @@ pub fn ppf_getfn(pm: *mut crate::ported::zsh_h::param) -> f64 {          // c:36
     }
 }
 
-/// Port of `ppf_setfn()` from `Src/Modules/param_private.c:380`.
+/// Port of `ppf_setfn(pm, x)` from `Src/Modules/param_private.c:380`.
 pub fn ppf_setfn(pm: *mut crate::ported::zsh_h::param, x: f64) {         // c:380
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
@@ -439,7 +439,7 @@ pub fn ppf_setfn(pm: *mut crate::ported::zsh_h::param, x: f64) {         // c:38
     }
 }
 
-/// Port of `ppf_unsetfn()` from `Src/Modules/param_private.c:392`.
+/// Port of `ppf_unsetfn(pm, explicit)` from `Src/Modules/param_private.c:392`.
 pub fn ppf_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:392
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
@@ -455,7 +455,7 @@ pub fn ppf_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
     }
 }
 
-/// Port of `ppa_getfn()` from `Src/Modules/param_private.c:408`.
+/// Port of `ppa_getfn(pm)` from `Src/Modules/param_private.c:408`.
 pub fn ppa_getfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String> {  // c:408
     if pm.is_null() { return Vec::new(); }
     let pm_level = unsafe { (*pm).level };
@@ -466,7 +466,7 @@ pub fn ppa_getfn(pm: *mut crate::ported::zsh_h::param) -> Vec<String> {  // c:40
     }
 }
 
-/// Port of `ppa_setfn()` from `Src/Modules/param_private.c:421`.
+/// Port of `ppa_setfn(pm, x)` from `Src/Modules/param_private.c:421`.
 pub fn ppa_setfn(pm: *mut crate::ported::zsh_h::param, x: Vec<String>) {  // c:421
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
@@ -478,7 +478,7 @@ pub fn ppa_setfn(pm: *mut crate::ported::zsh_h::param, x: Vec<String>) {  // c:4
     }
 }
 
-/// Port of `ppa_unsetfn()` from `Src/Modules/param_private.c:433`.
+/// Port of `ppa_unsetfn(pm, explicit)` from `Src/Modules/param_private.c:433`.
 pub fn ppa_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:433
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
@@ -494,7 +494,7 @@ pub fn ppa_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
     }
 }
 
-/// Port of `pph_getfn()` from `Src/Modules/param_private.c:451`.
+/// Port of `pph_getfn(pm)` from `Src/Modules/param_private.c:451`.
 ///
 /// Returns whether the param has a hash table (zsh_h::HashTable is
 /// `Box<hashtable>` which doesn't impl Clone — caller invokes via
@@ -511,7 +511,7 @@ pub fn pph_getfn(pm: *mut crate::ported::zsh_h::param) -> Option<()> {   // c:45
     }
 }
 
-/// Port of `pph_setfn()` from `Src/Modules/param_private.c:463`.
+/// Port of `pph_setfn(pm, x)` from `Src/Modules/param_private.c:463`.
 pub fn pph_setfn(pm: *mut crate::ported::zsh_h::param,                       // c:463
                  x: Option<crate::ported::zsh_h::HashTable>) {            // c:463
     if pm.is_null() { return; }
@@ -524,7 +524,7 @@ pub fn pph_setfn(pm: *mut crate::ported::zsh_h::param,                       // 
     }
 }
 
-/// Port of `pph_unsetfn()` from `Src/Modules/param_private.c:475`.
+/// Port of `pph_unsetfn(pm, explicit)` from `Src/Modules/param_private.c:475`.
 pub fn pph_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:475
     if pm.is_null() { return; }
     let pm_level = unsafe { (*pm).level };
@@ -544,7 +544,7 @@ pub fn pph_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
 // Builtin entry + scope/wrap helpers (c:217-660).
 // ---------------------------------------------------------------------------
 
-/// Port of `bin_private()` from `Src/Modules/param_private.c:217`.
+/// Port of `bin_private(nam, args, assigns, ops, func)` from `Src/Modules/param_private.c:217`.
 ///
 /// C signature: `static int bin_private(char *nam, char **args,
 ///                                       LinkList assigns, Options ops,
@@ -660,7 +660,7 @@ fn bin_typeset(_nam: &str, _args: &[String],                                 // 
 pub const PM_WAS_UNSET: u32 = crate::ported::zsh_h::PM_NORESTORE;        // c:508
 pub const PM_WAS_RONLY: u32 = crate::ported::zsh_h::PM_RESTRICTED;       // c:509
 
-/// Port of `getprivatenode()` from `Src/Modules/param_private.c:567`.
+/// Port of `getprivatenode(ht, nam)` from `Src/Modules/param_private.c:567`.
 ///
 /// C body walks `pm->old` chain skipping private params at deeper
 /// scopes, then resolves nameref. Returns the visible Param node.
@@ -696,7 +696,7 @@ pub fn getprivatenode(pm: *mut crate::ported::zsh_h::param)               // c:5
     cur                                                                   // c:614
 }
 
-/// Port of `getprivatenode2()` from `Src/Modules/param_private.c:618`.
+/// Port of `getprivatenode2(ht, nam)` from `Src/Modules/param_private.c:618`.
 ///
 /// Like `getprivatenode` but skips the autoload-precedence and
 /// nameref-resolve passes — used for direct `gethashnode2` lookups
@@ -717,7 +717,7 @@ pub fn getprivatenode2(pm: *mut crate::ported::zsh_h::param)              // c:6
     cur                                                                   // c:627
 }
 
-/// Port of `scopeprivate()` from `Src/Modules/param_private.c:512`.
+/// Port of `scopeprivate(hn, onoff)` from `Src/Modules/param_private.c:512`.
 ///
 /// C body: per-param hook called via `scanhashtable` to mark/unmark
 /// private params with PM_UNSET+PM_READONLY (entry) or restore
@@ -763,7 +763,7 @@ pub fn scopeprivate(pm: *mut crate::ported::zsh_h::param, onoff: i32) {  // c:51
     }
 }
 
-/// Port of `wrap_private()` from `Src/Modules/param_private.c:550`.
+/// Port of `wrap_private(prog, w, name)` from `Src/Modules/param_private.c:550`.
 ///
 /// C body:
 /// ```c
@@ -828,7 +828,7 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/param_private.c:670`.
+/// Port of `setup_(m)` from `Src/Modules/param_private.c:670`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:670
     // C body c:672-689 — installs `private` builtin by hijacking
     //                    the existing `local` builtintab node, swaps
@@ -841,14 +841,14 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
     0
 }
 
-/// Port of `features_()` from `Src/Modules/param_private.c:694`.
+/// Port of `features_(m, features)` from `Src/Modules/param_private.c:694`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_()` from `Src/Modules/param_private.c:702`.
+/// Port of `enables_(m, enables)` from `Src/Modules/param_private.c:702`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     handlefeatures(m, module_features(), enables)
@@ -862,7 +862,7 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 pub static emptytable: std::sync::Mutex<Option<crate::ported::zsh_h::HashTable>> =
     std::sync::Mutex::new(None);                                              // c:447
 
-/// Port of `boot_()` from `Src/Modules/param_private.c:709`.
+/// Port of `boot_(m)` from `Src/Modules/param_private.c:709`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:709
     // c:711 — `emptytable = newparamtable(1, "private");`
     if let Some(t) = crate::ported::params::newparamtable(1, "private") {     // c:711
@@ -876,13 +876,13 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
     0                                                                         // c:713
 }
 
-/// Port of `cleanup_()` from `Src/Modules/param_private.c:717`.
+/// Port of `cleanup_(m)` from `Src/Modules/param_private.c:717`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_()` from `Src/Modules/param_private.c:734`.
+/// Port of `finish_(m)` from `Src/Modules/param_private.c:734`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:734
     // c:736 — `deletehashtable(emptytable);` — release the wrapper's
     // empty-paramtab marker allocated by boot_.
@@ -922,7 +922,7 @@ mod tests {
         assert_eq!(bin_private("private", &[], &mut ops, 0, &mut assigns), 0);
     }
 
-    /// Port of `bin_private()` from `Src/Modules/param_private.c:217`.
+    /// Port of `bin_private(nam, args, assigns, ops, func)` from `Src/Modules/param_private.c:217`.
     /// Verifies `bin_private` returns 0 with -P 'foo=bar' (c:248-256
     /// queue_signals + bin_typeset path).
     #[test]
@@ -935,7 +935,7 @@ mod tests {
         assert_eq!(r, 0);
     }
 
-    /// Port of `bin_private()` from `Src/Modules/param_private.c:217`.
+    /// Port of `bin_private(nam, args, assigns, ops, func)` from `Src/Modules/param_private.c:217`.
     /// Verifies the -P -T combination is refused per c:231-233.
     #[test]
     fn bin_private_minus_p_minus_t_refused() {

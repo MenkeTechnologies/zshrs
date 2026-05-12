@@ -52,7 +52,7 @@ use crate::ported::zsh_h::{
 // edcharsetfn(Param pm, char *x)                                     c:46
 // =====================================================================
 
-/// Port of `edcharsetfn()` from `Src/Modules/ksh93.c:47`.
+/// Port of `edcharsetfn(pm, x)` from `Src/Modules/ksh93.c:47`.
 pub fn edcharsetfn(_pm: *mut param, _x: *mut libc::c_char) {           // c:47
     /*
      * To make this work like ksh, we must intercept $KEYS before the widget
@@ -68,7 +68,7 @@ pub fn edcharsetfn(_pm: *mut param, _x: *mut libc::c_char) {           // c:47
 // matchgetfn(Param pm)                                               c:60
 // =====================================================================
 
-/// Port of `matchgetfn()` from `Src/Modules/ksh93.c:60`.
+/// Port of `matchgetfn(pm)` from `Src/Modules/ksh93.c:60`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
@@ -197,7 +197,7 @@ pub static sh_edmode: Mutex<[u8; 2]> = Mutex::new([0, 0]);              // c:109
 #[allow(dead_code)]
 const LOCAL_NAMEREF: u32 = PM_LOCAL | PM_UNSET | PM_NAMEREF;            // c:158
 
-/// Port of `ksh93_wrapper()` from `Src/Modules/ksh93.c:143`.
+/// Port of `ksh93_wrapper(prog, w, name)` from `Src/Modules/ksh93.c:143`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
@@ -397,26 +397,26 @@ pub fn ksh93_wrapper(_prog: *const eprog, _w: *const funcwrap, name: *mut libc::
 // setup_(UNUSED(Module m))                                           c:235
 // =====================================================================
 
-/// Port of `setup_()` from `Src/Modules/ksh93.c:236`.
+/// Port of `setup_(m)` from `Src/Modules/ksh93.c:236`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:236
     // C body c:238-239 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_()` from `Src/Modules/ksh93.c:243`.
+/// Port of `features_(m, features)` from `Src/Modules/ksh93.c:243`.
 /// C body c:245-247 — `*features = featuresarray(m, &module_features); return 0`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:243
     *features = featuresarray(m, module_features());
     0                                                                        // c:247
 }
 
-/// Port of `enables_()` from `Src/Modules/ksh93.c:251`.
+/// Port of `enables_(m, enables)` from `Src/Modules/ksh93.c:251`.
 /// C body c:253-254 — `return handlefeatures(m, &module_features, enables)`.
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:251
     handlefeatures(m, module_features(), enables) // c:253
 }
 
-/// Port of `boot_()` from `Src/Modules/ksh93.c:258`.
+/// Port of `boot_(m)` from `Src/Modules/ksh93.c:258`.
 /// C body: `return addwrapper(m, wrapper);`
 pub fn boot_(m: *const module) -> i32 {
     // c:260 — addwrapper(m, wrapper); zshrs's fusevm doesn't run
@@ -426,7 +426,7 @@ pub fn boot_(m: *const module) -> i32 {
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/ksh93.c:265`.
+/// Port of `cleanup_(m)` from `Src/Modules/ksh93.c:265`.
 /// C body (c:267-278):
 /// ```c
 /// struct paramdef *p;
@@ -484,7 +484,7 @@ use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// Port of `ksh93_wrapper()` from `Src/Modules/ksh93.c:143`.
+/// Port of `ksh93_wrapper(prog, w, name)` from `Src/Modules/ksh93.c:143`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -559,7 +559,7 @@ fn gethashnode2(_ht: &AtomicI32, _name: &str) -> *mut param {
     std::ptr::null_mut()
 }
 
-/// Port of `finish_()` from `Src/Modules/ksh93.c:284`.
+/// Port of `finish_(m)` from `Src/Modules/ksh93.c:284`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:284
     // C body c:286-287 — `return 0`. Faithful empty-body port; the
     //                    ksh93 wrapper unregisters in cleanup_ via
@@ -686,7 +686,7 @@ mod tests {
         assert_eq!(finish_(m), 0);
     }
 
-    /// Port of `ksh93_wrapper()` from `Src/Modules/ksh93.c:143`.
+    /// Port of `ksh93_wrapper(prog, w, name)` from `Src/Modules/ksh93.c:143`.
     /// Verifies the C-faithful static globals are initialized empty
     /// (sh_unsetval-equivalent) at module-load.
     #[test]
@@ -702,7 +702,7 @@ mod tests {
         assert_eq!(sh_unsetval, [0u8, 0u8]);
     }
 
-    /// Port of `ksh93_wrapper()` from `Src/Modules/ksh93.c:143`.
+    /// Port of `ksh93_wrapper(prog, w, name)` from `Src/Modules/ksh93.c:143`.
     /// Verifies `LOCAL_NAMEREF` matches the C `#define` at c:158.
     #[test]
     fn local_nameref_matches_c_define() {

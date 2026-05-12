@@ -795,7 +795,7 @@ pub fn createoptiontable() {                                                 // 
     let _ = ShellOptions::new();
 }
 
-/// Direct port of `printoptionnode()` from Src/options.c:450.
+/// Direct port of `printoptionnode(hn, set)` from Src/options.c:450.
 /// C body (c:450-466):
 /// ```c
 /// optno = on->optno; if (optno < 0) optno = -optno;
@@ -1143,7 +1143,7 @@ pub fn installemulation(new_emulation: i32,
 }
 
 /// `setopt OPT` builtin per-arg dispatch.
-/// Port of `setoption()` from Src/options.c:573 — the inner loop
+/// Port of `setoption(hn, value)` from Src/options.c:573 — the inner loop
 /// of `bin_setopt`. Returns 0 on success, -1 on bad option name.
 pub fn setoption(name: &str, value: i32) -> i32 {
     // C: `opts[optno] = value;` — the C source writes the option's
@@ -1156,7 +1156,7 @@ pub fn setoption(name: &str, value: i32) -> i32 {
 
 // Identify an option name                                                  // c:680
 /// Translate an option name to a signed option index.
-/// Port of `optlookup()` from Src/options.c:684.
+/// Port of `optlookup(name)` from Src/options.c:684.
 ///
 /// C body (c:684-715): normalize `name` (strip `_`, lowercase),
 /// then `optiontab->getnode(optiontab, s)` returns the `Optname`
@@ -1194,7 +1194,7 @@ pub fn optlookup(name: &str) -> i32 {                                        // 
 
 // Identify an option letter                                                // c:717
 /// Translate a single-letter option flag to its index.
-/// Port of `optlookupc()` from Src/options.c:721. Returns 0 for
+/// Port of `optlookupc(c)` from Src/options.c:721. Returns 0 for
 /// unrecognised letters.
 pub fn optlookupc(c: char) -> i32 {                                          // c:721
     let opts = ShellOptions::new();
@@ -1265,7 +1265,7 @@ pub fn opt_state_set(name: &str, value: bool) {
     }
 }
 
-/// Direct port of `dosetopt()` from Src/options.c:735. C body:
+/// Direct port of `dosetopt(optno, value, force, new_opts)` from Src/options.c:735. C body:
 /// negate value when optno < 0 (the "no" prefix marker); look up
 /// option name by optno; reject emulation-locked options; write
 /// `opts[optno] = value`. Static-link path: optno is the FNV hash
@@ -1286,7 +1286,7 @@ pub fn dosetopt(optno: i32, mut value: i32, _force: i32) -> i32 {            // 
     }
 }
 
-/// Direct port of `bin_setopt()` from Src/options.c:580.
+/// Direct port of `bin_setopt(nam, args, isun)` from Src/options.c:580.
 /// C body (c:585-680):
 ///   - no args → `scanhashtable(optiontab, 1, 0, OPT_ALIAS,
 ///     optiontab->printnode, !isun)` lists each option set or unset
@@ -1457,7 +1457,7 @@ pub fn bin_setopt(nam: &str, args: &[String],                                // 
 
 /// Build the value of `$-`: a string of the active single-letter
 /// option flags (e.g. `"is"` for an interactive script).
-/// Port of `dashgetfn()` from Src/options.c:890. C source iterates
+/// Port of `dashgetfn(pm)` from Src/options.c:890. C source iterates
 /// `[FIRST_OPT..=LAST_OPT]` and appends each set option's letter.
 pub fn dashgetfn() -> String {
     // C reads `opts[optno]` for each single-letter option (c:890-895).
@@ -1477,7 +1477,7 @@ pub fn dashgetfn() -> String {
     out
 }
 
-/// Direct port of `printoptionstates()` from Src/options.c:909.
+/// Direct port of `printoptionstates(hadplus)` from Src/options.c:909.
 /// C body (c:910): `scanhashtable(optiontab, 1, 0, OPT_ALIAS,
 /// printoptionnodestate, hadplus);` — walks optiontab applying the
 /// printoptionnodestate callback to each non-alias entry.
@@ -1492,7 +1492,7 @@ pub fn printoptionstates(hadplus: bool) {                                    // 
     }
 }
 
-/// Direct port of `printoptionnodestate()` from Src/options.c:916.
+/// Direct port of `printoptionnodestate(hn, hadplus)` from Src/options.c:916.
 /// C body (c:920-933):
 /// ```c
 /// if (hadplus) {
@@ -1579,7 +1579,7 @@ pub fn printoptionlist_printoption(name: &str, _ignored: i32) {              // 
     println!("  --{}", name);                                                // c:967
 }
 
-/// Direct port of `printoptionlist_printequiv()` from Src/options.c:971.
+/// Direct port of `printoptionlist_printequiv(optno)` from Src/options.c:971.
 /// C body (c:973-977):
 /// ```c
 /// int isneg = optno < 0;
@@ -1598,7 +1598,7 @@ pub fn printoptionlist_printequiv(optno: i32) {                              // 
     println!("  equivalent to --{}{}", prefix, name);                        // c:975
 }
 
-/// Direct port of `print_emulate_option()` from Src/options.c:986.
+/// Direct port of `print_emulate_option(hn, fully)` from Src/options.c:986.
 /// C body (c:990-997):
 /// ```c
 /// if (!(on->node.flags & OPT_ALIAS) &&
@@ -1620,7 +1620,7 @@ pub fn print_emulate_option(name: &str, value: bool, _fully: bool) {         // 
     println!("{}", name);                                                    // c:996
 }
 
-/// Direct port of `list_emulate_options()` from Src/options.c:1002.
+/// Direct port of `list_emulate_options(cmdopts, fully)` from Src/options.c:1002.
 /// C body (c:1003-1006):
 /// ```c
 /// print_emulate_opts = cmdopts;

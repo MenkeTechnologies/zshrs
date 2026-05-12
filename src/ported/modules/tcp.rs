@@ -52,7 +52,7 @@ thread_local! {
     };
 }
 
-/// Port of `zsh_inet_ntop()` from `Src/Modules/tcp.c:72`. Wraps
+/// Port of `zsh_inet_ntop(af, cp, buf, len)` from `Src/Modules/tcp.c:72`. Wraps
 /// libc inet_ntop(3) — converts AF_INET / AF_INET6 network-byte
 /// addresses to dotted/colon presentation form.
 pub fn zsh_inet_ntop(af: i32, addr_bytes: &[u8]) -> Option<String> {     // c:72
@@ -68,12 +68,12 @@ pub fn zsh_inet_ntop(af: i32, addr_bytes: &[u8]) -> Option<String> {     // c:72
     }
 }
 
-/// Port of `zsh_inet_aton()` from `Src/Modules/tcp.c:103`.
+/// Port of `zsh_inet_aton(src, dst)` from `Src/Modules/tcp.c:103`.
 pub fn zsh_inet_aton(src: &str) -> Option<u32> {                         // c:103
     src.parse::<std::net::Ipv4Addr>().ok().map(|a| u32::from(a).to_be())
 }
 
-/// Port of `zsh_inet_pton()` from `Src/Modules/tcp.c:122`. Wraps
+/// Port of `zsh_inet_pton(af, src, dst)` from `Src/Modules/tcp.c:122`. Wraps
 /// libc inet_pton(3) — parses an IP-presentation string into the
 /// network-byte-order bytes. Returns 1 / 0 / -1 per C.
 pub fn zsh_inet_pton(af: i32, src: &str, dst: &mut [u8]) -> i32 {        // c:122
@@ -98,7 +98,7 @@ pub fn zsh_inet_pton(af: i32, src: &str, dst: &mut [u8]) -> i32 {        // c:12
     }
 }
 
-/// Port of `zsh_gethostbyname2()` from `Src/Modules/tcp.c:146`.
+/// Port of `zsh_gethostbyname2(name, af)` from `Src/Modules/tcp.c:146`.
 pub fn zsh_gethostbyname2(name: &str, af: i32) -> Vec<[u8; 4]> {         // c:146
     // C body wraps gethostbyname2(name, af); when AF_INET6 is unused
     // it falls back to gethostbyname(name). The relevant payload is
@@ -118,20 +118,20 @@ pub fn zsh_gethostbyname2(name: &str, af: i32) -> Vec<[u8; 4]> {         // c:14
     out
 }
 
-/// Port of `zsh_getipnodebyname()` from `Src/Modules/tcp.c:170`.
+/// Port of `zsh_getipnodebyname(name, af, errorp)` from `Src/Modules/tcp.c:170`.
 /// C body falls through to `zsh_gethostbyname2(name, af)` and returns
 /// its `hostent`. Rust returns the AF_INET address list directly.
 pub fn zsh_getipnodebyname(name: &str, af: i32) -> Vec<[u8; 4]> {        // c:170
     zsh_gethostbyname2(name, af)                                         // c:190
 }
 
-/// Port of `freehostent()` from `Src/Modules/tcp.c:198`. C body is
+/// Port of `freehostent(ptr)` from `Src/Modules/tcp.c:198`. C body is
 /// a no-op (UNUSED `struct hostent *ptr`).
 pub fn freehostent() {                                                   // c:198
     // c:200 — empty body.
 }
 
-/// Port of `zts_alloc()` from `Src/Modules/tcp.c:215`. Allocates a
+/// Port of `zts_alloc(ztflags)` from `Src/Modules/tcp.c:215`. Allocates a
 /// fresh Tcp_session, initialises `fd = -1` + `flags = ztflags`,
 /// and inserts it into the `ztcp_sessions` list. Returns the index
 /// (proxy for the C pointer return).
@@ -199,7 +199,7 @@ fn sess_with<F: FnOnce(&mut tcp_session)>(idx: usize, f: F) {
     });
 }
 
-/// Port of `tcp_socket()` from `Src/Modules/tcp.c:231`.
+/// Port of `tcp_socket(domain, type, protocol, ztflags)` from `Src/Modules/tcp.c:231`.
 /// C body (c:235-243):
 /// ```c
 /// Tcp_session sess = zts_alloc(ztflags);
@@ -217,13 +217,13 @@ pub fn tcp_socket(domain: i32, ty: i32, protocol: i32, ztflags: i32) -> TcpSessi
     Some(idx)                                                            // c:243 return sess
 }
 
-/// Port of `ztcp_free_session()` from `Src/Modules/tcp.c:245`.
+/// Port of `ztcp_free_session(sess)` from `Src/Modules/tcp.c:245`.
 /// In the Rust port the Vec drop handles `zfree(sess, ...)`.
 pub fn ztcp_free_session(_idx: usize) -> i32 {                           // c:245
     0                                                                    // c:250
 }
 
-/// Port of `zts_delete()` from `Src/Modules/tcp.c:253`. Removes a
+/// Port of `zts_delete(sess)` from `Src/Modules/tcp.c:253`. Removes a
 /// session from the list and frees its slot. Returns 0 on success,
 /// 1 if the fd has no matching session.
 pub fn zts_delete(fd: RawFd) -> i32 {                                    // c:253
@@ -240,7 +240,7 @@ pub fn zts_delete(fd: RawFd) -> i32 {                                    // c:25
     })
 }
 
-/// Port of `zts_byfd()` from `Src/Modules/tcp.c:271`. Linear scan.
+/// Port of `zts_byfd(fd)` from `Src/Modules/tcp.c:271`. Linear scan.
 /// C returns `Tcp_session` (pointer to the session) or NULL. Rust
 /// returns the index handle or None.
 pub fn zts_byfd(fd: RawFd) -> TcpSessionHandle {                         // c:271
@@ -262,7 +262,7 @@ pub fn tcp_cleanup() {                                                   // c:28
     });
 }
 
-/// Port of `tcp_close()` from `Src/Modules/tcp.c:295`. Takes a session
+/// Port of `tcp_close(sess)` from `Src/Modules/tcp.c:295`. Takes a session
 /// pointer (Rust handle), closes its fd, and removes it from the list.
 /// C body (c:298-313):
 /// ```c
@@ -298,7 +298,7 @@ pub fn tcp_close(sess: TcpSessionHandle) -> i32 {                        // c:29
     0                                                                    // c:313 — NULL sess: noop
 }
 
-/// Port of `tcp_connect()` from `Src/Modules/tcp.c:316`. C body
+/// Port of `tcp_connect(sess, addrp, zhost, d_port)` from `Src/Modules/tcp.c:316`. C body
 /// (c:319-340):
 /// ```c
 /// sess->peer.in.sin_family = zhost->h_addrtype;
@@ -323,7 +323,7 @@ pub fn tcp_connect(sess: TcpSessionHandle, addr: &[u8; 4], d_port: u16) -> i32 {
 }
 
 
-/// Direct port of `bin_ztcp()` from `Src/Modules/tcp.c:342`. Implements
+/// Direct port of `bin_ztcp(nam, args, ops)` from `Src/Modules/tcp.c:342`. Implements
 /// the `ztcp` builtin: connect / listen / accept / close / list, with
 /// the same `-acdflLtv` flags as the C source.
 #[allow(non_snake_case)]
@@ -668,26 +668,26 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/tcp.c:714`.
+/// Port of `setup_(m)` from `Src/Modules/tcp.c:714`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:714
     // C body c:716-717 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_()` from `Src/Modules/tcp.c:721`.
+/// Port of `features_(m, features)` from `Src/Modules/tcp.c:721`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:721
     *features = featuresarray(m, module_features());
     0                                                                    // c:725
 }
 
-/// Port of `enables_()` from `Src/Modules/tcp.c:729`.
+/// Port of `enables_(m, enables)` from `Src/Modules/tcp.c:729`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:729
     handlefeatures(m, module_features(), enables) // c:731
 }
 
-/// Port of `boot_()` from `Src/Modules/tcp.c:736`.
+/// Port of `boot_(m)` from `Src/Modules/tcp.c:736`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:736
     // C body c:738-739 — `ztcp_sessions = znewlinklist(); return 0`.
     //                    Reset the per-thread sessions Vec to empty
@@ -696,14 +696,14 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/tcp.c:745`.
+/// Port of `cleanup_(m)` from `Src/Modules/tcp.c:745`.
 /// C body: `tcp_cleanup(); return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:745
     tcp_cleanup();                                                       // c:748
     setfeatureenables(m, module_features(), None) // c:751
 }
 
-/// Port of `finish_()` from `Src/Modules/tcp.c:754`.
+/// Port of `finish_(m)` from `Src/Modules/tcp.c:754`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:754
     // C body c:756-757 — `return 0`. Faithful empty-body port; the
     //                    actual session teardown happens in cleanup_.

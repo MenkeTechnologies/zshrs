@@ -89,7 +89,7 @@ impl StyleTable {
         Self::default()
     }
 
-    /// Port of `setstypat()` from `Src/Modules/zutil.c:295`.
+    /// Port of `setstypat(s, pat, prog, vals, eval)` from `Src/Modules/zutil.c:295`.
     /// Insert or replace a pattern→values mapping for a style.
     /// Mirrors Src/Modules/zutil.c:295 `setstypat` + c:403 `addstyle`
     /// — find or create the style's pats list, replace if pattern
@@ -158,7 +158,7 @@ impl StyleTable {
         style_patterns.insert(pos, sp);
     }
 
-    /// Port of `bin_zstyle()` from `Src/Modules/zutil.c:487`.
+    /// Port of `bin_zstyle(nam, args)` from `Src/Modules/zutil.c:487`.
     /// Look up the values for (context, style). Mirrors
     /// Src/Modules/zutil.c:443 `lookupstyle` — walk the style's pats
     /// list, return values from the first weight-sorted entry whose
@@ -205,7 +205,7 @@ impl StyleTable {
         }
     }
 
-    /// Port of `setstypat()` from `Src/Modules/zutil.c:295`.
+    /// Port of `setstypat(s, pat, prog, vals, eval)` from `Src/Modules/zutil.c:295`.
     /// Return `(pattern, style, values)` triples for `zstyle -L` /
     /// `zstyle -a` listing. Mirrors bin_zstyle list dispatch
     /// (Src/Modules/zutil.c:487 -L/-a arms).
@@ -290,7 +290,7 @@ impl StyleTable {
     }
 }
 
-/// Port of `setstypat()` from `Src/Modules/zutil.c:295`.
+/// Port of `setstypat(s, pat, prog, vals, eval)` from `Src/Modules/zutil.c:295`.
 /// Format a string with specifications
 /// `zformat` builtin entry point.
 /// Helper extracted from `bin_zformat()` (Src/Modules/zutil.c:955)
@@ -552,7 +552,7 @@ mod tests {
         assert_eq!(t.get(":other:thing", "s").unwrap()[0], "broad");
     }
 
-    /// Port of `bin_zparseopts()` from `Src/Modules/zutil.c:1738`.
+    /// Port of `bin_zparseopts(nam, args)` from `Src/Modules/zutil.c:1738`.
     #[test]
     fn zof_flags_are_distinct_powers_of_two() {
         // c:1531-1538 — ZOF_* are independent bits in a single u8 field.
@@ -641,7 +641,7 @@ mod tests {
         assert_eq!(table.test_bool("ctx", "multiple"), None);
     }
 
-    /// Port of `bin_zstyle()` from `Src/Modules/zutil.c:487`.
+    /// Port of `bin_zstyle(nam, args)` from `Src/Modules/zutil.c:487`.
     /// Verifies the persistent global `zstyletab` round-trips
     /// set→get and that `lookupstyle` / `testforstyle` C-name shims
     /// see the same entry. Lock-stamps the global-state path that
@@ -722,10 +722,10 @@ mod tests {
 // ===========================================================
 
 // =====================================================================
-// Direct port of bin_zformat() from Src/Modules/zutil.c:954
+// Direct port of bin_zformat(nam, args) from Src/Modules/zutil.c:954
 // =====================================================================
 
-/// Direct port of `bin_zregexparse()` from `Src/Modules/zutil.c:1486`.
+/// Direct port of `bin_zregexparse(nam, args, ops)` from `Src/Modules/zutil.c:1486`.
 /// C body (c:1488-1517):
 /// ```c
 /// int oldextendedglob = opts[EXTENDEDGLOB];
@@ -800,7 +800,7 @@ pub fn bin_zregexparse(nam: &str, args: &[String],                            //
     ret                                                                      // c:1515
 }
 
-/// Direct port of `bin_zstyle()` from `Src/Modules/zutil.c:487`.
+/// Direct port of `bin_zstyle(nam, args)` from `Src/Modules/zutil.c:487`.
 /// C body (c:490-952): switch over -L/-l/-d/-s/-b/-t/-T/-m/-a/-g/-e
 /// flags + per-mode handlers.
 ///
@@ -1003,9 +1003,9 @@ pub fn bin_zstyle(nam: &str, args: &[String],                                 //
     0                                                                        // c:951
 }
 
-/// Direct port of `bin_zformat()` from `Src/Modules/zutil.c:954`.
+/// Direct port of `bin_zformat(nam, args)` from `Src/Modules/zutil.c:954`.
 /// C signature: `static int bin_zformat(char *nam, char **args,
-/// Port of `bin_zparseopts()` from `Src/Modules/zutil.c:1738`. C
+/// Port of `bin_zparseopts(nam, args)` from `Src/Modules/zutil.c:1738`. C
 /// signature: `static int bin_zparseopts(char *nam, char **args,
 /// UNUSED(Options ops), UNUSED(int func))`.
 ///
@@ -1368,7 +1368,7 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
     0
 }
 
-/// Port of `bin_zformat()` from `Src/Modules/zutil.c:954`.
+/// Port of `bin_zformat(nam, args)` from `Src/Modules/zutil.c:954`.
 /// C signature: `static int bin_zformat(char *nam, char **args,
 /// UNUSED(Options ops), UNUSED(int func))`.
 /// BUILTIN spec at zutil.c:2138 takes just two-or-more args (no
@@ -1539,36 +1539,36 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/zutil.c:2152`.
+/// Port of `setup_(m)` from `Src/Modules/zutil.c:2152`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:2152
     0
 }
 
-/// Port of `features_()` from `Src/Modules/zutil.c:2161`.
+/// Port of `features_(m, features)` from `Src/Modules/zutil.c:2161`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:2161
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_()` from `Src/Modules/zutil.c:2169`.
+/// Port of `enables_(m, enables)` from `Src/Modules/zutil.c:2169`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:2169
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_()` from `Src/Modules/zutil.c:2176`.
+/// Port of `boot_(m)` from `Src/Modules/zutil.c:2176`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:2176
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/zutil.c:2183`.
+/// Port of `cleanup_(m)` from `Src/Modules/zutil.c:2183`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:2183
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_()` from `Src/Modules/zutil.c:2190`.
+/// Port of `finish_(m)` from `Src/Modules/zutil.c:2190`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:2190
     0
 }
@@ -1636,7 +1636,7 @@ pub struct RParseResult {
     pub args: Vec<String>,
 }
 
-/// Port of `add_opt_val()` from Src/Modules/zutil.c:1642.
+/// Port of `add_opt_val(d, arg)` from Src/Modules/zutil.c:1642.
 /// C: `static void add_opt_val(Zoptdesc d, char *arg)` — append a value
 /// to the option's `vals` collection or assign to the bound array.
 #[allow(non_snake_case)]
@@ -1646,7 +1646,7 @@ pub fn add_opt_val(d: &mut zoptdesc, arg: String) {                          // 
     d.vals.push(arg);
 }
 
-/// Port of `addstyle()` from Src/Modules/zutil.c:403.
+/// Port of `addstyle(name)` from Src/Modules/zutil.c:403.
 /// C: `static Style addstyle(char *name)` — alloc a new Style node and
 /// install in zstyletab.
 #[allow(non_snake_case)]
@@ -1665,7 +1665,7 @@ pub fn addstyle(name: &str) -> Option<Style> {                               // 
     Some(Box::new(s))
 }
 
-/// Port of `appendactions()` from Src/Modules/zutil.c:1282.
+/// Port of `appendactions(acts, branches)` from Src/Modules/zutil.c:1282.
 /// C: `static void appendactions(LinkList acts, LinkList branches)` — for
 /// each branch, append all actions in `acts` to its action list.
 #[allow(non_snake_case)]
@@ -1686,7 +1686,7 @@ pub fn appendactions(acts: &mut Vec<String>, branches: &mut Vec<String>) {    //
     }
 }
 
-/// Port of `connectstates()` from Src/Modules/zutil.c:1119.
+/// Port of `connectstates(out, in)` from Src/Modules/zutil.c:1119.
 /// C: `static void connectstates(LinkList out, LinkList in)` — splice out
 /// states' `nullacts` into in states' branch lists.
 #[allow(non_snake_case)]
@@ -1704,7 +1704,7 @@ pub fn connectstates(out: &mut Vec<String>, in_: &mut Vec<String>) {          //
     }
 }
 
-/// Port of `setstypat()` from Src/Modules/zutil.c:295.
+/// Port of `setstypat(s, pat, prog, vals, eval)` from Src/Modules/zutil.c:295.
 /// C: `static int setstypat(Style s, char *pat, Patprog prog,
 /// char **vals, int eval)` — store/replace a (pat, vals) entry on
 /// the Style's pat list. Returns 1 on parse error, 0 on success.
@@ -1728,7 +1728,7 @@ pub fn setstypat(style_name: &str, pat: &str,                                // 
     }
 }
 
-/// Port of `evalstyle()` from Src/Modules/zutil.c:413.
+/// Port of `evalstyle(p)` from Src/Modules/zutil.c:413.
 /// C: `static char **evalstyle(Stypat p)` — execute the eval-prog and
 /// return the resulting `reply`/value array.
 #[allow(non_snake_case)]
@@ -1738,7 +1738,7 @@ pub fn evalstyle(_p: &Stypat) -> Vec<String> {                               // 
     Vec::new()
 }
 
-/// Port of `freematch()` from Src/Modules/zutil.c:72.
+/// Port of `freematch(m, nbeg, nend)` from Src/Modules/zutil.c:72.
 /// C: `static void freematch(MatchData *m)` — drops the captured arrays.
 #[allow(non_snake_case)]
 pub fn freematch(m: &mut MatchData) {                                        // c:72
@@ -1750,7 +1750,7 @@ pub fn freematch(m: &mut MatchData) {                                        // 
     m.mend.take();
 }
 
-/// Port of `freestylenode()` from Src/Modules/zutil.c:123.
+/// Port of `freestylenode(hn)` from Src/Modules/zutil.c:123.
 /// C: `static void freestylenode(HashNode hn)` — walk pats list freeing
 /// each via freestylepatnode, then free node name + Style.
 #[allow(non_snake_case)]
@@ -1767,7 +1767,7 @@ pub fn freestylenode(hn: HashNode) {                                          //
     // c:135 zsfree(s->node.nam) + c:136 zfree(s) — Rust Drop handles.
 }
 
-/// Port of `freestylepatnode()` from Src/Modules/zutil.c:111.
+/// Port of `freestylepatnode(p)` from Src/Modules/zutil.c:111.
 /// C: `static void freestylepatnode(Stypat p)` — drops pat/prog/vals/eval.
 #[allow(non_snake_case)]
 pub fn freestylepatnode(p: Stypat) {                                          // c:111
@@ -1779,7 +1779,7 @@ pub fn freestylepatnode(p: Stypat) {                                          //
     drop(p);
 }
 
-/// Port of `freestypat()` from Src/Modules/zutil.c:151.
+/// Port of `freestypat(p, s, prev)` from Src/Modules/zutil.c:151.
 /// C: `static void freestypat(Stypat p, Style s, Stypat prev)` — unlink
 /// from style.pats list, then freestylepatnode. If style empties,
 /// remove from zstyletab too.
@@ -1805,7 +1805,7 @@ pub fn freestypat(mut p: Stypat, s: Option<&mut style>, prev: Option<&mut stypat
     let _ = s_has_some;
 }
 
-/// Port of `get_opt_arr()` from Src/Modules/zutil.c:1602.
+/// Port of `get_opt_arr(name)` from Src/Modules/zutil.c:1602.
 /// C: `static Zoptarr get_opt_arr(char *name)` — find a Zoptarr by name.
 #[allow(non_snake_case)]
 pub fn get_opt_arr(_name: &str) -> Option<Zoptarr> {                         // c:1602
@@ -1814,7 +1814,7 @@ pub fn get_opt_arr(_name: &str) -> Option<Zoptarr> {                         // 
     None
 }
 
-/// Port of `get_opt_desc()` from Src/Modules/zutil.c:1558.
+/// Port of `get_opt_desc(name)` from Src/Modules/zutil.c:1558.
 /// C: `static Zoptdesc get_opt_desc(char *name)` — find a Zoptdesc.
 #[allow(non_snake_case)]
 pub fn get_opt_desc(_name: &str) -> Option<Zoptdesc> {                       // c:1558
@@ -1823,7 +1823,7 @@ pub fn get_opt_desc(_name: &str) -> Option<Zoptdesc> {                       // 
     None
 }
 
-/// Port of `lookup_opt()` from Src/Modules/zutil.c:1570.
+/// Port of `lookup_opt(str)` from Src/Modules/zutil.c:1570.
 /// C: `static Zoptdesc lookup_opt(char *str)` — name-prefix match into
 /// opt_descs; returns the desc or NULL.
 #[allow(non_snake_case)]
@@ -1833,7 +1833,7 @@ pub fn lookup_opt(_str: &str) -> Option<Zoptdesc> {                          // 
     None
 }
 
-/// Port of `lookupstyle()` from Src/Modules/zutil.c:443.
+/// Port of `lookupstyle(ctxt, style)` from Src/Modules/zutil.c:443.
 /// C: `static char **lookupstyle(char *ctxt, char *style)` — find best
 /// pat-style match against the style entry; return its vals.
 #[allow(non_snake_case)]
@@ -1849,7 +1849,7 @@ pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {                  //
     }
 }
 
-/// Port of `map_opt_desc()` from Src/Modules/zutil.c:1614.
+/// Port of `map_opt_desc(start)` from Src/Modules/zutil.c:1614.
 /// C: `static Zoptdesc map_opt_desc(Zoptdesc start)` — maps starting node
 /// through alias chain.
 #[allow(non_snake_case)]
@@ -1859,7 +1859,7 @@ pub fn map_opt_desc(_start: Option<Zoptdesc>) -> Option<Zoptdesc> {
     None
 }
 
-/// Port of `newzstyletable()` from Src/Modules/zutil.c:270.
+/// Port of `newzstyletable(size, name)` from Src/Modules/zutil.c:270.
 /// C: `static HashTable newzstyletable(int size, char const *name)` —
 /// alloc a fresh style hash table.
 #[allow(non_snake_case)]
@@ -1869,7 +1869,7 @@ pub fn newzstyletable(_size: i32, _name: &str) -> Option<HashNode> {
     None
 }
 
-/// Port of `prependactions()` from Src/Modules/zutil.c:1269.
+/// Port of `prependactions(acts, branches)` from Src/Modules/zutil.c:1269.
 /// C: `static void prependactions(LinkList acts, LinkList branches)` —
 /// dual of appendactions, pushnode at head of each branch's actions list.
 #[allow(non_snake_case)]
@@ -1887,7 +1887,7 @@ pub fn prependactions(acts: &mut Vec<String>, branches: &mut Vec<String>) {   //
     }
 }
 
-/// Port of `printstylenode()` from Src/Modules/zutil.c:184.
+/// Port of `printstylenode(hn, printflags)` from Src/Modules/zutil.c:184.
 /// C: `static void printstylenode(HashNode hn, int printflags)` — emit
 /// `zstyle -L` / basic-list output for one style entry.
 #[allow(non_snake_case)]
@@ -1916,7 +1916,7 @@ pub fn printstylenode(hn: HashNode, printflags: i32) {                        //
     }
 }
 
-/// Port of `restorematch()` from Src/Modules/zutil.c:55.
+/// Port of `restorematch(m)` from Src/Modules/zutil.c:55.
 /// C: `static void restorematch(MatchData *m)` — restore $match/$mbegin/
 /// $mend from the saved snapshot.
 #[allow(non_snake_case)]
@@ -1926,7 +1926,7 @@ pub fn restorematch(m: &MatchData) {
     let _ = m;
 }
 
-/// Port of `rmatch()` from Src/Modules/zutil.c:1366.
+/// Port of `rmatch(sm, subj, var1, var2, comp)` from Src/Modules/zutil.c:1366.
 /// C: `static int rmatch(RParseResult *sm, char *subj, char *var1,
 ///     char *var2, int comp)` — match subj against sm; bind var1/var2.
 #[allow(non_snake_case)]
@@ -1941,7 +1941,7 @@ pub fn rmatch(
     0
 }
 
-/// Port of `rparsealt()` from Src/Modules/zutil.c:1345.
+/// Port of `rparsealt(result, perr)` from Src/Modules/zutil.c:1345.
 /// C: `static int rparsealt(RParseResult *result, jmp_buf *perr)` — parse
 /// alternation in regex syntax.
 #[allow(non_snake_case)]
@@ -1951,7 +1951,7 @@ pub fn rparsealt(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i3
     0
 }
 
-/// Port of `rparseclo()` from Src/Modules/zutil.c:1252.
+/// Port of `rparseclo(result, perr)` from Src/Modules/zutil.c:1252.
 #[allow(non_snake_case)]
 pub fn rparseclo(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i32 {
     // c:1252
@@ -1959,7 +1959,7 @@ pub fn rparseclo(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i3
     0
 }
 
-/// Port of `rparseelt()` from Src/Modules/zutil.c:1142.
+/// Port of `rparseelt(result, perr)` from Src/Modules/zutil.c:1142.
 #[allow(non_snake_case)]
 pub fn rparseelt(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i32 {
     // c:1142
@@ -1967,7 +1967,7 @@ pub fn rparseelt(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i3
     0
 }
 
-/// Port of `rparseseq()` from Src/Modules/zutil.c:1294.
+/// Port of `rparseseq(result, perr)` from Src/Modules/zutil.c:1294.
 #[allow(non_snake_case)]
 pub fn rparseseq(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i32 {
     // c:1294
@@ -1975,7 +1975,7 @@ pub fn rparseseq(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i3
     0
 }
 
-/// Port of `savematch()` from Src/Modules/zutil.c:40.
+/// Port of `savematch(m)` from Src/Modules/zutil.c:40.
 /// C: `static void savematch(MatchData *m)` — snapshot $match/$mbegin/
 /// $mend into the MatchData struct.
 #[allow(non_snake_case)]
@@ -1996,7 +1996,7 @@ pub fn savematch(m: &mut MatchData) {                                         //
     crate::ported::signals_h::unqueue_signals();                              // c:51
 }
 
-/// Port of `scanpatstyles()` from Src/Modules/zutil.c:229.
+/// Port of `scanpatstyles(hn, spatflags)` from Src/Modules/zutil.c:229.
 /// C: `static void scanpatstyles(HashNode hn, int spatflags)` — iterate
 /// every pattern of `hn`'s style, switching on `spatflags` (ZSPAT_NAME /
 /// ZSPAT_PAT / ZSPAT_REMOVE).
@@ -2025,7 +2025,7 @@ pub fn scanpatstyles(hn: HashNode, spatflags: i32) {                          //
     }
 }
 
-/// Port of `testforstyle()` from Src/Modules/zutil.c:465.
+/// Port of `testforstyle(ctxt, style)` from Src/Modules/zutil.c:465.
 /// C: `static int testforstyle(char *ctxt, char *style)` — non-empty
 /// match check for context+style. Returns `!found` so 0 == success.
 #[allow(non_snake_case)]
@@ -2038,7 +2038,7 @@ pub fn testforstyle(ctxt: &str, style: &str) -> i32 {                         //
     if found { 0 } else { 1 }                                                  // c:485 return !found
 }
 
-/// Port of `zalloc_default_array()` from Src/Modules/zutil.c:1710.
+/// Port of `zalloc_default_array(aval, assoc, keep, num)` from Src/Modules/zutil.c:1710.
 /// C: `static char **zalloc_default_array(int size)` — heap-alloc an
 /// array of `size` empty strings.
 #[allow(non_snake_case)]

@@ -40,7 +40,7 @@ thread_local! {
     };
 }
 
-/// Port of `bin_pcre_compile()` from `Src/Modules/pcre.c:70`.
+/// Port of `bin_pcre_compile(nam, args, ops)` from `Src/Modules/pcre.c:70`.
 /// C: `static int bin_pcre_compile(char *nam, char **args, Options ops,
 /// UNUSED(int func))` — compile *args into the file-static
 /// `pcre_pattern`. Option bits read from `ops` via OPT_ISSET.
@@ -93,7 +93,7 @@ pub fn bin_pcre_compile(nam: &str, args: &[String], ops: &options, _func: i32) -
     }
 }
 
-/// Port of `bin_pcre_study()` from `Src/Modules/pcre.c:112`. The C
+/// Port of `bin_pcre_study(nam)` from `Src/Modules/pcre.c:112`. The C
 /// source calls `pcre2_jit_compile()` to JIT-optimize the compiled
 /// pattern; the Rust `regex` crate already builds an optimal NFA
 /// at compile time, so this is the "no pattern" guard plus return 0.
@@ -106,7 +106,7 @@ pub fn bin_pcre_study(nam: &str, _args: &[String], _ops: &options, _func: i32) -
     0
 }
 
-/// Port of `bin_pcre_match()` from `Src/Modules/pcre.c:328`. Runs
+/// Port of `bin_pcre_match(nam, args, ops)` from `Src/Modules/pcre.c:328`. Runs
 /// the file-static PCRE_PATTERN against `*args`. Returns C's
 /// "0 on match, 1 on no-match / error" int convention.
 ///
@@ -210,7 +210,7 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) // 
     (return_value, full_match, captures)                                     // c:417
 }
 
-/// Port of `cond_pcre_match()` from `Src/Modules/pcre.c:422`. The
+/// Port of `cond_pcre_match(a, id)` from `Src/Modules/pcre.c:422`. The
 /// `-pcre-match` operator dispatch hook the lexer wires for
 /// `[[ s -pcre-match pat ]]`. Compiles `a[1]` and matches `a[0]`.
 /// Returns C's `int` (0 = no match, 1 = match) plus the captures so
@@ -421,24 +421,24 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/pcre.c:542`.
+/// Port of `setup_(m)` from `Src/Modules/pcre.c:542`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:542
     // C body c:544-545 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_()` from `Src/Modules/pcre.c:549`.
+/// Port of `features_(m, features)` from `Src/Modules/pcre.c:549`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:549
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_()` from `Src/Modules/pcre.c:557`.
+/// Port of `enables_(m, enables)` from `Src/Modules/pcre.c:557`.
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:557
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_()` from `Src/Modules/pcre.c:564`.
+/// Port of `boot_(m)` from `Src/Modules/pcre.c:564`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:564
     // C body c:566-567 — `return 0`. Faithful empty-body port; the
     //                    pcre_compile/pcre_match/pcre_study builtins
@@ -446,12 +446,12 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/pcre.c:571`.
+/// Port of `cleanup_(m)` from `Src/Modules/pcre.c:571`.
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:571
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_()` from `Src/Modules/pcre.c:578`.
+/// Port of `finish_(m)` from `Src/Modules/pcre.c:578`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:578
     // C body c:580-581 — `return 0`. Faithful empty-body port; the
     //                    builtins unregister via cleanup_'s setfeatureenables.
@@ -463,7 +463,7 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
 // yet covered above. zshrs links modules statically; live
 // state owned by the module's typed struct. Name-parity shims.
 
-/// Port of `getposint()` from Src/Modules/pcre.c:312.
+/// Port of `getposint(instr, nam)` from Src/Modules/pcre.c:312.
 /// C: `static int getposint(char *instr, char *nam)` — parse positive
 /// decimal integer; emit "integer expected" warning + return -1 on bad input.
 #[allow(non_snake_case)]
@@ -479,7 +479,7 @@ pub fn getposint(instr: &str, nam: &str) -> i32 {                            // 
     }
 }
 
-/// Port of `pcre_callout()` from Src/Modules/pcre.c:132.
+/// Port of `pcre_callout(block)` from Src/Modules/pcre.c:132.
 /// C: `static int pcre_callout(pcre2_callout_block_8 *block,
 ///     UNUSED(void *callout_data))` — eval the callout string as zsh code,
 ///     bind .pcre.subject and .pcre.pos parameters, return $? | errflag.

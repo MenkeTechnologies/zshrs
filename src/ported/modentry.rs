@@ -12,7 +12,7 @@
 
 use crate::module::ModuleLifecycle;
 
-/// Port of `modentry()` from Src/modentry.c:11. Direct port of the
+/// Port of `modentry(boot, m, ptr)` from Src/modentry.c:11. Direct port of the
 /// C `int modentry(int boot, Module m, void *ptr)` switch — `boot`
 /// selects which lifecycle function to dispatch. Unknown values
 /// return 1 (matches C's `zerr("bad call to modentry"); return 1`).

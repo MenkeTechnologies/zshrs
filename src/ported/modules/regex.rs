@@ -21,7 +21,7 @@
 /// `zcond_regex_match` for the only currently-supported flavour.
 pub const ZREGEX_EXTENDED: i32 = 0;                                      // c:36
 
-/// Port of `zcond_regex_match()` from `Src/Modules/regex.c:54`.
+/// Port of `zcond_regex_match(a, id)` from `Src/Modules/regex.c:54`.
 ///
 /// C signature: `static int zcond_regex_match(char **a, int id)`.
 /// Returns 1 on match, 0 on no match. The capture writeback into
@@ -169,7 +169,7 @@ pub fn zregex_regerrwarn(prefix: &str, err_msg: &str) {                  // c:40
 mod tests {
     use super::*;
 
-    /// Port of `zcond_regex_match()` from `Src/Modules/regex.c:54`.
+    /// Port of `zcond_regex_match(a, id)` from `Src/Modules/regex.c:54`.
     #[test]
     fn match_returns_one() {
         let r = zcond_regex_match(&["hello world", "wor.d"], ZREGEX_EXTENDED);
@@ -240,36 +240,36 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/regex.c:229`.
+/// Port of `setup_(m)` from `Src/Modules/regex.c:229`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:229
     // C body c:231-232 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_()` from `Src/Modules/regex.c:236`.
+/// Port of `features_(m, features)` from `Src/Modules/regex.c:236`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_()` from `Src/Modules/regex.c:244`.
+/// Port of `enables_(m, enables)` from `Src/Modules/regex.c:244`.
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_()` from `Src/Modules/regex.c:251`.
+/// Port of `boot_(m)` from `Src/Modules/regex.c:251`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:251
     // C body c:253-254 — `return 0`. Faithful empty-body port; the
     //                    regex-match condition registers via cd_list.
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/regex.c:258`.
+/// Port of `cleanup_(m)` from `Src/Modules/regex.c:258`.
 pub fn cleanup_(m: *const module) -> i32 {
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_()` from `Src/Modules/regex.c:265`.
+/// Port of `finish_(m)` from `Src/Modules/regex.c:265`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:265
     // C body c:267-268 — `return 0`. Faithful empty-body port.
     0

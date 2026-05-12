@@ -62,7 +62,7 @@ const fn seteuid_breaks_setuid() -> bool {
     false
 }
 
-/// Port of `setresgid()` from Src/openssh_bsd_setres_id.c:70.
+/// Port of `setresgid(rgid, egid, sgid)` from Src/openssh_bsd_setres_id.c:70.
 ///
 /// Set the real, effective and saved group ids. Implementation
 /// requires `rgid == sgid` (the only combination zsh ever passes);
@@ -108,7 +108,7 @@ pub unsafe fn setresgid(rgid: libc::gid_t, egid: libc::gid_t, sgid: libc::gid_t)
     ret
 }
 
-/// Port of `setresuid()` from Src/openssh_bsd_setres_id.c:105.
+/// Port of `setresuid(ruid, euid, suid)` from Src/openssh_bsd_setres_id.c:105.
 ///
 /// Set the real, effective and saved user ids. As with `setresgid()`,
 /// only `ruid == suid` is supported; other combinations return `-1`

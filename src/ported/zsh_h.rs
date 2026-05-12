@@ -10,7 +10,7 @@
 //! Per the macro casing rule: UPPERCASE C macros stay UPPERCASE in
 //! Rust with `#[allow(non_snake_case)]`. Struct names use C casing
 //! verbatim with `#[allow(non_camel_case_types)]`. Reserved-keyword
-//! field names get a `_` suffix (`type` → `typ`, `str` → `str_`,
+//! field names get a `_` suffix (`type` → `typ`, `str` → `str`,
 //! `match` → `match_`, `new` → `new_`, `loop` → `loop_`,
 //! `mod` → `mod_`, `fn` → `fn_`, `ref` → `ref_`).
 //!
@@ -450,7 +450,7 @@ pub type voidvoidfnptr_t = fn(); // c:621
 
 // Body-by-body struct definitions (C source order, fields verbatim
 // from zsh.h). Reserved-keyword Rust fields renamed minimally
-// (type→typ, str→str_, match→match_, new→new_, loop→loop_,
+// (type→typ, str→str, match→match_, new→new_, loop→loop_,
 // mod→mod_, fn→fn_, ref→ref_, in→in_, where→where_).
 
 /// Port of `struct prepromptfn` from `Src/zsh.h:626-628`.
@@ -740,7 +740,7 @@ pub struct features {
 #[allow(non_camel_case_types)]
 pub struct feature_enables {
     // c:1573
-    pub str_: String,         // c:1575 (Rust keyword `str`)
+    pub str: String,         // c:1575 (Rust keyword `str`)
     pub pat: Option<Patprog>, // c:1577
 }
 
@@ -1099,7 +1099,7 @@ pub struct heredocs {
     pub next: Option<Box<heredocs>>, // c:1153
     pub typ: i32,                    // c:1154 (Rust keyword `type`)
     pub pc: i32,                     // c:1155
-    pub str_: Option<String>,        // c:1156
+    pub str: Option<String>,        // c:1156
 }
 
 /// Port of `struct execstack` from `Src/zsh.h:1127-1150`.
@@ -1206,7 +1206,7 @@ pub struct eccstr {
     // c:836
     pub left: Option<Eccstr>,  // c:838
     pub right: Option<Eccstr>, // c:838
-    pub str_: Option<String>,  // c:841
+    pub str: Option<String>,  // c:841
     pub offs: wordcode,        // c:844
     pub aoffs: wordcode,       // c:847
     pub nfunc: i32,            // c:854

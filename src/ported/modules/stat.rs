@@ -68,7 +68,7 @@ pub static STATELTS: &[&str] = &[                                        // c:39
     "link",
 ];
 
-/// Port of `statmodeprint()` from `Src/Modules/stat.c:47`. Renders
+/// Port of `statmodeprint(mode, outbuf, flags)` from `Src/Modules/stat.c:47`. Renders
 /// a Unix mode word per the STF_RAW / STF_OCTAL / STF_STRING flag
 /// combination — raw octal/decimal, "ls -l"-style permission
 /// string, or both with the raw form parenthesised.
@@ -130,7 +130,7 @@ pub fn statmodeprint(mode: u32, flags: i32) -> String {                  // c:47
     out
 }
 
-/// Port of `statuidprint()` from `Src/Modules/stat.c:132`. Renders
+/// Port of `statuidprint(uid, outbuf, flags)` from `Src/Modules/stat.c:132`. Renders
 /// a uid in raw form (decimal), string form (user name via
 /// `getpwuid`), or both.
 pub fn statuidprint(uid: u32, flags: i32) -> String {                    // c:132
@@ -164,7 +164,7 @@ pub fn statuidprint(uid: u32, flags: i32) -> String {                    // c:13
     out
 }
 
-/// Port of `statgidprint()` from `Src/Modules/stat.c:161`. Symmetric
+/// Port of `statgidprint(gid, outbuf, flags)` from `Src/Modules/stat.c:161`. Symmetric
 /// with `statuidprint` for gid via `getgrgid`.
 pub fn statgidprint(gid: u32, flags: i32) -> String {                    // c:161
     let mut out = String::new();
@@ -196,7 +196,7 @@ pub fn statgidprint(gid: u32, flags: i32) -> String {                    // c:16
     out
 }
 
-/// Port of `stattimeprint()` from `Src/Modules/stat.c:191`. Renders
+/// Port of `stattimeprint(tim, nsecs, outbuf, flags)` from `Src/Modules/stat.c:191`. Renders
 /// a Unix timestamp + nsec offset: raw form is integer seconds;
 /// string form is `ctime(3)` (or strftime via the timefmt global).
 pub fn stattimeprint(tim: i64, _nsecs: i64, flags: i32) -> String {      // c:191
@@ -219,14 +219,14 @@ pub fn stattimeprint(tim: i64, _nsecs: i64, flags: i32) -> String {      // c:19
     out
 }
 
-/// Port of `statulprint()` from `Src/Modules/stat.c:211`. Renders an
+/// Port of `statulprint(num, outbuf)` from `Src/Modules/stat.c:211`. Renders an
 /// unsigned-long stat field as decimal (always raw, no STF_STRING
 /// branch).
 pub fn statulprint(num: u64) -> String {                                 // c:211
     format!("{}", num)                                                    // c:213
 }
 
-/// Port of `statlinkprint()` from `Src/Modules/stat.c:219`. For
+/// Port of `statlinkprint(sbuf, outbuf, fname)` from `Src/Modules/stat.c:219`. For
 /// symlinks, renders the link target via `readlink(2)`; otherwise
 /// returns empty.
 pub fn statlinkprint(sbuf_mode: u32, fname: &str) -> String {            // c:219
@@ -238,7 +238,7 @@ pub fn statlinkprint(sbuf_mode: u32, fname: &str) -> String {            // c:21
         .unwrap_or_default()
 }
 
-/// Port of `statprint()` from `Src/Modules/stat.c:234`. The unified
+/// Port of `statprint(sbuf, outbuf, fname, iwhich, flags)` from `Src/Modules/stat.c:234`. The unified
 /// per-field dispatcher: given a stat metadata, file name, the
 /// `iwhich` index from `STATELTS`, and a flag word, produce the
 /// formatted value string.
@@ -279,7 +279,7 @@ pub fn statprint(meta: &fs::Metadata, fname: &str, iwhich: i32, flags: i32) -> S
     format!("{}{}", name_prefix, val)
 }
 
-/// Port of `bin_stat()` from `Src/Modules/stat.c:368`. The `zstat`
+/// Port of `bin_stat(name, args, ops)` from `Src/Modules/stat.c:368`. The `zstat`
 /// builtin entry. Parses the `+ELEMENT` / `-flag` / `-A NAME` /
 /// `-H NAME` / `-f FD` / `-F FORMAT` arg syntax, then calls
 /// `lstat`/`stat`/`fstat` per file, dispatching `statprint` for
@@ -542,39 +542,39 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/stat.c:651`.
+/// Port of `setup_(m)` from `Src/Modules/stat.c:651`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:651
     // C body c:653-654 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_()` from `Src/Modules/stat.c:658`.
+/// Port of `features_(m, features)` from `Src/Modules/stat.c:658`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:658
     *features = featuresarray(m, module_features());
     0                                                                    // c:662
 }
 
-/// Port of `enables_()` from `Src/Modules/stat.c:666`.
+/// Port of `enables_(m, enables)` from `Src/Modules/stat.c:666`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:666
     handlefeatures(m, module_features(), enables) // c:669
 }
 
-/// Port of `boot_()` from `Src/Modules/stat.c:673`.
+/// Port of `boot_(m)` from `Src/Modules/stat.c:673`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:673
     // C body c:675-676 — `return 0`. Faithful empty-body port; the
     //                    zstat builtin registers via the bn_list dispatch.
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/stat.c:680`.
+/// Port of `cleanup_(m)` from `Src/Modules/stat.c:680`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:680
     setfeatureenables(m, module_features(), None) // c:683
 }
 
-/// Port of `finish_()` from `Src/Modules/stat.c:687`.
+/// Port of `finish_(m)` from `Src/Modules/stat.c:687`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:687
     // C body c:689-690 — `return 0`. Faithful empty-body port; the
     //                    zstat builtin unregisters via cleanup_'s setfeatureenables.

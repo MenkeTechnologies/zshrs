@@ -240,7 +240,7 @@ pub fn check_entry(entry: &libc::utmpx, current_user: &str) -> bool {
 
 /// Check if a watch pattern matches an entry field
 /// Match a `$watch` pattern against an actual user/host/tty.
-/// Port of `watchlog_match()` from Src/Modules/watch.c:434 — same
+/// Port of `watchlog_match(teststr, actual, buflen)` from Src/Modules/watch.c:434 — same
 /// `user@host:tty` triple-component matching.
 pub fn watchlog_match(pattern: &str, value: &str) -> bool {                  // c:434
     if pattern == value {
@@ -256,7 +256,7 @@ pub fn watchlog_match(pattern: &str, value: &str) -> bool {                  // 
 
 /// Format a watch event
 /// Format a watch event line (login or logout).
-/// Port of `watch3ary()` from Src/Modules/watch.c:206 (the
+/// Port of `watch3ary(inout, u, fmt, prnt)` from Src/Modules/watch.c:206 (the
 /// per-format-character branch of `watchlog2()` line 242) — same
 /// `%n`/`%M`/`%l`/`%a`/`%T`/`%t`/`%w`/`%W`/`%D` directives.
 pub fn watch3ary(entry: &libc::utmpx, logged_in: bool, fmt: &str) -> String { // c:206
@@ -498,7 +498,7 @@ pub fn dowatch(current_user: &str) -> Vec<(libc::utmpx, bool)> {            // c
 
 /// Log builtin - force immediate watch check
 /// `log` builtin entry point.
-/// Port of `bin_log()` from Src/Modules/watch.c:681 — emits the
+/// Port of `bin_log(nam, argv, ops, func)` from Src/Modules/watch.c:681 — emits the
 /// last seen watch events using the user's `$WATCHFMT` (or the
 /// supplied override).
 pub fn bin_log(current_user: &str, fmt: Option<&str>) -> String {            // c:681
@@ -525,7 +525,7 @@ pub fn bin_log(current_user: &str, fmt: Option<&str>) -> String {            // 
 mod tests {
     use super::*;
 
-    /// Port of `boot_()` from `Src/Modules/watch.c:738`.
+    /// Port of `boot_(m)` from `Src/Modules/watch.c:738`.
     #[test]
     fn test_watch_initial_empty() {
         // Fresh thread → thread_locals are zero-initialised; the `$watch`
@@ -646,7 +646,7 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/watch.c:712`.
+/// Port of `setup_(m)` from `Src/Modules/watch.c:712`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:712
     // C body c:714-718 — `partab[0].gsu = (void *)&colonarr_gsu;
     //                     partab[1].gsu = (void *)&vararray_gsu;
@@ -656,20 +656,20 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
     0
 }
 
-/// Port of `features_()` from `Src/Modules/watch.c:723`.
+/// Port of `features_(m, features)` from `Src/Modules/watch.c:723`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:723
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_()` from `Src/Modules/watch.c:731`.
+/// Port of `enables_(m, enables)` from `Src/Modules/watch.c:731`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:731
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_()` from `Src/Modules/watch.c:738`.
+/// Port of `boot_(m)` from `Src/Modules/watch.c:738`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:738
     // C body c:740-770: ties $watch and $WATCH, creates empty `watch`
     // array, sets WATCHFMT/LOGCHECK defaults IFF unset, installs the
@@ -686,13 +686,13 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/watch.c:768`.
+/// Port of `cleanup_(m)` from `Src/Modules/watch.c:768`.
 /// C body: `delprepromptfn(checksched); return setfeatureenables(...);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:768
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_()` from `Src/Modules/watch.c:776`.
+/// Port of `finish_(m)` from `Src/Modules/watch.c:776`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:776
     // C body c:778-779 — `return 0`. Faithful empty-body port; the
     //                    watch utmpx descriptor is process-lifetime,
@@ -700,7 +700,7 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
     0
 }
 
-/// Port of `getlogtime()` from `Src/Modules/watch.c:161`. For
+/// Port of `getlogtime(u, inout)` from `Src/Modules/watch.c:161`. For
 /// login events (`inout` non-zero) returns the entry's `ut_time`
 /// directly. For logout events, walks `wtmp` backwards looking
 /// for the matching login record so the resulting time pairs the
@@ -725,7 +725,7 @@ pub fn getlogtime(u_line: &str, u_time: i64, inout: i32) -> i64 {        // c:16
     unsafe { libc::time(std::ptr::null_mut()) as i64 }                   // c:171/175/181/186 return time(NULL)
 }
 
-/// Port of `ucmp()` from `Src/Modules/watch.c:527`. The qsort
+/// Port of `ucmp(u, v)` from `Src/Modules/watch.c:527`. The qsort
 /// comparator for utmp records: by `ut_time` ascending, then by
 /// `ut_line` lexicographic.
 ///
@@ -744,7 +744,7 @@ pub fn ucmp(u_time: i64, u_line: &str, v_time: i64, v_line: &str) -> i32 {  // c
     (u_time - v_time) as i32                                             // c:531
 }
 
-/// Port of `readwtab()` from `Src/Modules/watch.c:537`. Reads the
+/// Port of `readwtab(head, initial_sz)` from `Src/Modules/watch.c:537`. Reads the
 /// utmp file (`getutxent` on systems with it, otherwise raw
 /// `WATCH_UTMP_FILE`), filters out non-USER_PROCESS entries, and
 /// returns them sorted by `ucmp`.
@@ -780,7 +780,7 @@ pub fn readwtab() -> Vec<libc::utmpx> {                                  // c:53
     entries                                                              // c:589 return sz
 }
 
-/// Port of `watchlog()` from `Src/Modules/watch.c:458`. Top-level
+/// Port of `watchlog(inout, u, w, fmt)` from `Src/Modules/watch.c:458`. Top-level
 /// per-event dispatcher: for each entry in the `$watch` array,
 /// run pattern-match against the user/host/line of the changed
 /// utmp entry; on match, format via `watch3ary` (or print
@@ -799,7 +799,7 @@ pub fn watchlog(inout: i32, u: &libc::utmpx, w: &[String], fmt: &str) {  // c:45
     eprintln!("{}", line);                                               // c:520 fputs(stderr) + putc
 }
 
-/// Port of `watchlog2()` from `Src/Modules/watch.c:242`. The
+/// Port of `watchlog2(inout, u, fmt, prnt, fini)` from `Src/Modules/watch.c:242`. The
 /// mutually-recursive ternary handler for `$WATCHFMT` parsing.
 /// C body walks the format string handling `%(c.true.false)`
 /// ternaries (where `c` is one of `n`/`m`/`l`/`a` etc.) by
