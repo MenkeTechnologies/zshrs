@@ -1014,7 +1014,7 @@ impl<'a> ZshParser<'a> {
     /// (AST root). Same role at the parse-output boundary.
     pub fn parse_event(&mut self, endtok: lextok) -> Option<ZshProgram> {
         // parse.c:616-619 — reset state and prime the lexer.
-        self.lexer.tok = ENDINPUT;
+        self.lexer.set_tok(ENDINPUT);
         self.lexer.set_incmdpos(true);
         self.lexer.zshlex();
         // parse.c:620 — `init_parse();`
@@ -1048,7 +1048,7 @@ impl<'a> ZshParser<'a> {
     /// parse_sublist + parse_list. Same flow, different output.
     pub fn par_event(&mut self, endtok: lextok) -> bool {
         // parse.c:639-643 — skip leading SEPERs.
-        while self.lexer.tok == SEPER {
+        while self.lexer.tok() == SEPER {
             // parse.c:640-641 — at top-level (endtok == ENDINPUT),
             // a SEPER on a fresh line ends the event.
             if self.lexer.isnewlin() > 0 && endtok == ENDINPUT {
@@ -1057,10 +1057,10 @@ impl<'a> ZshParser<'a> {
             self.lexer.zshlex();
         }
         // parse.c:644-647 — terminate on EOF or matching close-token.
-        if self.lexer.tok == ENDINPUT {
+        if self.lexer.tok() == ENDINPUT {
             return false;
         }
-        if self.lexer.tok == endtok {
+        if self.lexer.tok() == endtok {
             return true;
         }
         // parse.c:649-... — drive parse_sublist + handle terminator.
@@ -1119,8 +1119,8 @@ impl<'a> ZshParser<'a> {
     pub fn par_wordlist(&mut self) -> Vec<String> {
         let mut out = Vec::new();
         // parse.c:2362-2378 — collect STRINGs into the wordlist.
-        while self.lexer.tok == STRING_LEX {
-            if let Some(text) = self.lexer.tokstr.clone() {
+        while self.lexer.tok() == STRING_LEX {
+            if let Some(text) = self.lexer.tokstr() {
                 out.push(text);
             }
             self.lexer.zshlex();
@@ -1133,12 +1133,12 @@ impl<'a> ZshParser<'a> {
     /// par_wordlist but tolerates leading/trailing newlines.
     pub fn par_nl_wordlist(&mut self) -> Vec<String> {
         // parse.c:2380-2381 — skip leading newlines.
-        while self.lexer.tok == NEWLIN {
+        while self.lexer.tok() == NEWLIN {
             self.lexer.zshlex();
         }
         let out = self.par_wordlist();
         // parse.c:2395-2397 — skip trailing newlines.
-        while self.lexer.tok == NEWLIN {
+        while self.lexer.tok() == NEWLIN {
             self.lexer.zshlex();
         }
         out
@@ -1149,10 +1149,10 @@ impl<'a> ZshParser<'a> {
     /// Used for `[[ N OP M ]]` numeric tests where N/M are integer
     /// literals or variable references.
     pub fn get_cond_num(&mut self) -> Option<i64> {
-        if self.lexer.tok != STRING_LEX {
+        if self.lexer.tok() != STRING_LEX {
             return None;
         }
-        let text = self.lexer.tokstr.as_ref()?.clone();
+        let text = self.lexer.tokstr()?;
         // parse.c:2647-2655 — parse as integer with optional sign.
         let parsed = text.parse::<i64>().ok()?;
         self.lexer.zshlex();
@@ -1510,7 +1510,7 @@ impl<'a> ZshParser<'a> {
             }
 
             // Skip separators
-            while self.lexer.tok == SEPER || self.lexer.tok == NEWLIN {
+            while self.lexer.tok() == SEPER || self.lexer.tok() == NEWLIN {
                 if self.check_limit() {
                     self.error("parser exceeded global iteration limit");
                     return ZshProgram { lists };
@@ -1518,13 +1518,13 @@ impl<'a> ZshParser<'a> {
                 self.lexer.zshlex();
             }
 
-            if self.lexer.tok == ENDINPUT || self.lexer.tok == LEXERR {
+            if self.lexer.tok() == ENDINPUT || self.lexer.tok() == LEXERR {
                 break;
             }
 
             // Check for end tokens
             if let Some(end_toks) = end_tokens {
-                if end_toks.contains(&self.lexer.tok) {
+                if end_toks.contains(&self.lexer.tok()) {
                     break;
                 }
             }
@@ -1532,7 +1532,7 @@ impl<'a> ZshParser<'a> {
             // Also stop at these tokens when not explicitly looking for them
             // Note: Else/Elif/Then are NOT here - they're handled by parse_if
             // to allow nested if statements inside case arms, loops, etc.
-            match self.lexer.tok {
+            match self.lexer.tok() {
                 OUTBRACE_TOK
                 | DSEMI
                 | SEMIAMP
@@ -1611,10 +1611,10 @@ impl<'a> ZshParser<'a> {
                         // src/zsh/Src/parse.c:1666 par_funcdef wordlist.
                         // Skip separators on the real lexer; safe because
                         // parse_program's next iteration would also skip them.
-                        while self.lexer.tok == SEPER || self.lexer.tok == NEWLIN {
+                        while self.lexer.tok() == SEPER || self.lexer.tok() == NEWLIN {
                             self.lexer.zshlex();
                         }
-                        if self.lexer.tok == INBRACE_TOK {
+                        if self.lexer.tok() == INBRACE_TOK {
                             // Capture body_start BEFORE the lexer
                             // advances past the first body token. The
                             // outer zshlex() consumed `{`; lexer.pos
@@ -1628,7 +1628,7 @@ impl<'a> ZshParser<'a> {
                             let body_start = self.lexer.pos;
                             self.lexer.zshlex();
                             let body = self.parse_program();
-                            let body_end = if self.lexer.tok == OUTBRACE_TOK {
+                            let body_end = if self.lexer.tok() == OUTBRACE_TOK {
                                 self.lexer.pos.saturating_sub(1)
                             } else {
                                 self.lexer.pos
@@ -1639,7 +1639,7 @@ impl<'a> ZshParser<'a> {
                                 .get(body_start..body_end)
                                 .map(|s| s.trim().to_string())
                                 .filter(|s| !s.is_empty());
-                            if self.lexer.tok == OUTBRACE_TOK {
+                            if self.lexer.tok() == OUTBRACE_TOK {
                                 self.lexer.zshlex();
                             }
                             // Replace the Simple list with a FuncDef list.
@@ -1666,7 +1666,7 @@ impl<'a> ZshParser<'a> {
                             };
                             lists.push(synthetic);
                         } else if !matches!(
-                            self.lexer.tok,
+                            self.lexer.tok(),
                             ENDINPUT | OUTBRACE_TOK | SEPER | NEWLIN
                         ) {
                             // No-brace one-line body: `foo() echo hello`.
@@ -1742,7 +1742,7 @@ impl<'a> ZshParser<'a> {
     fn parse_list(&mut self) -> Option<ZshList> {
         let sublist = self.parse_sublist()?;
 
-        let flags = match self.lexer.tok {
+        let flags = match self.lexer.tok() {
             AMPER => {
                 self.lexer.zshlex();
                 ListFlags {
@@ -1788,10 +1788,10 @@ impl<'a> ZshParser<'a> {
         let mut flags = SublistFlags::default();
 
         // Handle coproc and !
-        if self.lexer.tok == COPROC {
+        if self.lexer.tok() == COPROC {
             flags.coproc = true;
             self.lexer.zshlex();
-        } else if self.lexer.tok == BANG_TOK {
+        } else if self.lexer.tok() == BANG_TOK {
             flags.not = true;
             self.lexer.zshlex();
         }
@@ -1805,7 +1805,7 @@ impl<'a> ZshParser<'a> {
         };
 
         // Check for && or ||
-        let next = match self.lexer.tok {
+        let next = match self.lexer.tok() {
             DAMPER => {
                 self.lexer.zshlex();
                 self.skip_separators();
@@ -1846,9 +1846,9 @@ impl<'a> ZshParser<'a> {
 
         // Check for | or |&
         let mut merge_stderr = false;
-        let next = match self.lexer.tok {
+        let next = match self.lexer.tok() {
             BAR_TOK | BARAMP => {
-                merge_stderr = self.lexer.tok == BARAMP;
+                merge_stderr = self.lexer.tok() == BARAMP;
                 self.lexer.zshlex();
                 self.skip_separators();
                 self.parse_pipe().map(Box::new)
@@ -1873,13 +1873,13 @@ impl<'a> ZshParser<'a> {
     fn parse_cmd(&mut self) -> Option<ZshCommand> {
         // Parse leading redirections
         let mut redirs = Vec::new();
-        while IS_REDIROP(self.lexer.tok) {
+        while IS_REDIROP(self.lexer.tok()) {
             if let Some(redir) = self.parse_redir() {
                 redirs.push(redir);
             }
         }
 
-        let cmd = match self.lexer.tok {
+        let cmd = match self.lexer.tok() {
             FOR | FOREACH => self.parse_for(),
             SELECT => self.parse_select(),
             CASE => self.parse_case(),
@@ -1903,7 +1903,7 @@ impl<'a> ZshParser<'a> {
         // ZshCommand::Redirected so compile_zsh can scope-bracket them.
         if let Some(inner) = cmd {
             let mut trailing: Vec<ZshRedir> = Vec::new();
-            while IS_REDIROP(self.lexer.tok) {
+            while IS_REDIROP(self.lexer.tok()) {
                 if let Some(redir) = self.parse_redir() {
                     trailing.push(redir);
                 }
@@ -1941,7 +1941,7 @@ impl<'a> ZshParser<'a> {
         let mut iterations = 0;
 
         // Parse leading assignments
-        while self.lexer.tok == ENVSTRING || self.lexer.tok == ENVARRAY {
+        while self.lexer.tok() == ENVSTRING || self.lexer.tok() == ENVARRAY {
             iterations += 1;
             if iterations > MAX_ITERATIONS {
                 self.error("parse_simple: exceeded max iterations in assignments");
@@ -1960,7 +1960,7 @@ impl<'a> ZshParser<'a> {
                 self.error("parse_simple: exceeded max iterations");
                 return None;
             }
-            match self.lexer.tok {
+            match self.lexer.tok() {
                 ENVSTRING | ENVARRAY => {
                     // Mid-command assignment-shape arg under typeset
                     // / declare / local / etc. (intypeset gates the
@@ -1984,7 +1984,7 @@ impl<'a> ZshParser<'a> {
                     self.lexer.zshlex();
                 }
                 STRING_LEX | TYPESET => {
-                    let s = self.lexer.tokstr.clone();
+                    let s = self.lexer.tokstr();
                     if let Some(s) = s {
                         words.push(s);
                     }
@@ -1998,7 +1998,7 @@ impl<'a> ZshParser<'a> {
                     // arrives as a String. If it matches `{IDENT}` and
                     // the NEXT token is a redirop, pop it off as the
                     // varid for that redir.
-                    if !words.is_empty() && IS_REDIROP(self.lexer.tok) {
+                    if !words.is_empty() && IS_REDIROP(self.lexer.tok()) {
                         let last = words.last().unwrap();
                         let untoked = super::lex::untokenize(last);
                         if untoked.starts_with('{') && untoked.ends_with('}') && untoked.len() > 2 {
@@ -2022,7 +2022,7 @@ impl<'a> ZshParser<'a> {
                         }
                     }
                 }
-                _ if IS_REDIROP(self.lexer.tok) => {
+                _ if IS_REDIROP(self.lexer.tok()) => {
                     match self.parse_redir() {
                         Some(redir) => redirs.push(redir),
                         None => break, // Error in redir parsing, stop
@@ -2097,14 +2097,15 @@ impl<'a> ZshParser<'a> {
             None
         }
 
-        let tokstr = self.lexer.tokstr.as_ref()?;
+        let _ts_tokstr = self.lexer.tokstr()?;
+        let tokstr = _ts_tokstr.as_str();
 
         // Parse name=value or name+=value.
-        let (name, value_str, append) = if self.lexer.tok == ENVARRAY {
+        let (name, value_str, append) = if self.lexer.tok() == ENVARRAY {
             let (name, append) = if let Some(stripped) = tokstr.strip_suffix('+') {
                 (stripped, true)
             } else {
-                (tokstr.as_str(), false)
+                (tokstr, false)
             };
             (name.to_string(), String::new(), append)
         } else if let Some(pos) = find_assign_equals(tokstr) {
@@ -2132,7 +2133,7 @@ impl<'a> ZshParser<'a> {
             return None;
         };
 
-        let value = if self.lexer.tok == ENVARRAY {
+        let value = if self.lexer.tok() == ENVARRAY {
             // Array assignment: name=(...)
             let mut elements = Vec::new();
             self.lexer.zshlex(); // skip past token
@@ -2140,7 +2141,7 @@ impl<'a> ZshParser<'a> {
             let mut arr_iters = 0;
             const MAX_ARRAY_ELEMENTS: usize = 10_000;
             while matches!(
-                self.lexer.tok,
+                self.lexer.tok(),
                 STRING_LEX | SEPER | NEWLIN
             ) {
                 arr_iters += 1;
@@ -2148,9 +2149,10 @@ impl<'a> ZshParser<'a> {
                     self.error("array assignment exceeded maximum elements");
                     break;
                 }
-                if self.lexer.tok == STRING_LEX {
-                    if let Some(ref s) = self.lexer.tokstr {
-                        elements.push(s.clone());
+                if self.lexer.tok() == STRING_LEX {
+                    let _ts_s = self.lexer.tokstr();
+                    if let Some(s) = _ts_s.as_deref() {
+                        elements.push(s.to_string());
                     }
                 }
                 self.lexer.zshlex();
@@ -2164,7 +2166,7 @@ impl<'a> ZshParser<'a> {
             // We only consume Outpar; let the caller handle the rest.
             // Without this guard `g=(o1); f() { :; }` parsed as one
             // Simple with assigns=[g] and words=["f()"] (one token).
-            if self.lexer.tok == OUTPAR_TOK {
+            if self.lexer.tok() == OUTPAR_TOK {
                 // Note: do NOT zshlex() here. parse_simple's `self.lexer
                 // .zshlex()` after `parse_assign` returns advances past
                 // the Outpar onto the next significant token.
@@ -2196,7 +2198,7 @@ impl<'a> ZshParser<'a> {
     /// (or here-doc body / pipe-redir command), and any `{var}` style
     /// fd-binding parameter.
     fn parse_redir(&mut self) -> Option<ZshRedir> {
-        let rtype = match self.lexer.tok {
+        let rtype = match self.lexer.tok() {
             OUTANG_TOK => REDIR_WRITE,
             OUTANGBANG => REDIR_WRITENOW,
             DOUTANG => REDIR_APP,
@@ -2233,9 +2235,9 @@ impl<'a> ZshParser<'a> {
 
         self.lexer.zshlex();
 
-        let name = match self.lexer.tok {
+        let name = match self.lexer.tok() {
             STRING_LEX | ENVSTRING => {
-                let n = self.lexer.tokstr.clone().unwrap_or_default();
+                let n = self.lexer.tokstr().unwrap_or_default();
                 self.lexer.zshlex();
                 n
             }
@@ -2276,11 +2278,11 @@ impl<'a> ZshParser<'a> {
     /// inner branch for the `((...))` arithmetic-header variant
     /// (parse.c:1100-1140 inside par_for).
     fn parse_for(&mut self) -> Option<ZshCommand> {
-        let is_foreach = self.lexer.tok == FOREACH;
+        let is_foreach = self.lexer.tok() == FOREACH;
         self.lexer.zshlex();
 
         // Check for C-style: for (( init; cond; step ))
-        if self.lexer.tok == DINPAR {
+        if self.lexer.tok() == DINPAR {
             return self.parse_for_cstyle();
         }
 
@@ -2290,8 +2292,8 @@ impl<'a> ZshParser<'a> {
         // We store the names space-joined since variable identifiers
         // can't contain whitespace.
         let mut names: Vec<String> = Vec::new();
-        while self.lexer.tok == STRING_LEX {
-            let v = self.lexer.tokstr.clone().unwrap_or_default();
+        while self.lexer.tok() == STRING_LEX {
+            let v = self.lexer.tokstr().unwrap_or_default();
             if v == "in" {
                 break;
             }
@@ -2311,15 +2313,14 @@ impl<'a> ZshParser<'a> {
         // single String token with the parens lexed-as-content
         // (`<INPAR>a b c<OUTPAR>`) instead of as separate Inpar/String/
         // Outpar tokens. Detect that shape and split it manually.
-        let list = if self.lexer.tok == STRING_LEX
+        let list = if self.lexer.tok() == STRING_LEX
             && self
                 .lexer
-                .tokstr
-                .as_ref()
+                .tokstr()
                 .map(|s| s.starts_with('\u{88}') && s.ends_with('\u{8a}'))
                 .unwrap_or(false)
         {
-            let raw = self.lexer.tokstr.clone().unwrap_or_default();
+            let raw = self.lexer.tokstr().unwrap_or_default();
             // Strip leading INPAR + trailing OUTPAR, then untokenize the
             // inner content and split on whitespace for the word list.
             let inner = &raw[raw.char_indices().nth(1).map(|(i, _)| i).unwrap_or(0)
@@ -2332,20 +2333,21 @@ impl<'a> ZshParser<'a> {
             let words: Vec<String> = cleaned.split_whitespace().map(|s| s.to_string()).collect();
             self.lexer.zshlex();
             ForList::Words(words)
-        } else if self.lexer.tok == STRING_LEX {
-            let s = self.lexer.tokstr.as_ref();
+        } else if self.lexer.tok() == STRING_LEX {
+            let s = self.lexer.tokstr();
             if s.map(|s| s == "in").unwrap_or(false) {
                 self.lexer.zshlex();
                 let mut words = Vec::new();
                 let mut word_count = 0;
-                while self.lexer.tok == STRING_LEX {
+                while self.lexer.tok() == STRING_LEX {
                     word_count += 1;
                     if word_count > 500 || self.check_limit() {
                         self.error("for: too many words");
                         return None;
                     }
-                    if let Some(ref s) = self.lexer.tokstr {
-                        words.push(s.clone());
+                    let _ts_s = self.lexer.tokstr();
+                    if let Some(s) = _ts_s.as_deref() {
+                        words.push(s.to_string());
                     }
                     self.lexer.zshlex();
                 }
@@ -2353,25 +2355,26 @@ impl<'a> ZshParser<'a> {
             } else {
                 ForList::Positional
             }
-        } else if self.lexer.tok == INPAR_TOK {
+        } else if self.lexer.tok() == INPAR_TOK {
             // for var (...)
             self.lexer.zshlex();
             let mut words = Vec::new();
             let mut word_count = 0;
-            while self.lexer.tok == STRING_LEX || self.lexer.tok == SEPER {
+            while self.lexer.tok() == STRING_LEX || self.lexer.tok() == SEPER {
                 word_count += 1;
                 if word_count > 500 || self.check_limit() {
                     self.error("for: too many words in parens");
                     return None;
                 }
-                if self.lexer.tok == STRING_LEX {
-                    if let Some(ref s) = self.lexer.tokstr {
-                        words.push(s.clone());
+                if self.lexer.tok() == STRING_LEX {
+                    let _ts_s = self.lexer.tokstr();
+                    if let Some(s) = _ts_s.as_deref() {
+                        words.push(s.to_string());
                     }
                 }
                 self.lexer.zshlex();
             }
-            if self.lexer.tok == OUTPAR_TOK {
+            if self.lexer.tok() == OUTPAR_TOK {
                 // After the `)` of a for-list, the next token is the
                 // body opener — `do`/`{`. zsh's lexer needs incmdpos
                 // set so `{` lexes as Inbrace (not as a literal). C
@@ -2414,27 +2417,27 @@ impl<'a> ZshParser<'a> {
 
         self.lexer.zshlex(); // Get init: Dinpar "i=0"
 
-        if self.lexer.tok != DINPAR {
+        if self.lexer.tok() != DINPAR {
             self.error("expected init expression in for ((");
             return None;
         }
-        let init = self.lexer.tokstr.clone().unwrap_or_default();
+        let init = self.lexer.tokstr().unwrap_or_default();
 
         self.lexer.zshlex(); // Get cond: Dinpar "i<10"
 
-        if self.lexer.tok != DINPAR {
+        if self.lexer.tok() != DINPAR {
             self.error("expected condition in for ((");
             return None;
         }
-        let cond = self.lexer.tokstr.clone().unwrap_or_default();
+        let cond = self.lexer.tokstr().unwrap_or_default();
 
         self.lexer.zshlex(); // Get step: Doutpar "i++"
 
-        if self.lexer.tok != DOUTPAR {
+        if self.lexer.tok() != DOUTPAR {
             self.error("expected )) in for");
             return None;
         }
-        let step = self.lexer.tokstr.clone().unwrap_or_default();
+        let step = self.lexer.tokstr().unwrap_or_default();
 
         self.lexer.zshlex(); // Move past ))
 
@@ -2474,9 +2477,9 @@ impl<'a> ZshParser<'a> {
     fn parse_case(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip 'case'
 
-        let word = match self.lexer.tok {
+        let word = match self.lexer.tok() {
             STRING_LEX => {
-                let w = self.lexer.tokstr.clone().unwrap_or_default();
+                let w = self.lexer.tokstr().unwrap_or_default();
                 self.lexer.zshlex();
                 w
             }
@@ -2489,9 +2492,9 @@ impl<'a> ZshParser<'a> {
         self.skip_separators();
 
         // Expect 'in' or {
-        let use_brace = self.lexer.tok == INBRACE_TOK;
-        if self.lexer.tok == STRING_LEX {
-            let s = self.lexer.tokstr.as_ref();
+        let use_brace = self.lexer.tok() == INBRACE_TOK;
+        if self.lexer.tok() == STRING_LEX {
+            let s = self.lexer.tokstr();
             if s.map(|s| s != "in").unwrap_or(true) {
                 self.error("expected 'in' in case");
                 return None;
@@ -2526,22 +2529,21 @@ impl<'a> ZshParser<'a> {
 
             // Check for end
             // Note: 'esac' might be String "esac" if incasepat > 0 prevents reserved word recognition
-            let is_esac = self.lexer.tok == ESAC
-                || (self.lexer.tok == STRING_LEX
+            let is_esac = self.lexer.tok() == ESAC
+                || (self.lexer.tok() == STRING_LEX
                     && self
                         .lexer
-                        .tokstr
-                        .as_ref()
+                        .tokstr()
                         .map(|s| s == "esac")
                         .unwrap_or(false));
-            if (use_brace && self.lexer.tok == OUTBRACE_TOK) || (!use_brace && is_esac) {
+            if (use_brace && self.lexer.tok() == OUTBRACE_TOK) || (!use_brace && is_esac) {
                 self.lexer.set_incasepat(0);
                 self.lexer.zshlex();
                 break;
             }
 
             // Also break on EOF
-            if self.lexer.tok == ENDINPUT || self.lexer.tok == LEXERR {
+            if self.lexer.tok() == ENDINPUT || self.lexer.tok() == LEXERR {
                 self.lexer.set_incasepat(0);
                 break;
             }
@@ -2553,7 +2555,7 @@ impl<'a> ZshParser<'a> {
             // `)` after pattern parsing — otherwise the arm-close would
             // be interpreted as the pattern-close and the actual body
             // would get the leftover `)`.
-            let had_leading_paren = self.lexer.tok == INPAR_TOK;
+            let had_leading_paren = self.lexer.tok() == INPAR_TOK;
             if had_leading_paren {
                 self.lexer.zshlex();
             }
@@ -2569,20 +2571,20 @@ impl<'a> ZshParser<'a> {
                     return None;
                 }
 
-                if self.lexer.tok == STRING_LEX {
-                    let s = self.lexer.tokstr.as_ref();
+                if self.lexer.tok() == STRING_LEX {
+                    let s = self.lexer.tokstr();
                     if s.map(|s| s == "esac").unwrap_or(false) {
                         break;
                     }
-                    patterns.push(self.lexer.tokstr.clone().unwrap_or_default());
+                    patterns.push(self.lexer.tokstr().unwrap_or_default());
                     // After first pattern token, set incasepat=2 so ( is treated as part of pattern
                     self.lexer.set_incasepat(2);
                     self.lexer.zshlex();
-                } else if self.lexer.tok != BAR_TOK {
+                } else if self.lexer.tok() != BAR_TOK {
                     break;
                 }
 
-                if self.lexer.tok == BAR_TOK {
+                if self.lexer.tok() == BAR_TOK {
                     // Reset to 1 (start of next alternative pattern)
                     self.lexer.set_incasepat(1);
                     self.lexer.zshlex();
@@ -2613,7 +2615,7 @@ impl<'a> ZshParser<'a> {
             // pattern, then arm-close). The first form is unambiguous
             // when the bare pattern was simple; the second is needed
             // when the body starts with `(`.
-            if self.lexer.tok != OUTPAR_TOK {
+            if self.lexer.tok() != OUTPAR_TOK {
                 self.error("expected ')' in case pattern");
                 return None;
             }
@@ -2628,7 +2630,7 @@ impl<'a> ZshParser<'a> {
             // command position; only the FIRST body word was broken.
             self.lexer.set_incmdpos(true);
             self.lexer.zshlex();
-            if had_leading_paren && self.lexer.tok == OUTPAR_TOK {
+            if had_leading_paren && self.lexer.tok() == OUTPAR_TOK {
                 self.lexer.set_incmdpos(true);
                 self.lexer.zshlex();
             }
@@ -2642,7 +2644,7 @@ impl<'a> ZshParser<'a> {
             // this, a `[`-prefixed pattern after the FIRST arm became
             // Inbrack instead of String and the pattern-loop bailed
             // out with "expected ')' in case pattern".
-            let terminator = match self.lexer.tok {
+            let terminator = match self.lexer.tok() {
                 DSEMI => {
                     self.lexer.set_incasepat(1);
                     self.lexer.zshlex();
@@ -2687,8 +2689,8 @@ impl<'a> ZshParser<'a> {
         self.skip_separators();
 
         // Expect 'then' or {
-        let use_brace = self.lexer.tok == INBRACE_TOK;
-        if self.lexer.tok != THEN && !use_brace {
+        let use_brace = self.lexer.tok() == INBRACE_TOK;
+        if self.lexer.tok() != THEN && !use_brace {
             self.error("expected 'then' or '{' after if condition");
             return None;
         }
@@ -2697,7 +2699,7 @@ impl<'a> ZshParser<'a> {
         // Parse then-body - stops at else/elif/fi, or } if using brace syntax
         let then = if use_brace {
             let body = self.parse_program_until(Some(&[OUTBRACE_TOK]));
-            if self.lexer.tok == OUTBRACE_TOK {
+            if self.lexer.tok() == OUTBRACE_TOK {
                 self.lexer.zshlex();
             }
             Box::new(body)
@@ -2727,7 +2729,7 @@ impl<'a> ZshParser<'a> {
             loop {
                 self.skip_separators();
 
-                match self.lexer.tok {
+                match self.lexer.tok() {
                     ELIF => {
                         self.lexer.zshlex();
                         // elif condition stops at 'then' or '{'
@@ -2735,8 +2737,8 @@ impl<'a> ZshParser<'a> {
                             self.parse_program_until(Some(&[THEN, INBRACE_TOK]));
                         self.skip_separators();
 
-                        let elif_use_brace = self.lexer.tok == INBRACE_TOK;
-                        if self.lexer.tok != THEN && !elif_use_brace {
+                        let elif_use_brace = self.lexer.tok() == INBRACE_TOK;
+                        if self.lexer.tok() != THEN && !elif_use_brace {
                             self.error("expected 'then' after elif");
                             return None;
                         }
@@ -2745,7 +2747,7 @@ impl<'a> ZshParser<'a> {
                         // elif body stops at else/elif/fi or } if using braces
                         let ebody = if elif_use_brace {
                             let body = self.parse_program_until(Some(&[OUTBRACE_TOK]));
-                            if self.lexer.tok == OUTBRACE_TOK {
+                            if self.lexer.tok() == OUTBRACE_TOK {
                                 self.lexer.zshlex();
                             }
                             body
@@ -2763,7 +2765,7 @@ impl<'a> ZshParser<'a> {
                         self.lexer.zshlex();
                         self.skip_separators();
 
-                        let else_use_brace = self.lexer.tok == INBRACE_TOK;
+                        let else_use_brace = self.lexer.tok() == INBRACE_TOK;
                         if else_use_brace {
                             self.lexer.zshlex();
                         }
@@ -2771,7 +2773,7 @@ impl<'a> ZshParser<'a> {
                         // else body stops at 'fi' or '}'
                         else_ = Some(Box::new(if else_use_brace {
                             let body = self.parse_program_until(Some(&[OUTBRACE_TOK]));
-                            if self.lexer.tok == OUTBRACE_TOK {
+                            if self.lexer.tok() == OUTBRACE_TOK {
                                 self.lexer.zshlex();
                             }
                             body
@@ -2780,7 +2782,7 @@ impl<'a> ZshParser<'a> {
                         }));
 
                         // Consume the 'fi' if present (not for brace syntax)
-                        if !else_use_brace && self.lexer.tok == FI {
+                        if !else_use_brace && self.lexer.tok() == FI {
                             self.lexer.zshlex();
                         }
                         break;
@@ -2829,9 +2831,9 @@ impl<'a> ZshParser<'a> {
     fn parse_repeat(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip 'repeat'
 
-        let count = match self.lexer.tok {
+        let count = match self.lexer.tok() {
             STRING_LEX => {
-                let c = self.lexer.tokstr.clone().unwrap_or_default();
+                let c = self.lexer.tokstr().unwrap_or_default();
                 self.lexer.zshlex();
                 c
             }
@@ -2859,24 +2861,24 @@ impl<'a> ZshParser<'a> {
     /// CMD` may skip do/done) vs c-style (which always requires
     /// do/done).
     fn parse_loop_body(&mut self, foreach_style: bool) -> Option<ZshProgram> {
-        if self.lexer.tok == DOLOOP {
+        if self.lexer.tok() == DOLOOP {
             self.lexer.zshlex();
             let body = self.parse_program();
-            if self.lexer.tok == DONE {
+            if self.lexer.tok() == DONE {
                 self.lexer.zshlex();
             }
             Some(body)
-        } else if self.lexer.tok == INBRACE_TOK {
+        } else if self.lexer.tok() == INBRACE_TOK {
             self.lexer.zshlex();
             let body = self.parse_program();
-            if self.lexer.tok == OUTBRACE_TOK {
+            if self.lexer.tok() == OUTBRACE_TOK {
                 self.lexer.zshlex();
             }
             Some(body)
         } else if foreach_style {
             // foreach allows 'end' terminator
             let body = self.parse_program();
-            if self.lexer.tok == ZEND {
+            if self.lexer.tok() == ZEND {
                 self.lexer.zshlex();
             }
             Some(body)
@@ -2894,7 +2896,7 @@ impl<'a> ZshParser<'a> {
     fn parse_subsh(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip (
         let prog = self.parse_program();
-        if self.lexer.tok == OUTPAR_TOK {
+        if self.lexer.tok() == OUTPAR_TOK {
             self.lexer.zshlex();
         }
         Some(ZshCommand::Subsh(Box::new(prog)))
@@ -2916,21 +2918,21 @@ impl<'a> ZshParser<'a> {
         // No `{` after `()` → bare empty subshell shape `()`. Fall back
         // to a Subsh with an empty program so the status is 0 (matches
         // zsh's `()` no-op behavior).
-        if self.lexer.tok != INBRACE_TOK {
+        if self.lexer.tok() != INBRACE_TOK {
             return Some(ZshCommand::Subsh(Box::new(ZshProgram {
                 lists: Vec::new(),
             })));
         }
         self.lexer.zshlex(); // skip {
         let body = self.parse_program();
-        if self.lexer.tok == OUTBRACE_TOK {
+        if self.lexer.tok() == OUTBRACE_TOK {
             self.lexer.zshlex();
         }
         // Collect any trailing args until a separator. zsh's anon-fn form
         // `() { body } a b c` runs body with $1=a, $2=b, $3=c.
         let mut args = Vec::new();
-        while self.lexer.tok == STRING_LEX {
-            if let Some(s) = self.lexer.tokstr.clone() {
+        while self.lexer.tok() == STRING_LEX {
+            if let Some(s) = self.lexer.tokstr() {
                 args.push(s);
             }
             self.lexer.zshlex();
@@ -2970,22 +2972,22 @@ impl<'a> ZshParser<'a> {
         // rule (lex.rs:976-983) leaves the second `{` in word position,
         // turning `always { ... }` into a Simple `{` `echo` … and the
         // try/always pairing is silently lost.
-        if self.lexer.tok == OUTBRACE_TOK {
+        if self.lexer.tok() == OUTBRACE_TOK {
             self.lexer.set_incmdpos(true); // parse.c:1632 incmdpos = !zsh_construct
             self.lexer.zshlex();
 
             // Check for 'always'
-            if self.lexer.tok == STRING_LEX {
-                let s = self.lexer.tokstr.as_ref();
+            if self.lexer.tok() == STRING_LEX {
+                let s = self.lexer.tokstr();
                 if s.map(|s| s == "always").unwrap_or(false) {
                     self.lexer.set_incmdpos(true); // parse.c:1637 incmdpos = 1
                     self.lexer.zshlex();
                     self.skip_separators();
 
-                    if self.lexer.tok == INBRACE_TOK {
+                    if self.lexer.tok() == INBRACE_TOK {
                         self.lexer.zshlex();
                         let always = self.parse_program();
-                        if self.lexer.tok == OUTBRACE_TOK {
+                        if self.lexer.tok() == OUTBRACE_TOK {
                             self.lexer.zshlex();
                         }
                         return Some(ZshCommand::Try(ZshTry {
@@ -3033,9 +3035,10 @@ impl<'a> ZshParser<'a> {
         //      par_funcdef which knows it's in funcdef-header context
         //      and accepts the brace either way.
         loop {
-            match self.lexer.tok {
+            match self.lexer.tok() {
                 STRING_LEX => {
-                    let s = self.lexer.tokstr.as_ref()?;
+                    let _ts_s = self.lexer.tokstr()?;
+                    let s = _ts_s.as_str();
                     if s == "{" {
                         // Funcdef body opener — break, body-parser branch handles it.
                         break;
@@ -3050,7 +3053,7 @@ impl<'a> ZshParser<'a> {
                         self.lexer.zshlex();
                         continue;
                     }
-                    names.push(s.clone());
+                    names.push(s.to_string());
                     self.lexer.zshlex();
                 }
                 INBRACE_TOK | INOUTPAR | SEPER | NEWLIN => break,
@@ -3059,7 +3062,7 @@ impl<'a> ZshParser<'a> {
         }
 
         // Optional ()
-        let saw_paren = self.lexer.tok == INOUTPAR;
+        let saw_paren = self.lexer.tok() == INOUTPAR;
         if saw_paren {
             self.lexer.zshlex();
         }
@@ -3068,9 +3071,9 @@ impl<'a> ZshParser<'a> {
 
         // Body opener: real Inbrace OR a String("{") (the lexer emits
         // the latter after a String NAME — see comment above).
-        let body_opener_is_string_brace = self.lexer.tok == STRING_LEX
-            && self.lexer.tokstr.as_deref() == Some("{");
-        if self.lexer.tok == INBRACE_TOK || body_opener_is_string_brace {
+        let body_opener_is_string_brace = self.lexer.tok() == STRING_LEX
+            && self.lexer.tokstr_eq("{");
+        if self.lexer.tok() == INBRACE_TOK || body_opener_is_string_brace {
             // Capture body_start BEFORE the lexer advances past the
             // first body token. After the previous zshlex consumed
             // `{`, lexer.pos points just past `{` (which is where the
@@ -3081,7 +3084,7 @@ impl<'a> ZshParser<'a> {
             let body_start = self.lexer.pos;
             self.lexer.zshlex();
             let body = self.parse_program();
-            let body_end = if self.lexer.tok == OUTBRACE_TOK {
+            let body_end = if self.lexer.tok() == OUTBRACE_TOK {
                 // Lexer has just consumed `}`; pos is past it. Body content
                 // ends one byte before pos.
                 self.lexer.pos.saturating_sub(1)
@@ -3094,7 +3097,7 @@ impl<'a> ZshParser<'a> {
                 .get(body_start..body_end)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            if self.lexer.tok == OUTBRACE_TOK {
+            if self.lexer.tok() == OUTBRACE_TOK {
                 self.lexer.zshlex();
             }
 
@@ -3106,8 +3109,8 @@ impl<'a> ZshParser<'a> {
             // function with the args as positional params.
             if names.is_empty() {
                 let mut args = Vec::new();
-                while self.lexer.tok == STRING_LEX {
-                    if let Some(s) = self.lexer.tokstr.clone() {
+                while self.lexer.tok() == STRING_LEX {
+                    if let Some(s) = self.lexer.tokstr() {
                         args.push(s);
                     }
                     self.lexer.zshlex();
@@ -3154,19 +3157,19 @@ impl<'a> ZshParser<'a> {
     /// arm (parse.c:1836-2228).
     fn parse_inline_funcdef(&mut self, name: String) -> Option<ZshCommand> {
         // Skip ()
-        if self.lexer.tok == INOUTPAR {
+        if self.lexer.tok() == INOUTPAR {
             self.lexer.zshlex();
         }
 
         self.skip_separators();
 
         // Parse body
-        if self.lexer.tok == INBRACE_TOK {
+        if self.lexer.tok() == INBRACE_TOK {
             // Same body_start-before-zshlex fix as parse_funcdef.
             let body_start = self.lexer.pos;
             self.lexer.zshlex();
             let body = self.parse_program();
-            let body_end = if self.lexer.tok == OUTBRACE_TOK {
+            let body_end = if self.lexer.tok() == OUTBRACE_TOK {
                 self.lexer.pos.saturating_sub(1)
             } else {
                 self.lexer.pos
@@ -3177,7 +3180,7 @@ impl<'a> ZshParser<'a> {
                 .get(body_start..body_end)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            if self.lexer.tok == OUTBRACE_TOK {
+            if self.lexer.tok() == OUTBRACE_TOK {
                 self.lexer.zshlex();
             }
             Some(ZshCommand::FuncDef(ZshFuncDef {
@@ -3229,14 +3232,14 @@ impl<'a> ZshParser<'a> {
                              // diagnostic and return None so the caller produces a
                              // non-zero exit. Without this, `[[ ]]` silently passed and
                              // returned exit 0.
-        if self.lexer.tok == DOUTBRACK {
+        if self.lexer.tok() == DOUTBRACK {
             self.error("parse error near `]]'");
             self.lexer.zshlex();
             return None;
         }
         let cond = self.parse_cond_expr();
 
-        if self.lexer.tok == DOUTBRACK {
+        if self.lexer.tok() == DOUTBRACK {
             self.lexer.zshlex();
         }
 
@@ -3271,7 +3274,7 @@ impl<'a> ZshParser<'a> {
 
         self.skip_cond_separators();
 
-        let result = if self.lexer.tok == DBAR {
+        let result = if self.lexer.tok() == DBAR {
             self.lexer.zshlex();
             self.skip_cond_separators();
             self.parse_cond_or()
@@ -3303,7 +3306,7 @@ impl<'a> ZshParser<'a> {
 
         self.skip_cond_separators();
 
-        let result = if self.lexer.tok == DAMPER {
+        let result = if self.lexer.tok() == DAMPER {
             self.lexer.zshlex();
             self.skip_cond_separators();
             self.parse_cond_and()
@@ -3329,12 +3332,11 @@ impl<'a> ZshParser<'a> {
         self.skip_cond_separators();
 
         // ! can be either BANG_TOK or String "!"
-        let is_not = self.lexer.tok == BANG_TOK
-            || (self.lexer.tok == STRING_LEX
+        let is_not = self.lexer.tok() == BANG_TOK
+            || (self.lexer.tok() == STRING_LEX
                 && self
                     .lexer
-                    .tokstr
-                    .as_ref()
+                    .tokstr()
                     .map(|s| s == "!")
                     .unwrap_or(false));
         if is_not {
@@ -3350,7 +3352,7 @@ impl<'a> ZshParser<'a> {
             return Some(ZshCond::Not(Box::new(inner)));
         }
 
-        if self.lexer.tok == INPAR_TOK {
+        if self.lexer.tok() == INPAR_TOK {
             self.lexer.zshlex();
             self.skip_cond_separators();
             let inner = match self.parse_cond_expr() {
@@ -3361,7 +3363,7 @@ impl<'a> ZshParser<'a> {
                 }
             };
             self.skip_cond_separators();
-            if self.lexer.tok == OUTPAR_TOK {
+            if self.lexer.tok() == OUTPAR_TOK {
                 self.lexer.zshlex();
             }
             self.recursion_depth -= 1;
@@ -3378,9 +3380,9 @@ impl<'a> ZshParser<'a> {
     /// sub-expressions. Direct port of par_cond_double / par_cond_triple
     /// / par_cond_multi at parse.c:2626-2731 (chosen by arg count).
     fn parse_cond_primary(&mut self) -> Option<ZshCond> {
-        let s1 = match self.lexer.tok {
+        let s1 = match self.lexer.tok() {
             STRING_LEX => {
-                let s = self.lexer.tokstr.clone().unwrap_or_default();
+                let s = self.lexer.tokstr().unwrap_or_default();
                 self.lexer.zshlex();
                 s
             }
@@ -3396,9 +3398,9 @@ impl<'a> ZshParser<'a> {
         // is 2 UTF-8 bytes (`\xc2\x9b`).
         let s1_chars: Vec<char> = s1.chars().collect();
         if s1_chars.len() == 2 && IS_DASH(s1_chars[0]) {
-            let s2 = match self.lexer.tok {
+            let s2 = match self.lexer.tok() {
                 STRING_LEX => {
-                    let s = self.lexer.tokstr.clone().unwrap_or_default();
+                    let s = self.lexer.tokstr().unwrap_or_default();
                     self.lexer.zshlex();
                     s
                 }
@@ -3414,9 +3416,9 @@ impl<'a> ZshParser<'a> {
         // The bump makes the lexer treat `(` as a literal character inside
         // the RHS word (e.g. `[[ x =~ (foo) ]]`) instead of returning INPAR
         // and splitting the regex into multiple tokens.
-        let op = match self.lexer.tok {
+        let op = match self.lexer.tok() {
             STRING_LEX => {
-                let s = self.lexer.tokstr.clone().unwrap_or_default();
+                let s = self.lexer.tokstr().unwrap_or_default();
                 self.lexer.set_incond(self.lexer.incond() + 1);
                 self.lexer.zshlex();
                 self.lexer.set_incond(self.lexer.incond() - 1);
@@ -3439,9 +3441,9 @@ impl<'a> ZshParser<'a> {
 
         self.skip_cond_separators();
 
-        let s2 = match self.lexer.tok {
+        let s2 = match self.lexer.tok() {
             STRING_LEX => {
-                let s = self.lexer.tokstr.clone().unwrap_or_default();
+                let s = self.lexer.tokstr().unwrap_or_default();
                 self.lexer.zshlex();
                 s
             }
@@ -3456,8 +3458,8 @@ impl<'a> ZshParser<'a> {
     }
 
     fn skip_cond_separators(&mut self) {
-        while self.lexer.tok == SEPER && {
-            let s = self.lexer.tokstr.as_ref();
+        while self.lexer.tok() == SEPER && {
+            let s = self.lexer.tokstr();
             s.map(|s| !s.contains(';')).unwrap_or(true)
         } {
             self.lexer.zshlex();
@@ -3469,7 +3471,7 @@ impl<'a> ZshParser<'a> {
     /// `par_dinbrack` (despite the name; the function actually handles
     /// DINPAR `(( ))` blocks too).
     fn parse_arith(&mut self) -> Option<ZshCommand> {
-        let expr = self.lexer.tokstr.clone().unwrap_or_default();
+        let expr = self.lexer.tokstr().unwrap_or_default();
         self.lexer.zshlex();
         Some(ZshCommand::Arith(expr))
     }
@@ -3482,9 +3484,9 @@ impl<'a> ZshParser<'a> {
         self.lexer.zshlex(); // skip 'time'
 
         // Check if there's a pipeline to time
-        if self.lexer.tok == SEPER
-            || self.lexer.tok == NEWLIN
-            || self.lexer.tok == ENDINPUT
+        if self.lexer.tok() == SEPER
+            || self.lexer.tok() == NEWLIN
+            || self.lexer.tok() == ENDINPUT
         {
             Some(ZshCommand::Time(None))
         } else {
@@ -3495,13 +3497,13 @@ impl<'a> ZshParser<'a> {
 
     /// Check if next token is ()
     fn peek_inoutpar(&mut self) -> bool {
-        self.lexer.tok == INOUTPAR
+        self.lexer.tok() == INOUTPAR
     }
 
     /// Skip separator tokens
     fn skip_separators(&mut self) {
         let mut iterations = 0;
-        while self.lexer.tok == SEPER || self.lexer.tok == NEWLIN {
+        while self.lexer.tok() == SEPER || self.lexer.tok() == NEWLIN {
             iterations += 1;
             if iterations > 100_000 {
                 self.error("skip_separators: too many iterations");
