@@ -3824,69 +3824,69 @@ mod tests {
     fn test_simple_command() {
         let mut lexer = ZshLexer::new("echo hello");
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
-        assert_eq!(lexer.tokstr, Some("echo".to_string()));
+        assert_eq!(lexer.tok(), STRING_LEX);
+        assert_eq!(lexer.tokstr(), Some("echo".to_string()));
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
-        assert_eq!(lexer.tokstr, Some("hello".to_string()));
+        assert_eq!(lexer.tok(), STRING_LEX);
+        assert_eq!(lexer.tokstr(), Some("hello".to_string()));
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, ENDINPUT);
+        assert_eq!(lexer.tok(), ENDINPUT);
     }
 
     #[test]
     fn test_pipeline() {
         let mut lexer = ZshLexer::new("ls | grep foo");
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, BAR_TOK);
+        assert_eq!(lexer.tok(), BAR_TOK);
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
     }
 
     #[test]
     fn test_redirections() {
         let mut lexer = ZshLexer::new("echo > file");
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, OUTANG_TOK);
+        assert_eq!(lexer.tok(), OUTANG_TOK);
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
     }
 
     #[test]
     fn test_heredoc() {
         let mut lexer = ZshLexer::new("cat << EOF");
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, DINANG);
+        assert_eq!(lexer.tok(), DINANG);
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
     }
 
     #[test]
     fn test_single_quotes() {
         let mut lexer = ZshLexer::new("echo 'hello world'");
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
         // Should contain Snull markers around literal content
-        assert!(lexer.tokstr.is_some());
+        assert!(lexer.tokstr().is_some());
     }
 
     #[test]
@@ -3894,37 +3894,37 @@ mod tests {
         let mut lexer = ZshLexer::new("function foo { }");
         lexer.zshlex();
         assert_eq!(
-            lexer.tok,
+            lexer.tok(),
             FUNC,
             "expected Func, got {:?}",
-            lexer.tok
+            lexer.tok()
         );
 
         lexer.zshlex();
         assert_eq!(
-            lexer.tok,
+            lexer.tok(),
             STRING_LEX,
             "expected String for 'foo', got {:?}",
-            lexer.tok
+            lexer.tok()
         );
-        assert_eq!(lexer.tokstr, Some("foo".to_string()));
+        assert_eq!(lexer.tokstr(), Some("foo".to_string()));
 
         lexer.zshlex();
         assert_eq!(
-            lexer.tok,
+            lexer.tok(),
             INBRACE_TOK,
             "expected Inbrace, got {:?} tokstr={:?}",
-            lexer.tok,
-            lexer.tokstr
+            lexer.tok(),
+            lexer.tokstr()
         );
 
         lexer.zshlex();
         assert_eq!(
-            lexer.tok,
+            lexer.tok(),
             OUTBRACE_TOK,
             "expected Outbrace, got {:?} tokstr={:?} incmdpos={}",
-            lexer.tok,
-            lexer.tokstr,
+            lexer.tok(),
+            lexer.tokstr(),
             lexer.incmdpos()
         );
     }
@@ -3933,22 +3933,22 @@ mod tests {
     fn test_double_quotes() {
         let mut lexer = ZshLexer::new("echo \"hello $name\"");
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
         // Should contain tokenized content
-        assert!(lexer.tokstr.is_some());
+        assert!(lexer.tokstr().is_some());
     }
 
     #[test]
     fn test_command_substitution() {
         let mut lexer = ZshLexer::new("echo $(pwd)");
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
     }
 
     #[test]
@@ -3957,15 +3957,15 @@ mod tests {
         lexer.set_incmdpos(true);
         lexer.zshlex();
         assert_eq!(
-            lexer.tok,
+            lexer.tok(),
             ENVSTRING,
             "tok={:?} tokstr={:?}",
-            lexer.tok,
-            lexer.tokstr
+            lexer.tok(),
+            lexer.tokstr()
         );
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
     }
 
     #[test]
@@ -3973,21 +3973,21 @@ mod tests {
         let mut lexer = ZshLexer::new("arr=(a b c)");
         lexer.set_incmdpos(true);
         lexer.zshlex();
-        assert_eq!(lexer.tok, ENVARRAY);
+        assert_eq!(lexer.tok(), ENVARRAY);
     }
 
     #[test]
     fn test_process_substitution() {
         let mut lexer = ZshLexer::new("diff <(ls) >(cat)");
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
         // <(ls) is tokenized into the string
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
         // >(cat) is tokenized
     }
 
@@ -3995,10 +3995,10 @@ mod tests {
     fn test_arithmetic() {
         let mut lexer = ZshLexer::new("echo $((1+2))");
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
 
         lexer.zshlex();
-        assert_eq!(lexer.tok, STRING_LEX);
+        assert_eq!(lexer.tok(), STRING_LEX);
     }
 
     #[test]
@@ -4008,28 +4008,28 @@ mod tests {
         // Skip to first ;;
         loop {
             lexer.zshlex();
-            if lexer.tok == DSEMI || lexer.tok == ENDINPUT {
+            if lexer.tok() == DSEMI || lexer.tok() == ENDINPUT {
                 break;
             }
         }
-        assert_eq!(lexer.tok, DSEMI);
+        assert_eq!(lexer.tok(), DSEMI);
 
         // Find ;&
         loop {
             lexer.zshlex();
-            if lexer.tok == SEMIAMP || lexer.tok == ENDINPUT {
+            if lexer.tok() == SEMIAMP || lexer.tok() == ENDINPUT {
                 break;
             }
         }
-        assert_eq!(lexer.tok, SEMIAMP);
+        assert_eq!(lexer.tok(), SEMIAMP);
 
         // Find ;|
         loop {
             lexer.zshlex();
-            if lexer.tok == SEMIBAR || lexer.tok == ENDINPUT {
+            if lexer.tok() == SEMIBAR || lexer.tok() == ENDINPUT {
                 break;
             }
         }
-        assert_eq!(lexer.tok, SEMIBAR);
+        assert_eq!(lexer.tok(), SEMIBAR);
     }
 }
