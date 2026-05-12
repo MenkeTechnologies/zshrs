@@ -304,8 +304,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         Some(i) => &a[..i],
                         None => a.as_str(),
                     };
-                    let old = exec.scalar(name)
-                        .or_else(|| exec.variables.get(name).cloned());
+                    let old = exec.scalar(name);
                     exec.local_save_stack.push((name.to_string(), old));
                 }
             }
@@ -1423,7 +1422,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.set_scalar(scalar_name, joined);
                 exec.set_array(name.clone(), values.clone());
             } else {
-                exec.variables.remove(&name);
+                exec.unset_scalar(&name);
                 exec.set_array(name.clone(), values.clone());
             }
             // PFA-SMR aspect: array SET (`name=(...)`). emit_path_or_assign
@@ -1491,7 +1490,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.set_assoc(name, map);
                 return;
             }
-            exec.variables.remove(&name);
+            exec.unset_scalar(&name);
             // `typeset -U arr` dedupes — append must respect existing
             // elements too. Skip values that are already present.
             // PFA-SMR aspect: array APPEND (`name+=(...)`). Same
@@ -1600,9 +1599,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         };
 
         let prompt = with_executor(|exec| {
-            exec.variables
-                .get("PROMPT3")
-                .cloned()
+            exec.scalar("PROMPT3")
                 .unwrap_or_else(|| "?# ".to_string())
         });
 
@@ -1728,10 +1725,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // path landed.
             let signal = with_executor(|exec| exec.loop_signal.take());
             let break_legacy = with_executor(|exec| {
-                exec.variables
-                    .remove("BREAK_SELECT")
-                    .map(|v| v != "0" && !v.is_empty())
-                    .unwrap_or(false)
+                let v = exec.scalar("BREAK_SELECT");
+                exec.unset_scalar("BREAK_SELECT");
+                v.map(|s| s != "0" && !s.is_empty()).unwrap_or(false)
             });
             match signal {
                 Some(LoopSignal::Break) => break,
@@ -2487,8 +2483,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         let strs: Vec<String> =
                             items.iter().map(|i| i.to_str()).collect();
                         let sep = with_executor(|exec| {
-                            exec.variables
-                                .get("IFS")
+                            exec.scalar("IFS")
                                 .and_then(|s| s.chars().next())
                                 .unwrap_or(' ')
                         });
@@ -4717,12 +4712,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     arr.push(String::new());
                 }
                 arr[idx] = value;
-                exec.variables.remove(&name);
+                exec.unset_scalar(&name);
                 exec.set_array(name, arr);
                 return;
             }
             // Default: assoc set.
-            exec.variables.remove(&name);
+            exec.unset_scalar(&name);
             let mut map = exec.assoc(&name).unwrap_or_default();
             map.insert(key, value);
             exec.set_assoc(name, map);
@@ -4735,9 +4730,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_WORD_SPLIT, |vm, _argc| {
         let s = vm.pop().to_str();
         let ifs = with_executor(|exec| {
-            exec.variables
-                .get("IFS")
-                .cloned()
+            exec.scalar("IFS")
                 .unwrap_or_else(|| " \t\n".to_string())
         });
         // Direct port of multsub's IFS-split path (src/zsh/Src/subst.c:
@@ -5029,7 +5022,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
         with_executor(|exec| {
-            exec.variables.remove(&name);
+            exec.unset_scalar(&name);
             let mut map = exec.assoc(&name).unwrap_or_default();
             match map.get_mut(&key) {
                 Some(existing) => existing.push_str(&tail),
@@ -5094,8 +5087,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let name = vm.pop().to_str();
         let result = with_executor(|exec| {
             let sep = exec
-                .variables
-                .get("IFS")
+                .scalar("IFS")
                 .and_then(|s| s.chars().next())
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| " ".to_string());
@@ -5128,7 +5120,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // sh_word_split option or explicit `${(s.,.)scalar}`.
                     let val = exec.get_variable(&name);
                     if val.is_empty()
-                        && !exec.variables.contains_key(&name)
+                        && !exec.has_scalar(&name)
                         && std::env::var(&name).is_err()
                     {
                         Value::Array(vec![])
@@ -5136,9 +5128,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // bash-compat: under setopt sh_word_split, do
                         // split scalars on IFS chars.
                         let ifs = exec
-                            .variables
-                            .get("IFS")
-                            .cloned()
+                            .scalar("IFS")
                             .unwrap_or_else(|| " \t\n".to_string());
                         let parts: Vec<Value> = val
                             .split(|c: char| ifs.contains(c))
@@ -5232,7 +5222,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let read_fd = c2p[0];
                 let write_fd = p2c[1];
                 with_executor(|exec| {
-                    exec.variables.remove(&name);
+                    exec.unset_scalar(&name);
                     exec.arrays
                         .insert(name, vec![read_fd.to_string(), write_fd.to_string()]);
                 });
@@ -5695,12 +5685,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()) {
                 if let Ok(n) = name.parse::<usize>() {
                     if n == 0 {
-                        return exec.variables.contains_key("0");
+                        return exec.has_scalar("0");
                     }
                     return n <= exec.pparams().len();
                 }
             }
-            exec.variables.contains_key(&name)
+            exec.has_scalar(&name)
                 || exec.array(&name).is_some()
                 || exec.assoc(&name).is_some()
                 || std::env::var(&name).is_ok()
@@ -5784,8 +5774,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_SET_TRY_BLOCK_ERROR, |vm, _argc| {
         let vm_status = vm.last_status;
         with_executor(|exec| {
-            exec.variables
-                .insert("TRY_BLOCK_ERROR".to_string(), vm_status.to_string());
+            exec.set_scalar("TRY_BLOCK_ERROR".to_string(), vm_status.to_string());
         });
         fusevm::Value::Status(0)
     });
@@ -5812,7 +5801,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             exec.set_scalar(name.clone(), v);
                         }
                         None => {
-                            exec.variables.remove(&name);
+                            exec.unset_scalar(&name);
                         }
                     }
                     match prev_env {
@@ -5835,8 +5824,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // exit status is discarded for the construct.
     vm.register_builtin(BUILTIN_RESTORE_TRY_BLOCK_STATUS, |_vm, _argc| {
         let try_status = with_executor(|exec| {
-            exec.variables
-                .get("TRY_BLOCK_ERROR")
+            exec.scalar("TRY_BLOCK_ERROR")
                 .and_then(|s| s.parse::<i32>().ok())
                 .unwrap_or(0)
         });
@@ -6055,7 +6043,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let lo_idx = (lo - 1) as usize;
                 let hi_idx = ((hi as usize).min(arr.len())).max(lo_idx);
                 let _: Vec<String> = arr.splice(lo_idx..hi_idx, values).collect();
-                exec.variables.remove(&name);
+                exec.unset_scalar(&name);
                 exec.set_array(name, arr);
                 return;
             }
@@ -6086,7 +6074,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let end = (idx + 1).min(arr.len());
                 let _: Vec<String> = arr.splice(idx..end, values).collect();
             }
-            exec.variables.remove(&name);
+            exec.unset_scalar(&name);
             exec.set_array(name, arr);
         });
         fusevm::Value::Status(0)
@@ -6771,7 +6759,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     | "EGID"
                     | "SHLVL"
             );
-            exec.variables.contains_key(&name)
+            exec.has_scalar(&name)
                 || exec.array(&name).is_some()
                 || exec.assoc(&name).is_some()
                 || std::env::var(&name).is_ok()
@@ -7410,9 +7398,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     fusevm::Value::str(trimmed.to_string())
                 } else {
                     let ifs = exec
-                        .variables
-                        .get("IFS")
-                        .cloned()
+                        .scalar("IFS")
                         .unwrap_or_else(|| " \t\n".to_string());
                     let parts: Vec<fusevm::Value> = trimmed
                         .split(|c: char| ifs.contains(c))
@@ -8052,12 +8038,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             exec.set_array("mbegin".to_string(), begins);
                             exec.set_array("mend".to_string(), ends);
                             if let Some(m0) = caps.get(0) {
-                                exec.variables
-                                    .insert("MATCH".to_string(), m0.as_str().to_string());
-                                exec.variables
-                                    .insert("MBEGIN".to_string(), (m0.start() + 1).to_string());
-                                exec.variables
-                                    .insert("MEND".to_string(), m0.end().to_string());
+                                exec.set_scalar("MATCH".to_string(), m0.as_str().to_string());
+                                exec.set_scalar("MBEGIN".to_string(), (m0.start() + 1).to_string());
+                                exec.set_scalar("MEND".to_string(), m0.end().to_string());
                             }
                         });
                         with_executor(|exec| exec.singsub(&repl_raw))
@@ -9021,7 +9004,6 @@ impl fusevm::ShellHost for ZshrsHost {
                 .map(|m| m.clone())
                 .unwrap_or_default();
             exec.subshell_snapshots.push(SubshellSnapshot {
-                variables: exec.variables.clone(),
                 arrays: exec.arrays.clone(),
                 assoc_arrays: exec.assoc_arrays.clone(),
                 paramtab: paramtab_snap,
@@ -9049,12 +9031,10 @@ impl fusevm::ShellHost for ZshrsHost {
             // a trap set INSIDE the subshell shouldn't leak out).
             exec.traps.remove("EXIT");
             let level = exec
-                .variables
-                .get("ZSH_SUBSHELL")
+                .scalar("ZSH_SUBSHELL")
                 .and_then(|s| s.parse::<i32>().ok())
                 .unwrap_or(0);
-            exec.variables
-                .insert("ZSH_SUBSHELL".to_string(), (level + 1).to_string());
+            exec.set_scalar("ZSH_SUBSHELL".to_string(), (level + 1).to_string());
         });
     }
 
@@ -9075,7 +9055,6 @@ impl fusevm::ShellHost for ZshrsHost {
         }
         with_executor(|exec| {
             if let Some(snap) = exec.subshell_snapshots.pop() {
-                exec.variables = snap.variables;
                 exec.arrays = snap.arrays;
                 exec.assoc_arrays = snap.assoc_arrays;
                 // Restore paramtab + hashed storage so subshell-scoped
@@ -9323,8 +9302,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // by default — users with deeper need can raise FUNCNEST
         // explicitly AND run with a larger stack (RUST_MIN_STACK).
         let funcnest_limit = with_executor(|exec| {
-            exec.variables
-                .get("FUNCNEST")
+            exec.scalar("FUNCNEST")
                 .and_then(|s| s.parse::<usize>().ok())
                 .unwrap_or(100)
         });
@@ -9427,8 +9405,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // (like REGISTER_COMPILED_FN) leaked their last arg
             // (the function body source!) as $_.
             let dollar_underscore = args.last().cloned().unwrap_or_else(|| fn_name.clone());
-            exec.variables
-                .insert("_".to_string(), dollar_underscore.clone());
+            exec.set_scalar("_".to_string(), dollar_underscore.clone());
             exec.pending_underscore = Some(dollar_underscore);
             (
                 prev,
@@ -9488,8 +9465,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // overwrite here so the caller sees the function's call
             // form, not internal `return 42` arg.
             let last_call_arg = args.last().cloned().unwrap_or_else(|| fn_name.clone());
-            exec.variables
-                .insert("_".to_string(), last_call_arg.clone());
+            exec.set_scalar("_".to_string(), last_call_arg.clone());
             exec.pending_underscore = Some(last_call_arg);
             exec.set_pparams(saved_params);
             exec.local_scope_depth -= 1;
@@ -9515,7 +9491,7 @@ impl fusevm::ShellHost for ZshrsHost {
                     exec.set_scalar("0".to_string(), v);
                 }
                 None => {
-                    exec.variables.remove("0");
+                    exec.unset_scalar("0");
                 }
             }
             exec.scriptname = saved_scriptname;
@@ -9536,7 +9512,7 @@ impl fusevm::ShellHost for ZshrsHost {
                             exec.set_scalar(var_name, v);
                         }
                         None => {
-                            exec.variables.remove(&var_name);
+                            exec.unset_scalar(&var_name);
                         }
                     }
                 }

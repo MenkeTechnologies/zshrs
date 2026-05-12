@@ -246,7 +246,7 @@ fn main() -> ExitCode {
         };
         tracing::info!(file = %disp, "zshrs-recorder: sourcing");
         eprintln!("zshrs-recorder: sourcing {}", disp);
-        executor.variables.insert("0".to_string(), disp.clone());
+        executor.set_scalar("0".to_string(), disp.clone());
         last_status = executor.execute_script(&content).unwrap_or_else(|e| {
             eprintln!("zshrs-recorder: {}: {}", disp, e);
             1
@@ -272,7 +272,7 @@ fn main() -> ExitCode {
             };
             tracing::info!(file = %disp, "zshrs-recorder: sourcing");
             eprintln!("zshrs-recorder: sourcing {}", disp);
-            executor.variables.insert("0".to_string(), disp.clone());
+            executor.set_scalar("0".to_string(), disp.clone());
             last_status = executor.execute_script(&content).unwrap_or_else(|e| {
                 eprintln!("zshrs-recorder: {}: {}", disp, e);
                 1

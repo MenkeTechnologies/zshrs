@@ -552,9 +552,7 @@ pub fn zshrs_main() {
             executor.set_pparams(script_args);
             let mut last_status = 0;
             for file in &embedded.0 {
-                executor
-                    .variables
-                    .insert("0".to_string(), file.name.clone());
+                executor.set_scalar("0".to_string(), file.name.clone());
                 last_status = match executor.execute_script(&file.source) {
                     Ok(s) => s,
                     Err(e) => {
@@ -796,7 +794,7 @@ pub fn zshrs_main() {
         } else {
             args[0].clone()
         };
-        executor.variables.insert("0".to_string(), zero.clone());
+        executor.set_scalar("0".to_string(), zero.clone());
         // Wire the GSU dispatch: `argzerogetfn` reads
         // `utils::argzero()` which returns this value via
         // `lookup_special_var("0")`. Without `set_argzero`, the GSU
@@ -952,9 +950,7 @@ pub fn zshrs_main() {
         // Before running the script, init.c:1369 does
         //   `argzero = ztrdup(runscript)` — i.e. `$0` becomes the
         // verbatim script path the user passed (NOT canonicalized).
-        executor
-            .variables
-            .insert("0".to_string(), args[1].clone());
+        executor.set_scalar("0".to_string(), args[1].clone());
         executor.set_pparams(args.iter().skip(2).cloned().collect());
         if let Err(e) = executor.execute_script_file(&args[1]) {
             eprintln!("zshrs: {}: {}", args[1], e);
@@ -1586,10 +1582,8 @@ fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str)
         .copied()
         .unwrap_or(true)
     {
-        let prev = executor.variables.get("0").cloned();
-        executor
-            .variables
-            .insert("0".to_string(), path.to_string_lossy().to_string());
+        let prev = executor.scalar("0");
+        executor.set_scalar("0".to_string(), path.to_string_lossy().to_string());
         Some(prev)
     } else {
         None
@@ -1621,10 +1615,10 @@ fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str)
     if let Some(prev) = saved_argzero {
         match prev {
             Some(v) => {
-                executor.variables.insert("0".to_string(), v);
+                executor.set_scalar("0".to_string(), v);
             }
             None => {
-                executor.variables.remove("0");
+                executor.unset_scalar("0");
             }
         }
     }
@@ -3026,19 +3020,15 @@ impl ZshrsPrompt {
     fn new(executor: &ShellExecutor) -> Self {
         // Check for PS1 or PROMPT (zsh uses PROMPT, bash uses PS1)
         let prompt_str = executor
-            .variables
-            .get("PROMPT")
-            .or_else(|| executor.variables.get("PS1"))
-            .cloned()
+            .scalar("PROMPT")
+            .or_else(|| executor.scalar("PS1"))
             .or_else(|| env::var("PROMPT").ok())
             .or_else(|| env::var("PS1").ok())
             .unwrap_or_else(|| "%n@%m %1~ %# ".to_string());
 
         // Check for RPROMPT (right prompt, zsh feature)
         let rprompt_str = executor
-            .variables
-            .get("RPROMPT")
-            .cloned()
+            .scalar("RPROMPT")
             .or_else(|| env::var("RPROMPT").ok())
             .unwrap_or_default();
 

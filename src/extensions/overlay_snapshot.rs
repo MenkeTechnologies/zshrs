@@ -78,10 +78,22 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
         // object. Arrays serialize as JSON arrays of strings; assoc
         // as nested objects. zsync's daemon-side push handler
         // accepts the union shape.
-        if !exec.variables.is_empty() || !exec.arrays.is_empty() || !exec.assoc_arrays.is_empty() {
+        // Scalars from paramtab (canonical); arrays + assocs from
+        // their respective stores. Iterate paramtab once for scalars
+        // (entries with no u_arr — array entries set u_arr).
+        let scalar_entries: Vec<(String, String)> =
+            if let Ok(tab) = crate::ported::params::paramtab().lock() {
+                tab.iter()
+                    .filter(|(_, pm)| pm.u_arr.is_none())
+                    .map(|(k, pm)| (k.clone(), pm.u_str.clone().unwrap_or_default()))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        if !scalar_entries.is_empty() || !exec.arrays.is_empty() || !exec.assoc_arrays.is_empty() {
             let mut params = serde_json::Map::new();
-            for (k, v) in &exec.variables {
-                params.insert(k.clone(), Value::String(v.clone()));
+            for (k, v) in scalar_entries {
+                params.insert(k, Value::String(v));
             }
             for (k, v) in &exec.arrays {
                 params.insert(

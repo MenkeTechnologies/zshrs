@@ -203,9 +203,7 @@ pub(crate) fn slice_positionals(exec: &ShellExecutor, offset: i64, length: i64) 
     let pp = exec.pparams();
     let mut all: Vec<String> = Vec::with_capacity(pp.len() + 1);
     all.push(
-        exec.variables
-            .get("0")
-            .cloned()
+        exec.scalar("0")
             .unwrap_or_else(|| std::env::args().next().unwrap_or_default()),
     );
     for p in pp {
@@ -266,7 +264,6 @@ pub enum LoopSignal {
 /// line 1084 — captures everything that must be replaced when a
 /// `(...)` group fires.
 pub struct SubshellSnapshot {
-    pub variables: HashMap<String, String>,
     pub arrays: HashMap<String, Vec<String>>,
     pub assoc_arrays: HashMap<String, IndexMap<String, String>>,
     /// Snapshot of `paramtab` (the C-canonical parameter store) at
@@ -373,7 +370,6 @@ pub struct ShellExecutor {
     /// shell on any unmatched glob even with multi-statement input.
     /// `Cell` because the no-match site only has a `&self` borrow.
     pub current_command_glob_failed: std::cell::Cell<bool>,
-    pub variables: HashMap<String, String>,
     pub arrays: HashMap<String, Vec<String>>,
     pub assoc_arrays: HashMap<String, IndexMap<String, String>>, // zsh associative arrays (insertion-ordered, mirrors zsh hashtable hnodes)
     pub jobs: JobTable,
@@ -611,21 +607,10 @@ pub struct ShellExecutor {
 }
 
 impl ShellExecutor {
-    /// Set a scalar parameter. Writes both the in-memory
-    /// `exec.variables` HashMap (legacy fusevm path) AND the canonical
-    /// `paramtab` (`Src/params.c:3350 setsparam`). paramtab is the
-    /// C-source single source of truth; the HashMap is a transitional
-    /// cache for fusevm-emitted reads that haven't yet been migrated
-    /// to paramtab. Bridging at the write site keeps both stores
-    /// coherent so `${name}` resolution behaves the same regardless
-    /// of which reader path observes it.
-    /// Mechanical-migration signature: takes owned `String`s so that
-    /// `exec.set_scalar(name, value)` call sites can swap to
-    /// `exec.set_scalar(name, value)` verbatim without ref/owned
-    /// gymnastics. The `set_scalar` body owns the inserts cleanly.
-    pub(crate) fn set_scalar(&mut self, name: String, value: String) {
+    /// Set a scalar parameter via the canonical `paramtab`
+    /// (`Src/params.c:3350 setsparam`). The single store.
+    pub fn set_scalar(&mut self, name: String, value: String) {
         crate::ported::params::setsparam(&name, &value);                     // c:params.c:3350
-        self.variables.insert(name, value);
     }
 
     /// Read positional parameters from canonical `PPARAMS`
@@ -722,9 +707,7 @@ impl ShellExecutor {
 
     /// Read a scalar parameter. Mirrors C `getsparam` at
     /// `Src/params.c:3076` — reads through paramtab, falls back to
-    /// special-var hooks and env. Use this instead of poking
-    /// `self.variables.get(name)` directly so the store boundary
-    /// stays inside one helper.
+    /// special-var hooks and env.
     pub fn scalar(&self, name: &str) -> Option<String> {
         crate::ported::params::getsparam(name)
     }
@@ -765,6 +748,21 @@ impl ShellExecutor {
         self.assoc_arrays.get(name).cloned()
     }
 
+    /// Test whether a scalar parameter exists in paramtab.
+    /// Mirrors the C `paramtab->getnode(name) != NULL` check.
+    pub fn has_scalar(&self, name: &str) -> bool {
+        crate::ported::params::getsparam(name).is_some()
+    }
+
+    /// Unset a scalar parameter from canonical paramtab. Narrower
+    /// than `unset_var` which clears arrays + assocs too. Direct
+    /// port of `Src/params.c:unsetparam_pm` for a scalar PM_TYPE.
+    pub fn unset_scalar(&mut self, name: &str) {
+        if let Some(tab) = crate::ported::params::paramtab().lock().ok().as_deref_mut() {
+            tab.remove(name);
+        }
+    }
+
     /// Unset a parameter from every store. Mirrors the C
     /// `unsetparam_pm` semantics at `Src/params.c:3905`: clear the
     /// paramtab entry + the legacy HashMap caches + (for exported
@@ -772,7 +770,6 @@ impl ShellExecutor {
     /// just one type pass through this single entry so paramtab and
     /// the HashMaps don't drift apart.
     pub(crate) fn unset_var(&mut self, name: &str) {
-        self.variables.remove(name);
         self.arrays.remove(name);
         self.assoc_arrays.remove(name);
         if let Some(tab) = crate::ported::params::paramtab().lock().ok().as_deref_mut() {
@@ -970,7 +967,6 @@ impl ShellExecutor {
             subshell_snapshots: Vec::new(),
             inline_env_stack: Vec::new(),
             current_command_glob_failed: std::cell::Cell::new(false),
-            variables,
             arrays: {
                 let mut a = HashMap::new();
                 // $path mirrors $PATH (tied array)
@@ -1158,7 +1154,7 @@ impl ShellExecutor {
         // Rust port builds local HashMaps first and then constructs
         // self; this loop fans the contents out to paramtab in one
         // pass at the end of new().
-        for (k, v) in &exec.variables {
+        for (k, v) in &variables {
             crate::ported::params::setsparam(k, v);                          // c:params.c:3350
         }
         for (k, v) in &exec.arrays {
@@ -1393,8 +1389,7 @@ impl ShellExecutor {
         // zsh ceiling rationale. Cap at 100 by default (matches
         // call_function's ceiling).
         let funcnest_limit: usize = self
-            .variables
-            .get("FUNCNEST")
+            .scalar("FUNCNEST")
             .and_then(|s| s.parse().ok())
             .unwrap_or(100);
         if self.local_scope_depth >= funcnest_limit {
@@ -1452,7 +1447,7 @@ impl ShellExecutor {
                 self.set_scalar("0".to_string(), v);
             }
             None => {
-                self.variables.remove("0");
+                self.unset_scalar("0");
             }
         }
         while self.local_save_stack.len() > saved_local_count {
@@ -1462,7 +1457,7 @@ impl ShellExecutor {
                         self.set_scalar(var_name, v);
                     }
                     None => {
-                        self.variables.remove(&var_name);
+                        self.unset_scalar(&var_name);
                     }
                 }
             }
@@ -1853,8 +1848,7 @@ impl ShellExecutor {
         // exec — for our sub-VM (fresh compile) we use lineno_addend
         // to shift inner's line N → outer_lineno + (N - 1).
         let outer_lineno: u64 = self
-            .variables
-            .get("LINENO")
+            .scalar("LINENO")
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(0);
         let mut parser = crate::parse::ZshParser::new(cmd_str);
@@ -2281,8 +2275,7 @@ impl ShellExecutor {
             .get_variable("ZSH_SUBSHELL")
             .parse::<i32>()
             .unwrap_or(0);
-        self.variables
-            .insert("ZSH_SUBSHELL".to_string(), (level + 1).to_string());
+        self.set_scalar("ZSH_SUBSHELL".to_string(), (level + 1).to_string());
 
         // Handle job control
         if flags.contains(SubshellFlags::NOMONITOR) {
@@ -3325,7 +3318,11 @@ impl crate::ported::exec::ShellExecutor {
             "parameters" => {
                 if key == "@" || key == "*" {
                     let mut names: std::collections::BTreeSet<String> =
-                        self.variables.keys().cloned().collect();
+                        if let Ok(tab) = crate::ported::params::paramtab().lock() {
+                            tab.keys().cloned().collect()
+                        } else {
+                            std::collections::BTreeSet::new()
+                        };
                     names.extend(self.arrays.keys().cloned());
                     names.extend(self.assoc_arrays.keys().cloned());
                     let v: Vec<String> = names.into_iter().collect();
@@ -3365,7 +3362,7 @@ impl crate::ported::exec::ShellExecutor {
                     Some("association".to_string())
                 } else if self.arrays.contains_key(key) {
                     Some("array".to_string())
-                } else if self.variables.contains_key(key) || std::env::var(key).is_ok() {
+                } else if self.has_scalar(key) || std::env::var(key).is_ok() {
                     Some("scalar".to_string())
                 } else {
                     Some(String::new())
@@ -3534,9 +3531,7 @@ impl crate::ported::exec::ShellExecutor {
                 // @/* expansion, return one entry per active job so
                 // arr-length math (${#jobdirs}) matches ${#jobtexts}.
                 let pwd = self
-                    .variables
-                    .get("PWD")
-                    .cloned()
+                    .scalar("PWD")
                     .or_else(|| env::var("PWD").ok())
                     .unwrap_or_default();
                 if key == "@" || key == "*" {
@@ -3925,8 +3920,7 @@ impl crate::ported::exec::ShellExecutor {
                 // $@ technically does the same in scalar context but
                 // is usually quoted-spliced — both fall through here.
                 let sep = self
-                    .variables
-                    .get("IFS")
+                    .scalar("IFS")
                     .and_then(|s| s.chars().next())
                     .unwrap_or(' ');
                 self.pparams().join(&sep.to_string())
@@ -3936,9 +3930,7 @@ impl crate::ported::exec::ShellExecutor {
             "ARGC" => self.pparams().len().to_string(),
             "?" | "status" => self.last_status().to_string(),
             "!" => self
-                .variables
-                .get("!")
-                .cloned()
+                .scalar("!")
                 .unwrap_or_else(|| "0".to_string()),
             // `$-` returns the concatenated single-letter flags of options
             // currently set. zsh always emits a baseline "569X" prefix
@@ -3987,9 +3979,7 @@ impl crate::ported::exec::ShellExecutor {
             "GID" => unsafe { libc::getgid() }.to_string(),
             "PPID" => unsafe { libc::getppid() }.to_string(),
             "ZSH_SUBSHELL" => self
-                .variables
-                .get("ZSH_SUBSHELL")
-                .cloned()
+                .scalar("ZSH_SUBSHELL")
                 .unwrap_or_else(|| "0".to_string()),
             "HOST" => {
                 // libc gethostname → up to 256 bytes.
@@ -4092,8 +4082,7 @@ impl crate::ported::exec::ShellExecutor {
                         .map(|d| d.as_secs())
                         .unwrap_or(0);
                     let start = self
-                        .variables
-                        .get("__zshrs_start_secs")
+                        .scalar("__zshrs_start_secs")
                         .and_then(|s| s.parse::<u64>().ok())
                         .unwrap_or(now);
                     now.saturating_sub(start).to_string()
@@ -4161,9 +4150,7 @@ impl crate::ported::exec::ShellExecutor {
                 // Set by `{ … } always { … }` — last status of the try
                 // block. Lives in self.variables under the same name when
                 // the try arm assigns it; default 0.
-                self.variables
-                    .get("TRY_BLOCK_ERROR")
-                    .cloned()
+                self.scalar("TRY_BLOCK_ERROR")
                     .unwrap_or_else(|| "0".to_string())
             }
             "patchars" => "*?[]<>(){}|^&;".to_string(),
@@ -4180,15 +4167,11 @@ impl crate::ported::exec::ShellExecutor {
             }
             "LINENO" => {
                 // Tracked elsewhere; default to 1 if not populated.
-                self.variables
-                    .get("LINENO")
-                    .cloned()
+                self.scalar("LINENO")
                     .unwrap_or_else(|| "1".to_string())
             }
             "0" => self
-                .variables
-                .get("0")
-                .cloned()
+                .scalar("0")
                 .unwrap_or_else(|| env::args().next().unwrap_or_default()),
             n if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => {
                 let idx: usize = n.parse().unwrap_or(0);
@@ -5029,8 +5012,7 @@ impl crate::ported::exec::ShellExecutor {
         } else {
             self.set_scalar("PS1".to_string(), ps1.to_string());
             self.set_scalar("RPS1".to_string(), rps1.to_string());
-            self.variables
-                .insert("prompt_theme".to_string(), theme.to_string());
+            self.set_scalar("prompt_theme".to_string(), theme.to_string());
         }
     }
 }
@@ -5495,8 +5477,10 @@ impl crate::ported::exec::ShellExecutor {
                 Err(_) => std::collections::HashMap::new(),
             }
         };
-        for (k, v) in &self.variables {
-            extras.insert(k.clone(), v.clone());
+        if let Ok(tab) = crate::ported::params::paramtab().lock() {
+            for (k, pm) in tab.iter().filter(|(_, p)| p.u_arr.is_none()) {
+                extras.insert(k.clone(), pm.u_str.clone().unwrap_or_default());
+            }
         }
         for special in [
             "RANDOM",
@@ -5710,7 +5694,16 @@ impl crate::ported::exec::ShellExecutor {
         let octal = self.options.get("octalzeroes").copied().unwrap_or(false);
 
         new(&expr_expanded);
-        with_string_variables(&self.variables);
+        let scalar_snap: HashMap<String, String> =
+            if let Ok(tab) = crate::ported::params::paramtab().lock() {
+                tab.iter()
+                    .filter(|(_, p)| p.u_arr.is_none())
+                    .map(|(k, p)| (k.clone(), p.u_str.clone().unwrap_or_default()))
+                    .collect()
+            } else {
+                HashMap::new()
+            };
+        with_string_variables(&scalar_snap);
         with_c_precedences(c_prec);
         with_octal_zeroes(octal);
 
@@ -5886,9 +5879,7 @@ impl crate::ported::exec::ShellExecutor {
                 // agree. Direct port of zsh/Src/jobs.c printjob's
                 // `pwd: %s` line when SHOWDIR is set.
                 let pwd = self
-                    .variables
-                    .get("PWD")
-                    .cloned()
+                    .scalar("PWD")
                     .or_else(|| env::var("PWD").ok())
                     .unwrap_or_else(|| {
                         env::current_dir()
@@ -6452,8 +6443,7 @@ impl crate::ported::exec::ShellExecutor {
                     // pid), accept missing %1 silently — the bg/wait
                     // idiom relies on it. Otherwise error like zsh.
                     let bg_was_used = self
-                        .variables
-                        .get("!")
+                        .scalar("!")
                         .and_then(|s| s.parse::<u32>().ok())
                         .map(|p| p > 0)
                         .unwrap_or(false);

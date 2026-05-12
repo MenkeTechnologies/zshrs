@@ -61,8 +61,7 @@ impl crate::ported::exec::ShellExecutor {
     /// Phase 2 alongside the source-stack push/pop in bin_dot.
     pub(crate) fn recorder_ctx(&self) -> crate::recorder::RecordCtx {
         let line = self
-            .variables
-            .get("LINENO")
+            .scalar("LINENO")
             .and_then(|s| s.parse::<u32>().ok());
         let fn_chain = self.arrays.get("funcstack").and_then(|s| {
             if s.is_empty() {

@@ -839,7 +839,14 @@ impl crate::ported::exec::ShellExecutor {
             aliases: self.aliases.keys().cloned().collect(),
             global_aliases: self.global_aliases.keys().cloned().collect(),
             suffix_aliases: self.suffix_aliases.keys().cloned().collect(),
-            variables: self.variables.clone(),
+            variables: if let Ok(tab) = crate::ported::params::paramtab().lock() {
+                tab.iter()
+                    .filter(|(_, pm)| pm.u_arr.is_none())
+                    .map(|(k, pm)| (k.clone(), pm.u_str.clone().unwrap_or_default()))
+                    .collect()
+            } else {
+                std::collections::HashMap::new()
+            },
             arrays: self.arrays.keys().cloned().collect(),
             assoc_arrays: self.assoc_arrays.keys().cloned().collect(),
             fpath: self.fpath.clone(),
@@ -921,9 +928,17 @@ impl crate::ported::exec::ShellExecutor {
             "ZSH_ARGZERO", "ZSH_EVAL_CONTEXT", "ZSH_SUBSHELL",
             "HISTCMD", "MATCH", "MBEGIN", "MEND",
         ];
-        let mut var_keys: Vec<&String> = self.variables.keys().collect();
+        let mut var_keys: Vec<String> =
+            if let Ok(tab) = crate::ported::params::paramtab().lock() {
+                tab.iter()
+                    .filter(|(_, pm)| pm.u_arr.is_none())
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            };
         var_keys.sort();
-        for name in var_keys {
+        for name in &var_keys {
             if NON_REPLAYABLE_VARS.contains(&name.as_str()) {
                 continue;
             }
