@@ -1354,7 +1354,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 std::process::exit(1);
             }
             // Two-statement assoc init: `typeset -A m; m=(k v k v ...)`.
-            if exec.assoc_arrays.contains_key(&name) {
+            if exec.assoc(&name).is_some() {
                 // zsh: odd number of values -> `bad set of key/value
                 // pairs for associative array` exit 1, no
                 // assignment. zshrs's `if let Some(v) = it.next()`
@@ -1462,14 +1462,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // adds key/value pairs. Without this, the values were
             // appended to a parallel array and `${m[k]}` lookup missed
             // the new keys entirely.
-            if exec.assoc_arrays.contains_key(&name) {
-                let map = exec.assoc_arrays.entry(name).or_default();
+            if exec.assoc(&name).is_some() {
+                let mut map = exec.assoc(&name).unwrap_or_default();
                 let mut it = values.into_iter();
                 while let Some(k) = it.next() {
                     if let Some(v) = it.next() {
                         map.insert(k, v);
                     }
                 }
+                exec.set_assoc(name, map);
                 return;
             }
             exec.variables.remove(&name);
@@ -1491,7 +1492,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // `path+=(/some/dir)` left $PATH stale, so `command -v`
             // / pathprog lookups missed newly-added dirs.
             let tied_scalar = exec.tied_array_to_scalar.get(&name).cloned();
-            let target = exec.arrays.entry(name.clone()).or_insert_with(Vec::new);
+            // Read current via canonical exec.array (paramtab-first),
+            // mutate, then write back via set_array which writes both
+            // paramtab and the legacy cache.
+            let mut target = exec.array(&name).unwrap_or_default();
             if is_unique {
                 let existing: std::collections::HashSet<String> = target.iter().cloned().collect();
                 for v in values {
@@ -1502,10 +1506,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 target.extend(values);
             }
+            exec.set_array(name.clone(), target);
             if let Some((scalar_name, sep)) = tied_scalar {
                 let joined = exec
-                    .arrays
-                    .get(&name)
+                    .array(&name)
                     .map(|a| a.join(&sep))
                     .unwrap_or_default();
                 exec.set_scalar(scalar_name.clone(), joined.clone());
@@ -1955,9 +1959,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // env or implicit assignment).
                     if let Some(attr) = exec.var_attrs.get(idx) {
                         Some(Value::str(attr.format_zsh()))
-                    } else if exec.assoc_arrays.contains_key(idx) {
+                    } else if exec.assoc(idx).is_some() {
                         Some(Value::str("association"))
-                    } else if exec.arrays.contains_key(idx) {
+                    } else if exec.array(idx).is_some() {
                         Some(Value::str("array"))
                     } else if exec.variables.contains_key(idx) || env::var(idx).is_ok() {
                         Some(Value::str("scalar"))
@@ -2363,7 +2367,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // prints "0" (just the echo's status), not "0 1".
         if name == "pipestatus" || name == "PIPESTATUS" {
             let arr = with_executor(|exec| {
-                let cached = exec.arrays.get(&name).cloned();
+                let cached = exec.array(&name);
                 let last = exec.last_status.to_string();
                 match cached {
                     Some(arr)
@@ -2458,7 +2462,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // that name exists. Mirroring: skip the magic path if
         // `name` is already in `assoc_arrays`.
         let user_defined_assoc =
-            with_executor(|exec| exec.assoc_arrays.contains_key(&name));
+            with_executor(|exec| exec.assoc(&name).is_some());
         if !user_defined_assoc {
             if let Some(v) = magic_assoc_lookup(&name, &idx) {
                 // Magic-assoc with `(I)pat` glob-match returned an
@@ -2489,10 +2493,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // Splice: assoc → values list (zsh's `${foo[@]}` for assoc);
                 // indexed → element list. For assoc the order of values is
                 // implementation-defined (matches HashMap iteration).
-                if let Some(map) = exec.assoc_arrays.get(&name) {
+                if let Some(map) = exec.assoc(&name) {
                     return Value::Array(map.values().map(Value::str).collect());
                 }
-                match exec.arrays.get(&name) {
+                match exec.array(&name) {
                     Some(v) => Value::Array(v.iter().map(Value::str).collect()),
                     None => Value::Array(vec![]),
                 }
@@ -2507,7 +2511,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     return Value::str(
                         exec.get_special_array_value(&name, &idx).unwrap_or_default());
                 }
-                if let Some(map) = exec.assoc_arrays.get(&name) {
+                if let Some(map) = exec.assoc(&name) {
                     if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
                         // Port of subst.c subscript-flag parser:
                         // `(I)pat` / `(R)pat` / `(i)pat` / `(r)pat`.
@@ -2559,7 +2563,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         }
                         // Default flag handling — route to getarg's
                         // hash-search arm (params.c:1581-1660).
-                        match crate::ported::params::getarg(&idx, None, Some(map), None) {
+                        match crate::ported::params::getarg(&idx, None, Some(&map), None) {
                             Some(crate::ported::params::GetargOut::Value(v)) => return v,
                             _ => {}
                         }
@@ -2567,8 +2571,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     return Value::str(map.get(&idx).cloned().unwrap_or_default());
                 }
 
-                let arr = match exec.arrays.get(&name) {
-                    Some(a) => a.clone(),
+                let arr = match exec.array(&name) {
+                    Some(a) => a,
                     None => {
                         // Fall back to scalar subscripting on `variables`.
                         // zsh treats `${str[N]}` and `${str[N,M]}` as
@@ -2991,12 +2995,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             St::S(literal.to_string())
         } else {
             with_executor(|exec| {
-                if let Some(map) = exec.assoc_arrays.get(&name) {
+                if let Some(map) = exec.assoc(&name) {
                     // For assoc, default to value list (no flag) — `(k)`/`(v)`
                     // override.
                     St::A(map.values().cloned().collect())
-                } else if let Some(arr) = exec.arrays.get(&name) {
-                    St::A(arr.clone())
+                } else if let Some(arr) = exec.array(&name) {
+                    St::A(arr)
                 } else if want_keys {
                     // `${(k)<magic-assoc>}` — names like `aliases`,
                     // `functions`, `options`, `commands`, `terminfo`,
@@ -3086,15 +3090,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 };
                 // Bare-name path.
                 if sub.is_none() {
-                    if let Some(arr) = exec.arrays.get(&base) {
-                        return St::A(arr.clone());
+                    if let Some(arr) = exec.array(&base) {
+                        return St::A(arr);
                     }
                     return St::S(exec.get_variable(&base));
                 }
                 let sub_str = sub.unwrap();
                 // Assoc lookup: `${(P)"map[key]"}` — single value for
                 // the given key.
-                if let Some(m) = exec.assoc_arrays.get(&base).cloned() {
+                if let Some(m) = exec.assoc(&base) {
                     return St::S(m.get(&sub_str).cloned().unwrap_or_default());
                 }
                 // Indexed-array subscript. Direct port of getindex()
@@ -3104,7 +3108,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // paths that re-fetch the WHOLE array on the bridge
                 // back from subst_port. Apply the subscript here
                 // directly.
-                if let Some(arr) = exec.arrays.get(&base).cloned() {
+                if let Some(arr) = exec.array(&base) {
                     let n = arr.len() as i64;
                     let to_zero = |i: i64| -> i64 {
                         if i > 0 {
@@ -3874,15 +3878,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if i < chars.len() && chars[i] == 'v' {
                         i += 1; // consume the 'v'
                         let pairs = with_executor(|exec| {
-                            if let Some(m) = exec.assoc_arrays.get(&name) {
+                            if let Some(m) = exec.assoc(&name) {
                                 let mut out = Vec::with_capacity(m.len() * 2);
                                 for (k, v) in m {
                                     out.push(k.clone());
                                     out.push(v.clone());
                                 }
                                 out
-                            } else if let Some(arr) = exec.arrays.get(&name) {
-                                arr.clone()
+                            } else if let Some(arr) = exec.array(&name) {
+                                arr
                             } else {
                                 // Magic-assoc fallback for (kv): emit
                                 // alternating [key, value] pairs by
@@ -3906,12 +3910,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         state = St::A(pairs);
                     } else {
                         let keys = with_executor(|exec| {
-                            if let Some(m) = exec.assoc_arrays.get(&name) {
+                            if let Some(m) = exec.assoc(&name) {
                                 m.keys().cloned().collect::<Vec<_>>()
-                            } else if let Some(arr) = exec.arrays.get(&name) {
+                            } else if let Some(arr) = exec.array(&name) {
                                 // zsh quirk: `(k)` on a regular array
                                 // returns the array values themselves.
-                                arr.clone()
+                                arr
                             } else {
                                 // `${(k)<magic-assoc>}` — names like
                                 // `aliases`, `functions`, `options`,
@@ -3940,7 +3944,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if i < chars.len() && chars[i] == 'k' {
                         i += 1; // consume the 'k'
                         let pairs = with_executor(|exec| {
-                            if let Some(m) = exec.assoc_arrays.get(&name) {
+                            if let Some(m) = exec.assoc(&name) {
                                 let mut out = Vec::with_capacity(m.len() * 2);
                                 for (k, v) in m {
                                     out.push(v.clone());
@@ -3966,7 +3970,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         state = St::A(pairs);
                     } else {
                         let vals = with_executor(|exec| {
-                            if let Some(m) = exec.assoc_arrays.get(&name) {
+                            if let Some(m) = exec.assoc(&name) {
                                 m.values().cloned().collect::<Vec<_>>()
                             } else if let Some(keys) =
                                 crate::exec::scan_magic_assoc_keys(&name)
@@ -4399,9 +4403,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         if let Some(attr) = exec.var_attrs.get(&target) {
                             return attr.format_zsh();
                         }
-                        if exec.assoc_arrays.contains_key(&target) {
+                        if exec.assoc(&target).is_some() {
                             "association".to_string()
-                        } else if exec.arrays.contains_key(&target) {
+                        } else if exec.array(&target).is_some() {
                             "array".to_string()
                         } else if exec.variables.contains_key(&target)
                             || std::env::var(&target).is_ok()
@@ -4668,8 +4672,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // indexed array (or new var with numeric key) assigns to
             // the 1-based slot, growing the array if needed. Negative
             // indices count from the end.
-            let is_indexed = exec.arrays.contains_key(&name);
-            let is_assoc = exec.assoc_arrays.contains_key(&name);
+            let is_indexed = exec.array(&name).is_some();
+            let is_assoc = exec.assoc(&name).is_some();
             let key_literal_int = key.trim().parse::<i64>().ok();
             // For an existing indexed array, fall back to arith eval so
             // `a[i+1]=v` works when `i` is set.
@@ -4686,7 +4690,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 key_literal_int.is_some()
             };
             if let (true, Some(i)) = (route_indexed, key_int_for_indexed) {
-                let len = exec.arrays.get(&name).map(|a| a.len() as i64).unwrap_or(0);
+                let len = exec.array(&name).map(|a| a.len() as i64).unwrap_or(0);
                 let idx = if i > 0 {
                     (i - 1) as usize
                 } else if i < 0 {
@@ -4702,20 +4706,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     eprintln!("zshrs:1: {}: assignment to invalid subscript range", name);
                     std::process::exit(1);
                 };
-                let arr = exec.arrays.entry(name.clone()).or_insert_with(Vec::new);
+                // Read paramtab-first, mutate, write back via
+                // canonical set_array so the assignment is visible
+                // to both the legacy cache and paramtab.
+                let mut arr = exec.array(&name).unwrap_or_default();
                 while arr.len() <= idx {
                     arr.push(String::new());
                 }
                 arr[idx] = value;
                 exec.variables.remove(&name);
+                exec.set_array(name, arr);
                 return;
             }
             // Default: assoc set.
             exec.variables.remove(&name);
-            exec.assoc_arrays
-                .entry(name)
-                .or_insert_with(IndexMap::new)
-                .insert(key, value);
+            let mut map = exec.assoc(&name).unwrap_or_default();
+            map.insert(key, value);
+            exec.set_assoc(name, map);
         });
         Value::Status(0)
     });
@@ -5020,13 +5027,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let name = vm.pop().to_str();
         with_executor(|exec| {
             exec.variables.remove(&name);
-            let map = exec.assoc_arrays.entry(name.clone()).or_insert_with(IndexMap::new);
+            let mut map = exec.assoc(&name).unwrap_or_default();
             match map.get_mut(&key) {
                 Some(existing) => existing.push_str(&tail),
                 None => {
                     map.insert(key.clone(), tail.clone());
                 }
             }
+            exec.set_assoc(name.clone(), map);
             // PFA-SMR aspect: assoc subscript-append `m[k]+=tail`.
             // Recorder emits a structured assoc event with the
             // POST-append value so replay reconstructs end state
@@ -5055,7 +5063,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ARRAY_LENGTH, |vm, _argc| {
         let name = vm.pop().to_str();
-        let len = with_executor(|exec| exec.arrays.get(&name).map(|a| a.len()).unwrap_or(0));
+        let len = with_executor(|exec| exec.array(&name).map(|a| a.len()).unwrap_or(0));
         Value::str(len.to_string())
     });
 
@@ -5091,7 +5099,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if name == "@" || name == "*" || name == "argv" {
                 return exec.positional_params.join(&sep);
             }
-            if let Some(arr) = exec.arrays.get(&name) {
+            if let Some(arr) = exec.array(&name) {
                 arr.join(&sep)
             } else {
                 exec.get_variable(&name)
@@ -5107,7 +5115,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if name == "@" || name == "*" || name == "argv" {
                 return Value::Array(exec.positional_params.iter().map(Value::str).collect());
             }
-            match exec.arrays.get(&name) {
+            match exec.array(&name) {
                 Some(v) => Value::Array(v.iter().map(Value::str).collect()),
                 None => {
                     // Fall back to scalar lookup. zsh (unlike bash)
@@ -5284,7 +5292,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if rc_expand {
             let arr_val = with_executor(|exec| {
                 sync_status(exec);
-                exec.arrays.get(&name).cloned()
+                exec.array(&name)
             });
             if let Some(arr) = arr_val {
                 return fusevm::Value::Array(arr.into_iter().map(fusevm::Value::str).collect());
@@ -5332,13 +5340,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // Src/params.c getstrvalue's KSH_ARRAYS gate which
             // returns aval[0] instead of the whole array.
             let ksh_arrays = exec.options.get("ksharrays").copied().unwrap_or(false);
-            if let Some(arr) = exec.arrays.get(&name) {
+            if let Some(arr) = exec.array(&name) {
                 if ksh_arrays {
                     return Some((vec![arr.first().cloned().unwrap_or_default()], in_dq));
                 }
                 return Some((arr.clone(), in_dq));
             }
-            if let Some(map) = exec.assoc_arrays.get(&name) {
+            if let Some(map) = exec.assoc(&name) {
                 let mut keys: Vec<&String> = map.keys().collect();
                 keys.sort();
                 let values: Vec<String> = keys
@@ -5391,8 +5399,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let name = iter.next().unwrap_or_default();
         let value = iter.next().unwrap_or_default();
         with_executor(|exec| {
-            if let Some(arr) = exec.arrays.get_mut(&name) {
+            if let Some(mut arr) = exec.array(&name) {
                 arr.push(value.clone());
+                exec.set_array(name.clone(), arr);
                 // PFA-SMR aspect: `name+=elem` array push (scalar form
                 // resolved to existing indexed array). is_append=true.
                 #[cfg(feature = "recorder")]
@@ -5403,7 +5412,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 return;
             }
-            if exec.assoc_arrays.contains_key(&name) {
+            if exec.assoc(&name).is_some() {
                 eprintln!("zshrs: {}: cannot use += on assoc without (key val)", name);
                 return;
             }
@@ -5663,7 +5672,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let arr_name = &name[..open];
                 let key = &name[open + 1..name.len() - 1];
                 let exists = with_executor(|exec| {
-                    if let Some(arr) = exec.arrays.get(arr_name) {
+                    if let Some(arr) = exec.array(arr_name) {
                         // 1-based index, supports negatives.
                         let parsed = key.parse::<i64>().ok();
                         if let Some(i) = parsed {
@@ -5673,7 +5682,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         }
                         return false;
                     }
-                    if let Some(h) = exec.assoc_arrays.get(arr_name) {
+                    if let Some(h) = exec.assoc(arr_name) {
                         return h.contains_key(key);
                     }
                     false
@@ -5695,8 +5704,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
             }
             exec.variables.contains_key(&name)
-                || exec.arrays.contains_key(&name)
-                || exec.assoc_arrays.contains_key(&name)
+                || exec.array(&name).is_some()
+                || exec.assoc(&name).is_some()
                 || std::env::var(&name).is_ok()
         });
         fusevm::Value::Bool(exists)
@@ -5942,7 +5951,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             pattern_raw
         };
-        let arr_val = with_executor(|exec| exec.arrays.get(&name).cloned());
+        let arr_val = with_executor(|exec| exec.array(&name));
         // Inline of the deleted extendedglob_match helper (Src/glob.c
         // pattern_match path): leading `^` inverts when extendedglob is
         // set; otherwise falls through to glob_match_static. Plain
@@ -6023,7 +6032,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         with_executor(|exec| {
-            let arr = exec.arrays.entry(name.clone()).or_insert_with(Vec::new);
+            // Read paramtab-first, mutate, write back via canonical
+            // set_array so subscript-slice/index assignments are
+            // visible to both the paramtab single source and the
+            // legacy cache.
+            let mut arr = exec.array(&name).unwrap_or_default();
             // Slice form `a[i,j]=(values)` — replace the inclusive
             // slice. Negative bounds count from end. Out-of-range high
             // bound clamps to len; low bound below 1 clamps to 1.
@@ -6046,6 +6059,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let hi_idx = ((hi as usize).min(arr.len())).max(lo_idx);
                 let _: Vec<String> = arr.splice(lo_idx..hi_idx, values).collect();
                 exec.variables.remove(&name);
+                exec.set_array(name, arr);
                 return;
             }
             // Single-int key. `a[i]=()` (empty values) removes the
@@ -6076,6 +6090,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let _: Vec<String> = arr.splice(idx..end, values).collect();
             }
             exec.variables.remove(&name);
+            exec.set_array(name, arr);
         });
         fusevm::Value::Status(0)
     });
@@ -6768,8 +6783,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     | "SHLVL"
             );
             exec.variables.contains_key(&name)
-                || exec.arrays.contains_key(&name)
-                || exec.assoc_arrays.contains_key(&name)
+                || exec.array(&name).is_some()
+                || exec.assoc(&name).is_some()
                 || std::env::var(&name).is_ok()
                 || is_zsh_special
         });
@@ -6876,10 +6891,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 }
                                 return Some(false);
                             }
-                            if let Some(map) = exec.assoc_arrays.get(arr_name) {
+                            if let Some(map) = exec.assoc(arr_name) {
                                 return Some(map.contains_key(key));
                             }
-                            if let Some(arr) = exec.arrays.get(arr_name) {
+                            if let Some(arr) = exec.array(arr_name) {
                                 let pat = if let Some(p) = key
                                     .strip_prefix("(r)")
                                     .or_else(|| key.strip_prefix("(R)"))
@@ -6946,7 +6961,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let result = with_executor(|exec| slice_positionals(exec, offset, length));
             return fusevm::Value::Array(result.into_iter().map(fusevm::Value::str).collect());
         }
-        let array_slice = with_executor(|exec| exec.arrays.get(&lookup_name).cloned());
+        let array_slice = with_executor(|exec| exec.array(&lookup_name));
         if let Some(arr) = array_slice {
             let result = slice_array_zero_based(&arr, offset, length);
             return if force_array {
@@ -7024,7 +7039,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 return Result::Arr(parts);
             }
             // Array slice (`${arr:1:2}` or `${arr[@]:1:2}`).
-            if let Some(arr) = exec.arrays.get(&lookup_name).cloned() {
+            if let Some(arr) = exec.array(&lookup_name) {
                 let sliced = slice_array_zero_based(&arr, offset, length_opt.unwrap_or(i64::MIN));
                 return if force_array {
                     Result::Arr(sliced)
@@ -7245,7 +7260,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .collect();
                 return StripResult::Array(stripped);
             }
-            if let Some(arr) = exec.arrays.get(&name) {
+            if let Some(arr) = exec.array(&name) {
                 if in_dq {
                     let joined = arr.join(" ");
                     return StripResult::Scalar(strip_one(&joined, op, &pattern));
@@ -7599,7 +7614,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // Expand `$VAR` / `${VAR}` references inside the
                     // subscript before lookup (single dollar pass).
                     let resolved_idx = expand_dollar_refs(raw_idx, exec);
-                    if let Some(arr) = exec.arrays.get(bare) {
+                    if let Some(arr) = exec.array(bare) {
                         if let Ok(n) = resolved_idx.trim().parse::<i64>() {
                             let len = arr.len() as i64;
                             let idx = if n > 0 { n - 1 } else if n < 0 { len + n } else { -1 };
@@ -7609,7 +7624,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         }
                         return String::new();
                     }
-                    if let Some(map) = exec.assoc_arrays.get(bare) {
+                    if let Some(map) = exec.assoc(bare) {
                         return map.get(resolved_idx.as_str()).cloned().unwrap_or_default();
                     }
                     String::new()
@@ -7659,9 +7674,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 _ => {}
             }
-            if let Some(arr) = exec.arrays.get(&name) {
+            if let Some(arr) = exec.array(&name) {
                 arr.len()
-            } else if let Some(assoc) = exec.assoc_arrays.get(&name) {
+            } else if let Some(assoc) = exec.assoc(&name) {
                 assoc.len()
             } else {
                 exec.get_variable(&name).chars().count()
@@ -8159,7 +8174,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // for `a=(one two three)` joins to "one two three", then
         // does the FIRST replacement only -> "One two three".
         // Unquoted `${a/o/O}` per-element first -> "One twO three".
-        let arr_val = with_executor(|exec| exec.arrays.get(&name).cloned());
+        let arr_val = with_executor(|exec| exec.array(&name));
         if let Some(arr) = arr_val {
             if dq_flag {
                 let joined = arr.join(" ");
@@ -9397,7 +9412,7 @@ impl fusevm::ShellHost for ZshrsHost {
             );
             // funcstack: prepend the function name; outermost call
             // is at the END of the stack per zsh.
-            let prev_stack = exec.arrays.get("funcstack").cloned();
+            let prev_stack = exec.array("funcstack");
             let mut new_stack = vec![fn_name.clone()];
             if let Some(ref s) = prev_stack {
                 new_stack.extend_from_slice(s);

@@ -1543,13 +1543,7 @@ pub fn assignaparam(
     pm.u_hash = None;
     let cloned = pm.clone();
     drop(tab);
-    // Mirror to exec.arrays for fusevm read path. Two-store coherence
-    // until exec.arrays is dissolved. Use try_with_executor because
-    // setaparam may be called outside VM context (init, tests).
-    let name_owned = name.to_string();
-    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
-        exec.arrays.insert(name_owned, val_final);
-    });
+    let _ = val_final;
     Some(cloned)
 }
 
@@ -1612,14 +1606,7 @@ pub fn sethparam(name: &str, val: Vec<String>)                              // c
     paramtab_hashed_storage()
         .lock()
         .unwrap()
-        .insert(name.to_string(), map.clone());
-
-    // Mirror to exec.assoc_arrays for fusevm read path. Two-store
-    // coherence until exec.assoc_arrays is dissolved.
-    let name_owned = name.to_string();
-    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
-        exec.assoc_arrays.insert(name_owned, map);
-    });
+        .insert(name.to_string(), map);
 
     Some(cloned)
 }

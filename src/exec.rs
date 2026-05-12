@@ -675,18 +675,35 @@ impl ShellExecutor {
     /// `pm->u.arr.clone()`. Returns an owned `Vec<String>` because
     /// paramtab access requires a mutex lock that can't outlive the
     /// returned borrow.
+    ///
+    /// Reads paramtab first (canonical), then falls back to the
+    /// `self.arrays` cache for entries that were written through the
+    /// fusevm-side `entry().or_insert_with` mutation paths (those
+    /// don't yet write through to paramtab). When all writers go
+    /// through `set_array`, the cache becomes dead.
     pub fn array(&self, name: &str) -> Option<Vec<String>> {
-        let tab = crate::ported::params::paramtab().lock().ok()?;
-        tab.get(name).and_then(|pm| pm.u_arr.clone())
+        if let Ok(tab) = crate::ported::params::paramtab().lock() {
+            if let Some(v) = tab.get(name).and_then(|pm| pm.u_arr.clone()) {
+                return Some(v);
+            }
+        }
+        self.arrays.get(name).cloned()
     }
 
     /// Read an associative array parameter. Mirrors C `gethparam` at
     /// `Src/params.c:3115` — returns the typed `IndexMap` from
     /// `paramtab_hashed_storage`.
+    ///
+    /// Reads paramtab_hashed_storage first (canonical), then falls
+    /// back to `self.assoc_arrays` for fusevm-side direct inserts.
     pub fn assoc(&self, name: &str) -> Option<indexmap::IndexMap<String, String>> {
-        crate::ported::params::paramtab_hashed_storage()
+        if let Some(m) = crate::ported::params::paramtab_hashed_storage()
             .lock().ok()
             .and_then(|m| m.get(name).cloned())
+        {
+            return Some(m);
+        }
+        self.assoc_arrays.get(name).cloned()
     }
 
     /// Unset a parameter from every store. Mirrors the C
