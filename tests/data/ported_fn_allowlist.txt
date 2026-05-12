@@ -921,8 +921,8 @@ shfunc_autoload
 getkeystring_with
 apply_history_modifiers
 
-# === lex.rs / parse.rs — absorbed from the standalone `zshrs-parse`
-# workspace crate (2026-05-12). The crate's lexer + parser predate the
+# === lex.rs / parse.rs — Rust-only helpers in the lexer + parser
+# (absorbed into `src/ported/` 2026-05-12). These helpers predate the
 # strict-port discipline of `src/ported/`; many helpers below either
 # wrap real zsh lexer state with idiomatic Rust safety guards
 # (check_recursion / check_iterations are recursion-depth limiters; C

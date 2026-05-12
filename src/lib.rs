@@ -93,9 +93,9 @@ pub mod daemon {
 #[path = "extensions/fds.rs"] pub mod fds;
 #[path = "extensions/fish_features.rs"] pub mod fish_features;
 #[path = "extensions/ast_sexp.rs"] pub mod ast_sexp;
-// Lexer + parser were absorbed back into `src/ported/` (was the standalone
-// `zshrs-parse` workspace crate). Re-export the modules so existing call
-// sites (`zsh::lex::…`, `zsh::parse::…`, `zsh::tokens::…`) keep resolving.
+// Lexer + parser live in `src/ported/lex.rs` and `src/ported/parse.rs`.
+// Re-export the modules so existing call sites (`zsh::lex::…`,
+// `zsh::parse::…`, `zsh::tokens::…`) keep resolving.
 // `tokens` aliases `lex` because tokens.rs's contents (lextok enum +
 // reserved-word table) now live inside lex.rs. Char tokens (POUND / INPAR /
 // EQUALS / …) and the REDIR_* / COND_* constants are not duplicated — they

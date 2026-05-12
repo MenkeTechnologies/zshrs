@@ -85,18 +85,27 @@ pub const CFN_DEFAULT: i32 = 2;                                              // 
 // =================================================================
 
 /// Global cmatcher list. Port of file-static `Cmlist cmatcher;` at
-/// Src/Zle/compctl.c:36.
+/// Src/Zle/compctl.c:36. Bucket-2 user-registered registry per
+/// PORT_PLAN.md — `compctl -M` writes via `freecmlist + cpcmlist`,
+/// every completion call reads. `RwLock` lets parallel completion
+/// reads proceed without serialising on a mutex.
 pub(crate) static CMATCHER:
-    Mutex<Option<Box<crate::ported::zle::comp_h::Cmlist>>> =
-        Mutex::new(None);                                                    // c:36
+    std::sync::RwLock<Option<Box<crate::ported::zle::comp_h::Cmlist>>> =
+        std::sync::RwLock::new(None);                                        // c:36
 
 /// `compctltab` hash table — name → Compctl.
 /// Port of `HashTable compctltab;` at Src/Zle/compctl.c:46.
-static COMPCTL_TAB: Mutex<Option<HashMap<String, Arc<Compctl>>>> = Mutex::new(None);
+/// Bucket-2 user-registered registry: `compctl name args` writes,
+/// every completion call reads. `RwLock` per PORT_PLAN.md.
+static COMPCTL_TAB: std::sync::RwLock<Option<HashMap<String, Arc<Compctl>>>>
+    = std::sync::RwLock::new(None);
 
 /// Pattern-compctl list. Port of `Patcomp patcomps;` at
-/// Src/Zle/compctl.c:51.
-static PATCOMPS: Mutex<Vec<(String, Arc<Compctl>)>> = Mutex::new(Vec::new());
+/// Src/Zle/compctl.c:51. Bucket-2 user-registered registry:
+/// `compctl -p` writes, every pattern-completion call reads.
+/// `RwLock` per PORT_PLAN.md.
+static PATCOMPS: std::sync::RwLock<Vec<(String, Arc<Compctl>)>>
+    = std::sync::RwLock::new(Vec::new());
 
 // `cclist` — flag for listing/command/default/first completion.
 // Port of file-static `int cclist;` at Src/Zle/compctl.c:63.
@@ -123,9 +132,9 @@ thread_local! {
 /// printnode, freenode); Rust uses a plain HashMap so the wiring
 /// reduces to allocation.
 pub(crate) fn createcompctltable() {
-    let mut g = COMPCTL_TAB.lock().unwrap();
+    let mut g = COMPCTL_TAB.write().unwrap();
     *g = Some(HashMap::new());
-    let mut p = PATCOMPS.lock().unwrap();
+    let mut p = PATCOMPS.write().unwrap();
     p.clear();
 }
 
@@ -134,7 +143,7 @@ pub(crate) fn createcompctltable() {
 /// drop handles the inner Compctl free; this is the entry the C
 /// hash table calls back when removing a node.
 pub(crate) fn freecompctlp(name: &str) {
-    let mut g = COMPCTL_TAB.lock().unwrap();
+    let mut g = COMPCTL_TAB.write().unwrap();
     if let Some(map) = g.as_mut() {
         map.remove(name);
     }
@@ -216,7 +225,7 @@ pub(crate) fn set_gmatcher(name: &str, argv: &[String]) -> i32 {             // 
     }
     // freecmlist(cmatcher) — Drop on the Box handles the C free path.       // c:328
     let new_list = cpcmlist(head.as_deref());                                // c:329 cpcmlist(l)
-    if let Ok(mut guard) = CMATCHER.lock() {
+    if let Ok(mut guard) = CMATCHER.write() {
         *guard = new_list;
     }
     1                                                                        // c:331
@@ -788,7 +797,7 @@ pub(crate) fn cc_assign(name: &str, cct: Arc<Compctl>, reass: bool) {
         // reserved keys in zshrs's table.
         if (cclist & COMP_COMMAND) != 0 {
             let _ = cc_reassign(cct.clone());
-            let mut g = COMPCTL_TAB.lock().unwrap();
+            let mut g = COMPCTL_TAB.write().unwrap();
             if g.is_none() { *g = Some(HashMap::new()); }
             if let Some(map) = g.as_mut() {
                 map.insert("__cc_compos".to_string(), cct);
@@ -797,7 +806,7 @@ pub(crate) fn cc_assign(name: &str, cct: Arc<Compctl>, reass: bool) {
         }
         if (cclist & COMP_DEFAULT) != 0 {
             let _ = cc_reassign(cct.clone());
-            let mut g = COMPCTL_TAB.lock().unwrap();
+            let mut g = COMPCTL_TAB.write().unwrap();
             if g.is_none() { *g = Some(HashMap::new()); }
             if let Some(map) = g.as_mut() {
                 map.insert("__cc_default".to_string(), cct);
@@ -806,7 +815,7 @@ pub(crate) fn cc_assign(name: &str, cct: Arc<Compctl>, reass: bool) {
         }
         if (cclist & COMP_FIRST) != 0 {
             let _ = cc_reassign(cct.clone());
-            let mut g = COMPCTL_TAB.lock().unwrap();
+            let mut g = COMPCTL_TAB.write().unwrap();
             if g.is_none() { *g = Some(HashMap::new()); }
             if let Some(map) = g.as_mut() {
                 map.insert("__cc_first".to_string(), cct);
@@ -817,7 +826,7 @@ pub(crate) fn cc_assign(name: &str, cct: Arc<Compctl>, reass: bool) {
     // C: c:1205-1247 — Rust's Arc replaces the manual zsfree/ztrdup
     // ladder. The new spec is installed under `name`; the prior
     // entry (if any) drops its refcount when this insert overwrites.
-    let mut g = COMPCTL_TAB.lock().unwrap();
+    let mut g = COMPCTL_TAB.write().unwrap();
     if g.is_none() { *g = Some(HashMap::new()); }
     if let Some(map) = g.as_mut() {
         map.insert(name.to_string(), cct);
@@ -888,7 +897,7 @@ pub(crate) fn compctl_name_pat(p: &str) -> (bool, String) {
 /// patcomps list, removes the entry matching `n`, frees the cc.
 /// Rust's Vec::retain handles the linked-list-style removal.
 pub(crate) fn delpatcomp(n: &str) {
-    let mut p = PATCOMPS.lock().unwrap();
+    let mut p = PATCOMPS.write().unwrap();
     p.retain(|(pat, _)| pat != n);
 }
 
@@ -904,13 +913,13 @@ pub(crate) fn compctl_process_cc(s: &[String], cc: Arc<Compctl>) -> i32 {
             // pattern shape — `compctl -p`. compctl_name_pat
             // returns true if `n` looks like a pattern; here we
             // just check both tables.
-            let mut p = PATCOMPS.lock().unwrap();
+            let mut p = PATCOMPS.write().unwrap();
             let len_before = p.len();
             p.retain(|(pat, _)| pat != n);
             let pat_removed = p.len() != len_before;
             drop(p);
             if !pat_removed {
-                if let Some(map) = COMPCTL_TAB.lock().unwrap().as_mut() {
+                if let Some(map) = COMPCTL_TAB.write().unwrap().as_mut() {
                     map.remove(n);
                 }
             }
@@ -921,7 +930,7 @@ pub(crate) fn compctl_process_cc(s: &[String], cc: Arc<Compctl>) -> i32 {
             // For now, treat all names as plain (not pattern) —
             // pattern-mode `-p` requires get_compctl to set a flag
             // we haven't ported yet.
-            let mut g = COMPCTL_TAB.lock().unwrap();
+            let mut g = COMPCTL_TAB.write().unwrap();
             if g.is_none() {
                 *g = Some(HashMap::new());
             }
@@ -1121,12 +1130,12 @@ pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
     // C: c:1601 — if no commands and no special-target flag, print all
     if argv.is_empty() && (cclist & (COMP_SPECIAL | COMP_LISTMATCH)) == 0 {
         // Print pattern compctls
-        let pats = PATCOMPS.lock().unwrap().clone();
+        let pats = PATCOMPS.read().unwrap().clone();
         for (pat, cc) in &pats {
             printcompctl(pat, cc, 0, true);
         }
         // Print all hash table entries (sorted for stable output)
-        if let Some(map) = COMPCTL_TAB.lock().unwrap().as_ref() {
+        if let Some(map) = COMPCTL_TAB.read().unwrap().as_ref() {
             let mut names: Vec<&String> = map.keys().collect();
             names.sort();
             for n in names {
@@ -1148,7 +1157,7 @@ pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
         for n in &argv {
             let mut found = false;
             // Try pattern compctls first
-            let pats = PATCOMPS.lock().unwrap().clone();
+            let pats = PATCOMPS.read().unwrap().clone();
             for (pat, cc) in &pats {
                 if pat == n {
                     printcompctl(pat, cc, 0, true);
@@ -1157,7 +1166,7 @@ pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
                 }
             }
             if !found {
-                if let Some(map) = COMPCTL_TAB.lock().unwrap().as_ref() {
+                if let Some(map) = COMPCTL_TAB.read().unwrap().as_ref() {
                     if let Some(cc) = map.get(n) {
                         printcompctlp(n, cc, 0);
                         found = true;
@@ -1327,7 +1336,7 @@ pub(crate) fn ccmakehookfn(_dat: ()) -> i32 {
     // once with no matcher.
 
     // Use the lock so static analysis doesn't flag CMATCHER as unused.
-    let _guard = CMATCHER.lock();
+    let _guard = CMATCHER.read();
     drop(_guard);
 
     // C: c:1903 — restore stdout fd
@@ -1770,7 +1779,7 @@ pub(crate) fn makecomplistcmd(os: &str, incmd: bool, flags: i32) -> i32 {
             Some(s) => s.clone(),
             None => return ret,
         };
-        let table = COMPCTL_TAB.lock().unwrap();
+        let table = COMPCTL_TAB.read().unwrap();
         let from_table = table.as_ref().and_then(|m| m.get(&name).cloned());
         drop(table);
         match from_table {
@@ -1832,7 +1841,7 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {                 // 
         crate::ported::builtin::findcmd(&cmdstr, 1, 0)                       // c:2540
     };
 
-    let pats = PATCOMPS.lock().unwrap().clone();
+    let pats = PATCOMPS.read().unwrap().clone();
     for (pat, cc) in &pats {                                                 // c:2542
         // c:2543 patcompile(pc->pat) — Rust patmatch compiles inline.
         // c:2544-2545 — pattry(pat, cmdstr) || (s && pattry(pat, s)).
@@ -2573,7 +2582,7 @@ pub(crate) fn cleanup_() -> i32 {
 /// reset; lastccused frees via Vec::clear; compctlreadptr is the
 /// COMPCTLREAD_INSTALLED bool.
 pub(crate) fn finish_() -> i32 {
-    *COMPCTL_TAB.lock().unwrap() = None;                      // c:4069 deletehashtable
+    *COMPCTL_TAB.write().unwrap() = None;                       // c:4069 deletehashtable
     LASTCCUSED.lock().unwrap().clear();                       // c:4071-4072 freelinklist
     *COMPCTLREAD_INSTALLED.lock().unwrap() = false;           // c:4074
     0
@@ -2594,7 +2603,7 @@ mod tests {
     fn createcompctltable_initializes_table() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
-        let g = COMPCTL_TAB.lock().unwrap();
+        let g = COMPCTL_TAB.read().unwrap();
         assert!(g.is_some());
         assert_eq!(g.as_ref().unwrap().len(), 0);
     }
@@ -2608,7 +2617,7 @@ mod tests {
             ..Default::default()
         });
         cc_assign("ls", cc, false);
-        let g = COMPCTL_TAB.lock().unwrap();
+        let g = COMPCTL_TAB.read().unwrap();
         assert!(g.as_ref().unwrap().contains_key("ls"));
     }
 
@@ -2618,7 +2627,7 @@ mod tests {
         createcompctltable();
         cc_assign("rm", Arc::new(Compctl::default()), false);
         freecompctlp("rm");
-        let g = COMPCTL_TAB.lock().unwrap();
+        let g = COMPCTL_TAB.read().unwrap();
         assert!(!g.as_ref().unwrap().contains_key("rm"));
     }
 
@@ -2731,7 +2740,7 @@ mod tests {
         createcompctltable();
         let r = bin_compctl("compctl", &["-f".to_string(), "mycmd".to_string()]);
         assert_eq!(r, 0);
-        let g = COMPCTL_TAB.lock().unwrap();
+        let g = COMPCTL_TAB.read().unwrap();
         assert!(g.as_ref().unwrap().contains_key("mycmd"));
         let cc = g.as_ref().unwrap().get("mycmd").unwrap();
         assert_ne!(cc.mask & CC_FILES, 0);
@@ -2759,12 +2768,12 @@ mod tests {
     #[test]
     fn delpatcomp_removes_matching_pattern() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut p = PATCOMPS.lock().unwrap();
+        let mut p = PATCOMPS.write().unwrap();
         p.push(("foo*".to_string(), Arc::new(Compctl::default())));
         p.push(("bar*".to_string(), Arc::new(Compctl::default())));
         drop(p);
         delpatcomp("foo*");
-        let p = PATCOMPS.lock().unwrap();
+        let p = PATCOMPS.read().unwrap();
         assert_eq!(p.len(), 1);
         assert_eq!(p[0].0, "bar*");
     }
@@ -2778,7 +2787,7 @@ mod tests {
             mask: CC_FILES,
             ..Default::default()
         }), true);
-        let g = COMPCTL_TAB.lock().unwrap();
+        let g = COMPCTL_TAB.read().unwrap();
         assert!(g.as_ref().unwrap().contains_key("__cc_compos"));
         // Reset for other tests.
         drop(g);
@@ -2791,7 +2800,7 @@ mod tests {
         createcompctltable();
         CCLIST.with(|c| c.set(COMP_DEFAULT));
         cc_assign("compctl", Arc::new(Compctl::default()), true);
-        let g = COMPCTL_TAB.lock().unwrap();
+        let g = COMPCTL_TAB.read().unwrap();
         assert!(g.as_ref().unwrap().contains_key("__cc_default"));
         drop(g);
         CCLIST.with(|c| c.set(0));
@@ -2816,7 +2825,7 @@ mod tests {
         assert!(cc_first.is_some());
         assert_eq!(cc_first.unwrap().mask2, CC_CCCONT);
         // table exists
-        assert!(COMPCTL_TAB.lock().unwrap().is_some());
+        assert!(COMPCTL_TAB.read().unwrap().is_some());
         // compctlread installed
         assert!(*COMPCTLREAD_INSTALLED.lock().unwrap());
     }
@@ -2827,7 +2836,7 @@ mod tests {
         setup_();
         finish_();
         // Table cleared
-        assert!(COMPCTL_TAB.lock().unwrap().is_none());
+        assert!(COMPCTL_TAB.read().unwrap().is_none());
         // compctlread restored
         assert!(!*COMPCTLREAD_INSTALLED.lock().unwrap());
         // lastccused cleared
@@ -3084,7 +3093,7 @@ mod tests {
         createcompctltable();
         CCLIST.with(|c| c.set(COMP_COMMAND | COMP_DEFAULT));
         cc_assign("compctl", Arc::new(Compctl::default()), true);
-        let g = COMPCTL_TAB.lock().unwrap();
+        let g = COMPCTL_TAB.read().unwrap();
         // Should have been rejected — neither key installed.
         assert!(!g.as_ref().unwrap().contains_key("__cc_compos"));
         assert!(!g.as_ref().unwrap().contains_key("__cc_default"));
@@ -3100,7 +3109,7 @@ mod tests {
         cc_assign("bar", Arc::new(Compctl::default()), false);
         CCLIST.with(|c| c.set(COMP_REMOVE));
         compctl_process_cc(&["foo".to_string()], Arc::new(Compctl::default()));
-        let g = COMPCTL_TAB.lock().unwrap();
+        let g = COMPCTL_TAB.read().unwrap();
         let map = g.as_ref().unwrap();
         assert!(!map.contains_key("foo"));
         assert!(map.contains_key("bar"));
