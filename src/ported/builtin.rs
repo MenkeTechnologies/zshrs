@@ -3125,6 +3125,20 @@ pub fn bin_print(name: &str, args: &[String],                                // 
     } else {
         args.to_vec()
     };
+    // c:Src/builtin.c:4869-4880 `-o` / `-O` / `-i` sort flags.
+    // -o → case-insensitive ascending, -O → case-insensitive
+    // descending, -i → case-sensitive (with -o/-O).
+    if OPT_ISSET(ops, b'o') || OPT_ISSET(ops, b'O') {
+        let case_sensitive = OPT_ISSET(ops, b'i');
+        if case_sensitive {
+            processed_args.sort();
+        } else {
+            processed_args.sort_by_key(|s| s.to_lowercase());
+        }
+        if OPT_ISSET(ops, b'O') {
+            processed_args.reverse();
+        }
+    }
     // c:Src/builtin.c:4866-4886 — when `-r` is NOT set, each arg goes
     // through `getkeystring` to interpret backslash escapes (`\n`,
     // `\t`, `\\`, escaped space `\ `, etc.). `echo` follows the same
@@ -3165,13 +3179,29 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
     // c:Src/builtin.c:4711 — `fmt = getkeystring(fmt, &flen, ...,
     // GETKEYS_PRINTF_FMT, ...);`. The format string is first run
     // through getkeystring to interpret backslash escapes (`\n`,
-    // `\t`, `\xNN`, etc.) before %-format substitution. Earlier port
-    // treated `%n`/`%t`/`%\\` as escape sequences, which is wrong:
-    // those are %-format specs, not backslash escapes.
+    // `\t`, `\xNN`, etc.) before %-format substitution.
     let (fmt, _) = crate::ported::utils::getkeystring(fmt);                  // c:builtin.c:4711
+    let mut out = String::new();
+    // c:Src/builtin.c:4914-4923 — printf reapplies the format
+    // string until ALL args are consumed. `printf '%s,' a b c` →
+    // "a,b,c," not just "a,". Loop until arg_i stops advancing.
+    let mut arg_i = 0usize;
+    loop {
+        let prev = arg_i;
+        let chunk = printf_format_once(&fmt, args, &mut arg_i);
+        out.push_str(&chunk);
+        if arg_i == prev || arg_i >= args.len() { break; }
+    }
+    out
+}
+
+fn printf_format_once(fmt: &str, args: &[String], arg_i_ref: &mut usize) -> String {
+    // Local re-bind so the existing `arg_i` uses read/write through
+    // the caller-owned counter (so the loop in printf_format sees
+    // progress across reapplies of the format string).
+    macro_rules! arg_i { () => { *arg_i_ref }; }
     let mut out = String::with_capacity(fmt.len() + 16);
     let mut iter = fmt.chars().peekable();
-    let mut arg_i = 0usize;
     while let Some(c) = iter.next() {
         if c != '%' {
             out.push(c);
@@ -3203,58 +3233,71 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
         match iter.next() {
             Some('%') => out.push('%'),
             Some('s') => {
-                let a = args.get(arg_i).cloned().unwrap_or_default();
+                let a = args.get(arg_i!()).cloned().unwrap_or_default();
                 spec.push('s');
                 out.push_str(&format_spec_str(&spec, &a));
-                arg_i += 1;
+                arg_i!() += 1;
             }
             Some('d') | Some('i') => {
-                let a = args.get(arg_i).cloned().unwrap_or_default();
+                let a = args.get(arg_i!()).cloned().unwrap_or_default();
                 let n: i64 = a.parse().unwrap_or(0);
                 spec.push('d');
                 out.push_str(&format_spec_int(&spec, n));
-                arg_i += 1;
+                arg_i!() += 1;
             }
             Some('u') => {
-                let a = args.get(arg_i).cloned().unwrap_or_default();
+                let a = args.get(arg_i!()).cloned().unwrap_or_default();
                 let n: u64 = a.parse().unwrap_or(0);
                 spec.push('u');
                 out.push_str(&format_spec_uint(&spec, n));
-                arg_i += 1;
+                arg_i!() += 1;
             }
             Some('x') => {
-                let a = args.get(arg_i).cloned().unwrap_or_default();
+                let a = args.get(arg_i!()).cloned().unwrap_or_default();
                 let n: i64 = a.parse().unwrap_or(0);
                 spec.push('x');
                 out.push_str(&format!("{:x}", n));
-                arg_i += 1;
+                arg_i!() += 1;
             }
             Some('X') => {
-                let a = args.get(arg_i).cloned().unwrap_or_default();
+                let a = args.get(arg_i!()).cloned().unwrap_or_default();
                 let n: i64 = a.parse().unwrap_or(0);
                 spec.push('X');
                 out.push_str(&format!("{:X}", n));
-                arg_i += 1;
+                arg_i!() += 1;
             }
             Some('o') => {
-                let a = args.get(arg_i).cloned().unwrap_or_default();
+                let a = args.get(arg_i!()).cloned().unwrap_or_default();
                 let n: i64 = a.parse().unwrap_or(0);
                 spec.push('o');
                 out.push_str(&format!("{:o}", n));
-                arg_i += 1;
+                arg_i!() += 1;
             }
             Some('f') | Some('F') | Some('g') | Some('G') | Some('e') | Some('E') => {
-                let a = args.get(arg_i).cloned().unwrap_or_default();
+                let a = args.get(arg_i!()).cloned().unwrap_or_default();
                 let n: f64 = a.parse().unwrap_or(0.0);
                 spec.push('f');
                 out.push_str(&format_spec_float(&spec, n));
-                arg_i += 1;
+                arg_i!() += 1;
             }
             Some('c') => {
-                if let Some(a) = args.get(arg_i) {
+                if let Some(a) = args.get(arg_i!()) {
                     if let Some(ch) = a.chars().next() { out.push(ch); }
                 }
-                arg_i += 1;
+                arg_i!() += 1;
+            }
+            // c:builtin.c:4825 %q — shell-quote the arg.
+            Some('q') => {
+                let a = args.get(arg_i!()).cloned().unwrap_or_default();
+                out.push_str(&crate::ported::utils::quotedzputs(&a));
+                arg_i!() += 1;
+            }
+            // c:builtin.c:4810 %b — interpret backslash escapes.
+            Some('b') => {
+                let a = args.get(arg_i!()).cloned().unwrap_or_default();
+                let (s, _) = crate::ported::utils::getkeystring_print(&a);
+                out.push_str(&s);
+                arg_i!() += 1;
             }
             Some(other) => { out.push('%'); out.push(other); }
             None => out.push('%'),

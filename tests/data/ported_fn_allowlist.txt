@@ -919,3 +919,4 @@ module_handle
 shfunc_with_body
 shfunc_autoload
 getkeystring_print
+printf_format_once
