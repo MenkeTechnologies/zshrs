@@ -253,8 +253,15 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
         let _ = stderr_lock.write_all(nicezputs(to_emit).as_bytes());
         let _ = stderr_lock.write_all(b":");
     }
-    // C: zerrmsg(stderr, fmt, ap);  — emit formatted message + \n.
-    let _ = stderr_lock.write_all(b" ");
+    // C: zerrmsg(stderr, fmt, ap);  — emit lineno prefix (when
+    // SHINSTDIN unset or locallevel != 0) then formatted message + \n.
+    // Direct port of utils.c:301-308.
+    let lineno = *lineno_lock().lock().unwrap();
+    if (!shinstdin || locallevel != 0) && lineno != 0 {
+        let _ = stderr_lock.write_all(format!("{}: ", lineno).as_bytes());
+    } else {
+        let _ = stderr_lock.write_all(b" ");
+    }
     let _ = stderr_lock.write_all(msg.as_bytes());
     let _ = stderr_lock.write_all(b"\n");
     let _ = stderr_lock.flush();

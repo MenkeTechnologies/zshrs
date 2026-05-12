@@ -5855,6 +5855,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             exec.set_scalar("LINENO".to_string(), n.to_string());
         });
+        // Mirror to the file-static `lineno` (utils.c:121) that
+        // zerrmsg reads at utils.c:301 for the `:N: msg` prefix.
+        crate::ported::utils::set_lineno(n as i32);
         fusevm::Value::Status(0)
     });
 
