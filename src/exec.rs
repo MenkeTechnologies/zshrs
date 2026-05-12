@@ -629,6 +629,46 @@ impl ShellExecutor {
         self.variables.insert(name, value);
     }
 
+    /// Read PM_* type flags from the paramtab Param entry. Used by
+    /// SET_VAR / `+=` arms (case-fold, integer-add, readonly guard)
+    /// instead of the legacy `exec.var_attrs` HashMap. Returns 0 when
+    /// the name isn't in paramtab. Mirrors the C source's direct
+    /// `pm->node.flags & PM_INTEGER` checks.
+    pub fn param_flags(&self, name: &str) -> i32 {
+        crate::ported::params::paramtab()
+            .lock()
+            .ok()
+            .and_then(|t| t.get(name).map(|p| p.node.flags))
+            .unwrap_or(0)
+    }
+
+    /// `typeset -i name` — Param has PM_INTEGER. Reads via
+    /// `param_flags`.
+    pub fn is_integer_param(&self, name: &str) -> bool {
+        (self.param_flags(name) as u32 & crate::ported::zsh_h::PM_INTEGER) != 0
+    }
+
+    /// `typeset -F` / `-E` — float.
+    pub fn is_float_param(&self, name: &str) -> bool {
+        let f = self.param_flags(name) as u32;
+        (f & (crate::ported::zsh_h::PM_EFLOAT | crate::ported::zsh_h::PM_FFLOAT)) != 0
+    }
+
+    /// `typeset -l` — Param has PM_LOWER.
+    pub fn is_lowercase_param(&self, name: &str) -> bool {
+        (self.param_flags(name) as u32 & crate::ported::zsh_h::PM_LOWER) != 0
+    }
+
+    /// `typeset -u` — Param has PM_UPPER.
+    pub fn is_uppercase_param(&self, name: &str) -> bool {
+        (self.param_flags(name) as u32 & crate::ported::zsh_h::PM_UPPER) != 0
+    }
+
+    /// `readonly` / `typeset -r` — Param has PM_READONLY.
+    pub fn is_readonly_param(&self, name: &str) -> bool {
+        (self.param_flags(name) as u32 & crate::ported::zsh_h::PM_READONLY) != 0
+    }
+
     /// Set the most-recent-command exit status. Writes through to the
     /// canonical `builtin::LASTVAL` AtomicI32 (`Src/builtin.c:6443`).
     /// Use this instead of `self.last_status = X` so the global stays
@@ -3268,6 +3308,33 @@ impl crate::ported::exec::ShellExecutor {
                     let v: Vec<String> = names.into_iter().collect();
                     return Some(v.join(" "));
                 }
+                // Read PM_TYPE from paramtab Param flags first
+                // (canonical). PM_INTEGER → "integer", PM_FFLOAT|
+                // PM_EFLOAT → "float", PM_HASHED → "association",
+                // PM_ARRAY → "array", scalar default. Append PM_LOWER
+                // / PM_UPPER / PM_READONLY / PM_EXPORTED suffixes.
+                use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT,
+                    PM_ARRAY, PM_HASHED, PM_LOWER, PM_UPPER, PM_READONLY,
+                    PM_EXPORTED, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z};
+                let flags = self.param_flags(key) as u32;
+                if flags != 0 || self.array(key).is_some() || self.assoc(key).is_some() {
+                    let base = if flags & PM_INTEGER != 0 { "integer" }
+                        else if flags & (PM_EFLOAT | PM_FFLOAT) != 0 { "float" }
+                        else if flags & PM_HASHED != 0 || self.assoc(key).is_some() { "association" }
+                        else if flags & PM_ARRAY != 0 || self.array(key).is_some() { "array" }
+                        else { "scalar" };
+                    let mut out = String::from(base);
+                    if flags & PM_LEFT != 0 { out.push_str("-left"); }
+                    if flags & PM_RIGHT_B != 0 { out.push_str("-right_blanks"); }
+                    if flags & PM_RIGHT_Z != 0 { out.push_str("-right_zeros"); }
+                    if flags & PM_LOWER != 0 { out.push_str("-lower"); }
+                    if flags & PM_UPPER != 0 { out.push_str("-upper"); }
+                    if flags & PM_READONLY != 0 { out.push_str("-readonly"); }
+                    if flags & PM_EXPORTED != 0 { out.push_str("-export"); }
+                    return Some(out);
+                }
+                // Legacy var_attrs fallback for entries that haven't
+                // migrated to paramtab flags yet.
                 if let Some(attr) = self.var_attrs.get(key) {
                     return Some(attr.format_zsh());
                 }
@@ -5389,7 +5456,24 @@ impl crate::ported::exec::ShellExecutor {
         // MathState looks up names in a static HashMap, so without
         // substitution these would resolve to 0. Inject the current
         // value into a fresh extras HashMap.
-        let mut extras = self.variables.clone();
+        //
+        // Seed with paramtab scalar values first (so canonical-set
+        // entries like `typeset -i n=10` are visible to arith eval),
+        // then overlay the legacy `self.variables` HashMap so fusevm-
+        // side direct writes win for entries that exist in both.
+        let mut extras: std::collections::HashMap<String, String> = {
+            let tab = crate::ported::params::paramtab().lock();
+            match tab {
+                Ok(g) => g
+                    .iter()
+                    .filter_map(|(k, pm)| pm.u_str.clone().map(|v| (k.clone(), v)))
+                    .collect(),
+                Err(_) => std::collections::HashMap::new(),
+            }
+        };
+        for (k, v) in &self.variables {
+            extras.insert(k.clone(), v.clone());
+        }
         for special in [
             "RANDOM",
             "SECONDS",

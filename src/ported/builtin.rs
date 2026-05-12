@@ -4005,35 +4005,24 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
                 };
                 crate::ported::params::setsparam(n, &folded);                // c:params.c:3350
                 std::env::set_var(n, &folded);                               // c:3024 addenv
-                // Mirror to exec.variables (legacy store) so arith
-                // eval (`evaluate_arithmetic` seeds `extras` from
-                // `self.variables`) sees the typed assignment. Without
-                // this, `typeset -i n=10; echo $((n+5))` returned 5
-                // instead of 15 because $((n)) resolved to 0.
-                let is_int = (on & PM_INTEGER) != 0;
-                let is_float = (on & (PM_EFLOAT | PM_FFLOAT)) != 0;
-                let n_owned = n.to_string();
-                let folded_clone = folded.clone();
-                let _ = crate::fusevm_bridge::try_with_executor(|exec| {
-                    exec.variables.insert(n_owned.clone(), folded_clone);
-                    if lower || upper || is_int || is_float
-                        || (on & PM_READONLY) != 0
-                    {
-                        let attr = exec.var_attrs
-                            .entry(n_owned)
-                            .or_default();
-                        attr.lowercase = lower;
-                        attr.uppercase = upper;
-                        if is_int {
-                            attr.kind = crate::ported::params::VarKind::Integer;
-                        } else if is_float {
-                            attr.kind = crate::ported::params::VarKind::Float;
-                        }
-                        if (on & PM_READONLY) != 0 {
-                            attr.readonly = true;
+                // C-canonical: typeset -i / -F / -E / -l / -u / -r set
+                // PM_INTEGER / PM_FFLOAT / PM_EFLOAT / PM_LOWER /
+                // PM_UPPER / PM_READONLY on the Param (Src/builtin.c
+                // typeset_single + Src/params.c assignsparam). We set
+                // them on the just-created paramtab entry so SET_VAR
+                // and subsequent reads see the type metadata in one
+                // canonical place — no exec.var_attrs mirror needed.
+                let type_mask = (PM_INTEGER | PM_EFLOAT | PM_FFLOAT
+                    | PM_LOWER | PM_UPPER | PM_READONLY) as i32;
+                let to_set = (on & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT
+                    | PM_LOWER | PM_UPPER | PM_READONLY)) as i32;
+                if to_set != 0 {
+                    if let Ok(mut tab) = crate::ported::params::paramtab().lock() {
+                        if let Some(pm) = tab.get_mut(n) {
+                            pm.node.flags = (pm.node.flags & !type_mask) | to_set;
                         }
                     }
-                });
+                }
             }
         } else if is_hashed || is_array {
             // c:3060-3070 — bare name + `-A`/`-a` declares an empty

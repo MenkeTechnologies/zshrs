@@ -1953,21 +1953,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 "parameters" => {
                     // ${parameters[name]} returns the type with all
-                    // attributes joined by `-` (zsh `paramtypes` per
-                    // VarAttr::format_zsh). Falls back to base kind
-                    // when there's no attr entry yet (e.g. inherited
-                    // env or implicit assignment).
-                    if let Some(attr) = exec.var_attrs.get(idx) {
-                        Some(Value::str(attr.format_zsh()))
-                    } else if exec.assoc(idx).is_some() {
-                        Some(Value::str("association"))
-                    } else if exec.array(idx).is_some() {
-                        Some(Value::str("array"))
-                    } else if exec.variables.contains_key(idx) || env::var(idx).is_ok() {
-                        Some(Value::str("scalar"))
-                    } else {
-                        Some(Value::str(""))
-                    }
+                    // attributes joined by `-`. Delegates to
+                    // `get_special_array_value` which reads PM_TYPE
+                    // / PM_LOWER / PM_READONLY / etc. flags from the
+                    // canonical paramtab entry.
+                    Some(Value::str(
+                        exec.get_special_array_value("parameters", idx)
+                            .unwrap_or_default()))
                 }
                 "jobtexts" => {
                     let job_id: usize = idx.parse().ok()?;
@@ -4400,20 +4392,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         name.clone()
                     };
                     let kind = with_executor(|exec| {
-                        if let Some(attr) = exec.var_attrs.get(&target) {
-                            return attr.format_zsh();
-                        }
-                        if exec.assoc(&target).is_some() {
-                            "association".to_string()
-                        } else if exec.array(&target).is_some() {
-                            "array".to_string()
-                        } else if exec.variables.contains_key(&target)
-                            || std::env::var(&target).is_ok()
-                        {
-                            "scalar".to_string()
-                        } else {
-                            String::new()
-                        }
+                        // Delegate to the canonical (t)-flag formatter
+                        // which reads PM_TYPE flags from paramtab. The
+                        // exec.rs "parameters" arm of get_special_array
+                        // _value handles the same PM_INTEGER / PM_FFLOAT
+                        // / PM_LOWER / PM_READONLY flag dispatch.
+                        exec.get_special_array_value("parameters", &target)
+                            .unwrap_or_default()
                     });
                     state = St::S(kind);
                 }
@@ -5417,12 +5402,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 return;
             }
             // typeset -i: `+=` is arithmetic add, not string concat.
-            // `typeset -i x=42; x+=8` must store 50, not "428".
-            let is_integer = exec
-                .var_attrs
-                .get(&name)
-                .map(|a| matches!(a.kind, VarKind::Integer))
-                .unwrap_or(false);
+            // `typeset -i x=42; x+=8` must store 50, not "428". Per
+            // Src/params.c assignsparam:3270-3293, the PM_TYPE switch
+            // routes integer/float through matheval. Read PM_INTEGER
+            // from the canonical Param flags.
+            let is_integer = exec.is_integer_param(&name);
             if is_integer {
                 let prev = exec.get_variable(&name);
                 let prev_n: i64 = prev.parse().unwrap_or(0);
@@ -5492,11 +5476,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             );
             let is_ro = is_intrinsic_ro
                 || exec.readonly_vars.contains(&name)
-                || exec
-                    .var_attrs
-                    .get(&name)
-                    .map(|a| a.readonly)
-                    .unwrap_or(false);
+                || exec.is_readonly_param(&name);
             if is_ro {
                 eprintln!("zshrs:1: read-only variable: {}", name);
                 // Mirror zsh -c: read-only assignment failure aborts
@@ -5505,18 +5485,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             // If the variable was previously declared `integer` (or
             // `typeset -i`), arith-evaluate the value before storing.
-            // zsh: `integer i; i=5*3` stores 15.
-            let attrs = exec.var_attrs.get(&name).cloned();
-            let is_integer = attrs
-                .as_ref()
-                .map(|a| matches!(a.kind, VarKind::Integer))
-                .unwrap_or(false);
-            let int_base = attrs.as_ref().and_then(|a| a.int_base);
+            // zsh: `integer i; i=5*3` stores 15. Mirrors C's PM_TYPE
+            // dispatch at Src/params.c assignsparam:3270.
+            let is_integer = exec.is_integer_param(&name);
+            // `typeset -i N` base-formatting still consults var_attrs
+            // since int_base is metadata C stores in pm.base (a struct
+            // field, not a flag). TODO: dissolve via Param.base.
+            let int_base = exec.var_attrs.get(&name).and_then(|a| a.int_base);
             let stored = if is_integer && !value.is_empty() {
                 let evaluated = exec.eval_arith_expr(&value).to_string();
-                // Apply `typeset -i N` base-formatting at storage time.
-                // Without this, `typeset -i 16 x; x=255` stored `255`
-                // instead of zsh's `16#FF` form.
                 if let Some(base) = int_base {
                     evaluated
                         .parse::<i64>()
@@ -5531,11 +5508,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // c:Src/params.c — `typeset -l` (PM_LOWER) / `-u`
             // (PM_UPPER) case-fold the assigned value before storage.
             // Direct port of the PM_LOWER/PM_UPPER setstrvalue arms.
-            let stored = if let Some(ref a) = attrs {
-                if a.uppercase { stored.to_uppercase() }
-                else if a.lowercase { stored.to_lowercase() }
-                else { stored }
-            } else { stored };
+            let stored = if exec.is_uppercase_param(&name) {
+                stored.to_uppercase()
+            } else if exec.is_lowercase_param(&name) {
+                stored.to_lowercase()
+            } else {
+                stored
+            };
             // Mirror scalar→array if name is the scalar side of a
             // typeset -T tie. Direct port of Src/params.c PM_TIED:
             // assigning to PATH must update both `path` (the array
