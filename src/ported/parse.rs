@@ -22,6 +22,41 @@ use super::zsh_h::{
 };
 use serde::{Deserialize, Serialize};
 use crate::zsh_h::{EC_DUP, EC_NODUP};
+
+// Wordcode-buffer thread-locals — direct port of `Src/parse.c:269-285`
+// file-statics. Per-evaluator (bucket-1 in PORT_PLAN.md): each worker
+// thread parsing a separate program needs its own wordcode buffer.
+//
+// ECBUF: the wordcode array being built. C `Wordcode ecbuf`
+// (parse.c:275).
+// ECLEN: allocated entries in ECBUF (parse.c:269).
+// ECUSED: entries actually used so far (parse.c:271).
+// ECNPATS: count of patterns referenced by ECBUF (parse.c:273).
+// ECSOFFS / ECSSUB: byte offsets into the deferred string region
+// (parse.c:279). ECSSUB subtracts substring overlap.
+// ECNFUNC: count of functions defined so far (parse.c:285).
+// ECSTRS_INDEX: dedup index for long strings — C uses a binary tree
+// of `struct eccstr` (zsh.h:836); the canonical Eccstr port exists
+// at zsh_h::eccstr but stays unused at runtime here. The HashMap
+// preserves the API contract (lookup by (nfunc, str) → offs) with
+// simpler ownership semantics.
+thread_local! {
+    static ECBUF: std::cell::RefCell<Vec<u32>> = std::cell::RefCell::new(Vec::new());
+    static ECLEN: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    static ECUSED: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    static ECNPATS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    static ECSOFFS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    static ECSSUB: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    static ECNFUNC: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    static ECSTRS_INDEX: std::cell::RefCell<std::collections::HashMap<(i32, String), u32>>
+        = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+// Direct port of `Src/parse.c:287-289` grow-policy constants.
+const EC_INIT_SIZE: i32 = 256;
+const EC_DOUBLE_THRESHOLD: i32 = 32768;
+const EC_INCREMENT: i32 = 1024;
+
 // =============================================================================
 // Wordcode read helpers — used by text.rs's `gettext2` and exec dispatch
 // to walk a compiled Eprog without re-running the parser. These are the
@@ -924,7 +959,24 @@ impl<'a> ZshParser<'a> {
     /// function reduces to init_parse_status + recursion_depth/
     /// global_iterations clear.
     pub fn init_parse(&mut self) {
-        // parse.c:513-520 — init wordcode buffer. zshrs no-op.
+        // parse.c:513-520 — `ecbuf = (Wordcode) zalloc(EC_INIT_SIZE *
+        // sizeof(wordcode)); eclen = EC_INIT_SIZE; ecused = 0;
+        // ecnpats = 0; ecstrs = NULL; ecsoffs = ecnfunc = 0;
+        // ecssub = 0;`. P9b — initialize the per-evaluator wordcode
+        // buffer for this parse call. zshrs uses thread-local
+        // statics declared at file scope (parse.rs:25-50).
+        ECBUF.with_borrow_mut(|buf| {
+            buf.clear();
+            buf.resize(EC_INIT_SIZE as usize, 0);
+        });
+        ECLEN.set(EC_INIT_SIZE);
+        ECUSED.set(0);
+        ECNPATS.set(0);
+        ECSOFFS.set(0);
+        ECSSUB.set(0);
+        ECNFUNC.set(0);
+        ECSTRS_INDEX.with_borrow_mut(|m| m.clear());
+
         self.recursion_depth = 0;
         self.global_iterations = 0;
         // parse.c:522 — `init_parse_status();`
@@ -1152,52 +1204,173 @@ impl<'a> ZshParser<'a> {
     /// Patch a sublist-placeholder wordcode with its actual opcode.
     /// Direct port of zsh/Src/parse.c:753-763 `set_sublist_code`.
     /// Same role as set_list_code at the sublist level.
-    pub fn set_sublist_code(_p: usize, _type_code: i32, _flags: i32, _skip: i32, _cmplx: bool) {
-        // parse.c:757-762 — wordcode patching. zshrs no-op.
+    pub fn set_sublist_code(p: usize, type_code: i32, flags: i32, skip: i32, cmplx: bool) {
+        // parse.c:757-762 — patch the wordcode at p. zshrs P9b: write
+        // into ECBUF directly so par_* productions can build sublist
+        // wordcode with deferred type/skip patching.
+        let _ = cmplx; // cmplx encoded into flags by caller; not
+                       // re-encoded here.
+        ECBUF.with_borrow_mut(|buf| {
+            if p < buf.len() {
+                let data = (type_code | (flags << 1) | (skip << 6)) as u32;
+                buf[p] = crate::ported::zsh_h::WC_SUBLIST
+                    | (data << crate::ported::zsh_h::WC_CODEBITS);
+            }
+        });
     }
 
-    /// Add one wordcode opcode to the buffer. Direct port of
-    /// zsh/Src/parse.c:396-408 `ecadd`. Returns the index of the
-    /// new opcode. zshrs no-op since the AST is built inline.
-    pub fn ecadd(_c: u32) -> usize {
-        // parse.c:399-407 — append to ecbuf with grow-on-demand.
-        // zshrs no-op.
-        0
+    /// Direct port of `ecadd` at `Src/parse.c:396-408`. Append `c` to
+    /// the wordcode buffer with grow-on-demand, return the new index.
+    pub fn ecadd(c: u32) -> usize {
+        // parse.c:399-405 — `if ((eclen - ecused) < 1) grow`.
+        if (ECLEN.get() - ECUSED.get()) < 1 {
+            let cur = ECLEN.get();
+            let a = if cur < EC_DOUBLE_THRESHOLD {
+                cur
+            } else {
+                EC_INCREMENT
+            };
+            ECBUF.with_borrow_mut(|buf| {
+                buf.resize((cur + a) as usize, 0);
+            });
+            ECLEN.set(cur + a);
+        }
+        let idx = ECUSED.get();
+        ECBUF.with_borrow_mut(|buf| {
+            if (idx as usize) >= buf.len() {
+                buf.resize((idx + 1) as usize, 0);
+            }
+            buf[idx as usize] = c;
+        });
+        ECUSED.set(idx + 1);
+        idx as usize
     }
 
-    /// Delete a wordcode at position p. Direct port of
-    /// zsh/Src/parse.c:412-421 `ecdel`. zshrs no-op.
-    pub fn ecdel(_p: usize) {
-        // parse.c:415-420 — memmove + decrement ecused. zshrs no-op.
+    /// Direct port of `ecdel` at `Src/parse.c:412-421`. Remove the
+    /// wordcode at position `p`, shift later entries left by one,
+    /// decrement ecused, adjust pending heredoc pointers.
+    pub fn ecdel(p: usize) {
+        // parse.c:415-418 — memmove + decrement ecused.
+        let n = ECUSED.get() as usize - p - 1;
+        if n > 0 {
+            ECBUF.with_borrow_mut(|buf| {
+                for i in 0..n {
+                    buf[p + i] = buf[p + i + 1];
+                }
+            });
+        }
+        ECUSED.set(ECUSED.get() - 1);
+        // parse.c:420 — `ecadjusthere(p, -1)`.
+        Self::ecadjusthere(p, -1);
     }
 
-    /// Encode a string into a wordcode value. Direct port of
-    /// zsh/Src/parse.c:425-471 `ecstrcode`. C source packs short
-    /// strings (≤4 chars) into a single wordcode + uses a binary
-    /// tree (Eccstr) for longer strings; long-string slots are
-    /// de-duplicated via hasher + strcmp. zshrs no-op since the
-    /// AST stores strings directly.
-    pub fn ecstrcode(_s: &str) -> u32 {
-        // parse.c:432-470 — the actual encoding logic. zshrs no-op.
-        0
+    /// Direct port of `ecstrcode` at `Src/parse.c:425-471`. Encode a
+    /// string into a single wordcode (short strings ≤4 bytes packed
+    /// inline; longer strings get an offset into the deduped registry).
+    pub fn ecstrcode(s: &str) -> u32 {
+        // parse.c:432-470 — short-string inline-pack vs registry-offset.
+        let l = s.len() + 1; // include NUL terminator (matches C strlen+1)
+        let t = crate::ported::utils::has_token(s);
+        let bytes = s.as_bytes();
+        if l <= 4 {
+            // parse.c:436-445 — short-string inline pack.
+            let mut c: u32 = if t { 3 } else { 2 };
+            match l {
+                4 => {
+                    c |= (bytes[2] as u32) << 19;
+                    c |= (bytes[1] as u32) << 11;
+                    c |= (bytes[0] as u32) << 3;
+                }
+                3 => {
+                    c |= (bytes[1] as u32) << 11;
+                    c |= (bytes[0] as u32) << 3;
+                }
+                2 => {
+                    c |= (bytes[0] as u32) << 3;
+                }
+                1 => {
+                    // parse.c:443 — empty string special case.
+                    c = if t { 7 } else { 6 };
+                }
+                _ => {}
+            }
+            c
+        } else {
+            // parse.c:448-470 — long string: dedup by (nfunc, hashval,
+            // str) and return existing offs if found, else allocate
+            // a new offs into the string region. zshrs uses HashMap
+            // for the dedup index — the canonical eccstr binary tree
+            // (zsh.h:836) is defined but not used at runtime here;
+            // the API contract (return offs for a given string) is
+            // preserved.
+            let key = (ECNFUNC.get(), s.to_string());
+            if let Some(&offs) = ECSTRS_INDEX.with_borrow(|m| m.get(&key).copied()).as_ref() {
+                return offs;
+            }
+            let offs = (((ECSOFFS.get() - ECSSUB.get()) as u32) << 2)
+                | if t { 1 } else { 0 };
+            ECSTRS_INDEX.with_borrow_mut(|m| {
+                m.insert(key, offs);
+            });
+            ECSOFFS.set(ECSOFFS.get() + l as i32);
+            offs
+        }
     }
 
-    /// Insert N empty wordcode slots at position p. Direct port of
-    /// zsh/Src/parse.c:371-388 `ecispace`. Used to reserve space
-    /// for a forward-jump opcode that will be patched once the
-    /// jump target is known. zshrs no-op since AST jumps are
-    /// resolved at compile_zsh time.
-    pub fn ecispace(_p: usize, _n: usize) {
-        // parse.c:376-387 — grow + memmove + adjust hdocs. zshrs no-op.
+    /// Direct port of `ecispace` at `Src/parse.c:371-388`. Insert `n`
+    /// empty wordcode slots at position `p`, shifting later entries
+    /// right, growing the buffer as needed, adjusting heredoc pointers.
+    pub fn ecispace(p: usize, n: usize) {
+        // parse.c:376-381 — grow if needed.
+        let need = n as i32;
+        if (ECLEN.get() - ECUSED.get()) < need {
+            let cur = ECLEN.get();
+            let mut a = if cur < EC_DOUBLE_THRESHOLD {
+                cur
+            } else {
+                EC_INCREMENT
+            };
+            if need > a {
+                a = need;
+            }
+            ECBUF.with_borrow_mut(|buf| {
+                buf.resize((cur + a) as usize, 0);
+            });
+            ECLEN.set(cur + a);
+        }
+        // parse.c:382-385 — memmove p → p+n, gap of n.
+        let m = ECUSED.get() as usize - p;
+        if m > 0 {
+            ECBUF.with_borrow_mut(|buf| {
+                let needed = (ECUSED.get() as usize) + n;
+                if buf.len() < needed {
+                    buf.resize(needed, 0);
+                }
+                for i in (0..m).rev() {
+                    buf[p + n + i] = buf[p + i];
+                }
+                for i in 0..n {
+                    buf[p + i] = 0;
+                }
+            });
+        }
+        // parse.c:386 — bump ecused by n.
+        ECUSED.set(ECUSED.get() + need);
+        // parse.c:387 — `ecadjusthere(p, n)`.
+        Self::ecadjusthere(p, need);
     }
 
-    /// Adjust pending heredoc pointers when wordcodes shift. Direct
-    /// port of zsh/Src/parse.c:359-367 `ecadjusthere`. Called
-    /// internally by ecispace / ecdel after they shift the buffer.
-    /// zshrs no-op since heredocs are tracked by index in the
-    /// lexer's Vec, not by absolute wordcode offset.
+    /// Direct port of `ecadjusthere` at `Src/parse.c:359-367`. Walk
+    /// the pending-heredocs list and bump each `pc` by `d` if it's
+    /// at or after position `p`. Called by `ecispace` / `ecdel` when
+    /// wordcodes shift.
     pub fn ecadjusthere(_p: usize, _d: i32) {
-        // parse.c:362-366 — walk hdocs list, bump pc by d. zshrs no-op.
+        // parse.c:362-366 — `for (p2 = hdocs; p2; p2 = p2->next) if
+        // (p2->pc >= p) p2->pc += d;`. zshrs's hdocs are still
+        // Vec<HereDoc> on the lexer (pre-P9c migration); since none
+        // of them carry a wordcode pc today (the AST tree has no pc
+        // slots), this is a no-op until Phase 9c wires
+        // `hdocs.pc` into wordcode emission.
     }
 
     // ============================================================
