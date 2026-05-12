@@ -726,39 +726,21 @@ pub fn zshrs_main() {
             executor.enter_ksh_mode();
         }
         if xtrace {
-            executor.options.insert("xtrace".to_string(), true);
-            // Mirror to canonical options store so printprompt4's
-            // `isset(XTRACE)` early-return check sees the live state.
-            // Without this, `-x` toggled `exec.options` only and the
-            // canonical store stayed false → no PS4 prefix emission.
             zsh::ported::options::opt_state_set("xtrace", true);
         }
         if verbose {
-            executor.options.insert("verbose".to_string(), true);
             zsh::ported::options::opt_state_set("verbose", true);
         }
         if no_rcs {
             // Match zsh -f: rcs and hashdirs default-on options are
             // turned off so `setopt` lists `nohashdirs norcs`. zsh
             // keeps globalrcs on (only the user-rcs files are skipped).
-            executor.options.insert("rcs".to_string(), false);
-            executor.options.insert("hashdirs".to_string(), false);
             zsh::ported::options::opt_state_set("rcs", false);
             zsh::ported::options::opt_state_set("hashdirs", false);
         }
-        // Apply CLI `-o NAME` / `+o NAME` option settings. zsh's
-        // option table stores names verbatim (e.g. `nomatch` is
-        // the canonical name; `unsetopt nomatch` and `+o nomatch`
-        // both produce `nomatch=false`). The `no` prefix is part
-        // of the canonical name, not a negation marker — query
-        // canonicalization (e.g. `[[ -o nonomatch ]]`) is a
-        // SEPARATE code path from `setopt`/`unsetopt`. Mirror by
-        // storing the option name verbatim (just lowercased +
-        // separator-stripped). zshrs's runtime nomatch check at
-        // expand_glob looks up "nomatch" directly.
+        // Apply CLI `-o NAME` / `+o NAME` option settings.
         for (raw, set_val) in opts {
             let canonical = raw.to_lowercase().replace(['_', '-'], "");
-            executor.options.insert(canonical.clone(), *set_val);
             zsh::ported::options::opt_state_set(&canonical, *set_val);
         }
     }
@@ -1344,10 +1326,10 @@ fn run_non_interactive() {
     // stdin-not-tty bypasses run_interactive.
     let argv: Vec<String> = std::env::args().collect();
     if argv.iter().any(|a| a == "-x" || a == "--xtrace") {
-        executor.options.insert("xtrace".to_string(), true);
+        zsh::ported::options::opt_state_set("xtrace", true);
     }
     if argv.iter().any(|a| a == "-v" || a == "--verbose") {
-        executor.options.insert("verbose".to_string(), true);
+        zsh::ported::options::opt_state_set("verbose", true);
     }
     // Read all of stdin at once so multi-line constructs (heredocs, functions,
     // loops, etc.) are parsed correctly — line-by-line breaks them.
@@ -1469,7 +1451,7 @@ fn source_startup_files(
     }
 
     // Check RCS after /etc/zshenv
-    if !executor.options.get("rcs").copied().unwrap_or(true) {
+    if !zsh::ported::options::opt_state_get("rcs").unwrap_or(true) {
         return;
     }
 
@@ -1483,7 +1465,7 @@ fn source_startup_files(
     }
 
     // Re-check RCS after .zshenv
-    if !executor.options.get("rcs").copied().unwrap_or(true) {
+    if !zsh::ported::options::opt_state_get("rcs").unwrap_or(true) {
         return;
     }
 
@@ -1491,7 +1473,7 @@ fn source_startup_files(
     if is_login {
         // /etc/zprofile
         if idx < preloaded.len() {
-            if executor.options.get("globalrcs").copied().unwrap_or(true) {
+            if zsh::ported::options::opt_state_get("globalrcs").unwrap_or(true) {
                 if let Some(ref text) = preloaded[idx].1 {
                     source_from_memory(executor, &preloaded[idx].0, text);
                 }
@@ -1500,7 +1482,7 @@ fn source_startup_files(
         }
         // $ZDOTDIR/.zprofile
         if idx < preloaded.len() {
-            if executor.options.get("rcs").copied().unwrap_or(true) {
+            if zsh::ported::options::opt_state_get("rcs").unwrap_or(true) {
                 if let Some(ref text) = preloaded[idx].1 {
                     source_from_memory(executor, &preloaded[idx].0, text);
                 }
@@ -1510,7 +1492,7 @@ fn source_startup_files(
     }
 
     // Re-check RCS
-    if !executor.options.get("rcs").copied().unwrap_or(true) {
+    if !zsh::ported::options::opt_state_get("rcs").unwrap_or(true) {
         return;
     }
 
@@ -1518,7 +1500,7 @@ fn source_startup_files(
     if is_interactive {
         // /etc/zshrc
         if idx < preloaded.len() {
-            if executor.options.get("globalrcs").copied().unwrap_or(true) {
+            if zsh::ported::options::opt_state_get("globalrcs").unwrap_or(true) {
                 if let Some(ref text) = preloaded[idx].1 {
                     source_from_memory(executor, &preloaded[idx].0, text);
                 }
@@ -1527,7 +1509,7 @@ fn source_startup_files(
         }
         // $ZDOTDIR/.zshrc
         if idx < preloaded.len() {
-            if executor.options.get("rcs").copied().unwrap_or(true) {
+            if zsh::ported::options::opt_state_get("rcs").unwrap_or(true) {
                 if let Some(ref text) = preloaded[idx].1 {
                     source_from_memory(executor, &preloaded[idx].0, text);
                 }
@@ -1537,7 +1519,7 @@ fn source_startup_files(
     }
 
     // Re-check RCS
-    if !executor.options.get("rcs").copied().unwrap_or(true) {
+    if !zsh::ported::options::opt_state_get("rcs").unwrap_or(true) {
         return;
     }
 
@@ -1545,7 +1527,7 @@ fn source_startup_files(
     if is_login {
         // /etc/zlogin
         if idx < preloaded.len() {
-            if executor.options.get("globalrcs").copied().unwrap_or(true) {
+            if zsh::ported::options::opt_state_get("globalrcs").unwrap_or(true) {
                 if let Some(ref text) = preloaded[idx].1 {
                     source_from_memory(executor, &preloaded[idx].0, text);
                 }
@@ -1554,7 +1536,7 @@ fn source_startup_files(
         }
         // $ZDOTDIR/.zlogin
         if idx < preloaded.len() {
-            if executor.options.get("rcs").copied().unwrap_or(true) {
+            if zsh::ported::options::opt_state_get("rcs").unwrap_or(true) {
                 if let Some(ref text) = preloaded[idx].1 {
                     source_from_memory(executor, &preloaded[idx].0, text);
                 }
@@ -1576,12 +1558,7 @@ fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str)
     // the source and is restored afterwards. The C source uses
     // ztrdup(arg0) to copy and zsfree on exit; Rust's String
     // ownership handles both automatically.
-    let saved_argzero = if executor
-        .options
-        .get("functionargzero")
-        .copied()
-        .unwrap_or(true)
-    {
+    let saved_argzero = if zsh::ported::options::opt_state_get("functionargzero").unwrap_or(true) {
         let prev = executor.scalar("0");
         executor.set_scalar("0".to_string(), path.to_string_lossy().to_string());
         Some(prev)
@@ -1694,7 +1671,7 @@ fn source_logout_files(executor: &mut ShellExecutor, is_login: bool) {
     }
 
     // Check RCS option
-    if !executor.options.get("rcs").copied().unwrap_or(true) {
+    if !zsh::ported::options::opt_state_get("rcs").unwrap_or(true) {
         return;
     }
 
@@ -1704,7 +1681,7 @@ fn source_logout_files(executor: &mut ShellExecutor, is_login: bool) {
     source_file_with_zwc(executor, &zdotdir.join(".zlogout"));
 
     // /etc/zlogout (only if GLOBAL_RCS is set)
-    if executor.options.get("globalrcs").copied().unwrap_or(true) {
+    if zsh::ported::options::opt_state_get("globalrcs").unwrap_or(true) {
         source_file_with_zwc(executor, &PathBuf::from("/etc/zlogout"));
     }
 }
@@ -1858,10 +1835,10 @@ fn run_interactive() {
     // every line of `.zshenv` / `.zshrc` is also traced, matching
     // `zsh -x` (which sets XTRACE before init scripts run).
     if args.iter().any(|a| a == "-x" || a == "--xtrace") {
-        executor.options.insert("xtrace".to_string(), true);
+        zsh::ported::options::opt_state_set("xtrace", true);
     }
     if args.iter().any(|a| a == "-v" || a == "--verbose") {
-        executor.options.insert("verbose".to_string(), true);
+        zsh::ported::options::opt_state_set("verbose", true);
     }
 
     // Login shell detection:
@@ -1877,8 +1854,8 @@ fn run_interactive() {
     let is_interactive = true; // We're in run_interactive()
 
     // Set default options (RCS and GLOBAL_RCS are on by default)
-    executor.options.insert("rcs".to_string(), true);
-    executor.options.insert("globalrcs".to_string(), true);
+    zsh::ported::options::opt_state_set("rcs", true);
+    zsh::ported::options::opt_state_set("globalrcs", true);
 
     // Source startup files in correct zsh order per zshall(1).
     // OR — if the daemon is up and serving zshrs canonical state, AND

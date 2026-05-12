@@ -372,7 +372,9 @@ pub struct ShellExecutor {
     pub session_histnum: i64,
     pub(crate) process_sub_counter: u32,
     pub traps: HashMap<String, String>,
-    pub options: HashMap<String, bool>,
+    // `options` field deleted — dup of canonical `OPTS_LIVE` in
+    // `src/ported/options.rs:1112`. Callers route through
+    // `opt_state_get`/`opt_state_set`/`opt_state_unset`/`opt_state_snapshot`.
     pub completions: HashMap<String, CompSpec>, // command -> completion spec
     // `dir_stack` field deleted — canonical `DIRSTACK` lives in
     // `modules/parameter.rs:398` (mirror of C `dirstack` global at
@@ -1040,6 +1042,14 @@ impl ShellExecutor {
             .map(|s| s.to_string())
             .collect();
         arrays.insert("path".to_string(), path_dirs);
+        // Seed canonical OPTS_LIVE with defaults if not already
+        // populated. `default_options` builds the same name→bool map
+        // we previously cloned into `exec.options`.
+        if crate::ported::options::opt_state_len() == 0 {
+            for (k, v) in Self::default_options() {
+                crate::ported::options::opt_state_set(&k, v);
+            }
+        }
         let mut exec = Self {
             scriptname: None,
             scriptfilename: None,
@@ -1055,7 +1065,6 @@ impl ShellExecutor {
             completions: HashMap::new(),
             process_sub_counter: 0,
             traps: HashMap::new(),
-            options: Self::default_options(),
             // zsh completion system
             comp_matches: Vec::new(),
             comp_groups: Vec::new(),
@@ -2637,7 +2646,7 @@ impl ShellExecutor {
     /// Port of zfork(struct timespec *ts) from exec.c
     pub fn zfork(&mut self, flags: ForkFlags) -> std::io::Result<ForkResult> {
         // Check for job control
-        let can_background = self.options.get("monitor").copied().unwrap_or(false);
+        let can_background = crate::ported::options::opt_state_get("monitor").unwrap_or(false);
 
         unsafe {
             match libc::fork() {
@@ -2747,7 +2756,7 @@ impl ShellExecutor {
 
         // Handle job control
         if flags.contains(SubshellFlags::NOMONITOR) {
-            self.options.insert("monitor".to_string(), false);
+            crate::ported::options::opt_state_set("monitor", false);
         }
 
         // Close unneeded fds
@@ -3336,16 +3345,15 @@ impl crate::ported::exec::ShellExecutor {
             // === SHELL OPTIONS ===
             "options" => {
                 if key == "@" || key == "*" {
-                    // Return all options as "name=on/off" pairs
-                    let opts: Vec<String> = self
-                        .options
+                    // Return all options as "name=on/off" pairs.
+                    let opts: Vec<String> = crate::ported::options::opt_state_snapshot()
                         .iter()
                         .map(|(k, v)| format!("{}={}", k, if *v { "on" } else { "off" }))
                         .collect();
                     return Some(opts.join(" "));
                 }
                 let opt_name = key.to_lowercase().replace('_', "");
-                let is_on = self.options.get(&opt_name).copied().unwrap_or(false);
+                let is_on = crate::ported::options::opt_state_get(&opt_name).unwrap_or(false);
                 Some(if is_on {
                     "on".to_string()
                 } else {
@@ -3802,8 +3810,7 @@ impl crate::ported::exec::ShellExecutor {
                     "zsh/main",
                     "zsh/files",
                 ];
-                let user_loaded: Vec<String> = self
-                    .options
+                let user_loaded: Vec<String> = crate::ported::options::opt_state_snapshot()
                     .iter()
                     .filter_map(|(k, v)| {
                         if *v {
@@ -3824,10 +3831,7 @@ impl crate::ported::exec::ShellExecutor {
                     return Some(all.join(" "));
                 }
                 if ALWAYS_LOADED.contains(&key)
-                    || self
-                        .options
-                        .get(&format!("_module_{}", key))
-                        .copied()
+                    || crate::ported::options::opt_state_get(&format!("_module_{}", key))
                         .unwrap_or(false)
                 {
                     Some("loaded".to_string())
@@ -3942,8 +3946,7 @@ impl crate::ported::exec::ShellExecutor {
             // disabled list isn't recoverable post-disable; emit
             // empty for those.
             "dis_builtins" => {
-                let disabled: Vec<String> = self
-                    .options
+                let disabled: Vec<String> = crate::ported::options::opt_state_snapshot()
                     .iter()
                     .filter_map(|(k, v)| {
                         if *v {
@@ -4128,7 +4131,7 @@ impl crate::ported::exec::ShellExecutor {
             // `case $- in *x*) … esac` see consistent letters.
             "-" => {
                 let mut letters = String::from("569X");
-                let opt = |n: &str| self.options.get(n).copied().unwrap_or(false);
+                let opt = |n: &str| crate::ported::options::opt_state_get(n).unwrap_or(false);
                 // `e` comes BEFORE `f` in zsh's letter ordering: `set -e`
                 // in -f mode produces "569Xef", not "569Xfe".
                 if opt("errexit") {
@@ -4415,8 +4418,8 @@ impl crate::ported::exec::ShellExecutor {
                         // `set -o nounset` all turn it OFF. Different
                         // code paths in zshrs persist either key, so
                         // honor either signal.
-                        let nounset_on = self.options.get("nounset").copied().unwrap_or(false)
-                            || !self.options.get("unset").copied().unwrap_or(true);
+                        let nounset_on = crate::ported::options::opt_state_get("nounset").unwrap_or(false)
+                            || !crate::ported::options::opt_state_get("unset").unwrap_or(true);
                         if nounset_on {
                             zerr(&format!("{}: parameter not set", name));
                             std::process::exit(1);
@@ -4801,7 +4804,7 @@ impl crate::ported::exec::ShellExecutor {
         // top-level `~` (not inside brackets/parens) when extendedglob
         // is on and split. Recursively expand both halves and remove
         // the RHS matches from the LHS list.
-        let extglob_on = self.options.get("extendedglob").copied().unwrap_or(false);
+        let extglob_on = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
         if extglob_on {
             // extendedglob `^pat` (negation): match everything that
             // does NOT match `pat`. The lexer leaves `^` as a literal
@@ -4840,11 +4843,11 @@ impl crate::ported::exec::ShellExecutor {
                 if !out.is_empty() {
                     return out;
                 }
-                let nullglob = self.options.get("nullglob").copied().unwrap_or(false);
+                let nullglob = crate::ported::options::opt_state_get("nullglob").unwrap_or(false);
                 if nullglob {
                     return Vec::new();
                 }
-                let nomatch = self.options.get("nomatch").copied().unwrap_or(true);
+                let nomatch = crate::ported::options::opt_state_get("nomatch").unwrap_or(true);
                 if nomatch {
                     zerr(&format!("no matches found: {}", pattern));
                     std::process::exit(1);
@@ -4892,11 +4895,11 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 // Empty after exclusion — fall through so NOMATCH
                 // semantics fire if no nullglob.
-                let nullglob = self.options.get("nullglob").copied().unwrap_or(false);
+                let nullglob = crate::ported::options::opt_state_get("nullglob").unwrap_or(false);
                 if nullglob {
                     return Vec::new();
                 }
-                let nomatch = self.options.get("nomatch").copied().unwrap_or(true);
+                let nomatch = crate::ported::options::opt_state_get("nomatch").unwrap_or(true);
                 if nomatch && Self::looks_like_glob(pattern) {
                     zerr(&format!("no matches found: {}", pattern));
                     std::process::exit(1);
@@ -5014,7 +5017,7 @@ impl crate::ported::exec::ShellExecutor {
             return self.filter_by_qualifiers(expanded, &qualifiers);
         }
 
-        let nullglob = self.options.get("nullglob").copied().unwrap_or(false);
+        let nullglob = crate::ported::options::opt_state_get("nullglob").unwrap_or(false);
         // `(D)` glob qualifier — per-pattern dotglob. Same effect as
         // `setopt dotglob` but scoped to this expansion only.
         // Also: when the LAST path component starts with literal `.`,
@@ -5025,8 +5028,8 @@ impl crate::ported::exec::ShellExecutor {
         // `globdots` is the zsh canonical name; `dotglob` is the bash
         // alias. Both end up stored under their own key by setopt — read
         // both so either spelling works.
-        let dotglob = self.options.get("dotglob").copied().unwrap_or(false)
-            || self.options.get("globdots").copied().unwrap_or(false)
+        let dotglob = crate::ported::options::opt_state_get("dotglob").unwrap_or(false)
+            || crate::ported::options::opt_state_get("globdots").unwrap_or(false)
             || qualifiers.contains('D')
             || pattern_starts_with_dot;
         // `setopt nocaseglob` normalizes to `caseglob=false` in the
@@ -5034,8 +5037,8 @@ impl crate::ported::exec::ShellExecutor {
         // Read both forms so user code that flips either key works:
         //   - `caseglob=false` → case-INSENSITIVE
         //   - `nocaseglob=true` → case-INSENSITIVE (legacy / direct)
-        let nocaseglob = !self.options.get("caseglob").copied().unwrap_or(true)
-            || self.options.get("nocaseglob").copied().unwrap_or(false);
+        let nocaseglob = !crate::ported::options::opt_state_get("caseglob").unwrap_or(true)
+            || crate::ported::options::opt_state_get("nocaseglob").unwrap_or(false);
 
         // Parallel recursive glob: when pattern contains **/ we split the
         // directory walk across worker pool threads — one thread per top-level
@@ -5127,7 +5130,7 @@ impl crate::ported::exec::ShellExecutor {
             // emits "no matches found" on stderr and aborts the command
             // (the shell exits in -c mode). bash-style "pass literal
             // through" is the opt-out via `unsetopt nomatch`.
-            let nomatch = self.options.get("nomatch").copied().unwrap_or(true);
+            let nomatch = crate::ported::options::opt_state_get("nomatch").unwrap_or(true);
             if nomatch && Self::looks_like_glob(pattern) {
                 zerr(&format!("no matches found: {}", pattern));
                 // zsh: command is aborted (skipped) with status 1,
@@ -6806,7 +6809,7 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
     // `extendedglob_match` for the param-filter path; do it here
     // too so `[[ str = ^pat ]]` works via the cond `=` matcher.
     let extendedglob_on =
-        with_executor(|e| e.options.get("extendedglob").copied().unwrap_or(false));
+        with_executor(|e| crate::ported::options::opt_state_get("extendedglob").unwrap_or(false));
     if extendedglob_on {
         if let Some(rest) = pattern.strip_prefix('^') {
             return !crate::exec::glob_match_static(s, rest);
@@ -6833,7 +6836,7 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
     // overwhelmingly common form); embedded `!()` inside a larger
     // pattern still falls through and is left literal — full
     // zsh-style negation needs lookahead which `regex` lacks.
-    let kshglob_on = with_executor(|e| e.options.get("kshglob").copied().unwrap_or(false));
+    let kshglob_on = with_executor(|e| crate::ported::options::opt_state_get("kshglob").unwrap_or(false));
     if kshglob_on {
         if let Some(body) = pattern.strip_prefix("!(").and_then(|r| r.strip_suffix(')')) {
             // Don't recurse if body itself contains an unmatched
@@ -6962,7 +6965,7 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
             '?' | '*' | '+' | '@'
                 if chars.peek() == Some(&'(')
                     && with_executor(|e| {
-                        e.options.get("kshglob").copied().unwrap_or(false)
+                        crate::ported::options::opt_state_get("kshglob").unwrap_or(false)
                     }) =>
             {
                 let op = c;

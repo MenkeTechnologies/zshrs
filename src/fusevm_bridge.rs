@@ -1196,7 +1196,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // first non-zero stage status (so failures earlier in the
         // pipeline propagate even if the last stage succeeded).
         let pipefail_on =
-            with_executor(|exec| exec.options.get("pipefail").copied().unwrap_or(false));
+            with_executor(|exec| crate::ported::options::opt_state_get("pipefail").unwrap_or(false));
         let last_status = if pipefail_on {
             pipestatus
                 .iter()
@@ -1915,7 +1915,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 "options" => {
                     let opt_name = idx.to_lowercase().replace('_', "");
                     Some(Value::str(
-                        if exec.options.get(&opt_name).copied().unwrap_or(false) {
+                        if crate::ported::options::opt_state_get(&opt_name).unwrap_or(false) {
                             "on"
                         } else {
                             "off"
@@ -2030,10 +2030,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         "zsh/profiler",
                     ];
                     let loaded = ALWAYS_LOADED.contains(&idx)
-                        || exec
-                            .options
-                            .get(&format!("_module_{}", idx))
-                            .copied()
+                        || crate::ported::options::opt_state_get(&format!("_module_{}", idx))
                             .unwrap_or(false);
                     Some(Value::str(if loaded { "loaded" } else { "" }))
                 }
@@ -2698,7 +2695,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // positive values up by 1 before the (1-based)
                         // slicer runs. zsh: `setopt ksh_arrays;
                         // a=(a b c d); echo $a[1,2]` → `b c`.
-                        let ksh = exec.options.get("ksharrays").copied().unwrap_or(false);
+                        let ksh = crate::ported::options::opt_state_get("ksharrays").unwrap_or(false);
                         let s = if ksh && s >= 0 { s + 1 } else { s };
                         let e = if ksh && e >= 0 { e + 1 } else { e };
                         let sliced = getarrvalue(&arr, s, e);
@@ -2733,7 +2730,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     Err(_) => crate::ported::math::mathevali(&crate::ported::subst::singsub(&idx)).unwrap_or(0),
                 };
                 let len = arr.len() as i64;
-                let ksh = exec.options.get("ksharrays").copied().unwrap_or(false);
+                let ksh = crate::ported::options::opt_state_get("ksharrays").unwrap_or(false);
                 let resolved = if ksh {
                     if i < 0 {
                         let off = len + i;
@@ -4744,7 +4741,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Src/glob.c::xpandbraces at glob.rs:1678). Was stubbed
         // as `vec![s]` — every `print X{1,2,3}Y` returned literal.
         let brace_ccl = with_executor(|exec|
-            exec.options.get("braceccl").copied().unwrap_or(false));
+            crate::ported::options::opt_state_get("braceccl").unwrap_or(false));
         let parts = crate::ported::glob::xpandbraces(&s, brace_ccl);
         if parts.len() == 1 {
             fusevm::Value::str(parts.into_iter().next().unwrap_or_default())
@@ -5035,9 +5032,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let opt = vm.pop().to_str();
         with_executor(|exec| {
             if on {
-                exec.options.insert(opt, true);
+                crate::ported::options::opt_state_set(&opt, true);
             } else {
-                exec.options.remove(&opt);
+                crate::ported::options::opt_state_unset(&opt);
             }
         });
         Value::Status(0)
@@ -5084,7 +5081,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         && std::env::var(&name).is_err()
                     {
                         Value::Array(vec![])
-                    } else if exec.options.get("shwordsplit").copied().unwrap_or(false) {
+                    } else if crate::ported::options::opt_state_get("shwordsplit").unwrap_or(false) {
                         // bash-compat: under setopt sh_word_split, do
                         // split scalars on IFS chars.
                         let ifs = exec
@@ -5240,7 +5237,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // the option, arrays still join to a space-separated scalar
         // (zsh's default unquoted-array-as-scalar semantics).
         let rc_expand =
-            with_executor(|exec| exec.options.get("rcexpandparam").copied().unwrap_or(false));
+            with_executor(|exec| crate::ported::options::opt_state_get("rcexpandparam").unwrap_or(false));
         if rc_expand {
             let arr_val = with_executor(|exec| {
                 sync_status(exec);
@@ -5291,7 +5288,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // based first-element-only semantics). Direct port of
             // Src/params.c getstrvalue's KSH_ARRAYS gate which
             // returns aval[0] instead of the whole array.
-            let ksh_arrays = exec.options.get("ksharrays").copied().unwrap_or(false);
+            let ksh_arrays = crate::ported::options::opt_state_get("ksharrays").unwrap_or(false);
             if let Some(arr) = exec.array(&name) {
                 if ksh_arrays {
                     return Some((vec![arr.first().cloned().unwrap_or_default()], in_dq));
@@ -5557,7 +5554,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // `set -o allexport`: every assignment auto-exports the var.
             // zsh: `setopt allexport; a=42; env | grep ^a=` prints `a=42`.
             // Without this, env didn't see user-set scalars.
-            let allexport = exec.options.get("allexport").copied().unwrap_or(false);
+            let allexport = crate::ported::options::opt_state_get("allexport").unwrap_or(false);
             let already_exported = (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
             if allexport || already_exported {
                 std::env::set_var(&name, &stored);
@@ -5907,7 +5904,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let starts_neg = pat.starts_with('^');
             if pat.contains('*') || pat.contains('?') || pat.contains('[') || starts_neg {
                 let extendedglob = with_executor(|exec| {
-                    exec.options.get("extendedglob").copied().unwrap_or(false)
+                    crate::ported::options::opt_state_get("extendedglob").unwrap_or(false)
                 });
                 if extendedglob {
                     if let Some(neg) = pat.strip_prefix('^') {
@@ -6183,7 +6180,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let rhs = vm.pop();
         let lhs = vm.pop();
         let rc_expand = with_executor(|exec| {
-            exec.options.get("rcexpandparam").copied().unwrap_or(false)
+            crate::ported::options::opt_state_get("rcexpandparam").unwrap_or(false)
         });
         let ifs_first = || -> String {
             with_executor(|exec| {
@@ -6463,7 +6460,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // this handler always emits when xtrace is on — no prefix-
         // string heuristic.
         let on = with_executor(|exec|
-            exec.options.get("xtrace").copied().unwrap_or(false));
+            crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
         if on {
             let already = XTRACE_DONE_PS4.with(|f| f.get());
             if !already {
@@ -6491,7 +6488,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             exec.set_last_status(live);
         });
-        let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
+        let on = with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
         if on {
             let n_args = argc.saturating_sub(1) as usize;
             let len = vm.stack.len();
@@ -6559,7 +6556,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // no newline; trailing `\n` comes from XTRACE_ARGS (cmd path)
     // or XTRACE_NEWLINE (assignment-only path).
     vm.register_builtin(BUILTIN_XTRACE_ASSIGN, |vm, _argc| {
-        let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
+        let on = with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
         if on {
             // PEEK [..., name, value] — argc==2 by contract.
             let len = vm.stack.len();
@@ -6584,7 +6581,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // C's `fputc('\n', xtrerr); fflush(xtrerr);` at exec.c:3398
     // (the assignment-only path through execcmd_exec).
     vm.register_builtin(BUILTIN_XTRACE_NEWLINE, |_vm, _argc| {
-        let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
+        let on = with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
         if on {
             let already_ps4 = XTRACE_DONE_PS4.with(|f| f.get());
             if already_ps4 {
@@ -6639,7 +6636,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // says on.
             let on_canonical = crate::ported::zsh_h::isset(
                 crate::ported::zsh_h::ERREXIT);
-            let on_legacy = exec.options.get("errexit").copied().unwrap_or(false);
+            let on_legacy = crate::ported::options::opt_state_get("errexit").unwrap_or(false);
             (on_canonical || on_legacy)
                 && exec.local_scope_depth == 0
                 && exec.subshell_snapshots.is_empty()
@@ -6666,25 +6663,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // otherwise `${unset:-fb}` exits the shell instead of returning
         // "fb". Save/restore nounset around the lookup.
         let val = with_executor(|exec| {
-            let saved_nounset = exec.options.get("nounset").copied();
-            let saved_unset = exec.options.get("unset").copied();
-            exec.options.insert("nounset".to_string(), false);
-            exec.options.insert("unset".to_string(), true);
+            let saved_nounset = crate::ported::options::opt_state_get("nounset");
+            let saved_unset = crate::ported::options::opt_state_get("unset");
+            crate::ported::options::opt_state_set("nounset", false);
+            crate::ported::options::opt_state_set("unset", true);
             let v = exec.get_variable(&name);
             match saved_nounset {
                 Some(b) => {
-                    exec.options.insert("nounset".to_string(), b);
+                    crate::ported::options::opt_state_set("nounset", b);
                 }
                 None => {
-                    exec.options.remove("nounset");
+                    crate::ported::options::opt_state_unset("nounset");
                 }
             }
             match saved_unset {
                 Some(b) => {
-                    exec.options.insert("unset".to_string(), b);
+                    crate::ported::options::opt_state_set("unset", b);
                 }
                 None => {
-                    exec.options.remove("unset");
+                    crate::ported::options::opt_state_unset("unset");
                 }
             }
             v
@@ -7415,9 +7412,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // zsh stores the option as `glob` (default ON);
                 // `setopt noglob` writes `glob=false`. Honor either
                 // form so the dispatcher behaves the same as zsh.
-                let noglob = exec.options.get("noglob").copied().unwrap_or(false)
-                    || exec.options.get("GLOB").map(|v| !v).unwrap_or(false)
-                    || !exec.options.get("glob").copied().unwrap_or(true);
+                let noglob = crate::ported::options::opt_state_get("noglob").unwrap_or(false)
+                    || crate::ported::options::opt_state_get("GLOB").map(|v| !v).unwrap_or(false)
+                    || !crate::ported::options::opt_state_get("glob").unwrap_or(true);
                 let parts: Vec<String> = brace_expanded
                     .into_iter()
                     .flat_map(|s| {
@@ -7470,7 +7467,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // `setopt extendedglob` — runtime falls through
                         // to literal if that's off.
                         let extglob_meta =
-                            exec.options.get("extendedglob").copied().unwrap_or(false)
+                            crate::ported::options::opt_state_get("extendedglob").unwrap_or(false)
                                 && (s.starts_with('^') || s.contains('~') || s.contains("/^"));
                         let has_numeric_range = s.contains('<')
                             && s.contains('>')
@@ -7592,7 +7589,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 "galiases" => return exec.global_alias_entries().len(),
                 "saliases" => return exec.suffix_alias_entries().len(),
                 "functions" => return exec.function_names().len(),
-                "options" => return exec.options.len(),
+                "options" => return crate::ported::options::opt_state_len(),
                 "sysparams" => return 3, // pid, ppid, procsubstpid
                 // Magic-assoc lengths backed by canonical scanners.
                 // Direct ports of parameter.c SPECIALPMDEF entries —
@@ -8756,7 +8753,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // brace_ccl: respect the BRACE_CCL option which the bracket-
         // class form `{a-z}` requires. Pull from executor options.
         let brace_ccl = with_executor(|exec|
-            exec.options.get("braceccl").copied().unwrap_or(false));
+            crate::ported::options::opt_state_get("braceccl").unwrap_or(false));
         crate::ported::glob::xpandbraces(s, brace_ccl)
     }
 
@@ -9310,7 +9307,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // does `setopt no_glob` to scope an option leaked the change
         // to the caller, breaking p10k/zinit's per-function emulate
         // -L sticky-mode pattern.
-        let saved_options = with_executor(|exec| exec.options.clone());
+        let saved_options = crate::ported::options::opt_state_snapshot();
         let (
             saved_params,
             saved_zero,
@@ -9454,14 +9451,19 @@ impl fusevm::ShellHost for ZshrsHost {
             // changes inside helpers without leaking to callers.
             // Without it, `setopt no_glob` inside a helper polluted
             // the caller's option state.
-            if exec
-                .options
-                .get("localoptions")
-                .copied()
-                .unwrap_or(false)
-            {
-                exec.options = saved_options.clone();
+            if crate::ported::options::opt_state_get("localoptions").unwrap_or(false) {
+                // Walk all options touched since entry; reset to snapshot.
+                let current = crate::ported::options::opt_state_snapshot();
+                for (k, _) in &current {
+                    if !saved_options.contains_key(k) {
+                        crate::ported::options::opt_state_unset(k);
+                    }
+                }
+                for (k, v) in &saved_options {
+                    crate::ported::options::opt_state_set(k, *v);
+                }
             }
+            let _ = exec; // exec still used below for other restores
             // Restore `$0`, scriptname, and `$funcstack` to their
             // pre-call values. scriptname mirrors C exec.c:5907
             // `scriptname = oldscriptname;` after execode returns.
@@ -9590,8 +9592,8 @@ impl crate::ported::exec::ShellExecutor {
                 // zsh internally stores the inverted-name `clobber`
                 // (default ON); `setopt noclobber` writes
                 // `clobber=false`. Honor both keys.
-                let noclobber = self.options.get("noclobber").copied().unwrap_or(false)
-                    || !self.options.get("clobber").copied().unwrap_or(true);
+                let noclobber = crate::ported::options::opt_state_get("noclobber").unwrap_or(false)
+                    || !crate::ported::options::opt_state_get("clobber").unwrap_or(true);
                 if noclobber && std::path::Path::new(target).exists() {
                     eprintln!("zshrs:1: file exists: {}", target);
                     self.set_last_status(1);

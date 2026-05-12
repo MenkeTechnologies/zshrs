@@ -197,7 +197,7 @@ impl ShellExecutor {
         println!("  assoc:       {}", crate::ported::params::paramtab_hashed_storage().lock().map(|m| m.len()).unwrap_or(0));
         println!(
             "  options:     {} set",
-            self.options.iter().filter(|(_, v)| **v).count()
+            crate::ported::options::opt_state_snapshot().iter().filter(|(_, v)| **v).count()
         );
         println!("  traps:       {} active", self.traps.len());
         // Count entries across all `<hook>_functions` arrays in paramtab.
@@ -7593,9 +7593,10 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
         // List all shell options. Sorted by name so output is
         // deterministic across runs (was HashMap-iteration-order
         // → flickered between runs and broke `shopt | diff`).
-        let opts_snapshot: Vec<(String, bool)> = crate::fusevm_bridge::with_executor(|exec| {
-            exec.options.iter().map(|(k, v)| (k.clone(), *v)).collect()
-        });
+        let opts_snapshot: Vec<(String, bool)> =
+            crate::ported::options::opt_state_snapshot()
+                .into_iter()
+                .collect();
         let mut sorted = opts_snapshot;
         sorted.sort_by(|a, b| a.0.cmp(&b.0));
         for (opt, val) in &sorted {
@@ -7605,7 +7606,7 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
     }
 
     let mut set = None;
-    let mut opts = Vec::new();
+    let mut opts: Vec<String> = Vec::new();
 
     for arg in args {
         match arg.as_str() {
@@ -7615,7 +7616,7 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
                 // Print option status
                 crate::fusevm_bridge::with_executor(|exec| {
                     for opt in &opts {
-                        let val = exec.options.get(opt).copied().unwrap_or(false);
+                        let val = crate::ported::options::opt_state_get(opt).unwrap_or(false);
                         println!("shopt {} {}", if val { "-s" } else { "-u" }, opt);
                     }
                 });
@@ -7628,13 +7629,13 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
     if let Some(enable) = set {
         crate::fusevm_bridge::with_executor(|exec| {
             for opt in &opts {
-                exec.options.insert(opt.clone(), enable);
+                crate::ported::options::opt_state_set(&opt, enable);
             }
         });
     } else {
         crate::fusevm_bridge::with_executor(|exec| {
             for opt in &opts {
-                let val = exec.options.get(opt).copied().unwrap_or(false);
+                let val = crate::ported::options::opt_state_get(opt).unwrap_or(false);
                 println!("shopt {} {}", if val { "-s" } else { "-u" }, opt);
             }
         });
