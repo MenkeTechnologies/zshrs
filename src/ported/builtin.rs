@@ -142,7 +142,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
     BUILTIN("cd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, None, 0, 2, BIN_CD, Some("qsPL"), None),
     BUILTIN("chdir", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, None, 0, 2, BIN_CD, Some("qsPL"), None),
     BUILTIN("continue", BINF_PSPECIAL, None, 0, 1, BIN_CONTINUE, None, None),
-    BUILTIN("declare", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, None, 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klmnp:%rtuxz"), None),
+    BUILTIN("declare", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klmnp:%rtuxz"), None),
     BUILTIN("dirs", 0, None, 0, -1, 0, Some("clpv"), None),
     BUILTIN("disable", 0, None, 0, -1, BIN_DISABLE, Some("afmprs"), None),
     BUILTIN("disown", 0, None, 0, -1, BIN_DISOWN, None, None),
@@ -151,13 +151,13 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
     BUILTIN("enable", 0, None, 0, -1, BIN_ENABLE, Some("afmprs"), None),
     BUILTIN("eval", BINF_PSPECIAL, None, 0, -1, BIN_EVAL, None, None),
     BUILTIN("exit", BINF_PSPECIAL, None, 0, 1, BIN_EXIT, None, None),
-    BUILTIN("export", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, None, 0, -1, BIN_EXPORT, Some("E:%F:%HL:%R:%TUZ:%afhi:%lp:%rtu"), Some("xg")),
+    BUILTIN("export", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_EXPORT, Some("E:%F:%HL:%R:%TUZ:%afhi:%lp:%rtu"), Some("xg")),
     BUILTIN("false", 0, None, 0, -1, 0, None, None),
     // C source (Src/builtin.c:69-73): the argument to -e used to be
     // optional; making it required is more consistent.
     BUILTIN("fc", 0, None, 0, -1, BIN_FC, Some("aAdDe:EfiIlLmnpPrRst:W"), None),
     BUILTIN("fg", 0, None, 0, -1, BIN_FG, None, None),
-    BUILTIN("float", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, None, 0, -1, 0, Some("E:%F:%HL:%R:%Z:%ghlp:%rtux"), Some("E")),
+    BUILTIN("float", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("E:%F:%HL:%R:%Z:%ghlp:%rtux"), Some("E")),
     BUILTIN("functions", BINF_PLUSOPTS, None, 0, -1, 0, Some("ckmMstTuUWx:z"), None),
     BUILTIN("getln", 0, None, 0, -1, 0, Some("ecnAlE"), Some("zr")),
     BUILTIN("getopts", 0, None, 2, -1, 0, None, None),
@@ -166,11 +166,11 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
     //   BUILTIN("hashinfo", 0, bin_hashinfo, 0, 0, 0, NULL, NULL)
     BUILTIN("hashinfo", 0, None, 0, 0, 0, None, None),
     BUILTIN("history", 0, None, 0, -1, BIN_FC, Some("adDEfiLmnpPrt:"), Some("l")),
-    BUILTIN("integer", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, None, 0, -1, 0, Some("HL:%R:%Z:%ghi:%lp:%rtux"), Some("i")),
+    BUILTIN("integer", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("HL:%R:%Z:%ghi:%lp:%rtux"), Some("i")),
     BUILTIN("jobs", 0, None, 0, -1, BIN_JOBS, Some("dlpZrs"), None),
     BUILTIN("kill", BINF_HANDLES_OPTS, None, 0, -1, 0, None, None),
     BUILTIN("let", 0, None, 1, -1, 0, None, None),
-    BUILTIN("local", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, None, 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%ahi:%lnp:%rtux"), None),
+    BUILTIN("local", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%ahi:%lnp:%rtux"), None),
     BUILTIN("logout", 0, None, 0, 1, BIN_LOGOUT, None, None),
     // Src/builtin.c — `#if defined(ZSH_MEM) & defined(ZSH_MEM_DEBUG)`
     //   BUILTIN("mem", 0, bin_mem, 0, 0, 0, "v", NULL)
@@ -186,7 +186,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
     BUILTIN("pwd", 0, None, 0, 0, 0, Some("rLP"), None),
     BUILTIN("r", 0, None, 0, -1, BIN_R, Some("IlLnr"), None),
     BUILTIN("read", 0, None, 0, -1, 0, Some("cd:ek:%lnpqrst:%zu:AE"), None),
-    BUILTIN("readonly", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, None, 0, -1, BIN_READONLY, Some("AE:%F:%HL:%R:%TUZ:%afghi:%lptux"), Some("r")),
+    BUILTIN("readonly", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_READONLY, Some("AE:%F:%HL:%R:%TUZ:%afghi:%lptux"), Some("r")),
     BUILTIN("rehash", 0, None, 0, 0, 0, Some("df"), Some("r")),
     BUILTIN("return", BINF_PSPECIAL, None, 0, 1, BIN_RETURN, None, None),
     BUILTIN("set", BINF_PSPECIAL | BINF_HANDLES_OPTS, None, 0, -1, 0, None, None),
@@ -3920,6 +3920,21 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
                 // `setsparam` (Src/params.c:3350) writes paramtab; the
                 // env mirror at `Src/params.c:3024 addenv` follows.
                 //
+                // c:Src/params.c PM_LOCAL: when typeset is invoked as
+                // `local`/`private`/inside a fn with implicit local
+                // scope, save the current value to local_save_stack
+                // so the function-exit unwind at fusevm_bridge.rs:
+                // 9514 can restore it. Without this, `x=outer; f() {
+                // local x=inner }; f; echo $x` left x=inner after f.
+                if (on & PM_LOCAL) != 0 {
+                    let n_owned = n.to_string();
+                    let _ = crate::fusevm_bridge::try_with_executor(|exec| {
+                        if exec.local_scope_depth > 0 {
+                            let old = exec.variables.get(&n_owned).cloned();
+                            exec.local_save_stack.push((n_owned, old));
+                        }
+                    });
+                }
                 // c:Src/params.c PM_LOWER/PM_UPPER setstrvalue arms:
                 // when typeset -l or -u is set, the assigned value is
                 // case-folded BEFORE storage. Without this, `typeset -l
