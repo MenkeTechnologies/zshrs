@@ -124,6 +124,8 @@ pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {           // c:68
 // since the static-link harness handles startup-script sourcing
 // separately. The full source.c port wires the real loader.
 const SOURCE_NOT_FOUND: i32 = 1;
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/newuser.c`.
 fn source(_buf: &str) -> i32 {
     // Try to actually source the file (best-effort): if it doesn't
     // exist or can't be read, return SOURCE_NOT_FOUND so the caller

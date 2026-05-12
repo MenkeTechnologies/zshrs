@@ -83,10 +83,13 @@ pub static zstyletab: std::sync::LazyLock<std::sync::Mutex<StyleTable>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(StyleTable::new())); // c:209
 
 impl StyleTable {
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Port of `setstypat()` from `Src/Modules/zutil.c:295`.
     /// Insert or replace a pattern→values mapping for a style.
     /// Mirrors Src/Modules/zutil.c:295 `setstypat` + c:403 `addstyle`
     /// — find or create the style's pats list, replace if pattern
@@ -155,6 +158,7 @@ impl StyleTable {
         style_patterns.insert(pos, sp);
     }
 
+    /// Port of `bin_zstyle()` from `Src/Modules/zutil.c:487`.
     /// Look up the values for (context, style). Mirrors
     /// Src/Modules/zutil.c:443 `lookupstyle` — walk the style's pats
     /// list, return values from the first weight-sorted entry whose
@@ -174,6 +178,8 @@ impl StyleTable {
         })
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     /// Remove style/pattern entries from the table. Mirrors the
     /// `-d` dispatch arms of `bin_zstyle` (Src/Modules/zutil.c:487).
     pub fn delete(&mut self, pattern: Option<&str>, style: Option<&str>) {
@@ -199,6 +205,7 @@ impl StyleTable {
         }
     }
 
+    /// Port of `setstypat()` from `Src/Modules/zutil.c:295`.
     /// Return `(pattern, style, values)` triples for `zstyle -L` /
     /// `zstyle -a` listing. Mirrors bin_zstyle list dispatch
     /// (Src/Modules/zutil.c:487 -L/-a arms).
@@ -222,11 +229,15 @@ impl StyleTable {
         result
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     /// List all registered style names (bin_zstyle -g without args).
     pub fn list_styles(&self) -> Vec<&str> {
         self.styles.keys().map(|s| s.as_str()).collect()
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     /// List all distinct patterns across every style (bin_zstyle -g
     /// with a single pattern arg).
     pub fn list_patterns(&self) -> Vec<&str> {
@@ -241,6 +252,8 @@ impl StyleTable {
         patterns
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     /// Boolean-truthy `zstyle -T` / `zstyle -t` check.
     /// Mirrors bin_zstyle -t / -T arms in Src/Modules/zutil.c:487.
     pub fn test(&self, context: &str, style: &str, values: Option<&[&str]>) -> bool {
@@ -258,6 +271,8 @@ impl StyleTable {
         }
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     /// Single-value "yes/no" interrogation of a style. The `bin_zstyle`
     /// -b arm of Src/Modules/zutil.c:487.
     pub fn test_bool(&self, context: &str, style: &str) -> Option<bool> {
@@ -275,6 +290,7 @@ impl StyleTable {
     }
 }
 
+/// Port of `setstypat()` from `Src/Modules/zutil.c:295`.
 /// Format a string with specifications
 /// `zformat` builtin entry point.
 /// Helper extracted from `bin_zformat()` (Src/Modules/zutil.c:955)
@@ -517,6 +533,8 @@ impl ZFormat {
 mod tests {
     use super::*;
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     /// Verifies the weight formula matches C's setstypat (zutil.c:344-385):
     /// component count (high 32 bits) + per-component specificity sum
     /// (low 32 bits). More specific = higher weight. Drives weight via
@@ -534,6 +552,7 @@ mod tests {
         assert_eq!(t.get(":other:thing", "s").unwrap()[0], "broad");
     }
 
+    /// Port of `bin_zparseopts()` from `Src/Modules/zutil.c:1738`.
     #[test]
     fn zof_flags_are_distinct_powers_of_two() {
         // c:1531-1538 — ZOF_* are independent bits in a single u8 field.
@@ -547,6 +566,8 @@ mod tests {
         }
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     /// Verifies pattern matching via the StyleTable.get path mirrors
     /// C's lookupstyle (zutil.c:443) walking the pats list for the
     /// first weight-sorted match.
@@ -562,6 +583,8 @@ mod tests {
         assert!(t2.get("anything", "s2").is_some());
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     #[test]
     fn test_style_table_set_get() {
         let mut table = StyleTable::new();
@@ -574,6 +597,8 @@ mod tests {
         assert!(result.is_none());
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     #[test]
     fn test_style_table_priority() {
         let mut table = StyleTable::new();
@@ -584,6 +609,8 @@ mod tests {
         assert_eq!(result, Some(&["yes".to_string()][..]));
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     #[test]
     fn test_style_table_delete() {
         let mut table = StyleTable::new();
@@ -595,6 +622,8 @@ mod tests {
         assert!(table.get("test", "style2").is_some());
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     #[test]
     fn test_style_test_bool() {
         let mut table = StyleTable::new();
@@ -612,6 +641,7 @@ mod tests {
         assert_eq!(table.test_bool("ctx", "multiple"), None);
     }
 
+    /// Port of `bin_zstyle()` from `Src/Modules/zutil.c:487`.
     /// Verifies the persistent global `zstyletab` round-trips
     /// set→get and that `lookupstyle` / `testforstyle` C-name shims
     /// see the same entry. Lock-stamps the global-state path that
@@ -636,6 +666,8 @@ mod tests {
         }
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     #[test]
     fn test_zformat_basic() {
         let mut specs = HashMap::new();
@@ -646,6 +678,8 @@ mod tests {
         assert_eq!(result, "Name: test, Value: 42");
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     #[test]
     fn test_zformat_padding() {
         let mut specs = HashMap::new();
@@ -658,6 +692,8 @@ mod tests {
         assert_eq!(result, "[        hi]");
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     #[test]
     fn test_zformat_truncate() {
         let mut specs = HashMap::new();
@@ -667,6 +703,8 @@ mod tests {
         assert_eq!(result, "[hello]");
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zutil.c`.
     #[test]
     fn test_zformat_escape() {
         let specs = HashMap::new();
@@ -1444,7 +1482,7 @@ pub fn bin_zformat(nam: &str, args: &[String],                                //
             // c:1083 — setaparam(args[0], ret). Direct write to paramtab
             // since the canonical params::setaparam takes HashMap refs and
             // the executor isn't threaded into bin_zformat.
-            if let Ok(mut tab) = crate::ported::params::paramtab().lock() {
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
                 use crate::ported::zsh_h::{Param, hashnode, param, PM_ARRAY};
                 let pm: Param = Box::new(param {
                     node: hashnode {
@@ -2014,6 +2052,8 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zutil.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -2033,10 +2073,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zutil.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:zformat".to_string(), "b:zparseopts".to_string(), "b:zregexparse".to_string(), "b:zstyle".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zutil.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -2048,6 +2092,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zutil.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

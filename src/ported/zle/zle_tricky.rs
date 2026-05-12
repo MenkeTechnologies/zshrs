@@ -388,7 +388,7 @@ pub fn checkparams(p: &str) -> i32 {                                         // 
     let l = p.len();
     let mut n = 0;
     let mut exact = false;
-    if let Ok(tab) = crate::ported::params::paramtab().lock() {              // c:437
+    if let Ok(tab) = crate::ported::params::paramtab().read() {              // c:437
         for name in tab.keys() {
             if name.starts_with(p) && name.len() >= l {
                 n += 1;

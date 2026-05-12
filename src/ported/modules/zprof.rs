@@ -463,6 +463,8 @@ mod tests {
     /// cargo-test parallel runner doesn't shred each other's state.
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zprof.c`.
     fn reset_state() {
         let mut c = CALLS.lock().unwrap();
         c.clear();
@@ -473,6 +475,7 @@ mod tests {
         NARCS.store(0, Ordering::SeqCst);
     }
 
+    /// Port of `bin_zprof()` from `Src/Modules/zprof.c:139`.
     /// Verifies `Pfunc` mirrors C `struct pfunc` field-for-field
     /// (name/calls/time/self/num at c:40-44).
     #[test]
@@ -485,6 +488,8 @@ mod tests {
         assert_eq!(p.num, 0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zprof.c`.
     /// Verifies `freepfuncs` empties the table (c:78-82 zsfree+zfree).
     #[test]
     fn freepfuncs_clears() {
@@ -493,6 +498,8 @@ mod tests {
         assert!(v.is_empty());
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zprof.c`.
     /// Verifies `findpfunc` linear-scan match (c:101-103).
     #[test]
     fn findpfunc_matches_by_name() {
@@ -506,6 +513,8 @@ mod tests {
         reset_state();
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zprof.c`.
     /// Verifies `findparc` matches (from, to) pair (c:113-115).
     #[test]
     fn findparc_matches_pair() {
@@ -519,6 +528,8 @@ mod tests {
         reset_state();
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zprof.c`.
     /// Verifies `cmpsfuncs` is descending (c:121-124).
     #[test]
     fn cmpsfuncs_descending() {
@@ -529,6 +540,8 @@ mod tests {
         assert_eq!(cmpsfuncs(&b, &a), std::cmp::Ordering::Less);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zprof.c`.
     /// Verifies `bin_zprof -c` clears state (c:141-147).
     #[test]
     fn bin_zprof_clear_resets_tables() {
@@ -551,6 +564,8 @@ mod tests {
         assert_eq!(NARCS.load(Ordering::SeqCst), 0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zprof.c`.
     /// Verifies `zprof_wrapper` returns 0 (the static-link no-op
     /// path mirrors C's `return 0;` exit at c:311).
     #[test]
@@ -558,6 +573,8 @@ mod tests {
         assert_eq!(zprof_wrapper("foo"), 0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/zprof.c`.
     /// Verifies `name_for_anonymous_function` formats as
     /// `name [filename:lineno]` per c:224-232.
     #[test]
@@ -571,6 +588,8 @@ use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zprof.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -590,10 +609,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zprof.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:zprof".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zprof.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -605,6 +628,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/zprof.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

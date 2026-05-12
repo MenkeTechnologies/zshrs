@@ -63,6 +63,7 @@ pub fn xgetxattr(path: &str, name: &str, value: &mut [u8], symlink: i32) -> isiz
     }
 }
 
+/// Port of `xgetxattr()` from `Src/Modules/attr.c:37`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn xgetxattr(_path: &str, _name: &str, _value: &mut [u8], _symlink: i32) -> isize { -1 }
 
@@ -97,6 +98,7 @@ pub fn xlistxattr(path: &str, list: &mut [u8], symlink: i32) -> isize {      // 
     }
 }
 
+/// Port of `xlistxattr()` from `Src/Modules/attr.c:52`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn xlistxattr(_path: &str, _list: &mut [u8], _symlink: i32) -> isize { -1 }
 
@@ -130,6 +132,7 @@ pub fn xsetxattr(path: &str, name: &str, value: &[u8], flags: i32, symlink: i32)
     }
 }
 
+/// Port of `xsetxattr()` from `Src/Modules/attr.c:67`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn xsetxattr(_path: &str, _name: &str, _value: &[u8], _flags: i32, _symlink: i32) -> i32 { -1 }
 
@@ -158,6 +161,7 @@ pub fn xremovexattr(path: &str, name: &str, symlink: i32) -> i32 {           // 
     }
 }
 
+/// Port of `xremovexattr()` from `Src/Modules/attr.c:83`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn xremovexattr(_path: &str, _name: &str, _symlink: i32) -> i32 { -1 }
 
@@ -466,10 +470,14 @@ mod tests {
     use super::*;
     use crate::ported::zsh_h::MAX_OPS;
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/attr.c`.
     fn empty_ops() -> options {
         options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/attr.c`.
     #[test]
     fn xgetxattr_nonexistent_returns_negative() {
         let mut buf = [0u8; 0];
@@ -477,12 +485,16 @@ mod tests {
         assert!(r < 0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/attr.c`.
     #[test]
     fn xsetxattr_nonexistent_returns_negative() {
         let r = xsetxattr("/nonexistent/path", "user.test", b"value", 0, 0);
         assert!(r < 0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/attr.c`.
     #[test]
     fn xlistxattr_nonexistent_returns_negative() {
         let mut buf = [0u8; 0];
@@ -490,12 +502,16 @@ mod tests {
         assert!(r < 0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/attr.c`.
     #[test]
     fn xremovexattr_nonexistent_returns_negative() {
         let r = xremovexattr("/nonexistent/path", "user.test", 0);
         assert!(r < 0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/attr.c`.
     #[test]
     fn bin_getattr_nonexistent_path_returns_nonzero() {
         let ops = empty_ops();
@@ -504,6 +520,8 @@ mod tests {
         assert_ne!(rc, 0);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/attr.c`.
     #[test]
     fn bin_setattr_nonexistent_path_returns_one() {
         let ops = empty_ops();
@@ -512,6 +530,8 @@ mod tests {
         assert_eq!(rc, 1);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/attr.c`.
     #[test]
     fn module_loaders_return_zero() {
         let m: *const module = std::ptr::null();
@@ -532,6 +552,8 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/attr.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -551,10 +573,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/attr.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:zgetattr".to_string(), "b:zsetattr".to_string(), "b:zdelattr".to_string(), "b:zlistattr".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/attr.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -566,6 +592,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/attr.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

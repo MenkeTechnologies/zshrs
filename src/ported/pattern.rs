@@ -1716,18 +1716,26 @@ pub static patterndisables: Mutex<Vec<String>> = Mutex::new(Vec::new());
 pub fn startpatternscope() {                                                  // c:4241
     // Saving/restoring handled per-call; mark a scope boundary by
     // duplicating the current disables list onto a stack.
-    let mut stack = PATSCOPE_STACK.lock().unwrap();
     let cur = patterndisables.lock().unwrap().clone();
-    stack.push(cur);
+    PATSCOPE_STACK.with(|s| s.borrow_mut().push(cur));
 }
 
-static PATSCOPE_STACK: Mutex<Vec<Vec<String>>> = Mutex::new(Vec::new());
+/// Port of file-static `zpc_disables_stack` from `Src/pattern.c:4244`.
+/// Per-evaluator function-scope disable save-stack (bucket-1: each
+/// worker thread parses/executes its own function calls, so each must
+/// have its own scope stack). Reason for `thread_local!` over `Mutex`:
+/// in zsh C this is a per-process file-static; in zshrs each worker
+/// thread is its own evaluator — TLS preserves the per-evaluator
+/// semantic without serializing across workers.
+thread_local! {
+    static PATSCOPE_STACK: std::cell::RefCell<Vec<Vec<String>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
 
 /// Port of `endpatternscope()` from `Src/pattern.c:4279`. Ends the
 /// current scope, popping the saved state.
 pub fn endpatternscope() {                                                    // c:4279
-    let mut stack = PATSCOPE_STACK.lock().unwrap();
-    if let Some(prev) = stack.pop() {
+    if let Some(prev) = PATSCOPE_STACK.with(|s| s.borrow_mut().pop()) {
         *patterndisables.lock().unwrap() = prev;
     }
 }

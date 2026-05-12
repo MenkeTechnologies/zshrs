@@ -1186,7 +1186,7 @@ pub fn zle_usable() -> i32 {                                                 // 
     use std::sync::atomic::Ordering;
     let active = crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0;
     let incompctlfunc = crate::ported::zle::compctl::INCOMPCTLFUNC               // c:636
-        .load(Ordering::Relaxed);
+        .with(|c| c.get());
     let incompfunc = crate::ported::zle::complete::INCOMPFUNC.load(Ordering::Relaxed) != 0;
     if active && !incompctlfunc && !incompfunc { 1 } else { 0 }
 }

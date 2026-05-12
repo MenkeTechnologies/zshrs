@@ -232,7 +232,7 @@ pub struct Zle {
     /// `hascompmod` — port of `int hascompmod` from zle_tricky.c.
     /// Reserved for "zsh/complete module loaded" guard on
     /// completion-system dispatch. (`incompctlfunc` is unified with
-    /// the live INCOMPCTLFUNC atomic in compctl.rs — Zle field
+    /// the live INCOMPCTLFUNC thread_local in compctl.rs — Zle field
     /// deleted to avoid dual state.)
     pub hascompmod: bool,
     /// Terminal file descriptor

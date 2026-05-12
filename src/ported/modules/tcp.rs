@@ -23,12 +23,16 @@ use crate::ported::modules::tcp_h::ZTCP_INBOUND;
 use crate::ported::modules::tcp_h::ZTCP_ZFTP;
 
 impl Default for tcp_sockaddr {
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/tcp.c`.
     fn default() -> Self {
         Self { a: unsafe { std::mem::zeroed() } }
     }
 }
 
 impl Default for tcp_session {
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/tcp.c`.
     fn default() -> Self {
         Self {
             fd: -1,
@@ -173,6 +177,8 @@ pub fn zts_alloc(ztflags: i32) -> usize {                                // c:21
 // indexes into the thread-local `ZTCP_SESSIONS` Vec. NULL → None.
 type TcpSessionHandle = Option<usize>;
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/tcp.c`.
 /// !!! RUST-ONLY HELPER — see WARNING block above. Equivalent to
 /// the C expression `sess->FIELD` (read).
 fn sess_get<R, F: FnOnce(&tcp_session) -> R>(idx: usize, f: F) -> R {
@@ -182,6 +188,8 @@ fn sess_get<R, F: FnOnce(&tcp_session) -> R>(idx: usize, f: F) -> R {
     })
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/tcp.c`.
 /// !!! RUST-ONLY HELPER — see WARNING block above. Equivalent to
 /// the C statement `sess->FIELD = X;` (write).
 fn sess_with<F: FnOnce(&mut tcp_session)>(idx: usize, f: F) {
@@ -705,6 +713,8 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
 mod tests {
     use super::*;
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/tcp.c`.
     #[test]
     fn zts_alloc_creates_session_with_default_fd() {
         let _ = zts_alloc(ZTCP_LISTEN);
@@ -717,12 +727,16 @@ mod tests {
         });
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/tcp.c`.
     #[test]
     fn inet_ntop_v4_works() {
         let bytes = [127u8, 0, 0, 1];
         assert_eq!(zsh_inet_ntop(libc::AF_INET, &bytes).as_deref(), Some("127.0.0.1"));
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/tcp.c`.
     #[test]
     fn inet_pton_v4_works() {
         let mut buf = [0u8; 4];
@@ -730,6 +744,8 @@ mod tests {
         assert_eq!(buf, [127, 0, 0, 1]);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/tcp.c`.
     #[test]
     fn inet_pton_invalid_returns_zero() {
         let mut buf = [0u8; 4];
@@ -747,6 +763,8 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/tcp.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -766,10 +784,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/tcp.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:ztcp".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/tcp.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -781,6 +803,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/tcp.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

@@ -402,6 +402,8 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/mapfile.c`.
     /// Verifies the C c:228-234 `else` branch: `get_contents` returns
     /// NULL → caller treats as PM_UNSET (Option::None).
     #[test]
@@ -409,6 +411,8 @@ mod tests {
         assert!(getpmmapfile("/nonexistent/file/path/zshrs_mapfile").is_none());
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/mapfile.c`.
     /// Verifies the c:88 `open(O_RDWR|O_CREAT)` + c:97 `memcpy` +
     /// c:101 `msync` + c:106 `ftruncate` write path: a file written
     /// by `setpmmapfile` reads back identically through
@@ -424,6 +428,8 @@ mod tests {
         let _ = fs::remove_file(test_file);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/mapfile.c`.
     /// Verifies the empty-content fast path skips the mmap block but
     /// still touches the file via `open(O_CREAT)`. C semantics:
     /// mmap(len=0) returns MAP_FAILED so the inner block is bypassed,
@@ -439,6 +445,8 @@ mod tests {
         let _ = fs::remove_file(test_file);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/mapfile.c`.
     /// Verifies the c:255 `zreaddir(dir, 1)` walk with `ignoredots=1`
     /// — `.` / `..` never appear in the result, every value is `""`
     /// (c:263).
@@ -452,6 +460,8 @@ mod tests {
         }
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/mapfile.c`.
     /// Verifies the c:134 `unlink(fname)` write — the unset callback
     /// removes the file when not readonly.
     #[test]
@@ -462,6 +472,8 @@ mod tests {
         assert!(!Path::new(test_file).exists());
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/mapfile.c`.
     /// Verifies the c:133 readonly guard: a readonly param's unset
     /// callback skips the unlink.
     #[test]
@@ -473,6 +485,8 @@ mod tests {
         let _ = fs::remove_file(test_file);
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/mapfile.c`.
     /// Verifies the c:87 readonly guard on `setpmmapfile`: write is
     /// skipped, file is not created.
     #[test]
@@ -483,6 +497,8 @@ mod tests {
         assert!(!Path::new(test_file).exists());
     }
 
+    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+    /// of any function in `Src/Modules/mapfile.c`.
     /// Verifies `setpmmapfiles` (the bulk-set callback) routes each
     /// entry through `setpmmapfile` and respects the readonly guard
     /// at c:149.
@@ -509,6 +525,8 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/mapfile.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -528,10 +546,14 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/mapfile.c`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["p:mapfile".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/mapfile.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -543,6 +565,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/mapfile.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

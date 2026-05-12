@@ -1274,7 +1274,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32)                          // 
 
     // Subscripted path (c:3210-3231).
     if let Some(key) = subscript {
-        let mut tab = paramtab().lock().unwrap();
+        let mut tab = paramtab().write().unwrap();
         let exists = tab.contains_key(name);                                 // c:3212
         if !exists {
             // c:3213 `createparam(t, PM_ARRAY); created = 1;`
@@ -1338,7 +1338,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32)                          // 
     }
 
     // c:3232 non-subscripted branch.
-    let mut tab = paramtab().lock().unwrap();
+    let mut tab = paramtab().write().unwrap();
     let existing = tab.contains_key(name);
     if !existing {
         // c:3234 `createparam(t, PM_SCALAR); created = 1;`
@@ -1431,7 +1431,7 @@ pub(crate) fn paramtab_hashed_storage()
 /// table) into the three HashMaps that `SubstState` uses as its
 /// transient backing during `prefork()` (Src/subst.c:100). This
 /// is a port-transition shim: once `subst.rs` reads parameters
-/// directly through `paramtab().lock()` instead of carrying
+/// directly through `paramtab().read()` / `.write()` instead of carrying
 /// `state.variables`/`state.arrays`/`state.assoc_arrays`, this
 /// helper goes away.
 pub fn sync_state_from_paramtab(
@@ -1439,7 +1439,7 @@ pub fn sync_state_from_paramtab(
     arrays: &mut HashMap<String, Vec<String>>,
     assoc_arrays: &mut HashMap<String, indexmap::IndexMap<String, String>>,
 ) {
-    let tab = paramtab().lock().unwrap();
+    let tab = paramtab().read().unwrap();
     for (name, pm) in tab.iter() {
         let f = pm.node.flags as u32;
         if (f & PM_ARRAY) != 0 {
@@ -1495,7 +1495,7 @@ pub fn assignaparam(
 
     // c:3391-3394 — fetchvalue / createparam(PM_ARRAY) if missing.
     let (existed, prior_scalar, prior_flags) = {
-        let tab = paramtab().lock().unwrap();
+        let tab = paramtab().read().unwrap();
         match tab.get(name) {
             Some(pm) => (true, pm.u_str.clone(), pm.node.flags),
             None => (false, None, 0),
@@ -1523,7 +1523,7 @@ pub fn assignaparam(
     }
 
     // c:3434 — setarrvalue(v, val): store array in pm.u_arr.
-    let mut tab = paramtab().lock().unwrap();
+    let mut tab = paramtab().write().unwrap();
     let pm = tab.get_mut(name)?;
     let uniq = pm.node.flags & PM_UNIQUE as i32 != 0;                        // c:3401
     if pm.node.flags & PM_SPECIAL as i32 == 0 {
@@ -1575,7 +1575,7 @@ pub fn sethparam(name: &str, val: Vec<String>)                              // c
     }
 
     // c:3625 — fetchvalue / createparam(PM_HASHED) if missing.
-    let exists = paramtab().lock().unwrap().contains_key(name);
+    let exists = paramtab().read().unwrap().contains_key(name);
     if !exists {
         createparam(name, PM_HASHED as i32)?;
     }
@@ -1590,7 +1590,7 @@ pub fn sethparam(name: &str, val: Vec<String>)                              // c
     }
 
     // c:3640 — install in paramtab + paramtab_hashed_storage.
-    let mut tab = paramtab().lock().unwrap();
+    let mut tab = paramtab().write().unwrap();
     let pm = tab.get_mut(name)?;
     if pm.node.flags & PM_SPECIAL as i32 == 0 {
         let type_mask =
@@ -1741,7 +1741,7 @@ pub fn getsparam(name: &str) -> Option<String> {                             // 
     //    Walk the global paramtab for the named param, returning
     //    `pm->u.str` for PM_SCALAR/PM_NAMEREF or `sepjoin(pm->u.arr)`
     //    for PM_ARRAY (matches `getstrvalue` at params.c:2358).
-    if let Ok(tab) = paramtab().lock() {
+    if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
             if let Some(s) = pm.u_str.as_ref() {
                 return Some(s.clone());
@@ -1765,7 +1765,7 @@ pub fn getsparam(name: &str) -> Option<String> {                             // 
 pub fn getiparam(name: &str) -> i64 {
     // C also honours PM_INTEGER's `pm->u.val` payload directly when
     // the param is typed numeric; check paramtab first for that case.
-    if let Ok(tab) = paramtab().lock() {
+    if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
             if (pm.node.flags as u32 & crate::ported::zsh_h::PM_INTEGER) != 0
             {
@@ -1783,7 +1783,7 @@ pub fn getiparam(name: &str) -> i64 {
 /// returns `(0, 0.0, false)`, matching the MN_INTEGER zero
 /// fallback in the C source's not-found branch.
 pub fn getnparam(name: &str) -> (i64, f64, bool) {
-    if let Ok(tab) = paramtab().lock() {
+    if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
             let fl = pm.node.flags as u32;
             if (fl & (crate::ported::zsh_h::PM_EFLOAT
@@ -1913,7 +1913,7 @@ pub fn endparamscope() {
     // the live paramtab (HashMap-backed until the hashtable.c vtable
     // is wired) and apply scanendscope's `pm->level > locallevel`
     // filter, restoring the `pm.old` chain or removing the entry.
-    if let Ok(mut tab) = paramtab().lock() {
+    if let Ok(mut tab) = paramtab().write() {
         let stale: Vec<String> = tab.iter()
             .filter_map(|(k, pm)| if pm.level > ll { Some(k.clone()) } else { None })
             .collect();
@@ -3535,29 +3535,37 @@ use crate::zsh_h::{paramdef, ERRFLAG_ERROR, PM_DONTIMPORT, PM_DONTIMPORT_SUID, P
 // (`Src/params.c:508-513` — "paramtab is sometimes temporarily
 // changed to point at another table").
 //
-// The Rust port stores entries in `Mutex<HashMap<String, Param>>`
-// keyed on `node.nam` (the canonical `param` struct lives in
-// `zsh_h.rs`). The full `HashTable` substrate (vtable callbacks,
-// intrusive `next` chain, scope-stacked iterators) is not yet
-// wired; until it is, the typed map is the operative storage.
-static PARAMTAB_INNER: OnceLock<Mutex<HashMap<String, crate::ported::zsh_h::Param>>> =
+// Per PORT_PLAN.md Phase 3, bucket-2 read-mostly tables use
+// `RwLock` so parallel readers (every `$VAR` expansion, every
+// completion lookup) don't serialize. Writers (assignments,
+// scope pushes/pops, function-local declarations) take the
+// exclusive write lock. `OnceLock` provides the single-static
+// guarantee without an `Arc` allocation since the table lives
+// for the process lifetime.
+//
+// Entries are keyed on `node.nam` (the canonical `param` struct
+// lives in `zsh_h.rs`). The full `HashTable` substrate (vtable
+// callbacks, intrusive `next` chain, scope-stacked iterators) is
+// not yet wired; until it is, the typed map is the operative
+// storage.
+static PARAMTAB_INNER: OnceLock<RwLock<HashMap<String, crate::ported::zsh_h::Param>>> =
     OnceLock::new();
-static REALPARAMTAB_INNER: OnceLock<Mutex<HashMap<String, crate::ported::zsh_h::Param>>> =
+static REALPARAMTAB_INNER: OnceLock<RwLock<HashMap<String, crate::ported::zsh_h::Param>>> =
     OnceLock::new();
 
 /// Accessor for the global `paramtab` (Src/params.c:515).
 /// Mirrors C's `paramtab->...` dereference by handing back the
-/// inner mutex; callers `.lock()` and operate on the `HashMap<String,
-/// Param>` directly.
-pub fn paramtab() -> &'static Mutex<HashMap<String, crate::ported::zsh_h::Param>> {
-    PARAMTAB_INNER.get_or_init(|| Mutex::new(HashMap::new()))
+/// inner RwLock; callers `.read()` for lookups and `.write()` for
+/// mutation, operating on the `HashMap<String, Param>` directly.
+pub fn paramtab() -> &'static RwLock<HashMap<String, crate::ported::zsh_h::Param>> {
+    PARAMTAB_INNER.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 /// Accessor for the global `realparamtab` (Src/params.c:515).
 /// Same role as `paramtab` for the not-currently-redirected case;
 /// the alias-flip during assoc-array iteration isn't modelled yet.
-pub fn realparamtab() -> &'static Mutex<HashMap<String, crate::ported::zsh_h::Param>> {
-    REALPARAMTAB_INNER.get_or_init(|| Mutex::new(HashMap::new()))
+pub fn realparamtab() -> &'static RwLock<HashMap<String, crate::ported::zsh_h::Param>> {
+    REALPARAMTAB_INNER.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 fn ifs_lock() -> &'static Mutex<String> {
@@ -4484,20 +4492,20 @@ pub fn addenv(name: &str, value: &str) -> i32 {                              // 
 
     // c:5463 — `newenv = mkenvstr(pm->nam, value, pm->flags)`.
     let flags = {
-        let tab = paramtab().lock().unwrap();
+        let tab = paramtab().read().unwrap();
         tab.get(name).map(|pm| pm.node.flags).unwrap_or(0)
     };
     let newenv = mkenvstr(name, value, flags);
     // c:5464-5468 — `if (zputenv(newenv)) { free; pm->env=NULL; return }`.
     if zputenv(&newenv) != 0 {
-        let mut tab = paramtab().lock().unwrap();
+        let mut tab = paramtab().write().unwrap();
         if let Some(pm) = tab.get_mut(name) {
             pm.env = None;
         }
         return 1;
     }
     // c:5482-5484 — `pm->env = newenv; pm->flags |= PM_EXPORTED`.
-    let mut tab = paramtab().lock().unwrap();
+    let mut tab = paramtab().write().unwrap();
     if let Some(pm) = tab.get_mut(name) {
         pm.env = Some(newenv);
         pm.node.flags |= PM_EXPORTED as i32;
@@ -4525,7 +4533,7 @@ pub fn delenv(name: &str) {                                                  // 
     // c:5567 — `unsetenv(pm->node.nam)`.
     env::remove_var(name);
     // c:5568 / c:5572 — `pm->env = NULL`. PM_EXPORTED stays set.
-    let mut tab = paramtab().lock().unwrap();
+    let mut tab = paramtab().write().unwrap();
     if let Some(pm) = tab.get_mut(name) {
         pm.env = None;
     }
@@ -4637,7 +4645,7 @@ pub fn arrfixenv(s: &str, t: Option<&[String]>) {                            // 
 
     // c:5294 — `pm = paramtab->getnode(paramtab, s)`.
     let pm_arc_data = {
-        let tab = paramtab().lock().unwrap();
+        let tab = paramtab().read().unwrap();
         tab.get(s).map(|pm| (pm.node.flags, pm.gsu_a.is_some()))
     };
     let (flags, _has_gsu_a) = match pm_arc_data {
@@ -4659,7 +4667,7 @@ pub fn arrfixenv(s: &str, t: Option<&[String]>) {                            // 
     let allexport = isset(ALLEXPORT);
     // c:5305 — `pm->flags &= ~PM_DEFAULTED` always.
     {
-        let mut tab = paramtab().lock().unwrap();
+        let mut tab = paramtab().write().unwrap();
         if let Some(pm) = tab.get_mut(s) {
             if allexport {
                 pm.node.flags |= PM_EXPORTED as i32;
@@ -4670,7 +4678,7 @@ pub fn arrfixenv(s: &str, t: Option<&[String]>) {                            // 
 
     // c:5311-5312 — `if (!(pm->flags & PM_EXPORTED)) return`.
     let new_flags = {
-        let tab = paramtab().lock().unwrap();
+        let tab = paramtab().read().unwrap();
         tab.get(s).map(|pm| pm.node.flags).unwrap_or(0)
     };
     if new_flags & PM_EXPORTED as i32 == 0 {
@@ -5099,7 +5107,7 @@ pub fn tiedarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) { /
     // c:4361-4368 — free old / clear PM_DEFAULTED on tied counterpart.
     if pm.u_arr.is_none() {
         if let Some(ename) = pm.ename.clone() {                              // c:4365
-            let mut tab = paramtab().lock().unwrap();
+            let mut tab = paramtab().write().unwrap();
             if let Some(altpm) = tab.get_mut(&ename) {                       // c:4366
                 altpm.node.flags &= !(PM_DEFAULTED as i32);                  // c:4367
             }
@@ -5731,7 +5739,7 @@ pub fn createparamtable() {                                                  // 
     // c:838-840 — `for (ip = special_params; ip->node.nam; ip++)
     //              paramtab->addnode(...)`. Section 1: always loaded.
     {
-        let mut tab = paramtab().lock().unwrap();
+        let mut tab = paramtab().write().unwrap();
         for ip in special_params[..SPECIAL_PARAMS_ZSH_START].iter() {
             add_special(ip, &mut tab);
         }
@@ -5745,7 +5753,7 @@ pub fn createparamtable() {                                                  // 
         crate::ported::zsh_h::EMULATE_SH | crate::ported::zsh_h::EMULATE_KSH,
     );
     {
-        let mut tab = paramtab().lock().unwrap();
+        let mut tab = paramtab().write().unwrap();
         if is_sh_ksh {
             // c:841-843 — sh/ksh: scalar replacements.
             for ip in special_params_sh.iter() {
@@ -5833,7 +5841,7 @@ pub fn createparamtable() {                                                  // 
         }
         // c:902-906 — block if PM_DONTIMPORT-family flags say so.
         let blocked = {
-            let tab = paramtab().lock().unwrap();
+            let tab = paramtab().read().unwrap();
             tab.get(&iname)
                 .map(|pm| dontimport(pm.node.flags) != 0)
                 .unwrap_or(false)
@@ -5849,7 +5857,7 @@ pub fn createparamtable() {                                                  // 
             crate::ported::zsh_h::ASSPM_ENV_IMPORT,
         );
         // c:909-915 — stamp PM_EXPORTED and the env-side string.
-        let mut tab = paramtab().lock().unwrap();
+        let mut tab = paramtab().write().unwrap();
         if let Some(pm) = tab.get_mut(&iname) {
             pm.node.flags |= PM_EXPORTED as i32;
             let env_str = if pm.node.flags & PM_SPECIAL as i32 != 0 {
@@ -5895,7 +5903,7 @@ pub fn createparamtable() {                                                  // 
     );
     let home_val = home_lock().lock().expect("home poisoned").clone();
     let home_action: Option<bool> = {
-        let mut tab = paramtab().lock().unwrap();
+        let mut tab = paramtab().write().unwrap();
         if let Some(pm) = tab.get_mut("HOME") {
             if is_zsh {                                                      // c:939
                 pm.node.flags &= !(PM_UNSET as i32);                         // c:941
@@ -5920,7 +5928,7 @@ pub fn createparamtable() {                                                  // 
 
     // c:946-948 — LOGNAME. If not already exported, addenv(pm, pm->u.str).
     let logname_export: Option<String> = {
-        let tab = paramtab().lock().unwrap();
+        let tab = paramtab().read().unwrap();
         tab.get("LOGNAME").and_then(|pm| {
             if pm.node.flags & PM_EXPORTED as i32 == 0 {
                 pm.u_str.clone()
@@ -6022,7 +6030,7 @@ pub fn createparamtable() {                                                  // 
         }
     }
     {
-        let mut tab = paramtab().lock().unwrap();
+        let mut tab = paramtab().write().unwrap();
         let pm = Box::new(crate::ported::zsh_h::param {
             node: crate::ported::zsh_h::hashnode {
                 next: None,
@@ -6178,7 +6186,7 @@ pub fn createparam(                                                          // 
     // chase branches (c:1043-1104) elided — covered when nameref
     // / readonly-by-design Params are wired.
     let oldpm: Option<crate::ported::zsh_h::Param> = if !name.is_empty() {
-        paramtab().lock().ok().and_then(|t| t.get(name).cloned())
+        paramtab().read().ok().and_then(|t| t.get(name).cloned())
     } else {
         None
     };
@@ -6252,7 +6260,7 @@ pub fn createparam(                                                          // 
     // displaced) old.
     if !name.is_empty() {
         let cloned = pm.clone();
-        paramtab().lock().unwrap().insert(name.to_string(), pm);
+        paramtab().write().unwrap().insert(name.to_string(), pm);
         return Some(cloned);
     }
     Some(pm)                                                                 // c:1159
@@ -6397,7 +6405,7 @@ pub fn getparamnode(ht: &crate::ported::zsh_h::HashTable, nam: &str)         // 
 {
     use crate::ported::zsh_h::PM_UNSET;
     // c:572 — `pm = loadparamnode(ht, gethashnode2(ht, nam), nam)`.
-    let pm = paramtab().lock().unwrap().get(nam).cloned();
+    let pm = paramtab().read().unwrap().get(nam).cloned();
     let pm = loadparamnode(ht, pm, nam);
     // c:573 — `if (pm && ht == realparamtab && !PM_UNSET) pm = resolve_nameref(pm)`.
     if let Some(p) = pm {
@@ -6502,7 +6510,7 @@ pub fn fetchvalue<'a>(                                                       // 
     // c:2227-2236 — paramtab lookup honouring SCANPM_NONAMEREF for
     // getnode vs getnode2 (the second skips nameref resolution).
     let pm = {
-        let tab = paramtab().lock().unwrap();
+        let tab = paramtab().read().unwrap();
         let key = if name == "0" { "0" } else { name };
         tab.get(key).cloned()
     };
@@ -6830,7 +6838,7 @@ pub fn loadparamnode(                                                        // 
     // for now we look up the module without a table to keep the
     // dispatch site honest. Module-table integration is pending.
     // c:550 — re-fetch the node from ht after autoload.
-    let mut pm = paramtab().lock().unwrap().get(nam).cloned();
+    let mut pm = paramtab().write().unwrap().get(nam).cloned();
     // c:551 — walk pm->old back to original level.
     while let Some(ref p) = pm {
         if p.level > level {
@@ -6923,7 +6931,7 @@ pub fn paramvalarr(_ht: &crate::ported::zsh_h::HashTable, flags: i32) -> Vec<Str
     let want_vals = (flags_u & SCANPM_WANTVALS) != 0;
     let want_index = (flags_u & SCANPM_WANTINDEX) != 0;
 
-    let tab = paramtab().lock().unwrap();
+    let tab = paramtab().read().unwrap();
     let mut out: Vec<String> = Vec::with_capacity(tab.len() * 2);
     let mut idx: i64 = 0;
     // c:695-696, c:699-700 — scanhashtable filters out PM_UNSET and
@@ -7696,7 +7704,7 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         "!" => {
             // Last-backgrounded job PID. Stored in paramtab `!` slot;
             // default to 0 to match zsh fresh-shell behaviour.
-            let tab = paramtab().lock().ok()?;
+            let tab = paramtab().read().ok()?;
             Some(tab.get("!").and_then(|pm| pm.u_str.clone())
                 .unwrap_or_else(|| "0".to_string()))
         }

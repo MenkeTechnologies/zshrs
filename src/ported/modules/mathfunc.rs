@@ -294,6 +294,7 @@ pub fn math_string(_name: &str, arg: &str, id: i32) -> Mnumber {         // c:43
 mod tests {
     use super::*;
 
+    /// Port of `math_func()` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_acos() {
         let argv = [Mnumber { l: 0, d: 1.0, type_: MN_FLOAT }];
@@ -302,6 +303,7 @@ mod tests {
         assert!((r.d - 0.0).abs() < 1e-9);
     }
 
+    /// Port of `math_func()` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_atan_two_args() {
         let argv = [Mnumber { l: 0, d: 1.0, type_: MN_FLOAT }, Mnumber { l: 0, d: 1.0, type_: MN_FLOAT }];
@@ -310,6 +312,7 @@ mod tests {
         assert!((r.d - std::f64::consts::FRAC_PI_4).abs() < 1e-9);
     }
 
+    /// Port of `math_func()` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_abs_int_preserves_type() {
         let argv = [Mnumber { l: -7, d: 0.0, type_: MN_INTEGER }];
@@ -318,6 +321,7 @@ mod tests {
         assert_eq!(r.l, 7);
     }
 
+    /// Port of `math_func()` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_int_truncates() {
         let argv = [Mnumber { l: 0, d: 3.7, type_: MN_FLOAT }];
@@ -326,6 +330,7 @@ mod tests {
         assert_eq!(r.l, 3);
     }
 
+    /// Port of `math_func()` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_math_func_isnan() {
         let argv = [Mnumber { l: 0, d: f64::NAN, type_: MN_FLOAT }];
@@ -333,6 +338,7 @@ mod tests {
         assert_eq!(r.l, 1);
     }
 
+    /// Port of `math_string()` from `Src/Modules/mathfunc.c:439`.
     #[test]
     fn test_math_string_rand48_in_range() {
         let r = math_string("rand48", "", MS_RAND48);
@@ -401,6 +407,8 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/mathfunc.c`.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -420,10 +428,13 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+/// Port of `math_func()` from `Src/Modules/mathfunc.c:173`.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["f:abs".to_string(), "f:acos".to_string(), "f:acosh".to_string(), "f:asin".to_string(), "f:asinh".to_string(), "f:atan".to_string(), "f:atanh".to_string(), "f:cbrt".to_string(), "f:ceil".to_string(), "f:copysign".to_string(), "f:cos".to_string(), "f:cosh".to_string(), "f:erf".to_string(), "f:erfc".to_string(), "f:exp".to_string(), "f:expm1".to_string(), "f:fabs".to_string(), "f:float".to_string(), "f:floor".to_string(), "f:fmod".to_string(), "f:gamma".to_string(), "f:hypot".to_string(), "f:ilogb".to_string(), "f:int".to_string(), "f:isinf".to_string(), "f:isnan".to_string(), "f:j0".to_string(), "f:j1".to_string(), "f:jn".to_string(), "f:ldexp".to_string(), "f:lgamma".to_string(), "f:log".to_string(), "f:log10".to_string(), "f:log1p".to_string(), "f:log2".to_string(), "f:logb".to_string(), "f:nextafter".to_string(), "f:rint".to_string(), "f:scalb".to_string(), "f:signgam".to_string(), "f:sin".to_string(), "f:sinh".to_string(), "f:sqrt".to_string(), "f:tan".to_string(), "f:tanh".to_string(), "f:y0".to_string(), "f:y1".to_string(), "f:yn".to_string()]
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/mathfunc.c`.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -435,6 +446,8 @@ fn handlefeatures(
     0
 }
 
+/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
+/// of any function in `Src/Modules/mathfunc.c`.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

@@ -1234,7 +1234,7 @@ thread_local! { static INCOMPFUNC: std::cell::Cell<i32> = const { std::cell::Cel
 /// (zlemetacs, clwords, clwnum) lives in src/ported/zle/zle_main.rs.
 pub(crate) fn compctlread(name: &str, args: &[String]) -> i32 {
     // C: c:195 — must be called from compctl-invoked function
-    let incompctlfunc = INCOMPCTLFUNC.load(std::sync::atomic::Ordering::Relaxed);
+    let incompctlfunc = INCOMPCTLFUNC.with(|c| c.get());
     if !incompctlfunc {
         eprintln!("{}: option valid only in functions called via compctl", name);
         return 1;
@@ -1293,10 +1293,15 @@ pub(crate) fn compctlread(name: &str, args: &[String]) -> i32 {
 }
 
 // True iff we're inside a function called via compctl -K. Mirrors
-// the C `incompctlfunc` global from Src/Zle/zle_tricky.c — set by
-// the dispatcher around the -K function call.
-pub(crate) static INCOMPCTLFUNC: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+// the C `incompctlfunc` global from Src/Zle/zle_main.c:54
+// (`mod_export int incompctlfunc`). Per PORT_PLAN.md bucket-1: each
+// worker thread runs its own completion, so the in-compctl-fn flag
+// is per-evaluator — `thread_local!` preserves zsh's per-process
+// semantic per-worker without cross-thread leakage.
+thread_local! {
+    pub(crate) static INCOMPCTLFUNC: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
 
 /// Hook for completion-list build start.
 /// Port of `ccmakehookfn()` from Src/Zle/compctl.c:1762 (~145 lines).
@@ -2094,7 +2099,7 @@ fn inull(c: char) -> bool {                                                  // 
 ///   - inull/Bnull adjustment loop (c:2931-2952)
 ///   - nested makecomplistcmd dispatch (c:3006)
 ///
-/// The actual `ctxtlex()` driver is replaced by Rust's `ZshLexer`
+/// The actual `ctxtlex()` driver is replaced by Rust`s lex module`
 /// from parse/src/lex.rs — for this port we approximate by
 /// splitting the temp string on whitespace + tracking the cursor
 /// word. Full lexer-token reconstruction (LEXERR/STRING/ENDINPUT
@@ -2170,7 +2175,7 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
 
     // C: c:2840-2873 — lex loop. We approximate ctxtlex() with a
     // whitespace-tokenize + cursor-word detection. Real lexer
-    // integration requires the parse crate's ZshLexer wired with
+    // integration requires lex.rs wired with
     // ZLE input-stack semantics.
     {
         let chars: Vec<char> = tmp.chars().collect();
@@ -2862,7 +2867,7 @@ mod tests {
     #[test]
     fn compctlread_outside_compctl_func_errors() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        INCOMPCTLFUNC.store(false, std::sync::atomic::Ordering::Relaxed);
+        INCOMPCTLFUNC.with(|c| c.set(false));
         let r = compctlread("compctlread", &[]);
         assert_eq!(r, 1);
     }

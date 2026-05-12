@@ -623,7 +623,7 @@ pub fn checkcurline(line: &str) -> i32 {
 
 /// Port of `void hbegin(int dohist)` from Src/hist.c:1110.
 pub fn hbegin(dohist: i32) {                                                 // c:1110
-    // isfirstln/isfirstch live on ZshLexer in zshrs_parse, not as
+    // isfirstln/isfirstch live in the lex.rs LEX_* thread_locals, not as
     // globals — caller resets them via lexer instance API.            // c:1114
 
     crate::ported::utils::errflag.fetch_and(                                 // c:1115

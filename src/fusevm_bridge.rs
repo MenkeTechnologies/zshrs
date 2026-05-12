@@ -5445,8 +5445,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // (Src/zsh.h:1860 — int print base). Per C convfloat /
             // convbase in params.c, base==0 means default decimal.
             let int_base: Option<u32> = if is_integer {
-                let b = crate::ported::params::paramtab()
-                    .lock().ok()
+                let b = crate::ported::params::paramtab().read().ok()
                     .and_then(|t| t.get(&name).map(|pm| pm.base))
                     .unwrap_or(0);
                 if b > 0 { Some(b as u32) } else { None }
@@ -8146,7 +8145,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // ${(k)functions} / functions builtin see user defs.
                 // C: exec.c:funcdef → shfunctab->addnode(ztrdup(name),shf).
                 if let Ok(mut tab) =
-                    crate::ported::hashtable::shfunctab_lock().lock()
+                    crate::ported::hashtable::shfunctab_lock().write()
                 {
                     let shf = crate::ported::hashtable::shfunc_with_body(
                         &name,
@@ -8430,7 +8429,7 @@ pub const BUILTIN_WORD_SPLIT: u16 = 304;
 
 /// Register a pre-compiled fusevm chunk as a function. Stack: [name,
 /// base64-bincode-of-Chunk]. Used by compile_zsh's compile_funcdef to
-/// register functions parsed via ZshParser without going through the
+/// register functions parsed via parse_init+parse without going through the
 /// ShellCommand JSON serialization path.
 pub const BUILTIN_REGISTER_COMPILED_FN: u16 = 305;
 pub const BUILTIN_VAR_EXISTS: u16 = 306;
@@ -8461,7 +8460,7 @@ pub const BUILTIN_PARAM_LENGTH: u16 = 311;
 /// `$((10/3))` returns "3" not "3.333...".
 pub const BUILTIN_ARITH_EVAL: u16 = 312;
 /// `$(cmd)` command substitution. Pops \[cmd_string\], runs through
-/// `run_command_substitution` which compiles via ZshParser+ZshCompiler
+/// `run_command_substitution` which compiles via parse_init+parse + ZshCompiler
 /// and captures stdout via an in-process pipe. Returns trimmed output
 /// as Value::Str. Avoids the sub-chunk word-emit quoting bug in the
 /// raw Op::CmdSubst path.
@@ -8945,8 +8944,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // store unification mirrors writes there; restoring only
             // the HashMaps leaks subshell-scoped writes to the parent
             // via paramtab readers like `paramsubst → vars_get`).
-            let paramtab_snap = crate::ported::params::paramtab()
-                .lock().ok()
+            let paramtab_snap = crate::ported::params::paramtab().read().ok()
                 .map(|t| t.clone())
                 .unwrap_or_default();
             let paramtab_hashed_snap = crate::ported::params::paramtab_hashed_storage()
@@ -9006,7 +9004,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 // Restore paramtab + hashed storage so subshell-scoped
                 // writes via setsparam/setaparam/sethparam don't leak
                 // to the parent via paramtab readers.
-                if let Some(tab) = crate::ported::params::paramtab().lock().ok().as_deref_mut() {
+                if let Some(tab) = crate::ported::params::paramtab().write().ok().as_deref_mut() {
                     *tab = snap.paramtab;
                 }
                 if let Some(m) = crate::ported::params::paramtab_hashed_storage()

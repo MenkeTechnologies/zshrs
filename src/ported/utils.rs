@@ -3362,7 +3362,7 @@ pub fn spscan(name: &str, candidates: &[String], threshold: usize) -> Option<Str
 /// at call time).
 pub fn getshfunc(name: &str) -> Option<String> {
     let tab = crate::ported::hashtable::shfunctab_lock()
-        .lock()
+        .read()
         .expect("shfunctab poisoned");
     tab.get(name).and_then(|f| f.body.clone())
 }
@@ -5320,7 +5320,7 @@ pub fn callhookfunc(name: &str, args: Option<&[String]>, arrayp: bool) -> i32 {
     // c:utils.c:1494 — `if ((hn = gethashnode2(shfunctab, name)))
     //                     doshfunc((Shfunc) hn, args, 1);`
     let shf_exists = crate::ported::hashtable::shfunctab_lock()
-        .lock()
+        .read()
         .map(|t| t.get(name).is_some())
         .unwrap_or(false);
     if shf_exists {
@@ -5333,14 +5333,13 @@ pub fn callhookfunc(name: &str, args: Option<&[String]>, arrayp: bool) -> i32 {
         // c:utils.c:1504-1514 — `arr = getaparam(arrname); if (arr)
         //                          for (... ; *arr; arr++) doshfunc(...)`
         let arr_name = format!("{}_functions", name);
-        let arr = crate::ported::params::paramtab()
-            .lock()
+        let arr = crate::ported::params::paramtab().read()
             .ok()
             .and_then(|t| t.get(&arr_name).and_then(|p| p.u_arr.clone()))
             .unwrap_or_default();
         for fn_name in arr {
             let exists = crate::ported::hashtable::shfunctab_lock()
-                .lock()
+                .read()
                 .map(|t| t.get(&fn_name).is_some())
                 .unwrap_or(false);
             if exists {

@@ -1393,7 +1393,7 @@ pub(crate) fn getmathparam(name: &str) -> Mnumber {
                 .map(|n| if n.type_ == crate::ported::zsh_h::MN_FLOAT { n.d as i64 } else { n.l })
                 .unwrap_or(0);
             // Read paramtab directly: PM_ARRAY → u_arr indexed by 1-based pos.
-            if let Ok(tab) = crate::ported::params::paramtab().lock() {
+            if let Ok(tab) = crate::ported::params::paramtab().read() {
                 if let Some(pm) = tab.get(arr_name) {
                     if let Some(arr) = &pm.u_arr {
                         let len = arr.len() as i64;

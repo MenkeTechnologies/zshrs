@@ -839,7 +839,7 @@ impl crate::ported::exec::ShellExecutor {
             aliases: self.alias_entries().into_iter().map(|(k, _)| k).collect(),
             global_aliases: self.global_alias_entries().into_iter().map(|(k, _)| k).collect(),
             suffix_aliases: self.suffix_alias_entries().into_iter().map(|(k, _)| k).collect(),
-            variables: if let Ok(tab) = crate::ported::params::paramtab().lock() {
+            variables: if let Ok(tab) = crate::ported::params::paramtab().read() {
                 tab.iter()
                     .filter(|(_, pm)| pm.u_arr.is_none())
                     .map(|(k, pm)| (k.clone(), pm.u_str.clone().unwrap_or_default()))
@@ -847,7 +847,7 @@ impl crate::ported::exec::ShellExecutor {
             } else {
                 std::collections::HashMap::new()
             },
-            arrays: if let Ok(tab) = crate::ported::params::paramtab().lock() {
+            arrays: if let Ok(tab) = crate::ported::params::paramtab().read() {
                 tab.iter()
                     .filter(|(_, pm)| pm.u_arr.is_some())
                     .map(|(k, _)| k.clone())
@@ -929,7 +929,7 @@ impl crate::ported::exec::ShellExecutor {
             "HISTCMD", "MATCH", "MBEGIN", "MEND",
         ];
         let mut var_keys: Vec<String> =
-            if let Ok(tab) = crate::ported::params::paramtab().lock() {
+            if let Ok(tab) = crate::ported::params::paramtab().read() {
                 tab.iter()
                     .filter(|(_, pm)| pm.u_arr.is_none())
                     .map(|(k, _)| k.clone())
@@ -958,7 +958,7 @@ impl crate::ported::exec::ShellExecutor {
 
         // New arrays — iterate paramtab for PM_ARRAY entries.
         let arr_entries: Vec<(String, Vec<String>)> =
-            if let Ok(tab) = crate::ported::params::paramtab().lock() {
+            if let Ok(tab) = crate::ported::params::paramtab().read() {
                 let mut v: Vec<(String, Vec<String>)> = tab.iter()
                     .filter_map(|(k, pm)| pm.u_arr.clone().map(|a| (k.clone(), a)))
                     .collect();
@@ -1154,7 +1154,7 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         // Plugin cache replay: each bincode blob is a ShellCommand AST.
-        // Replay each function's source text through ZshParser + ZshCompiler.
+        // Replay each function's source text through parse_init + parse + ZshCompiler.
         // Delta format: name → UTF-8 source bytes (no AST round-trip needed).
         use crate::ported::utils::{errflag, ERRFLAG_ERROR};
         use std::sync::atomic::Ordering;
