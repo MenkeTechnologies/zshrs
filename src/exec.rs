@@ -2345,34 +2345,9 @@ impl ShellExecutor {
     // you'll get a duplicate-definition error when the recorder
     // feature is enabled.
 
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_cd(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_cd("cd", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_pwd(&mut self, _redirects: &[crate::parse::Redirect]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_pwd("pwd", &[], &ops, 0)
-    }
     pub(crate) fn builtin_pwd_with_args(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_pwd("pwd", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_unset(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_unset("unset", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_dot(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_dot("source", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_test(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_test("test", args, &ops, 0)
     }
     // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_typeset(&mut self, args: &[String]) -> i32 {
@@ -2458,128 +2433,6 @@ impl ShellExecutor {
             i += 1;
         }
         crate::ported::builtin::bin_read("read", &positional, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_shift(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_shift("shift", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_eval(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_eval("eval", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_fc(&mut self, args: &[String]) -> i32 {
-        let mut ops = Self::_empty_ops();
-        crate::ported::builtin::bin_fc("fc", args, &mut ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_trap(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_trap("trap", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_alias(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_alias("alias", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_set(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_set("set", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_getopts(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_getopts("getopts", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_hash(&mut self, name: &str, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_hash(name, args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_let(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_let("let", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_dirs(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_dirs("dirs", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_break(&mut self, name: &str, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        let func = match name {
-            "break"    => crate::ported::builtin::BIN_BREAK,
-            "continue" => crate::ported::builtin::BIN_CONTINUE,
-            "return"   => crate::ported::builtin::BIN_RETURN,
-            "exit"     => crate::ported::builtin::BIN_EXIT,
-            "logout"   => crate::ported::builtin::BIN_LOGOUT,
-            _          => crate::ported::builtin::BIN_EXIT,
-        };
-        crate::ported::builtin::bin_break(name, args, &ops, func)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_enable(&mut self, name: &str, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_enable(name, args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_emulate(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_emulate("emulate", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_functions(&self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_functions("functions", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_print(&mut self, args: &[String]) -> i32 {
-        // Route through `execbuiltin` (Src/builtin.c:250) so `bn->optstr`
-        // ("abcC:Df:ilmnNoOpPrRsSu:v:x:X:z-") parses `-l`, `-n`, `-r`,
-        // `-u FD`, `-v VAR`, `-f FMT` etc. into `ops`. Earlier direct
-        // call with `_empty_ops()` made `print -l -- "${(@)arr}"` emit
-        // `-l -- a b c` as positional args instead of one-per-line.
-        let bn_idx = crate::ported::builtin::BUILTINS.iter()
-            .position(|b| b.node.nam == "print");
-        if let Some(idx) = bn_idx {
-            let bn_static: &'static crate::ported::zsh_h::builtin =
-                &crate::ported::builtin::BUILTINS[idx];
-            let bn_ptr = bn_static as *const _ as *mut _;
-            crate::ported::builtin::execbuiltin(args.to_vec(), Vec::new(), bn_ptr)
-        } else {
-            let ops = Self::_empty_ops();
-            crate::ported::builtin::bin_print("print", args, &ops, 0)
-        }
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_whence(&self, args: &[String]) -> i32 {
-        // No canonical bin_whence yet — return 1 (not found) placeholder.
-        let _ = args; 1
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_umask(&self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_umask("umask", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_unhash(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_unhash("unhash", args, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_times(&self, _args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_times("times", &[], &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_ttyctl(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_ttyctl("ttyctl", args, &ops, 0)
     }
     pub(crate) fn bin_zcompile(&mut self, args: &[String]) -> i32 {
         // No canonical bin_zcompile yet — return 0 placeholder.
@@ -2691,40 +2544,6 @@ impl ShellExecutor {
     // bin_zstyle/bin_zparseopts/bin_zformat/bin_zregexparse free-fn
     // ports (Src/Modules/zutil.c) will land in zutil.rs at module
     // level; until then these stubs unblock callers.
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_zstyle(&mut self, args: &[String]) -> i32 {
-        // Canonical bin_zstyle per zutil.c:487 — BUILTIN spec at
-        // zutil.c:2143 ("LRMl:b:s:a:t:T:m:e:Dd"). Inline parse the
-        // single-letter flags into ops; -d/-e/-l/-L/-R/-M/-D have no
-        // arg; -l/-b/-s/-a/-t/-T/-m/-e take a context-name arg.
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                argscount: 0, argsalloc: 0 };
-        let mut positional: Vec<String> = Vec::new();
-        let mut i = 0;
-        while i < args.len() {
-            let a = &args[i];
-            if a == "--" { i += 1; positional.extend_from_slice(&args[i..]); break; }
-            if let Some(rest) = a.strip_prefix('-') {
-                if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
-                for c in rest.chars() {
-                    let cb = c as u8;
-                    if cb.is_ascii_alphabetic() { ops.ind[cb as usize] = 1; }
-                }
-            } else {
-                positional.push(a.clone());
-            }
-            i += 1;
-        }
-        crate::ported::modules::zutil::bin_zstyle("zstyle", &positional, &ops, 0)
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_zparseopts(&mut self, args: &[String]) -> i32 {
-        // Canonical bin_zparseopts per zutil.c:1738 — BUILTIN spec at
-        // zutil.c:2137 takes no option flags (parses its own opts).
-        let ops = Self::_empty_ops();
-        crate::ported::modules::zutil::bin_zparseopts("zparseopts", args, &ops, 0)
-    }
     // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_zformat(&mut self, args: &[String]) -> i32 {
         // bin_zformat takes no flag options (BUILTIN spec at
@@ -5876,84 +5695,6 @@ impl crate::ported::exec::ShellExecutor {
         }
         0
     }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_fg(&mut self, args: &[String]) -> i32 {
-        // zsh in `-c` mode has no real job-control regardless of the
-        // `monitor` option. zsh `fg %N` always errors `fg:1: no job
-        // control in this shell.` in this context. zshrs's options
-        // table reports `interactive=true` and `monitor=true` even
-        // in `-c` mode, so option-based checks don't work. Use the
-        // stdin-tty status: a real interactive shell has a tty on
-        // stdin; `-c` mode does not (stdin is piped or empty).
-        if !atty::is(atty::Stream::Stdin) {
-            zwarnnam("fg", "no job control in this shell.");
-            return 1;
-        }
-        let job_id = if let Some(arg) = args.first() {
-            // Parse %N or just N
-            let s = arg.trim_start_matches('%');
-            match s.parse::<usize>() {
-                Ok(id) => Some(id),
-                Err(_) => {
-                    zwarnnam("fg", &format!("{}: no such job", arg));
-                    return 1;
-                }
-            }
-        } else {
-            self.jobs.current().map(|j| j.id)
-        };
-
-        let Some(id) = job_id else {
-            // Match zsh's diagnostic for non-interactive contexts.
-            zwarnnam("fg", "no job control in this shell.");
-            return 1;
-        };
-
-        let Some(job) = self.jobs.get(id) else {
-            zwarnnam("fg", &format!("%{}: no such job", id));
-            return 1;
-        };
-
-        let pid = job.pid;
-        let cmd = job.command.clone();
-        println!("{}", cmd);
-
-        // Continue the job
-        if let Err(e) = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGCONT).map_err(|e| e.to_string()) {
-            zwarnnam("fg", &format!("{}", e));
-            return 1;
-        }
-
-        // Wait for it
-        match {
-            // Inline wait_for_job — port of jobs.c::update_job's
-            // waitpid loop (Src/jobs.c:460).
-            use nix::sys::wait::{waitpid, WaitStatus};
-            use nix::unistd::Pid;
-            let result: Result<i32, String>;
-            loop {
-                result = match waitpid(Pid::from_raw(pid), None) {
-                    Ok(WaitStatus::Exited(_, code)) => Ok(code),
-                    Ok(WaitStatus::Signaled(_, sig, _)) => Ok(128 + sig as i32),
-                    Ok(WaitStatus::Stopped(_, _)) => Ok(128),
-                    Ok(_) => continue,
-                    Err(nix::errno::Errno::ECHILD) => Ok(0),
-                    Err(e) => Err(e.to_string()),
-                };
-                break;
-            }
-            result
-        } {
-            Ok(status) => {
-                self.jobs.remove(id);
-                status
-            }
-            Err(e) => {
-                zwarnnam("fg", &format!("{}", e));
-                1
-            }
-        }
-    }
     pub(crate) fn builtin_bg(&mut self, args: &[String]) -> i32 {
         // Same no-job-control semantics as `fg` — see comment there.
         if !atty::is(atty::Stream::Stdin) {
@@ -5994,324 +5735,6 @@ impl crate::ported::exec::ShellExecutor {
         job.state = JobState::Running;
         println!("[{}] {} &", id, cmd);
         0
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_kill(&mut self, args: &[String]) -> i32 {
-        // kill [ -s signal_name | -n signal_number | -sig ] job ...
-        // kill -l [ sig ... ]
-        use nix::sys::signal::{kill, Signal};
-        use nix::unistd::Pid;
-
-        if args.is_empty() {
-            // zsh: bare `kill` -> `kill:1: not enough arguments` exit 1.
-            // zshrs printed a multi-line bash-style usage banner that
-            // didn't match zsh's terse format.
-            zwarnnam("kill", "not enough arguments");
-            return 1;
-        }
-
-        // Signal name/number mapping. Numbers are pulled from libc
-        // so they're platform-correct: macOS USR1=30, Linux USR1=10.
-        // Hardcoding caused `kill -l USR1` to print 10 on macOS.
-        let signal_map: &[(&str, i32, Signal)] = &[
-            ("HUP", libc::SIGHUP, Signal::SIGHUP),
-            ("INT", libc::SIGINT, Signal::SIGINT),
-            ("QUIT", libc::SIGQUIT, Signal::SIGQUIT),
-            ("ILL", libc::SIGILL, Signal::SIGILL),
-            ("TRAP", libc::SIGTRAP, Signal::SIGTRAP),
-            ("ABRT", libc::SIGABRT, Signal::SIGABRT),
-            #[cfg(target_os = "macos")]
-            ("EMT", libc::SIGEMT, Signal::SIGEMT),
-            ("BUS", libc::SIGBUS, Signal::SIGBUS),
-            ("FPE", libc::SIGFPE, Signal::SIGFPE),
-            ("KILL", libc::SIGKILL, Signal::SIGKILL),
-            ("USR1", libc::SIGUSR1, Signal::SIGUSR1),
-            ("SEGV", libc::SIGSEGV, Signal::SIGSEGV),
-            ("USR2", libc::SIGUSR2, Signal::SIGUSR2),
-            ("PIPE", libc::SIGPIPE, Signal::SIGPIPE),
-            ("ALRM", libc::SIGALRM, Signal::SIGALRM),
-            ("TERM", libc::SIGTERM, Signal::SIGTERM),
-            ("CHLD", libc::SIGCHLD, Signal::SIGCHLD),
-            ("CONT", libc::SIGCONT, Signal::SIGCONT),
-            ("STOP", libc::SIGSTOP, Signal::SIGSTOP),
-            ("TSTP", libc::SIGTSTP, Signal::SIGTSTP),
-            ("TTIN", libc::SIGTTIN, Signal::SIGTTIN),
-            ("TTOU", libc::SIGTTOU, Signal::SIGTTOU),
-            ("URG", libc::SIGURG, Signal::SIGURG),
-            ("XCPU", libc::SIGXCPU, Signal::SIGXCPU),
-            ("XFSZ", libc::SIGXFSZ, Signal::SIGXFSZ),
-            ("VTALRM", libc::SIGVTALRM, Signal::SIGVTALRM),
-            ("PROF", libc::SIGPROF, Signal::SIGPROF),
-            ("WINCH", libc::SIGWINCH, Signal::SIGWINCH),
-            ("IO", libc::SIGIO, Signal::SIGIO),
-            ("SYS", libc::SIGSYS, Signal::SIGSYS),
-            // macOS-only SIGINFO (29). zsh's `kill -l` lists it
-            // between WINCH and USR1; without this entry zshrs
-            // skipped INFO and the listing didn't match.
-            #[cfg(target_os = "macos")]
-            ("INFO", libc::SIGINFO, Signal::SIGINFO),
-        ];
-
-        let mut sig = Signal::SIGTERM;
-        let mut signal_zero = false;
-        let mut pids: Vec<String> = Vec::new();
-        let mut list_mode = false;
-        let mut list_args: Vec<String> = Vec::new();
-
-        let mut i = 0;
-        let mut after_dashdash = false;
-        while i < args.len() {
-            let arg = &args[i];
-
-            // `--` is end-of-options; subsequent args are PIDs.
-            // zsh `kill -- PID` correctly sends SIGTERM. zshrs's
-            // catch-all `arg.starts_with('-') && arg.len() > 1`
-            // treated `--` as a signal name (`-` -> "L", missing).
-            if arg == "--" && !after_dashdash {
-                after_dashdash = true;
-                i += 1;
-                continue;
-            }
-            if after_dashdash {
-                pids.push(arg.clone());
-                i += 1;
-                continue;
-            }
-
-            if arg == "-l" {
-                list_mode = true;
-                // Remaining args are signal numbers to translate
-                list_args = args[i + 1..].to_vec();
-                break;
-            } else if arg == "-s" {
-                // -s signal_name (or numeric signal-by-name)
-                i += 1;
-                if i >= args.len() {
-                    zwarnnam("kill", "-s requires an argument");
-                    return 1;
-                }
-                // zsh: empty signal name -> `kill:1: -: signal name
-                // expected`. zshrs's name lookup of "" produced
-                // "invalid signal:  " (with empty trailing).
-                if args[i].is_empty() {
-                    zwarnnam("kill", "-: signal name expected");
-                    return 1;
-                }
-                // zsh accepts numeric values to `-s` too — `-s 0`
-                // is the existence-check form. zshrs's name-only
-                // lookup rejected `0` as an invalid signal.
-                if args[i] == "0" {
-                    signal_zero = true;
-                } else if let Ok(num) = args[i].parse::<i32>() {
-                    if let Some((_, _, s)) = signal_map.iter().find(|(_, n, _)| *n == num) {
-                        sig = *s;
-                    } else {
-                        zwarnnam("kill", &format!("invalid signal: {}", args[i]));
-                        return 1;
-                    }
-                } else {
-                    let sig_name = args[i].to_uppercase();
-                    let sig_name = sig_name.strip_prefix("SIG").unwrap_or(&sig_name);
-                    if let Some((_, _, s)) =
-                        signal_map.iter().find(|(name, _, _)| *name == sig_name)
-                    {
-                        sig = *s;
-                    } else {
-                        zwarnnam("kill", &format!("invalid signal: {}", args[i]));
-                        return 1;
-                    }
-                }
-            } else if arg == "-n" {
-                // -n signal_number
-                i += 1;
-                if i >= args.len() {
-                    zwarnnam("kill", "-n requires an argument");
-                    return 1;
-                }
-                let num: i32 = match args[i].parse() {
-                    Ok(n) => n,
-                    Err(_) => {
-                        zwarnnam("kill", &format!("invalid signal number: {}", args[i]));
-                        return 1;
-                    }
-                };
-                if let Some((_, _, s)) = signal_map.iter().find(|(_, n, _)| *n == num) {
-                    sig = *s;
-                } else {
-                    zwarnnam("kill", &format!("invalid signal number: {}", num));
-                    return 1;
-                }
-            } else if arg.starts_with('-') && arg.len() > 1 {
-                // -SIGNAL or -NUM
-                let sig_str = &arg[1..];
-                let sig_upper = sig_str.to_uppercase();
-                let sig_name = sig_upper.strip_prefix("SIG").unwrap_or(&sig_upper);
-
-                // Try as number first
-                if let Ok(num) = sig_str.parse::<i32>() {
-                    // Signal 0: special "process existence check" — no
-                    // signal sent, but kill(pid, 0) returns 0 if pid is
-                    // alive, errno ESRCH if not. Mark with a sentinel
-                    // (SIGUSR1 + override flag) handled below.
-                    if num == 0 {
-                        signal_zero = true;
-                    } else if let Some((_, _, s)) = signal_map.iter().find(|(_, n, _)| *n == num) {
-                        sig = *s;
-                    } else {
-                        zwarnnam("kill", &format!("invalid signal: {}", arg));
-                        return 1;
-                    }
-                } else if let Some((_, _, s)) =
-                    signal_map.iter().find(|(name, _, _)| *name == sig_name)
-                {
-                    sig = *s;
-                } else {
-                    // zsh: `unknown signal: SIGFOO` followed by a hint
-                    // line `type kill -l for a list of signals`. zshrs
-                    // emitted the bash-style `kill: invalid signal:
-                    // -FOO` (with the leading dash, no SIG prefix).
-                    zwarnnam("kill", &format!("unknown signal: SIG{}", sig_name));
-                    zwarnnam("kill", "type kill -l for a list of signals");
-                    return 1;
-                }
-            } else {
-                pids.push(arg.clone());
-            }
-            i += 1;
-        }
-
-        // Handle -l (list signals)
-        if list_mode {
-            if list_args.is_empty() {
-                // zsh prints bare signal names separated by spaces on
-                // a single line for `kill -l`, ordered by SIGNAL
-                // NUMBER (not declaration order). Sort by num so
-                // macOS shows HUP INT QUIT ILL TRAP ABRT EMT FPE
-                // KILL BUS SEGV SYS PIPE ALRM TERM URG STOP TSTP …
-                // matching `/bin/zsh -f -c 'kill -l'`.
-                let mut by_num: Vec<&(&str, i32, _)> = signal_map.iter().collect();
-                by_num.sort_by_key(|(_, n, _)| *n);
-                let names: Vec<String> = by_num.iter().map(|(n, _, _)| (*n).to_string()).collect();
-                println!("{}", names.join(" "));
-            } else {
-                // Translate signal numbers to names or vice versa
-                for arg in &list_args {
-                    if let Ok(num) = arg.parse::<i32>() {
-                        // Number -> name. zsh passes through unknown
-                        // numbers (`kill -l 100` → `100`) instead of
-                        // erroring — matches POSIX-ish behavior.
-                        if let Some((name, _, _)) = signal_map.iter().find(|(_, n, _)| *n == num) {
-                            println!("{}", name);
-                        } else {
-                            println!("{}", num);
-                        }
-                    } else {
-                        // Name -> number
-                        // Strip leading `-` in addition to SIG prefix
-                        // — `kill -l -X` should report `unknown
-                        // signal: SIGX`, not `SIG-X`.
-                        let sig_upper = arg.trim_start_matches('-').to_uppercase();
-                        let sig_name = sig_upper.strip_prefix("SIG").unwrap_or(&sig_upper);
-                        if let Some((_, num, _)) =
-                            signal_map.iter().find(|(name, _, _)| *name == sig_name)
-                        {
-                            println!("{}", num);
-                        } else {
-                            // zsh's diagnostic always uses the SIG prefix
-                            // even when the user's input lacked it:
-                            // `kill -l XYZ` → `unknown signal: SIGXYZ`.
-                            zwarnnam("kill", &format!("unknown signal: SIG{}", sig_name));
-                        }
-                    }
-                }
-            }
-            return 0;
-        }
-
-        if pids.is_empty() {
-            // zsh: `kill -9` (signal but no pid) -> `kill:1: not enough
-            // arguments` exit 1. Match the same terse format used for
-            // bare `kill`.
-            zwarnnam("kill", "not enough arguments");
-            return 1;
-        }
-
-        let mut status = 0;
-        for arg in &pids {
-            // Handle %job syntax
-            if let Some(spec) = arg.strip_prefix('%') {
-                let id: usize = match spec.parse() {
-                    Ok(id) => id,
-                    Err(_) => {
-                        // zsh format: `kill:1: job not found:
-                        // <name-without-%>`. zshrs's `%abc: no such
-                        // job` had the % AND wrong wording.
-                        zwarnnam("kill", &format!("job not found: {}", spec));
-                        status = 1;
-                        continue;
-                    }
-                };
-                if let Some(job) = self.jobs.get(id) {
-                    if let Err(e) = kill(Pid::from_raw(job.pid), sig) {
-                        zwarnnam("kill", &format!("{}", e));
-                        status = 1;
-                    }
-                } else {
-                    zwarnnam("kill", &format!("{}: no such job", arg));
-                    status = 1;
-                }
-            } else {
-                // Direct PID
-                let pid: u32 = match arg.parse() {
-                    Ok(p) => p,
-                    Err(_) => {
-                        // zsh: `kill -0 abc` -> `kill:1: illegal pid:
-                        // abc` exit 1. zshrs's bash-style `kill: abc:
-                        // invalid pid` had no shell-name prefix.
-                        zwarnnam("kill", &format!("illegal pid: {}", arg));
-                        status = 1;
-                        continue;
-                    }
-                };
-                if signal_zero {
-                    // `kill -0 PID` — process existence check. POSIX
-                    // doesn't define a Signal::SIG0 enum variant; call
-                    // libc::kill(pid, 0) directly.
-                    let rc = unsafe { libc::kill(pid as i32, 0) };
-                    if rc != 0 {
-                        // zsh format: `kill:1: kill PID failed:
-                        // <reason>` with the OS error message
-                        // lowercased and the `(os error N)` suffix
-                        // stripped. zshrs's `{}: {}` form was
-                        // bash-style.
-                        let err = std::io::Error::last_os_error();
-                        let raw = err.to_string();
-                        let cleaned = raw
-                            .split(" (os error")
-                            .next()
-                            .unwrap_or(&raw)
-                            .to_lowercase();
-                        zwarnnam("kill", &format!("kill {} failed: {}", pid, cleaned));
-                        status = 1;
-                    }
-                } else if let Err(e) = kill(Pid::from_raw(pid as i32), sig) {
-                    // zsh format: `kill:1: kill PID failed: <reason>`
-                    // with the OS error message lowercased and the
-                    // `(os error N)` suffix stripped. zshrs's `kill:
-                    // ESRCH: ...` printed the errno code verbatim.
-                    let raw = e.to_string();
-                    let cleaned = raw
-                        .split(':')
-                        .next_back()
-                        .unwrap_or(&raw)
-                        .trim()
-                        .to_lowercase();
-                    zwarnnam("kill", &format!("kill {} failed: {}", pid, cleaned));
-                    status = 1;
-                }
-            }
-        }
-        status
     }
     pub(crate) fn builtin_disown(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
@@ -6498,18 +5921,6 @@ impl crate::ported::exec::ShellExecutor {
             }
         }
         status
-    }
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_suspend(&self, args: &[String]) -> i32 {
-        // Canonical bin_suspend per jobs.c:3170. BUILTIN spec at
-        // jobs.c:bintab takes "-f" only.
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                argscount: 0, argsalloc: 0 };
-        for arg in args {
-            if arg == "-f" { ops.ind[b'f' as usize] = 1; }
-        }
-        crate::ported::jobs::bin_suspend("suspend", args, &ops, 0)
     }
 }
 
@@ -9379,50 +8790,11 @@ impl crate::ported::exec::ShellExecutor {
 
         0
     }
-    /// `vared` shim — parses the `"AaceghM:m:p:r:i:f:"` BUILTIN spec
-    /// from zle_main.c:2186 into a real `options` struct, then invokes
-    /// the canonical free-fn port at
-    /// crate::ported::zle::zle_main::bin_vared which matches the C
-    /// signature `bin_vared(name, args, ops, func)` exactly.
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_vared(&mut self, args: &[String]) -> i32 {
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                argscount: 0, argsalloc: 0 };
-        let mut positional: Vec<String> = Vec::new();
-        let mut i = 0;
-        while i < args.len() {
-            let a = &args[i];
-            if a == "--" { i += 1; positional.extend_from_slice(&args[i..]); break; }
-            if let Some(rest) = a.strip_prefix('-') {
-                if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
-                let chars: Vec<char> = rest.chars().collect();
-                let mut j = 0;
-                while j < chars.len() {
-                    let c = chars[j] as u8;
-                    // -M / -m / -p / -r / -i / -f all take an arg per the spec.
-                    if matches!(c, b'M' | b'm' | b'p' | b'r' | b'i' | b'f') {
-                        ops.ind[c as usize] = (ops.args.len() + 1) as u8;
-                        let rest_after = &rest[j + 1..];
-                        if !rest_after.is_empty() {
-                            ops.args.push(rest_after.to_string());
-                        } else {
-                            i += 1;
-                            ops.args.push(args.get(i).cloned().unwrap_or_default());
-                        }
-                        ops.argscount = ops.args.len() as i32;
-                        break;
-                    }
-                    if c.is_ascii_alphabetic() { ops.ind[c as usize] = 1; }
-                    j += 1;
-                }
-            } else {
-                positional.push(a.clone());
-            }
-            i += 1;
-        }
-        crate::ported::zle::zle_main::bin_vared("vared", &positional, &ops, 0)
-    }
+    // `vared` shim — parses the `"AaceghM:m:p:r:i:f:"` BUILTIN spec
+    // from zle_main.c:2186 into a real `options` struct, then invokes
+    // the canonical free-fn port at
+    // crate::ported::zle::zle_main::bin_vared which matches the C
+    // signature `bin_vared(name, args, ops, func)` exactly.
 }
 
 // =====================================================================
@@ -9431,21 +8803,18 @@ impl crate::ported::exec::ShellExecutor {
 
 impl crate::ported::exec::ShellExecutor {
     /// `cap` builtin entry. Bridge to `bin_cap()` above.
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_cap(&self, args: &[String]) -> i32 {
         let ops = crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
         bin_cap("cap", args, &ops, 0)
     }
 
     /// `getcap` builtin entry. Bridge to `bin_getcap()` above.
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_getcap(&self, args: &[String]) -> i32 {
         let ops = crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
         bin_getcap("getcap", args, &ops, 0)
     }
 
     /// `setcap` builtin entry. Bridge to `bin_setcap()` above.
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_setcap(&self, args: &[String]) -> i32 {
         let ops = crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
         bin_setcap("setcap", args, &ops, 0)
@@ -9457,55 +8826,11 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
-    /// `zpty` builtin — delegates to canonical port at
-    /// `src/ported/modules/zpty.rs:367` (`bin_zpty()` from
-    /// `Src/Modules/zpty.c`). The named-pty table lives on
-    /// `ShellExecutor` so `zpty -w NAME ...` and `zpty -r NAME` can
-    /// reach a session started by an earlier `zpty NAME ...` call.
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_zpty(&mut self, args: &[String]) -> i32 {
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut ops = options {
-            ind: [0u8; MAX_OPS], args: Vec::new(),
-            argscount: 0, argsalloc: 0,
-        };
-        let mut positional: Vec<String> = Vec::new();
-        let mut iter = args.iter();
-        let mut argi: usize = 0;
-        while let Some(arg) = iter.next() {
-            match arg.as_str() {
-                "-d" => ops.ind[b'd' as usize] = 1,
-                "-L" => ops.ind[b'L' as usize] = 1,
-                "-w" => ops.ind[b'w' as usize] = 1,
-                "-r" => {
-                    if let Some(s) = iter.next() {
-                        argi += 1;
-                        ops.ind[b'r' as usize] = ((argi << 2) | 1) as u8;
-                        ops.args.push(s.clone());
-                    }
-                }
-                "-e" => ops.ind[b'e' as usize] = 1,
-                "-t" => ops.ind[b't' as usize] = 1,
-                "-b" => ops.ind[b'b' as usize] = 1,
-                "-m" => {
-                    if let Some(s) = iter.next() {
-                        argi += 1;
-                        ops.ind[b'm' as usize] = ((argi << 2) | 1) as u8;
-                        ops.args.push(s.clone());
-                    }
-                }
-                "-T" => {
-                    if let Some(s) = iter.next() {
-                        argi += 1;
-                        ops.ind[b'T' as usize] = ((argi << 2) | 1) as u8;
-                        ops.args.push(s.clone());
-                    }
-                }
-                _ => positional.push(arg.clone()),
-            }
-        }
-        crate::zpty::bin_zpty("zpty", &positional, &ops, 0)
-    }
+    // `zpty` builtin — delegates to canonical port at
+    // `src/ported/modules/zpty.rs:367` (`bin_zpty()` from
+    // `Src/Modules/zpty.c`). The named-pty table lives on
+    // `ShellExecutor` so `zpty -w NAME ...` and `zpty -r NAME` can
+    // reach a session started by an earlier `zpty NAME ...` call.
 }
 
 // =====================================================================
@@ -9519,7 +8844,6 @@ impl crate::ported::exec::ShellExecutor {
     /// previous shim mapped terminfo→termcap and routed through
     /// bin_echotc; the canonical port now calls libcurses tigetstr/
     /// tigetnum/tigetflag + tparm directly per the C source.
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_echoti(&mut self, args: &[String]) -> i32 {
         use crate::ported::zsh_h::{options, MAX_OPS};
         let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
@@ -9533,23 +8857,13 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
-    /// `log` builtin — delegates to canonical port at
-    /// `src/ported/modules/watch.rs` (`bin_log()` from
-    /// `Src/Modules/watch.c`). The watch state lives in
-    /// `thread_local!`s in the canonical port (mirroring C's
-    /// `Src/Modules/watch.c:150-156` file-statics) so login/logout
-    /// edge detection survives across calls without a struct on
-    /// `ShellExecutor`.
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_log(&mut self, _args: &[String]) -> i32 {
-        let user = std::env::var("USER").unwrap_or_default();
-        let fmt = crate::ported::params::getsparam("WATCHFMT");
-        let output = crate::watch::bin_log(&user, fmt.as_deref());
-        if !output.is_empty() {
-            print!("{}", output);
-        }
-        0
-    }
+    // `log` builtin — delegates to canonical port at
+    // `src/ported/modules/watch.rs` (`bin_log()` from
+    // `Src/Modules/watch.c`). The watch state lives in
+    // `thread_local!`s in the canonical port (mirroring C's
+    // `Src/Modules/watch.c:150-156` file-statics) so login/logout
+    // edge detection survives across calls without a struct on
+    // `ShellExecutor`.
 }
 
 // =====================================================================
@@ -9557,88 +8871,19 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
-    /// `pcre_compile` builtin — delegates to canonical port at
-    /// `src/ported/modules/pcre.rs` (`bin_pcre_compile()` from
-    /// `Src/Modules/pcre.c:70`). Builds an `options` struct from the
-    /// `-a/-i/-m/-s/-x` flags so the canonical port reads them via
-    /// `OPT_ISSET` exactly like C does.
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_pcre_compile(&mut self, args: &[String]) -> i32 {
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                argscount: 0, argsalloc: 0 };
-        let mut positional: Vec<String> = Vec::new();
-        for arg in args {
-            match arg.as_str() {
-                "-a" => ops.ind[b'a' as usize] = 1,
-                "-i" => ops.ind[b'i' as usize] = 1,
-                "-m" => ops.ind[b'm' as usize] = 1,
-                "-s" => ops.ind[b's' as usize] = 1,
-                "-x" => ops.ind[b'x' as usize] = 1,
-                s if !s.starts_with('-') => positional.push(s.to_string()),
-                _ => {}
-            }
-        }
-        crate::pcre::bin_pcre_compile("pcre_compile", &positional, &ops, 0)
-    }
-    /// `pcre_match` builtin — delegates to canonical port at
-    /// `src/ported/modules/pcre.rs` (`bin_pcre_match()` from
-    /// `Src/Modules/pcre.c:328`). Builds the `options` struct from
-    /// `-v`/`-a` argv (matching C's OPT_ARG reads) and writes the
-    /// returned capture data into the executor's variable/array
-    /// tables — that side-effect cannot live in the canonical port
-    /// because it doesn't own those tables.
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_pcre_match(&mut self, args: &[String]) -> i32 {
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                argscount: 0, argsalloc: 0 };
-        let mut var_name = "MATCH".to_string();
-        let mut array_name = "match".to_string();
-        let mut positional: Vec<String> = Vec::new();
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "-v" => {
-                    i += 1;
-                    if i < args.len() {
-                        var_name = args[i].clone();
-                        ops.ind[b'v' as usize] = 1;
-                        ops.args.push(var_name.clone());
-                    }
-                }
-                "-a" => {
-                    i += 1;
-                    if i < args.len() {
-                        array_name = args[i].clone();
-                        ops.ind[b'a' as usize] = 1;
-                        ops.args.push(array_name.clone());
-                    }
-                }
-                s if !s.starts_with('-') => positional.push(s.to_string()),
-                _ => {}
-            }
-            i += 1;
-        }
-        let (status, full_match, captures) =
-            crate::pcre::bin_pcre_match("pcre_match", &positional, &ops, 0);
-        if status == 0 {
-            if let Some(m) = full_match {
-                self.set_scalar(var_name, m);
-            }
-            let matches: Vec<String> = captures.into_iter().flatten().collect();
-            self.set_array(array_name, matches);
-        }
-        status
-    }
-    /// pcre_study - optimize compiled PCRE (no-op in Rust regex)
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_pcre_study(&mut self, _args: &[String]) -> i32 {
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                            argscount: 0, argsalloc: 0 };
-        crate::pcre::bin_pcre_study("pcre_study", &[], &ops, 0)
-    }
+    // `pcre_compile` builtin — delegates to canonical port at
+    // `src/ported/modules/pcre.rs` (`bin_pcre_compile()` from
+    // `Src/Modules/pcre.c:70`). Builds an `options` struct from the
+    // `-a/-i/-m/-s/-x` flags so the canonical port reads them via
+    // `OPT_ISSET` exactly like C does.
+    // `pcre_match` builtin — delegates to canonical port at
+    // `src/ported/modules/pcre.rs` (`bin_pcre_match()` from
+    // `Src/Modules/pcre.c:328`). Builds the `options` struct from
+    // `-v`/`-a` argv (matching C's OPT_ARG reads) and writes the
+    // returned capture data into the executor's variable/array
+    // tables — that side-effect cannot live in the canonical port
+    // because it doesn't own those tables.
+    // pcre_study - optimize compiled PCRE (no-op in Rust regex)
 }
 
 // =====================================================================
@@ -9646,45 +8891,6 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_ztcp(&mut self, args: &[String]) -> i32 {
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                argscount: 0, argsalloc: 0 };
-        let mut positional: Vec<String> = Vec::new();
-        let mut i = 0;
-        while i < args.len() {
-            let a = &args[i];
-            if a == "--" { i += 1; positional.extend_from_slice(&args[i..]); break; }
-            if let Some(rest) = a.strip_prefix('-') {
-                if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
-                let chars: Vec<char> = rest.chars().collect();
-                let mut j = 0;
-                while j < chars.len() {
-                    let c = chars[j] as u8;
-                    if c == b'd' {
-                        // -d takes an arg: rest of token, or next argv.
-                        ops.ind[c as usize] = (ops.args.len() + 1) as u8;
-                        let rest_after = &rest[j + 1..];
-                        if !rest_after.is_empty() {
-                            ops.args.push(rest_after.to_string());
-                        } else {
-                            i += 1;
-                            ops.args.push(args.get(i).cloned().unwrap_or_default());
-                        }
-                        ops.argscount = ops.args.len() as i32;
-                        break;
-                    }
-                    if c.is_ascii_alphabetic() { ops.ind[c as usize] = 1; }
-                    j += 1;
-                }
-            } else {
-                positional.push(a.clone());
-            }
-            i += 1;
-        }
-        bin_ztcp("ztcp", &positional, &ops, 0)
-    }
 }
 
 // =====================================================================
@@ -9692,125 +8898,13 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
-    /// Tie a parameter to a GDBM database
-    /// Usage: ztie -d db/gdbm -f /path/to/db.gdbm [-r] PARAM_NAME
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_ztie(&mut self, args: &[String]) -> i32 {
-        let mut db_type: Option<String> = None;
-        let mut file_path: Option<String> = None;
-        let mut readonly = false;
-        let mut param_args: Vec<String> = Vec::new();
-
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "-d" => {
-                    if i + 1 < args.len() {
-                        db_type = Some(args[i + 1].clone());
-                        i += 2;
-                    } else {
-                        zwarnnam("ztie", "-d requires an argument");
-                        return 1;
-                    }
-                }
-                "-f" => {
-                    if i + 1 < args.len() {
-                        file_path = Some(args[i + 1].clone());
-                        i += 2;
-                    } else {
-                        zwarnnam("ztie", "-f requires an argument");
-                        return 1;
-                    }
-                }
-                "-r" => {
-                    readonly = true;
-                    i += 1;
-                }
-                arg if arg.starts_with('-') => {
-                    zwarnnam("ztie", &format!("bad option: {}", arg));
-                    return 1;
-                }
-                _ => {
-                    param_args.push(args[i].clone());
-                    i += 1;
-                }
-            }
-        }
-
-        // Build the canonical `options` struct from the parsed flags
-        // so `bin_ztie` (the C-faithful free fn) can read via OPT_ISSET
-        // / OPT_ARG just like the C source.
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
-        if readonly { ops.ind[b'r' as usize] = 1; }
-        if let Some(d) = db_type {
-            ops.ind[b'd' as usize] = (1 + ((ops.args.len() as u8 + 1) << 2)) | 1;
-            ops.args.push(d);
-        }
-        if let Some(f) = file_path {
-            ops.ind[b'f' as usize] = (1 + ((ops.args.len() as u8 + 1) << 2)) | 1;
-            ops.args.push(f);
-        }
-        crate::ported::modules::db_gdbm::bin_ztie("ztie", &param_args, &ops, 0)
-    }
-    /// Untie a parameter from its GDBM database
-    /// Usage: zuntie [-u] PARAM_NAME...
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_zuntie(&mut self, args: &[String]) -> i32 {
-        use crate::ported::zsh_h::{options, MAX_OPS};
-
-        let mut force_unset = false;
-        let mut param_args: Vec<String> = Vec::new();
-
-        for arg in args {
-            match arg.as_str() {
-                "-u" => force_unset = true,
-                a if a.starts_with('-') => {
-                    zwarnnam("zuntie", &format!("bad option: {}", a));
-                    return 1;
-                }
-                _ => param_args.push(arg.clone()),
-            }
-        }
-
-        if param_args.is_empty() {
-            zwarnnam("zuntie", "not enough arguments");
-            return 1;
-        }
-
-        // Build canonical `&options` from -u flag, then dispatch to the
-        // C-faithful free fn.
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
-        if force_unset { ops.ind[b'u' as usize] = 1; }
-        crate::ported::modules::db_gdbm::bin_zuntie("zuntie", &param_args, &ops, 0)
-    }
-    /// Get the path of a tied GDBM database
-    /// Usage: zgdbmpath PARAM_NAME
-    /// Sets $REPLY to the path
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_zgdbmpath(&mut self, args: &[String]) -> i32 {
-        use crate::ported::zsh_h::{options, MAX_OPS};
-
-        // Build empty `&options` (zgdbmpath takes no flags), dispatch
-        // to the C-faithful free fn. The free fn writes the path to
-        // stdout (degraded $REPLY equivalent until params globalize);
-        // bridge captures it into the executor's REPLY map.
-        let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
-
-        // Capture the path before dispatching so we can ALSO populate
-        // the executor REPLY (the free fn's println is the diagnostic
-        // form for non-bridged callers).
-        if let Some(pmname) = args.first() {
-            if let Ok(p) = crate::ported::modules::db_gdbm::TIED_PARAMS.lock() {
-                if let Some(tied) = p.get(pmname) {
-                    let path = tied.db.path().to_string_lossy().to_string();
-                    self.set_scalar("REPLY".to_string(), path.clone());
-                    std::env::set_var("REPLY", &path);
-                }
-            }
-        }
-        crate::ported::modules::db_gdbm::bin_zgdbmpath("zgdbmpath", args, &ops, 0)
-    }
+    // Tie a parameter to a GDBM database
+    // Usage: ztie -d db/gdbm -f /path/to/db.gdbm [-r] PARAM_NAME
+    // Untie a parameter from its GDBM database
+    // Usage: zuntie [-u] PARAM_NAME...
+    // Get the path of a tied GDBM database
+    // Usage: zgdbmpath PARAM_NAME
+    // Sets $REPLY to the path
 }
 
 // =====================================================================
@@ -9818,14 +8912,8 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
-    /// `echotc` builtin shim — adapts `&[String]` argv to
-    /// `bin_echotc` over a `[bool; 256]` ops bitmask.
-    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
-    pub(crate) fn bin_echotc(&mut self, args: &[String]) -> i32 {
-        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-        let ops = [false; 256];
-        bin_echotc("echotc", &argv, &ops)
-    }
+    // `echotc` builtin shim — adapts `&[String]` argv to
+    // `bin_echotc` over a `[bool; 256]` ops bitmask.
 }
 
 // (FAKE `magic_assoc_keys` deleted per user instruction. Callers

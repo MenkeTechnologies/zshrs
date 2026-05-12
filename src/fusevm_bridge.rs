@@ -128,6 +128,27 @@ where
 
 
 
+
+/// Look up a canonical builtin by name in `BUILTINS` and dispatch
+/// via `execbuiltin` (Src/builtin.c:250). Mirrors the C pattern
+/// `bn = gethashnode2(builtintab, name); execbuiltin(args, redirs,
+/// bn)`. Returns 1 if no such builtin or if the handler is wired
+/// to None (legacy stub entry — the wrapper on ShellExecutor still
+/// covers those until their handler is wired into BUILTINS).
+pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
+    let bn_idx = crate::ported::builtin::BUILTINS.iter()
+        .position(|b| b.node.nam == name);
+    if let Some(idx) = bn_idx {
+        let bn_static: &'static crate::ported::zsh_h::builtin =
+            &crate::ported::builtin::BUILTINS[idx];
+        let bn_ptr = bn_static as *const _ as *mut _;
+        crate::ported::builtin::execbuiltin(args, Vec::new(), bn_ptr)
+    } else {
+        1
+    }
+}
+
+
 /// Register all zsh builtins with the VM.
 pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     use fusevm::shell_builtins::*;
@@ -156,7 +177,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(s) = try_user_fn_override("cd", &args) {
             return Value::Status(s);
         }
-        let status = with_executor(|exec| exec.bin_cd(&args));
+        let status = dispatch_builtin("cd", args);
         Value::Status(status)
     });
 
@@ -188,7 +209,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(s);
         }
         crate::ported::params::set_zunderscore(&args);
-        let status = with_executor(|exec| exec.bin_print(&args));
+        let status = dispatch_builtin("print", args);
         Value::Status(status)
     });
 
@@ -209,19 +230,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_UNSET, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_unset(&args));
+        let status = dispatch_builtin("unset", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_SOURCE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_dot(&args));
+        let status = dispatch_builtin("dot", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_EXIT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_break("exit", &args));
+        let status = dispatch_builtin("exit", args);
         Value::Status(status)
     });
 
@@ -234,12 +255,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // statement boundaries, not after each VM op), so read
         // the live `vm.last_status` instead.
         let live_status = vm.last_status;
-        let status = with_executor(|exec| {
-            // Sync executor.last_status to the VM's view BEFORE
+        let status = {
+            // Sync canonical LASTVAL to the VM's view BEFORE
             // bin_break("return") reads it for the no-arg fallback.
-            exec.set_last_status(live_status);
-            exec.bin_break("return", &args)
-        });
+            with_executor(|exec| exec.set_last_status(live_status));
+            dispatch_builtin("return", args)
+        };
         Value::Status(status)
     });
 
@@ -282,7 +303,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_TEST, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_test(&args));
+        let status = dispatch_builtin("test", args);
         Value::Status(status)
     });
 
@@ -342,19 +363,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Control flow
     vm.register_builtin(BUILTIN_BREAK, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_break("break", &args));
+        let status = dispatch_builtin("break", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_CONTINUE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_break("continue", &args));
+        let status = dispatch_builtin("continue", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_SHIFT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_shift(&args));
+        let status = dispatch_builtin("shift", args);
         Value::Status(status)
     });
 
@@ -387,7 +408,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_LET, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_let(&args));
+        let status = dispatch_builtin("let", args);
         Value::Status(status)
     });
 
@@ -400,7 +421,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_FG, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_fg(&args));
+        let status = dispatch_builtin("fg", args);
         Value::Status(status)
     });
 
@@ -412,7 +433,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_KILL, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_kill(&args));
+        let status = dispatch_builtin("kill", args);
         Value::Status(status)
     });
 
@@ -430,7 +451,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_SUSPEND, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_suspend(&args));
+        let status = dispatch_builtin("suspend", args);
         Value::Status(status)
     });
 
@@ -441,14 +462,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // the canonical port at `src/ported/builtin.rs`.
     vm.register_builtin(BUILTIN_FC, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_fc(&args));
+        let status = dispatch_builtin("fc", args);
         Value::Status(status)
     });
 
     // Aliases
     vm.register_builtin(BUILTIN_ALIAS, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_alias(&args));
+        let status = dispatch_builtin("alias", args);
         Value::Status(status)
     });
 
@@ -457,7 +478,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Options
     vm.register_builtin(BUILTIN_SET, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_set(&args));
+        let status = dispatch_builtin("set", args);
         Value::Status(status)
     });
 
@@ -491,13 +512,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_EMULATE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_emulate(&args));
+        let status = dispatch_builtin("emulate", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_GETOPTS, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_getopts(&args));
+        let status = dispatch_builtin("getopts", args);
         Value::Status(status)
     });
 
@@ -505,14 +526,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // stubs. `bin_functions` stays — wired to the canonical port.
     vm.register_builtin(BUILTIN_FUNCTIONS, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_functions(&args));
+        let status = dispatch_builtin("functions", args);
         Value::Status(status)
     });
 
     // Traps
     vm.register_builtin(BUILTIN_TRAP, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_trap(&args));
+        let status = dispatch_builtin("trap", args);
         Value::Status(status)
     });
 
@@ -520,7 +541,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // `bin_dirs` stays — wired to the canonical port.
     vm.register_builtin(BUILTIN_DIRS, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_dirs(&args));
+        let status = dispatch_builtin("dirs", args);
         Value::Status(status)
     });
 
@@ -528,45 +549,33 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // (canonical port at `src/ported/builtin.rs:3734` of
     // `Src/builtin.c:3975`). Each gets its own opcode so funcid +
     // defopts come from the BUILTINS table entry — execbuiltin
-    // applies them correctly.
-    fn whence_via_execbuiltin(name: &str, args: Vec<String>) -> i32 {
-        let bn_idx = crate::ported::builtin::BUILTINS.iter()
-            .position(|b| b.node.nam == name);
-        if let Some(idx) = bn_idx {
-            let bn_static: &'static crate::ported::zsh_h::builtin =
-                &crate::ported::builtin::BUILTINS[idx];
-            let bn_ptr = bn_static as *const _ as *mut _;
-            crate::ported::builtin::execbuiltin(args, Vec::new(), bn_ptr)
-        } else {
-            1
-        }
-    }
+    // applies them correctly via the module-level dispatch_builtin.
     vm.register_builtin(BUILTIN_WHENCE, |vm, argc| {
         let args = pop_args(vm, argc);
-        Value::Status(whence_via_execbuiltin("whence", args))
+        Value::Status(dispatch_builtin("whence", args))
     });
     vm.register_builtin(BUILTIN_TYPE, |vm, argc| {
         let args = pop_args(vm, argc);
-        Value::Status(whence_via_execbuiltin("type", args))
+        Value::Status(dispatch_builtin("type", args))
     });
     vm.register_builtin(BUILTIN_WHICH, |vm, argc| {
         let args = pop_args(vm, argc);
-        Value::Status(whence_via_execbuiltin("which", args))
+        Value::Status(dispatch_builtin("which", args))
     });
     vm.register_builtin(BUILTIN_WHERE, |vm, argc| {
         let args = pop_args(vm, argc);
-        Value::Status(whence_via_execbuiltin("where", args))
+        Value::Status(dispatch_builtin("where", args))
     });
 
     vm.register_builtin(BUILTIN_HASH, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_hash("hash", &args));
+        let status = dispatch_builtin("hash", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_REHASH, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_hash("rehash", &args));
+        let status = dispatch_builtin("rehash", args);
         Value::Status(status)
     });
 
@@ -653,7 +662,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Zsh-specific
     vm.register_builtin(BUILTIN_ZSTYLE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_zstyle(&args));
+        let status = dispatch_builtin("zstyle", args);
         Value::Status(status)
     });
 
@@ -677,7 +686,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_VARED, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_vared(&args));
+        let status = dispatch_builtin("vared", args);
         Value::Status(status)
     });
 
@@ -695,7 +704,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ZPARSEOPTS, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_zparseopts(&args));
+        let status = dispatch_builtin("zparseopts", args);
         Value::Status(status)
     });
 
@@ -726,14 +735,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_UMASK, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_umask(&args));
+        let status = dispatch_builtin("umask", args);
         Value::Status(status)
     });
 
     // Misc
     vm.register_builtin(BUILTIN_TIMES, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_times(&args));
+        let status = dispatch_builtin("times", args);
         Value::Status(status)
     });
 
@@ -751,13 +760,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ENABLE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_enable("enable", &args));
+        let status = dispatch_builtin("enable", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_DISABLE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_enable("disable", &args));
+        let status = dispatch_builtin("disable", args);
         Value::Status(status)
     });
 
@@ -765,7 +774,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_TTYCTL, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_ttyctl(&args));
+        let status = dispatch_builtin("ttyctl", args);
         Value::Status(status)
     });
 
@@ -859,38 +868,38 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // PCRE
     vm.register_builtin(BUILTIN_PCRE_COMPILE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_pcre_compile(&args));
+        let status = dispatch_builtin("pcre_compile", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_PCRE_MATCH, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_pcre_match(&args));
+        let status = dispatch_builtin("pcre_match", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_PCRE_STUDY, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_pcre_study(&args));
+        let status = dispatch_builtin("pcre_study", args);
         Value::Status(status)
     });
 
     // Database (GDBM)
     vm.register_builtin(BUILTIN_ZTIE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_ztie(&args));
+        let status = dispatch_builtin("ztie", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_ZUNTIE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_zuntie(&args));
+        let status = dispatch_builtin("zuntie", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_ZGDBMPATH, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_zgdbmpath(&args));
+        let status = dispatch_builtin("zgdbmpath", args);
         Value::Status(status)
     });
 
@@ -9786,11 +9795,11 @@ impl crate::ported::exec::ShellExecutor {
         // to spawn a non-existent binary.
         match cmd.as_str() {
             "sched" => return self.bin_sched(&rest_vec),
-            "echotc" => return self.bin_echotc(&rest_vec),
-            "echoti" => return self.bin_echoti(&rest_vec),
+            "echotc" => return crate::fusevm_bridge::dispatch_builtin("echotc", rest_vec.clone()),
+            "echoti" => return crate::fusevm_bridge::dispatch_builtin("echoti", rest_vec.clone()),
             // "getln" handler deleted with its stub.
-            "zpty" => return self.bin_zpty(&rest_vec),
-            "ztcp" => return self.bin_ztcp(&rest_vec),
+            "zpty" => return crate::fusevm_bridge::dispatch_builtin("zpty", rest_vec.clone()),
+            "ztcp" => return crate::fusevm_bridge::dispatch_builtin("ztcp", rest_vec.clone()),
             "zsocket" => {
                 // Shim — parses the BUILTIN spec "ad:ltv" from
                 // socket.c:276 into a real `options` struct, then
@@ -9849,8 +9858,8 @@ impl crate::ported::exec::ShellExecutor {
                 return crate::modules::param_private::bin_private("private",
                     &rest_vec, &mut ops, 0, &mut assigns);
             }
-            "zformat" => return self.bin_zformat(&rest_vec),
-            "zregexparse" => return self.bin_zregexparse(&rest_vec),
+            "zformat" => return crate::fusevm_bridge::dispatch_builtin("zformat", rest_vec.clone()),
+            "zregexparse" => return crate::fusevm_bridge::dispatch_builtin("zregexparse", rest_vec.clone()),
             // `unalias`/`unhash`/`unfunction` share `bin_unhash` but
             // each carries its own funcid (BIN_UNALIAS / BIN_UNHASH /
             // BIN_UNFUNCTION) in the BUILTINS table. Route through
@@ -9890,9 +9899,9 @@ impl crate::ported::exec::ShellExecutor {
                 return crate::ported::modules::zselect::bin_zselect(
                     "zselect", &rest_vec, &ops, 0);
             }
-            "cap" => return self.bin_cap(&rest_vec),
-            "getcap" => return self.bin_getcap(&rest_vec),
-            "setcap" => return self.bin_setcap(&rest_vec),
+            "cap" => return crate::fusevm_bridge::dispatch_builtin("cap", rest_vec.clone()),
+            "getcap" => return crate::fusevm_bridge::dispatch_builtin("getcap", rest_vec.clone()),
+            "setcap" => return crate::fusevm_bridge::dispatch_builtin("setcap", rest_vec.clone()),
             "yes" => return self.builtin_yes(&rest_vec),
             "nl" => return self.builtin_nl(&rest_vec),
             "env" => return self.builtin_env(&rest_vec),
