@@ -37,7 +37,7 @@ impl crate::ported::exec::ShellExecutor {
         }
         // `<hook>_functions` array — zsh stdlib + add-zsh-hook idiom.
         let array_name = format!("{}_functions", hook_name);
-        if let Some(funcs) = self.arrays.get(&array_name).cloned() {
+        if let Some(funcs) = self.array(&array_name) {
             for func_name in funcs {
                 invoke(self, &func_name);
             }

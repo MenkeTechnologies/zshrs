@@ -90,14 +90,22 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
             } else {
                 Vec::new()
             };
-        if !scalar_entries.is_empty() || !exec.arrays.is_empty() || !exec.assoc_arrays.is_empty() {
+        let array_entries: Vec<(String, Vec<String>)> =
+            if let Ok(tab) = crate::ported::params::paramtab().lock() {
+                tab.iter()
+                    .filter_map(|(k, pm)| pm.u_arr.clone().map(|a| (k.clone(), a)))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        if !scalar_entries.is_empty() || !array_entries.is_empty() || !exec.assoc_arrays.is_empty() {
             let mut params = serde_json::Map::new();
             for (k, v) in scalar_entries {
                 params.insert(k, Value::String(v));
             }
-            for (k, v) in &exec.arrays {
+            for (k, v) in array_entries {
                 params.insert(
-                    k.clone(),
+                    k,
                     Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
                 );
             }

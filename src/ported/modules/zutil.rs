@@ -1128,7 +1128,7 @@ pub fn bin_zparseopts(nam: &str, args: &[String],                             //
         if params_src == "argv" {
             exec.pparams()
         } else {
-            exec.arrays.get(&params_src).cloned().unwrap_or_default()
+            exec.array(&params_src).unwrap_or_default()
         }
     });
 

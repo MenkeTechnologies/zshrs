@@ -264,7 +264,6 @@ pub enum LoopSignal {
 /// line 1084 — captures everything that must be replaced when a
 /// `(...)` group fires.
 pub struct SubshellSnapshot {
-    pub arrays: HashMap<String, Vec<String>>,
     pub assoc_arrays: HashMap<String, IndexMap<String, String>>,
     /// Snapshot of `paramtab` (the C-canonical parameter store) at
     /// subshell entry. Step 1 of the unification mirrors writes to
@@ -370,7 +369,6 @@ pub struct ShellExecutor {
     /// shell on any unmatched glob even with multi-statement input.
     /// `Cell` because the no-match site only has a `&self` borrow.
     pub current_command_glob_failed: std::cell::Cell<bool>,
-    pub arrays: HashMap<String, Vec<String>>,
     pub assoc_arrays: HashMap<String, IndexMap<String, String>>, // zsh associative arrays (insertion-ordered, mirrors zsh hashtable hnodes)
     pub jobs: JobTable,
     pub fpath: Vec<PathBuf>,
@@ -684,11 +682,10 @@ impl ShellExecutor {
             .store(status, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Set an indexed array parameter. Mirrors to paramtab via
-    /// `setaparam` (`Src/params.c:3595`).
-    pub(crate) fn set_array(&mut self, name: String, value: Vec<String>) {
-        crate::ported::params::setaparam(&name, value.clone());              // c:params.c:3595
-        self.arrays.insert(name, value);
+    /// Set an indexed array parameter via canonical paramtab
+    /// (`setaparam`, `Src/params.c:3595`). The single store.
+    pub fn set_array(&mut self, name: String, value: Vec<String>) {
+        crate::ported::params::setaparam(&name, value);                      // c:params.c:3595
     }
 
     /// Set an associative array parameter. Mirrors to paramtab via
@@ -712,24 +709,14 @@ impl ShellExecutor {
         crate::ported::params::getsparam(name)
     }
 
-    /// Read an array parameter. Mirrors C `getaparam` at
-    /// `Src/params.c:3100` — `paramtab->getnode(s)` then
-    /// `pm->u.arr.clone()`. Returns an owned `Vec<String>` because
-    /// paramtab access requires a mutex lock that can't outlive the
-    /// returned borrow.
-    ///
-    /// Reads paramtab first (canonical), then falls back to the
-    /// `self.arrays` cache for entries that were written through the
-    /// fusevm-side `entry().or_insert_with` mutation paths (those
-    /// don't yet write through to paramtab). When all writers go
-    /// through `set_array`, the cache becomes dead.
+    /// Read an array parameter from canonical paramtab. Mirrors C
+    /// `getaparam` at `Src/params.c:3100` — `paramtab->getnode(s)`
+    /// then `pm->u.arr.clone()`. Returns an owned `Vec<String>`.
     pub fn array(&self, name: &str) -> Option<Vec<String>> {
-        if let Ok(tab) = crate::ported::params::paramtab().lock() {
-            if let Some(v) = tab.get(name).and_then(|pm| pm.u_arr.clone()) {
-                return Some(v);
-            }
-        }
-        self.arrays.get(name).cloned()
+        crate::ported::params::paramtab()
+            .lock()
+            .ok()
+            .and_then(|t| t.get(name).and_then(|pm| pm.u_arr.clone()))
     }
 
     /// Read an associative array parameter. Mirrors C `gethparam` at
@@ -754,6 +741,24 @@ impl ShellExecutor {
         crate::ported::params::getsparam(name).is_some()
     }
 
+    /// Test whether an array parameter exists in paramtab.
+    pub fn has_array(&self, name: &str) -> bool {
+        crate::ported::params::paramtab()
+            .lock()
+            .ok()
+            .and_then(|t| t.get(name).map(|pm| pm.u_arr.is_some()))
+            .unwrap_or(false)
+    }
+
+    /// Unset an array parameter. Direct port of `unsetparam_pm` for
+    /// a PM_ARRAY Param. Mirrors are kept for now while the field
+    /// transitions.
+    pub fn unset_array(&mut self, name: &str) {
+        if let Some(tab) = crate::ported::params::paramtab().lock().ok().as_deref_mut() {
+            tab.remove(name);
+        }
+    }
+
     /// Unset a scalar parameter from canonical paramtab. Narrower
     /// than `unset_var` which clears arrays + assocs too. Direct
     /// port of `Src/params.c:unsetparam_pm` for a scalar PM_TYPE.
@@ -770,7 +775,6 @@ impl ShellExecutor {
     /// just one type pass through this single entry so paramtab and
     /// the HashMaps don't drift apart.
     pub(crate) fn unset_var(&mut self, name: &str) {
-        self.arrays.remove(name);
         self.assoc_arrays.remove(name);
         if let Some(tab) = crate::ported::params::paramtab().lock().ok().as_deref_mut() {
             tab.remove(name);                                                // c:params.c:3900 paramtab removenode
@@ -945,6 +949,15 @@ impl ShellExecutor {
         // init so the canonical port owns the default-alias set; the
         // Executor's `aliases` HashMap then mirrors aliastab.
         crate::ported::hashtable::createaliastables();
+        // Build the initial $path tied array as a local — fans out
+        // to paramtab below; no ShellExecutor mirror anymore.
+        let mut arrays: HashMap<String, Vec<String>> = HashMap::new();
+        let path_dirs: Vec<String> = env::var("PATH")
+            .unwrap_or_default()
+            .split(':')
+            .map(|s| s.to_string())
+            .collect();
+        arrays.insert("path".to_string(), path_dirs);
         let mut exec = Self {
             aliases: {
                 // Mirror the canonical aliastab (the C-port single
@@ -967,17 +980,6 @@ impl ShellExecutor {
             subshell_snapshots: Vec::new(),
             inline_env_stack: Vec::new(),
             current_command_glob_failed: std::cell::Cell::new(false),
-            arrays: {
-                let mut a = HashMap::new();
-                // $path mirrors $PATH (tied array)
-                let path_dirs: Vec<String> = env::var("PATH")
-                    .unwrap_or_default()
-                    .split(':')
-                    .map(|s| s.to_string())
-                    .collect();
-                a.insert("path".to_string(), path_dirs);
-                a
-            },
             // `terminfo` and `termcap` are NOT pre-seeded into
             // `assoc_arrays` — `magic_assoc_lookup` handles them
             // lazily via ncurses (tigetstr/tgetstr) so ANY cap name
@@ -1157,7 +1159,7 @@ impl ShellExecutor {
         for (k, v) in &variables {
             crate::ported::params::setsparam(k, v);                          // c:params.c:3350
         }
-        for (k, v) in &exec.arrays {
+        for (k, v) in &arrays {
             crate::ported::params::setaparam(k, v.clone());                  // c:params.c:3595
         }
         for (k, v) in &exec.assoc_arrays {
@@ -1469,7 +1471,7 @@ impl ShellExecutor {
                         self.set_array(arr_name, items);
                     }
                     None => {
-                        self.arrays.remove(&arr_name);
+                        self.unset_array(&arr_name);
                     }
                 }
             }
@@ -3323,7 +3325,6 @@ impl crate::ported::exec::ShellExecutor {
                         } else {
                             std::collections::BTreeSet::new()
                         };
-                    names.extend(self.arrays.keys().cloned());
                     names.extend(self.assoc_arrays.keys().cloned());
                     let v: Vec<String> = names.into_iter().collect();
                     return Some(v.join(" "));
@@ -3360,7 +3361,7 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 if self.assoc_arrays.contains_key(key) {
                     Some("association".to_string())
-                } else if self.arrays.contains_key(key) {
+                } else if self.has_array(key) {
                     Some("array".to_string())
                 } else if self.has_scalar(key) || std::env::var(key).is_ok() {
                     Some("scalar".to_string())
@@ -3705,7 +3706,7 @@ impl crate::ported::exec::ShellExecutor {
             // and definition tracking) which we don't yet wire; emit
             // empty for those until they're populated.
             "funcstack" => {
-                if let Some(stack) = self.arrays.get("funcstack") {
+                if let Some(stack) = self.array("funcstack") {
                     if key == "@" || key == "*" {
                         return Some(stack.join(" "));
                     }
@@ -3724,7 +3725,7 @@ impl crate::ported::exec::ShellExecutor {
                 // synthesize from funcstack with a `:0` placeholder
                 // line. This still lets scripts that test
                 // `[[ -n $functrace[1] ]]` work without false-empty.
-                if let Some(stack) = self.arrays.get("funcstack") {
+                if let Some(stack) = self.array("funcstack") {
                     let synth: Vec<String> = stack.iter().map(|n| format!("{}:0", n)).collect();
                     if key == "@" || key == "*" {
                         return Some(synth.join(" "));
@@ -4209,7 +4210,7 @@ impl crate::ported::exec::ShellExecutor {
                             None
                         }
                     })
-                    .or_else(|| self.arrays.get(name).map(|a| a.join(" ")))
+                    .or_else(|| self.array(name).map(|a| a.join(" ")))
                     .or_else(|| {
                         self.assoc_arrays.get(name).map(|h| {
                             if h.is_empty() {
@@ -4286,7 +4287,7 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 if name_end > name_start {
                     let name: String = bytes[name_start..name_end].iter().collect();
-                    let count = if let Some(arr) = self.arrays.get(&name) {
+                    let count = if let Some(arr) = self.array(&name) {
                         arr.len()
                     } else if let Some(assoc) = self.assoc_arrays.get(&name) {
                         assoc.len()
@@ -4360,7 +4361,7 @@ impl crate::ported::exec::ShellExecutor {
                 } else if name == "@" || name == "*" {
                     let pos = self.pparams();
                     getarg(trimmed_key, Some(&pos), None, None)
-                } else if let Some(arr) = self.arrays.get(&name).cloned() {
+                } else if let Some(arr) = self.array(&name) {
                     getarg(trimmed_key, Some(&arr), None, None)
                 } else if let Some(ref s) = scalar_val {
                     getarg(trimmed_key, None, None, Some(s.as_str()))
@@ -4396,7 +4397,7 @@ impl crate::ported::exec::ShellExecutor {
                 } else {
                     "0".to_string()
                 }
-            } else if let Some(arr) = self.arrays.get(&name) {
+            } else if let Some(arr) = self.array(&name) {
                 if let Ok(idx) = key_str.trim().parse::<i64>() {
                     let len = arr.len() as i64;
                     let pos = if idx < 0 { len + idx } else { idx - 1 };
@@ -4513,7 +4514,7 @@ impl crate::ported::exec::ShellExecutor {
                         } else if name == "@" || name == "*" {
                             let pos = self.pparams();
                             getarg(trimmed_key, Some(&pos), None, None)
-                        } else if let Some(arr) = self.arrays.get(&name).cloned() {
+                        } else if let Some(arr) = self.array(&name) {
                             getarg(trimmed_key, Some(&arr), None, None)
                         } else if let Some(ref s) = scalar_val {
                             getarg(trimmed_key, None, None, Some(s.as_str()))
@@ -4529,7 +4530,7 @@ impl crate::ported::exec::ShellExecutor {
                             .get(&key_resolved)
                             .cloned()
                             .unwrap_or_else(|| "0".to_string())
-                    } else if let Some(arr) = self.arrays.get(&name) {
+                    } else if let Some(arr) = self.array(&name) {
                         // Numeric subscript — can be a literal or an
                         // expression. For simple int literals only here;
                         // complex exprs are uncommon in real scripts.
@@ -5285,7 +5286,7 @@ impl crate::ported::exec::ShellExecutor {
                     .and_then(|m| m.get(&key_str))
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(0)
-            } else if let Some(arr) = self.arrays.get(&name) {
+            } else if let Some(arr) = self.array(&name) {
                 let len = arr.len() as i64;
                 let pos = if idx_val < 0 {
                     len + idx_val
@@ -5333,7 +5334,7 @@ impl crate::ported::exec::ShellExecutor {
                 if let Some(map) = self.assoc_arrays.get_mut(&name) {
                     map.insert(key_str, new_val.to_string());
                 }
-            } else if let Some(arr) = self.arrays.get_mut(&name) {
+            } else if let Some(mut arr) = self.array(&name) {
                 let len = arr.len() as i64;
                 let pos = if idx_val < 0 {
                     len + idx_val
@@ -5347,6 +5348,7 @@ impl crate::ported::exec::ShellExecutor {
                     }
                     arr[p] = new_val.to_string();
                 }
+                self.set_array(name, arr);
             } else {
                 // Auto-create indexed array.
                 let mut arr: Vec<String> = Vec::new();
@@ -5370,7 +5372,7 @@ impl crate::ported::exec::ShellExecutor {
         if let Some((name, idx_expr, rhs)) = parse_assign(&expr) {
             let idx_val = self.eval_arith_expr(&idx_expr);
             let rhs_val = self.eval_arith_expr(&rhs);
-            if let Some(arr) = self.arrays.get_mut(&name) {
+            if let Some(mut arr) = self.array(&name) {
                 let i_pos = if idx_val < 0 {
                     arr.len() as i64 + idx_val
                 } else {
@@ -5383,6 +5385,7 @@ impl crate::ported::exec::ShellExecutor {
                     }
                     arr[pos] = rhs_val.to_string();
                 }
+                self.set_array(name, arr);
             } else if let Some(map) = self.assoc_arrays.get_mut(&name) {
                 map.insert(idx_val.to_string(), rhs_val.to_string());
             } else {
@@ -5660,7 +5663,7 @@ impl crate::ported::exec::ShellExecutor {
             // Evaluate the RHS.
             let rhs_val = self.eval_arith_expr(&rhs);
             // Write back: arrays for numeric idx, assoc otherwise.
-            if let Some(arr) = self.arrays.get_mut(&name) {
+            if let Some(mut arr) = self.array(&name) {
                 let i_pos = if idx_val < 0 {
                     arr.len() as i64 + idx_val
                 } else {
@@ -5673,6 +5676,7 @@ impl crate::ported::exec::ShellExecutor {
                     }
                     arr[pos] = rhs_val.to_string();
                 }
+                self.set_array(name, arr);
             } else if let Some(map) = self.assoc_arrays.get_mut(&name) {
                 map.insert(idx_val.to_string(), rhs_val.to_string());
             } else {
