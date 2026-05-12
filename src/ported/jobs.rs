@@ -123,9 +123,13 @@ impl Job {
             && self.procs.iter().all(|p| !p.is_running() && !p.is_stopped())
     }
 
-    /// True if any proc is stopped via `WIFSTOPPED`.
+    /// True if the job is stopped — checks both the `STAT_STOPPED`
+    /// flag bit on `self.stat` and per-proc `WIFSTOPPED`. Matches
+    /// C's two-source check (`Src/jobs.c` reads `jn->stat & STAT_STOPPED`
+    /// for the flag and `WIFSTOPPED(pn->status)` per proc).
     pub fn is_stopped(&self) -> bool {
-        self.procs.iter().any(|p| p.is_stopped())
+        (self.stat & stat::STOPPED) != 0
+            || self.procs.iter().any(|p| p.is_stopped())
     }
 
     /// True if the slot is marked `INUSE` — equivalent to C's
