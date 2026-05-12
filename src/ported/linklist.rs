@@ -49,7 +49,7 @@ impl<T> LinkList<T> {
     }
 
     // Count the number of nodes in a linked list                             // c:300
-    /// Port of `countlinknodes(list)` from Src/linklist.c:304.
+    /// Port of `countlinknodes(LinkList list)` from Src/linklist.c:304.
     pub fn len(&self) -> usize {                                                // c:304
         self.nodes.len()
     }
@@ -65,7 +65,7 @@ impl<T> LinkList<T> {
         self.nodes.push_back(data);
     }
 
-    /// Pop the head. Port of `getlinknode(list)` (`Src/linklist.c:210`).
+    /// Pop the head. Port of `getlinknode(LinkList list)` (`Src/linklist.c:210`).
     pub fn pop_front(&mut self) -> Option<T> {                                  // c:210
         self.nodes.pop_front()
     }
@@ -167,6 +167,7 @@ impl<T> LinkList<T> {
     /// (`Src/zsh.h:580`) and the function form (`Src/linklist.c:133`)
     /// — insert after the supplied node index, return the index of the
     /// inserted node.
+    /// WARNING: param names don't match C — Rust=(after_idx, data) vs C=(list, node, dat)
     pub fn insertlinknode(&mut self, after_idx: usize, data: T) -> usize {      // c:linklist.c:133
         let new_idx = after_idx + 1;
         if new_idx >= self.nodes.len() {
@@ -178,7 +179,7 @@ impl<T> LinkList<T> {
         }
     }
 
-    /// Remove + free a node. Port of `remnode(list, nd)` (`Src/linklist.c:251`).
+    /// Remove + free a node. Port of `remnode(LinkList list, LinkNode nd)` (`Src/linklist.c:251`).
     pub fn delete_node(&mut self, idx: usize) -> Option<T> {                    // c:251
         self.nodes.remove(idx)
     }
@@ -246,7 +247,7 @@ pub fn hlinklist2array(list: &LinkList<String>) -> Vec<String> {                
 // Free-fn ports of `Src/linklist.c` (functions, not macros).
 // ===========================================================
 
-// Get an empty linked list header                                         // c:99
+// Get an empty linked list header                                         // c:116
 /// Port of `newlinklist()` (`Src/linklist.c:103`).
 pub fn newlinklist() -> LinkList<String> {                                   // c:103
     LinkList::new()
@@ -257,18 +258,18 @@ pub fn znewlinklist() -> LinkList<String> {                                  // 
     LinkList::new()
 }
 
-// Insert a node in a linked list after a given node                       // c:129
-/// Port of `insertlinknode(list, node, dat)` (`Src/linklist.c:133`).
+// Insert a node in a linked list after a given node                       // c:151
+/// Port of `insertlinknode(LinkList list, LinkNode node, void *dat)` (`Src/linklist.c:133`).
 pub fn insertlinknode<T>(list: &mut LinkList<T>, node: usize, dat: T) -> usize { // c:133
     list.insertlinknode(node, dat)
 }
 
-/// Port of `zinsertlinknode(list, node, dat)` (`Src/linklist.c:151`).
+/// Port of `zinsertlinknode(LinkList list, LinkNode node, void *dat)` (`Src/linklist.c:151`).
 pub fn zinsertlinknode<T>(list: &mut LinkList<T>, node: usize, dat: T) -> usize {
     list.insertlinknode(node, dat)
 }
 
-/// Port of `uinsertlinknode(list, node, new)` (`Src/linklist.c:173`).
+/// Port of `uinsertlinknode(LinkList list, LinkNode node, LinkNode new)` (`Src/linklist.c:173`).
 pub fn uinsertlinknode(list: &mut LinkList<String>, node: usize, new: String) -> Option<usize> {
     if list.iter().any(|s| s == &new) {
         None
@@ -277,8 +278,9 @@ pub fn uinsertlinknode(list: &mut LinkList<String>, node: usize, new: String) ->
     }
 }
 
-// Insert a list in another list                                           // c:186
-/// Port of `insertlinklist(l, where, x)` (`Src/linklist.c:190`).
+// Insert a list in another list                                           // c:210
+/// Port of `insertlinklist(LinkList l, LinkNode where, LinkList x)` (`Src/linklist.c:190`).
+/// WARNING: param names don't match C — Rust=(l, after_idx, x) vs C=(l, where, x)
 pub fn insertlinklist<T: Clone>(l: &mut LinkList<T>, after_idx: usize, x: &LinkList<T>) { // c:190
     let mut idx = after_idx;
     for v in x.iter() {
@@ -286,43 +288,44 @@ pub fn insertlinklist<T: Clone>(l: &mut LinkList<T>, after_idx: usize, x: &LinkL
     }
 }
 
-// Pop the top node off a linked list and free it.                         // c:206
-/// Port of `getlinknode(list)` (`Src/linklist.c:210`).
+// Pop the top node off a linked list and free it.                         // c:210
+/// Port of `getlinknode(LinkList list)` (`Src/linklist.c:210`).
 pub fn getlinknode<T>(list: &mut LinkList<T>) -> Option<T> {                 // c:210
     list.pop_front()
 }
 
-// Pop the top node off a linked list without freeing it.                  // c:227
-/// Port of `ugetnode(list)` (`Src/linklist.c:231`).
+// Pop the top node off a linked list without freeing it.                  // c:251
+/// Port of `ugetnode(LinkList list)` (`Src/linklist.c:231`).
 pub fn ugetnode<T>(list: &mut LinkList<T>) -> Option<T> {                    // c:231
     list.pop_front()
 }
 
-// Remove a node from a linked list                                        // c:247
-/// Port of `remnode(list, nd)` (`Src/linklist.c:251`).
+// Remove a node from a linked list                                        // c:270
+/// Port of `remnode(LinkList list, LinkNode nd)` (`Src/linklist.c:251`).
 pub fn remnode<T>(list: &mut LinkList<T>, nd: usize) -> Option<T> {         // c:251
     list.delete_node(nd)
 }
 
-/// Port of `uremnode(list, nd)` (`Src/linklist.c:270`).
+/// Port of `uremnode(LinkList list, LinkNode nd)` (`Src/linklist.c:270`).
 pub fn uremnode<T>(list: &mut LinkList<T>, nd: usize) -> Option<T> {        // c:270
     list.delete_node(nd)
 }
 
-// Free a linked list                                                       // c:283
-/// Port of `freelinklist(list, freefunc)` (`Src/linklist.c:287`).
+// Free a linked list                                                       // c:304
+/// Port of `freelinklist(LinkList list, FreeFunc freefunc)` (`Src/linklist.c:287`).
+/// WARNING: param names don't match C — Rust=(list) vs C=(list, freefunc)
 pub fn freelinklist<T>(list: &mut LinkList<T>) {                             // c:287
     list.clear();
 }
 
-// Count the number of nodes in a linked list                              // c:300
-/// Port of `countlinknodes(list)` (`Src/linklist.c:304`).
+// Count the number of nodes in a linked list                              // c:317
+/// Port of `countlinknodes(LinkList list)` (`Src/linklist.c:304`).
 pub fn countlinknodes<T>(list: &LinkList<T>) -> usize {                      // c:304
     list.len()
 }
 
-// Make specified node first, moving preceding nodes to end                // c:313
-/// Port of `rolllist(l, nd)` (`Src/linklist.c:317`).
+// Make specified node first, moving preceding nodes to end                // c:317
+/// Port of `rolllist(LinkList l, LinkNode nd)` (`Src/linklist.c:317`).
 pub fn rolllist<T>(l: &mut LinkList<T>, nd: usize) {                       // c:317
     let len = l.len();
     if len > 0 {
@@ -335,29 +338,30 @@ pub fn rolllist<T>(l: &mut LinkList<T>, nd: usize) {                       // c:
     }
 }
 
-// Create linklist of specified size. node->dats are not initialized.      // c:327
-/// Port of `newsizedlist(size)` (`Src/linklist.c:331`).
+// Create linklist of specified size. node->dats are not initialized.      // c:331
+/// Port of `newsizedlist(int size)` (`Src/linklist.c:331`).
 #[allow(unused_variables)]
 pub fn newsizedlist<T>(size: usize) -> LinkList<T> {                        // c:331
     LinkList::new()
 }
 
-/// Port of `joinlists(first, second)` (`Src/linklist.c:360`).
+/// Port of `joinlists(LinkList first, LinkList second)` (`Src/linklist.c:360`).
 pub fn joinlists<T>(first: &mut LinkList<T>, second: &mut LinkList<T>) {              // c:360
     first.append(second);
 }
 
-/// Port of `linknodebydatum(list, dat)` (`Src/linklist.c:386`).
+/// Port of `linknodebydatum(LinkList list, void *dat)` (`Src/linklist.c:386`).
 pub fn linknodebydatum<T: PartialEq>(list: &LinkList<T>, dat: &T) -> Option<usize> { // c:386
     list.iter().position(|v| v == dat)
 }
 
-/// Port of `linknodebystring(list, dat)` (`Src/linklist.c:403`).
+/// Port of `linknodebystring(LinkList list, char *dat)` (`Src/linklist.c:403`).
 pub fn linknodebystring(list: &LinkList<String>, dat: &str) -> Option<usize> { // c:403
     list.iter().position(|v| v == dat)
 }
 
-/// Port of `zlinklist2array(list, copy)` (`Src/linklist.c:449`).
+/// Port of `zlinklist2array(LinkList list, int copy)` (`Src/linklist.c:449`).
+/// WARNING: param names don't match C — Rust=(list) vs C=(list, copy)
 pub fn zlinklist2array(list: &LinkList<String>) -> Vec<String> {             // c:449
     list.iter().cloned().collect()
 }

@@ -20,7 +20,7 @@
 //! panic — matching the C behavior of producing a possibly-truncated
 //! byte string.
 
-/// Port of `dupstring(s)` from `Src/string.c:33`.
+/// Port of `dupstring(const char *s)` from `Src/string.c:33`.
 ///
 /// C body:
 /// ```c
@@ -36,7 +36,7 @@ pub fn dupstring(s: &str) -> String {                                        // 
     s.to_string()
 }
 
-/// Port of `dupstring_wlen(s, len)` from `Src/string.c:48`.
+/// Port of `dupstring_wlen(const char *s, unsigned len)` from `Src/string.c:48`.
 ///
 /// C body:
 /// ```c
@@ -51,14 +51,13 @@ pub fn dupstring(s: &str) -> String {                                        // 
 /// `s[..len.min(s.len())]` which panics if `len` lands on a non-
 /// UTF-8 boundary. C just `memcpy`s the bytes; this port matches
 /// that semantic via `as_bytes` slicing + `from_utf8_lossy`.
-/// Port of `dupstring_wlen(s, len)` from `Src/string.c:48`.
 pub fn dupstring_wlen(s: &str, len: usize) -> String {                       // c:48
     let bytes = s.as_bytes();
     let n = len.min(bytes.len());
     String::from_utf8_lossy(&bytes[..n]).into_owned()
 }
 
-/// Port of `ztrdup(s)` from `Src/string.c:62`.
+/// Port of `ztrdup(const char *s)` from `Src/string.c:62`.
 ///
 /// C body:
 /// ```c
@@ -74,7 +73,7 @@ pub fn ztrdup(s: &str) -> String {                                           // 
     s.to_string()
 }
 
-/// Port of `wcs_ztrdup(s)` from `Src/string.c:77`.
+/// Port of `wcs_ztrdup(const wchar_t *s)` from `Src/string.c:77`.
 ///
 /// C body (under `#ifdef MULTIBYTE_SUPPORT`):
 /// ```c
@@ -90,13 +89,13 @@ pub fn wcs_ztrdup(s: &str) -> String {                                       // 
     s.to_string()
 }
 
-/// Port of `tricat(s1, s2, s3)` from `Src/string.c:98`.
+/// Port of `tricat(char const *s1, char const *s2, char const *s3)` from `Src/string.c:98`.
 ///
 /// C body uses three `strcpy` calls into a `zalloc(l1+l2+l3+1)`
 /// buffer. Rust port pre-sizes the `String` to avoid reallocation
 /// and pushes the three slices in order.
 ///
-// To concatenate four or more strings, see zjoin().                       // c:93
+// To concatenate four or more strings, see zjoin().                       // c:98
 /// "Permanent" allocation lane in C; Rust's `String` is always
 /// owned so the lane choice is irrelevant.
 pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {                      // c:98
@@ -107,7 +106,7 @@ pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {                      // 
     result
 }
 
-/// Port of `zhtricat(s1, s2, s3)` from `Src/string.c:114`.
+/// Port of `zhtricat(char const *s1, char const *s2, char const *s3)` from `Src/string.c:114`.
 ///
 /// Heap-arena variant of [`tricat`] in C. Same Rust impl since
 /// the lanes collapse.
@@ -115,7 +114,7 @@ pub fn zhtricat(s1: &str, s2: &str, s3: &str) -> String {                    // 
     tricat(s1, s2, s3)
 }
 
-/// Port of `dyncat(s1, s2)` from `Src/string.c:131`.
+/// Port of `dyncat(const char *s1, const char *s2)` from `Src/string.c:131`.
 ///
 /// C body:
 /// ```c
@@ -125,7 +124,7 @@ pub fn zhtricat(s1: &str, s2: &str, s3: &str) -> String {                    // 
 /// return ptr;
 /// ```
 ///
-// concatenate s1 and s2 in dynamically allocated buffer                    // c:127
+// concatenate s1 and s2 in dynamically allocated buffer                    // c:131
 /// Heap-arena two-string concat.
 pub fn dyncat(s1: &str, s2: &str) -> String {                                // c:131
     let mut result = String::with_capacity(s1.len() + s2.len());
@@ -134,7 +133,7 @@ pub fn dyncat(s1: &str, s2: &str) -> String {                                // 
     result
 }
 
-/// Port of `bicat(s1, s2)` from `Src/string.c:145`.
+/// Port of `bicat(const char *s1, const char *s2)` from `Src/string.c:145`.
 ///
 /// Same shape as [`dyncat`], but C uses the permanent-storage
 /// `zalloc` lane. Rust port: identical body.
@@ -145,7 +144,7 @@ pub fn bicat(s1: &str, s2: &str) -> String {                                 // 
     result
 }
 
-/// Port of `dupstrpfx(s, len)` from `Src/string.c:161`.
+/// Port of `dupstrpfx(const char *s, int len)` from `Src/string.c:161`.
 ///
 /// C body:
 /// ```c
@@ -155,7 +154,7 @@ pub fn bicat(s1: &str, s2: &str) -> String {                                 // 
 /// return r;
 /// ```
 ///
-// like dupstring(), but with a specified length                             // c:157
+// like dupstring(), but with a specified length                             // c:161
 /// Byte-counted prefix copy. The previous Rust port used
 /// `s[..len]` which panics on non-UTF-8 boundary; this port
 /// matches C's `memcpy` semantics via byte slicing.
@@ -165,7 +164,7 @@ pub fn dupstrpfx(s: &str, len: usize) -> String {                            // 
     String::from_utf8_lossy(&bytes[..n]).into_owned()
 }
 
-/// Port of `ztrduppfx(s, len)` from `Src/string.c:172`.
+/// Port of `ztrduppfx(const char *s, int len)` from `Src/string.c:172`.
 ///
 /// Same body as [`dupstrpfx`], but C uses the permanent-storage
 /// lane. Lanes collapse in Rust.
@@ -173,7 +172,7 @@ pub fn ztrduppfx(s: &str, len: usize) -> String {
     dupstrpfx(s, len)
 }
 
-/// Port of `appstr(base, append)` from `Src/string.c:186`.
+/// Port of `appstr(char *base, char const *append)` from `Src/string.c:186`.
 ///
 /// C body:
 /// ```c
@@ -186,12 +185,11 @@ pub fn ztrduppfx(s: &str, len: usize) -> String {
 /// of C's "return the new pointer" is "the caller's reference is
 /// still valid after the push" — `String::push_str` reallocates
 /// transparently if needed.
-/// Port of `appstr(base, append)` from `Src/string.c:186`.
 pub fn appstr(base: &mut String, append: &str) {
     base.push_str(append);
 }
 
-/// Port of `strend(str)` from `Src/string.c:196`.
+/// Port of `strend(char *str)` from `Src/string.c:196`.
 ///
 /// C body:
 /// ```c
@@ -206,7 +204,6 @@ pub fn appstr(base: &mut String, append: &str) {
 /// - Empty input → empty `&str` (the "`*str == '\\0'`" branch).
 /// - Non-empty input → the trailing UTF-8 character as a `&str`
 ///   slice.
-/// Port of `strend(str)` from `Src/string.c:196`.
 pub fn strend(str: &str) -> &str {
     if str.is_empty() {
         return str;

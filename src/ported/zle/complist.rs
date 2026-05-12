@@ -52,20 +52,22 @@ pub fn compprintlist(_showall: i32) -> i32 {                                 // 
 
 /// Format the "scroll for more?" prompt shown when the match list
 /// exceeds the terminal height.
-/// Port of `asklistscroll(ml)` from Src/Zle/complist.c. The C source
+/// Port of `asklistscroll(int ml)` from Src/Zle/complist.c. The C source
 /// emits "--More--" plus a percent indicator and reads y/n via
 /// `getzlequery`; ours produces the prompt string and leaves the
 /// input read to the caller.
+/// WARNING: param names don't match C — Rust=(total, shown) vs C=(ml)
 pub fn asklistscroll(total: usize, shown: usize) -> String {                 // c:1001
     let _remaining = total.saturating_sub(shown);
     format!("--More--({}/{})", shown, total)
 }
 
 /// Substitute `%d`/`%g`/`%%` in a `LIST_GROUPS_HEADER`-style format.
-/// Port of `compprintfmt(fmt, n, dopr, doesc, ml, stop)` from Src/Zle/complist.c. The C source
+/// Port of `compprintfmt(char *fmt, int n, int dopr, int doesc, int ml, int *stop)` from Src/Zle/complist.c. The C source
 /// supports more escapes (per-group counts, etc.); the daily-driver
 /// subset (count + group + literal `%`) is honoured here.
 // Stripped-down version of printfmt(). But can do in-string colouring.    // c:668
+/// WARNING: param names don't match C — Rust=(format, matches_count, group) vs C=(fmt, n, dopr, doesc, ml, stop)
 pub fn compprintfmt(format: &str, matches_count: usize, group: &str) -> String { // c:1072
     format
         .replace("%d", &matches_count.to_string())
@@ -84,8 +86,9 @@ pub fn cleareol() -> &'static str {                                          // 
 
 /// Wrap a string in a CSI SGR sequence using the supplied colour
 /// code, then reset.
-/// Port of `zcputs(group, colour)` from Src/Zle/complist.c. The C source uses
+/// Port of `zcputs(char *group, int colour)` from Src/Zle/complist.c. The C source uses
 /// this for per-match colour application during list paint.
+/// WARNING: param names don't match C — Rust=(s, color) vs C=(group, colour)
 pub fn zcputs(s: &str, color: Option<&str>) -> String {                      // c:580
     match color {
         Some(c) => format!("\x1b[{}m{}\x1b[0m", c, s),
@@ -169,7 +172,7 @@ mod tests {
     }
 }
 
-/// Port of `adjust_mcol(wish, tabp, grp)` from Src/Zle/complist.c:2127.
+/// Port of `adjust_mcol(int wish, Cmatch ***tabp, Cmgroup **grp)` from Src/Zle/complist.c:2127.
 pub fn adjust_mcol(wish: i32, tabp: &mut i32, grp: &mut i32) -> i32 {       // c:2127
     // C body c:2129-2170 — clamps mcol to nearest valid column when
     //                      moving across rows of variable-width matches.
@@ -178,7 +181,8 @@ pub fn adjust_mcol(wish: i32, tabp: &mut i32, grp: &mut i32) -> i32 {       // c
     wish.max(0)
 }
 
-/// Port of `boot_(m)` from Src/Zle/complist.c:3564.
+/// Port of `boot_(UNUSED(Module m))` from Src/Zle/complist.c:3564.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
 pub fn boot_() -> i32 {                                                      // c:3564
     // C body c:3567-3582 — `mtab = NULL; mgtab = NULL; mselect = -1;
     //                       inselect = 0; w_menuselect = addzlefunction(...);
@@ -189,7 +193,8 @@ pub fn boot_() -> i32 {                                                      // 
     0
 }
 
-/// Port of `cleanup_(m)` from Src/Zle/complist.c:3586.
+/// Port of `cleanup_(UNUSED(Module m))` from Src/Zle/complist.c:3586.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
 pub fn cleanup_() -> i32 {                                                   // c:3586
     // C body c:3589-3596 — frees mtab/mgtab, deletes w_menuselect zle
     //                      function, drops the comp_list_matches and
@@ -199,7 +204,7 @@ pub fn cleanup_() -> i32 {                                                   // 
     0
 }
 
-/// Port of `clnicezputs(do_colors, s, ml)` from Src/Zle/complist.c:715.
+/// Port of `clnicezputs(int do_colors, char *s, int ml)` from Src/Zle/complist.c:715.
 #[allow(unused_variables)]
 pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {               // c:715
     // C body c:717-790 — emits a string with nice-character escapes
@@ -214,7 +219,7 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {               // c
     0
 }
 
-/// Port of `clprintfmt(p, ml)` from Src/Zle/complist.c:671.
+/// Port of `clprintfmt(char *p, int ml)` from Src/Zle/complist.c:671.
 pub fn clprintfmt(p: &str, ml: i32) -> i32 {                                // c:671
     // C body c:673-712 — colored variant of printfmt that uses mcolors
     //                    for %F/%B etc. Without the mcolors substrate
@@ -222,7 +227,8 @@ pub fn clprintfmt(p: &str, ml: i32) -> i32 {                                // c
     crate::ported::zle::zle_tricky::printfmt(p, ml, true, true)
 }
 
-/// Port of `clprintm(g, mp, mc, ml, lastc, width)` from Src/Zle/complist.c:1730.
+/// Port of `clprintm(Cmgroup g, Cmatch *mp, int mc, int ml, int lastc, int width)` from Src/Zle/complist.c:1730.
+/// WARNING: param names don't match C — Rust=() vs C=(g, mp, mc, ml, lastc, width)
 pub fn clprintm() -> i32 {                                                   // c:1730
     // C body c:1732-1988 — full per-match printer: emits LS_COLOR for
     //                      file type, leading spaces, the match string
@@ -232,7 +238,8 @@ pub fn clprintm() -> i32 {                                                   // 
     0
 }
 
-/// Port of `complistmatches(dat)` from Src/Zle/complist.c:1990.
+/// Port of `complistmatches(UNUSED(Hookdef dummy), Chdata dat)` from Src/Zle/complist.c:1990.
+/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
 pub fn complistmatches() -> i32 {                                            // c:1990
     // C body c:1992-2125 — top-level entry installed as the
     //                      "comp_list_matches" hook by boot_(); calls
@@ -242,7 +249,7 @@ pub fn complistmatches() -> i32 {                                            // 
     0
 }
 
-/// Port of `compprintnl(ml)` from Src/Zle/complist.c:1054.
+/// Port of `compprintnl(int ml)` from Src/Zle/complist.c:1054.
 #[allow(unused_variables)]
 pub fn compprintnl(ml: i32) -> i32 {                                        // c:1054
     // C body c:1056-1064 — `cleareol(); putc('\n', shout);
@@ -253,7 +260,7 @@ pub fn compprintnl(ml: i32) -> i32 {                                        // c
     0
 }
 
-/// Port of `compzputs(s, ml)` from Src/Zle/complist.c:1338.
+/// Port of `compzputs(char const *s, int ml)` from Src/Zle/complist.c:1338.
 #[allow(unused_variables)]
 pub fn compzputs(s: &str, ml: i32) -> i32 {                                 // c:1338
     // C body c:1342-1361 — walks bytes, demetafies (Meta byte XOR 32),
@@ -283,7 +290,7 @@ pub fn compzputs(s: &str, ml: i32) -> i32 {                                 // c
     0
 }
 
-/// Port of `doiscol(pos)` from Src/Zle/complist.c:635.
+/// Port of `doiscol(int pos)` from Src/Zle/complist.c:635.
 pub fn doiscol(pos: i32) -> i32 {                                             // c:635
     // C body c:637-668 — emits an in-list color escape from `last_cap`
     //                    using shout. Without curses we no-op and
@@ -292,7 +299,8 @@ pub fn doiscol(pos: i32) -> i32 {                                             //
     0
 }
 
-/// Port of `domenuselect(dummy, dat)` from Src/Zle/complist.c:2383.
+/// Port of `domenuselect(Hookdef dummy, Chdata dat)` from Src/Zle/complist.c:2383.
+/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
 pub fn domenuselect() -> i32 {                                               // c:2383
     // C body c:2385-3482 — main interactive menu-select loop: reads
     //                      keys via getkeycmd, updates mline/mcol via
@@ -304,7 +312,8 @@ pub fn domenuselect() -> i32 {                                               // 
     0
 }
 
-/// Port of `enables_(m, enables)` from Src/Zle/complist.c:3526.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from Src/Zle/complist.c:3526.
+/// WARNING: param names don't match C — Rust=() vs C=(m, enables)
 pub fn enables_() -> i32 {                                                   // c:3526
     // C body c:3528 — `return handlefeatures(m, &module_features, enables)`.
     //                  No feature-toggle dispatch in the static-link
@@ -312,7 +321,8 @@ pub fn enables_() -> i32 {                                                   // 
     0
 }
 
-/// Port of `features_(m, features)` from Src/Zle/complist.c:3518.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from Src/Zle/complist.c:3518.
+/// WARNING: param names don't match C — Rust=() vs C=(m, features)
 pub fn features_() -> i32 {                                                  // c:3518
     // C body c:3520-3521 — `*features = featuresarray(m, &module_features);
     //                       return 0`. The features array is exposed
@@ -611,7 +621,6 @@ pub static LR_CAPLEN:   std::sync::atomic::AtomicI32 = std::sync::atomic::Atomic
 /// observed cap length.
 pub static MAX_CAPLEN:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:269
 
-/// Port of `filecol(col)` from `Src/Zle/complist.c:487-498`.
 /// ```c
 /// static filecol
 /// filecol(char *col)
@@ -626,22 +635,23 @@ pub static MAX_CAPLEN:  std::sync::atomic::AtomicI32 = std::sync::atomic::Atomic
 /// ```
 /// Allocate a fresh filecol with no group pattern and the given
 /// color string. Caller is expected to chain it via `mcolors.files[i]`.
-/// Port of `filecol(col)` from `Src/Zle/complist.c:487`.
-pub fn filecol(col: &str) -> filecol {                                       // c:487
-    filecol {                                                                // c:492 zhalloc
+/// Port of `filecol(char *col)` from `Src/Zle/complist.c:488`.
+pub fn filecol(col: &str) -> filecol {                                       // c:488
+    filecol {                                                                // c:488 zhalloc
         prog: None,                                                          // c:493 fc->prog = NULL
         col:  col.to_string(),                                               // c:494 fc->col = col
         next: None,                                                          // c:495 fc->next = NULL
     }                                                                        // c:497 return fc
 }
 
-/// Port of `finish_(m)` from Src/Zle/complist.c:3601.
+/// Port of `finish_(UNUSED(Module m))` from Src/Zle/complist.c:3601.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
 pub fn finish_() -> i32 {                                                    // c:3601
     // C body c:3603-3604 — `return 0`. Faithful port of the empty body.
     0
 }
 
-/// Port of `getcoldef(s)` from Src/Zle/complist.c:330.
+/// Port of `getcoldef(char *s)` from Src/Zle/complist.c:330.
 pub fn getcoldef(s: &str) -> Option<String> {                                // c:330
     // C body c:332-503 — parses one "key=val" entry from LS_COLORS
     //                    /ZLS_COLORS, walks past the key (one of the
@@ -654,6 +664,7 @@ pub fn getcoldef(s: &str) -> Option<String> {                                // 
 }
 
 /// Port of `getcols()` from Src/Zle/complist.c:505.
+/// WARNING: param names don't match C — Rust=(_lscol) vs C=()
 pub fn getcols(_lscol: &str) -> i32 {                                        // c:505
     // C body c:507-602 — parses LS_COLORS into mcolors; calls
     //                    getcoldef in a loop, populates mcolors.files,
@@ -662,7 +673,7 @@ pub fn getcols(_lscol: &str) -> i32 {                                        // 
     0
 }
 
-/// Port of `getcolval(s, multi)` from Src/Zle/complist.c:275.
+/// Port of `getcolval(char *s, int multi)` from Src/Zle/complist.c:275.
 #[allow(unused_variables)]
 pub fn getcolval(s: &str, multi: i32) -> &str {                             // c:275
     // C body c:277-329 — walks one ANSI escape sequence (digits and
@@ -680,7 +691,8 @@ pub fn initiscol() -> i32 {                                                  // 
     0
 }
 
-/// Port of `menuselect(args)` from Src/Zle/complist.c:3484.
+/// Port of `menuselect(char **args)` from Src/Zle/complist.c:3484.
+/// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn menuselect() -> i32 {                                                 // c:3484
     // C body c:3486-3510 — entry widget for `menu-select`. Sets
     //                      `usemenu = 1`, calls docomplete with
@@ -702,7 +714,8 @@ pub fn menuselect_bindings() -> i32 {                                        // 
     0
 }
 
-/// Port of `msearch(ptr, ins, back, rep, wrapp)` from Src/Zle/complist.c:2302.
+/// Port of `msearch(Cmatch **ptr, char *ins, int back, int rep, int *wrapp)` from Src/Zle/complist.c:2302.
+/// WARNING: param names don't match C — Rust=() vs C=(ptr, ins, back, rep, wrapp)
 pub fn msearch() -> i32 {                                                    // c:2302
     // C body c:2304-2380 — incremental search through the match
     //                      matrix using msearchstr; updates mline/mcol
@@ -711,7 +724,8 @@ pub fn msearch() -> i32 {                                                    // 
     0
 }
 
-/// Port of `msearchpop(backp)` from Src/Zle/complist.c:2281.
+/// Port of `msearchpop(int *backp)` from Src/Zle/complist.c:2281.
+/// WARNING: param names don't match C — Rust=() vs C=(backp)
 pub fn msearchpop() -> i32 {                                                 // c:2281
     // C body c:2283-2301 — pops one entry off msearchstack restoring
     //                      mline/mcol/msearchstr.
@@ -719,7 +733,8 @@ pub fn msearchpop() -> i32 {                                                 // 
     0
 }
 
-/// Port of `msearchpush(p, back)` from Src/Zle/complist.c:2266.
+/// Port of `msearchpush(Cmatch **p, int back)` from Src/Zle/complist.c:2266.
+/// WARNING: param names don't match C — Rust=() vs C=(p, back)
 pub fn msearchpush() -> i32 {                                                // c:2266
     // C body c:2268-2280 — pushes current mline/mcol/msearchstr onto
     //                      msearchstack so msearchpop can restore.
@@ -727,7 +742,7 @@ pub fn msearchpush() -> i32 {                                                // 
     0
 }
 
-/// Port of `putfilecol(group, filename, m, special)` from Src/Zle/complist.c:910.
+/// Port of `putfilecol(char *group, char *filename, mode_t m, int special)` from Src/Zle/complist.c:910.
 pub fn putfilecol(group: &str, filename: &str, m: u32, special: i32) -> i32 { // c:910
     // C body c:912-988 — looks up the LS_COLORS class for `name`
     //                    by mode bits + filename suffix, emits the
@@ -737,8 +752,8 @@ pub fn putfilecol(group: &str, filename: &str, m: u32, special: i32) -> i32 { //
     0
 }
 
-// Get the terminal color string for the given match.                      // c:878
-/// Port of `putmatchcol(group, n)` from Src/Zle/complist.c:881.
+// Get the terminal color string for the given match.                      // c:881
+/// Port of `putmatchcol(char *group, char *n)` from Src/Zle/complist.c:881.
 pub fn putmatchcol(group: &str, n: &str) -> i32 {                       // c:881
     // C body c:883-908 — looks up "ma" or "co" entries in mcolors
     //                    for the given group/name and emits the
@@ -748,7 +763,8 @@ pub fn putmatchcol(group: &str, n: &str) -> i32 {                       // c:881
     0
 }
 
-/// Port of `setmstatus(status, sline, sll, scs, csp, llp, lenp)` from Src/Zle/complist.c:2203.
+/// Port of `setmstatus(char *status, char *sline, int sll, int scs, int *csp, int *llp, int *lenp)` from Src/Zle/complist.c:2203.
+/// WARNING: param names don't match C — Rust=(_status, _sline, _scs, _np, _nl, _nc) vs C=(status, sline, sll, scs, csp, llp, lenp)
 pub fn setmstatus(_status: &str, _sline: i32, _scs: i32, _np: &mut i32, _nl: &mut i32, _nc: &mut i32) -> i32 { // c:2203
     // C body c:2205-2265 — updates the menu-select status line at
     //                      the bottom of the screen. Without curses
@@ -756,13 +772,14 @@ pub fn setmstatus(_status: &str, _sline: i32, _scs: i32, _np: &mut i32, _nl: &mu
     0
 }
 
-/// Port of `setup_(m)` from Src/Zle/complist.c:3511.
+/// Port of `setup_(UNUSED(Module m))` from Src/Zle/complist.c:3511.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
 pub fn setup_() -> i32 {                                                     // c:3511
     // C body c:3513-3514 — `return 0`. Faithful empty body.
     0
 }
 
-/// Port of `singlecalc(cp, l, lcp)` from Src/Zle/complist.c:1909.
+/// Port of `singlecalc(int *cp, int l, int *lcp)` from Src/Zle/complist.c:1909.
 #[allow(unused_variables)]
 pub fn singlecalc(cp: &mut i32, l: i32, lcp: &mut i32) -> i32 {          // c:1909
     // C body c:1911-1933 — computes scroll offset for single-column
@@ -771,7 +788,7 @@ pub fn singlecalc(cp: &mut i32, l: i32, lcp: &mut i32) -> i32 {          // c:19
 }
 
 /// Direct port of `static int singledraw(void)` from
-/// `Src/Zle/complist.c:1934-1988`. Repaints the menu-completion
+/// `Src/Zle/complist.c:1934`. Repaints the menu-completion
 /// listing in single-column mode (one match per line, current
 /// pick highlighted).
 ///
@@ -786,7 +803,7 @@ pub fn singledraw() -> i32 {                                                 // 
     0
 }
 
-// Turn off colouring.                                                     // c:594
+// Turn off colouring.                                                     // c:597
 /// Port of `zcoff()` from Src/Zle/complist.c:597.
 pub fn zcoff() {                                                            // c:597
     // C body c:599-617 — emits the LS_COLORS no-color escape via
@@ -794,7 +811,7 @@ pub fn zcoff() {                                                            // c
     //                    No mcolors substrate: no-op.
 }
 
-/// Port of `zlrputs(cap)` from Src/Zle/complist.c:564.
+/// Port of `zlrputs(char *cap)` from Src/Zle/complist.c:564.
 pub fn zlrputs(cap: &str) -> i32 {                                           // c:564
     // C body c:566-595 — emits an LS_COLORS escape `\\033[<cap>m` to
     //                    shout. Without curses substrate we emit via

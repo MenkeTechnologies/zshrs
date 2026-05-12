@@ -7,27 +7,27 @@
 
 use std::path::PathBuf;
 
-/// Port of `setup_(m)` from `Src/Modules/newuser.c:37`. C body is
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/newuser.c:37`. C body is
 /// `return 0;` (UNUSED `Module m`).
 #[allow(unused_variables)]
 pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {          // c:37
-    0                                                                    // c:40
+    0                                                                    // c:44
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/newuser.c:44`. C body is
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/newuser.c:44`. C body is
 /// `return 1;` — the newuser module exposes no shell features
 /// (no builtins, no ZLE widgets, no params); the non-zero return
 /// signals "no feature table" to the loader.
 #[allow(unused_variables)]
 pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 { // c:44
-    1                                                                    // c:47
+    1                                                                    // c:51
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/newuser.c:51`. C body is
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/newuser.c:51`. C body is
 /// `return 0;` — no per-feature enables to manage.
 #[allow(unused_variables)]
 pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 { // c:51
-    0                                                                    // c:54
+    0                                                                    // c:58
 }
 
 /// Port of static helper `check_dotfile()` from
@@ -35,14 +35,14 @@ pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec
 /// non-zero (errno via `access(2) F_OK`). The C body composes
 /// `dotdir/fname` and calls `access(F_OK)`.
 pub fn check_dotfile(dotdir: &str, fname: &str) -> i32 {                 // c:58
-    let mut p = PathBuf::from(dotdir);                                   // c:60-61
+    let mut p = PathBuf::from(dotdir);                                   // c:58-61
     p.push(fname);                                                       // c:60-61
     // C: `access(buf, F_OK)` returns 0 if accessible, -1 with errno
     // set otherwise. Rust's `Path::exists` collapses both into bool.
     if p.exists() { 0 } else { -1 }                                      // c:62
 }
 
-/// Port of `boot_(m)` from `Src/Modules/newuser.c:68`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/newuser.c:68`.
 ///
 /// C body (verbatim):
 /// ```c
@@ -77,9 +77,8 @@ pub fn check_dotfile(dotdir: &str, fname: &str) -> i32 {                 // c:58
 ///     return 0;
 /// }
 /// ```
-/// Port of `boot_(m)` from `Src/Modules/newuser.c:68`.
 #[allow(unused_variables)]
-pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:68
+pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:4
     // c:70 — `const char *dotdir = getsparam_u("ZDOTDIR");`
     let mut dotdir: String = std::env::var("ZDOTDIR").unwrap_or_default();
 
@@ -125,7 +124,7 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:68
     0                                                                    // c:104
 }
 
-// `source()` lives in `Src/init.c:1528`. Stub: returns SOURCE_NOT_FOUND
+// `source()` lives in `Src/init.c:1551`. Stub: returns SOURCE_NOT_FOUND
 // since the static-link harness handles startup-script sourcing
 // separately. The full source.c port wires the real loader.
 const SOURCE_NOT_FOUND: i32 = 1;
@@ -141,16 +140,16 @@ fn source(_buf: &str) -> i32 {
     }
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/newuser.c:109`. C body is
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/newuser.c:109`. C body is
 /// `return 0;` (UNUSED `Module m`).
 #[allow(unused_variables)]
 pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {        // c:109
-    0                                                                    // c:112
+    0                                                                    // c:116
 }
 
-/// Port of `finish_(m)` from `Src/Modules/newuser.c:116`. C body is
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/newuser.c:116`. C body is
 /// `return 0;` (UNUSED `Module m`).
 #[allow(unused_variables)]
 pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {         // c:116
-    0                                                                    // c:119
+    0                                                                    // c:116
 }

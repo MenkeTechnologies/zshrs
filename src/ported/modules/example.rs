@@ -60,7 +60,7 @@ pub static arrparam: Mutex<Option<Vec<String>>> = Mutex::new(None);  // c:37
 // bin_example(char *nam, char **args, Options ops, UNUSED(int func))  c:42
 // =====================================================================
 
-/// Port of `bin_example(nam, args, ops)` from `Src/Modules/example.c:42`.
+/// Port of `bin_example(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/example.c:42`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
@@ -132,27 +132,27 @@ pub fn bin_example(nam: &str, args: &[String], ops: &options, func: i32) -> i32 
     };
     *strparam.lock().unwrap() = Some(new_sp);                         // c:71
     // c:72-74 — if (arrparam) freearray(arrparam); arrparam = zarrdup(oargs);
-    let new_ap: Vec<String> = oargs.to_vec();                          // c:74
-    *arrparam.lock().unwrap() = Some(new_ap);                          // c:74
+    let new_ap: Vec<String> = oargs.to_vec();                          // c:80
+    *arrparam.lock().unwrap() = Some(new_ap);                          // c:80
 
-    0                                                                 // c:75
+    0                                                                 // c:80
 }
 
 // =====================================================================
 // cond_p_len(char **a, UNUSED(int id))                               c:80
 // =====================================================================
 
-/// Port of `cond_p_len(a)` from `Src/Modules/example.c:80`.
+/// Port of `cond_p_len(char **a, UNUSED(int id))` from `Src/Modules/example.c:80`.
 #[allow(unused_variables)]
 pub fn cond_p_len(a: &[String], id: i32) -> i32 {                           // c:80
-    // c:82 — `char *s1 = cond_str(a, 0, 0);`
+    // c:80 — `char *s1 = cond_str(a, 0, 0);`
     let s1: String = cond_str(a, 0, false);                            // c:82
     if a.len() > 1 {                                                   // c:84 if (a[1])
         let v: i64 = cond_val(a, 1);                                   // c:85 zlong v = cond_val(a, 1);
         // c:87 — `return strlen(s1) == v;`
         if (s1.len() as i64) == v { 1 } else { 0 }
-    } else {                                                           // c:88
-        // c:89 — `return !s1[0];`
+    } else {                                                           // c:95
+        // c:95 — `return !s1[0];`
         if s1.is_empty() { 1 } else { 0 }
     }
 }
@@ -161,24 +161,24 @@ pub fn cond_p_len(a: &[String], id: i32) -> i32 {                           // c
 // cond_i_ex(char **a, UNUSED(int id))                                c:95
 // =====================================================================
 
-/// Port of `cond_i_ex(a)` from `Src/Modules/example.c:95`.
+/// Port of `cond_i_ex(char **a, UNUSED(int id))` from `Src/Modules/example.c:95`.
 #[allow(unused_variables)]
 pub fn cond_i_ex(a: &[String], id: i32) -> i32 {                            // c:95
-    // c:97 — `char *s1 = cond_str(a, 0, 0), *s2 = cond_str(a, 1, 0);`
-    let s1: String = cond_str(a, 0, false);                            // c:97
-    let s2: String = cond_str(a, 1, false);                            // c:97
-    // c:99 — `return !strcmp("example", dyncat(s1, s2));`
-    if dyncat(&s1, &s2) == "example" { 1 } else { 0 }                  // c:99
+    // c:95 — `char *s1 = cond_str(a, 0, 0), *s2 = cond_str(a, 1, 0);`
+    let s1: String = cond_str(a, 0, false);                            // c:104
+    let s2: String = cond_str(a, 1, false);                            // c:104
+    // c:104 — `return !strcmp("example", dyncat(s1, s2));`
+    if dyncat(&s1, &s2) == "example" { 1 } else { 0 }                  // c:104
 }
 
 // =====================================================================
 // math_sum(UNUSED(char *name), int argc, mnumber *argv, UNUSED(int id))  c:104
 // =====================================================================
 
-/// Port of `math_sum(argc, argv)` from `Src/Modules/example.c:104`.
+/// Port of `math_sum(UNUSED(char *name), int argc, mnumber *argv, UNUSED(int id))` from `Src/Modules/example.c:104`.
 #[allow(unused_variables)]
 pub fn math_sum(name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber { // c:104
-    // c:106 — `mnumber ret;`
+    // c:104 — `mnumber ret;`
     let mut ret = Mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
     // c:107 — `int f = 0;`
     let mut f: i32 = 0;
@@ -207,19 +207,19 @@ pub fn math_sum(name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber { /
         }
         p += 1;                                                        // c:124 argv++
     }
-    // c:126 — `ret.type = (f ? MN_FLOAT : MN_INTEGER);`
+    // c:133 — `ret.type = (f ? MN_FLOAT : MN_INTEGER);`
     ret.type_ = if f != 0 { MN_FLOAT } else { MN_INTEGER };
-    ret                                                                 // c:128
+    ret                                                                 // c:133
 }
 
 // =====================================================================
 // math_length(UNUSED(char *name), char *arg, UNUSED(int id))         c:133
 // =====================================================================
 
-/// Port of `math_length(arg)` from `Src/Modules/example.c:133`.
+/// Port of `math_length(UNUSED(char *name), char *arg, UNUSED(int id))` from `Src/Modules/example.c:133`.
 #[allow(unused_variables)]
 pub fn math_length(name: &str, arg: &str, id: i32) -> Mnumber {            // c:133
-    // c:135 — `mnumber ret;`
+    // c:133 — `mnumber ret;`
     // c:137 — `ret.type = MN_INTEGER;`
     // c:138 — `ret.u.l = strlen(arg);`
     Mnumber {
@@ -233,12 +233,13 @@ pub fn math_length(name: &str, arg: &str, id: i32) -> Mnumber {            // c:
 // ex_wrapper(Eprog prog, FuncWrap w, char *name)                     c:145
 // =====================================================================
 
-/// Port of `ex_wrapper(prog, w, name)` from `Src/Modules/example.c:145`.
+/// Port of `ex_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/example.c:145`.
 ///
 /// `Eprog` and `FuncWrap` are `Box<eprog>` / `Box<funcwrap>` per
 /// zsh.h:774 / 522. Pointer-shape preserved as `*const eprog` /
 /// `*const funcwrap` since the C body never derefs `prog`/`w` beyond
 /// passing them to `runshfunc`.
+/// WARNING: param names don't match C — Rust=(prog, name) vs C=(prog, w, name)
 pub fn ex_wrapper(prog: *const crate::ported::zsh_h::eprog,                  // c:145
                   w: *const crate::ported::zsh_h::funcwrap,
                   name: &str) -> i32 {
@@ -280,45 +281,45 @@ pub fn ex_wrapper(prog: *const crate::ported::zsh_h::eprog,                  // 
 // setup_(UNUSED(Module m))                                           c:198
 // =====================================================================
 
-/// Port of `setup_(m)` from `Src/Modules/example.c:198`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/example.c:198`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {
     let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "The example module has now been set up."); // c:200
-    let _ = stdout.flush();                                              // c:201
-    0                                                                    // c:202
+    let _ = writeln!(stdout, "The example module has now been set up."); // c:207
+    let _ = stdout.flush();                                              // c:207
+    0                                                                    // c:207
 }
 
 // =====================================================================
 // features_(Module m, char ***features)                              c:207
 // =====================================================================
 
-/// Port of `features_(m, features)` from `Src/Modules/example.c:207`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/example.c:207`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     *features = featuresarray(m, module_features());
-    0                                                                   // c:210
+    0                                                                   // c:215
 }
 
 // =====================================================================
 // enables_(Module m, int **enables)                                  c:215
 // =====================================================================
 
-/// Port of `enables_(m, enables)` from `Src/Modules/example.c:215`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/example.c:215`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
-    handlefeatures(m, module_features(), enables) // c:217
+    handlefeatures(m, module_features(), enables) // c:222
 }
 
 // =====================================================================
 // boot_(Module m)                                                    c:222
 // =====================================================================
 
-/// Port of `boot_(m)` from `Src/Modules/example.c:222`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/example.c:222`.
 /// C body sets the demo paramdef-bound statics then calls
 /// `addwrapper(m, wrapper)`.
 pub fn boot_(m: *const module) -> i32 {
-    intparam.store(42, Ordering::Relaxed);                              // c:224
+    intparam.store(42, Ordering::Relaxed);                              // c:222
     *strparam.lock().unwrap() = Some("example".to_string());             // c:225
     *arrparam.lock().unwrap() = Some(vec![                              // c:226-228
         "example".to_string(),                                          // c:227
@@ -337,19 +338,19 @@ pub fn boot_(m: *const module) -> i32 {
 // cleanup_(Module m)                                                 c:235
 // =====================================================================
 
-/// Port of `cleanup_(m)` from `Src/Modules/example.c:235`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/example.c:235`.
 /// C body: `deletewrapper(m, wrapper); return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {
-    // c:237 — deletewrapper(m, wrapper); paired with c:230 addwrapper,
+    // c:243 — deletewrapper(m, wrapper); paired with c:230 addwrapper,
     // no-op until the wrapper machinery has a Rust equivalent.
-    setfeatureenables(m, module_features(), None) // c:238
+    setfeatureenables(m, module_features(), None) // c:243
 }
 
 // =====================================================================
 // finish_(UNUSED(Module m))                                          c:243
 // =====================================================================
 
-/// Port of `finish_(m)` from `Src/Modules/example.c:243`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/example.c:243`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {
     let mut stdout = std::io::stdout().lock();
@@ -411,7 +412,7 @@ mod tests {
     /// lock restores the single-writer assumption for the test phase.
     static EXAMPLE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// Port of `boot_(m)` from `Src/Modules/example.c:222`.
+    /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/example.c:222`.
     /// Verifies `boot_()` populates the three paramdef-bound statics
     /// per c:224-228: intparam=42, strparam="example",
     /// arrparam=["example","array"].
@@ -489,7 +490,7 @@ mod tests {
         assert_eq!(ex_wrapper(std::ptr::null(), std::ptr::null(), "example_func"), 0);
     }
 
-    /// Port of `bin_example(nam, args, ops)` from `Src/Modules/example.c:42`.
+    /// Port of `bin_example(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/example.c:42`.
     /// Verifies `bin_example` reads `OPT_ISSET(ops, c)` and prints flagged
     /// option letters — c:49-51.
     #[test]

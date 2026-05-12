@@ -12,11 +12,12 @@
 
 use crate::module::ModuleLifecycle;
 
-/// Port of `modentry(boot, m, ptr)` from Src/modentry.c:11. Direct port of the
+/// Port of `modentry(int boot, Module m, void *ptr)` from Src/modentry.c:7. Direct port of the
 /// C `int modentry(int boot, Module m, void *ptr)` switch — `boot`
 /// selects which lifecycle function to dispatch. Unknown values
 /// return 1 (matches C's `zerr("bad call to modentry"); return 1`).
-pub fn modentry(boot: i32, module: &mut dyn ModuleLifecycle) -> i32 {       // c:11
+/// WARNING: param names don't match C — Rust=(boot, module) vs C=(boot, m, ptr)
+pub fn modentry(boot: i32, module: &mut dyn ModuleLifecycle) -> i32 {       // c:7
     match boot {
         0 => module.setup(),                                                 // c:14
         1 => module.boot(),                                                  // c:18

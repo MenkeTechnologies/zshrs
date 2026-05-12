@@ -647,14 +647,14 @@ fn acceptline(name: &str) -> (fn(&mut Zle), WidgetFlags) {
 // Widget implementations
 
 fn widget_accept_line(zle: &mut Zle) {
-    // Port of acceptline(args) from Src/Zle/zle_misc.c:401. The C source is
+    // Port of acceptline(UNUSED(char **args)) from Src/Zle/zle_misc.c:401. The C source is
     // a one-liner: `done = 1`; everything else (return current line,
     // history append, hooks) happens in zleread() after zlecore returns.
     crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_accept_and_hold(zle: &mut Zle) {
-    // Port of acceptandhold(args) from Src/Zle/zle_misc.c:409.
+    // Port of acceptandhold(UNUSED(char **args)) from Src/Zle/zle_misc.c:409.
     // Push current line onto bufstack so the next zleread() re-feeds it
     // as the next entry, then exit the editor.
     let line: String = zle.zleline.iter().collect();
@@ -665,7 +665,7 @@ fn widget_accept_and_hold(zle: &mut Zle) {
 }
 
 fn widget_accept_line_and_down_history(zle: &mut Zle) {
-    // Port of acceptlineanddownhistory(args) from Src/Zle/zle_hist.c:420.
+    // Port of acceptlineanddownhistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:420.
     // Move forward one history entry and queue it on bufstack so the
     // next zleread() loads it; then exit the editor to run the current line.
     let len = zle.history.entries.len();
@@ -681,7 +681,7 @@ fn widget_accept_line_and_down_history(zle: &mut Zle) {
 }
 
 fn widget_self_insert(zle: &mut Zle) {
-    // Port of selfinsert(args) from Src/Zle/zle_misc.c:113. Insert the
+    // Port of selfinsert(UNUSED(char **args)) from Src/Zle/zle_misc.c:113. Insert the
     // last-read char at the cursor (`zmult` times — count-aware).
     let n = zle.mult.max(1);
     #[cfg(feature = "multibyte")]
@@ -700,7 +700,7 @@ fn widget_self_insert(zle: &mut Zle) {
 }
 
 fn widget_self_insert_unmeta(zle: &mut Zle) {
-    // Port of selfinsertunmeta(args) from Src/Zle/zle_misc.c:149. Strip the
+    // Port of selfinsertunmeta(char **args) from Src/Zle/zle_misc.c:149. Strip the
     // 0x80 meta bit from lastchar before inserting — used when the user
     // bound an Esc-prefixed key (e.g. `\\eA`) to literally insert 'A'.
     let n = zle.mult.max(1);
@@ -711,7 +711,7 @@ fn widget_self_insert_unmeta(zle: &mut Zle) {
 }
 
 fn widget_forward_char(zle: &mut Zle) {
-    // Port of forwardchar(args) from Src/Zle/zle_move.c:441. Count-aware;
+    // Port of forwardchar(char **args) from Src/Zle/zle_move.c:441. Count-aware;
     // negative count delegates to backward-char (mirrors the C source's
     // recursive flip at zle_move.c:445).
     let mut n = zle.mult;
@@ -729,7 +729,7 @@ fn widget_forward_char(zle: &mut Zle) {
 }
 
 fn widget_backward_char(zle: &mut Zle) {
-    // Port of backwardchar(args) from Src/Zle/zle_move.c:464.
+    // Port of backwardchar(char **args) from Src/Zle/zle_move.c:464.
     let mut n = zle.mult;
     if n < 0 {
         zle.mult = -n;
@@ -745,7 +745,7 @@ fn widget_backward_char(zle: &mut Zle) {
 }
 
 fn widget_forward_word(zle: &mut Zle) {
-    // Port of forwardword(args) from Src/Zle/zle_word.c:45. Count-aware;
+    // Port of forwardword(char **args) from Src/Zle/zle_word.c:45. Count-aware;
     // skips the current word (iword chars) then trailing non-iword
     // chars, repeated `mult` times.
     let n = zle.mult.max(1);
@@ -764,7 +764,7 @@ fn widget_forward_word(zle: &mut Zle) {
 }
 
 fn widget_backward_word(zle: &mut Zle) {
-    // Port of backwardword(args) from Src/Zle/zle_word.c:240. Count-aware
+    // Port of backwardword(char **args) from Src/Zle/zle_word.c:240. Count-aware
     // mirror of forward-word.
     let n = zle.mult.max(1);
     for _ in 0..n {
@@ -782,7 +782,7 @@ fn widget_backward_word(zle: &mut Zle) {
 }
 
 fn widget_beginning_of_line(zle: &mut Zle) {
-    // Port of beginningofline(args) from Src/Zle/zle_move.c. Cursor moves
+    // Port of beginningofline(char **args) from Src/Zle/zle_move.c. Cursor moves
     // to the start of the current logical line — find_bol respects
     // embedded newlines.
     zle.zlecs = zle.find_bol(zle.zlecs);
@@ -790,13 +790,13 @@ fn widget_beginning_of_line(zle: &mut Zle) {
 }
 
 fn widget_end_of_line(zle: &mut Zle) {
-    // Port of endofline(args) from Src/Zle/zle_move.c.
+    // Port of endofline(char **args) from Src/Zle/zle_move.c.
     zle.zlecs = zle.find_eol(zle.zlecs);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_delete_char(zle: &mut Zle) {
-    // Port of deletechar(args) from Src/Zle/zle_misc.c:157. Count-aware;
+    // Port of deletechar(char **args) from Src/Zle/zle_misc.c:157. Count-aware;
     // negative count delegates to backward-delete-char. The C source
     // returns 1 (failure) if it can't delete `mult` chars (cursor hit
     // EoB before completing); we beep instead since we don't propagate
@@ -821,7 +821,7 @@ fn widget_delete_char(zle: &mut Zle) {
 }
 
 fn widget_backward_delete_char(zle: &mut Zle) {
-    // Port of backwarddeletechar(args) from Src/Zle/zle_misc.c:180.
+    // Port of backwarddeletechar(char **args) from Src/Zle/zle_misc.c:180.
     // Count-aware; negative count delegates to delete-char. C clamps
     // count to zlecs (zle_misc.c:189) so deleting past BoB stops at 0
     // rather than erroring.
@@ -845,7 +845,7 @@ fn widget_backward_delete_char(zle: &mut Zle) {
 }
 
 fn widget_delete_char_or_list(zle: &mut Zle) {
-    // Port of deletecharorlist(args) from Src/Zle/zle_misc.c. With an empty
+    // Port of deletecharorlist(char **args) from Src/Zle/zle_misc.c. With an empty
     // buffer this is EOF; with non-end cursor it deletes one char; at
     // end-of-line it falls through to list-choices completion.
     if zle.zlell == 0 {
@@ -857,7 +857,7 @@ fn widget_delete_char_or_list(zle: &mut Zle) {
 }
 
 fn widget_kill_line(zle: &mut Zle) {
-    // Port of killline(args) from Src/Zle/zle_misc.c:419. Count-aware:
+    // Port of killline(char **args) from Src/Zle/zle_misc.c:419. Count-aware:
     // killing N lines from the cursor — for each iteration, if the
     // cursor sits on a newline consume just that newline, otherwise
     // kill from cursor to the next newline (or EoB). Final kill goes
@@ -897,7 +897,7 @@ fn widget_kill_line(zle: &mut Zle) {
 }
 
 fn widget_backward_kill_line(zle: &mut Zle) {
-    // Port of backwardkillline(args) from Src/Zle/zle_misc.c:225. Mirror of
+    // Port of backwardkillline(char **args) from Src/Zle/zle_misc.c:225. Mirror of
     // kill-line: per iteration, consume a leading \\n if present;
     // otherwise back up to the previous \\n (or BoB). Negative count
     // delegates to kill-line (zle_misc.c:229).
@@ -934,7 +934,7 @@ fn widget_backward_kill_line(zle: &mut Zle) {
 }
 
 fn widget_kill_whole_line(zle: &mut Zle) {
-    // Port of killwholeline(args) from Src/Zle/zle_misc.c:195. The C source
+    // Port of killwholeline(UNUSED(char **args)) from Src/Zle/zle_misc.c:195. The C source
     // is count-aware: kills `mult` lines centered on the current line
     // (or the whole buffer if -1). Our simplified version kills the
     // entire buffer once — sufficient for the common single-line use,
@@ -952,7 +952,7 @@ fn widget_kill_whole_line(zle: &mut Zle) {
 }
 
 fn widget_kill_word(zle: &mut Zle) {
-    // Port of killword(args) from Src/Zle/zle_word.c. The C source skips
+    // Port of killword(char **args) from Src/Zle/zle_word.c. The C source skips
     // non-word chars then the word, captures the killed region in the
     // kill ring, and leaves the cursor at the start. Honours the count
     // multiplier (mult) — `3M-d` kills three words.
@@ -984,7 +984,7 @@ fn widget_kill_word(zle: &mut Zle) {
 }
 
 fn widget_backward_kill_word(zle: &mut Zle) {
-    // Port of backwardkillword(args) from Src/Zle/zle_word.c. Mirrors
+    // Port of backwardkillword(char **args) from Src/Zle/zle_word.c. Mirrors
     // kill-word but in the opposite direction; cursor lands at the
     // start of the killed range. Count-aware.
     let n = zle.mult.max(1);
@@ -1014,7 +1014,7 @@ fn widget_backward_kill_word(zle: &mut Zle) {
 }
 
 fn widget_yank(zle: &mut Zle) {
-    // Port of yank(args) from Src/Zle/zle_misc.c. Inserts the most-recent kill-ring
+    // Port of yank(UNUSED(char **args)) from Src/Zle/zle_misc.c. Inserts the most-recent kill-ring
     // entry at the cursor and remembers the inserted region so that an
     // immediately-following yank-pop can rotate to the previous entry.
     if let Some(text) = zle.killring.front().cloned() {
@@ -1034,7 +1034,7 @@ fn widget_yank(zle: &mut Zle) {
 }
 
 fn widget_yank_pop(zle: &mut Zle) {
-    // Port of yankpop(args) from Src/Zle/zle_misc.c:728.
+    // Port of yankpop(UNUSED(char **args)) from Src/Zle/zle_misc.c:728.
     // Only meaningful immediately after a yank; replaces the just-yanked
     // region with the previous kill-ring entry, cycling around the ring.
     if !zle.yanklast {
@@ -1091,27 +1091,27 @@ fn widget_yank_pop(zle: &mut Zle) {
 }
 
 fn widget_undo(zle: &mut Zle) {
-    // Port of undo(args) from Src/Zle/zle_utils.c:1601.
+    // Port of undo(char **args) from Src/Zle/zle_utils.c:1601.
     let _ = zle.undo_widget();
 }
 
 fn widget_redo(zle: &mut Zle) {
-    // Port of redo(args) from Src/Zle/zle_utils.c:1661.
+    // Port of redo(UNUSED(char **args)) from Src/Zle/zle_utils.c:1661.
     let _ = zle.redo_widget();
 }
 
 fn widget_up_line_or_history(zle: &mut Zle) {
-    // Port of uplineorhistory(args) from Src/Zle/zle_hist.c:282.
+    // Port of uplineorhistory(char **args) from Src/Zle/zle_hist.c:282.
     let _ = zle.up_line_or_history_widget();
 }
 
 fn widget_down_line_or_history(zle: &mut Zle) {
-    // Port of downlineorhistory(args) from Src/Zle/zle_hist.c:370.
+    // Port of downlineorhistory(char **args) from Src/Zle/zle_hist.c:370.
     let _ = zle.down_line_or_history_widget();
 }
 
 fn widget_up_history(zle: &mut Zle) {
-    // Port of uphistory(args) from Src/Zle/zle_hist.c:233.
+    // Port of uphistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:233.
     // C calls zle_goto_hist(histline, -zmult, isset(HISTIGNOREDUPS)).
     // skipdups=false until ZLE has access to ShellOptions; behavior matches HISTIGNOREDUPS unset.
     let m = zle.mult;
@@ -1119,24 +1119,24 @@ fn widget_up_history(zle: &mut Zle) {
 }
 
 fn widget_down_history(zle: &mut Zle) {
-    // Port of downhistory(args) from Src/Zle/zle_hist.c:434.
+    // Port of downhistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:434.
     let m = zle.mult;
     zle.zle_goto_hist(m, false);
 }
 
 fn widget_history_isearch_backward(zle: &mut Zle) {
-    // Port of historyincrementalsearchbackward(args) from Src/Zle/zle_hist.c:922
+    // Port of historyincrementalsearchbackward(char **args) from Src/Zle/zle_hist.c:922
     // (which is doisearch(-1, 0)).
     do_isearch(zle, -1);
 }
 
 fn widget_history_isearch_forward(zle: &mut Zle) {
-    // Port of historyincrementalsearchforward(args) from Src/Zle/zle_hist.c:929
+    // Port of historyincrementalsearchforward(char **args) from Src/Zle/zle_hist.c:929
     // (doisearch(1, 0)).
     do_isearch(zle, 1);
 }
 
-/// Minimal port of doisearch(args, dir, pattern) from zle_hist.c.
+/// Minimal port of doisearch(char **args, int dir, int pattern) from zle_hist.c.
 /// Reads characters into a pattern and re-searches history on each keystroke.
 /// Recognised control chars: Ctrl-R repeats backward, Ctrl-S repeats forward,
 /// Ctrl-G/Esc cancels (restores starting line), backspace shortens the
@@ -1234,7 +1234,7 @@ fn do_isearch(zle: &mut Zle, mut dir: i32) {
 }
 
 fn widget_beginning_of_buffer_or_history(zle: &mut Zle) {
-    // Port of beginningofbufferorhistory(args) from Src/Zle/zle_hist.c:573.
+    // Port of beginningofbufferorhistory(char **args) from Src/Zle/zle_hist.c:573.
     // If the cursor is past the start of its current logical line
     // (findbol > 0), jump to absolute position 0 inside the buffer;
     // otherwise we're already at BoB → fall through to
@@ -1248,7 +1248,7 @@ fn widget_beginning_of_buffer_or_history(zle: &mut Zle) {
 }
 
 fn widget_end_of_buffer_or_history(zle: &mut Zle) {
-    // Port of endofbufferorhistory(args) from Src/Zle/zle_hist.c:593.
+    // Port of endofbufferorhistory(char **args) from Src/Zle/zle_hist.c:593.
     if zle.find_eol(zle.zlecs) != zle.zlell {
         zle.zlecs = zle.zlell;
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -1258,7 +1258,7 @@ fn widget_end_of_buffer_or_history(zle: &mut Zle) {
 }
 
 fn widget_transpose_chars(zle: &mut Zle) {
-    // Port of transposechars(args) from Src/Zle/zle_misc.c:313. The C source
+    // Port of transposechars(UNUSED(char **args)) from Src/Zle/zle_misc.c:313. The C source
     // is count-aware (negative count transposes backwards, positive
     // forwards, default 1) and respects newline boundaries — at BoL or
     // EoL/EOB, the swap involves the cursor's neighbor on the same
@@ -1307,20 +1307,20 @@ fn widget_transpose_chars(zle: &mut Zle) {
 }
 
 fn widget_clear_screen(zle: &mut Zle) {
-    // Port of clearscreen(args) from Src/Zle/zle_refresh.c. Routes through
+    // Port of clearscreen(UNUSED(char **args)) from Src/Zle/zle_refresh.c. Routes through
     // the existing Zle::clearscreen helper which emits the CSI clear +
     // home, then forces a refresh on the next zlecore iteration.
     zle.clearscreen();
 }
 
 fn widget_redisplay(zle: &mut Zle) {
-    // Port of redisplay(args) from Src/Zle/zle_refresh.c. Just sets the
+    // Port of redisplay(UNUSED(char **args)) from Src/Zle/zle_refresh.c. Just sets the
     // reset flag — the next zlecore iteration calls zrefresh.
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_send_break(zle: &mut Zle) {
-    // Port of sendbreak(args) from Src/Zle/zle_misc.c:1144. The C source
+    // Port of sendbreak(UNUSED(char **args)) from Src/Zle/zle_misc.c:1144. The C source
     // sets errflag |= ERRFLAG_ERROR | ERRFLAG_INT and returns 1, which
     // causes the zlecore loop at zle_main.c:1128 to exit. Our
     // abort_line() clears the buffer and sets done=true — same outward
@@ -1331,14 +1331,14 @@ fn widget_send_break(zle: &mut Zle) {
 }
 
 fn widget_overwrite_mode(zle: &mut Zle) {
-    // Port of overwritemode(args) from Src/Zle/zle_misc.c. Toggles between
+    // Port of overwritemode(UNUSED(char **args)) from Src/Zle/zle_misc.c. Toggles between
     // insert (default) and overwrite. Insert mode appends at the cursor;
     // overwrite replaces the char under the cursor.
     crate::ported::zle::zle_main::INSMODE.fetch_xor(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_quoted_insert(zle: &mut Zle) {
-    // Port of quotedinsert(args) from Src/Zle/zle_misc.c. Reads the next
+    // Port of quotedinsert(char **args) from Src/Zle/zle_misc.c. Reads the next
     // input char and inserts it literally (bypassing keymap dispatch),
     // letting the user enter control chars verbatim — the canonical
     // Ctrl-V binding.
@@ -1348,35 +1348,35 @@ fn widget_quoted_insert(zle: &mut Zle) {
 }
 
 fn widget_expand_or_complete(zle: &mut Zle) {
-    // Port of expandorcomplete(args) from Src/Zle/zle_tricky.c — tries
+    // Port of expandorcomplete(char **args) from Src/Zle/zle_tricky.c — tries
     // expansion first, falls back to completion. Compsys lives in a
     // separate crate; surface the request and let the host run it.
 }
 
 fn widget_complete_word(zle: &mut Zle) {
-    // Port of completeword(args) from Src/Zle/zle_tricky.c.
+    // Port of completeword(char **args) from Src/Zle/zle_tricky.c.
 }
 
 fn widget_expand_word(zle: &mut Zle) {
-    // Port of expandword(args) from Src/Zle/zle_tricky.c — runs only the
+    // Port of expandword(char **args) from Src/Zle/zle_tricky.c — runs only the
     // expansion phase (history, glob, parameter, brace) without falling
     // through to completion.
 }
 
 fn widget_list_choices(zle: &mut Zle) {
-    // Port of listchoices(args) from Src/Zle/zle_tricky.c — shows matches
+    // Port of listchoices(UNUSED(char **args)) from Src/Zle/zle_tricky.c — shows matches
     // without inserting.
 }
 
 fn widget_menu_complete(zle: &mut Zle) {
-    // Port of menucomplete(args) from Src/Zle/zle_tricky.c — enters/steps
+    // Port of menucomplete(char **args) from Src/Zle/zle_tricky.c — enters/steps
     // the menu-selection state.
 }
 
 // Vi mode widgets
 
 fn widget_vi_cmd_mode(zle: &mut Zle) {
-    // Port of vicmdmode(args) from Src/Zle/zle_vi.c. ESC out of insert →
+    // Port of vicmdmode(UNUSED(char **args)) from Src/Zle/zle_vi.c. ESC out of insert →
     // command mode; cursor steps back one (vim convention) since vi
     // command mode treats the cursor as ON a char rather than between.
     crate::ported::zle::zle_keymap::selectkeymap("vicmd", 1);
@@ -1387,13 +1387,13 @@ fn widget_vi_cmd_mode(zle: &mut Zle) {
 }
 
 fn widget_vi_insert(zle: &mut Zle) {
-    // Port of viinsert(args) from Src/Zle/zle_vi.c:355.
+    // Port of viinsert(UNUSED(char **args)) from Src/Zle/zle_vi.c:355.
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_vi_insert_bol(zle: &mut Zle) {
-    // Port of viinsertbol(args) from Src/Zle/zle_vi.c:374. Vim's `I` —
+    // Port of viinsertbol(UNUSED(char **args)) from Src/Zle/zle_vi.c:374. Vim's `I` —
     // first-non-blank of current line, then enter insert mode.
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -1407,7 +1407,7 @@ fn widget_vi_insert_bol(zle: &mut Zle) {
 }
 
 fn widget_vi_add_next(zle: &mut Zle) {
-    // Port of viaddnext(args) from Src/Zle/zle_vi.c:336. Vim's `a` —
+    // Port of viaddnext(UNUSED(char **args)) from Src/Zle/zle_vi.c:336. Vim's `a` —
     // step right one then enter insert mode (so insert lands AFTER
     // the cursor's current char).
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
@@ -1419,7 +1419,7 @@ fn widget_vi_add_next(zle: &mut Zle) {
 }
 
 fn widget_vi_add_eol(zle: &mut Zle) {
-    // Port of viaddeol(args) from Src/Zle/zle_vi.c:346. Vim's `A` —
+    // Port of viaddeol(UNUSED(char **args)) from Src/Zle/zle_vi.c:346. Vim's `A` —
     // jump to end-of-line then enter insert mode.
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -1428,7 +1428,7 @@ fn widget_vi_add_eol(zle: &mut Zle) {
 }
 
 fn widget_vi_forward_char(zle: &mut Zle) {
-    // Port of viforwardchar(args) from Src/Zle/zle_move.c:653. Vim's `l`
+    // Port of viforwardchar(char **args) from Src/Zle/zle_move.c:653. Vim's `l`
     // — count-aware, can't cross EoL (cursor lands on the last char
     // of the current logical line at most).
     let mut n = zle.mult;
@@ -1448,7 +1448,7 @@ fn widget_vi_forward_char(zle: &mut Zle) {
 }
 
 fn widget_vi_backward_char(zle: &mut Zle) {
-    // Port of vibackwardchar(args) from Src/Zle/zle_move.c:683. Vim's `h`
+    // Port of vibackwardchar(char **args) from Src/Zle/zle_move.c:683. Vim's `h`
     // — count-aware, can't cross BoL.
     let mut n = zle.mult;
     if n < 0 {
@@ -1466,13 +1466,13 @@ fn widget_vi_backward_char(zle: &mut Zle) {
 }
 
 fn widget_vi_forward_word(zle: &mut Zle) {
-    // Port of viforwardword(args) from Src/Zle/zle_word.c. Vim's `w` —
+    // Port of viforwardword(char **args) from Src/Zle/zle_word.c. Vim's `w` —
     // routes to forward-word with the iword class definition.
     widget_forward_word(zle);
 }
 
 fn widget_vi_forward_word_end(zle: &mut Zle) {
-    // Port of viforwardwordend(args) from Src/Zle/zle_word.c. Vim's `e` —
+    // Port of viforwardwordend(char **args) from Src/Zle/zle_word.c. Vim's `e` —
     // step right one, skip non-word, then walk word chars but land on
     // the LAST word char (peek-ahead pattern). Count-aware.
     let n = zle.mult.max(1);
@@ -1493,7 +1493,7 @@ fn widget_vi_forward_word_end(zle: &mut Zle) {
 }
 
 fn widget_vi_forward_blank_word(zle: &mut Zle) {
-    // Port of viforwardblankword(args) from Src/Zle/zle_word.c. Vim's `W` —
+    // Port of viforwardblankword(char **args) from Src/Zle/zle_word.c. Vim's `W` —
     // whitespace-only word boundary (no iword class distinction).
     let n = zle.mult.max(1);
     for _ in 0..n {
@@ -1508,7 +1508,7 @@ fn widget_vi_forward_blank_word(zle: &mut Zle) {
 }
 
 fn widget_vi_forward_blank_word_end(zle: &mut Zle) {
-    // Port of viforwardblankwordend(args) from Src/Zle/zle_word.c. Vim's
+    // Port of viforwardblankwordend(char **args) from Src/Zle/zle_word.c. Vim's
     // `E` — whitespace-only end-of-word.
     let n = zle.mult.max(1);
     for _ in 0..n {
@@ -1528,12 +1528,12 @@ fn widget_vi_forward_blank_word_end(zle: &mut Zle) {
 }
 
 fn widget_vi_backward_word(zle: &mut Zle) {
-    // Port of vibackwardword(args) from Src/Zle/zle_word.c. Vim's `b`.
+    // Port of vibackwardword(char **args) from Src/Zle/zle_word.c. Vim's `b`.
     widget_backward_word(zle);
 }
 
 fn widget_vi_backward_blank_word(zle: &mut Zle) {
-    // Port of vibackwardblankword(args) from Src/Zle/zle_word.c. Vim's `B`.
+    // Port of vibackwardblankword(char **args) from Src/Zle/zle_word.c. Vim's `B`.
     let n = zle.mult.max(1);
     for _ in 0..n {
         while zle.zlecs > 0 && zle.zleline[zle.zlecs - 1].is_whitespace() {
@@ -1547,12 +1547,12 @@ fn widget_vi_backward_blank_word(zle: &mut Zle) {
 }
 
 fn widget_vi_delete(zle: &mut Zle) {
-    // Port of videlete(args) from Src/Zle/zle_vi.c:384.
+    // Port of videlete(UNUSED(char **args)) from Src/Zle/zle_vi.c:384.
     let _ = zle.vi_delete_op();
 }
 
 fn widget_vi_delete_char(zle: &mut Zle) {
-    // Port of videletechar(args) from Src/Zle/zle_vi.c:405. Vim's `x`
+    // Port of videletechar(char **args) from Src/Zle/zle_vi.c:405. Vim's `x`
     // command — same as delete-char but C source clamps the count to
     // findeol-zlecs to avoid spilling past the current line. We let
     // delete-char run with EoB clamp; for vi-aware line-bounded
@@ -1561,35 +1561,35 @@ fn widget_vi_delete_char(zle: &mut Zle) {
 }
 
 fn widget_vi_backward_delete_char(zle: &mut Zle) {
-    // Port of vibackwarddeletechar(args) from Src/Zle/zle_vi.c. Vim's `X`.
+    // Port of vibackwarddeletechar(char **args) from Src/Zle/zle_vi.c. Vim's `X`.
     widget_backward_delete_char(zle);
 }
 
 fn widget_vi_change(zle: &mut Zle) {
-    // Port of vichange(args) from Src/Zle/zle_vi.c:438.
+    // Port of vichange(UNUSED(char **args)) from Src/Zle/zle_vi.c:438.
     let _ = zle.vi_change_op();
 }
 
 fn widget_vi_change_eol(zle: &mut Zle) {
-    // Port of vichangeeol(args) from Src/Zle/zle_vi.c:482. Vim's `C` —
+    // Port of vichangeeol(UNUSED(char **args)) from Src/Zle/zle_vi.c:482. Vim's `C` —
     // kill from cursor to EoL, enter insert mode.
     widget_kill_line(zle);
     widget_vi_insert(zle);
 }
 
 fn widget_vi_kill_eol(zle: &mut Zle) {
-    // Port of vikilleol(args) from Src/Zle/zle_vi.c. Vim's `D` — kill
+    // Port of vikilleol(UNUSED(char **args)) from Src/Zle/zle_vi.c. Vim's `D` — kill
     // from cursor to EoL without entering insert.
     widget_kill_line(zle);
 }
 
 fn widget_vi_yank(zle: &mut Zle) {
-    // Port of viyank(args) from Src/Zle/zle_vi.c:507.
+    // Port of viyank(UNUSED(char **args)) from Src/Zle/zle_vi.c:507.
     let _ = zle.vi_yank_op();
 }
 
 fn widget_vi_yank_whole_line(zle: &mut Zle) {
-    // Port of viyankwholeline(args) from Src/Zle/zle_vi.c:550. Vim's `Y` —
+    // Port of viyankwholeline(UNUSED(char **args)) from Src/Zle/zle_vi.c:550. Vim's `Y` —
     // yank `mult` whole lines into the kill ring (with the trailing
     // newline included so vi-put-after / vi-put-before recognise this
     // as a line-wise yank). C source: zle_vi.c:559 walks zlecs through
@@ -1615,7 +1615,7 @@ fn widget_vi_yank_whole_line(zle: &mut Zle) {
 }
 
 fn widget_vi_put_after(zle: &mut Zle) {
-    // Port of viputafter(args) from Src/Zle/zle_misc.c. Vim's `p` command —
+    // Port of viputafter(UNUSED(char **args)) from Src/Zle/zle_misc.c. Vim's `p` command —
     // for character-wise paste, insert AFTER the cursor; for line-wise
     // paste (when the kill-ring entry contains a trailing '\n'), insert
     // on a new line below. Cursor lands on the LAST char of the pasted
@@ -1648,7 +1648,7 @@ fn widget_vi_put_after(zle: &mut Zle) {
 }
 
 fn widget_vi_put_before(zle: &mut Zle) {
-    // Port of viputbefore(args) from Src/Zle/zle_misc.c. Vim's `P` command —
+    // Port of viputbefore(UNUSED(char **args)) from Src/Zle/zle_misc.c. Vim's `P` command —
     // char-wise paste BEFORE the cursor; line-wise paste opens a new
     // line ABOVE. Cursor lands on the last char of the pasted region.
     let is_line_paste = zle
@@ -1670,7 +1670,7 @@ fn widget_vi_put_before(zle: &mut Zle) {
 }
 
 fn widget_vi_replace(zle: &mut Zle) {
-    // Port of vireplace(args) from Src/Zle/zle_vi.c (the `R` command).
+    // Port of vireplace(UNUSED(char **args)) from Src/Zle/zle_vi.c (the `R` command).
     // Switch to insert keymap with overwrite mode so subsequent self-
     // inserts replace existing chars instead of pushing them right.
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
@@ -1678,7 +1678,7 @@ fn widget_vi_replace(zle: &mut Zle) {
 }
 
 fn widget_vi_replace_chars(zle: &mut Zle) {
-    // Port of vireplacechars(args) from Src/Zle/zle_vi.c (the `r` command).
+    // Port of vireplacechars(UNUSED(char **args)) from Src/Zle/zle_vi.c (the `r` command).
     // Read one char and overwrite the char under the cursor with it.
     // The C source supports a numeric prefix (`3rX` replaces the next
     // 3 chars all with X); replicated below.
@@ -1700,7 +1700,7 @@ fn widget_vi_replace_chars(zle: &mut Zle) {
 }
 
 fn widget_vi_substitute(zle: &mut Zle) {
-    // Port of visubstitute(args) from Src/Zle/zle_vi.c:455. Delete `mult`
+    // Port of visubstitute(UNUSED(char **args)) from Src/Zle/zle_vi.c:455. Delete `mult`
     // chars then enter insert mode — vim's `s` command.
     let n = zle.mult.max(1);
     for _ in 0..n {
@@ -1710,14 +1710,14 @@ fn widget_vi_substitute(zle: &mut Zle) {
 }
 
 fn widget_vi_change_whole_line(zle: &mut Zle) {
-    // Port of vichangewholeline(args) from Src/Zle/zle_vi.c:499 (the `S`
+    // Port of vichangewholeline(char **args) from Src/Zle/zle_vi.c:499 (the `S`
     // command). Kill the whole line, then enter insert mode.
     widget_kill_whole_line(zle);
     widget_vi_insert(zle);
 }
 
 fn widget_vi_first_non_blank(zle: &mut Zle) {
-    // Port of vifirstnonblank(args) from Src/Zle/zle_move.c:862. Move
+    // Port of vifirstnonblank(UNUSED(char **args)) from Src/Zle/zle_move.c:862. Move
     // cursor to the first non-blank character on the current line.
     let bol = zle.find_bol(zle.zlecs);
     let mut p = bol;
@@ -1729,7 +1729,7 @@ fn widget_vi_first_non_blank(zle: &mut Zle) {
 }
 
 fn widget_vi_end_of_line(zle: &mut Zle) {
-    // Port of viendofline(args) from Src/Zle/zle_move.c:708. Vim's `$`
+    // Port of viendofline(UNUSED(char **args)) from Src/Zle/zle_move.c:708. Vim's `$`
     // semantics — cursor lands on the last char of the line, not past it.
     let eol = zle.find_eol(zle.zlecs);
     if eol > 0 && (eol == zle.zlell || zle.zleline[eol] == '\n') {
@@ -1741,7 +1741,7 @@ fn widget_vi_end_of_line(zle: &mut Zle) {
 }
 
 fn widget_vi_digit_or_beginning_of_line(zle: &mut Zle) {
-    // Port of vidigitorbeginningofline(args) from Src/Zle/zle_vi.c. With
+    // Port of vidigitorbeginningofline(char **args) from Src/Zle/zle_vi.c. With
     // an active numeric prefix the `0` key acts as a digit; otherwise
     // it's beginning-of-line.
     if zle.zmod.flags & crate::ported::zle::zle_h::MOD_MULT != 0 {
@@ -1752,7 +1752,7 @@ fn widget_vi_digit_or_beginning_of_line(zle: &mut Zle) {
 }
 
 fn widget_vi_open_line_below(zle: &mut Zle) {
-    // Port of viopenlinebelow(args) from Src/Zle/zle_vi.c (the `o` command).
+    // Port of viopenlinebelow(UNUSED(char **args)) from Src/Zle/zle_vi.c (the `o` command).
     // Move to end of line, insert newline, enter insert mode.
     zle.zlecs = zle.find_eol(zle.zlecs);
     zle.self_insert('\n');
@@ -1760,7 +1760,7 @@ fn widget_vi_open_line_below(zle: &mut Zle) {
 }
 
 fn widget_vi_open_line_above(zle: &mut Zle) {
-    // Port of viopenlineabove(args) from Src/Zle/zle_vi.c (the `O` command).
+    // Port of viopenlineabove(UNUSED(char **args)) from Src/Zle/zle_vi.c (the `O` command).
     // Move to start of line, insert newline, step back, enter insert.
     zle.zlecs = zle.find_bol(zle.zlecs);
     zle.self_insert('\n');
@@ -1771,7 +1771,7 @@ fn widget_vi_open_line_above(zle: &mut Zle) {
 }
 
 fn widget_vi_join(zle: &mut Zle) {
-    // Port of vijoin(args) from Src/Zle/zle_misc.c (the `J` command).
+    // Port of vijoin(UNUSED(char **args)) from Src/Zle/zle_misc.c (the `J` command).
     // Find the newline at or after the cursor, remove it, and insert
     // a separator space (unless the newline was at end-of-buffer or
     // the next char was already whitespace). The C source also
@@ -1810,7 +1810,7 @@ fn widget_vi_join(zle: &mut Zle) {
 }
 
 fn widget_vi_repeat_change(zle: &mut Zle) {
-    // Port of virepeatchange(args) from Src/Zle/zle_vi.c. Replays the keys in
+    // Port of virepeatchange(UNUSED(char **args)) from Src/Zle/zle_vi.c. Replays the keys in
     // vi_chg_buf — but the recording side (which captures keystrokes during
     // d/c/y operators into vi_chg_buf) is still pending, so without a
     // recorded change the buffer is empty and the widget is a no-op.
@@ -1826,37 +1826,37 @@ fn widget_vi_repeat_change(zle: &mut Zle) {
 }
 
 fn widget_vi_find_next_char(zle: &mut Zle) {
-    // Port of vifindnextchar(args) from Src/Zle/zle_move.c:739.
+    // Port of vifindnextchar(char **args) from Src/Zle/zle_move.c:739.
     zle.vi_find_char(true, false);
 }
 
 fn widget_vi_find_prev_char(zle: &mut Zle) {
-    // Port of vifindprevchar(args) from Src/Zle/zle_move.c:751.
+    // Port of vifindprevchar(char **args) from Src/Zle/zle_move.c:751.
     zle.vi_find_char(false, false);
 }
 
 fn widget_vi_find_next_char_skip(zle: &mut Zle) {
-    // Port of vifindnextcharskip(args) from Src/Zle/zle_move.c:763.
+    // Port of vifindnextcharskip(char **args) from Src/Zle/zle_move.c:763.
     zle.vi_find_char(true, true);
 }
 
 fn widget_vi_find_prev_char_skip(zle: &mut Zle) {
-    // Port of vifindprevcharskip(args) from Src/Zle/zle_move.c:775.
+    // Port of vifindprevcharskip(char **args) from Src/Zle/zle_move.c:775.
     zle.vi_find_char(false, true);
 }
 
 fn widget_vi_repeat_find(zle: &mut Zle) {
-    // Port of virepeatfind(args) from Src/Zle/zle_move.c:835.
+    // Port of virepeatfind(char **args) from Src/Zle/zle_move.c:835.
     let _ = zle.vi_repeat_find();
 }
 
 fn widget_vi_rev_repeat_find(zle: &mut Zle) {
-    // Port of virevrepeatfind(args) from Src/Zle/zle_move.c:842.
+    // Port of virevrepeatfind(char **args) from Src/Zle/zle_move.c:842.
     let _ = zle.vi_rev_repeat_find();
 }
 
 fn widget_vi_history_search_forward(zle: &mut Zle) {
-    // Port of vihistorysearchforward(args) from Src/Zle/zle_hist.c.
+    // Port of vihistorysearchforward(char **args) from Src/Zle/zle_hist.c.
     // Read the search pattern starting from `?` then run a forward history search.
     // For now: re-run the last srch_str if any.
     let pat = match zle.srch_str.clone() {
@@ -1882,7 +1882,7 @@ fn widget_vi_history_search_forward(zle: &mut Zle) {
 }
 
 fn widget_vi_history_search_backward(zle: &mut Zle) {
-    // Port of vihistorysearchbackward(args) from Src/Zle/zle_hist.c.
+    // Port of vihistorysearchbackward(char **args) from Src/Zle/zle_hist.c.
     let pat = match zle.srch_str.clone() {
         Some(s) if !s.is_empty() => s,
         _ => return,
@@ -1912,7 +1912,7 @@ fn widget_vi_history_search_backward(zle: &mut Zle) {
 }
 
 fn widget_vi_repeat_search(zle: &mut Zle) {
-    // Port of virepeatsearch(args) from Src/Zle/zle_hist.c.
+    // Port of virepeatsearch(UNUSED(char **args)) from Src/Zle/zle_hist.c.
     // Replays the last vi search in the same direction.
     let mut hist = std::mem::take(&mut zle.history);
     zle.vi_repeat_search(&mut hist);
@@ -1920,14 +1920,14 @@ fn widget_vi_repeat_search(zle: &mut Zle) {
 }
 
 fn widget_vi_rev_repeat_search(zle: &mut Zle) {
-    // Port of virevrepeatsearch(args) from Src/Zle/zle_hist.c.
+    // Port of virevrepeatsearch(char **args) from Src/Zle/zle_hist.c.
     let mut hist = std::mem::take(&mut zle.history);
     zle.vi_rev_repeat_search(&mut hist);
     zle.history = hist;
 }
 
 fn widget_vi_fetch_history(zle: &mut Zle) {
-    // Port of vifetchhistory(args) from Src/Zle/zle_hist.c:1787.
+    // Port of vifetchhistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:1787.
     // With no count: jump to the live (newest) entry. With a count: load
     // that history event by 1-based index. Negative count is rejected.
     if zle.mult < 0 {
@@ -1970,7 +1970,7 @@ fn widget_vi_fetch_history(zle: &mut Zle) {
 }
 
 fn widget_vi_goto_column(zle: &mut Zle) {
-    // Port of vigotocolumn(args) from Src/Zle/zle_move.c. Vim's `|` —
+    // Port of vigotocolumn(UNUSED(char **args)) from Src/Zle/zle_move.c. Vim's `|` —
     // jump to column N (1-based) on the current logical line. The
     // count is in zmod.mult; cursor lands at bol + (mult - 1),
     // clamped to the line's EoL.
@@ -1982,14 +1982,14 @@ fn widget_vi_goto_column(zle: &mut Zle) {
 }
 
 fn widget_vi_backward_kill_word(zle: &mut Zle) {
-    // Port of vibackwardkillword(args) from Src/Zle/zle_word.c. Vim's
+    // Port of vibackwardkillword(UNUSED(char **args)) from Src/Zle/zle_word.c. Vim's
     // ^W in insert mode — same as backward-kill-word but specifically
     // bound for the vi insert keymap.
     widget_backward_kill_word(zle);
 }
 
 fn widget_digit_argument(zle: &mut Zle) {
-    // Port of digitargument(args) from Src/Zle/zle_misc.c:950 plus the
+    // Port of digitargument(UNUSED(char **args)) from Src/Zle/zle_misc.c:950 plus the
     // parsedigit() helper at zle_misc.c:919. Accepts a digit in the
     // current zmod.base (10 by default; up to 36 honours a-z / A-Z),
     // and accumulates it into zmod.tmult with sign tracking. After
@@ -2020,7 +2020,7 @@ fn widget_digit_argument(zle: &mut Zle) {
 }
 
 fn widget_undefined(zle: &mut Zle) {
-    // Port of undefinedkey(args) from Src/Zle/zle_main.c. zsh dispatches
+    // Port of undefinedkey(UNUSED(char **args)) from Src/Zle/zle_main.c. zsh dispatches
     // here when a key has no binding in the current keymap; the C
     // source just beeps. We do the same by ignoring `zle` (handle_feep
     // would also work, but the zlecore's no-binding fallback already
@@ -2031,7 +2031,7 @@ fn widget_undefined(zle: &mut Zle) {
 
 /// Parse a single byte as a digit in `base`. Returns `-1` if the byte
 /// isn't a valid digit in that base.
-/// Port of `parsedigit(inkey)` from Src/Zle/zle_misc.c:919. Used by
+/// Port of `parsedigit(int inkey)` from Src/Zle/zle_misc.c:919. Used by
 /// digit-argument and universal-argument to honour zmod.base ∈ [2, 36].
 fn parse_digit_in_base(b: u8, base: i32) -> i32 {
     let inkey = b as i32 & 0x7f;
@@ -2068,7 +2068,7 @@ fn widget_beep(zle: &mut Zle) {
 }
 
 fn widget_set_mark_command(zle: &mut Zle) {
-    // Port of setmarkcommand(args) from Src/Zle/zle_move.c:483. Negative count
+    // Port of setmarkcommand(UNUSED(char **args)) from Src/Zle/zle_move.c:483. Negative count
     // disables the region; otherwise marks the current cursor and turns
     // on the visual region (charwise).
     if zle.mult < 0 {
@@ -2080,7 +2080,7 @@ fn widget_set_mark_command(zle: &mut Zle) {
 }
 
 fn widget_exchange_point_and_mark(zle: &mut Zle) {
-    // Port of exchangepointandmark(args) from Src/Zle/zle_move.c:496. With
+    // Port of exchangepointandmark(UNUSED(char **args)) from Src/Zle/zle_move.c:496. With
     // mult==0 the C source just turns the region on without swapping;
     // with mult>0 swaps cursor↔mark and clamps cursor.
     if zle.mult == 0 {
@@ -2097,38 +2097,38 @@ fn widget_exchange_point_and_mark(zle: &mut Zle) {
 }
 
 fn widget_deactivate_region(zle: &mut Zle) {
-    // Port of deactivateregion(args) from Src/Zle/zle_move.c:564.
+    // Port of deactivateregion(UNUSED(char **args)) from Src/Zle/zle_move.c:564.
     zle.vi_deactivate_region();
 }
 
 fn widget_visual_mode(zle: &mut Zle) {
-    // Port of visualmode(args) from Src/Zle/zle_move.c:516.
+    // Port of visualmode(UNUSED(char **args)) from Src/Zle/zle_move.c:516.
     zle.vi_visual_mode();
 }
 
 fn widget_visual_line_mode(zle: &mut Zle) {
-    // Port of visuallinemode(args) from Src/Zle/zle_move.c:540.
+    // Port of visuallinemode(UNUSED(char **args)) from Src/Zle/zle_move.c:540.
     zle.vi_visual_line_mode();
 }
 
 fn widget_capitalize_word(zle: &mut Zle) {
-    // Port of capitalizeword(args) from Src/Zle/zle_misc.c. Method already
+    // Port of capitalizeword(UNUSED(char **args)) from Src/Zle/zle_misc.c. Method already
     // exists on Zle; this is the dispatch entry.
     zle.capitalize_word();
 }
 
 fn widget_down_case_word(zle: &mut Zle) {
-    // Port of downcaseword(args) from Src/Zle/zle_misc.c.
+    // Port of downcaseword(UNUSED(char **args)) from Src/Zle/zle_misc.c.
     zle.downcase_word();
 }
 
 fn widget_up_case_word(zle: &mut Zle) {
-    // Port of upcaseword(args) from Src/Zle/zle_misc.c.
+    // Port of upcaseword(UNUSED(char **args)) from Src/Zle/zle_misc.c.
     zle.upcase_word();
 }
 
 fn widget_pound_insert(zle: &mut Zle) {
-    // Port of poundinsert(args) from Src/Zle/zle_misc.c:369. Toggle a leading
+    // Port of poundinsert(UNUSED(char **args)) from Src/Zle/zle_misc.c:369. Toggle a leading
     // `#` on every logical line so the entire input is commented out
     // (or uncommented). Common keybinding: M-#.
     zle.zlecs = 0;
@@ -2170,7 +2170,7 @@ fn widget_pound_insert(zle: &mut Zle) {
 }
 
 fn widget_quote_line(zle: &mut Zle) {
-    // Port of quoteline(args) from Src/Zle/zle_misc.c:1187. Wrap the entire
+    // Port of quoteline(UNUSED(char **args)) from Src/Zle/zle_misc.c:1187. Wrap the entire
     // buffer in single quotes, escaping any embedded single bslashquote as
     // `'\''` (the C source's makequote routine).
     let inner: String = zle.zleline.iter().collect();
@@ -2183,7 +2183,7 @@ fn widget_quote_line(zle: &mut Zle) {
 }
 
 fn widget_quote_region(zle: &mut Zle) {
-    // Port of quoteregion(args) from Src/Zle/zle_misc.c:1152. Wrap the
+    // Port of quoteregion(UNUSED(char **args)) from Src/Zle/zle_misc.c:1152. Wrap the
     // currently-selected region (mark..zlecs, normalised) in single
     // quotes with embedded-bslashquote escaping.
     let (lo, hi) = if zle.mark <= zle.zlecs {
@@ -2207,7 +2207,7 @@ fn widget_quote_region(zle: &mut Zle) {
 }
 
 fn widget_copy_region_as_kill(zle: &mut Zle) {
-    // Port of copyregionaskill(args) from Src/Zle/zle_misc.c:494. Copies
+    // Port of copyregionaskill(char **args) from Src/Zle/zle_misc.c:494. Copies
     // mark..zlecs (normalised) onto the kill ring without removing it.
     let (lo, hi) = if zle.mark <= zle.zlecs {
         (zle.mark, zle.zlecs)
@@ -2227,7 +2227,7 @@ fn widget_copy_region_as_kill(zle: &mut Zle) {
 }
 
 fn widget_copy_prev_word(zle: &mut Zle) {
-    // Port of copyprevword(args) from Src/Zle/zle_misc.c:1066. Inserts the
+    // Port of copyprevword(UNUSED(char **args)) from Src/Zle/zle_misc.c:1066. Inserts the
     // previous word (per ZC_iword) at the cursor. The full C version
     // walks `zmult` words back; we replicate that by scanning backward
     // through `mult` word-boundaries.
@@ -2262,7 +2262,7 @@ fn widget_copy_prev_word(zle: &mut Zle) {
 }
 
 fn widget_transpose_words(zle: &mut Zle) {
-    // Port of transposewords(args) from Src/Zle/zle_word.c:652. The C source
+    // Port of transposewords(UNUSED(char **args)) from Src/Zle/zle_word.c:652. The C source
     // is a multi-step pointer dance; this Rust port recreates the
     // common-case behavior: swap the two whitespace-separated words
     // around (or before) the cursor. Multi-line + edge-case handling
@@ -2334,7 +2334,7 @@ fn widget_transpose_words(zle: &mut Zle) {
 }
 
 fn widget_history_beginning_search_backward(zle: &mut Zle) {
-    // Port of historybeginningsearchbackward(args) from Src/Zle/zle_hist.c:2039.
+    // Port of historybeginningsearchbackward(char **args) from Src/Zle/zle_hist.c:2039.
     // Searches history for entries that start with the text *before* the
     // cursor (the prefix), keeping the cursor where it is on a match.
     let prefix: String = zle.zleline[..zle.zlecs.min(zle.zleline.len())]
@@ -2386,33 +2386,33 @@ fn widget_history_beginning_search_forward(zle: &mut Zle) {
 }
 
 fn widget_beginning_of_history(zle: &mut Zle) {
-    // Port of beginningofhistory(args) from Src/Zle/zle_hist.c:464.
+    // Port of beginningofhistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:464.
     let mut hist = std::mem::take(&mut zle.history);
     zle.beginning_of_history(&mut hist);
     zle.history = hist;
 }
 
 fn widget_end_of_history(zle: &mut Zle) {
-    // Port of endofhistory(args) from Src/Zle/zle_hist.c:478.
+    // Port of endofhistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:478.
     let mut hist = std::mem::take(&mut zle.history);
     zle.end_of_history(&mut hist);
     zle.history = hist;
 }
 
 fn widget_push_line(zle: &mut Zle) {
-    // Port of pushline(args) from Src/Zle/zle_hist.c:832.
+    // Port of pushline(UNUSED(char **args)) from Src/Zle/zle_hist.c:832.
     zle.push_line();
     crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_describe_key_briefly(zle: &mut Zle) {
-    // Port of describekeybriefly(args) from Src/Zle/zle_thingy.c. Existing
+    // Port of describekeybriefly(UNUSED(char **args)) from Src/Zle/zle_thingy.c. Existing
     // method on Zle handles the input read + lookup loop.
     zle.describe_key_briefly();
 }
 
 fn widget_delete_word(zle: &mut Zle) {
-    // Port of deleteword(args) from Src/Zle/zle_word.c. Like kill-word but
+    // Port of deleteword(char **args) from Src/Zle/zle_word.c. Like kill-word but
     // doesn't put the deleted text on the kill ring.
     let saved_cs = zle.zlecs;
     let end = zle.find_word_end(WordStyle::Emacs);
@@ -2424,7 +2424,7 @@ fn widget_delete_word(zle: &mut Zle) {
 }
 
 fn widget_backward_delete_word(zle: &mut Zle) {
-    // Port of backwarddeleteword(args) from Src/Zle/zle_word.c. Like
+    // Port of backwarddeleteword(char **args) from Src/Zle/zle_word.c. Like
     // backward-kill-word but no kill-ring update.
     let end = zle.zlecs;
     let start = zle.find_word_start(WordStyle::Emacs);
@@ -2437,7 +2437,7 @@ fn widget_backward_delete_word(zle: &mut Zle) {
 }
 
 fn widget_emacs_forward_word(zle: &mut Zle) {
-    // Port of emacsforwardword(args) from Src/Zle/zle_word.c — same as
+    // Port of emacsforwardword(char **args) from Src/Zle/zle_word.c — same as
     // forward-word in emacs style; explicit name binding for users who
     // want it independent of the global word style.
     zle.zlecs = zle.find_word_end(WordStyle::Emacs);
@@ -2445,13 +2445,13 @@ fn widget_emacs_forward_word(zle: &mut Zle) {
 }
 
 fn widget_emacs_backward_word(zle: &mut Zle) {
-    // Port of emacsbackwardword(args) from Src/Zle/zle_word.c.
+    // Port of emacsbackwardword(char **args) from Src/Zle/zle_word.c.
     zle.zlecs = zle.find_word_start(WordStyle::Emacs);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_kill_region(zle: &mut Zle) {
-    // Port of killregion(args) from Src/Zle/zle_misc.c. Drains the region
+    // Port of killregion(UNUSED(char **args)) from Src/Zle/zle_misc.c. Drains the region
     // (mark..zlecs, normalised) into the kill ring and removes it.
     let (lo, hi) = if zle.mark <= zle.zlecs {
         (zle.mark, zle.zlecs)
@@ -2475,7 +2475,7 @@ fn widget_kill_region(zle: &mut Zle) {
 }
 
 fn widget_kill_buffer(zle: &mut Zle) {
-    // Port of killbuffer(args) from Src/Zle/zle_misc.c. Cuts the entire line
+    // Port of killbuffer(UNUSED(char **args)) from Src/Zle/zle_misc.c. Cuts the entire line
     // to the kill ring.
     if zle.zlell == 0 {
         return;
@@ -2492,7 +2492,7 @@ fn widget_kill_buffer(zle: &mut Zle) {
 }
 
 fn widget_vi_set_mark_widget(zle: &mut Zle) {
-    // Port of visetmark(args) from Src/Zle/zle_move.c:872. Reads the next
+    // Port of visetmark(UNUSED(char **args)) from Src/Zle/zle_move.c:872. Reads the next
     // char as the mark name and stores it in vi_marks via the existing
     // Zle::vi_set_mark method.
     if let Some(c) = zle.getfullchar(false) {
@@ -2501,14 +2501,14 @@ fn widget_vi_set_mark_widget(zle: &mut Zle) {
 }
 
 fn widget_vi_goto_mark_widget(zle: &mut Zle) {
-    // Port of vigotomark(args) from Src/Zle/zle_move.c:887.
+    // Port of vigotomark(UNUSED(char **args)) from Src/Zle/zle_move.c:887.
     if let Some(c) = zle.getfullchar(false) {
         zle.vi_goto_mark(c);
     }
 }
 
 fn widget_vi_goto_mark_line_widget(zle: &mut Zle) {
-    // Port of vigotomarkline(args) from Src/Zle/zle_move.c. Same as
+    // Port of vigotomarkline(char **args) from Src/Zle/zle_move.c. Same as
     // vi-goto-mark but lands at first non-blank of the line containing
     // the mark.
     if let Some(c) = zle.getfullchar(false) {
@@ -2525,20 +2525,20 @@ fn widget_vi_goto_mark_line_widget(zle: &mut Zle) {
 }
 
 fn widget_vi_match_bracket(zle: &mut Zle) {
-    // Port of vimatchbracket(args) from Src/Zle/zle_vi.c. Method already
+    // Port of vimatchbracket(UNUSED(char **args)) from Src/Zle/zle_vi.c. Method already
     // exists on Zle via vi_match_bracket.
     zle.vi_match_bracket();
 }
 
 fn widget_vi_caps_lock_panic(zle: &mut Zle) {
-    // Port of vicapslockpanic(args) from Src/Zle/zle_vi.c. zsh's joke
+    // Port of vicapslockpanic(UNUSED(char **args)) from Src/Zle/zle_vi.c. zsh's joke
     // widget: blocks until you press a non-Caps-Lock key. Practical
     // port simply beeps once.
     zle.handle_feep();
 }
 
 fn widget_vi_kill_line(zle: &mut Zle) {
-    // Port of vikillline(args) from Src/Zle/zle_vi.c. Kills from cursor
+    // Port of vikillline(UNUSED(char **args)) from Src/Zle/zle_vi.c. Kills from cursor
     // back to start of line — different from Emacs kill-line which
     // kills forward.
     let bol = zle.find_bol(zle.zlecs);
@@ -2555,7 +2555,7 @@ fn widget_vi_kill_line(zle: &mut Zle) {
 }
 
 fn widget_vi_yank_eol(zle: &mut Zle) {
-    // Port of viyankeol(args) from Src/Zle/zle_vi.c:537. Copies from cursor
+    // Port of viyankeol(UNUSED(char **args)) from Src/Zle/zle_vi.c:537. Copies from cursor
     // to end of line into the kill ring without removing.
     let eol = zle.find_eol(zle.zlecs);
     if eol > zle.zlecs {
@@ -2568,13 +2568,13 @@ fn widget_vi_yank_eol(zle: &mut Zle) {
 }
 
 fn widget_vi_beginning_of_line(zle: &mut Zle) {
-    // Port of vibeginningofline(args) from Src/Zle/zle_move.c:728.
+    // Port of vibeginningofline(UNUSED(char **args)) from Src/Zle/zle_move.c:728.
     zle.zlecs = zle.find_bol(zle.zlecs);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_vi_swap_case(zle: &mut Zle) {
-    // Port of viswapcase(args) from Src/Zle/zle_vi.c. Swap the case of
+    // Port of viswapcase(UNUSED(char **args)) from Src/Zle/zle_vi.c. Swap the case of
     // the char under the cursor and advance one position; repeat
     // `mult` times.
     let n = zle.mult.max(1);
@@ -2599,7 +2599,7 @@ fn widget_vi_swap_case(zle: &mut Zle) {
 }
 
 fn widget_vi_oper_swap_case(zle: &mut Zle) {
-    // Port of vioperswapcase(args) from Src/Zle/zle_vi.c. As an operator,
+    // Port of vioperswapcase(UNUSED(char **args)) from Src/Zle/zle_vi.c. As an operator,
     // swaps the case of every char in a vi range. The range read is
     // delegated to `vi_get_range('~')` (the C source uses the same
     // operator-pending machinery as d/c/y).
@@ -2621,7 +2621,7 @@ fn widget_vi_oper_swap_case(zle: &mut Zle) {
 }
 
 fn widget_vi_undo_change(zle: &mut Zle) {
-    // Port of viundochange(args) from Src/Zle/zle_vi.c. zsh's vi-undo-change
+    // Port of viundochange(char **args) from Src/Zle/zle_vi.c. zsh's vi-undo-change
     // walks back to the change boundary recorded at insert-mode entry
     // (vistartchange) — undo until cur_change drops below that. Our
     // simpler model: just call undo_widget once, matching the common
@@ -2630,7 +2630,7 @@ fn widget_vi_undo_change(zle: &mut Zle) {
 }
 
 fn widget_universal_argument(zle: &mut Zle) {
-    // Port of universalargument(args) from Src/Zle/zle_misc.c:986. The C
+    // Port of universalargument(char **args) from Src/Zle/zle_misc.c:986. The C
     // source greedily reads digits (and an optional leading '-') from
     // the input stream right after C-u, then applies the result as
     // tmult; if no digits follow, multiplies the existing tmult by 4
@@ -2666,7 +2666,7 @@ fn widget_universal_argument(zle: &mut Zle) {
 }
 
 fn widget_neg_argument(zle: &mut Zle) {
-    // Port of negargument(args) from Src/Zle/zle_misc.c:974. The C source
+    // Port of negargument(UNUSED(char **args)) from Src/Zle/zle_misc.c:974. The C source
     // bails (returns 1) if MOD_TMULT is already set — neg-argument is
     // only valid as the *first* prefix, not after a digit. Otherwise
     // sets tmult = -1 and the MOD_TMULT|MOD_NEG flags so the next
@@ -2682,13 +2682,13 @@ fn widget_neg_argument(zle: &mut Zle) {
 }
 
 fn widget_recursive_edit(zle: &mut Zle) {
-    // Port of recursiveedit(args) from Src/Zle/zle_main.c. Method already
+    // Port of recursiveedit(UNUSED(char **args)) from Src/Zle/zle_main.c. Method already
     // exists on Zle via recursive_edit.
     let _ = zle.recursive_edit();
 }
 
 fn widget_what_cursor_position(zle: &mut Zle) {
-    // Port of whatcursorposition(args) from Src/Zle/zle_misc.c. Emits a
+    // Port of whatcursorposition(UNUSED(char **args)) from Src/Zle/zle_misc.c. Emits a
     // status-line message describing the cursor position. The C source
     // formats "Char: X (NNN, 0xHH, 0bBB) Point N of N (PP%) Column N".
     // Routed to our `show_msg` so the message lands wherever the host
@@ -2709,7 +2709,7 @@ fn widget_what_cursor_position(zle: &mut Zle) {
 }
 
 fn widget_set_local_history_widget(zle: &mut Zle) {
-    // Port of setlocalhistory(args) from Src/Zle/zle_hist.c:794.
+    // Port of setlocalhistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:794.
     let has_mult = zle.zmod.flags & crate::ported::zle::zle_h::MOD_MULT != 0;
     let mult = zle.zmod.mult;
     let mut hist = std::mem::take(&mut zle.history);
@@ -2718,13 +2718,13 @@ fn widget_set_local_history_widget(zle: &mut Zle) {
 }
 
 fn widget_undefined_key(zle: &mut Zle) {
-    // Port of undefinedkey(args) from Src/Zle/zle_main.c. The C source just
+    // Port of undefinedkey(UNUSED(char **args)) from Src/Zle/zle_main.c. The C source just
     // beeps; we route to handle_feep.
     zle.handle_feep();
 }
 
 fn widget_history_search_backward(zle: &mut Zle) {
-    // Port of historysearchbackward(args) from Src/Zle/zle_hist.c. Method
+    // Port of historysearchbackward(char **args) from Src/Zle/zle_hist.c. Method
     // exists; this is the dispatch entry.
     let mut hist = std::mem::take(&mut zle.history);
     zle.history_search_backward(&mut hist);
@@ -2732,14 +2732,14 @@ fn widget_history_search_backward(zle: &mut Zle) {
 }
 
 fn widget_history_search_forward(zle: &mut Zle) {
-    // Port of historysearchforward(args) from Src/Zle/zle_hist.c.
+    // Port of historysearchforward(char **args) from Src/Zle/zle_hist.c.
     let mut hist = std::mem::take(&mut zle.history);
     zle.history_search_forward(&mut hist);
     zle.history = hist;
 }
 
 fn widget_insert_last_word_widget(zle: &mut Zle) {
-    // Port of insertlastword(args) from Src/Zle/zle_hist.c. Method exists;
+    // Port of insertlastword(char **args) from Src/Zle/zle_hist.c. Method exists;
     // this is the dispatch entry.
     let hist = std::mem::take(&mut zle.history);
     zle.insert_last_word(&hist);
@@ -2747,20 +2747,20 @@ fn widget_insert_last_word_widget(zle: &mut Zle) {
 }
 
 fn widget_up_line(zle: &mut Zle) {
-    // Port of upline(args) from Src/Zle/zle_hist.c:243. Just the
+    // Port of upline(char **args) from Src/Zle/zle_hist.c:243. Just the
     // multi-line cursor motion — no history fallback.
     let _ = zle.upline();
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_down_line(zle: &mut Zle) {
-    // Port of downline(args) from Src/Zle/zle_hist.c:332.
+    // Port of downline(char **args) from Src/Zle/zle_hist.c:332.
     let _ = zle.downline();
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_vi_up_line_or_history(zle: &mut Zle) {
-    // Port of viuplineorhistory(args) from Src/Zle/zle_hist.c:302. Same as
+    // Port of viuplineorhistory(char **args) from Src/Zle/zle_hist.c:302. Same as
     // up-line-or-history but lands at the first non-blank.
     let _ = zle.up_line_or_history_widget();
     let bol = zle.find_bol(zle.zlecs);
@@ -2773,7 +2773,7 @@ fn widget_vi_up_line_or_history(zle: &mut Zle) {
 }
 
 fn widget_vi_down_line_or_history(zle: &mut Zle) {
-    // Port of vidownlineorhistory(args) from Src/Zle/zle_hist.c:390.
+    // Port of vidownlineorhistory(char **args) from Src/Zle/zle_hist.c:390.
     let _ = zle.down_line_or_history_widget();
     let bol = zle.find_bol(zle.zlecs);
     let mut p = bol;
@@ -2785,7 +2785,7 @@ fn widget_vi_down_line_or_history(zle: &mut Zle) {
 }
 
 fn widget_up_line_or_search(zle: &mut Zle) {
-    // Port of uplineorsearch(args) from Src/Zle/zle_hist.c:312. Try cursor
+    // Port of uplineorsearch(char **args) from Src/Zle/zle_hist.c:312. Try cursor
     // motion first; if at top, fall through to history-search-backward.
     let ocs = zle.zlecs;
     let n = zle.upline();
@@ -2796,7 +2796,7 @@ fn widget_up_line_or_search(zle: &mut Zle) {
 }
 
 fn widget_down_line_or_search(zle: &mut Zle) {
-    // Port of downlineorsearch(args) from Src/Zle/zle_hist.c:400.
+    // Port of downlineorsearch(char **args) from Src/Zle/zle_hist.c:400.
     let ocs = zle.zlecs;
     let n = zle.downline();
     if n != 0 {
@@ -2806,7 +2806,7 @@ fn widget_down_line_or_search(zle: &mut Zle) {
 }
 
 fn widget_beginning_of_line_hist(zle: &mut Zle) {
-    // Port of beginningoflinehist(args) from Src/Zle/zle_move.c. Same as
+    // Port of beginningoflinehist(char **args) from Src/Zle/zle_move.c. Same as
     // beginning-of-line at the start of the buffer; otherwise jumps to
     // the start of the current logical line.
     if zle.zlecs == 0 {
@@ -2819,13 +2819,13 @@ fn widget_beginning_of_line_hist(zle: &mut Zle) {
 }
 
 fn widget_end_of_line_hist(zle: &mut Zle) {
-    // Port of endoflinehist(args) from Src/Zle/zle_move.c.
+    // Port of endoflinehist(char **args) from Src/Zle/zle_move.c.
     zle.zlecs = zle.find_eol(zle.zlecs);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn widget_copy_prev_shell_word(zle: &mut Zle) {
-    // Port of copyprevshellword(args) from Src/Zle/zle_misc.c:1108. Copies
+    // Port of copyprevshellword(UNUSED(char **args)) from Src/Zle/zle_misc.c:1108. Copies
     // the previous shell-word (quoted spans intact) at the cursor —
     // uses our shell-word boundary helper from src/zle/zle_word.
     let n = zle.mult.max(1) as usize;
@@ -2859,7 +2859,7 @@ fn widget_copy_prev_shell_word(zle: &mut Zle) {
 }
 
 fn widget_gosmacs_transpose_chars(zle: &mut Zle) {
-    // Port of gosmacstransposechars(args) from Src/Zle/zle_misc.c. Like
+    // Port of gosmacstransposechars(UNUSED(char **args)) from Src/Zle/zle_misc.c. Like
     // transpose-chars but doesn't advance the cursor afterwards (the
     // C source: swaps the two chars before the cursor).
     if zle.zlecs < 2 {
@@ -2870,13 +2870,13 @@ fn widget_gosmacs_transpose_chars(zle: &mut Zle) {
 }
 
 fn widget_reset_prompt(zle: &mut Zle) {
-    // Port of resetprompt(args) from Src/Zle/zle_main.c. Already a method on
+    // Port of resetprompt(UNUSED(char **args)) from Src/Zle/zle_main.c. Already a method on
     // Zle (sets resetneeded); call through.
     zle.resetprompt();
 }
 
 fn widget_split_undo(zle: &mut Zle) {
-    // Port of splitundo(args) from Src/Zle/zle_utils.c. Closes any pending
+    // Port of splitundo(UNUSED(char **args)) from Src/Zle/zle_utils.c. Closes any pending
     // change record so the next mkundoent starts a fresh entry. Routes
     // to setlastline() which snapshots the current line state — the
     // C source achieves the same effect by flushing nextchanges.
@@ -2884,7 +2884,7 @@ fn widget_split_undo(zle: &mut Zle) {
 }
 
 fn widget_argument_base(zle: &mut Zle) {
-    // Port of argumentbase(args) from Src/Zle/zle_misc.c:1038. The C source
+    // Port of argumentbase(char **args) from Src/Zle/zle_misc.c:1038. The C source
     // takes the requested base from the previous mult (no explicit
     // arg), validates it's in [2, 36], stashes it in zmod.base, and
     // resets the rest of the modifier so the next digit-argument starts
@@ -2904,7 +2904,7 @@ fn widget_argument_base(zle: &mut Zle) {
 }
 
 fn widget_infer_next_history(zle: &mut Zle) {
-    // Port of infernexthistory(args) from Src/Zle/zle_hist.c. Looks for
+    // Port of infernexthistory(char **args) from Src/Zle/zle_hist.c. Looks for
     // the entry following the most recent match of the current line
     // and loads it. Useful when stepping through related commands.
     let line: String = zle.zleline.iter().collect();
@@ -2926,7 +2926,7 @@ fn widget_infer_next_history(zle: &mut Zle) {
 }
 
 fn widget_accept_and_infer_next_history(zle: &mut Zle) {
-    // Port of acceptandinfernexthistory(args) from Src/Zle/zle_hist.c.
+    // Port of acceptandinfernexthistory(char **args) from Src/Zle/zle_hist.c.
     // Like accept-line but pre-loads the entry following the most
     // recent match for the next prompt.
     widget_infer_next_history(zle);
@@ -2934,21 +2934,21 @@ fn widget_accept_and_infer_next_history(zle: &mut Zle) {
 }
 
 fn widget_vi_quoted_insert(zle: &mut Zle) {
-    // Port of viquotedinsert(args) from Src/Zle/zle_vi.c. Same as
+    // Port of viquotedinsert(char **args) from Src/Zle/zle_vi.c. Same as
     // quoted-insert in our model — read the next char and self-insert
     // it literally (existing widget_quoted_insert does this).
     widget_quoted_insert(zle);
 }
 
 fn widget_run_help(zle: &mut Zle) {
-    // Port of processcmd(args) (run-help binding) from Src/Zle/zle_misc.c.
+    // Port of processcmd(UNUSED(char **args)) (run-help binding) from Src/Zle/zle_misc.c.
     // The C source spawns the run-help function on the current command
     // word; we record a hook so the host can dispatch it.
     zle.call_hook("run-help", None);
 }
 
 fn widget_expand_history(zle: &mut Zle) {
-    // Port of expandhistory(args) from Src/Zle/zle_tricky.c:2921. zsh
+    // Port of expandhistory(UNUSED(char **args)) from Src/Zle/zle_tricky.c:2921. zsh
     // walks the line through the history-expansion machinery (`!!`,
     // `!$`, `!:0` etc.). Without that engine wired in here, surface
     // a hook for the host to satisfy.
@@ -2956,7 +2956,7 @@ fn widget_expand_history(zle: &mut Zle) {
 }
 
 fn widget_magic_space(zle: &mut Zle) {
-    // Port of magicspace(args) from Src/Zle/zle_tricky.c:2882. The C source
+    // Port of magicspace(char **args) from Src/Zle/zle_tricky.c:2882. The C source
     // expands history (via expandhistory above) then self-inserts a
     // literal space.
     widget_expand_history(zle);
@@ -2967,7 +2967,7 @@ fn widget_magic_space(zle: &mut Zle) {
 }
 
 fn widget_spell_word(zle: &mut Zle) {
-    // Port of spellword(args) from Src/Zle/zle_tricky.c. Surface as a hook
+    // Port of spellword(UNUSED(char **args)) from Src/Zle/zle_tricky.c. Surface as a hook
     // — the C source spawns an external speller; the host binds.
     zle.call_hook("spell-word", None);
 }
@@ -2989,7 +2989,7 @@ fn widget_get_line(zle: &mut Zle) {
 }
 
 fn widget_push_input(zle: &mut Zle) {
-    // Port of pushinput(args) from Src/Zle/zle_hist.c. Pushes the entire
+    // Port of pushinput(char **args) from Src/Zle/zle_hist.c. Pushes the entire
     // input including any in-progress continuation onto bufstack and
     // clears the editor — a superset of push-line that also flushes
     // pending PS2 lines. With our single-line model it behaves like
@@ -2998,7 +2998,7 @@ fn widget_push_input(zle: &mut Zle) {
 }
 
 fn widget_vi_set_buffer(zle: &mut Zle) {
-    // Port of visetbuffer(args) from Src/Zle/zle_vi.c. The C source reads
+    // Port of visetbuffer(char **args) from Src/Zle/zle_vi.c. The C source reads
     // a vi-buffer name (`"a..z`) and stores it for the next y/d/p.
     // Without the full vibuf register dispatch wired here, consume the
     // next char and stash it on zmod for later inspection.
@@ -3013,7 +3013,7 @@ fn widget_vi_set_buffer(zle: &mut Zle) {
 }
 
 fn widget_vi_indent(zle: &mut Zle) {
-    // Port of viindent(args) from Src/Zle/zle_vi.c. Inserts SHWIDTH spaces
+    // Port of viindent(UNUSED(char **args)) from Src/Zle/zle_vi.c. Inserts SHWIDTH spaces
     // at the start of every logical line in the range read via
     // vi_get_range. Defaults to 4 spaces (tab width); zsh's actual
     // shiftwidth comes from the SH_WORD_SPLIT family — left as a fixed
@@ -3034,7 +3034,7 @@ fn widget_vi_indent(zle: &mut Zle) {
 }
 
 fn widget_vi_unindent(zle: &mut Zle) {
-    // Port of viunindent(args) from Src/Zle/zle_vi.c. Removes up to 4
+    // Port of viunindent(UNUSED(char **args)) from Src/Zle/zle_vi.c. Removes up to 4
     // leading spaces from every logical line in the range.
     if let Some((start, end, _)) = zle.vi_get_range('<') {
         let bol_start = zle.find_bol(start);
@@ -3058,7 +3058,7 @@ fn widget_vi_unindent(zle: &mut Zle) {
 }
 
 fn widget_bracketed_paste(zle: &mut Zle) {
-    // Port of bracketedpaste(args) from Src/Zle/zle_misc.c. The C source
+    // Port of bracketedpaste(char **args) from Src/Zle/zle_misc.c. The C source
     // reads bytes between the bracketed-paste open + close escapes.
     // Surface as a hook so the host (which owns the input loop) drains
     // and inserts the text — host-driven because the paste sentinel
@@ -3067,7 +3067,7 @@ fn widget_bracketed_paste(zle: &mut Zle) {
 }
 
 fn widget_vi_backward_word_end(zle: &mut Zle) {
-    // Port of vibackwardwordend(args) from Src/Zle/zle_word.c:348. Step
+    // Port of vibackwardwordend(char **args) from Src/Zle/zle_word.c:348. Step
     // backward to the end (last char) of the previous word. Faithful to
     // the C loop: read class at current position, step back once, walk
     // back through same-class non-blank chars, then through blanks.
@@ -3103,7 +3103,7 @@ fn widget_vi_backward_word_end(zle: &mut Zle) {
 }
 
 fn widget_vi_backward_blank_word_end(zle: &mut Zle) {
-    // Port of vibackwardblankwordend(args) from Src/Zle/zle_word.c:375.
+    // Port of vibackwardblankwordend(char **args) from Src/Zle/zle_word.c:375.
     // Same shape as vibackwardwordend but whitespace is the only
     // separator (no class distinction between alnum and punctuation).
     let n = zle.mult.max(1);
@@ -3237,12 +3237,12 @@ fn widget_auto_suffix_remove(zle: &mut Zle) {
 }
 
 fn widget_auto_suffix_retain(zle: &mut Zle) {
-    // Port of handlesuffix(args) (KEEPSUFFIX) from Src/Zle/zle_misc.c.
+    // Port of handlesuffix(UNUSED(char **args)) (KEEPSUFFIX) from Src/Zle/zle_misc.c.
     zle.call_hook("auto-suffix-retain", None);
 }
 
 fn widget_put_replace_selection(zle: &mut Zle) {
-    // Port of putreplaceselection(args) from Src/Zle/zle_misc.c:680. With
+    // Port of putreplaceselection(UNUSED(char **args)) from Src/Zle/zle_misc.c:680. With
     // an active region, replaces it with the most-recent kill-ring
     // entry; otherwise pastes at the cursor (same as yank).
     if zle.region_active == 0 || zle.killring.is_empty() {
@@ -3274,7 +3274,7 @@ fn widget_put_replace_selection(zle: &mut Zle) {
 }
 
 fn widget_where_is(zle: &mut Zle) {
-    // Port of whereis(args) from Src/Zle/zle_thingy.c. The C source prompts
+    // Port of whereis(UNUSED(char **args)) from Src/Zle/zle_thingy.c. The C source prompts
     // for a widget name and shows what keys it's bound to. Surface as
     // a hook so the host can prompt + look up in the current keymap.
     zle.call_hook("where-is", None);
@@ -3294,47 +3294,47 @@ fn widget_execute_last_named_cmd(zle: &mut Zle) {
 }
 
 fn widget_read_command(zle: &mut Zle) {
-    // Port of readcommand(args) from Src/Zle/zle_thingy.c. Reads a widget
+    // Port of readcommand(UNUSED(char **args)) from Src/Zle/zle_thingy.c. Reads a widget
     // name from input and stores it for the host's executor.
     zle.call_hook("read-command", None);
 }
 
 fn widget_menu_expand_or_complete(zle: &mut Zle) {
-    // Port of menuexpandorcomplete(args) from Src/Zle/zle_tricky.c. Menu
+    // Port of menuexpandorcomplete(char **args) from Src/Zle/zle_tricky.c. Menu
     // completion variant of expand-or-complete.
 }
 
 fn widget_reverse_menu_complete(zle: &mut Zle) {
-    // Port of reversemenucomplete(args) from Src/Zle/zle_tricky.c. Steps
+    // Port of reversemenucomplete(char **args) from Src/Zle/zle_tricky.c. Steps
     // the menu backwards. Surfaced via a separate hook so the host's
     // menu state knows which direction to step.
     zle.call_hook("reverse-menu-complete", None);
 }
 
 fn widget_accept_and_menu_complete(zle: &mut Zle) {
-    // Port of acceptandmenucomplete(args) from Src/Zle/zle_tricky.c.
+    // Port of acceptandmenucomplete(char **args) from Src/Zle/zle_tricky.c.
     zle.call_hook("accept-and-menu-complete", None);
 }
 
 fn widget_list_expand(zle: &mut Zle) {
-    // Port of listexpand(args) from Src/Zle/zle_tricky.c. Expands current
+    // Port of listexpand(UNUSED(char **args)) from Src/Zle/zle_tricky.c. Expands current
     // word and lists the candidates.
 }
 
 fn widget_expand_cmd_path(zle: &mut Zle) {
-    // Port of expandcmdpath(args) from Src/Zle/zle_tricky.c. Expands the
+    // Port of expandcmdpath(UNUSED(char **args)) from Src/Zle/zle_tricky.c. Expands the
     // first word into its full path via PATH lookup.
     zle.call_hook("expand-cmd-path", None);
 }
 
 fn widget_expand_or_complete_prefix(zle: &mut Zle) {
-    // Port of expandorcompleteprefix(args) from Src/Zle/zle_tricky.c.
+    // Port of expandorcompleteprefix(char **args) from Src/Zle/zle_tricky.c.
     // Same as expand-or-complete but only considers the prefix before
     // the cursor.
 }
 
 fn widget_end_of_list(zle: &mut Zle) {
-    // Port of endoflist(args) from Src/Zle/zle_tricky.c. Used inside the
+    // Port of endoflist(UNUSED(char **args)) from Src/Zle/zle_tricky.c. Used inside the
     // completion menu to dismiss the listing — host-driven.
     zle.call_hook("end-of-list", None);
 }

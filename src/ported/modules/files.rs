@@ -24,7 +24,7 @@ pub const MV_ASKNW:         i32 = 1 << 3;                                    // 
 pub const MV_ATOMIC:        i32 = 1 << 4;                                    // c:177
 pub const MV_NOCHASETARGET: i32 = 1 << 5;                                    // c:178
 
-/// `bin_chown` func discriminant — `Src/Modules/files.c:719`
+/// `bin_chown` func discriminant — `Src/Modules/files.c:41`
 /// (`enum { BIN_CHOWN, BIN_CHGRP };`).
 pub const BIN_CHOWN: i32 = 0;                                                // c:719
 pub const BIN_CHGRP: i32 = 1;                                                // c:719
@@ -54,30 +54,32 @@ pub fn ask() -> i32 {                                                        // 
             Err(_) => break,
         }
     }
-    if a == b'y' || a == b'Y' { 1 } else { 0 }                               // c:46
+    if a == b'y' || a == b'Y' { 1 } else { 0 }                               // c:53
 }
 
 // =====================================================================
 // bin_sync — `Src/Modules/files.c:53`.
 // =====================================================================
 
-/// Direct port of `bin_sync(nam, args, ops, func)` from `Src/Modules/files.c:53`.
+/// Direct port of `bin_sync(UNUSED(char *nam), UNUSED(char **args), UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/files.c:53`.
 /// C body (c:55-57): `sync(); return 0;`.
-// sync builtin                                                             // c:49
+// sync builtin                                                             // c:53
+/// WARNING: param names don't match C — Rust=(_nam, _args, _func) vs C=(nam, args, ops, func)
 pub fn bin_sync(_nam: &str, _args: &[String],                                // c:53
                 _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     unsafe { libc::sync(); }                                                 // c:55
-    0                                                                        // c:56
+    0                                                                        // c:63
 }
 
 // =====================================================================
 // bin_mkdir + domkdir — `Src/Modules/files.c:63`, `:115`.
 // =====================================================================
 
-/// Direct port of `bin_mkdir(nam, args, ops)` from `Src/Modules/files.c:63`.
+/// Direct port of `bin_mkdir(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/files.c:63`.
 /// C body (c:65-110): default mode = 0777 & ~umask; parse -m; for
 /// each arg, strip trailing slashes; with -p walk each `/` segment.
-// mkdir builtin                                                            // c:59
+// mkdir builtin                                                            // c:63
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_mkdir(nam: &str, args: &[String],                                 // c:63
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
@@ -122,13 +124,13 @@ pub fn bin_mkdir(nam: &str, args: &[String],                                 // 
                 }
             }
         } else {
-            err |= domkdir(nam, &trimmed, mode, 0);                          // c:107
+            err |= domkdir(nam, &trimmed, mode, 0);                          // c:115
         }
     }
-    err                                                                      // c:109
+    err                                                                      // c:115
 }
 
-/// Direct port of `domkdir(nam, path, mode, p)` from `Src/Modules/files.c:115`.
+/// Direct port of `domkdir(char *nam, char *path, mode_t mode, int p)` from `Src/Modules/files.c:115`.
 /// C body (c:120-141): retry up to 8 times if EEXIST + p && stat
 /// shows existing entry is itself a directory.
 pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {            // c:115
@@ -160,16 +162,17 @@ pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {            // 
     zwarnnam(nam,                                                            // c:142
         &format!("cannot make directory `{}': {}",
             path, std::io::Error::from_raw_os_error(last_err)));
-    1                                                                        // c:143
+    1                                                                        // c:150
 }
 
 // =====================================================================
 // bin_rmdir — `Src/Modules/files.c:150`.
 // =====================================================================
 
-/// Direct port of `bin_rmdir(nam, args)` from `Src/Modules/files.c:150`.
+/// Direct port of `bin_rmdir(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/files.c:150`.
 /// C body (c:154-164): for each arg, call rmdir(2); accumulate err.
-// rmdir builtin                                                            // c:146
+// rmdir builtin                                                            // c:150
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_rmdir(nam: &str, args: &[String],                                 // c:150
                  _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     let mut err = 0i32;
@@ -205,16 +208,17 @@ pub fn bin_rmdir(nam: &str, args: &[String],                                 // 
 pub enum MoveFunc {
     Link,                                                                    // c:226
     Symlink,                                                                 // c:222
-    Rename,                                                                  // c:213
+    Rename,                                                                  // c:200
 }
 
-/// Direct port of `bin_ln(nam, args, ops, func)` from `Src/Modules/files.c:200`.
+/// Direct port of `bin_ln(char *nam, char **args, Options ops, int func)` from `Src/Modules/files.c:200`.
 /// C body (c:209-296):
 ///   - func == BIN_MV → movefn = rename, MV_ASKNW unless -f, MV_ATOMIC
 ///   - else → MV_FORCE if -f; -h/-n adds MV_NOCHASETARGET; -s →
 ///     symlink; otherwise link with MV_NODIRS unless -d
 ///   - -i without -f → MV_INTERACTIVE
 ///   - last-arg-is-dir handling: chase into the dir for each src
+/// WARNING: param names don't match C — Rust=(nam, args, func) vs C=(nam, args, ops, func)
 pub fn bin_ln(nam: &str, args: &[String],                                    // c:200
               ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;
@@ -307,12 +311,12 @@ pub fn bin_ln(nam: &str, args: &[String],                                    // 
     domove(nam, &movefn, &src, &dest, flags)                                 // c:275
 }
 
-/// Direct port of `domove(nam, movefn, p, q, flags)` from `Src/Modules/files.c:298`.
+/// Direct port of `domove(char *nam, MoveFunc movefn, char *p, char *q, int flags)` from `Src/Modules/files.c:298`.
 /// C body (c:300-360): if MV_NODIRS, refuse src that is dir; if dest
 /// exists, force/interactive/asknw checks; unlink dest if not atomic;
 /// then call movefn(src, dest) and report errno on failure.
 pub fn domove(nam: &str, movefn: &MoveFunc, p: &str, q: &str, flags: i32) -> i32 { // c:298
-    if (flags & MV_NODIRS) != 0 {                                            // c:307
+    if (flags & MV_NODIRS) != 0 {                                            // c:298
         match std::fs::symlink_metadata(p) {                                 // c:308 lstat
             Ok(meta) if meta.is_dir() => {                                   // c:308 S_ISDIR
                 zwarnnam(nam, &format!("{}: is a directory", p));            // c:310
@@ -395,17 +399,18 @@ where
     pub nam: &'a str,                                                        // c:366
     pub opt_noerr: i32,                                                      // c:367
     pub opt_recurse: i32,                                                    // c:368
-    pub opt_safe: i32,                                                       // c:369
-    pub dirpre_func: P,                                                      // c:370
-    pub dirpost_func: R,                                                     // c:371
-    pub leaf_func: L,                                                        // c:372
+    pub opt_safe: i32,                                                       // c:378
+    pub dirpre_func: P,                                                      // c:378
+    pub dirpost_func: R,                                                     // c:378
+    pub leaf_func: L,                                                        // c:378
 }
 
-/// Direct port of `recursivecmd(nam, opt_noerr, opt_recurse, opt_safe, args, dirpre_func, dirpost_func, leaf_func, magic)` from `Src/Modules/files.c:378`.
+/// Direct port of `recursivecmd(char *nam, int opt_noerr, int opt_recurse, int opt_safe, char **args, RecurseFunc dirpre_func, RecurseFunc dirpost_func, RecurseFunc leaf_func, void *magic)` from `Src/Modules/files.c:378`.
 /// C body (c:381-446): walk argv, dispatch each via recursivecmd_doone.
 /// The dirsav-based chdir-back stack (c:396-399, c:438-446) is omitted
 /// in the Rust port — std::fs operations take absolute paths so the
 /// chdir dance C uses to safely descend isn't needed.
+/// WARNING: param names don't match C — Rust=(opt_noerr, opt_recurse, opt_safe, args, dirpre_func, dirpost_func, leaf_func) vs C=(nam, opt_noerr, opt_recurse, opt_safe, args, dirpre_func, dirpost_func, leaf_func, magic)
 pub fn recursivecmd<P, R, L>(                                                // c:378
     nam: &str, opt_noerr: i32, opt_recurse: i32, opt_safe: i32,
     args: &[String], dirpre_func: P, dirpost_func: R, leaf_func: L,
@@ -424,14 +429,15 @@ where
     for arg in args {                                                        // c:401
         if (err & 2) != 0 { break; }
         let first = if opt_safe != 0 { 0 } else { 1 };                       // c:421/c:434
-        err |= recursivecmd_doone(&reccmd, arg, arg, first);                 // c:432/c:434
+        err |= recursivecmd_doone(&reccmd, arg, arg, first);                 // c:450/c:434
     }
-    if err != 0 { 1 } else { 0 }                                             // c:445 !!err
+    if err != 0 { 1 } else { 0 }                                             // c:450 !!err
 }
 
-/// Direct port of `recursivecmd_doone(reccmd, arg, rp, ds, first)` from `Src/Modules/files.c:450`.
+/// Direct port of `recursivecmd_doone(struct recursivecmd const *reccmd, char *arg, char *rp, struct dirsav *ds, int first)` from `Src/Modules/files.c:450`.
 /// C body (c:455-462): lstat the path; if recurse + S_ISDIR → dive
 /// via recursivecmd_dorec; else call leaf_func.
+/// WARNING: param names don't match C — Rust=(arg, rp, first) vs C=(reccmd, arg, rp, ds, first)
 pub fn recursivecmd_doone<P, R, L>(                                          // c:450
     reccmd: &recursivecmd<P, R, L>, arg: &str, rp: &str, first: i32,
 ) -> i32                                                                     // c:450
@@ -444,17 +450,18 @@ where
     if reccmd.opt_recurse != 0 {                                             // c:457
         if let Ok(ref meta) = st {
             if meta.is_dir() {                                               // c:458 S_ISDIR
-                return recursivecmd_dorec(reccmd, arg, rp, meta, first);    // c:459
+                return recursivecmd_dorec(reccmd, arg, rp, meta, first);    // c:465
             }
         }
     }
-    let sp = st.as_ref().ok();                                               // c:460 sp
-    (reccmd.leaf_func)(arg, rp, sp)                                          // c:461
+    let sp = st.as_ref().ok();                                               // c:465 sp
+    (reccmd.leaf_func)(arg, rp, sp)                                          // c:465
 }
 
-/// Direct port of `recursivecmd_dorec(reccmd, arg, rp, sp, ds, first)` from `Src/Modules/files.c:465`.
+/// Direct port of `recursivecmd_dorec(struct recursivecmd const *reccmd, char *arg, char *rp, struct stat const *sp, struct dirsav *ds, int first)` from `Src/Modules/files.c:465`.
 /// C body (c:475-525): dirpre callback, opendir + readdir each entry,
 /// recurse via recursivecmd_doone, then dirpost callback.
+/// WARNING: param names don't match C — Rust=(arg, rp, sp, _first) vs C=(reccmd, arg, rp, sp, ds, first)
 pub fn recursivecmd_dorec<P, R, L>(                                          // c:465
     reccmd: &recursivecmd<P, R, L>, arg: &str, rp: &str,
     sp: &std::fs::Metadata, _first: i32,
@@ -484,14 +491,15 @@ where
         let nrp = entry.path();
         let nrp_str = nrp.to_string_lossy();
         if (err & 2) != 0 { break; }                                         // c:503
-        err |= recursivecmd_doone(reccmd, &narg, &nrp_str, 0);               // c:511
+        err |= recursivecmd_doone(reccmd, &narg, &nrp_str, 0);               // c:530
     }
-    if (err & 2) != 0 { return 2; }                                          // c:516
-    err | (reccmd.dirpost_func)(arg, rp, Some(sp))                           // c:524
+    if (err & 2) != 0 { return 2; }                                          // c:530
+    err | (reccmd.dirpost_func)(arg, rp, Some(sp))                           // c:530
 }
 
-/// Direct port of `recurse_donothing(arg, rp, sp, magic)` from `Src/Modules/files.c:530`.
+/// Direct port of `recurse_donothing(UNUSED(char *arg), UNUSED(char *rp), UNUSED(struct stat const *sp), UNUSED(void *magic))` from `Src/Modules/files.c:530`.
 /// C body: `return 0;`.
+/// WARNING: param names don't match C — Rust=(_arg, _rp) vs C=(arg, rp, sp, magic)
 pub fn recurse_donothing(_arg: &str, _rp: &str,                              // c:530
                          _sp: Option<&std::fs::Metadata>) -> i32 {
     0                                                                        // c:533
@@ -503,17 +511,18 @@ pub fn recurse_donothing(_arg: &str, _rp: &str,                              // 
 
 /// Port of `struct rmmagic` from `Src/Modules/files.c:537`.
 pub struct rmmagic<'a> {
-    pub nam: &'a str,                                                        // c:538
-    pub opt_force: i32,                                                      // c:539
-    pub opt_interact: i32,                                                   // c:540
-    pub opt_unlinkdir: i32,                                                  // c:541
+    pub nam: &'a str,                                                        // c:546
+    pub opt_force: i32,                                                      // c:546
+    pub opt_interact: i32,                                                   // c:546
+    pub opt_unlinkdir: i32,                                                  // c:546
 }
 
-/// Direct port of `rm_leaf(arg, rp, sp, magic)` from `Src/Modules/files.c:546`.
+/// Direct port of `rm_leaf(char *arg, char *rp, struct stat const *sp, void *magic)` from `Src/Modules/files.c:546`.
 /// C body (c:551-589):
 ///   - if !opt_unlinkdir || !opt_force: lstat (if not provided);
 ///     refuse directories; ask if interactive; warn if read-only
 ///   - unlink(rp); error path returns 1 unless -f
+/// WARNING: param names don't match C — Rust=(arg, rp, sp) vs C=(arg, rp, sp, magic)
 pub fn rm_leaf(arg: &str, rp: &str, sp: Option<&std::fs::Metadata>,          // c:546
                rmm: &rmmagic) -> i32 {
     if rmm.opt_unlinkdir == 0 || rmm.opt_force == 0 {                        // c:551
@@ -551,16 +560,17 @@ pub fn rm_leaf(arg: &str, rp: &str, sp: Option<&std::fs::Metadata>,          // 
         Ok(c) => c,
         Err(_) => return 1,
     };
-    if unsafe { libc::unlink(crp.as_ptr()) } != 0 && rmm.opt_force == 0 {    // c:585
-        zwarnnam(rmm.nam,                                                    // c:586
+    if unsafe { libc::unlink(crp.as_ptr()) } != 0 && rmm.opt_force == 0 {    // c:594
+        zwarnnam(rmm.nam,                                                    // c:594
             &format!("{}: {}", arg, std::io::Error::last_os_error()));
-        return 1;                                                            // c:587
+        return 1;                                                            // c:594
     }
-    0                                                                        // c:589
+    0                                                                        // c:594
 }
 
-/// Direct port of `rm_dirpost(arg, rp, magic)` from `Src/Modules/files.c:594`.
+/// Direct port of `rm_dirpost(char *arg, char *rp, UNUSED(struct stat const *sp), void *magic)` from `Src/Modules/files.c:594`.
 /// C body (c:599-613): rmdir(rp); error path returns 1 unless -f.
+/// WARNING: param names don't match C — Rust=(arg, rp, _sp) vs C=(arg, rp, sp, magic)
 pub fn rm_dirpost(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,      // c:594
                   rmm: &rmmagic) -> i32 {
     let crp = match std::ffi::CString::new(rp) {
@@ -568,17 +578,18 @@ pub fn rm_dirpost(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,      // 
         Err(_) => return 1,
     };
     if unsafe { libc::rmdir(crp.as_ptr()) } != 0 && rmm.opt_force == 0 {     // c:608
-        zwarnnam(rmm.nam,                                                    // c:609
+        zwarnnam(rmm.nam,                                                    // c:616
             &format!("{}: {}", arg, std::io::Error::last_os_error()));
-        return 1;                                                            // c:610
+        return 1;                                                            // c:616
     }
-    0                                                                        // c:612
+    0                                                                        // c:616
 }
 
-/// Direct port of `bin_rm(nam, args, ops)` from `Src/Modules/files.c:616`.
+/// Direct port of `bin_rm(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/files.c:616`.
 /// C body (c:621-633): build rmmagic; recursivecmd with rm_dirpost
 /// + rm_leaf; -f swallows the err code.
 // rm builtin                                                               // c:535
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_rm(nam: &str, args: &[String],                                    // c:616
               ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;
@@ -600,17 +611,18 @@ pub fn bin_rm(nam: &str, args: &[String],                                    // 
 }
 
 // =====================================================================
-// bin_chmod — `Src/Modules/files.c:635-672`.
+// bin_chmod — `Src/Modules/files.c:642`.
 // =====================================================================
 
-/// Port of `struct chmodmagic` from `Src/Modules/files.c:635`.
+/// Port of `struct chmodmagic` from `Src/Modules/files.c:642`.
 pub struct chmodmagic<'a> {
-    pub nam: &'a str,                                                        // c:636
-    pub mode: u32,                                                           // c:637
+    pub nam: &'a str,                                                        // c:642
+    pub mode: u32,                                                           // c:642
 }
 
-/// Direct port of `chmod_dochmod(arg, rp, magic)` from `Src/Modules/files.c:642`.
+/// Direct port of `chmod_dochmod(char *arg, char *rp, UNUSED(struct stat const *sp), void *magic)` from `Src/Modules/files.c:642`.
 /// C body (c:646-652): `chmod(rp, mode)`; warn + return 1 on failure.
+/// WARNING: param names don't match C — Rust=(arg, rp, _sp) vs C=(arg, rp, sp, magic)
 pub fn chmod_dochmod(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // c:642
                      chm: &chmodmagic) -> i32 {
     let crp = match std::ffi::CString::new(rp) {
@@ -618,17 +630,18 @@ pub fn chmod_dochmod(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // 
         Err(_) => return 1,
     };
     if unsafe { libc::chmod(crp.as_ptr(), chm.mode as libc::mode_t) } != 0 { // c:646
-        zwarnnam(chm.nam,                                                    // c:647
+        zwarnnam(chm.nam,                                                    // c:655
             &format!("{}: {}", arg, std::io::Error::last_os_error()));
-        return 1;                                                            // c:648
+        return 1;                                                            // c:655
     }
-    0                                                                        // c:650
+    0                                                                        // c:655
 }
 
-/// Direct port of `bin_chmod(nam, args, ops)` from `Src/Modules/files.c:655`.
+/// Direct port of `bin_chmod(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/files.c:655`.
 /// C body (c:659-672): parse `args[0]` as octal mode; recursivecmd
 /// over `args[1..]` applying chmod_dochmod.
 // chmod builtin                                                            // c:633
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_chmod(nam: &str, args: &[String],                                 // c:655
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;
@@ -656,15 +669,16 @@ pub fn bin_chmod(nam: &str, args: &[String],                                 // 
 // bin_chown — `Src/Modules/files.c:674-801`.
 // =====================================================================
 
-/// Port of `struct chownmagic` from `Src/Modules/files.c:674`.
+/// Port of `struct chownmagic` from `Src/Modules/files.c:682`.
 pub struct chownmagic<'a> {
-    pub nam: &'a str,                                                        // c:675
-    pub uid: i64,                                                            // c:676 (uid_t but -1 sentinel)
-    pub gid: i64,                                                            // c:677
+    pub nam: &'a str,                                                        // c:682
+    pub uid: i64,                                                            // c:682 (uid_t but -1 sentinel)
+    pub gid: i64,                                                            // c:682
 }
 
-/// Direct port of `chown_dochown(arg, rp, magic)` from `Src/Modules/files.c:682`.
+/// Direct port of `chown_dochown(char *arg, char *rp, UNUSED(struct stat const *sp), void *magic)` from `Src/Modules/files.c:682`.
 /// C body (c:686-692): `chown(rp, uid, gid)`; warn + return 1 on failure.
+/// WARNING: param names don't match C — Rust=(arg, rp, _sp) vs C=(arg, rp, sp, magic)
 pub fn chown_dochown(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // c:682
                      chm: &chownmagic) -> i32 {
     let crp = match std::ffi::CString::new(rp) {
@@ -673,16 +687,17 @@ pub fn chown_dochown(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // 
     };
     let uid = if chm.uid < 0 { libc::uid_t::MAX } else { chm.uid as libc::uid_t };
     let gid = if chm.gid < 0 { libc::gid_t::MAX } else { chm.gid as libc::gid_t };
-    if unsafe { libc::chown(crp.as_ptr(), uid, gid) } != 0 {                 // c:686
-        zwarnnam(chm.nam,                                                    // c:687
+    if unsafe { libc::chown(crp.as_ptr(), uid, gid) } != 0 {                 // c:695
+        zwarnnam(chm.nam,                                                    // c:695
             &format!("{}: {}", arg, std::io::Error::last_os_error()));
-        return 1;                                                            // c:688
+        return 1;                                                            // c:695
     }
-    0                                                                        // c:690
+    0                                                                        // c:695
 }
 
-/// Direct port of `chown_dolchown(arg, rp, magic)` from `Src/Modules/files.c:695`.
+/// Direct port of `chown_dolchown(char *arg, char *rp, UNUSED(struct stat const *sp), void *magic)` from `Src/Modules/files.c:695`.
 /// C body (c:699-705): `lchown(rp, uid, gid)`.
+/// WARNING: param names don't match C — Rust=(arg, rp, _sp) vs C=(arg, rp, sp, magic)
 pub fn chown_dolchown(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,  // c:695
                       chm: &chownmagic) -> i32 {
     let crp = match std::ffi::CString::new(rp) {
@@ -691,33 +706,34 @@ pub fn chown_dolchown(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,  // 
     };
     let uid = if chm.uid < 0 { libc::uid_t::MAX } else { chm.uid as libc::uid_t };
     let gid = if chm.gid < 0 { libc::gid_t::MAX } else { chm.gid as libc::gid_t };
-    if unsafe { libc::lchown(crp.as_ptr(), uid, gid) } != 0 {                // c:699
-        zwarnnam(chm.nam,                                                    // c:700
+    if unsafe { libc::lchown(crp.as_ptr(), uid, gid) } != 0 {                // c:708
+        zwarnnam(chm.nam,                                                    // c:708
             &format!("{}: {}", arg, std::io::Error::last_os_error()));
-        return 1;                                                            // c:701
+        return 1;                                                            // c:708
     }
-    0                                                                        // c:703
+    0                                                                        // c:708
 }
 
-/// Direct port of `getnumeric(p, errp)` from `Src/Modules/files.c:708`.
+/// Direct port of `getnumeric(char *p, int *errp)` from `Src/Modules/files.c:708`.
 /// C body (c:712-719): parse leading digits as base-10 unsigned long;
 /// `*errp = !!*p` after parse — set when there are trailing non-digits.
 pub fn getnumeric(p: &str, errp: &mut i32) -> u64 {                          // c:708
-    if !p.chars().next().is_some_and(|c| c.is_ascii_digit()) {               // c:712
+    if !p.chars().next().is_some_and(|c| c.is_ascii_digit()) {               // c:708
         *errp = 1;                                                           // c:713
         return 0;                                                            // c:714
     }
     let end = p.find(|c: char| !c.is_ascii_digit()).unwrap_or(p.len());
-    let ret = p[..end].parse::<u64>().unwrap_or(0);                          // c:716 strtoul
-    *errp = if end < p.len() { 1 } else { 0 };                               // c:717
-    ret                                                                      // c:718
+    let ret = p[..end].parse::<u64>().unwrap_or(0);                          // c:725 strtoul
+    *errp = if end < p.len() { 1 } else { 0 };                               // c:725
+    ret                                                                      // c:725
 }
 
-/// Direct port of `bin_chown(nam, args, ops, func)` from `Src/Modules/files.c:725`.
+/// Direct port of `bin_chown(char *nam, char **args, Options ops, int func)` from `Src/Modules/files.c:725`.
 /// C body (c:729-797): parse `user[:group]` spec; for chgrp, skip the
 /// user half; getpwnam / getnumeric / getgrnam fallbacks; recursivecmd
 /// with chown_dochown or chown_dolchown for `-h`.
 // chown builtin                                                            // c:672
+/// WARNING: param names don't match C — Rust=(nam, args, func) vs C=(nam, args, ops, func)
 pub fn bin_chown(nam: &str, args: &[String],                                 // c:725
                  ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;
@@ -849,25 +865,25 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_(m)` from `Src/Modules/files.c:838`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/files.c:838`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                    // c:838
     // C body c:840-841 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/files.c:845`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/files.c:845`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:845
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/files.c:853`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/files.c:853`.
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:853
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_(m)` from `Src/Modules/files.c:860`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/files.c:860`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:860
     // C body c:862-863 — `return 0`. Faithful empty-body port; the
@@ -876,12 +892,12 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
     0
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/files.c:867`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/files.c:867`.
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:867
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_(m)` from `Src/Modules/files.c:874`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/files.c:874`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:874
     // C body c:876-877 — `return 0`. Faithful empty-body port; the

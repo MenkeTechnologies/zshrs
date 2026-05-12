@@ -1308,22 +1308,24 @@ pub(crate) fn zzlex() -> i32 {
         }
     }
 
-/// Port of `push(val, lval, getme)` from `Src/math.c:916`.
+/// Port of `push(mnumber val, char *lval, int getme)` from `Src/math.c:916`.
 ///
 /// Push a value onto the evaluator's operand stack, with the
 /// optional lvalue name (set when the value came from a variable
 /// reference; needed for `++`/`--`/assignment-op write-back).
+/// WARNING: param names don't match C — Rust=(lval) vs C=(val, lval, getme)
 pub(crate) fn push(val: Mnumber, lval: Option<String>) {
     m_stack_push(MathValue { val, lval, pval: () });
 }
 
-/// Port of `pop(noget)` from `Src/math.c:931`.
+/// Port of `pop(int noget)` from `Src/math.c:931`.
 ///
 /// Pop the top operand from the stack, resolving any deferred
 /// variable read (`Mnumber { l: 0, d: 0.0, type_: MN_UNSET }` + lval set). The C source
 /// passes a `noget` flag to skip the resolution; the Rust port
 /// always resolves since callers that want the raw lvalue use
 /// `pop_with_lval` instead.
+/// WARNING: param names don't match C — Rust=() vs C=(noget)
 pub(crate) fn pop() -> Mnumber {
     if let Some(mv) = m_stack_pop() {
         if (mv.val.type_ == MN_UNSET) {
@@ -1360,7 +1362,7 @@ pub(crate) fn pop() -> Mnumber {
         mv.val
     }
 
-/// Port of `getmathparam(mptr)` from `Src/math.c:337`.
+/// Port of `getmathparam(struct mathvalue *mptr)` from `Src/math.c:337`.
 ///
 /// Look up a parameter by name from inside math context. zsh
 /// auto-typesets a missing-but-referenced name (its mathparam
@@ -1368,6 +1370,7 @@ pub(crate) fn pop() -> Mnumber {
 /// the param table so a miss returns `Integer(0)` and skips the
 /// type-coercion. Indirect-string mode (`a="3+2"; $((a))`) is
 /// handled by recursively evaluating the string value.
+/// WARNING: param names don't match C — Rust=() vs C=(mptr)
 pub(crate) fn getmathparam(name: &str) -> Mnumber {
     // Strip array subscript if present
         let base_name = if let Some(bracket) = name.find('[') {
@@ -1467,13 +1470,14 @@ pub(crate) fn getmathparam(name: &str) -> Mnumber {
         Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
     }
 
-/// Port of `setmathvar(mvp, v)` from `Src/math.c:972`.
+/// Port of `setmathvar(struct mathvalue *mvp, mnumber v)` from `Src/math.c:972`.
 ///
 /// Write `val` to the named parameter from inside math context.
 /// Subscripted writes (`a[i] = …`) are pre-handled by the
 /// SubscriptArith free fns higher up the call chain; this stub
 /// only handles the scalar case. Returns the stored value so
 /// `op` can leave it on the stack.
+/// WARNING: param names don't match C — Rust=(val) vs C=(mvp, v)
 pub(crate) fn setmathvar(name: &str, val: Mnumber) -> Mnumber {
     let base_name = if let Some(bracket) = name.find('[') {
         &name[..bracket]
@@ -1484,13 +1488,14 @@ pub(crate) fn setmathvar(name: &str, val: Mnumber) -> Mnumber {
     val
 }
 
-/// Port of `op(what)` from `Src/math.c:1154`.
+/// Port of `op(int what)` from `Src/math.c:1154`.
 ///
 /// Apply a binary or unary operator to the operand stack. Pops
 /// 1-2 values, applies the operation (with type coercion), and
 /// pushes the result. Handles assignment (`OP_E2*` flag) by
 /// writing through `setmathvar` and pushing the new value back
 /// with the same lvalue so chained assigns work.
+/// WARNING: param names don't match C — Rust=() vs C=(what)
 pub(crate) fn op(what: i32) {
         if m_error_some() {
             return;
@@ -1828,12 +1833,13 @@ pub(crate) fn op(what: i32) {
         }
     }
 
-/// Port of `bop(tk)` from `Src/math.c:1454`.
+/// Port of `bop(int tk)` from `Src/math.c:1454`.
 ///
 /// Short-circuit boolean prologue. Inspects (without popping) the
 /// top of stack and bumps `m_noeval()` for the parse-only side of
 /// `&&` / `||` / their assignment forms. The matching decrement
 /// happens after `mathparse` recurses for the RHS.
+/// WARNING: param names don't match C — Rust=() vs C=(tk)
 pub(crate) fn bop(tk: i32) {
         if m_stack_is_empty() {
             return;
@@ -1868,7 +1874,7 @@ pub(crate) fn bop(tk: i32) {
         m_prec()[COMMA as usize] + 1
     }
 
-/// Port of `checkunary(mtokc, mptr)` from `Src/math.c:1548`.
+/// Port of `checkunary(int mtokc, char *mptr)` from `Src/math.c:1548`.
 ///
 /// Two roles. (1) Validate that the just-lexed token (`m_mtok()`)
 /// matches the parser's expectation: an operand was wanted but an
@@ -1877,6 +1883,7 @@ pub(crate) fn bop(tk: i32) {
 /// with `<kind>` being `operator` or `operand` and `<ctx>` taken
 /// from the input pointer at the start of the bad token. (2)
 /// Update `m_unary()` for the next iteration based on `OP_OPF`.
+/// WARNING: param names don't match C — Rust=() vs C=(mtokc, mptr)
 pub(crate) fn checkunary() {
     // Direct port of zsh math.c checkunary() (line 1548).
         // Two roles:
@@ -1945,7 +1952,8 @@ pub(crate) fn checkunary() {
     }
 
     /// Operator-precedence parser - closely follows zsh math.c mathparse()
-/// Port of `mathparse(pc)` from `Src/math.c:1594`.
+/// Port of `mathparse(int pc)` from `Src/math.c:1594`.
+    /// WARNING: param names don't match C — Rust=() vs C=(pc)
     pub(crate) fn mathparse(pc: u8) {
         if m_error_some() {
             return;
@@ -2098,7 +2106,8 @@ pub(crate) fn checkunary() {
     }
 
     /// Call a math function
-/// Port of `callmathfunc(o)` from `Src/math.c:1037`.
+/// Port of `callmathfunc(char *o)` from `Src/math.c:1037`.
+    /// WARNING: param names don't match C — Rust=() vs C=(o)
     pub(crate) fn callmathfunc(call: &str) -> Mnumber {
         // Parse function name and args
         let paren = call.find('(').unwrap_or(call.len());
@@ -2223,7 +2232,8 @@ pub(crate) fn checkunary() {
     }
 
     /// Evaluate the expression
-/// Port of `mathevall(s, prec_tp, ep)` from `Src/math.c:367`.
+/// Port of `mathevall(char *s, enum prec_type prec_tp, char **ep)` from `Src/math.c:367`.
+    /// WARNING: param names don't match C — Rust=() vs C=(s, prec_tp, ep)
     pub(crate) fn mathevall() -> Result<Mnumber, String> {
         m_prec_set(if m_c_precedences() { &C_PREC } else { &Z_PREC });
 
@@ -2288,7 +2298,7 @@ pub(crate) fn getmathparams() -> HashMap<String, Mnumber> {
 
 /// Convenience function to evaluate a math expression
 /// Top-level math-expression evaluator.
-/// Port of `matheval(s)` from Src/math.c:1480 — wraps `mathevall()`\n/// (line 367) with the C source's standard error-message\n/// formatting.
+/// Port of `matheval(char *s)` from Src/math.c:1480 — wraps `mathevall()`\n/// (line 367) with the C source's standard error-message\n/// formatting.
 pub fn matheval(s: &str) -> Result<Mnumber, String> {                     // c:1480
     new(s);
     mathevall()
@@ -2296,7 +2306,7 @@ pub fn matheval(s: &str) -> Result<Mnumber, String> {                     // c:1
 
 /// Evaluate and return integer
 /// Math evaluator that coerces the result to integer.
-/// Port of `mathevali(s)` from Src/math.c:1505.
+/// Port of `mathevali(char *s)` from Src/math.c:1505.
 pub fn mathevali(s: &str) -> Result<i64, String> {                        // c:1505
     matheval(s).map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
 }
@@ -2699,10 +2709,11 @@ pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
 // cleanup; do not add new callers — use `crate::ported::params::convbase`.
 /// Format an integer in the given base (2-36) using zsh's
 /// `BASE#DIGITS` form.
-/// Port of `convbase(s, v, base)` from Src/utils.c (also called from
+/// Port of `convbase(char *s, zlong v, int base)` from Src/utils.c (also called from
 /// Src/math.c:1089). Bases 2-9 are unsigned-style; uppercase
 /// A-Z are used for digits >= 10. A negative value is output
 /// as `-BASE#DIGITS`.
+/// WARNING: param names don't match C — Rust=(n, base) vs C=(buf, l, 10)
 pub fn convbase(n: i64, base: u32) -> String {                               // c:params.c:5632
     if !(2..=36).contains(&base) {
         return n.to_string();
@@ -2742,23 +2753,26 @@ pub fn convbase(n: i64, base: u32) -> String {                               // 
 // preserving the C name + citation.
 // ===========================================================
 
-/// Port of `isinf(x)` from Src/math.c:588 — IEEE +/-Infinity test.
+/// Port of `isinf(double x)` from Src/math.c:588 — IEEE +/-Infinity test.
 /// Wraps Rust's `f64::is_infinite`.
+/// WARNING: param names don't match C — Rust=() vs C=(x)
 pub(crate) fn isinf(x: f64) -> bool { x.is_infinite() }
 
-/// Port of `isnan(x)` from Src/math.c:608 — IEEE NaN test. C
+/// Port of `isnan(double x)` from Src/math.c:608 — IEEE NaN test. C
 /// implements it as `store(&x) != store(&x)` to defeat compiler
 /// folding of the canonical `x != x` NaN test; we route through
 /// `store` for parity, but Rust's `f64::is_nan` is the
 /// correctness path.
+/// WARNING: param names don't match C — Rust=() vs C=(x)
 pub(crate) fn isnan(x: f64) -> bool { store(x) != store(x) || x.is_nan() }
 
-/// Port of `notzero(a)` from Src/math.c:1142 — error-on-zero check
+/// Port of `notzero(mnumber a)` from Src/math.c:1142 — error-on-zero check
 /// used by `/` and `%` operators. Returns true when `a` is non-
 /// zero (caller continues), false when zero (caller raises
 /// "division by zero"). Float zero is treated as non-zero per
 /// IEEE 754 (1/0.0 → Inf, not an error) — only integer zero
 /// trips the check, matching math.c's `if (!a.u.l) zerr(…)`.
+/// WARNING: param names don't match C — Rust=() vs C=(a)
 pub(crate) fn notzero(a: Mnumber) -> bool {
     if (a.type_ == MN_UNSET) {
         return false;
@@ -2769,19 +2783,21 @@ pub(crate) fn notzero(a: Mnumber) -> bool {
     true
 }
 
-/// Port of `store(x)` from Src/math.c:601 — load/store a double
+/// Port of `store(double *x)` from Src/math.c:601 — load/store a double
 /// via a pointer to defeat compilers that mis-optimize the
 /// canonical `x != x` NaN test. zsh only compiles this path when
 /// `HAVE_ISNAN` is undefined; we keep it as a name-parity shim
 /// so `isnan()` can route through it (matching the C source's
 /// `store(&x) != store(&x)` idiom).
+/// WARNING: param names don't match C — Rust=() vs C=(x)
 pub(crate) fn store(x: f64) -> f64 { x }
 
-/// Port of `getcvar(s)` from Src/math.c:943 — character-constant
+/// Port of `getcvar(char *s)` from Src/math.c:943 — character-constant
 /// lookup. Reads the named shell variable and returns the
 /// codepoint of its first character. Used for `#varname` token
 /// (CId): `x="hello"; (( y = #x ))` puts 104 (`'h'`) into y.
 /// On miss or empty value, returns 0 (matches zsh's `*s ? *s : 0`).
+/// WARNING: param names don't match C — Rust=() vs C=(s)
 pub(crate) fn getcvar(name: &str) -> Mnumber {
     if let Some(raw) = m_string_variables_get(name) {
         return Mnumber { l: raw.chars().next().map(|c| c as i64).unwrap_or(0), d: 0.0, type_: MN_INTEGER };
@@ -2802,9 +2818,10 @@ pub(crate) fn getcvar(name: &str) -> Mnumber {
     Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
 }
 
-/// Port of `mathevalarg(s, ss)` from Src/math.c:1514 — evaluate one
+/// Port of `mathevalarg(char *s, char **ss)` from Src/math.c:1514 — evaluate one
 /// arg expression and return as integer. Used by `let` builtin
 /// and others that take an arith-expr argument.
+/// WARNING: param names don't match C — Rust=() vs C=(s, ss)
 pub(crate) fn mathevalarg(expr: &str) -> i64 {
     matheval(expr).map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).unwrap_or(0)
 }

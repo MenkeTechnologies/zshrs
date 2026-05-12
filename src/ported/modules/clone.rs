@@ -45,7 +45,7 @@ pub static ttystrname: Mutex<String> = Mutex::new(String::new());
 // bin_clone(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))  c:43
 // =====================================================================
 
-/// Port of `bin_clone(nam, args)` from `Src/Modules/clone.c:44`.
+/// Port of `bin_clone(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/clone.c:44`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
@@ -167,7 +167,7 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { 
     0                                                                    // c:106
 }
 
-/// Port of `bin_clone(nam, args)` from `Src/Modules/clone.c:44`.
+/// Port of `bin_clone(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/clone.c:44`.
 #[cfg(not(unix))]
 #[allow(unused_variables)]
 pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 {
@@ -199,41 +199,41 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 {
 // setup_(UNUSED(Module m))                                           c:122
 // =====================================================================
 
-/// Port of `setup_(m)` from `Src/Modules/clone.c:123`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/clone.c:123`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                    // c:123
-    0                                                                    // c:125
+    0                                                                    // c:138
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/clone.c:130`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/clone.c:130`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:130
     *features = featuresarray(m, module_features());
-    0                                                                    // c:133
+    0                                                                    // c:145
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/clone.c:138`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/clone.c:138`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:138
-    handlefeatures(m, module_features(), enables) // c:140
+    handlefeatures(m, module_features(), enables) // c:152
 }
 
-/// Port of `boot_(m)` from `Src/Modules/clone.c:145`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/clone.c:145`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:145
-    0                                                                    // c:147
+    0                                                                    // c:159
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/clone.c:152`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/clone.c:152`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:152
-    setfeatureenables(m, module_features(), None) // c:154
+    setfeatureenables(m, module_features(), None) // c:159
 }
 
-/// Port of `finish_(m)` from `Src/Modules/clone.c:159`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/clone.c:159`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:159
-    0                                                                    // c:161
+    0                                                                    // c:159
 }
 
 // =====================================================================
@@ -274,16 +274,16 @@ fn init_io(cmd: *mut libc::c_char) {                                         // 
     crate::ported::init::init_io(s.as_deref());
 }
 
-// `setsparam` lives in `Src/params.c:3380`. Routes through the
+// `setsparam` lives in `Src/params.c:3350`. Routes through the
 // canonical ksh93::setsparam free-fn (which writes to env-as-param-
 // table on the static-link path).
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/clone.c`.
-fn setsparam(name: &str, value: &str) {                                      // c:3380
+fn setsparam(name: &str, value: &str) {                                      // c:3350
     crate::ported::params::setsparam(name, value);
 }
 
-// `ztrdup` lives in `Src/string.c:18` — `strdup` clone using zsh's
+// `ztrdup` lives in `Src/string.c:62` — `strdup` clone using zsh's
 // allocator. Pass-through here; the `setsparam` stub copies anyway.
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/clone.c`.

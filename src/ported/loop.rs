@@ -55,12 +55,13 @@ static BREAK_LEVEL: AtomicI32 = AtomicI32::new(0);
 // LOOP_DEPTH / CONT_FLAG / BREAK_LEVEL above are this file's
 // internal mirrors.
 
-// And this is used to print select lists.                                 // c:343
+// And this is used to print select lists.                                 // c:347
 /// Select-menu display.
-/// Port of `selectlist(l, start)` from Src/loop.c:347 — formats the
+/// Port of `selectlist(LinkList l, size_t start)` from Src/loop.c:347 — formats the
 /// numbered menu the C source uses for `select var in words`. Picks
 /// columns automatically when `columns == 0`, mirroring the C
 /// source's terminal-width auto-detection.
+/// WARNING: param names don't match C — Rust=(items, start) vs C=(l, start)
 pub fn selectlist(items: &[&str], start: usize) -> usize {              // c:347
     use std::io::Write;
     let mut stderr = std::io::stderr().lock();
@@ -217,39 +218,46 @@ mod tests {
 //   execcase   → compile_zsh.rs::compile_case
 //   exectry    → compile_zsh.rs::compile_try
 
-/// Port of `execfor(state, do_exec)` from `Src/loop.c:50`. See module-level note:
+/// Port of `execfor(Estate state, int do_exec)` from `Src/loop.c:50`. See module-level note:
 /// fusevm bytecode replaces the tree walker; this entry is
 /// `unreachable!()` to crash if regressed.
+/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
 pub fn execfor(_do_exec: i32) -> i32 {                                   // c:50
     unreachable!("execfor: tree-walker disabled — fusevm lowers `for` in compile_zsh.rs")
 }
 
-/// Port of `execselect(state)` from `Src/loop.c:217`.
+/// Port of `execselect(Estate state, UNUSED(int do_exec))` from `Src/loop.c:217`.
+/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
 pub fn execselect(_do_exec: i32) -> i32 {                                // c:217
     unreachable!("execselect: tree-walker disabled — fusevm lowers `select` in compile_zsh.rs")
 }
 
-/// Port of `execwhile(state)` from `Src/loop.c:413`.
+/// Port of `execwhile(Estate state, UNUSED(int do_exec))` from `Src/loop.c:413`.
+/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
 pub fn execwhile(_do_exec: i32) -> i32 {                                 // c:413
     unreachable!("execwhile: tree-walker disabled — fusevm lowers `while`/`until` in compile_zsh.rs")
 }
 
-/// Port of `execrepeat(state)` from `Src/loop.c:499`.
+/// Port of `execrepeat(Estate state, UNUSED(int do_exec))` from `Src/loop.c:499`.
+/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
 pub fn execrepeat(_do_exec: i32) -> i32 {                                // c:499
     unreachable!("execrepeat: tree-walker disabled — fusevm lowers `repeat` in compile_zsh.rs")
 }
 
-/// Port of `execif(state, do_exec)` from `Src/loop.c:553`.
+/// Port of `execif(Estate state, int do_exec)` from `Src/loop.c:553`.
+/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
 pub fn execif(_do_exec: i32) -> i32 {                                    // c:553
     unreachable!("execif: tree-walker disabled — fusevm lowers `if`/`elif`/`else` in compile_zsh.rs")
 }
 
-/// Port of `execcase(state, do_exec)` from `Src/loop.c:600`.
+/// Port of `execcase(Estate state, int do_exec)` from `Src/loop.c:600`.
+/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
 pub fn execcase(_do_exec: i32) -> i32 {                                  // c:600
     unreachable!("execcase: tree-walker disabled — fusevm lowers `case` in compile_zsh.rs")
 }
 
-/// Port of `exectry(state, do_exec)` from `Src/loop.c:735`.
+/// Port of `exectry(Estate state, int do_exec)` from `Src/loop.c:735`.
+/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
 pub fn exectry(_do_exec: i32) -> i32 {                                   // c:735
     unreachable!("exectry: tree-walker disabled — fusevm lowers `try`/`always` in compile_zsh.rs")
 }

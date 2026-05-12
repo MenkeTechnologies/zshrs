@@ -511,8 +511,7 @@ pub fn sub_flags_set(v: i32) {
 }
 
 /// Check for array assignment with entries like [key]=val
-/// Port of keyvalpairelement(list, node) from subst.c lines 47-77
-/// Port of `keyvalpairelement(list, node)` from `Src/subst.c:49-79`.
+/// Port of `keyvalpairelement(LinkList list, LinkNode node)` from `Src/subst.c:49`.
 ///
 /// Detects an `[key]=value` or `[key]+=value` shape (assoc-array
 /// element assignment used in `typeset -A foo=([k]=v)`). On match,
@@ -523,6 +522,7 @@ pub fn sub_flags_set(v: i32) {
 ///
 /// Returns Some(value_node_idx) on match, None when the input doesn't
 /// fit the shape (caller falls through to normal word handling).
+/// WARNING: param names don't match C — Rust=(list, node_idx) vs C=(list, node)
 fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
     // c:49
     // C: `start = (char *)getdata(node)` — fetch the node's text.
@@ -597,12 +597,11 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
 } // c:79
 
 /// Do substitutions before fork
-/// Port of prefork(list, flags, ret_flags) from subst.c lines 94-183
 /// Phase-1 word-list substitution (tilde/equal/brace/param/cmd/arith).
-/// Port of `prefork(list, flags, ret_flags)` from Src/subst.c:100 — runs ahead of
+/// Port of `prefork(LinkList list, int flags, int *ret_flags)` from Src/subst.c:100 — runs ahead of
 /// glob expansion to fully resolve `${...}` / `$(...)` /
 /// `$((...))` / `~user` / `=cmd` / `{a,b}`.
-// Do substitutions before fork.                                            // c:82
+// Do substitutions before fork.                                            // c:100
 pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
     // c:100
     let mut node_idx = 0; // c:100
@@ -784,7 +783,6 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
     } // c:100
 } // c:100
 
-/// Port of `stringsubstquote(strstart, pstrdpos)` from `Src/subst.c:206-233`.
 ///
 /// Implements `$'...'` ANSI-C-style quoted-string substitution. The
 /// C signature is `char *stringsubstquote(char *strstart, char **pstrdpos)`
@@ -805,7 +803,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
 ///      suffix (strdpos+len..). Special case: empty `$''` returns
 ///      a Nularg sentinel so it doesn't get elided downstream.
 ///   4. Set *pstrdpos to point past the substituted region.
-/// Port of `stringsubstquote(strstart, pstrdpos)` from `Src/subst.c:206`.
+/// Port of `stringsubstquote(char *strstart, char **pstrdpos)` from `Src/subst.c:206`.
 fn stringsubstquote(strstart: &str, pstrdpos: usize) -> (String, usize) {
     // c:206
     let chars: Vec<char> = strstart.chars().collect(); // c:208
@@ -879,13 +877,13 @@ fn stringsubstquote(strstart: &str, pstrdpos: usize) -> (String, usize) {
         + strret
             .chars()
             .count()
-            .saturating_sub(prefix.chars().count() + suffix.chars().count()); // c:230
+            .saturating_sub(prefix.chars().count() + suffix.chars().count()); // c:237
 
-    (strret, new_pos) // c:232
-} // c:233
+    (strret, new_pos) // c:237
+} // c:237
 
 /// String substitution - main workhorse
-/// Port of stringsubst(list, node, pf_flags, ret_flags, asssub) from subst.c lines 227-421
+/// Port of stringsubst(LinkList list, LinkNode node, int pf_flags, int *ret_flags, int asssub) from subst.c lines 227-421
 fn stringsubst(
     // c:237
     list: &mut LinkList,    // c:237
@@ -1455,7 +1453,7 @@ fn stringsubst(
 
 // parameter substitution                                                   // c:1601
 /// Parameter substitution
-/// Port of paramsubst(l, n, str, qt, pf_flags, ret_flags) from subst.c lines 1600-4922 (THIS IS THE BIG ONE)
+/// Port of paramsubst(LinkList l, LinkNode n, char **str, int qt, int pf_flags, int *ret_flags) from subst.c lines 1600-4922 (THIS IS THE BIG ONE)
 // parameter substitution                                                   // c:1601
 pub fn paramsubst(
     // c:1625
@@ -5373,7 +5371,7 @@ pub fn paramsubst(
 
 // Helper functions
 
-/// Port of `filesubstr(namptr, assign)` from `Src/subst.c:737`.
+/// Port of `filesubstr(char **namptr, int assign)` from `Src/subst.c:737`.
 ///
 /// Performs `~` and `=` expansion on a single path component. Returns
 /// `Some(expanded)` on success, `None` if no expansion applies. The
@@ -5569,13 +5567,13 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
     None
 }
 
-/// Port of `filesub(namptr, assign)` from `Src/subst.c:667-704`.
+/// Port of `filesub(char **namptr, int assign)` from `Src/subst.c:667`.
 ///
 /// 1:1 with C: applies filesubstr to the leading `~`/`=`, then in
 /// assign-context walks `=` (TYPESET-only) and `:`-separated path
 /// lists, reapplying filesubstr to each suffix that begins with a
 /// tilde/equals.
-// ~, = subs: assign & PREFORK_TYPESET => typeset or magic equals          // c:661
+// ~, = subs: assign & PREFORK_TYPESET => typeset or magic equals          // c:667
 fn filesub(namptr: &str, assign: i32) -> String {
     // c:667
     // C: `filesubstr(namptr, assign);`  (line 672)
@@ -5666,7 +5664,7 @@ fn filesub(namptr: &str, assign: i32) -> String {
     namptr // c:702
 } // c:703
 
-/// Port of `arithsubst(a, bptr, rest)` from `Src/subst.c:4485-4509`.
+/// Port of `arithsubst(char *a, char **bptr, char *rest)` from `Src/subst.c:4485`.
 ///
 /// C body: param-substitute the expression first (`singsub(&a)`),
 /// evaluate as math, then format the integer/float result honoring
@@ -5677,6 +5675,7 @@ fn filesub(namptr: &str, assign: i32) -> String {
 /// to `(expr, prefix, rest) -> String` because Rust strings
 /// own their storage; the caller now consumes the returned String
 /// directly instead of the C in-out buffer protocol.
+/// WARNING: param names don't match C — Rust=(expr, prefix, rest) vs C=(a, bptr, rest)
 pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     // c:4485
     // Pre-resolve `$#NAME` before singsub — singsub treats `$#` as
@@ -5779,11 +5778,10 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
 use crate::ported::zsh_h::{MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START}; // c:zsh.h:2046-2059
 
 /// Perform substitution on a single word
-// perform substitution on a single word                                    // c:510
-/// Port of singsub(s) from subst.c lines 513-525
+// perform substitution on a single word                                    // c:514
 /// Single-string substitution.
-/// Port of `singsub(s)` from Src/subst.c:514.
-// perform substitution on a single word                                    // c:510
+/// Port of `singsub(char **s)` from Src/subst.c:514.
+// perform substitution on a single word                                    // c:514
 pub fn singsub(s: &str) -> String {                  // c:514
     // c:514
     let mut list = LinkList::default(); // c:514
@@ -5801,10 +5799,7 @@ pub fn singsub(s: &str) -> String {                  // c:514
 } // c:514
 
 /// Substitution with possible multiple results
-/// Port of multsub(s, pf_flags, a, isarr, sep, ms_flags) from subst.c lines 540-621
 /// Multi-word substitution with IFS splitting.
-/// Port of `multsub(s, pf_flags, a, isarr, sep, ms_flags)` from Src/subst.c:544.
-/// Port of `multsub(s, pf_flags, a, isarr, sep, ms_flags)` from `Src/subst.c:544-660`.
 ///
 /// Multi-word substitution: prefork the input as a single linknode,
 /// optionally word-split on IFS first, return the result as scalar or
@@ -5820,7 +5815,8 @@ pub fn singsub(s: &str) -> String {                  // c:514
 /// caller side and folded into `state.variables["IFS"]` for now;
 /// pending an explicit sep arg if a caller needs it. The return tuple
 /// carries (joined-scalar, array, isarr, ms_flags).
-/// Port of `multsub(s, pf_flags, a, isarr, sep, ms_flags)` from `Src/subst.c:544`.
+/// Port of `multsub(char **s, int pf_flags, char ***a, int *isarr, char *sep, int *ms_flags)` from `Src/subst.c:544`.
+/// WARNING: param names don't match C — Rust=(s, pf_flags) vs C=(s, pf_flags, a, isarr, sep, ms_flags)
 pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) { // c:544
     // c:544
     let mut ms_flags = 0i32; // c:551
@@ -5968,9 +5964,9 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) { // 
 // (Lower/Upper/Caps) with an extra unused `None` variant.
 
 /// History-style colon modifiers
-/// Port of modify(str, ptr, inbrace) from subst.c lines 4530-4873
 /// Apply a `:` modifier chain (`:t:r:s/x/y/`...).
-/// Port of `modify(str, ptr, inbrace)` from Src/subst.c:4531.
+/// Port of `modify(char **str, char **ptr, int inbrace)` from Src/subst.c:4531.
+/// WARNING: param names don't match C — Rust=(s, modifiers) vs C=(str, ptr, inbrace)
 pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
     // c:4531
     let mut result = s.to_string(); // c:4531
@@ -6517,7 +6513,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
 /// The Rust port uses `unicode-width`-style heuristics inline: ASCII
 /// printable + most BMP chars = 1 cell; CJK Unified Ideographs and
 /// other wide blocks = 2 cells; combining/control = 0.
-/// Port of `wcpadwidth(wc, multi_width)` from `Src/subst.c:848-866`.
+/// Port of `wcpadwidth(wchar_t wc, int multi_width)` from `Src/subst.c:848`.
 ///
 /// Returns the display-cell width of a wide char for `dopadding`.
 ///
@@ -6571,7 +6567,6 @@ pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {                       // 
 /// markers back to plain `String`/`Tick` tokens, mirroring the inner
 /// loop at subst.c:1473-1485 that strips the doubled-up bslashquote
 /// recognition.
-/// Port of `subst_parse_str(sp, single, err)` from `Src/subst.c:1460-1486`.
 ///
 /// C signature: `int subst_parse_str(char **sp, int single, int err)`.
 /// Mutates `*sp` to point at a duplicated, parser-pre-processed copy
@@ -6586,7 +6581,7 @@ pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {                       // 
 ///   2. parsestr / parsestrnoerr depending on `err` flag — fails → return 1
 ///   3. If !single, walk buffer: outside DNULL (`"`) regions convert
 ///      `Qstring` → `String` and `Qtick` → `Tick`. DNULL toggles qt.
-/// Port of `subst_parse_str(sp, single, err)` from `Src/subst.c:1460`.
+/// Port of `subst_parse_str(char **sp, int single, int err)` from `Src/subst.c:1460`.
 pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> { // c:1460
     // c:1460
     let _ = err; // c:1466 (parsestr error path
@@ -6638,10 +6633,7 @@ pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> { //
 } // c:1486
 
 /// Get a directory stack entry
-/// Port of dstackent(ch, val) from subst.c
 /// Resolve `~+N`/`~-N` directory-stack entries.
-/// Port of `dstackent(ch, val)` from Src/subst.c:4902.
-/// Port of `dstackent(ch, val)` from `Src/subst.c:4902-4922`.
 ///
 /// Resolves `~+N` / `~-N` directory-stack entries.
 ///
@@ -6661,7 +6653,8 @@ pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> { //
 /// Rust signature: takes the dirstack slice + pwd + the PUSHDMINUS
 /// option flag (callers read it from the live executor's options
 /// table). Returns Option.
-/// Port of `dstackent(ch, val)` from `Src/subst.c:4902`.
+/// Port of `dstackent(char ch, int val)` from `Src/subst.c:4902`.
+/// WARNING: param names don't match C — Rust=(val, dirstack, pwd, pushdminus_set) vs C=(ch, val)
 pub fn dstackent(                                                            // c:4902
     ch: char,
     val: i32,
@@ -6709,13 +6702,13 @@ pub fn dstackent(                                                            // 
 } // c:4922
 
 /// String padding
-/// Port of dopadding(str, prenum, postnum, preone, postone, premul, MULTIBYTE_SUPPORT, endif) from subst.c lines 798-1193
 /// `${(l:N:)var}` left/right-pad.
-/// Port of `dopadding(str, prenum, postnum, preone, postone, premul, MULTIBYTE_SUPPORT, endif)` from Src/subst.c:893.
+/// Port of `dopadding(char *str, int prenum, int postnum, char *preone, char *postone, char *premul, char *postmul #ifdef MULTIBYTE_SUPPORT , int multi_width #endif)` from Src/subst.c:893.
 ///
 /// `multi_width` controls cell-counting per the (m) flag (subst.c:2376):
 ///   • 0  → every char counts as one cell (C zsh's MULTIBYTE_SUPPORT off)
 ///   • 1+ → use wcpadwidth (CJK wide=2, combining=0, ZWJ=0).
+/// WARNING: param names don't match C — Rust=() vs C=(str, prenum, postnum, preone, postone, premul, MULTIBYTE_SUPPORT, endif)
 pub fn dopadding(                                                            // c:893
     // c:893
     s: &str,               // c:893
@@ -6889,9 +6882,9 @@ pub fn dopadding(                                                            // 
 } // c:893
 
 /// Get the delimiter argument for flags like (s:x:) or (j:x:)
-/// Port of get_strarg(s, lenp) from subst.c
 /// Parse a `:STR:`-delimited flag argument.
-/// Port of `get_strarg(s, lenp)` from Src/subst.c:1348.
+/// Port of `get_strarg(char *s, int *lenp)` from Src/subst.c:1348.
+/// WARNING: param names don't match C — Rust=(s) vs C=(s, lenp)
 pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {                 // c:1348
     // c:1348
     let mut chars = s.chars().peekable(); // c:1348
@@ -6933,10 +6926,8 @@ pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {                 // 
 } // c:1348
 
 /// Get integer argument for flags like (l.N.)
-/// Port of get_intarg(s, delmatchp) from subst.c
 /// Parse an `:N:`-delimited integer flag argument.
-/// Port of `get_intarg(s, delmatchp)` from Src/subst.c:1428.
-/// Port of `get_intarg(s, delmatchp)` from `Src/subst.c:1428-1457`.
+/// Port of `get_intarg(char **s, int *delmatchp)` from Src/subst.c:1428.
 ///
 /// Parses an `:N:`-delimited integer flag argument (e.g. `(l:5:)`).
 /// The C source returns -1 on error, the absolute value otherwise,
@@ -6948,6 +6939,7 @@ pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {                 // 
 ///
 /// Body: get_strarg → parsestr → singsub → mathevali, then absolute
 /// value. The math eval lets `(l:$n:)` etc. work.
+/// WARNING: param names don't match C — Rust=(s) vs C=(s, delmatchp)
 pub fn get_intarg(s: &str) -> Option<(i64, &str)> {                          // c:1428
     // c:1428
     // C: `char *t = get_strarg(*s, &arglen);` — get the delimited
@@ -6988,7 +6980,7 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {                          // 
 } // c:1457
 
 /// Quote substitution for heredoc tags
-/// Port of `quotesubst(str)` from `Src/subst.c:463-475`.
+/// Port of `quotesubst(char *str)` from `Src/subst.c:463`.
 ///
 /// Simplified version of prefork/singsub that does only the
 /// substitutions appropriate to quoting context — currently just the
@@ -7033,8 +7025,7 @@ pub fn quotesubst(str: &str) -> String {              // c:463
 } // c:475
 
 /// Glob entries in a linked list
-/// Port of globlist(list, flags) from subst.c lines 468-505
-/// Port of `globlist(list, flags)` from `Src/subst.c:489-510`.
+/// Port of `globlist(LinkList list, int flags)` from `Src/subst.c:489`.
 ///
 /// Glob-expands each entry in a linked list. Honors two PREFORK_*
 /// flags (per the C body header comment):
@@ -7131,7 +7122,7 @@ use crate::ported::zsh_h::{
     SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_RETFAIL, SUB_START, SUB_SUBSTR,
 }; // c:zsh.h:1981-1996
 
-/// Port of `strcatsub(d, pb, pe, src, l, s, glbsub, copied)` from `Src/subst.c:814-836`.
+/// Port of `strcatsub(char **d, char *pb, char *pe, char *src, int l, char *s, int glbsub, int copied)` from `Src/subst.c:814`.
 ///
 /// Concatenates `prefix` + `src` + `suffix` into a fresh string. If
 /// `glob_subst` is set, runs shtokenize on the src segment (so glob
@@ -7142,6 +7133,7 @@ use crate::ported::zsh_h::{
 /// with the concat result and returns a pointer past the src
 /// segment. The Rust version returns the full concatenation; callers
 /// can recover the post-src position via prefix.len() + src.len().
+/// WARNING: param names don't match C — Rust=(prefix, src, suffix, glob_subst) vs C=(d, pb, pe, src, l, s, glbsub, copied)
 pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> String { // c:814
     // c:814
     // C: `if (!pl && (!s || !*s)) { *d = dest = (copied ? src :
@@ -7569,8 +7561,7 @@ pub static NULSTRING_BYTES: [char; 2] = [NULARG, '\0']; // c:3193
 
 
 /// Evaluate character from number (for (#) flag)
-/// Port of substevalchar(ptr) from subst.c
-/// Port of `substevalchar(ptr)` from `Src/subst.c:1490-1521`.
+/// Port of `substevalchar(char *ptr)` from `Src/subst.c:1490`.
 ///
 /// Implements the `(#)` paramsubst flag: evaluate the expression as
 /// a math integer, then convert that codepoint to a UTF-8 string.
@@ -7625,8 +7616,7 @@ pub fn substevalchar(ptr: &str) -> Option<String> {
 } // c:1521
 
 /// Check for colon subscript in parameter expansion
-/// Port of check_colon_subscript(str, endp) from subst.c
-/// Port of `check_colon_subscript(str, endp)` from `Src/subst.c:1566-1597`.
+/// Port of `check_colon_subscript(char *str, char **endp)` from `Src/subst.c:1566`.
 ///
 /// Detects a `${var:OFFSET[:LEN]}` substring shape vs a history
 /// modifier or other postfix. Returns `Some((subscript_expr, rest))`
@@ -7635,6 +7625,7 @@ pub fn substevalchar(ptr: &str) -> Option<String> {
 ///
 /// C signature: `char *check_colon_subscript(char *str, char **endp)`.
 /// Rust returns the parsed (subscript, remainder) pair.
+/// WARNING: param names don't match C — Rust=(s) vs C=(str, endp)
 pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
     // c:1566
     // C: `if (!*str || ialpha(*str) || *str == '&') return NULL;`
@@ -7694,8 +7685,7 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
 } // c:1597
 
 /// Untokenize and escape string for flag argument
-/// Port of untok_and_escape(s, escapes, tok_arg) from subst.c
-/// Port of `untok_and_escape(s, escapes, tok_arg)` from `Src/subst.c:1528-1554`.
+/// Port of `untok_and_escape(char *s, int escapes, int tok_arg)` from `Src/subst.c:1528`.
 ///
 /// Helper for arguments to parameter flags. Handles two operations
 /// on the input string `s`:
@@ -7784,8 +7774,7 @@ use crate::zsh_h::isset;
 // c:zsh.h:200
 
 /// Equal substitution (=cmd)
-/// Port of equalsubstr(str, assign, nomatch) from subst.c lines 706-722
-/// Port of `equalsubstr(str, assign, nomatch)` from `Src/subst.c:715-733`.
+/// Port of `equalsubstr(char *str, int assign, int nomatch)` from `Src/subst.c:715`.
 ///
 /// `=cmd` substitution: looks up `cmd` via findcmd (canonical zsh
 /// PATH walker, ported as ShellExecutor::findcmd). Returns the
@@ -7799,7 +7788,7 @@ use crate::zsh_h::isset;
 ///   3. findcmd lookup; null → return NULL (with optional zerr).
 ///   4. If trailing chars exist (e.g. `=cmd:rest`), concat path
 ///      with the suffix.
-// do =foo substitution, or equivalent.                                     // c:706
+// do =foo substitution, or equivalent.                                     // c:715
 pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
     // c:715
     // C: `for (pp = str; !isend2(*pp); pp++);` — find end of cmd

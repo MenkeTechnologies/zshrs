@@ -43,12 +43,13 @@ use crate::zsh_h::{
 // `Src/zsh.h:3013-3028`); this file no longer carries a duplicate.
 use crate::ported::zsh_h::sortelt;
 
-/// Port of `zstrcmp(as, bs, sortflags)` from `Src/sort.c:191`.
+/// Port of `zstrcmp(const char *as, const char *bs, int sortflags)` from `Src/sort.c:191`.
 ///
 /// C fixes `sortdir = 1`, sets only `sortnobslash` and `sortnumeric`
 /// from `sortflags` (`sort.c:207-210`), then calls `eltpcmp`. It does
 /// **not** consult `SORTIT_BACKWARDS` or `SORTIT_IGNORING_CASE` — those
 /// apply in `strmetasort` via `sortdir` and the pre-transform loop.
+/// WARNING: param names don't match C — Rust=(a, bs, sortflags) vs C=(as, bs, sortflags)
 pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {              // c:191
     let sortnumeric = if sortflags & (SORTIT_NUMERICALLY_SIGNED as u32) != 0 {
         -1 // c:209-210
@@ -93,10 +94,10 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {              // 
         let mut mul: i32 = 0;
         let mut cmp: i32 = (ac as i32) - (bc as i32);
         if signed_mode {
-            if ac == bs'-' && ab.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(bc) {
+            if ac == b'-' && ab.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(bc) {
                 return Ordering::Less;
             }
-            if bc == bs'-' && bb.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(ac) {
+            if bc == b'-' && bb.get(i + 1).copied().map(is_digit).unwrap_or(false) && is_digit(ac) {
                 return Ordering::Greater;
             }
         }
@@ -105,7 +106,7 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {              // 
             while start > 0 && is_digit(ab[start - 1]) {
                 start -= 1;
             }
-            if signed_mode && start > 0 && ab[start - 1] == bs'-' {
+            if signed_mode && start > 0 && ab[start - 1] == b'-' {
                 mul = -1;
             } else {
                 mul = 1;
@@ -121,11 +122,11 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {              // 
                 .take_while(|&c| is_digit(c))
                 .collect();
             let stripped_a: &[u8] = {
-                let z = run_a.iter().take_while(|&&c| c == bs'0').count();
+                let z = run_a.iter().take_while(|&&c| c == b'0').count();
                 &run_a[z..]
             };
             let stripped_b: &[u8] = {
-                let z = run_b.iter().take_while(|&&c| c == bs'0').count();
+                let z = run_b.iter().take_while(|&&c| c == b'0').count();
                 &run_b[z..]
             };
             match stripped_a.len().cmp(&stripped_b.len()) {
@@ -204,7 +205,7 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {              // 
     }
 }
 
-/// Port of `eltpcmp(a, b)` from `Src/sort.c:44`.
+/// Port of `eltpcmp(const void *a, const void *b)` from `Src/sort.c:44`.
 ///
 /// The qsort callback. C's signature is
 /// `int(*)(const void*, const void*)` for direct use with
@@ -215,6 +216,7 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {              // 
 /// the comparison runs over the first `n` bytes of `cmp` field
 /// (matching C's `len != -1` branch at sort.c:52-118). Equal-but-
 /// shorter strings sort below their longer continuations.
+/// WARNING: param names don't match C — Rust=(a, b, sort_flags) vs C=(a, b)
 pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {      // c:44
     let reverse = (sort_flags & (SORTIT_BACKWARDS as u32)) != 0;
     // C's `len == -1` sentinel = "no embedded NULs, use strlen".
@@ -254,14 +256,15 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {      // 
     }
 }
 
-/// Port of `strmetasort(array, sortwhat, unmetalenp)` from `Src/sort.c:234`.
-// lengths.                                                                 // c:229
+/// Port of `strmetasort(char **array, int sortwhat, int *unmetalenp)` from `Src/sort.c:234`.
+// lengths.                                                                 // c:234
 /// C signature: `void strmetasort(char **array, int sortwhat,
 /// int *unmetalenp)`. `unmetalenp = None` (i.e. C's `NULL`) means
 /// the strings are still metafied (no embedded NULs). When
 /// `Some(slice)`, the slice is C's parallel array of per-element
 /// pre-unmetafied lengths; after sort it's re-ordered in lockstep
 /// with `arr` so the lengths track their owning strings.
+/// WARNING: param names don't match C — Rust=(sort_flags, unmetalenp) vs C=(array, sortwhat, unmetalenp)
 pub fn strmetasort(                                                          // c:234
     arr: &mut [String],
     sort_flags: u32,

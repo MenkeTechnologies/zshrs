@@ -282,14 +282,14 @@ pub static PAROFFS: AtomicI32 = AtomicI32::new(0);                           // 
 pub static MATCHORDER: AtomicI32 = AtomicI32::new(0);                        // c:3169
 
 // =====================================================================
-// rembslash — `Src/Zle/compcore.c:1322-1336`.
+// rembslash — `Src/Zle/compcore.c:1323`.
 // =====================================================================
 
 /// Port of `mod_export char *rembslash(char *s)` from compcore.c:1322.
 ///
 /// "Strip backslash escapes from a token, treating `\X` as `X`."
-pub fn rembslash(s: &str) -> String {                                        // c:1322
-    let mut result = String::with_capacity(s.len());                         // c:1325
+pub fn rembslash(s: &str) -> String {                                        // c:1323
+    let mut result = String::with_capacity(s.len());                         // c:1323
     let mut chars = s.chars().peekable();                                    // c:1327
     while let Some(c) = chars.next() {
         if c == '\\' {                                                       // c:1328
@@ -297,19 +297,19 @@ pub fn rembslash(s: &str) -> String {                                        // 
                 result.push(nxt);
             }
         } else {
-            result.push(c);                                                  // c:1332-1333
+            result.push(c);                                                  // c:1343-1333
         }
     }
-    result                                                                   // c:1335
+    result                                                                   // c:1343
 }
 
 // =====================================================================
-// remsquote — `Src/Zle/compcore.c:1342-1360`.
+// remsquote — `Src/Zle/compcore.c:1343`.
 // =====================================================================
 
 /// Port of `mod_export int remsquote(char *s)` from compcore.c:1342.
-pub fn remsquote(s: &mut String) -> i32 {                                    // c:1342
-    let rcquotes = isset(RCQUOTES); // c:1345
+pub fn remsquote(s: &mut String) -> i32 {                                    // c:1343
+    let rcquotes = isset(RCQUOTES); // c:1343
     let qa: usize = if rcquotes { 1 } else { 3 };
 
     let bytes = s.as_bytes();                                                // c:1346
@@ -336,11 +336,11 @@ pub fn remsquote(s: &mut String) -> i32 {                                    // 
         }
     }
     *s = String::from_utf8(t).unwrap_or_default();                           // c:1357
-    ret                                                                      // c:1359
+    ret                                                                      // c:1366
 }
 
 // =====================================================================
-// ctokenize — `Src/Zle/compcore.c:1365-1388`.
+// ctokenize — `Src/Zle/compcore.c:1366`.
 // =====================================================================
 
 /// Port of `mod_export char *ctokenize(char *p)` from compcore.c:1365.
@@ -348,8 +348,8 @@ pub fn remsquote(s: &mut String) -> i32 {                                    // 
 /// C calls `tokenize(p)` first then walks the string replacing
 /// unescaped `$`/`{`/`}` with the token bytes `String`/`Inbrace`/
 /// `Outbrace`. Backslash-escaped variants become `Bnull`.
-pub fn ctokenize(p: &str) -> String {                                        // c:1365
-    let bytes = p.as_bytes();                                                // c:1368
+pub fn ctokenize(p: &str) -> String {                                        // c:1366
+    let bytes = p.as_bytes();                                                // c:1366
     let mut out = Vec::<u8>::with_capacity(bytes.len());
     let mut bslash = false;                                                  // c:1369
     let mut prev_idx: Option<usize> = None;
@@ -384,16 +384,16 @@ pub fn ctokenize(p: &str) -> String {                                        // 
         }
         i += 1;
     }
-    String::from_utf8(out).unwrap_or_default()                               // c:1387
+    String::from_utf8(out).unwrap_or_default()                               // c:1403
 }
 
 // =====================================================================
-// comp_str — `Src/Zle/compcore.c:1402-1431`.
+// comp_str — `Src/Zle/compcore.c:1403`.
 // =====================================================================
 
 /// Port of `mod_export char *comp_str(int *ipl, int *pl, int untok)`
 /// from compcore.c:1402.
-pub fn comp_str(untok: bool) -> (String, i32, i32) {                         // c:1402
+pub fn comp_str(untok: bool) -> (String, i32, i32) {                         // c:1403
     use crate::ported::zle::complete::{COMPIPREFIX, COMPPREFIX, COMPSUFFIX};
     let mut p = COMPPREFIX.get_or_init(|| Mutex::new(String::new()))         // c:1405
         .lock().unwrap().clone();
@@ -410,20 +410,20 @@ pub fn comp_str(untok: bool) -> (String, i32, i32) {                         // 
     let lp = p.len() as i32;                                                 // c:1417
     let lip = ip.len() as i32;                                               // c:1419
     let mut str = String::with_capacity(ip.len() + p.len() + s.len() + 1);  // c:1420
-    str.push_str(&ip);                                                      // c:1421
-    str.push_str(&p);                                                       // c:1422
-    str.push_str(&s);                                                       // c:1423
-    (str, lip, lp)                                                          // c:1425-1430
+    str.push_str(&ip);                                                      // c:1435
+    str.push_str(&p);                                                       // c:1435
+    str.push_str(&s);                                                       // c:1435
+    (str, lip, lp)                                                          // c:1435-1430
 }
 
 // =====================================================================
-// comp_quoting_string — `Src/Zle/compcore.c:1434-1448`.
+// comp_quoting_string — `Src/Zle/compcore.c:1435`.
 // =====================================================================
 
 /// Port of `mod_export char *comp_quoting_string(int stype)` from
 /// compcore.c:1434.
-pub fn comp_quoting_string(stype: i32) -> &'static str {                     // c:1434
-    match stype {                                                            // c:1437
+pub fn comp_quoting_string(stype: i32) -> &'static str {                     // c:1435
+    match stype {                                                            // c:1435
         x if x == QT_SINGLE  => "'",                                         // c:1439-1440
         x if x == QT_DOUBLE  => "\"",                                        // c:1441-1442
         x if x == QT_DOLLARS => "$'",                                        // c:1443-1444
@@ -435,13 +435,13 @@ pub fn comp_quoting_string(stype: i32) -> &'static str {                     // 
 }
 
 // =====================================================================
-// multiquote — `Src/Zle/compcore.c:1064-1082`.
+// multiquote — `Src/Zle/compcore.c:1065`.
 // =====================================================================
 
 /// Port of `mod_export char *multiquote(char *s, int ign)` from
 /// compcore.c:1064.
-pub fn multiquote(s: &str, ign: i32) -> String {                             // c:1064
-    let stack = crate::ported::zle::complete::COMPQSTACK                     // c:1068
+pub fn multiquote(s: &str, ign: i32) -> String {                             // c:1065
+    let stack = crate::ported::zle::complete::COMPQSTACK                     // c:1065
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .map(|g| g.clone())
@@ -460,20 +460,20 @@ pub fn multiquote(s: &str, ign: i32) -> String {                             // 
             };
             cur = crate::ported::utils::quotestring(&cur, qt);
         }
-        cur                                                                  // c:1078
+        cur                                                                  // c:1092
     } else {
-        s.to_string()                                                        // c:1078
+        s.to_string()                                                        // c:1092
     }
 }
 
 // =====================================================================
-// tildequote — `Src/Zle/compcore.c:1091-1110`.
+// tildequote — `Src/Zle/compcore.c:1092`.
 // =====================================================================
 
 /// Port of `mod_export char *tildequote(char *s, int ign)` from
 /// compcore.c:1091.
-pub fn tildequote(s: &str, ign: i32) -> String {                             // c:1091
-    let bytes = s.as_bytes();                                                // c:1095
+pub fn tildequote(s: &str, ign: i32) -> String {                             // c:1092
+    let bytes = s.as_bytes();                                                // c:1092
     let tilde = !bytes.is_empty() && bytes[0] == b'~';                       // c:1097
     let staged = if tilde {                                                  // c:1098
         let mut tmp = String::with_capacity(s.len());
@@ -510,14 +510,14 @@ pub fn before_complete(lst: &mut i32) -> i32 {                               // 
     use crate::ported::zle::zle_tricky::{MENUCMP, USEMENU};
     let _ = lst;
     OLDMENUCMP.store(MENUCMP.load(Ordering::Relaxed), Ordering::Relaxed);    // c:463
-    if startauto.load(Ordering::Relaxed) != 0 {                              // c:494
+    if startauto.load(Ordering::Relaxed) != 0 {                              // c:503
         let bashauto = isset(BASHAUTOLIST);
         let lastambig: i32 = 0;
         if !bashauto || lastambig == 2 {
             USEMENU.store(2, Ordering::Relaxed);
         }
     }
-    0                                                                        // c:498
+    0                                                                        // c:503
 }
 
 /// Port of `int after_complete(Hookdef dummy, int *dat)` from
@@ -530,23 +530,23 @@ pub fn after_complete(_dat: &mut [i32]) -> i32 {                             // 
 }
 
 // =====================================================================
-// set_list_array — `Src/Zle/compcore.c:1947-1950`.
+// set_list_array — `Src/Zle/compcore.c:1947`.
 // =====================================================================
 
 /// Port of `static void set_list_array(char *name, LinkList l)` from
 /// compcore.c:1947.
 pub fn set_list_array(name: &str, l: &[String]) {                            // c:1947
-    std::env::set_var(name, l.join("\0"));                                   // c:1949
+    std::env::set_var(name, l.join("\0"));                                   // c:1956
 }
 
 // =====================================================================
-// get_user_var — `Src/Zle/compcore.c:1956-2014`.
+// get_user_var — `Src/Zle/compcore.c:1956`.
 // =====================================================================
 
 /// Port of `mod_export char **get_user_var(char *nam)` from
 /// compcore.c:1956.
 pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {              // c:1956
-    let nam = nam?;                                                          // c:1958
+    let nam = nam?;                                                          // c:1956
     if nam.starts_with('(') {                                                // c:1960
         let mut arrlist: Vec<String> = Vec::new();
         let bytes = nam.as_bytes();
@@ -590,19 +590,19 @@ pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {              // 
                 vec![s]                                                      // c:2007
             }
         });
-        crate::ported::signals::unqueue_signals();                           // c:2011
+        crate::ported::signals::unqueue_signals();                           // c:2022
         result
     }
 }
 
 // =====================================================================
-// get_data_arr — `Src/Zle/compcore.c:2022-2039`.
+// get_data_arr — `Src/Zle/compcore.c:2022`.
 // =====================================================================
 
 /// Port of `static char **get_data_arr(char *name, int keys)` from
 /// compcore.c:2022.
 pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {         // c:2022
-    crate::ported::signals::queue_signals();                                 // c:2028
+    crate::ported::signals::queue_signals();                                 // c:2022
     let raw = std::env::var(name).ok();                                      // c:2029
     let result = raw.map(|s| {
         let parts: Vec<String> = if s.contains('\0') {
@@ -616,18 +616,18 @@ pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {         // 
             parts
         }
     });
-    crate::ported::signals::unqueue_signals();                               // c:2035
+    crate::ported::signals::unqueue_signals();                               // c:2041
     result
 }
 
 // =====================================================================
-// addmatch — `Src/Zle/compcore.c:2041-2072`.
+// addmatch — `Src/Zle/compcore.c:2041`.
 // =====================================================================
 
 /// Port of `static void addmatch(char *str, int flags, char ***dispp,
 ///                                int line)` from compcore.c:2041.
 pub fn addmatch(str: &str, flags: i32, disp: Option<&str>, line: bool) {    // c:2041
-    let mut cm = Cmatch::default();                                          // c:2043
+    let mut cm = Cmatch::default();                                          // c:2041
     cm.str = Some(str.to_string());                                        // c:2047
     // c:2049-2051 — inline read of `complist` parameter, parse `packed`/
     // `rows` substrings into CMF_PACKED/CMF_ROWS flag bits.
@@ -668,13 +668,13 @@ pub fn addmatch(str: &str, flags: i32, disp: Option<&str>, line: bool) {    // c
 // at the single call site in callcompfunc (c:2049-2051).
 
 // =====================================================================
-// begcmgroup — `Src/Zle/compcore.c:3073-3125`.
+// begcmgroup — `Src/Zle/compcore.c:3073`.
 // =====================================================================
 
 /// Port of `mod_export void begcmgroup(char *n, int flags)` from
 /// compcore.c:3073.
 pub fn begcmgroup(n: Option<&str>, flags: i32) {                             // c:3073
-    if let Some(name) = n {                                                  // c:3075
+    if let Some(name) = n {                                                  // c:3073
         let mask = CGF_NOSORT | CGF_UNIQALL | CGF_UNIQCON                    // c:3085
                  | CGF_MATSORT | CGF_NUMSORT | CGF_REVSORT;
         let cell = amatches.get_or_init(|| Mutex::new(Vec::new()));
@@ -707,7 +707,7 @@ pub fn begcmgroup(n: Option<&str>, flags: i32) {                             // 
 }
 
 // =====================================================================
-// endcmgroup — `Src/Zle/compcore.c:3131-3134`.
+// endcmgroup — `Src/Zle/compcore.c:3131`.
 // =====================================================================
 
 /// Port of `mod_export void endcmgroup(char **ylist)` from
@@ -716,13 +716,13 @@ pub fn endcmgroup(ylist: Option<Vec<String>>) {                              // 
     let cell = mgroup.get_or_init(|| Mutex::new(None));
     if let Ok(mut g) = cell.lock() {
         if let Some(grp) = g.as_mut() {
-            grp.ylist = ylist.unwrap_or_default();                           // c:3133
+            grp.ylist = ylist.unwrap_or_default();                           // c:3140
         }
     }
 }
 
 // =====================================================================
-// addexpl — `Src/Zle/compcore.c:3140-3164`.
+// addexpl — `Src/Zle/compcore.c:3140`.
 // =====================================================================
 
 /// Port of `mod_export void addexpl(int always)` from compcore.c:3140.
@@ -766,12 +766,12 @@ pub fn addexpl(always: bool) {                                               // 
         if let Ok(mut mg) = mc.lock() {
             if let Some(grp) = mg.as_mut() { grp.new_ = 1; }
         }
-        nmessages.fetch_add(1, Ordering::Relaxed);                           // c:3163
+        nmessages.fetch_add(1, Ordering::Relaxed);                           // c:3173
     }
 }
 
 // =====================================================================
-// matchcmp — `Src/Zle/compcore.c:3173-3198`.
+// matchcmp — `Src/Zle/compcore.c:3173`.
 // =====================================================================
 
 /// Port of `static int matchcmp(Cmatch *a, Cmatch *b)` from
@@ -812,7 +812,7 @@ pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {              // 
 // =====================================================================
 
 #[inline]
-fn matchstreq(a: Option<&String>, b: Option<&String>) -> bool {              // c:3203
+fn matchstreq(a: Option<&String>, b: Option<&String>) -> bool {              // c:3207
     match (a, b) {
         (None, None) => true,
         (Some(x), Some(y)) => x == y,
@@ -822,8 +822,8 @@ fn matchstreq(a: Option<&String>, b: Option<&String>) -> bool {              // 
 
 /// Port of `static int matcheq(Cmatch a, Cmatch b)` from
 /// compcore.c:3206.
-pub fn matcheq(a: &Cmatch, b: &Cmatch) -> bool {                             // c:3206
-    matchstreq(a.ipre.as_ref(),  b.ipre.as_ref())  &&                        // c:3209
+pub fn matcheq(a: &Cmatch, b: &Cmatch) -> bool {                             // c:3207
+    matchstreq(a.ipre.as_ref(),  b.ipre.as_ref())  &&                        // c:3207
     matchstreq(a.pre.as_ref(),   b.pre.as_ref())   &&                        // c:3210
     matchstreq(a.ppre.as_ref(),  b.ppre.as_ref())  &&                        // c:3211
     matchstreq(a.psuf.as_ref(),  b.psuf.as_ref())  &&                        // c:3212
@@ -851,7 +851,7 @@ pub fn freematches(_g: Vec<Cmgroup>) {                                       // 
 // =====================================================================
 
 // =====================================================================
-// do_completion — `Src/Zle/compcore.c:287-458`.
+// do_completion — `Src/Zle/compcore.c:287`.
 // =====================================================================
 
 /// Direct port of `int do_completion(Hookdef dummy, Compldat dat)`
@@ -1143,6 +1143,7 @@ fn goto_compend(ret: i32) -> i32 {                                            //
 /// `ZLEMETALINE` global rather than a `&mut Zle` handle since
 /// compcore's call site (compcore.c:344-355 error-recovery) drives
 /// the global ZLE buffer directly.
+/// WARNING: param names don't match C — Rust=(ct) vs C=(ct, flags)
 fn foredel(ct: i32) {                                                    // zle_utils.c:1105
     if ct <= 0 { return; }
     let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
@@ -1164,6 +1165,7 @@ fn foredel(ct: i32) {                                                    // zle_
 /// Direct port of `#define inststr(X) inststrlen((X),1,-1)` from
 /// `Src/Zle/zle_tricky.c:57`. Inserts `s` at `ZLEMETACS` in the
 /// global metafied line; cursor advances by `s.len()`.
+/// WARNING: param names don't match C — Rust=(s) vs C=()
 fn inststr(s: &str) {                                                    // c:57
     if s.is_empty() { return; }
     let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
@@ -1192,7 +1194,7 @@ fn unmetafy_line() {                                                     // zle_
         .lock().map(|g| g.clone()).unwrap_or_default();
     let unmeta = crate::ported::zle::zle_tricky::unmetafy_line(&meta);
     let new_len = unmeta.len() as i32;
-    let cs = ZLEMETACS.load(Ordering::Relaxed);                              // c:996-1000
+    let cs = ZLEMETACS.load(Ordering::Relaxed);                              // c:978-1000
     if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
         *g = unmeta;
     }
@@ -1216,13 +1218,13 @@ fn metafy_line() {                                                       // zle_
     ZLEMETACS.store(cs.min(new_len), Ordering::Relaxed);
 }
 
-/// Direct port of `int selfinsert(char **args)` from `Src/Zle/zle_misc.c:112`.
+/// Direct port of `int selfinsert(char **args)` from `Src/Zle/zle_misc.c:113`.
 /// Inserts `lastchar` from ZLE state at cursor. Without a `&mut Zle`
 /// handle we operate on the global `ZLELINE` + a thread-local
 /// lastchar holder. Equivalent C body: insert one char at zlecs,
 /// advance zlecs, bump zlell.
 fn selfinsert() -> i32 {                                                 // zle_misc.c:112
-    let ch = LASTCHAR.load(Ordering::Relaxed);                               // c:114
+    let ch = LASTCHAR.load(Ordering::Relaxed);                               // c:113
     if ch < 0 { return 1; }                                                  // c:116 EOF
     let cs = ZLECS.load(Ordering::Relaxed) as usize;
     if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
@@ -1294,7 +1296,7 @@ fn lastpostbr_set(s: &str) {                                                  //
 
 
 // =====================================================================
-// callcompfunc — `Src/Zle/compcore.c:544-944`.
+// callcompfunc — `Src/Zle/compcore.c:544`.
 // =====================================================================
 
 /// Port of `static void callcompfunc(char *s, char *fn)` from
@@ -1426,7 +1428,7 @@ fn set_compstate_str(key: &str, val: &str) {                                  //
 }
 
 // =====================================================================
-// check_param — `Src/Zle/compcore.c:1113-1317`.
+// check_param — `Src/Zle/compcore.c:1113`.
 // =====================================================================
 
 /// Direct port of `static char *check_param(char *s, int set, int test)`
@@ -1768,7 +1770,7 @@ fn compfunc_active() -> bool {
 }
 
 // =====================================================================
-// set_comp_sep — `Src/Zle/compcore.c:1458-1940`.
+// set_comp_sep — `Src/Zle/compcore.c:1460`.
 // =====================================================================
 
 /// Direct port of `int set_comp_sep(void)` from compcore.c:1458 —
@@ -1779,8 +1781,8 @@ fn compfunc_active() -> bool {
 /// Body shell ports the top-level state save/restore from c:1458-
 /// 1490, with the inner lex-save/replay/restore block stubbed as
 /// `lexsave`/`lexrestore` until `lex.c` substrate lands.
-pub fn set_comp_sep() -> i32 {                                               // c:1458
-    let (_s, _lip, _lp) = comp_str(false);                                   // c:1469
+pub fn set_comp_sep() -> i32 {                                               // c:1460
+    let (_s, _lip, _lp) = comp_str(false);                                   // c:1460
     let owe = WE.load(Ordering::Relaxed);                                    // c:1473 owb, owe
     let owb = WB.load(Ordering::Relaxed);
     let _ooffs = OFFS.load(Ordering::Relaxed);
@@ -1829,7 +1831,7 @@ fn lexrestore(_token: usize) {                                           // lex.
 static LEXSAVE_DEPTH: AtomicI32 = AtomicI32::new(0);                         // local
 
 // =====================================================================
-// addmatches — `Src/Zle/compcore.c:2080-2637`.
+// addmatches — `Src/Zle/compcore.c:2080`.
 // =====================================================================
 
 /// Direct port of `int addmatches(Cadata dat, char **argv)` from
@@ -1963,7 +1965,7 @@ fn autoq_set(s: &str) {                                                       //
 }
 
 // =====================================================================
-// add_match_data — `Src/Zle/compcore.c:2643-3067`.
+// add_match_data — `Src/Zle/compcore.c:2643`.
 // =====================================================================
 
 /// Direct port of `Cmatch add_match_data(int alt, char *str, char *orig,
@@ -2084,7 +2086,7 @@ fn qipre_get() -> String {                                                   // 
 }
 
 // =====================================================================
-// makecomplist — `Src/Zle/compcore.c:946-1062`.
+// makecomplist — `Src/Zle/compcore.c:946`.
 // =====================================================================
 
 /// Direct port of `int makecomplist(char *s, int incmd, int lst)` from
@@ -2092,7 +2094,7 @@ fn qipre_get() -> String {                                                   // 
 /// either the new compsys path (`callcompfunc`) or the legacy compctl
 /// path (`COMPCTLMAKEHOOK`).
 pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {                  // c:946
-    let owb   = WB.load(Ordering::Relaxed);                                  // c:949
+    let owb   = WB.load(Ordering::Relaxed);                                  // c:946
     let owe   = WE.load(Ordering::Relaxed);
     let ooffs = OFFS.load(Ordering::Relaxed);
 
@@ -2299,7 +2301,7 @@ pub static HOOK_FNS: OnceLock<Mutex<std::collections::HashMap<String, Vec<String
     = OnceLock::new();                                                        // init.c zshhooks
 
 // =====================================================================
-// makearray — `Src/Zle/compcore.c:3223-3367`.
+// makearray — `Src/Zle/compcore.c:3224`.
 // =====================================================================
 
 /// Port of `static Cmatch *makearray(LinkList l, int type, int flags,
@@ -2310,8 +2312,8 @@ pub static HOOK_FNS: OnceLock<Mutex<std::collections::HashMap<String, Vec<String
 /// from `permmatches`. The `type=0` string-sort path on `lexpls` is
 /// inlined at the `permmatches` call site (C uses a `(char **)` cast
 /// trick that has no safe Rust equivalent).
-pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32) { // c:3223
-    let mut n: i32 = rp.len() as i32;                                        // c:3231
+pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32) { // c:3224
+    let mut n: i32 = rp.len() as i32;                                        // c:3224
     let mut nl: i32 = 0;                                                     // c:3231
     let mut ll: i32 = 0;                                                     // c:3231
 
@@ -2466,14 +2468,14 @@ pub fn makearray_strings(mut rp: Vec<String>, flags: i32) -> (Vec<String>, i32) 
 }
 
 // =====================================================================
-// dupmatch — `Src/Zle/compcore.c:3370-3418`.
+// dupmatch — `Src/Zle/compcore.c:3370`.
 // =====================================================================
 
 /// Port of `static Cmatch dupmatch(Cmatch m, int nbeg, int nend)` from
 /// compcore.c:3370. Deep-copies one match; brpl/brsl are truncated to
 /// nbeg/nend per the C body's nbeg/nend-sized `zalloc` + element copy.
 pub fn dupmatch(m: &Cmatch, nbeg: i32, nend: i32) -> Cmatch {                // c:3370
-    let mut r = Cmatch::default();                                           // c:3373-3374
+    let mut r = Cmatch::default();                                           // c:3370-3374
     r.str  = m.str.clone();                                                // c:3376 ztrdup
     r.orig  = m.orig.clone();                                                // c:3377
     r.ipre  = m.ipre.clone();                                                // c:3378
@@ -2511,18 +2513,18 @@ pub fn dupmatch(m: &Cmatch, nbeg: i32, nend: i32) -> Cmatch {                // 
 }
 
 // =====================================================================
-// permmatches — `Src/Zle/compcore.c:3422-3550`.
+// permmatches — `Src/Zle/compcore.c:3423`.
 // =====================================================================
 
 /// Static state for `permmatches`'s `static int fi`. C scopes the
 /// flag to the function; Rust hoists it to file scope per Rule S1.
-static PERMMATCHES_FI: AtomicI32 = AtomicI32::new(0);                        // c:3429 static int fi
+static PERMMATCHES_FI: AtomicI32 = AtomicI32::new(0);                        // c:3423 static int fi
 
 /// Port of `mod_export int permmatches(int last)` from compcore.c:3422.
 /// Promotes the per-round `amatches` accumulator into the permanent
 /// `pmatches` snapshot via deep-copy through `dupmatch`/`makearray`.
-pub fn permmatches(last: i32) -> i32 {                                       // c:3422
-    let ofi = PERMMATCHES_FI.load(Ordering::Relaxed);                        // c:3431 ofi = fi
+pub fn permmatches(last: i32) -> i32 {                                       // c:3423
+    let ofi = PERMMATCHES_FI.load(Ordering::Relaxed);                        // c:3423 ofi = fi
 
     // c:3433 — `if (pmatches && !newmatches)`
     let pmatches_set = pmatches.get_or_init(|| Mutex::new(Vec::new()))

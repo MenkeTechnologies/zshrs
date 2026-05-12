@@ -127,7 +127,7 @@ thread_local! {
 // =================================================================
 
 /// Initialize the `compctltab` hash table.
-/// Port of `createcompctltable()` from Src/Zle/compctl.c:69. The C
+/// Port of `createcompctltable()` from Src/Zle/compctl.c:70. The C
 /// version wires hash function pointers (hasher, addnode, getnode,
 /// printnode, freenode); Rust uses a plain HashMap so the wiring
 /// reduces to allocation.
@@ -139,9 +139,10 @@ pub(crate) fn createcompctltable() {
 }
 
 /// Free a `compctlp` hash node.
-/// Port of `freecompctlp(hn)` from Src/Zle/compctl.c:91. Rust's Arc
+/// Port of `freecompctlp(HashNode hn)` from Src/Zle/compctl.c:92. Rust's Arc
 /// drop handles the inner Compctl free; this is the entry the C
 /// hash table calls back when removing a node.
+/// WARNING: param names don't match C — Rust=() vs C=(hn)
 pub(crate) fn freecompctlp(name: &str) {
     let mut g = COMPCTL_TAB.write().unwrap();
     if let Some(map) = g.as_mut() {
@@ -150,10 +151,11 @@ pub(crate) fn freecompctlp(name: &str) {
 }
 
 /// Free a `compctl` spec.
-/// Port of `freecompctl(cc)` from Src/Zle/compctl.c:102. C uses
+/// Port of `freecompctl(Compctl cc)` from Src/Zle/compctl.c:103. C uses
 /// reference counting + manual `zsfree` of every string member +
 /// recursive free of `ext`/`xor` chains. Rust's Arc handles this
 /// automatically when the last reference drops.
+/// WARNING: param names don't match C — Rust=() vs C=(cc)
 pub(crate) fn freecompctl(_cc: Arc<Compctl>) {
     // Arc::drop recursively frees the spec when refcount hits zero.
     // Direct port of compctl.c:104-141 — the C ladder of `zsfree(...)`
@@ -161,18 +163,19 @@ pub(crate) fn freecompctl(_cc: Arc<Compctl>) {
 }
 
 /// Free a `compcond` spec.
-/// Port of `freecompcond(a)` from Src/Zle/compctl.c:145. C walks the
+/// Port of `freecompcond(void *a)` from Src/Zle/compctl.c:146. C walks the
 /// or/and chain, freeing per-type union data. Rust's enum + Box
 /// drop the chain automatically; this is the entry kept for ABI
 /// parity with the C source.
+/// WARNING: param names don't match C — Rust=() vs C=(a)
 pub(crate) fn freecompcond(_cc: Compcond) {
     // Drop handles the chain — direct equivalent of compctl.c:148-186.
 }
 
 /// Direct port of `static Cmlist cpcmlist(Cmlist l)` from
-/// Src/Zle/compctl.c:290-306. Deep-copies a Cmlist linked list, using
+/// Src/Zle/compctl.c:291. Deep-copies a Cmlist linked list, using
 /// `cpcmatcher` for each matcher's chain. Returns the new head.
-pub(crate) fn cpcmlist(                                                      // c:290
+pub(crate) fn cpcmlist(                                                      // c:291
     mut l: Option<&crate::ported::zle::comp_h::Cmlist>,
 ) -> Option<Box<crate::ported::zle::comp_h::Cmlist>> {
     use crate::ported::zle::comp_h::Cmlist;
@@ -193,13 +196,13 @@ pub(crate) fn cpcmlist(                                                      // 
                 tail_ref = &mut newnode.next as *mut _;
             }
         }
-        l = src.next.as_deref();                                             // c:302 l = l->next
+        l = src.next.as_deref();                                             // c:311 l = l->next
     }
-    head                                                                     // c:304 return r
+    head                                                                     // c:311 return r
 }
 
 /// Direct port of `static int set_gmatcher(char *name, char **argv)` from
-/// Src/Zle/compctl.c:311-333. Parses each argv entry as a cmatcher
+/// Src/Zle/compctl.c:311. Parses each argv entry as a cmatcher
 /// spec, builds a fresh Cmlist chain, frees the old CMATCHER and
 /// installs the new one via cpcmlist.
 pub(crate) fn set_gmatcher(name: &str, argv: &[String]) -> i32 {             // c:311
@@ -223,40 +226,41 @@ pub(crate) fn set_gmatcher(name: &str, argv: &[String]) -> i32 {             // 
             }
         }
     }
-    // freecmlist(cmatcher) — Drop on the Box handles the C free path.       // c:328
-    let new_list = cpcmlist(head.as_deref());                                // c:329 cpcmlist(l)
+    // freecmlist(cmatcher) — Drop on the Box handles the C free path.       // c:336
+    let new_list = cpcmlist(head.as_deref());                                // c:336 cpcmlist(l)
     if let Ok(mut guard) = CMATCHER.write() {
         *guard = new_list;
     }
-    1                                                                        // c:331
+    1                                                                        // c:336
 }
 
 /// Direct port of `static int get_gmatcher(char *name, char **argv)` from
-/// Src/Zle/compctl.c:336-352. Looks for a leading `-M` flag followed
+/// Src/Zle/compctl.c:336. Looks for a leading `-M` flag followed
 /// by matcher specs (no `-`-prefixed args), then forwards to
 /// `set_gmatcher` and translates its return into 0/1/2.
 pub(crate) fn get_gmatcher(name: &str, argv: &[String]) -> i32 {             // c:336
-    if argv.first().map(|s| s.as_str()) != Some("-M") {                      // c:338
+    if argv.first().map(|s| s.as_str()) != Some("-M") {                      // c:336
         return 0;                                                            // c:349
     }
     let rest = &argv[1..];                                                   // c:339 p = ++argv
     for w in rest {                                                          // c:341 while (*p)
         if w.starts_with('-') {                                              // c:342
-            return 0;                                                        // c:343
+            return 0;                                                        // c:357
         }
     }
-    if set_gmatcher(name, rest) != 0 {                                       // c:345
-        return 2;                                                            // c:346
+    if set_gmatcher(name, rest) != 0 {                                       // c:357
+        return 2;                                                            // c:357
     }
-    1                                                                        // c:348
+    1                                                                        // c:357
 }
 
 /// Print a global matcher. Stub.
-/// Port of `print_gmatcher(ac)` from Src/Zle/compctl.c:301.
+/// Port of `print_gmatcher(int ac)` from Src/Zle/compctl.c:357.
+/// WARNING: param names don't match C — Rust=() vs C=(next)
 pub(crate) fn print_gmatcher(_ac: i32) {}
 
 /// Get a compctl from arg vector — main compctl-spec parser.
-/// Port of `get_compctl(name, av, cc, first, isdef, cl)` from Src/Zle/compctl.c:373 (~600 lines).
+/// Port of `get_compctl(char *name, char ***av, Compctl cc, int first, int isdef, int cl)` from Src/Zle/compctl.c:377 (~600 lines).
 ///
 /// Walks `argv` letter-by-letter, applying flag bits to `cc.mask` /
 /// `cc.mask2` and capturing the string args (`-K func`, `-X expl`,
@@ -526,7 +530,7 @@ pub(crate) fn get_compctl(
 }
 
 /// Parse the `-x` extended-condition compctl form.
-/// Port of `get_xcompctl(name, av, cc, isdef)` from Src/Zle/compctl.c:909 (~260 lines).
+/// Port of `get_xcompctl(char *name, char ***av, Compctl cc, int isdef)` from Src/Zle/compctl.c:909 (~260 lines).
 ///
 /// C signature: `int get_xcompctl(char *name, char ***av, Compctl cc,
 /// int isdef)`. Walks the per-condition syntax `s[…][…], p[…]` …
@@ -765,7 +769,7 @@ pub(crate) fn get_xcompctl(
 }
 
 /// Copy fields from `cct` into the spec stored at `name`.
-/// Port of `cc_assign(name, ccptr, cct, reass)` from Src/Zle/compctl.c:1173 (~75 lines).
+/// Port of `cc_assign(char *name, Compctl *ccptr, Compctl cct, int reass)` from Src/Zle/compctl.c:1174 (~75 lines).
 ///
 /// C semantics: with `reass=true`, the special targets
 /// (cc_compos / cc_default / cc_first) are reassigned via
@@ -834,7 +838,7 @@ pub(crate) fn cc_assign(name: &str, cct: Arc<Compctl>, reass: bool) {
 }
 
 /// Free a special-target compctl's chain while preserving its slot.
-/// Port of `cc_reassign(cc)` from Src/Zle/compctl.c:1252.
+/// Port of `cc_reassign(Compctl cc)` from Src/Zle/compctl.c:1253.
 ///
 /// C semantics: builds a temporary Compctl carrying `cc->xor` /
 /// `cc->ext`, sets refc=1, calls `freecompctl` on it (which
@@ -846,6 +850,7 @@ pub(crate) fn cc_assign(name: &str, cct: Arc<Compctl>, reass: bool) {
 /// matches the "free the chain, keep the storage" semantic by
 /// dropping the input cc's ext/xor refcounts and giving the caller
 /// a placeholder.
+/// WARNING: param names don't match C — Rust=() vs C=(cc)
 pub(crate) fn cc_reassign(_cc: Arc<Compctl>) -> Arc<Compctl> {
     // Arc drop on the input cc handles the C `freecompctl(c2)` call —
     // when refcount hits zero, ext/xor chains drop too. Return an
@@ -854,7 +859,7 @@ pub(crate) fn cc_reassign(_cc: Arc<Compctl>) -> Arc<Compctl> {
 }
 
 /// Test whether the given string is a pattern.
-/// Port of `compctl_name_pat(p)` from Src/Zle/compctl.c:1274.
+/// Port of `compctl_name_pat(char **p)` from Src/Zle/compctl.c:1275.
 ///
 /// C signature: `int compctl_name_pat(char **p)` — returns 1 if `*p`
 /// contains glob wildcards (after `tokenize` + `remnulargs`); also
@@ -866,6 +871,7 @@ pub(crate) fn cc_reassign(_cc: Arc<Compctl>) -> Arc<Compctl> {
 /// glob-meta tokens (Star, Quest, Inbrack, etc.). Since the input
 /// here is plain user-typed text, we approximate by checking for
 /// the literal `*`/`?`/`[` characters.
+/// WARNING: param names don't match C — Rust=() vs C=(p)
 pub(crate) fn compctl_name_pat(p: &str) -> (bool, String) {
     // C: c:1282 `if (haswilds(s))` — has glob metas
     let has_glob = p.chars().any(|c| matches!(c, '*' | '?' | '['));
@@ -893,18 +899,20 @@ pub(crate) fn compctl_name_pat(p: &str) -> (bool, String) {
 }
 
 /// Delete a pattern compctl by name.
-/// Port of `delpatcomp(n)` from Src/Zle/compctl.c:1294. Walks the
+/// Port of `delpatcomp(char *n)` from Src/Zle/compctl.c:1294. Walks the
 /// patcomps list, removes the entry matching `n`, frees the cc.
 /// Rust's Vec::retain handles the linked-list-style removal.
+/// WARNING: param names don't match C — Rust=() vs C=(n)
 pub(crate) fn delpatcomp(n: &str) {
     let mut p = PATCOMPS.write().unwrap();
     p.retain(|(pat, _)| pat != n);
 }
 
 /// Process the parsed compctl into the table.
-/// Port of `compctl_process_cc(s, cc)` from Src/Zle/compctl.c:1314 —
+/// Port of `compctl_process_cc(char **s, Compctl cc)` from Src/Zle/compctl.c:1315 —
 /// installs the spec into compctltab (or patcomps for `-p PAT`),
 /// or removes entries when COMP_REMOVE is set (the `-` flag).
+/// WARNING: param names don't match C — Rust=(cc) vs C=(s, cc)
 pub(crate) fn compctl_process_cc(s: &[String], cc: Arc<Compctl>) -> i32 {
     let cclist = CCLIST.with(|c| c.get());
     if (cclist & COMP_REMOVE) != 0 {
@@ -943,7 +951,7 @@ pub(crate) fn compctl_process_cc(s: &[String], cc: Arc<Compctl>) -> i32 {
 }
 
 /// Print a single compctl spec.
-/// Port of `printcompctl(s, cc, printflags, ispat)` from Src/Zle/compctl.c:1358 (~190 lines).
+/// Port of `printcompctl(char *s, Compctl cc, int printflags, int ispat)` from Src/Zle/compctl.c:1359 (~190 lines).
 ///
 /// Emits the `compctl -FLAGS NAME` line that re-creates the spec.
 /// Direct port of the C flag-letter walk (c:1362 `css = "fcqovbAIFp..."`):
@@ -953,6 +961,7 @@ pub(crate) fn compctl_process_cc(s: &[String], cc: Arc<Compctl>) -> i32 {
 /// Then per-string-arg flags (-K func, -X expl, etc.), -x extended
 /// chain, +xor chain. Trailing arg is the command name (or pattern
 /// when ispat=true).
+/// WARNING: param names don't match C — Rust=(cc, printflags, ispat) vs C=(s, cc, printflags, ispat)
 pub(crate) fn printcompctl(
     s: &str,
     cc: &Compctl,
@@ -1059,14 +1068,14 @@ pub(crate) fn printcompctl(
 }
 
 /// Print a compctl hash node.
-/// Port of `printcompctlp(hn, printflags)` from Src/Zle/compctl.c:1549 — hash-table
+/// Port of `printcompctlp(HashNode hn, int printflags)` from Src/Zle/compctl.c:1550 — hash-table
 /// callback that calls printcompctl.
 pub(crate) fn printcompctlp(name: &str, hn: &Compctl, printflags: i32) {
     printcompctl(name, hn, printflags, false);
 }
 
 /// `compctl` builtin entry point.
-/// Port of `bin_compctl(name, argv)` from Src/Zle/compctl.c:1561 (~110 lines).
+/// Port of `bin_compctl(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))` from Src/Zle/compctl.c:1562 (~110 lines).
 /// Direct port of the C dispatch flow:
 ///   1. Reset cclist + showmask
 ///   2. Try `get_gmatcher` — if returns non-zero, return that-1
@@ -1077,6 +1086,7 @@ pub(crate) fn printcompctlp(name: &str, hn: &Compctl, printflags: i32) {
 ///      cc_compos/cc_default/cc_first + global matchers)
 ///   7. If COMP_LIST: print only the named entries
 ///   8. Else: install via compctl_process_cc
+/// WARNING: param names don't match C — Rust=(argv) vs C=(name, argv, ops, func)
 pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
     let mut argv: Vec<String> = argv.to_vec();
     let mut ret: i32 = 0;
@@ -1187,7 +1197,7 @@ pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
 }
 
 /// `compcall` builtin entry point.
-/// Port of `bin_compcall(name, ops)` from Src/Zle/compctl.c:1675.
+/// Port of `bin_compcall(char *name, UNUSED(char **argv), Options ops, UNUSED(int func))` from Src/Zle/compctl.c:1676.
 ///
 /// Re-invokes the completion machinery from inside a `-K` function.
 /// Per c:1680, `incompfunc` must be 1 (we're inside a completion
@@ -1197,6 +1207,7 @@ pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
 /// CFN_* bits (c:1672-1673):
 ///   CFN_FIRST   = 1  — skip cc_first
 ///   CFN_DEFAULT = 2  — skip cc_default
+/// WARNING: param names don't match C — Rust=(argv) vs C=(name, argv, ops, func)
 pub(crate) fn bin_compcall(name: &str, argv: &[String]) -> i32 {
     // C: c:1680-1683 — incompfunc check
     let incompfunc = INCOMPFUNC.with(|c| c.get());
@@ -1227,7 +1238,7 @@ pub(crate) fn bin_compcall(name: &str, argv: &[String]) -> i32 {
 thread_local! { static INCOMPFUNC: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
 /// `compctl -K`'s bound `compctlread` callback.
-/// Port of `compctlread(name, args, ops, reply)` from Src/Zle/compctl.c:189 (~150 lines).
+/// Port of `compctlread(char *name, char **args, Options ops, char *reply)` from Src/Zle/compctl.c:190 (~150 lines).
 ///
 /// The function reads input for the `read` builtin invoked from
 /// inside a completion function (e.g. `compctl -K myfunc` calls
@@ -1313,7 +1324,7 @@ thread_local! {
 }
 
 /// Hook for completion-list build start.
-/// Port of `ccmakehookfn(dat)` from Src/Zle/compctl.c:1762 (~145 lines).
+/// Port of `ccmakehookfn(UNUSED(Hookdef dummy), struct ccmakedat *dat)` from Src/Zle/compctl.c:1763 (~145 lines).
 ///
 /// Called by the completion driver via `addhookfunc("compctl_make",
 /// ccmakehookfn)` (boot_). Walks `cmatcher` (global -M chain),
@@ -1324,6 +1335,7 @@ thread_local! {
 /// This stubs the ZLE-result-state arms (matchers/ainfo/amatches/
 /// pmatches all live in zle_tricky.c) and keeps the high-level
 /// per-matcher loop visible. Real impl requires the matcher port.
+/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
 pub(crate) fn ccmakehookfn(_dat: ()) -> i32 {
     // C: c:1773 — queue_signals — Rust uses the runtime's signal
     // queue, no explicit queue here.
@@ -1345,12 +1357,13 @@ pub(crate) fn ccmakehookfn(_dat: ()) -> i32 {
 }
 
 /// Hook for completion-list build cleanup.
-/// Port of `cccleanuphookfn(dummy, dat)` from Src/Zle/compctl.c:1909.
+/// Port of `cccleanuphookfn(UNUSED(Hookdef dummy), UNUSED(void *dat))` from Src/Zle/compctl.c:1910.
 ///
 /// Called via `addhookfunc("compctl_cleanup", cccleanuphookfn)` at
 /// boot_. The C body just nulls the ccused/ccstack file-statics —
 /// Rust drops them automatically when the per-call state goes out
 /// of scope. Kept as a name-faithful entry for the hook table.
+/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
 pub(crate) fn cccleanuphookfn(_dat: ()) -> i32 {
     // C: c:1912 — `ccused = ccstack = NULL;` — Rust equivalent is
     // a no-op since per-call state is stack-allocated.
@@ -1385,7 +1398,7 @@ thread_local! { static ADDWHAT: std::cell::Cell<i32> = const { std::cell::Cell::
 thread_local! { static MATCH_LIST: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) }; }
 
 /// Add a match to the per-call result list.
-/// Port of `addmatch(str, flags, dispp, line)` from Src/Zle/compctl.c:1925 (~150 lines).
+/// Port of `addmatch(char *str, int flags, char ***dispp, int line)` from Src/Zle/compctl.c:1925 (~150 lines).
 ///
 /// The C body is a switch over `addwhat` (file static) that:
 ///   - addwhat ∈ {-1, -5, -6, -7, -8, CC_FILES} → file-match path
@@ -1431,7 +1444,7 @@ pub(crate) fn addmatch(s: &str, _t: Option<&str>) {
 }
 
 /// Build the tilde-expansion (named-directory) list.
-/// Port of `maketildelist()` from Src/Zle/compctl.c:2054.
+/// Port of `maketildelist()` from Src/Zle/compctl.c:2055.
 ///
 /// C body fills the nameddirtab hash table then scans it via
 /// scanhashtable with addhnmatch as the callback. Rust port walks
@@ -1450,7 +1463,7 @@ pub(crate) fn maketildelist() {
 }
 
 /// Hash-pattern match for `compctl -x` n[…] / N[…] conditions.
-/// Port of `getcpat(str, cpatindex, cpat, class)` from Src/Zle/compctl.c:2068.
+/// Port of `getcpat(char *str, int cpatindex, char *cpat, int class)` from Src/Zle/compctl.c:2068.
 ///
 /// C signature: `int getcpat(char *str, int cpatindex, char *cpat,
 /// int class)` — searches `str` for the `cpatindex`-th occurrence
@@ -1459,6 +1472,7 @@ pub(crate) fn maketildelist() {
 /// char is in the class) vs literal-substring mode.
 ///
 /// Returns the 1-based index of the match end, or -1 if not found.
+/// WARNING: param names don't match C — Rust=(cpatindex, cpat, class) vs C=(str, cpatindex, cpat, class)
 pub(crate) fn getcpat(str: &str, cpatindex: i32, cpat: &str, class: i32) -> i32 {
     // C: c:2073 — empty string → -1
     if str.is_empty() {
@@ -1530,11 +1544,12 @@ pub(crate) fn getcpat(str: &str, cpatindex: i32, cpat: &str, class: i32) -> i32 
 }
 
 /// Dump every entry of a hash table as a match.
-/// Port of `dumphashtable(ht, what)` from Src/Zle/compctl.c:2105.
+/// Port of `dumphashtable(HashTable ht, int what)` from Src/Zle/compctl.c:2106.
 ///
 /// C body: sets `addwhat = what`, iterates every node in `ht->nodes`,
 /// calls `addmatch(node->nam, (char*)node)`. Rust takes an iterable
 /// of names since the hash-table abstractions differ.
+/// WARNING: param names don't match C — Rust=(what) vs C=(ht, what)
 pub(crate) fn dumphashtable<I: IntoIterator<Item = String>>(names: I, what: i32) {
     // C: c:2111 — set addwhat global before the iteration
     ADDWHAT.with(|c| c.set(what));
@@ -1544,18 +1559,19 @@ pub(crate) fn dumphashtable<I: IntoIterator<Item = String>>(names: I, what: i32)
 }
 
 /// Hash-node → match adapter for scanhashtable callbacks.
-/// Port of `addhnmatch(hn)` from Src/Zle/compctl.c:2122.
+/// Port of `addhnmatch(HashNode hn, UNUSED(int flags))` from Src/Zle/compctl.c:2122.
 ///
 /// Trivial wrapper: ignores `flags` and forwards the node name to
 /// addmatch with `t=NULL`. Used by maketildelist's scanhashtable
 /// invocation (c:2060).
+/// WARNING: param names don't match C — Rust=(_flags) vs C=(hn, flags)
 pub(crate) fn addhnmatch(name: &str, _flags: i32) {
     addmatch(name, None);
 }
 
 /// Expand a string via prefork (parameter / arith / cmd-sub /
 /// tilde / brace / glob), suppressing errors.
-/// Port of `getreal(str)` from Src/Zle/compctl.c:2131.
+/// Port of `getreal(char *str)` from Src/Zle/compctl.c:2132.
 ///
 /// C body builds a one-element LinkList, sets `noerrs=1`, runs
 /// `prefork(l, 0, NULL)`, then returns the first element if the
@@ -1565,6 +1581,7 @@ pub(crate) fn addhnmatch(name: &str, _flags: i32) {
 /// Rust: routes through `singsub` since that's the equivalent
 /// "expand a single word with errors swallowed". Returns owned
 /// String (vs C's heap-string-pointer).
+/// WARNING: param names don't match C — Rust=() vs C=(str)
 pub(crate) fn getreal(str_in: &str) -> String {
     // C: c:2135 — `int ne = noerrs; noerrs = 2;`
     // C: c:2138-2139 — `t = dupstring(str); singsub(&t);`
@@ -1576,7 +1593,7 @@ pub(crate) fn getreal(str_in: &str) -> String {
 
 // (getreal port location; impl above already routes through singsub)
 /// Read a directory and add files to the matches list.
-/// Port of `gen_matches_files(dirs, execs, all)` from Src/Zle/compctl.c:2153.
+/// Port of `gen_matches_files(int dirs, int execs, int all)` from Src/Zle/compctl.c:2154.
 ///
 /// C signature: `void gen_matches_files(int dirs, int execs, int all)`.
 /// Walks the directory at `prpre` (the expanded pre-cursor path
@@ -1588,6 +1605,7 @@ pub(crate) fn getreal(str_in: &str) -> String {
 ///
 /// Rust port reads `prpre` (PRPRE static if set; else current dir),
 /// applies the same dirent-stat dispatch.
+/// WARNING: param names don't match C — Rust=(execs, all) vs C=(dirs, execs, all)
 pub(crate) fn gen_matches_files(dirs: bool, execs: bool, all: bool) {
     let prpre = PRPRE.with(|r| r.borrow().clone()).unwrap_or_else(|| ".".to_string());
     let entries = match std::fs::read_dir(&prpre) {
@@ -1637,7 +1655,7 @@ pub(crate) fn gen_matches_files(dirs: bool, execs: bool, all: bool) {
 thread_local! { static PRPRE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
 
 /// Find a node in a linked list by data-pointer equality.
-/// Port of `findnode(list, dat)` from Src/Zle/compctl.c:2287.
+/// Port of `findnode(LinkList list, void *dat)` from Src/Zle/compctl.c:2288.
 ///
 /// C signature: `LinkNode findnode(LinkList list, void *dat)` —
 /// walks `list` looking for the node whose data pointer == `dat`.
@@ -1645,6 +1663,7 @@ thread_local! { static PRPRE: std::cell::RefCell<Option<String>> = const { std::
 ///
 /// Rust generic over `T: PartialEq` — returns the index of the
 /// matching element, or None.
+/// WARNING: param names don't match C — Rust=(dat) vs C=(list, dat)
 pub(crate) fn findnode<T: PartialEq>(list: &[T], dat: &T) -> Option<usize> {
     list.iter().position(|x| x == dat)
 }
@@ -1664,7 +1683,7 @@ pub const MAX_CDEPTH: i32 = 16;                                              // 
 thread_local! { static CCONT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
 
 /// Build the completion list — top-level dispatch.
-/// Port of `makecomplistctl(flags)` from Src/Zle/compctl.c:2305.
+/// Port of `makecomplistctl(int flags)` from Src/Zle/compctl.c:2305.
 ///
 /// Entry point used by bin_compcall and the completion driver.
 /// The C body:
@@ -1703,7 +1722,7 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
 }
 
 /// Line-context dispatch — global completion entry.
-/// Port of `makecomplistglobal(os, incmd, flags)` from Src/Zle/compctl.c:2401.
+/// Port of `makecomplistglobal(char *os, int incmd, UNUSED(int lst), int flags)` from Src/Zle/compctl.c:2401.
 ///
 /// Looks at `linwhat` (IN_ENV / IN_MATH / IN_COND / IN_REDIR / else)
 /// and dispatches to the appropriate compctl spec:
@@ -1735,7 +1754,7 @@ pub(crate) fn makecomplistglobal(os: &str, incmd: bool, _lst: i32, flags: i32) -
 }
 
 /// Per-command compctl lookup + dispatch.
-/// Port of `makecomplistcmd(os, incmd, flags)` from Src/Zle/compctl.c:2473.
+/// Port of `makecomplistcmd(char *os, int incmd, int flags)` from Src/Zle/compctl.c:2474.
 ///
 /// Resolves the compctl for cmdstr by:
 ///   1. If !CFN_FIRST: run cc_first first; bail if !CC_CCCONT
@@ -1746,6 +1765,7 @@ pub(crate) fn makecomplistglobal(os: &str, incmd: bool, _lst: i32, flags: i32) -
 ///   5. If incmd: use cc_compos
 ///   6. Else if no match: cc_default (unless CFN_DEFAULT)
 ///   7. Call makecomplistcc(cc, os, incmd)
+/// WARNING: param names don't match C — Rust=(incmd, flags) vs C=(os, incmd, flags)
 pub(crate) fn makecomplistcmd(os: &str, incmd: bool, flags: i32) -> i32 {
     const CFN_FIRST: i32 = 1;
     const CFN_DEFAULT: i32 = 2;
@@ -1804,7 +1824,6 @@ pub(crate) fn makecomplistcmd(os: &str, incmd: bool, flags: i32) -> i32 {
 // completion driver before invoking makecomplistcmd.
 thread_local! { static CMDSTR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
 
-/// Direct port of `makecomplistpc(os, incmd)` from Src/Zle/compctl.c:2530.
 /// C body (c:2532-2552):
 /// ```c
 /// s = ((shfunctab->getnode(shfunctab, cmdstr) ||
@@ -1822,9 +1841,10 @@ thread_local! { static CMDSTR: std::cell::RefCell<Option<String>> = const { std:
 /// }
 /// return ret;
 /// ```
-/// Port of `makecomplistpc(os, incmd)` from `Src/Zle/compctl.c:2530`.
+/// Port of `makecomplistpc(char *os, int incmd)` from `Src/Zle/compctl.c:2530`.
+/// WARNING: param names don't match C — Rust=(incmd) vs C=(os, incmd)
 pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {                 // c:2530
-    let mut ret: i32 = 0;                                                    // c:2535
+    let mut ret: i32 = 0;                                                    // c:2530
     let cmdstr = match CMDSTR.with(|r| r.borrow().clone()) {                 // c:2533
         Some(s) => s,
         None => return 0,
@@ -1858,15 +1878,16 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {                 // 
             }
         }
     }
-    ret                                                                      // c:2552
+    ret                                                                      // c:2558
 }
 
 /// Per-compctl entry — track usage + dispatch the OR chain.
-/// Port of `makecomplistcc(cc, s, incmd)` from Src/Zle/compctl.c:2557.
+/// Port of `makecomplistcc(Compctl cc, char *s, int incmd)` from Src/Zle/compctl.c:2558.
 ///
 /// Bumps refc on cc, adds it to ccused list, resets ccont, calls
 /// makecomplistor. The ccused list lets later cleanup free all
 /// compctls used during a single completion.
+/// WARNING: param names don't match C — Rust=(s, incmd) vs C=(cc, s, incmd)
 pub(crate) fn makecomplistcc(cc: &Arc<Compctl>, s: &str, incmd: bool) {
     // C: c:2560 — refc++ (Arc handles this)
     let _ = cc.clone();
@@ -1882,17 +1903,18 @@ pub(crate) fn makecomplistcc(cc: &Arc<Compctl>, s: &str, incmd: bool) {
 }
 
 // `ccused` — per-completion list of compctls used. Port of
-// file-static `LinkList ccused` at Src/Zle/compctl.c:1702.
+// file-static `LinkList ccused` at Src/Zle/compctl.c:2574.
 thread_local! { static CCUSED: std::cell::RefCell<Vec<Arc<Compctl>>> = const { std::cell::RefCell::new(Vec::new()) }; }
 
 /// Walk the xor chain of compctls.
-/// Port of `makecomplistor(cc, s, incmd, compadd, sub)` from Src/Zle/compctl.c:2573.
+/// Port of `makecomplistor(Compctl cc, char *s, int incmd, int compadd, int sub)` from Src/Zle/compctl.c:2574.
 ///
 /// C body:
 ///   - Loop over xors (cc->xor chain)
 ///   - For each, call makecomplistlist
 ///   - Track newly-added matches (mn diff)
 ///   - Stop based on ccont bits (CC_PATCONT, CC_DEFCONT, CC_XORCONT)
+/// WARNING: param names don't match C — Rust=(s, incmd, compadd, sub) vs C=(cc, s, incmd, compadd, sub)
 pub(crate) fn makecomplistor(cc: &Arc<Compctl>, s: &str, incmd: bool, compadd: i32, sub: i32) {
     let mut current = cc.clone();
     loop {
@@ -1907,10 +1929,11 @@ pub(crate) fn makecomplistor(cc: &Arc<Compctl>, s: &str, incmd: bool, compadd: i
 }
 
 /// Top-level per-compctl dispatch.
-/// Port of `makecomplistlist(cc, s, incmd, compadd)` from Src/Zle/compctl.c:3081.
+/// Port of `makecomplistlist(Compctl cc, char *s, int incmd, int compadd)` from Src/Zle/compctl.c:2615.
 ///
 /// Routes to either makecomplistext (for -x extended conditions)
 /// or makecomplistflags (for the regular flag-mask compctl).
+/// WARNING: param names don't match C — Rust=(s, incmd, compadd) vs C=(ylist)
 pub(crate) fn makecomplistlist(cc: &Arc<Compctl>, s: &str, incmd: bool, compadd: i32) {
     if cc.ext.is_some() {
         // C: c:3155 — extended -x conditions
@@ -1922,11 +1945,12 @@ pub(crate) fn makecomplistlist(cc: &Arc<Compctl>, s: &str, incmd: bool, compadd:
 }
 
 /// Extended (`-x`) completion list builder.
-/// Port of `makecomplistext(occ, os, incmd)` from Src/Zle/compctl.c:3155.
+/// Port of `makecomplistext(Compctl occ, char *os, int incmd)` from Src/Zle/compctl.c:2640.
 ///
 /// Walks cc.ext chain (the per-condition compctls), evaluates each
 /// condition against the current line state, and dispatches to
 /// makecomplistflags for the first matching condition's spec.
+/// WARNING: param names don't match C — Rust=(os, incmd) vs C=(Equals)
 pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
     // Walk the ext chain — each entry has a Compcond + a Compctl.
     let mut current = occ.ext.clone();
@@ -2089,7 +2113,7 @@ fn inull(c: char) -> bool {                                                  // 
 }
 
 /// Separate the cursor word into prefix/word/suffix components.
-/// Port of `sep_comp_string(ss, s, noffs)` from Src/Zle/compctl.c:2806 (~225 lines).
+/// Port of `sep_comp_string(char *ss, char *s, int noffs)` from Src/Zle/compctl.c:2806 (~225 lines).
 ///
 /// C signature: `int sep_comp_string(char *ss, char *s, int noffs)`.
 ///
@@ -2404,7 +2428,7 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
 }
 
 /// The flag-driven completion-list builder — workhorse fn.
-/// Port of `makecomplistflags(cc, s, incmd, compadd)` from Src/Zle/compctl.c:3499 (~500 lines).
+/// Port of `makecomplistflags(Compctl cc, char *s, int incmd, int compadd)` from Src/Zle/compctl.c:3499 (~500 lines).
 ///
 /// Walks the bits of cc.mask and cc.mask2, dispatching per CC_* bit
 /// to the matching generator:
@@ -2501,7 +2525,7 @@ static LASTCCUSED: Mutex<Vec<Arc<Compctl>>> = Mutex::new(Vec::new());
 /// restores the fallback.
 static COMPCTLREAD_INSTALLED: Mutex<bool> = Mutex::new(false);
 
-/// Setup hook — port of `setup_(m)` from Src/Zle/compctl.c:4013.
+/// Setup hook — port of `setup_(UNUSED(Module m))` from Src/Zle/compctl.c:4014.
 ///
 /// Wires `compctlreadptr` to compctlread, creates the compctltab,
 /// initializes the special targets:
@@ -2528,11 +2552,11 @@ pub(crate) fn setup_() -> i32 {
         mask2: CC_CCCONT,                             // c:4025
         ..Default::default()
     }));
-    *LASTCCUSED.lock().unwrap() = Vec::new();                 // c:4027
+    *LASTCCUSED.lock().unwrap() = Vec::new();                 // c:4034
     0
 }
 
-/// Features hook — port of `features_(m, features)` from Src/Zle/compctl.c:4033.
+/// Features hook — port of `features_(UNUSED(Module m), UNUSED(char ***features))` from Src/Zle/compctl.c:4034.
 ///
 /// Returns the list of feature strings the module exposes. zsh C
 /// uses `featuresarray(m, &module_features)` which reads
@@ -2542,7 +2566,7 @@ pub(crate) fn features_() -> Vec<String> {
     vec!["b:compctl".to_string(), "b:compcall".to_string()]
 }
 
-/// Enables hook — port of `enables_(m, enables)` from Src/Zle/compctl.c:4041.
+/// Enables hook — port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from Src/Zle/compctl.c:4042.
 ///
 /// C delegates to `handlefeatures(m, &module_features, enables)`
 /// which writes the per-feature enable bits to `*enables`. Rust
@@ -2553,7 +2577,7 @@ pub(crate) fn enables_() -> Vec<i32> {
     vec![1, 1]
 }
 
-/// Boot hook — port of `boot_(m)` from Src/Zle/compctl.c:4048.
+/// Boot hook — port of `boot_(UNUSED(Module m))` from Src/Zle/compctl.c:4049.
 ///
 /// Registers the two completion-driver hooks via
 /// `addhookfunc("compctl_make", ccmakehookfn)` and
@@ -2567,7 +2591,7 @@ pub(crate) fn boot_() -> i32 {
     0
 }
 
-/// Cleanup hook — port of `cleanup_(m)` from Src/Zle/compctl.c:4057.
+/// Cleanup hook — port of `cleanup_(UNUSED(Module m))` from Src/Zle/compctl.c:4058.
 ///
 /// Reverses boot_: removes the two hooks, then disables features
 /// via `setfeatureenables(m, &module_features, NULL)`.
@@ -2576,14 +2600,14 @@ pub(crate) fn cleanup_() -> i32 {
     0
 }
 
-/// Finish hook — port of `finish_(m)` from Src/Zle/compctl.c:4066.
+/// Finish hook — port of `finish_(UNUSED(Module m))` from Src/Zle/compctl.c:4067.
 ///
 /// Tears down the compctltab hash table, frees lastccused, restores
 /// `compctlreadptr` to the fallback. Rust drops the table on Mutex
 /// reset; lastccused frees via Vec::clear; compctlreadptr is the
 /// COMPCTLREAD_INSTALLED bool.
 pub(crate) fn finish_() -> i32 {
-    *COMPCTL_TAB.write().unwrap() = None;                       // c:4069 deletehashtable
+    *COMPCTL_TAB.write().unwrap() = None;                       // c:4067 deletehashtable
     LASTCCUSED.lock().unwrap().clear();                       // c:4071-4072 freelinklist
     *COMPCTLREAD_INSTALLED.lock().unwrap() = false;           // c:4074
     0

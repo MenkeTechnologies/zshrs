@@ -166,13 +166,13 @@ pub fn shinbufrestore() {                                                    // 
     }
 }
 
-// Get a character from SHIN, -1 if none available                           // c:214
+// Get a character from SHIN, -1 if none available                           // c:218
 /// Read one byte from SHIN; returns -1 on EOF.
 /// Port of `shingetchar()` from Src/input.c:218. C source pulls
 /// from `shinbuffer` first then falls through to `read(2)` on the
 /// SHIN fd; Rust mirrors by reading from `std::io::stdin`.
 pub fn shingetchar() -> i32 {                                                // c:218
-    // c:223-228 — `if (shinbufptr < shinbufendptr) return *shinbufptr++;`
+    // c:218-228 — `if (shinbufptr < shinbufendptr) return *shinbufptr++;`
     let bufd = shinbuffer.with(|b| b.borrow().clone());
     let pos = shinbufpos.with(|p| p.get());
     if pos < bufd.len() {
@@ -228,7 +228,7 @@ pub fn shingetline() -> String {                                             // 
     }
 }
 
-// Read a line from the current command stream and store it as input         // c:362
+// Read a line from the current command stream and store it as input         // c:366
 /// Read one line into the input stack.
 /// Port of `inputline()` from Src/input.c:366. C source dispatches
 /// between zle / non-zle paths and `shingetline` /
@@ -302,7 +302,7 @@ pub fn ingetc() -> Option<char> {                                            // 
 }
 
 /// Push a character back onto the input stream.
-/// Port of `inungetc(c)` from Src/input.c:546.
+/// Port of `inungetc(int c)` from Src/input.c:546.
 pub fn inungetc(c: char) {                                                   // c:546
     if lexstop.with(|c| c.get()) {
         return;
@@ -323,9 +323,9 @@ pub fn inungetc(c: char) {                                                   // 
     }
 }
 
-// Set some new input onto a new element of the input stack                  // c:671
+// Set some new input onto a new element of the input stack                  // c:675
 /// Push a new input source onto the stack.
-/// Port of `inpush(str, flags, inalias)` from Src/input.c:675 — used for `eval`/
+/// Port of `inpush(char *str, int flags, Alias inalias)` from Src/input.c:675 — used for `eval`/
 /// `source`, alias expansion, and process substitution to layer a
 /// new input on top of the current one.
 pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {              // c:675
@@ -333,7 +333,7 @@ pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {              // 
         buf: inbuf.with(|b| std::mem::take(&mut *b.borrow_mut())),
         bufpos: inbufpos.with(|p| p.replace(0)),
         flags: inbufflags.with(|f| f.get()),
-        inalias: None,
+        alias: None,
     };
     instack.with(|st| st.borrow_mut().push(saved));
 
@@ -346,7 +346,7 @@ pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {              // 
         if let Some(a) = inalias {
             instack.with(|st| {
                 if let Some(last) = st.borrow_mut().last_mut() {
-                    last.inalias = Some(a);
+                    last.alias = Some(a);
                     if (flags & INP_HIST) != 0 {
                         last.flags |= INP_HISTCONT;
                     } else {
@@ -366,7 +366,7 @@ pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {              // 
     inbufflags.with(|f| f.set(combined));
 }
 
-// Remove the top element of the stack                                       // c:732
+// Remove the top element of the stack                                       // c:736
 /// Pop one input-stack frame off the top.
 /// Port of `inpoptop()` from Src/input.c:736.
 pub fn inpoptop() {                                                          // c:736
@@ -380,7 +380,7 @@ pub fn inpoptop() {                                                          // 
     }
 }
 
-// Remove the top element of the stack and all its continuations.            // c:781
+// Remove the top element of the stack and all its continuations.            // c:785
 /// Pop the topmost input-stack frame plus any continuations.
 /// Port of `inpop()` from Src/input.c:785.
 pub fn inpop() {                                                             // c:785
@@ -403,7 +403,7 @@ pub fn inpopalias() {                                                        // 
 }
 
 /// Replace the current input line.
-/// Port of `inputsetline(str, flags)` from Src/input.c:510.
+/// Port of `inputsetline(char *str, int flags)` from Src/input.c:510.
 pub fn inputsetline(str: &str, flags: i32) {                               // c:510
     inbuf.with(|b| *b.borrow_mut() = str.to_string());
     inbufpos.with(|p| p.set(0));
@@ -444,8 +444,9 @@ pub fn ingetptr() -> String {                                                // 
 // for history accumulates through `chline` / `addtoline`).
 
 /// Stuff a whole file into the input queue.
-/// Port of `stuff(fn)` from Src/input.c:647 — read the file, echo
+/// Port of `stuff(char *fn)` from Src/input.c:647 — read the file, echo
 /// it to stderr, push onto the input stack.
+/// WARNING: param names don't match C — Rust=(filename) vs C=(fn)
 pub fn stuff(filename: &str) -> i32 {                                        // c:647
     use std::io::Write;
     let buf = match std::fs::read_to_string(filename) {
@@ -469,8 +470,9 @@ fn imeta(c: char) -> bool {
 
 /// Read entire file into memory
 /// Read a file as a string for `source`/`stuff` semantics.
-/// Port of `zstuff(out, fn)` from Src/input.c:614 — the C source uses
+/// Port of `zstuff(char **out, const char *fn)` from Src/input.c:614 — the C source uses
 /// it for `Functions/Misc/run-help` and similar autoload paths.
+/// WARNING: param names don't match C — Rust=(path) vs C=(out, fn)
 pub fn zstuff(path: &str) -> io::Result<String> {                            // c:614
     std::fs::read_to_string(path)
 }

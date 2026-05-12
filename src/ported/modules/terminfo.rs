@@ -38,10 +38,11 @@ extern "C" {
              p9: libc::c_long) -> *const libc::c_char;
 }
 
-/// Direct port of `bin_echoti(name, argv)` from `Src/Modules/terminfo.c:64`.
+/// Direct port of `bin_echoti(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/terminfo.c:64`.
 /// C body (c:67-127): probe `tigetnum` → `tigetflag` → `tigetstr`
 /// in turn; numeric/boolean caps print and return; string caps go
 /// through `tparm` (with up to 9 long args) then `putp`.
+/// WARNING: param names don't match C — Rust=(name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_echoti(name: &str, argv: &[String],                               // c:64
                   _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
@@ -135,7 +136,7 @@ pub fn bin_echoti(name: &str, argv: &[String],                               // 
 }
 
 /// Initialize the terminfo database for the current `$TERM`. Must
-/// Port of `getterminfo(name)` from `Src/Modules/terminfo.c:135`.
+/// Port of `getterminfo(UNUSED(HashTable ht), const char *name)` from `Src/Modules/terminfo.c:135`.
 ///
 /// Also drives `bin_echoti` at line 64. Tries `tigetstr` → `tigetnum`
 /// → `tigetflag` in that order — string first, then numeric, then
@@ -144,6 +145,7 @@ pub fn bin_echoti(name: &str, argv: &[String],                               // 
 /// `setupterm()` call zsh's setup_/boot_ hook performs at terminfo.c:
 /// init_term path; collapsed into a OnceLock here since zshrs has no
 /// per-module init function shape.
+/// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
 pub fn getterminfo(name: &str) -> Option<String> {                       // c:135
     use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
     use std::sync::OnceLock;
@@ -262,43 +264,43 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_(m)` from `Src/Modules/terminfo.c:316`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/terminfo.c:316`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                    // c:316
     // C body c:318-319 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/terminfo.c:323`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/terminfo.c:323`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:323
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/terminfo.c:331`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/terminfo.c:331`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:331
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_(m)` from `Src/Modules/terminfo.c:338`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/terminfo.c:338`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:338
     // C body c:340-344 — `#ifdef USE_TERMINFO_MODULE zsetupterm(); #endif
     //                     return 0`. Initializes the terminfo database
     //                     for echoti/$terminfo to use.
-    let _ = crate::ported::utils::zsetupterm();                              // c:341
+    let _ = crate::ported::utils::zsetupterm();                              // c:359
     0
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/terminfo.c:349`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/terminfo.c:349`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:349
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_(m)` from `Src/Modules/terminfo.c:359`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/terminfo.c:359`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:359
     // C body c:361-362 — `return 0`. Faithful empty-body port; the
@@ -307,7 +309,7 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 }
 
 // === auto-generated stubs ===
-/// Port of `scanterminfo(func, flags)` from `Src/Modules/terminfo.c:177`. The
+/// Port of `scanterminfo(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/terminfo.c:177`. The
 /// magic-assoc scan callback for `${(k)terminfo}` /
 /// `${(kv)terminfo}`. Walks the bool/num/string capability-name
 /// tables (`boolnames`/`numnames`/`strnames` from libtermcap, or
@@ -318,6 +320,7 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 /// C signature: `static void scanterminfo(HashTable ht, ScanFunc func, int flags)`.
 /// Rust port returns `Vec<(String, String)>` since zshrs doesn't
 /// model the ScanFunc callback shape; iteration order matches C.
+/// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
 pub fn scanterminfo() -> Vec<(String, String)> {                         // c:177
     use std::sync::OnceLock;
     let mut out = Vec::new();

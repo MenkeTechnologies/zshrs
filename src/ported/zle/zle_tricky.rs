@@ -169,7 +169,7 @@ pub fn unmetafy_line(s: &str) -> String {                                    // 
 }
 
 /// Check if string has real tokens (not escaped)
-/// Port of has_real_token(s) from zle_tricky.c
+/// Port of has_real_token(const char *s) from zle_tricky.c
 pub fn has_real_token(s: &str) -> bool {
     let special = ['$', '`', '"', '\'', '\\', '{', '}', '[', ']', '*', '?', '~'];
 
@@ -192,7 +192,7 @@ pub fn has_real_token(s: &str) -> bool {
 }
 
 /// Get length of common prefix
-/// Port of pfxlen(s, t) from zle_tricky.c
+/// Port of pfxlen(char *s, char *t) from zle_tricky.c
 pub fn pfxlen(s1: &str, s2: &str) -> usize {                                 // c:2359
     s1.chars()
         .zip(s2.chars())
@@ -201,7 +201,7 @@ pub fn pfxlen(s1: &str, s2: &str) -> usize {                                 // 
 }
 
 /// Get length of common suffix
-/// Port of sfxlen(s, t) from zle_tricky.c
+/// Port of sfxlen(char *s, char *t) from zle_tricky.c
 pub fn sfxlen(s1: &str, s2: &str) -> usize {                                 // c:2411
     s1.chars()
         .rev()
@@ -342,7 +342,8 @@ mod tests {
     }
 }
 
-/// Port of `acceptandmenucomplete(args)` from Src/Zle/zle_tricky.c:353.
+/// Port of `acceptandmenucomplete(char **args)` from Src/Zle/zle_tricky.c:353.
+/// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn acceptandmenucomplete() -> i32 {                                      // c:353
     use std::sync::atomic::Ordering;
     // C body c:355-369 — `if (!menucmp) return 1;
@@ -354,7 +355,8 @@ pub fn acceptandmenucomplete() -> i32 {                                      // 
     docomplete(crate::ported::zle::zle_h::COMP_COMPLETE)
 }
 
-/// Port of `addx(ptmp)` from Src/Zle/zle_tricky.c:922.
+/// Port of `addx(char **ptmp)` from Src/Zle/zle_tricky.c:922.
+/// WARNING: param names don't match C — Rust=(zle, ptmp) vs C=(ptmp)
 pub fn addx(zle: &mut crate::ported::zle::zle_main::Zle, ptmp: &mut String) -> i32 { // c:922
     // C body c:924-955 — inserts an "x" placeholder at the cursor so
     //                    the parser sees a complete word; saves the
@@ -377,7 +379,7 @@ pub fn addx(zle: &mut crate::ported::zle::zle_main::Zle, ptmp: &mut String) -> i
     }
 }
 
-/// Port of `checkparams(p)` from Src/Zle/zle_tricky.c:435.
+/// Port of `checkparams(char *p)` from Src/Zle/zle_tricky.c:435.
 pub fn checkparams(p: &str) -> i32 {                                         // c:435
     use std::sync::atomic::Ordering;
     // C body c:437-449 — walks `paramtab` directly via `scanhashtable`
@@ -413,7 +415,7 @@ pub fn checkparams(p: &str) -> i32 {                                         // 
     }
 }
 
-/// Port of `cmphaswilds(str)` from Src/Zle/zle_tricky.c:457.
+/// Port of `cmphaswilds(char *str)` from Src/Zle/zle_tricky.c:457.
 pub fn cmphaswilds(str: &str) -> i32 {                                         // c:457
     // C body c:459-481 — Inbrack/Outbrack as standalone return 0;
     //                    skip leading "%?"; scan for any unescaped
@@ -442,7 +444,7 @@ pub fn cmphaswilds(str: &str) -> i32 {                                         /
     0
 }
 
-/// Port of `completecall(args)` from Src/Zle/zle_tricky.c:202.
+/// Port of `completecall(char **args)` from Src/Zle/zle_tricky.c:202.
 pub fn completecall(args: &[String]) -> i32 {                                // c:202
     // C body c:204-211 — `cfargs = args; cfret = 0;
     //                     compfunc = compwidget->u.comp.func;
@@ -456,7 +458,8 @@ pub fn completecall(args: &[String]) -> i32 {                                // 
     docomplete(crate::ported::zle::zle_h::COMP_COMPLETE)
 }
 
-/// Port of `completeword(args)` from Src/Zle/zle_tricky.c:216.
+/// Port of `completeword(char **args)` from Src/Zle/zle_tricky.c:216.
+/// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn completeword() -> i32 {                                               // c:216
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::{COMP_COMPLETE, COMP_LIST_COMPLETE};
@@ -468,10 +471,10 @@ pub fn completeword() -> i32 {                                               // 
     docomplete(COMP_COMPLETE).max(COMP_LIST_COMPLETE - COMP_LIST_COMPLETE)
 }
 
-/// Port of `deletecharorlist(args)` from Src/Zle/zle_tricky.c:270.
-pub fn deletecharorlist(args: &mut crate::ported::args::zle_main::Zle) -> i32 { // c:270
+/// Port of `deletecharorlist(char **args)` from Src/Zle/zle_tricky.c:270.
+pub fn deletecharorlist(args: &mut crate::ported::zle::zle_main::Zle) -> i32 { // c:270
     use std::sync::atomic::Ordering;
-    use crate::ported::args::zle_h::COMP_LIST_COMPLETE;
+    use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
     USEMENU.store(0, Ordering::SeqCst);                                      // c:273
     USEGLOB.store(1, Ordering::SeqCst);                                      // c:274
     WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:275
@@ -480,12 +483,12 @@ pub fn deletecharorlist(args: &mut crate::ported::args::zle_main::Zle) -> i32 { 
     if args.zlecs == args.zlell {
         docomplete(COMP_LIST_COMPLETE)
     } else {
-        crate::ported::args::zle_misc::deletechar(args)
+        crate::ported::zle::zle_misc::deletechar(args)
     }
 }
 
-// The main entry point for completion.                                     // c:595
-/// Port of `docomplete(lst)` from Src/Zle/zle_tricky.c:599.
+// The main entry point for completion.                                     // c:599
+/// Port of `docomplete(int lst)` from Src/Zle/zle_tricky.c:599.
 /// `lst` is `COMP_*` from `zle_h.rs`. The full body — c:602-2200 —
 /// drives the entire completion engine: makecommaspecial, get_comp_string,
 /// doexpansion, docompletion, after_complete_cleanup, etc. Without that
@@ -496,9 +499,9 @@ pub fn docomplete(lst: i32) -> i32 {                                         // 
     0
 }
 
-/// Port of `docompletion(s, lst, incmd)` from Src/Zle/zle_tricky.c:2339.
+/// Port of `docompletion(char *s, int lst, int incmd)` from Src/Zle/zle_tricky.c:2339.
 /// Direct port of `int docompletion(...)` from
-/// `Src/Zle/zle_tricky.c:2339-2398`. Main driver after
+/// `Src/Zle/zle_tricky.c:2339`. Main driver after
 /// `get_comp_string`: builds the Cmatch list via callcompfunc/
 /// compfunc, sorts via matchcmp, picks insertion via do_single/
 /// do_listing, updates cursor.
@@ -507,6 +510,7 @@ pub fn docomplete(lst: i32) -> i32 {                                         // 
 /// Rust port of the driver. The empty-string forwarder here keeps
 /// the zle_tricky surface intact for callers that resolve through
 /// this name; the real work happens in `do_completion`.
+/// WARNING: param names don't match C — Rust=() vs C=(s, lst, incmd)
 pub fn docompletion() -> i32 {                                               // c:2339
     crate::ported::zle::compcore::do_completion(
         "", 0, crate::ported::zle::zle_h::COMP_LIST_COMPLETE,
@@ -514,7 +518,7 @@ pub fn docompletion() -> i32 {                                               // 
 }
 
 /// Direct port of `int doexpandhist(char **args)` from
-/// `Src/Zle/zle_tricky.c:2802-2865`. Pushes the line through the
+/// `Src/Zle/zle_tricky.c:2802`. Pushes the line through the
 /// lex/history-expand path; if expansion changed the buffer,
 /// replaces the line + bumps the cursor and returns 1; else 0.
 ///
@@ -555,7 +559,8 @@ pub fn doexpandhist() -> i32 {                                               // 
     1                                                                        // c:2864 expanded
 }
 
-/// Port of `doexpansion(s, lst, olst, explincmd)` from Src/Zle/zle_tricky.c:2263.
+/// Port of `doexpansion(char *s, int lst, int olst, int explincmd)` from Src/Zle/zle_tricky.c:2263.
+/// WARNING: param names don't match C — Rust=() vs C=(s, lst, olst, explincmd)
 pub fn doexpansion() -> i32 {                                                // c:2263
     // C body c:2265-2336 — invoked via docomplete(COMP_EXPAND); calls
     //                      callcompfunc when bound, else falls through
@@ -567,7 +572,7 @@ pub fn doexpansion() -> i32 {                                                // 
     0
 }
 
-/// Port of `dupbrinfo(p, last, heap)` from `Src/Zle/zle_tricky.c:1032`.
+/// Port of `dupbrinfo(Brinfo p, Brinfo *last, int heap)` from `Src/Zle/zle_tricky.c:1032`.
 /// ```c
 /// mod_export Brinfo
 /// dupbrinfo(Brinfo p, Brinfo *last, int heap)
@@ -596,8 +601,8 @@ pub fn doexpansion() -> i32 {                                                // 
 ///
 /// Returns `(head, last)` — the C uses an out-pointer for `last`
 /// because callers want to splice further entries onto the tail.
-/// Port of `dupbrinfo(p, last, heap)` from `Src/Zle/zle_tricky.c:1032`.
-pub fn dupbrinfo(                                                            // c:1032
+/// WARNING: param names don't match C — Rust=() vs C=(p, last, heap)
+pub fn dupbrinfo(                                                            // c:1033
     mut p: Option<&crate::ported::zle::zle_h::brinfo>,
 ) -> (
     Option<crate::ported::zle::zle_h::BrinfoPtr>,
@@ -629,7 +634,7 @@ pub fn dupbrinfo(                                                            // 
     (head, last_ptr)
 }
 
-/// Port of `dupstrspace(str)` from `Src/Zle/zle_tricky.c:954`.
+/// Port of `dupstrspace(const char *str)` from `Src/Zle/zle_tricky.c:955`.
 /// ```c
 /// mod_export char *
 /// dupstrspace(const char *str)
@@ -642,16 +647,16 @@ pub fn dupbrinfo(                                                            // 
 /// }
 /// ```
 /// Like `dupstring`, but appends a single space.
-/// Port of `dupstrspace(str)` from `Src/Zle/zle_tricky.c:954`.
-pub fn dupstrspace(str: &str) -> String {                                      // c:954
-    let len = str.len();                                                       // c:957 strlen(str)
+pub fn dupstrspace(str: &str) -> String {                                      // c:955
+    let len = str.len();                                                       // c:955 strlen(str)
     let mut out = String::with_capacity(len + 2);                            // c:958 hcalloc(len+2)
     out.push_str(str);                                                         // c:959 strcpy(t, str)
     out.push(' ');                                                           // c:960 strcpy(t+len, " ")
     out                                                                      // c:961 return t
 }
 
-/// Port of `endoflist(args)` from Src/Zle/zle_tricky.c:3055.
+/// Port of `endoflist(UNUSED(char **args))` from Src/Zle/zle_tricky.c:3055.
+/// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn endoflist() -> i32 {                                                  // c:3055
     // C body c:3057-3070 — `if (lastlistlen > 0) { clearflag = 0;
     //                       trashzle(); for (i...) putc('\n'); ... }`.
@@ -659,8 +664,9 @@ pub fn endoflist() -> i32 {                                                  // 
     0
 }
 
-/// Port of `expandcmdpath(args)` from Src/Zle/zle_tricky.c:2982.
-pub fn expandcmdpath() -> i32 {                                              // c:2982
+/// Port of `expandcmdpath(UNUSED(char **args))` from Src/Zle/zle_tricky.c:2997.
+/// WARNING: param names don't match C — Rust=() vs C=(zlenoargs)
+pub fn expandcmdpath() -> i32 {                                              // c:2997
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_EXPAND;
     USEMENU.store(0, Ordering::SeqCst);
@@ -669,7 +675,8 @@ pub fn expandcmdpath() -> i32 {                                              // 
     docomplete(COMP_EXPAND)
 }
 
-/// Port of `expandhistory(args)` from Src/Zle/zle_tricky.c:2921.
+/// Port of `expandhistory(UNUSED(char **args))` from Src/Zle/zle_tricky.c:2921.
+/// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn expandhistory() -> i32 {                                              // c:2921
     // C body c:2923-2924 — `if (!doexpandhist()) return 1; return 0`.
     if doexpandhist() == 0 {
@@ -678,7 +685,8 @@ pub fn expandhistory() -> i32 {                                              // 
     0
 }
 
-/// Port of `expandorcomplete(args)` from Src/Zle/zle_tricky.c:299.
+/// Port of `expandorcomplete(char **args)` from Src/Zle/zle_tricky.c:299.
+/// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn expandorcomplete() -> i32 {                                           // c:299
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_EXPAND_COMPLETE;
@@ -688,19 +696,20 @@ pub fn expandorcomplete() -> i32 {                                           // 
     docomplete(COMP_EXPAND_COMPLETE)                                         // c:314
 }
 
-/// Port of `expandorcompleteprefix(args)` from Src/Zle/zle_tricky.c:3041.
-pub fn expandorcompleteprefix(args: &mut crate::ported::args::zle_main::Zle) -> i32 { // c:3041
+/// Port of `expandorcompleteprefix(char **args)` from Src/Zle/zle_tricky.c:3041.
+pub fn expandorcompleteprefix(args: &mut crate::ported::zle::zle_main::Zle) -> i32 { // c:3041
     use std::sync::atomic::Ordering;
     COMPPREF.store(1, Ordering::SeqCst);                                     // c:3045
     let ret = expandorcomplete();                                            // c:3046
     if args.zlecs > 0 && args.zleline[args.zlecs - 1] == ' ' {                  // c:3047
-        crate::ported::args::zle_misc::makesuffixstr(None, Some("\\-"), 0);   // c:3048
+        crate::ported::zle::zle_misc::makesuffixstr(None, Some("\\-"), 0);   // c:3048
     }
     COMPPREF.store(0, Ordering::SeqCst);                                     // c:3049
     ret
 }
 
-/// Port of `expandword(args)` from Src/Zle/zle_tricky.c:287.
+/// Port of `expandword(char **args)` from Src/Zle/zle_tricky.c:287.
+/// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn expandword() -> i32 {                                                 // c:287
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_EXPAND;
@@ -711,6 +720,7 @@ pub fn expandword() -> i32 {                                                 // 
 }
 
 /// Port of `fixmagicspace()` from Src/Zle/zle_tricky.c:2867.
+/// WARNING: param names don't match C — Rust=(zle) vs C=()
 pub fn fixmagicspace(zle: &mut crate::ported::zle::zle_main::Zle) {          // c:2867
     // C body c:2869-2876 — `lastchar = ' '; lastchar_wide = L' ';
     //                       lastchar_wide_valid = 1`.
@@ -719,7 +729,7 @@ pub fn fixmagicspace(zle: &mut crate::ported::zle::zle_main::Zle) {          // 
     crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// Port of `freebrinfo(p)` from `Src/Zle/zle_tricky.c:1015`.
+/// Port of `freebrinfo(Brinfo p)` from `Src/Zle/zle_tricky.c:1015`.
 /// ```c
 /// mod_export void
 /// freebrinfo(Brinfo p)
@@ -736,21 +746,21 @@ pub fn fixmagicspace(zle: &mut crate::ported::zle::zle_main::Zle) {          // 
 /// Free a Brinfo `next`-linked list. C frees each node + its `str`
 /// allocation; Rust drops the Box chain (and each `String` inside)
 /// automatically when the head Box is dropped.
-/// Port of `freebrinfo(p)` from `Src/Zle/zle_tricky.c:1015`.
-pub fn freebrinfo(p: Option<crate::ported::zle::zle_h::BrinfoPtr>) {         // c:1015
-    // c:1020-1026 — walk + zsfree(str) + zfree(p) loop. In Rust the
+pub fn freebrinfo(p: Option<crate::ported::zle::zle_h::BrinfoPtr>) {         // c:1016
+    // c:1016-1026 — walk + zsfree(str) + zfree(p) loop. In Rust the
     // Drop impls cascade through Box<brinfo> → String → next chain.
     drop(p);
 }
 
-/// Port of `get_comp_string()` from Src/Zle/zle_tricky.c:1086 — the
+/// Port of `get_comp_string()` from Src/Zle/zle_tricky.c:1087 — the
 /// "lasciate ogni speranza" function. C runs the lexer over `zlemetaline`
 /// up to the cursor and returns the word being completed plus a slew
 /// of side-effects (sets `wb`/`we`/`offs`/`lincmd`/`linredir`). Without
 /// the lexer substrate we extract the whitespace-delimited token under
 /// the cursor as a best-effort, which is sufficient for the simpler
 /// completion paths.
-pub fn get_comp_string(zle: &crate::ported::zle::zle_main::Zle) -> Option<String> { // c:1086
+/// WARNING: param names don't match C — Rust=(zle) vs C=()
+pub fn get_comp_string(zle: &crate::ported::zle::zle_main::Zle) -> Option<String> { // c:1087
     let snap: String = zle.zleline.iter().collect();
     let cs = zle.zlecs.min(snap.len());
     let bytes = snap.as_bytes();
@@ -771,6 +781,7 @@ pub fn get_comp_string(zle: &crate::ported::zle::zle_main::Zle) -> Option<String
 /// Port of `getcurcmd()` from Src/Zle/zle_tricky.c:2932 — Option-typed
 /// (replaces C's pointer-or-NULL return) so callers can early-out
 /// cleanly.
+/// WARNING: param names don't match C — Rust=(zle) vs C=()
 pub fn getcurcmd(zle: &crate::ported::zle::zle_main::Zle) -> Option<String> { // c:2932
     // C body c:2934-2980 — runs lexer over zlemetaline up to cursor and
     //                      returns the command word. Without the lexer
@@ -809,7 +820,8 @@ pub fn inststr(zle: &mut crate::ported::zle::zle_main::Zle, s: &str) -> i32 { //
     inststrlen(zle, s, true, -1)
 }
 
-/// Port of `inststrlen(str, move, len)` from Src/Zle/zle_tricky.c:2231.
+/// Port of `inststrlen(char *str, int move, int len)` from Src/Zle/zle_tricky.c:2231.
+/// WARNING: param names don't match C — Rust=(str, move_cursor, len) vs C=(str, move, len)
 pub fn inststrlen(                                                           // c:2231
     zle: &mut crate::ported::zle::zle_main::Zle,
     str: &str,
@@ -835,7 +847,7 @@ pub fn inststrlen(                                                           // 
     len
 }
 
-/// Port of `listchoices(args)` from `Src/Zle/zle_tricky.c:250`.
+/// Port of `listchoices(UNUSED(char **args))` from `Src/Zle/zle_tricky.c:251`.
 /// ```c
 /// int
 /// listchoices(UNUSED(char **args))
@@ -848,8 +860,8 @@ pub fn inststrlen(                                                           // 
 /// ```
 /// `list-choices` widget — set the menu/glob globals from options
 /// then dispatch to `docomplete(COMP_LIST_COMPLETE)`.
-/// Port of `listchoices(args)` from `Src/Zle/zle_tricky.c:250`.
-pub fn listchoices() -> i32 {                                                // c:250
+/// WARNING: param names don't match C — Rust=() vs C=(args)
+pub fn listchoices() -> i32 {                                                // c:251
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
     // c:253 — `usemenu = !!isset(MENUCOMPLETE)`.
@@ -864,7 +876,7 @@ pub fn listchoices() -> i32 {                                                // 
     docomplete(COMP_LIST_COMPLETE)
 }
 
-/// Port of `listexpand(args)` from `Src/Zle/zle_tricky.c:333`.
+/// Port of `listexpand(UNUSED(char **args))` from `Src/Zle/zle_tricky.c:334`.
 /// ```c
 /// int
 /// listexpand(UNUSED(char **args))
@@ -877,8 +889,8 @@ pub fn listchoices() -> i32 {                                                // 
 /// ```
 /// `list-expand` widget — like listchoices but dispatches with
 /// `COMP_LIST_EXPAND`.
-/// Port of `listexpand(args)` from `Src/Zle/zle_tricky.c:333`.
-pub fn listexpand() -> i32 {                                                 // c:333
+/// WARNING: param names don't match C — Rust=() vs C=(args)
+pub fn listexpand() -> i32 {                                                 // c:334
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_LIST_EXPAND;
     let menu = isset(MENUCOMPLETE) as i32;
@@ -889,11 +901,12 @@ pub fn listexpand() -> i32 {                                                 // 
     docomplete(COMP_LIST_EXPAND)                                             // c:339
 }
 
-/// Port of `listlist(l)` from Src/Zle/zle_tricky.c:2602.
+/// Port of `listlist(LinkList l)` from Src/Zle/zle_tricky.c:2602.
 /// Returns the number of terminal lines used to display `items`.
 /// `cols` is the terminal width.
+/// WARNING: param names don't match C — Rust=(items, cols) vs C=(l)
 pub fn listlist(items: &[String], cols: usize) -> i32 {                      // c:2602
-    let num = items.len();                                                   // c:2604
+    let num = items.len();                                                   // c:2602
     if num == 0 {
         return 0;
     }
@@ -925,8 +938,8 @@ pub fn listlist(items: &[String], cols: usize) -> i32 {                      // 
     nlines as i32
 }
 
-/// Port of `magicspace(args)` from Src/Zle/zle_tricky.c:2882.
-pub fn magicspace(args: &mut crate::ported::args::zle_main::Zle) -> i32 {      // c:2882
+/// Port of `magicspace(char **args)` from Src/Zle/zle_tricky.c:2882.
+pub fn magicspace(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:2882
     // C body c:2891 — `fixmagicspace()` then expandhistory; on success
     //                  insert a literal space.
     fixmagicspace(args);                                                      // c:2891
@@ -938,7 +951,8 @@ pub fn magicspace(args: &mut crate::ported::args::zle_main::Zle) -> i32 {      /
     ret
 }
 
-/// Port of `menucomplete(args)` from Src/Zle/zle_tricky.c:238.
+/// Port of `menucomplete(char **args)` from Src/Zle/zle_tricky.c:238.
+/// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn menucomplete() -> i32 {                                               // c:238
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_COMPLETE;
@@ -948,7 +962,8 @@ pub fn menucomplete() -> i32 {                                               // 
     docomplete(COMP_COMPLETE)                                                // c:246
 }
 
-/// Port of `menuexpandorcomplete(args)` from Src/Zle/zle_tricky.c:321.
+/// Port of `menuexpandorcomplete(char **args)` from Src/Zle/zle_tricky.c:321.
+/// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn menuexpandorcomplete() -> i32 {                                       // c:321
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_EXPAND_COMPLETE;
@@ -958,12 +973,13 @@ pub fn menuexpandorcomplete() -> i32 {                                       // 
     docomplete(COMP_EXPAND_COMPLETE)                                         // c:329
 }
 
-/// Port of `parambeg(s)` from Src/Zle/zle_tricky.c:521.
+/// Port of `parambeg(char *s)` from Src/Zle/zle_tricky.c:521.
 /// Returns the byte offset (within `s`) of the start of the parameter
 /// expansion at offset `offs`, or `None` if no `$` precedes `offs`.
 /// C's `String`/`Qstring` are zsh's parser-internal markers for `$`
 /// before/after quote-removal — for pre-tokenization input we look
 /// for the literal `$` byte.
+/// WARNING: param names don't match C — Rust=(s, offs) vs C=(s)
 pub fn parambeg(s: &str, offs: usize) -> Option<usize> {                     // c:521
     let bytes = s.as_bytes();
     if offs > bytes.len() || offs == 0 {
@@ -990,7 +1006,7 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {                     // 
     }
 }
 
-/// Port of `printfmt(fmt, n, dopr, doesc)` from Src/Zle/zle_tricky.c:2431.
+/// Port of `printfmt(char *fmt, int n, int dopr, int doesc)` from Src/Zle/zle_tricky.c:2431.
 /// `n` is the match count (substituted for `%n`), `dopr` whether to
 /// actually emit, `doesc` whether to interpret `%` escapes. Returns
 /// the visual column count (matches C `cc`).
@@ -1051,8 +1067,8 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {         // 
     cc
 }
 
-/// Port of `processcmd(args)` from Src/Zle/zle_tricky.c:2971.
-pub fn processcmd(args: &mut crate::ported::args::zle_main::Zle) -> i32 {      // c:2971
+/// Port of `processcmd(UNUSED(char **args))` from Src/Zle/zle_tricky.c:2971.
+pub fn processcmd(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:2971
     // C body c:2973-2989 — `s = getcurcmd(); if (!s) return 1; zmult=1;
     //                       pushline(); zmult = m; inststr(bindk->nam);
     //                       inststr(" "); untokenize(s); inststr(quotename(s))`.
@@ -1062,7 +1078,7 @@ pub fn processcmd(args: &mut crate::ported::args::zle_main::Zle) -> i32 {      /
     };
     let m = args.zmod.mult;                                                   // c:2974
     args.zmod.mult = 1;                                                       // c:2981
-    let _ = crate::ported::args::zle_hist::pushline(args);                     // c:2982
+    let _ = crate::ported::zle::zle_hist::pushline(args);                     // c:2982
     args.zmod.mult = m;                                                       // c:2983
     // c:2984 — `inststr(bindk->nam)` injects the bound widget name.
     //           Without bindk live we use the literal "run-help " marker
@@ -1102,15 +1118,15 @@ pub fn quotename(s: &str, instring: i32) -> String {                         // 
     crate::ported::utils::quotestring(s, qt)
 }
 
-/// Port of `reversemenucomplete(args)` from Src/Zle/zle_tricky.c:344.
-pub fn reversemenucomplete(args: &mut crate::ported::args::zle_main::Zle) -> i32 { // c:344
+/// Port of `reversemenucomplete(char **args)` from Src/Zle/zle_tricky.c:344.
+pub fn reversemenucomplete(args: &mut crate::ported::zle::zle_main::Zle) -> i32 { // c:344
     use std::sync::atomic::Ordering;
     WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:346
     args.zmod.mult = -args.zmod.mult;                                          // c:347
     menucomplete()                                                           // c:348
 }
 
-/// Port of `spellword(args)` from `Src/Zle/zle_tricky.c:260`.
+/// Port of `spellword(UNUSED(char **args))` from `Src/Zle/zle_tricky.c:261`.
 /// ```c
 /// int
 /// spellword(UNUSED(char **args))
@@ -1122,7 +1138,8 @@ pub fn reversemenucomplete(args: &mut crate::ported::args::zle_main::Zle) -> i32
 /// ```
 /// `spell-word` widget — clears menu/glob globals and dispatches
 /// with `COMP_SPELL`.
-pub fn spellword() -> i32 {                                                  // c:260
+/// WARNING: param names don't match C — Rust=() vs C=(args)
+pub fn spellword() -> i32 {                                                  // c:261
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_SPELL;
     USEMENU.store(0, Ordering::SeqCst);                                      // c:263 usemenu = 0
@@ -1132,6 +1149,7 @@ pub fn spellword() -> i32 {                                                  // 
 }
 
 /// Port of `usetab()` from Src/Zle/zle_tricky.c:183.
+/// WARNING: param names don't match C — Rust=(zle, keybuf) vs C=()
 pub fn usetab(zle: &crate::ported::zle::zle_main::Zle, keybuf: &[u8]) -> i32 { // c:183
     use std::sync::atomic::Ordering;
     // c:187-188 — `if (keybuf[0] != '\t' || keybuf[1]) return 0`.

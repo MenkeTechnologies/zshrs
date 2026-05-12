@@ -286,7 +286,7 @@ pub fn evalcond(                                                             // 
 // and the cond_str/cond_val/cond_match argument-coercion trio.
 // ===========================================================
 
-/// Port of `doaccess(s, c)` from Src/cond.c:438 — `[[ -r/-w/-x ]]` test.
+/// Port of `doaccess(char *s, int c)` from Src/cond.c:438 — `[[ -r/-w/-x ]]` test.
 /// Returns true (non-zero) when `access(2)` reports the file is
 /// reachable for the requested mode. The C source special-cases
 /// `/dev/fd/N` to use `faccessat` against the descriptor; we do the
@@ -315,7 +315,7 @@ pub fn doaccess(s: &str, c: i32) -> i32 {                                    // 
     }
 }
 
-/// Port of `getstat(s)` from Src/cond.c:452 — `stat(2)` wrapper that
+/// Port of `getstat(char *s)` from Src/cond.c:452 — `stat(2)` wrapper that
 /// special-cases `/dev/fd/N` with `fstat()`. Returns the metadata or
 /// `None` on error. Replaces the C global `static struct stat st`
 /// with a returned `Metadata` value (Rust avoids globals here).
@@ -330,27 +330,27 @@ pub fn getstat(s: &str) -> Option<Metadata> {                                // 
     fs::metadata(s).ok()
 }
 
-/// Port of `dostat(s)` from Src/cond.c:474 — returns the file's
+/// Port of `dostat(char *s)` from Src/cond.c:474 — returns the file's
 /// `st_mode` or 0 on error. Used by `[[ -b/-c/-d/-f/-g/-h/-k/-p
 /// /-S/-u/-w/-x ]]` to inspect mode bits.
 pub fn dostat(s: &str) -> u32 {                                              // c:474
     getstat(s).map(|m| m.mode()).unwrap_or(0)
 }
 
-/// Port of `dolstat(s)` from Src/cond.c:488 — like `dostat()` but
+/// Port of `dolstat(char *s)` from Src/cond.c:488 — like `dostat()` but
 /// uses `lstat(2)` so symlinks are *not* followed. Underpins
 /// `[[ -h ]]` / `[[ -L ]]`.
 pub fn dolstat(s: &str) -> u32 {                                             // c:488
     fs::symlink_metadata(s).map(|m| m.mode()).unwrap_or(0)
 }
 
-/// Port of `optison(name, s)` from Src/cond.c:502 — `[[ -o NAME ]]` shell-
+/// Port of `optison(char *name, char *s)` from Src/cond.c:502 — `[[ -o NAME ]]` shell-
 /// option test. Returns 0 (true) when the option is set, 1 (false)
 /// when unset, 3 (error) when the name is unrecognised. Routes
 /// through the canonical option table via `optlookup` /
 /// `optlookupc` (Src/options.c:684 / :721).
 pub fn optison(name: &str, s: &str) -> i32 {                                 // c:502
-    let i: i32 = if s.len() == 1 {                                           // c:506
+    let i: i32 = if s.len() == 1 {                                           // c:502
         crate::ported::options::optlookupc(s.as_bytes()[0] as char)          // c:507
     } else {
         crate::ported::options::optlookup(s)                                 // c:509
@@ -373,7 +373,7 @@ pub fn optison(name: &str, s: &str) -> i32 {                                 // 
 // (the latter returns defaults and would be wrong).
 use crate::ported::zsh_h::{isset, unset};
 
-/// Port of `cond_str(args, num, raw)` from Src/cond.c:525 — return `arg[num]` after
+/// Port of `cond_str(char **args, int num, int raw)` from Src/cond.c:525 — return `arg[num]` after
 /// running it through `singsub()` if it contains shell tokens, then
 /// optionally `untokenize()`. The Rust port stores already-expanded
 /// argument strings in the cond evaluator, so this collapses to an
@@ -383,7 +383,7 @@ pub fn cond_str(args: &[String], num: usize, raw: bool) -> String {          // 
     args.get(num).cloned().unwrap_or_default()
 }
 
-/// Port of `cond_val(args, num)` from Src/cond.c:539 — like `cond_str()` but
+/// Port of `cond_val(char **args, int num)` from Src/cond.c:539 — like `cond_str()` but
 /// then runs `mathevali()` to coerce the result to an integer. The
 /// Rust port handles math evaluation through `crate::math::eval`;
 /// here we parse the trimmed argument as a base-10 integer.
@@ -393,7 +393,7 @@ pub fn cond_val(args: &[String], num: usize) -> i64 {                        // 
         .unwrap_or(0)
 }
 
-/// Port of `cond_match(args, num, str)` from Src/cond.c:552 — `[[ str = pat ]]`
+/// Port of `cond_match(char **args, int num, char *str)` from Src/cond.c:552 — `[[ str = pat ]]`
 /// pattern test. Runs `singsub()` on the pattern, then defers to
 /// `matchpat()` (Src/glob.c).
 pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {         // c:552
@@ -402,7 +402,7 @@ pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {         // c
         .unwrap_or(false)
 }
 
-/// Port of `tracemodcond(name, args, inf)` from Src/cond.c:562 — `xtrace`-mode
+/// Port of `tracemodcond(char *name, char **args, int inf)` from Src/cond.c:563 — `xtrace`-mode
 /// pretty-printer for module-defined cond operators. Emits the
 /// op + args to stderr in the same shape the C source uses (infix
 /// for binary, prefix for unary). Used only when the `XTRACE`

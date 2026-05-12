@@ -79,10 +79,11 @@ thread_local! {
 // below as free fns at module scope.
 // =============================================================================
 
-/// Port of `ecgetstr(s, dup, tokflag)` from `Src/parse.c:2854`.
+/// Port of `ecgetstr(Estate s, int dup, int *tokflag)` from `Src/parse.c:2855`.
 ///
 /// `strs` must be the **current** string pool tail (`s->strs` in C); it advances
 /// separately via `estate.strs_offset` in `text.c` callers.
+/// WARNING: param names don't match C — Rust=(prog, strs, pc, dup, tokflag) vs C=(s, dup, tokflag)
 pub fn ecgetstr(
     prog: &[u32],
     strs: &[u8],
@@ -123,11 +124,12 @@ pub fn ecgetstr(
     r
 }
 
-/// Port of `ecgetredirs(s)` from `Src/parse.c:2959-2991`.
+/// Port of `ecgetredirs(Estate s)` from `Src/parse.c:2959`.
 ///
 /// `strs` must be the same tail `ecgetstr` uses (`s->strs` / `estate.strs` from offset).
+/// WARNING: param names don't match C — Rust=(prog, strs, pc) vs C=(s)
 pub fn ecgetredirs(prog: &[wordcode], strs: &[u8], pc: &mut usize) -> Vec<redir> {
-    let mut ret: Vec<redir> = Vec::new(); // c:2961 `LinkList ret = newlinklist();`
+    let mut ret: Vec<redir> = Vec::new(); // c:2959 `LinkList ret = newlinklist();`
     if *pc >= prog.len() {
         return ret;
     }
@@ -449,12 +451,13 @@ fn check_recursion() -> bool {
     PARSER_RECURSION_DEPTH.get() > MAX_RECURSION_DEPTH
 }
 
-/// Direct port of `parse_context_save(ps, toplevel)` at `Src/parse.c:295-320`.
+/// Direct port of `parse_context_save(struct parse_stack *ps, int toplevel)` at `Src/parse.c:295`.
 /// Snapshots the lexer-side file-statics (which currently live on
 /// `lexer` until Phase 7 dissolution makes them file-scope
 /// thread_local!s) plus the pending heredoc list, plus the
 /// wordcode-buffer state (STUB until Phase 9b). Saves Rust-only
 /// recursion counters too so nested parses get fresh limits.
+/// WARNING: param names don't match C — Rust=(ps) vs C=(ps, toplevel)
 pub fn parse_context_save(ps: &mut parse_stack) {
     // parse.c:299 — `ps->hdocs = hdocs; hdocs = NULL;`
     ps.hdocs = crate::ported::lex::heredocs_take();
@@ -495,10 +498,11 @@ pub fn parse_context_save(ps: &mut parse_stack) {
     crate::ported::lex::set_intypeset(false);
 }
 
-/// Direct port of `parse_context_restore(ps, toplevel)` at `Src/parse.c:326-355`.
+/// Direct port of `parse_context_restore(const struct parse_stack *ps, int toplevel)` at `Src/parse.c:326`.
 /// Inverse of `parse_context_save`. Restores lexer-side state +
 /// pending heredocs + Rust-only counters from `ps`, then clears
 /// `errflag & ERRFLAG_ERROR` per parse.c:354.
+/// WARNING: param names don't match C — Rust=(ps) vs C=(ps, toplevel)
 pub fn parse_context_restore(ps: &parse_stack) {
     // parse.c:330-331 — free any in-progress wordcode buffer.
     // zshrs has no wordcode yet (STUB until Phase 9b); the AST
@@ -528,7 +532,7 @@ pub fn parse_context_restore(ps: &parse_stack) {
     );
 }
 
-/// Initialize parser status. Direct port of zsh/Src/parse.c:489-503
+/// Initialize parser status. Direct port of zsh/Src/parse.c:491
 /// `init_parse_status`. Clears the per-parse-call lexer flags
 /// so a fresh parse starts from cmd-position with no nesting
 /// state inherited from a prior parse.
@@ -544,7 +548,7 @@ pub fn init_parse_status() {
 }
 
 /// Initialize parser for a fresh parse. Direct port of
-/// zsh/Src/parse.c:507-525 `init_parse`. C source allocates a
+/// zsh/Src/parse.c:509 `init_parse`. C source allocates a
 /// fresh wordcode buffer (ecbuf) sized EC_INIT_SIZE, resets the
 /// per-parse-call counters, and calls init_parse_status. zshrs
 /// has no flat wordcode buffer (AST is built inline) so this
@@ -577,7 +581,7 @@ pub fn init_parse() {
 }
 
 /// Check whether the parsed program is empty. Direct port of
-/// zsh/Src/parse.c:583-587 `empty_eprog`. C version checks
+/// zsh/Src/parse.c:584 `empty_eprog`. C version checks
 /// `*p->prog == WCB_END()` (single end-of-wordcode marker).
 /// zshrs version checks the AST node count.
 pub fn empty_eprog(prog: &ZshProgram) -> bool {
@@ -585,7 +589,7 @@ pub fn empty_eprog(prog: &ZshProgram) -> bool {
 }
 
 /// Clear pending here-document list. Direct port of
-/// zsh/Src/parse.c:589-600 `clear_hdocs`. The C version walks
+/// zsh/Src/parse.c:591 `clear_hdocs`. The C version walks
 /// the global `hdocs` linked list and frees each node. zshrs
 /// stores pending heredocs on the lexer's `heredocs` Vec —
 /// truncating it has the same effect.
@@ -633,7 +637,7 @@ pub fn parse_event(endtok: lextok) -> Option<ZshProgram> {
 }
 
 /// Parse one event (sublist with optional separator). Direct
-/// port of zsh/Src/parse.c:633-695 `par_event`. Returns true if
+/// port of zsh/Src/parse.c:635 `par_event`. Returns true if
 /// an event was successfully parsed, false on EOF / endtok.
 ///
 /// zshrs port note: the C version emits wordcodes via ecadd/
@@ -670,7 +674,7 @@ pub fn par_event(endtok: lextok) -> bool {
 }
 
 /// Parse one list — non-recursing variant. Direct port of
-/// zsh/Src/parse.c:807-817 `par_list1`. Like par_list but
+/// zsh/Src/parse.c:808 `par_list1`. Like par_list but
 /// doesn't recurse on the trailing-separator path; used by
 /// callers that only want one statement (e.g. each arm of a
 /// case body).
@@ -682,7 +686,7 @@ pub fn par_list1() -> Option<ZshSublist> {
 }
 
 /// Wire a here-document body onto the redirection token that
-/// requested it. Direct port of zsh/Src/parse.c:2347-2361
+/// requested it. Direct port of zsh/Src/parse.c:2347
 /// `setheredoc`. Called when a heredoc terminator has been
 /// matched and the body is ready to be attached to the redir.
 ///
@@ -700,7 +704,7 @@ pub fn setheredoc(_pc: usize, _redir_type: i32, _doc: &str, _term: &str, _munged
 }
 
 /// Parse a wordlist for `for ... in WORDS;`. Direct port of
-/// zsh/Src/parse.c:2362-2378 `par_wordlist`. Reads STRING tokens
+/// zsh/Src/parse.c:2362 `par_wordlist`. Reads STRING tokens
 /// until the next SEPER / SEMI / NEWLIN.
 pub fn par_wordlist() -> Vec<String> {
     let mut out = Vec::new();
@@ -715,7 +719,7 @@ pub fn par_wordlist() -> Vec<String> {
 }
 
 /// Parse a newline-separated wordlist. Direct port of
-/// zsh/Src/parse.c:2379-2398 `par_nl_wordlist`. Like
+/// zsh/Src/parse.c:2379 `par_nl_wordlist`. Like
 /// par_wordlist but tolerates leading/trailing newlines.
 pub fn par_nl_wordlist() -> Vec<String> {
     // parse.c:2380-2381 — skip leading newlines.
@@ -731,7 +735,7 @@ pub fn par_nl_wordlist() -> Vec<String> {
 }
 
 /// Get the integer value of the next token in a cond expression.
-/// Direct port of zsh/Src/parse.c:2643-2658 `get_cond_num`.
+/// Direct port of zsh/Src/parse.c:2643 `get_cond_num`.
 /// Used for `[[ N OP M ]]` numeric tests where N/M are integer
 /// literals or variable references.
 pub fn get_cond_num() -> Option<i64> {
@@ -773,7 +777,7 @@ pub fn yyerror(msg: &str) {
 // ============================================================
 
 /// Patch a list-placeholder wordcode with its actual opcode +
-/// jump distance. Direct port of zsh/Src/parse.c:736-749
+/// jump distance. Direct port of zsh/Src/parse.c:738
 /// `set_list_code`. zsh emits an `ecadd(0)` placeholder before
 /// par_sublist runs, then comes back through set_list_code to
 /// rewrite the slot with WCB_LIST(type, distance) once the
@@ -788,7 +792,7 @@ pub fn set_list_code(_p: usize, _type_code: i32, _cmplx: bool) {
 }
 
 /// Patch a sublist-placeholder wordcode with its actual opcode.
-/// Direct port of zsh/Src/parse.c:753-763 `set_sublist_code`.
+/// Direct port of zsh/Src/parse.c:755 `set_sublist_code`.
 /// Same role as set_list_code at the sublist level.
 pub fn set_sublist_code(p: usize, type_code: i32, flags: i32, skip: i32, cmplx: bool) {
     // parse.c:757-762 — patch the wordcode at p. zshrs P9b: write
@@ -804,7 +808,7 @@ pub fn set_sublist_code(p: usize, type_code: i32, flags: i32, skip: i32, cmplx: 
     });
 }
 
-/// Direct port of `ecadd(c)` at `Src/parse.c:396-408`. Append `c` to
+/// Direct port of `ecadd(wordcode c)` at `Src/parse.c:397`. Append `c` to
 /// the wordcode buffer with grow-on-demand, return the new index.
 pub fn ecadd(c: u32) -> usize {
     // parse.c:399-405 — `if ((eclen - ecused) < 1) grow`.
@@ -831,7 +835,7 @@ pub fn ecadd(c: u32) -> usize {
     idx as usize
 }
 
-/// Direct port of `ecdel(p)` at `Src/parse.c:412-421`. Remove the
+/// Direct port of `ecdel(int p)` at `Src/parse.c:413`. Remove the
 /// wordcode at position `p`, shift later entries left by one,
 /// decrement ecused, adjust pending heredoc pointers.
 pub fn ecdel(p: usize) {
@@ -849,7 +853,7 @@ pub fn ecdel(p: usize) {
     ecadjusthere(p, -1);
 }
 
-/// Direct port of `ecstrcode(s)` at `Src/parse.c:425-471`. Encode a
+/// Direct port of `ecstrcode(char *s)` at `Src/parse.c:426`. Encode a
 /// string into a single wordcode (short strings ≤4 bytes packed
 /// inline; longer strings get an offset into the deduped registry).
 pub fn ecstrcode(s: &str) -> u32 {
@@ -942,7 +946,7 @@ pub fn ecstrcode(s: &str) -> u32 {
     (s, next)
 }
 
-/// Direct port of `ecispace(p, n)` at `Src/parse.c:371-388`. Insert `n`
+/// Direct port of `ecispace(int p, int n)` at `Src/parse.c:372`. Insert `n`
 /// empty wordcode slots at position `p`, shifting later entries
 /// right, growing the buffer as needed, adjusting heredoc pointers.
 pub fn ecispace(p: usize, n: usize) {
@@ -985,7 +989,7 @@ pub fn ecispace(p: usize, n: usize) {
     ecadjusthere(p, need);
 }
 
-/// Direct port of `ecadjusthere(p, d)` at `Src/parse.c:359-367`. Walk
+/// Direct port of `ecadjusthere(int p, int d)` at `Src/parse.c:360`. Walk
 /// the pending-heredocs list and bump each `pc` by `d` if it's
 /// at or after position `p`. Called by `ecispace` / `ecdel` when
 /// wordcodes shift.
@@ -1009,7 +1013,7 @@ pub fn ecadjusthere(p: usize, d: i32) {
 // "free" is automatic on drop.
 // ============================================================
 
-/// Duplicate an Eprog. Direct port of zsh/Src/parse.c:2767-2812
+/// Duplicate an Eprog. Direct port of zsh/Src/parse.c:2813
 /// `dupeprog`. C version deep-copies the wordcode array + string
 /// table + pattern progs. zshrs uses Clone on the AST.
 pub fn dupeprog(prog: &ZshProgram) -> ZshProgram {
@@ -1017,7 +1021,7 @@ pub fn dupeprog(prog: &ZshProgram) -> ZshProgram {
 }
 
 /// Increment an Eprog's reference count. Direct port of
-/// zsh/Src/parse.c:2813-2822 `useeprog`. zshrs no-op (Rust
+/// zsh/Src/parse.c:2813 `useeprog`. zshrs no-op (Rust
 /// ownership).
 pub fn useeprog(_prog: &ZshProgram) {
     // parse.c:2815-2821 — `prog->nref++` if not heap-allocated.
@@ -1025,7 +1029,7 @@ pub fn useeprog(_prog: &ZshProgram) {
 }
 
 /// Decrement / free an Eprog. Direct port of
-/// zsh/Src/parse.c:2823-2854 `freeeprog`. zshrs no-op (drop on
+/// zsh/Src/parse.c:2823 `freeeprog`. zshrs no-op (drop on
 /// scope-exit).
 pub fn freeeprog(_prog: ZshProgram) {
     // parse.c:2825-2853 — decrement nref, free if zero. zshrs
@@ -1041,33 +1045,33 @@ pub fn freeeprog(_prog: ZshProgram) {
 // ============================================================
 
 /// Read a packed string without consuming the wordcode pointer.
-/// Direct port of zsh/Src/parse.c:2890-2913 `ecrawstr`. zshrs
+/// Direct port of zsh/Src/parse.c:2891 `ecrawstr`. zshrs
 /// no-op.
 pub fn ecrawstr() -> String {
     String::new()
 }
 
 /// Read a NUL-terminated string array from wordcode. Direct port
-/// of zsh/Src/parse.c:2916-2933 `ecgetarr`. zshrs no-op.
+/// of zsh/Src/parse.c:2917 `ecgetarr`. zshrs no-op.
 pub fn ecgetarr(_num: usize, _dup: bool) -> Vec<String> {
     Vec::new()
 }
 
 /// Read a linked-list of strings from wordcode. Direct port of
-/// zsh/Src/parse.c:2936-2955 `ecgetlist`. zshrs no-op.
+/// zsh/Src/parse.c:2937 `ecgetlist`. zshrs no-op.
 pub fn ecgetlist(_num: usize, _dup: bool) -> Vec<String> {
     Vec::new()
 }
 
 /// Copy consecutive redirection wordcodes into a new Eprog.
-/// Direct port of zsh/Src/parse.c:3001-3060 `eccopyredirs`.
+/// Direct port of zsh/Src/parse.c:3003 `eccopyredirs`.
 /// zshrs no-op.
 pub fn eccopyredirs() -> Option<ZshProgram> {
     None
 }
 
 /// Initialize the dummy Eprog used as a placeholder. Direct port
-/// of zsh/Src/parse.c:3068-3075 `init_eprog`. zshrs no-op since
+/// of zsh/Src/parse.c:3069 `init_eprog`. zshrs no-op since
 /// the AST has no equivalent dummy node — empty programs are
 /// just `ZshProgram { lists: vec![] }`.
 pub fn init_eprog() {
@@ -1718,7 +1722,7 @@ fn par_list() -> Option<ZshList> {
 
 /// Parse a sublist (pipelines connected by && or ||).
 ///
-/// Direct port of zsh/Src/parse.c:825-867 `par_sublist` and
+/// Direct port of zsh/Src/parse.c:825 `par_sublist` and
 /// par_sublist2 at parse.c:869-892. par_sublist handles the
 /// && / || conjunction and emits WC_SUBLIST opcodes; par_sublist2
 /// handles the leading `!` negation and `coproc` keyword.
@@ -1774,7 +1778,7 @@ fn par_sublist() -> Option<ZshSublist> {
 
 /// Parse a pipeline
 /// Parse a pipeline (cmds joined by `|` / `|&`). Direct port of
-/// zsh/Src/parse.c:894-956 `par_pline`. AST: ZshPipe { cmds: Vec<ZshCommand> }.
+/// zsh/Src/parse.c:894 `par_pline`. AST: ZshPipe { cmds: Vec<ZshCommand> }.
 /// C emits WC_PIPE wordcodes per command; same flow.
 fn par_pline() -> Option<ZshPipe> {
     PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
@@ -1818,7 +1822,7 @@ fn par_pline() -> Option<ZshPipe> {
 /// Parse a command — dispatches by leading token (FOR / CASE /
 /// IF / WHILE / UNTIL / REPEAT / FUNC / DINBRACK / DINPAR /
 /// INPAR subshell / INBRACE current-shell / TIME / NOCORRECT,
-/// else simple). Direct port of zsh/Src/parse.c:958-1085 `par_cmd`.
+/// else simple). Direct port of zsh/Src/parse.c:958 `par_cmd`.
 fn par_cmd() -> Option<ZshCommand> {
     // Parse leading redirections
     let mut redirs = Vec::new();
@@ -1877,7 +1881,7 @@ fn par_cmd() -> Option<ZshCommand> {
 
 /// Parse a simple command
 /// Parse a simple command (assignments + words + redirections).
-/// Direct port of zsh/Src/parse.c:1836-2228 `par_simple` —
+/// Direct port of zsh/Src/parse.c:1836 `par_simple` —
 /// the largest single function in parse.c. Handles ENVSTRING/
 /// ENVARRAY assignments at command head, intermixed redirs,
 /// typeset-style multi-assignment commands, and the trailing
@@ -2139,7 +2143,7 @@ fn parse_assign() -> Option<ZshAssign> {
 
 /// Parse a redirection
 /// Parse a redirection (>file, <file, >>file, <<HEREDOC, etc.).
-/// Direct port of zsh/Src/parse.c:2229-2346 `par_redir`. Returns
+/// Direct port of zsh/Src/parse.c:2229 `par_redir`. Returns
 /// a ZshRedir node carrying the operator type, fd, target word
 /// (or here-doc body / pipe-redir command), and any `{var}` style
 /// fd-binding parameter.
@@ -2220,7 +2224,7 @@ fn par_redir() -> Option<ZshRedir> {
 /// Parse for/foreach loop
 /// Parse `for NAME in WORDS; do BODY; done` (foreach style) AND
 /// `for ((init; cond; incr)) do BODY done` (c-style). Direct port
-/// of zsh/Src/parse.c:1087-1207 `par_for`. parse_for_cstyle is the
+/// of zsh/Src/parse.c:1087 `par_for`. parse_for_cstyle is the
 /// inner branch for the `((...))` arithmetic-header variant
 /// (parse.c:1100-1140 inside par_for).
 fn par_for() -> Option<ZshCommand> {
@@ -2415,7 +2419,7 @@ fn parse_select() -> Option<ZshCommand> {
 
 /// Parse case statement
 /// Parse `case WORD in PATTERN) BODY ;; ... esac`. Direct port
-/// of zsh/Src/parse.c:1209-1409 `par_case`. Each case arm is a
+/// of zsh/Src/parse.c:1209 `par_case`. Each case arm is a
 /// (pattern_list, body, terminator) tuple where terminator is
 /// `;;` (default), `;&` (fallthrough), or `;|` (continue testing).
 fn par_case() -> Option<ZshCommand> {
@@ -2619,7 +2623,7 @@ fn par_case() -> Option<ZshCommand> {
 
 /// Parse if statement
 /// Parse `if COND; then BODY; [elif COND; then BODY;]* [else BODY;] fi`.
-/// Direct port of zsh/Src/parse.c:1411-1519 `par_if`. The C source
+/// Direct port of zsh/Src/parse.c:1411 `par_if`. The C source
 /// emits WC_IF wordcodes per arm; zshrs builds an AST chain of
 /// (cond, then_body) tuples plus an optional else_body.
 fn par_if() -> Option<ZshCommand> {
@@ -2743,7 +2747,7 @@ fn par_if() -> Option<ZshCommand> {
 
 /// Parse while/until loop
 /// Parse `while COND; do BODY; done` and `until COND; do BODY; done`.
-/// Direct port of zsh/Src/parse.c:1521-1563 `par_while`. The
+/// Direct port of zsh/Src/parse.c:1521 `par_while`. The
 /// `until` variant is the same loop with the condition negated.
 fn par_while(until: bool) -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip while/until
@@ -2762,7 +2766,7 @@ fn par_while(until: bool) -> Option<ZshCommand> {
 
 /// Parse repeat loop
 /// Parse `repeat N; do BODY; done`. Direct port of
-/// zsh/Src/parse.c:1565-1617 `par_repeat`. The C source supports
+/// zsh/Src/parse.c:1565 `par_repeat`. The C source supports
 /// the SHORTLOOPS short-form `repeat N CMD` (no do/done) — zshrs's
 /// parser doesn't yet special-case that variant.
 fn par_repeat() -> Option<ZshCommand> {
@@ -2826,7 +2830,7 @@ fn parse_loop_body(foreach_style: bool) -> Option<ZshProgram> {
 }
 
 /// Parse (...) subshell
-/// Parse a subshell `( ... )`. Direct port of zsh/Src/parse.c:1619-1670
+/// Parse a subshell `( ... )`. Direct port of zsh/Src/parse.c:1619
 /// `par_subsh`. Body parses as a normal list; the subshell wrapper
 /// fork-isolates execution in the executor.
 fn par_subsh() -> Option<ZshCommand> {
@@ -2940,7 +2944,7 @@ fn parse_cursh() -> Option<ZshCommand> {
 
 /// Parse function definition
 /// Parse `function NAME { BODY }` or `NAME () { BODY }`. Direct
-/// port of zsh/Src/parse.c:1672-1785 `par_funcdef`. zsh handles
+/// port of zsh/Src/parse.c:1672 `par_funcdef`. zsh handles
 /// the multiple keyword shapes (function FOO, FOO (), function FOO ()),
 /// the optional `[fname1 fname2 ...]` for multi-name function defs,
 /// and the `function FOO () { ... }` traditional/POSIX hybrid form.
@@ -3149,7 +3153,7 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
 
 /// Parse [[ ... ]] conditional
 /// Parse `[[ EXPR ]]` conditional expression. Direct port of
-/// zsh/Src/parse.c:2409-2731 `par_cond` (and helpers par_cond_1,
+/// zsh/Src/parse.c:2409 `par_cond` (and helpers par_cond_1,
 /// par_cond_2, par_cond_double, par_cond_triple, par_cond_multi
 /// at parse.c:2434-2731). Expression operators: `||` `&&` `!`
 /// + unary tests (-f, -d, -n, -z, etc.) + binary tests (=, !=,
@@ -3402,7 +3406,7 @@ fn parse_arith() -> Option<ZshCommand> {
 
 /// Parse time command
 /// Parse `time CMD` (POSIX time keyword). Direct port of
-/// zsh/Src/parse.c:1787-1808 `par_time`. The `time` keyword
+/// zsh/Src/parse.c:1787 `par_time`. The `time` keyword
 /// times the execution of the following pipeline / cmd.
 fn par_time() -> Option<ZshCommand> {
     crate::ported::lex::zshlex(); // skip 'time'

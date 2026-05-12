@@ -17,20 +17,20 @@ use super::parse::{ParseStack};
 
 /// Port of `struct context_stack` from Src/context.c:38-44.
 #[allow(non_camel_case_types)]
-pub struct context_stack {                                                   // c:38
-    pub next: Option<Box<context_stack>>,                                    // c:39
-    pub hist_stack: hist_stack,                                              // c:41
-    pub lex_stack: lex_stack,                                                 // c:42
-    pub parse_stack: ParseStack,                                             // c:43
+pub struct context_stack {                                                   // c:52
+    pub next: Option<Box<context_stack>>,                                    // c:52
+    pub hist_stack: hist_stack,                                              // c:52
+    pub lex_stack: lex_stack,                                                 // c:52
+    pub parse_stack: ParseStack,                                             // c:52
 }
 
-/// Port of `static struct context_stack *cstack` from Src/context.c:46.
-static cstack: Mutex<Option<Box<context_stack>>> = Mutex::new(None);         // c:46
+/// Port of `static struct context_stack *cstack` from Src/context.c:52.
+static cstack: Mutex<Option<Box<context_stack>>> = Mutex::new(None);         // c:52
 
 /// Port of `void zcontext_save_partial(int parts)` from Src/context.c:52.
 #[allow(non_snake_case)]
 pub fn zcontext_save_partial(parts: i32) {                                   // c:52
-    crate::ported::signals::queue_signals();                                 // c:56
+    crate::ported::signals::queue_signals();                                 // c:52
 
     let mut cs = Box::new(context_stack {                                    // c:58
         next: None,
@@ -52,14 +52,14 @@ pub fn zcontext_save_partial(parts: i32) {                                   // 
     if (parts & ZCONTEXT_LEX) != 0 {                                         // c:63
         crate::ported::lex::lex_context_save(&mut cs.lex_stack);
     }
-    if (parts & ZCONTEXT_PARSE) != 0 {                                       // c:66
+    if (parts & ZCONTEXT_PARSE) != 0 {                                       // c:80
         crate::ported::parse::parse_context_save(&mut cs.parse_stack);
     }
 
-    cs.next = head.take();                                                   // c:70
-    *head = Some(cs);                                                        // c:71
+    cs.next = head.take();                                                   // c:89
+    *head = Some(cs);                                                        // c:89
 
-    crate::ported::signals::unqueue_signals();                               // c:73
+    crate::ported::signals::unqueue_signals();                               // c:89
 }
 
 /// Port of `void zcontext_save(void)` from Src/context.c:80.
@@ -87,13 +87,13 @@ pub fn zcontext_restore_partial(parts: i32) {                                // 
     if (parts & ZCONTEXT_LEX) != 0 {                                         // c:101
         crate::ported::lex::lex_context_restore(&mut cs.lex_stack);
     }
-    if (parts & ZCONTEXT_PARSE) != 0 {                                       // c:104
+    if (parts & ZCONTEXT_PARSE) != 0 {                                       // c:117
         crate::ported::parse::parse_context_restore(&cs.parse_stack);
     }
 
-    drop(cs);                                                                // c:108
+    drop(cs);                                                                // c:117
 
-    crate::ported::signals::unqueue_signals();                               // c:110
+    crate::ported::signals::unqueue_signals();                               // c:117
 }
 
 /// Port of `void zcontext_restore(void)` from Src/context.c:117.

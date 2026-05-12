@@ -120,52 +120,52 @@ pub static STACK: Mutex<Vec<Sfunc>> = Mutex::new(Vec::new());            // c:70
 /// static — `AtomicBool` captures the only state `zprof_wrapper`
 /// actually inspects (loaded vs. unloading), matching the C
 /// `MOD_UNLOAD` flag-check on the same pointer.
-pub static ZPROF_MODULE: AtomicBool = AtomicBool::new(false);            // c:71
+pub static ZPROF_MODULE: AtomicBool = AtomicBool::new(false);            // c:74
 
 // ---------------------------------------------------------------------------
 // Helpers (port of c:73-136).
 // ---------------------------------------------------------------------------
 
-/// Port of `freepfuncs(f)` from `Src/Modules/zprof.c:74`. C iterates
+/// Port of `freepfuncs(Pfunc f)` from `Src/Modules/zprof.c:74`. C iterates
 /// the linked list calling `zsfree(name)` + `zfree(node)` on each
 /// entry. Rust port clears the `Vec`; the contained `String`s and
 /// `Pfunc` slots are dropped at scope-exit.
 ///
 /// C signature: `static void freepfuncs(Pfunc f)`.
 pub fn freepfuncs(f: &mut Vec<Pfunc>) {                                  // c:74
-    f.clear();                                                           // c:78-82 zsfree+zfree
+    f.clear();                                                           // c:86-82 zsfree+zfree
 }
 
-/// Port of `freeparcs(a)` from `Src/Modules/zprof.c:86`.
+/// Port of `freeparcs(Parc a)` from `Src/Modules/zprof.c:86`.
 ///
 /// C signature: `static void freeparcs(Parc a)`.
 pub fn freeparcs(a: &mut Vec<Parc>) {                                    // c:86
-    a.clear();                                                           // c:90-93 zfree
+    a.clear();                                                           // c:97-93 zfree
 }
 
-/// Port of `findpfunc(name)` from `Src/Modules/zprof.c:97`. Linear-scan
+/// Port of `findpfunc(char *name)` from `Src/Modules/zprof.c:97`. Linear-scan
 /// lookup in the `calls` list for an entry with matching `name`.
 ///
 /// C signature: `static Pfunc findpfunc(char *name)`. Returns NULL on
 /// miss; Rust port returns `None`.
 pub fn findpfunc(name: &str) -> Option<usize> {                          // c:97
-    // c:101-103 — `for (f = calls; f; f = f->next) if (!strcmp(name, f->name)) return f;`
+    // c:109-103 — `for (f = calls; f; f = f->next) if (!strcmp(name, f->name)) return f;`
     let calls = CALLS.lock().unwrap();
     calls.iter().position(|f| f.name == name)
 }
 
-/// Port of `findparc(f, t)` from `Src/Modules/zprof.c:109`. Linear-scan
+/// Port of `findparc(Pfunc f, Pfunc t)` from `Src/Modules/zprof.c:109`. Linear-scan
 /// lookup in the `arcs` list for an arc with matching (from, to)
 /// pair.
 ///
 /// C signature: `static Parc findparc(Pfunc f, Pfunc t)`.
 pub fn findparc(f: usize, t: usize) -> Option<usize> {               // c:109
-    // c:113-115 — `for (a = arcs; a; a = a->next) if (a->f == f && a->t == t) return a;`
+    // c:109-115 — `for (a = arcs; a; a = a->next) if (a->f == f && a->t == t) return a;`
     let arcs = ARCS.lock().unwrap();
-    arcs.iter().position(|a| a.f == f && a.t == t)
+    arcs.iter().position(|a| a.from == f && a.to == t)
 }
 
-/// Port of `cmpsfuncs(a, b)` from `Src/Modules/zprof.c:121`. The qsort
+/// Port of `cmpsfuncs(Pfunc *a, Pfunc *b)` from `Src/Modules/zprof.c:121`. The qsort
 /// comparator: descending by `self`. C uses `Pfunc *` pointers
 /// because qsort passes opaque ptrs; Rust takes refs directly.
 ///
@@ -179,13 +179,13 @@ pub fn cmpsfuncs(a: &Pfunc, b: &Pfunc) -> std::cmp::Ordering {           // c:12
     b.self_time.partial_cmp(&a.self_time).unwrap_or(std::cmp::Ordering::Equal)
 }
 
-/// Port of `cmptfuncs(a, b)` from `Src/Modules/zprof.c:127`. Comparator
+/// Port of `cmptfuncs(Pfunc *a, Pfunc *b)` from `Src/Modules/zprof.c:127`. Comparator
 /// for descending by total `time`.
 pub fn cmptfuncs(a: &Pfunc, b: &Pfunc) -> std::cmp::Ordering {           // c:127
     b.time.partial_cmp(&a.time).unwrap_or(std::cmp::Ordering::Equal)
 }
 
-/// Port of `cmpparcs(a, b)` from `Src/Modules/zprof.c:133`. Comparator
+/// Port of `cmpparcs(Parc *a, Parc *b)` from `Src/Modules/zprof.c:133`. Comparator
 /// for descending by arc `time`.
 pub fn cmpparcs(a: &Parc, b: &Parc) -> std::cmp::Ordering {              // c:133
     b.time.partial_cmp(&a.time).unwrap_or(std::cmp::Ordering::Equal)
@@ -195,7 +195,7 @@ pub fn cmpparcs(a: &Parc, b: &Parc) -> std::cmp::Ordering {              // c:13
 // `bin_zprof` (port of c:139-214).
 // ---------------------------------------------------------------------------
 
-/// Port of `bin_zprof(ops)` from `Src/Modules/zprof.c:139`.
+/// Port of `bin_zprof(UNUSED(char *nam), UNUSED(char **args), Options ops, UNUSED(int func))` from `Src/Modules/zprof.c:139`.
 ///
 /// C signature: `static int bin_zprof(char *nam, char **args,
 ///                                     Options ops, int func)`.
@@ -206,6 +206,7 @@ pub fn cmpparcs(a: &Parc, b: &Parc) -> std::cmp::Ordering {              // c:13
 /// sort by self-time, print the c:170 header + per-function row,
 /// re-sort by total-time, print the c:184 per-function caller/callee
 /// blocks.
+/// WARNING: param names don't match C — Rust=(_nam, _args, _func) vs C=(nam, args, ops, func)
 pub fn bin_zprof(_nam: &str, _args: &[String],                               // c:139
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;
@@ -335,24 +336,25 @@ pub fn bin_zprof(_nam: &str, _args: &[String],                               // 
         }
     }
 
-    0                                                                    // c:213
+    0                                                                    // c:217
 }
 
-/// Port of `name_for_anonymous_function(name)` from `Src/Modules/zprof.c:217`.
+/// Port of `name_for_anonymous_function(char *name)` from `Src/Modules/zprof.c:217`.
 /// Anonymous functions don't have a real name; the profiler synthesises
 /// `name [filename:lineno]` using the current `funcstack[0]` frame.
 ///
 /// C signature: `static char *name_for_anonymous_function(char *name)`.
 /// Rust port takes the placeholder name + `(filename, lineno)` pair
 /// the caller pulls from the funcstack.
+/// WARNING: param names don't match C — Rust=(name, filename, lineno) vs C=(name)
 pub fn name_for_anonymous_function(name: &str, filename: &str, lineno: i32) -> String {  // c:217
-    // c:222 — `convbase(lineno, funcstack[0].flineno, 10);`
+    // c:217 — `convbase(lineno, funcstack[0].flineno, 10);`
     // c:224-230 — `parts[] = { name, " [", filename, ":", lineno, "]", NULL };`
     // c:232 — `return sepjoin(parts, "", 1);`
     format!("{} [{}:{}]", name, filename, lineno)
 }
 
-/// Port of `zprof_wrapper(prog, w, name)` from `Src/Modules/zprof.c:236`. The
+/// Port of `zprof_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/zprof.c:236`. The
 /// per-function-call wrapper hook: records call entry, measures wall
 /// time, runs the wrapped function via `runshfunc`, then accumulates
 /// self/total time on the function's `pfunc` entry and on the
@@ -404,52 +406,52 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_(m)` from `Src/Modules/zprof.c:332`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/zprof.c:332`.
 /// C body: `zprof_module = m; return 0;`
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                // c:332
-    ZPROF_MODULE.store(true, Ordering::SeqCst);                          // c:334
-    0                                                                    // c:335
+    ZPROF_MODULE.store(true, Ordering::SeqCst);                          // c:340
+    0                                                                    // c:348
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/zprof.c:340`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/zprof.c:340`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 { // c:340
     *features = featuresarray(m, module_features());
-    0                                                                    // c:343
+    0                                                                    // c:355
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/zprof.c:348`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/zprof.c:348`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:348
-    handlefeatures(m, module_features(), enables) // c:350
+    handlefeatures(m, module_features(), enables) // c:355
 }
 
-/// Port of `boot_(m)` from `Src/Modules/zprof.c:355`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/zprof.c:355`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                 // c:355
     let mut calls = CALLS.lock().unwrap();
-    calls.clear();                                                       // c:357
-    NCALLS.store(0, Ordering::SeqCst);                                   // c:358
+    calls.clear();                                                       // c:367
+    NCALLS.store(0, Ordering::SeqCst);                                   // c:367
     let mut arcs = ARCS.lock().unwrap();
-    arcs.clear();                                                        // c:359
-    NARCS.store(0, Ordering::SeqCst);                                    // c:360
-    STACK.lock().unwrap().clear();                                       // c:361
-    0                                                                    // c:362 addwrapper return
+    arcs.clear();                                                        // c:367
+    NARCS.store(0, Ordering::SeqCst);                                    // c:367
+    STACK.lock().unwrap().clear();                                       // c:367
+    0                                                                    // c:367 addwrapper return
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/zprof.c:367`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/zprof.c:367`.
 /// C body: free pfuncs + parcs, deletewrapper, setfeatureenables.
 pub fn cleanup_(m: *const module) -> i32 {                              // c:367
     let mut calls = CALLS.lock().unwrap();
-    freepfuncs(&mut calls);                                              // c:369
+    freepfuncs(&mut calls);                                              // c:377
     let mut arcs = ARCS.lock().unwrap();
-    freeparcs(&mut arcs);                                                // c:370
+    freeparcs(&mut arcs);                                                // c:377
     ZPROF_MODULE.store(false, Ordering::SeqCst);
-    setfeatureenables(m, module_features(), None) // c:372
+    setfeatureenables(m, module_features(), None) // c:377
 }
 
-/// Port of `finish_(m)` from `Src/Modules/zprof.c:377`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/zprof.c:377`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:377
     // C body c:379-380 — `return 0`. Faithful empty-body port; the
@@ -478,7 +480,7 @@ mod tests {
         NARCS.store(0, Ordering::SeqCst);
     }
 
-    /// Port of `bin_zprof(ops)` from `Src/Modules/zprof.c:139`.
+    /// Port of `bin_zprof(UNUSED(char *nam), UNUSED(char **args), Options ops, UNUSED(int func))` from `Src/Modules/zprof.c:139`.
     /// Verifies `Pfunc` mirrors C `struct pfunc` field-for-field
     /// (name/calls/time/self/num at c:40-44).
     #[test]

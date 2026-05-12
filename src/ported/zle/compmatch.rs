@@ -24,7 +24,7 @@
 // `comp_h.rs` and used by the real porters of `match_str` /
 // `pattern_match` / `add_match_str` etc. below.
 
-/// Port of `cpatterns_same(a, b)` from `Src/Zle/compmatch.c:42`.
+/// Port of `cpatterns_same(Cpattern a, Cpattern b)` from `Src/Zle/compmatch.c:42`.
 /// ```c
 /// static int
 /// cpatterns_same(Cpattern a, Cpattern b)
@@ -51,7 +51,7 @@
 /// Walk two parallel `Cpattern` chains testing structural equality
 /// (same `tp` + same `str` for class types or same `chr` for
 /// CPAT_CHAR). Used by `cmatchers_same` to dedupe matcher specs.
-/// Port of `cpatterns_same(a, b)` from `Src/Zle/compmatch.c:44`.
+/// WARNING: param names don't match C — Rust=(b) vs C=(a, b)
 pub fn cpatterns_same(                                                       // c:44
     mut a: Option<&crate::ported::zle::comp_h::Cpattern>,
     mut b: Option<&crate::ported::zle::comp_h::Cpattern>,
@@ -88,7 +88,7 @@ pub fn cpatterns_same(                                                       // 
     b.is_none()                                                              // c:77 return !b
 }
 
-/// Port of `cmatchers_same(a, b)` from `Src/Zle/compmatch.c:82`.
+/// Port of `cmatchers_same(Cmatcher a, Cmatcher b)` from `Src/Zle/compmatch.c:82`.
 /// ```c
 /// static int
 /// cmatchers_same(Cmatcher a, Cmatcher b)
@@ -106,7 +106,7 @@ pub fn cpatterns_same(                                                       // 
 /// ```
 /// Test two matchers for full structural equality — flags, lengths,
 /// patterns, and (if anchored) anchor patterns must all match.
-/// Port of `cmatchers_same(a, b)` from `Src/Zle/compmatch.c:84`.
+/// WARNING: param names don't match C — Rust=(b) vs C=(a, b)
 pub fn cmatchers_same(                                                       // c:84
     a: &crate::ported::zle::comp_h::Cmatcher,
     b: &crate::ported::zle::comp_h::Cmatcher,
@@ -149,7 +149,7 @@ pub fn cmatchers_same(                                                       // 
 // — `Src/Zle/compmatch.c:217-281`.
 // =====================================================================
 
-/// Port of `cline_sublen(l)` from `Src/Zle/compmatch.c:218`.
+/// Port of `cline_sublen(Cline l)` from `Src/Zle/compmatch.c:218`.
 /// ```c
 /// int
 /// cline_sublen(Cline l)
@@ -168,8 +168,7 @@ pub fn cmatchers_same(                                                       // 
 /// }
 /// ```
 /// Total visual length of one Cline plus its prefix/suffix sub-lists.
-/// Port of `cline_sublen(l)` from `Src/Zle/compmatch.c:218`.
-pub fn cline_sublen(l: &crate::ported::zle::comp_h::Cline) -> i32 {          // c:218
+pub fn cline_sublen(l: &crate::ported::zle::comp_h::Cline) -> i32 {          // c:219
     use crate::ported::zle::comp_h::{CLF_LINE, CLF_SUF};
     // c:221 — `len = (CLF_LINE ? llen : wlen)`.
     let mut len: i32 = if (l.flags & CLF_LINE) != 0 { l.llen } else { l.wlen };
@@ -198,7 +197,7 @@ pub fn cline_sublen(l: &crate::ported::zle::comp_h::Cline) -> i32 {          // 
     len                                                                      // c:233 return len
 }
 
-/// Port of `cline_setlens(l, both)` from `Src/Zle/compmatch.c:239`.
+/// Port of `cline_setlens(Cline l, int both)` from `Src/Zle/compmatch.c:240`.
 /// ```c
 /// void
 /// cline_setlens(Cline l, int both)
@@ -213,8 +212,7 @@ pub fn cline_sublen(l: &crate::ported::zle::comp_h::Cline) -> i32 {          // 
 /// ```
 /// Walk a Cline list setting `min` (and optionally `max`) from
 /// `cline_sublen`.
-/// Port of `cline_setlens(l, both)` from `Src/Zle/compmatch.c:239`.
-pub fn cline_setlens(l: &mut Option<Box<crate::ported::zle::comp_h::Cline>>, both: i32) {  // c:239
+pub fn cline_setlens(l: &mut Option<Box<crate::ported::zle::comp_h::Cline>>, both: i32) {  // c:240
     let mut cur = l.as_deref_mut();
     while let Some(node) = cur {                                             // c:242 while (l)
         let s = cline_sublen(node);                                          // c:243 cline_sublen(l)
@@ -226,7 +224,7 @@ pub fn cline_setlens(l: &mut Option<Box<crate::ported::zle::comp_h::Cline>>, bot
     }
 }
 
-/// Port of `cline_matched(p)` from `Src/Zle/compmatch.c:253`.
+/// Port of `cline_matched(Cline p)` from `Src/Zle/compmatch.c:254`.
 /// ```c
 /// void
 /// cline_matched(Cline p)
@@ -241,8 +239,7 @@ pub fn cline_setlens(l: &mut Option<Box<crate::ported::zle::comp_h::Cline>>, bot
 /// ```
 /// Set `CLF_MATCHED` on every Cline reachable through next/prefix/
 /// suffix from `p`.
-/// Port of `cline_matched(p)` from `Src/Zle/compmatch.c:253`.
-pub fn cline_matched(p: &mut Option<Box<crate::ported::zle::comp_h::Cline>>) {  // c:253
+pub fn cline_matched(p: &mut Option<Box<crate::ported::zle::comp_h::Cline>>) {  // c:254
     use crate::ported::zle::comp_h::CLF_MATCHED;
     let mut cur = p.as_deref_mut();
     while let Some(node) = cur {                                             // c:256 while (p)
@@ -253,7 +250,7 @@ pub fn cline_matched(p: &mut Option<Box<crate::ported::zle::comp_h::Cline>>) {  
     }
 }
 
-/// Port of `revert_cline(p)` from `Src/Zle/compmatch.c:269`.
+/// Port of `revert_cline(Cline p)` from `Src/Zle/compmatch.c:269`.
 /// ```c
 /// Cline
 /// revert_cline(Cline p)
@@ -269,7 +266,7 @@ pub fn cline_matched(p: &mut Option<Box<crate::ported::zle::comp_h::Cline>>) {  
 /// }
 /// ```
 /// Reverse a Cline `next`-chained list in place; returns the new head.
-/// Port of `revert_cline(p)` from `Src/Zle/compmatch.c:270`.
+/// WARNING: param names don't match C — Rust=() vs C=(p)
 pub fn revert_cline(                                                         // c:270
     mut p: Option<Box<crate::ported::zle::comp_h::Cline>>,
 ) -> Option<Box<crate::ported::zle::comp_h::Cline>> {                        // c:269
@@ -283,7 +280,7 @@ pub fn revert_cline(                                                         // 
     r                                                                        // c:280 return r
 }
 
-/// Port of `cp_cline(l, deep)` from `Src/Zle/compmatch.c:189`.
+/// Port of `cp_cline(Cline l, int deep)` from `Src/Zle/compmatch.c:189`.
 /// ```c
 /// Cline
 /// cp_cline(Cline l, int deep)
@@ -308,7 +305,7 @@ pub fn revert_cline(                                                         // 
 /// Deep- or shallow-copy a Cline list. `deep` recursively copies
 /// the prefix/suffix sub-lists too. The C source draws from a
 /// freecl free-list when available — Rust just heap-allocates.
-/// Port of `cp_cline(l, deep)` from `Src/Zle/compmatch.c:190`.
+/// WARNING: param names don't match C — Rust=(deep) vs C=(l, deep)
 pub fn cp_cline(                                                             // c:190
     l: Option<&crate::ported::zle::comp_h::Cline>,
     deep: i32,
@@ -348,7 +345,7 @@ pub fn cp_cline(                                                             // 
     r                                                                        // c:212 return r
 }
 
-/// Port of `free_cline(l)` from `Src/Zle/compmatch.c:171`.
+/// Port of `free_cline(Cline l)` from `Src/Zle/compmatch.c:171`.
 /// ```c
 /// void
 /// free_cline(Cline l)
@@ -366,9 +363,8 @@ pub fn cp_cline(                                                             // 
 /// ```
 /// Free a Cline list. C pushes onto a `freecl` free-list to recycle;
 /// Rust just drops via Box.
-/// Port of `free_cline(l)` from `Src/Zle/compmatch.c:171`.
-pub fn free_cline(l: Option<Box<crate::ported::zle::comp_h::Cline>>) {       // c:171
-    // c:176-183 — walk; free each prefix/suffix recursively. In Rust
+pub fn free_cline(l: Option<Box<crate::ported::zle::comp_h::Cline>>) {       // c:172
+    // c:172-183 — walk; free each prefix/suffix recursively. In Rust
     // dropping the Box of the list head triggers Drop on `next`/
     // `prefix`/`suffix` chains automatically. `freecl` recycling
     // is a C-only zhalloc optimisation that doesn't apply here.
@@ -395,7 +391,7 @@ pub static MATCHPARTS: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cli
 /// `Src/Zle/compmatch.c:294`. Inner cline list (prefix/suffix sub-list).
 pub static MATCHSUBS: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>> = OnceLock::new();   // c:294
 
-/// Port of `start_match()` from `Src/Zle/compmatch.c:299`.
+/// Port of `start_match()` from `Src/Zle/compmatch.c:300`.
 /// ```c
 /// static void
 /// start_match(void)
@@ -407,8 +403,8 @@ pub static MATCHSUBS: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Clin
 /// }
 /// ```
 /// Reset the per-match globals so a fresh pattern run starts clean.
-pub fn start_match() {                                                       // c:299
-    // c:302-303 — `if (matchbuf) *matchbuf = '\0'`.
+pub fn start_match() {                                                       // c:300
+    // c:300-303 — `if (matchbuf) *matchbuf = '\0'`.
     MATCHBUF
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
@@ -419,7 +415,7 @@ pub fn start_match() {                                                       // 
     *MATCHSUBS.get_or_init(|| Mutex::new(None)).lock().unwrap() = None;
 }
 
-/// Port of `abort_match()` from `Src/Zle/compmatch.c:311`.
+/// Port of `abort_match()` from `Src/Zle/compmatch.c:312`.
 /// ```c
 /// static void
 /// abort_match(void)
@@ -430,8 +426,8 @@ pub fn start_match() {                                                       // 
 /// }
 /// ```
 /// Tear down the per-match cline lists when a match attempt fails.
-pub fn abort_match() {                                                       // c:311
-    // c:314-315 — `free_cline(matchparts); free_cline(matchsubs)`.
+pub fn abort_match() {                                                       // c:312
+    // c:312-315 — `free_cline(matchparts); free_cline(matchsubs)`.
     let parts = MATCHPARTS
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -460,7 +456,7 @@ pub fn abort_match() {                                                       // 
 /// Direct port of `mod_export convchar_t pattern_match_equivalence(
 ///                    Cpattern lp, convchar_t wind, int wmtp,
 ///                    convchar_t wchr)`
-/// from `Src/Zle/compmatch.c:1316-1380`. Looks up the line-side
+/// from `Src/Zle/compmatch.c:1316`. Looks up the line-side
 /// equivalence-class member that pairs with word-side index
 /// `wind` (1-based), then resolves case-class crossings via the
 /// PP_UPPER/PP_LOWER pair.
@@ -849,7 +845,7 @@ mod tests {
 }
 
 /// Direct port of `mod_export void add_bmatchers(Cmatcher m)` from
-/// `Src/Zle/compmatch.c:101-115`. Walks the supplied Cmatcher chain
+/// `Src/Zle/compmatch.c:101`. Walks the supplied Cmatcher chain
 /// (the head of `def->matcher` at call sites) and prepends each
 /// matcher that qualifies for brace-matching to the file-scope
 /// `bmatchers` Cmlist. Original chain head is appended after the new
@@ -911,7 +907,7 @@ pub fn add_bmatchers(m: Option<&crate::ported::zle::comp_h::Cmatcher>) {     // 
 ///                                            char *o, int ol,
 ///                                            char *s, int sl,
 ///                                            int osl, int sfx)`
-/// from `Src/Zle/compmatch.c:373-444`. Appends a partial match into
+/// from `Src/Zle/compmatch.c:373`. Appends a partial match into
 /// `MATCHPARTS`, splitting the new part via `bld_parts` per the
 /// matcher's anchor rules and consuming any pending `MATCHSUBS`
 /// nodes into the new tail.
@@ -1037,16 +1033,16 @@ pub fn add_match_part(
     }
 }
 
-/// File-scope `Cline matchlastpart` from `Src/Zle/compmatch.c:292`.
+/// File-scope `Cline matchlastpart` from `Src/Zle/compmatch.c:327`.
 pub static MATCHLASTPART: std::sync::OnceLock<std::sync::Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>>
     = std::sync::OnceLock::new();                                            // c:292
 
 /// Direct port of `static void add_match_str(Cmatcher m, char *l,
 ///                                          char *w, int wl, int sfx)`
-/// from `Src/Zle/compmatch.c:326-370`. Pushes the string `w` (or
+/// from `Src/Zle/compmatch.c:327`. Pushes the string `w` (or
 /// `l` when `m & CMF_LINE`) of length `wl` into the file-scope
 /// `MATCHBUF` accumulator; `sfx` prepends instead of appends.
-pub fn add_match_str(m: Option<&crate::ported::zle::comp_h::Cmatcher>,        // c:326
+pub fn add_match_str(m: Option<&crate::ported::zle::comp_h::Cmatcher>,        // c:327
                      l: &str, w: &str, mut wl: i32, sfx: i32)
 {
     use crate::ported::zle::comp_h::CMF_LINE;
@@ -1080,13 +1076,13 @@ pub fn add_match_str(m: Option<&crate::ported::zle::comp_h::Cmatcher>,        //
     }
 }
 
-/// File-scope `int matchbufadded` from `Src/Zle/compmatch.c:289`.
+/// File-scope `int matchbufadded` from `Src/Zle/compmatch.c:446`.
 pub static MATCHBUFADDED: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);                                    // c:289
 
 /// Direct port of `static void add_match_sub(Cmatcher m, char *l, int ll,
 ///                                          char *w, int wl)` from
-/// `Src/Zle/compmatch.c:446-510`. Pushes one sub-match cline node
+/// `Src/Zle/compmatch.c:446`. Pushes one sub-match cline node
 /// into the file-scope `MATCHSUBS` / `MATCHLASTSUB` linked list.
 /// Called from match_str during a CMF_RIGHT anchor match.
 pub fn add_match_sub(
@@ -1194,14 +1190,15 @@ pub fn bld_line(
     consumed                                                                 // c:1991
 }
 
-/// Port of `bld_parts(str, len, plen, lp, lprem)` from Src/Zle/compmatch.c:1638.
+/// Port of `bld_parts(char *str, int len, int plen, Cline *lp, Cline *lprem)` from Src/Zle/compmatch.c:1638.
 /// Direct port of `static Cline bld_parts(char *str, int len, int plen,
 ///                                        Cline *lp, Cline *lprem)`
-/// from `Src/Zle/compmatch.c:1638-1734`. Splits the candidate string
+/// from `Src/Zle/compmatch.c:1638`. Splits the candidate string
 /// `str[..len]` into a Cline chain anchored by every CMF_RIGHT
 /// matcher in `bmatchers`. `plen` is the active prefix length;
 /// trailing remainder (after the last anchor) goes into `*lprem`,
 /// last node into `*lp`.
+/// WARNING: param names don't match C — Rust=(str, len, plen, lprem) vs C=(str, len, plen, lp, lprem)
 pub fn bld_parts(
     str: &str, len: i32, mut plen: i32,                                     // c:1638
     lp: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
@@ -1287,16 +1284,16 @@ pub fn bld_parts(
 pub struct cmdata {                                                          // c:2142
     pub cl:   Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143
     pub pcl:  Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143
-    pub str: String,                                                        // c:2144
-    pub astr: String,                                                        // c:2144
-    pub len:  i32,                                                           // c:2145
-    pub alen: i32,                                                           // c:2145
-    pub olen: i32,                                                           // c:2145
-    pub line: i32,                                                           // c:2145
+    pub str: String,                                                        // c:2152
+    pub astr: String,                                                        // c:2152
+    pub len:  i32,                                                           // c:2152
+    pub alen: i32,                                                           // c:2152
+    pub olen: i32,                                                           // c:2152
+    pub line: i32,                                                           // c:2152
 }
 
 /// Direct port of `static int check_cmdata(cmdata md, int sfx)` from
-/// `Src/Zle/compmatch.c:2152-2186`. Refills `md` from the next Cline
+/// `Src/Zle/compmatch.c:2152`. Refills `md` from the next Cline
 /// node when its `len` runs to zero; returns 1 when the chain is
 /// exhausted, 0 otherwise.
 pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {                      // c:2152
@@ -1442,19 +1439,20 @@ pub fn get_cline(l: Option<String>, ll: i32, w: Option<String>, wl: i32,    // c
 /// "return n unchanged" — the C "no-merge-needed first invocation"
 /// path at c:2710 (`if (!o) return n`).
 pub fn join_clines(o: i32, n: i32) -> i32 {                                  // c:2706
-    // c:2710 — `if (!o) return n` (first invocation, no merge yet).
+    // c:2706 — `if (!o) return n` (first invocation, no merge yet).
     if o == 0 { return n; }
     // Full driver merges o and n via the inner fns. Result indices
     // line up with the caller's Cline chain bookkeeping.
     n
 }
 
-/// Port of `join_mid(o, n)` from Src/Zle/compmatch.c:2608.
+/// Port of `join_mid(Cline o, Cline n)` from Src/Zle/compmatch.c:2608.
 /// Direct port of `static void join_mid(Cline o, Cline n)` from
-/// `Src/Zle/compmatch.c:2608-2640`. Joins the mid-anchor parts of
+/// `Src/Zle/compmatch.c:2608`. Joins the mid-anchor parts of
 /// two Cline lists. If `o` already carries CLF_JOIN, the suffix
 /// is in `o->suffix`; otherwise both lists are at "first time" so
 /// the prefix field still holds the full sub-list.
+/// WARNING: param names don't match C — Rust=(o) vs C=(o, n)
 pub fn join_mid(o: &mut crate::ported::zle::comp_h::Cline,                   // c:2608
                 n: &mut crate::ported::zle::comp_h::Cline)
 {
@@ -1514,7 +1512,7 @@ pub fn join_mid(o: &mut crate::ported::zle::comp_h::Cline,                   // 
     n.suffix = None;                                                         // c:2639
 }
 
-/// Port of `join_psfx(ot, nt, orest, nrest, sfx)` from Src/Zle/compmatch.c:2444.
+/// Port of `join_psfx(Cline ot, Cline nt, Cline *orest, Cline *nrest, int sfx)` from Src/Zle/compmatch.c:2444.
 /// Direct port of `static void join_psfx(Cline ot, Cline nt, Cline
 ///                                       *orest, Cline *nrest, int sfx)`
 /// from `Src/Zle/compmatch.c:2444-2606`. Walks both prefix/suffix
@@ -1581,9 +1579,8 @@ pub fn join_psfx(
 /// `cmatcher`-driven equivalence map, `matchbuf`/`matchbuflen`
 /// growable buffer, `start_match`/`end_match` framing. Returns
 /// `None` until `pattern_match1` lands.
-/// Direct port of `static char *join_strs(int la, char *sa, int lb,
 ///                                         char *sb)` from
-/// `Src/Zle/compmatch.c:1994-2105`. Tries to construct a common
+/// `Src/Zle/compmatch.c:1994`. Tries to construct a common
 /// string for `sa[..la]` and `sb[..lb]` by either taking equal
 /// chars verbatim or using a no-anchor matcher's bld_line synthesis.
 /// Returns the merged string on success, None when no match advances
@@ -1672,7 +1669,7 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str)               // 
 
 /// Direct port of `static Cline join_sub(cmdata md, char *str, int len,
 ///                                       int *mlen, int sfx, int join)`
-/// from `Src/Zle/compmatch.c:2212-2299`. Tries to match the new
+/// from `Src/Zle/compmatch.c:2212`. Tries to match the new
 /// substring `str[..len]` against the data currently in `md` via
 /// one of the no-anchor matchers in `bmatchers`; on success
 /// returns the matched-portion Cline and updates `md`/`*mlen`.
@@ -1787,12 +1784,13 @@ pub fn join_sub(md: &mut cmdata, str: &str, len: i32, mlen: &mut i32,       // c
     None                                                                     // c:2298
 }
 
-/// Port of `pattern_match(p, s, wp, ws)` from Src/Zle/compmatch.c:1548.
+/// Port of `pattern_match(Cpattern p, char *s, Cpattern wp, char *ws)` from Src/Zle/compmatch.c:1548.
 /// Direct port of `mod_export int pattern_match(Cpattern p, char *s,
 ///                                             Cpattern wp, char *ws)`
-/// from `Src/Zle/compmatch.c:1547-1614`. Walks two parallel pattern +
+/// from `Src/Zle/compmatch.c:1548`. Walks two parallel pattern +
 /// string pairs (line `p`/`s` vs word `wp`/`ws`) verifying that each
 /// position matches and that paired pattern-class indices line up.
+/// WARNING: param names don't match C — Rust=(p, wp, ws) vs C=(p, s, wp, ws)
 pub fn pattern_match(
     p: Option<&crate::ported::zle::comp_h::Cpattern>,                        // c:1548
     s: &str,
@@ -1853,7 +1851,7 @@ pub fn pattern_match(
 ///                                Cpattern wp, convchar_t *wsc,
 ///                                int wsclen, Cpattern prestrict,
 ///                                ZLE_STRING_T new_line)`
-/// from `Src/Zle/compmatch.c:1383-1546`. The restricted variant of
+/// from `Src/Zle/compmatch.c:1383`. The restricted variant of
 /// `pattern_match`: each line-side char must additionally match
 /// the corresponding `prestrict` Cpattern. Used when building the
 /// line-string from a partial match. Writes the deduced line chars
@@ -1968,13 +1966,14 @@ pub fn pattern_match_restrict(
     }
 }
 
-/// Port of `pattern_match1(p, c, mtp)` from Src/Zle/compmatch.c:1269.
+/// Port of `pattern_match1(Cpattern p, convchar_t c, int *mtp)` from Src/Zle/compmatch.c:1269.
 /// Direct port of `mod_export convchar_t pattern_match1(Cpattern p,
 ///                                    convchar_t c, int *mtp)`
-/// from `Src/Zle/compmatch.c:1269-1297`. Tests whether `p` matches
+/// from `Src/Zle/compmatch.c:1269`. Tests whether `p` matches
 /// the single char `c`, returning the matched-char (1 for ANY, the
 /// char for CHAR, or for EQUIV the equivalence-class index+1) or 0
 /// on miss. `mtp` is non-zero only for the EQUIV path.
+/// WARNING: param names don't match C — Rust=(p, mtp) vs C=(p, c, mtp)
 pub fn pattern_match1(p: &crate::ported::zle::comp_h::Cpattern,              // c:1269
                       c: u32, mtp: &mut i32) -> u32
 {
@@ -2037,7 +2036,7 @@ fn patmatchrange(s: Option<&str>, c: u32, indp: Option<&mut u32>, _mtp: Option<&
 
 /// Direct port of `static int sub_join(Cline a, Cline b, Cline e,
 ///                                     int anew)` from
-/// `Src/Zle/compmatch.c:2649-2706`. Helper for join_mid: takes a
+/// `Src/Zle/compmatch.c:2649`. Helper for join_mid: takes a
 /// trailing sub-list `b..e` and joins it with `a->prefix`, returning
 /// the byte-diff (max - min) when join_psfx succeeds, else 0.
 ///
@@ -2077,7 +2076,7 @@ pub fn sub_join(a: &mut crate::ported::zle::comp_h::Cline,                   // 
 
 /// Direct port of `static int sub_match(cmdata md, char *str, int len,
 ///                                       int sfx)` from
-/// `Src/Zle/compmatch.c:2301-2442`. Accumulates the longest common
+/// `Src/Zle/compmatch.c:2301`. Accumulates the longest common
 /// prefix (or suffix when `sfx` set) between the substring
 /// `str[..len]` and the data in `md`, advancing `md.str`/`md.len`
 /// as it consumes characters.
@@ -2160,12 +2159,12 @@ pub fn sub_match(md: &mut cmdata, str: &str, len: i32, sfx: i32) -> i32 {   // c
     ret                                                                      // c:2441
 }
 
-/// Port of `undo_cmdata(md, sfx)` from Src/Zle/compmatch.c:2188.
+/// Port of `undo_cmdata(Cmdata md, int sfx)` from Src/Zle/compmatch.c:2188.
 /// Direct port of `static Cline undo_cmdata(cmdata md, int sfx)` from
-/// `Src/Zle/compmatch.c:2187-2207`. Puts the not-yet-matched portion
+/// `Src/Zle/compmatch.c:2188`. Puts the not-yet-matched portion
 /// of `md` back into the previous cline node so it can be revisited
 /// on a different match path.
-pub fn undo_cmdata(md: &cmdata, sfx: i32) -> Option<Box<crate::ported::zle::comp_h::Cline>> { // c:2187
+pub fn undo_cmdata(md: &cmdata, sfx: i32) -> Option<Box<crate::ported::zle::comp_h::Cline>> { // c:2188
     use crate::ported::zle::comp_h::CLF_LINE;
     let mut r = md.pcl.as_deref().cloned()?;                                 // c:2189 r = md->pcl
 

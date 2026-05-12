@@ -177,20 +177,20 @@ pub static traplocallevel: AtomicI32 = AtomicI32::new(0);                     //
 pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
 
 /// Direct port of `void queue_traps(int wait_cmd)` from
-/// `Src/signals.c:1024`. Increments `trap_queueing_enabled` so
+/// `Src/signals.c:1041`. Increments `trap_queueing_enabled` so
 /// signals delivered while a long-running builtin is mid-flight
 /// stash into `trap_queue[]` instead of dispatching inline.
 pub fn queue_traps(_wait_cmd: i32) {                                          // c:1024
     trap_queueing_enabled.fetch_add(1, Ordering::SeqCst);
 }
 
-// Disable trap queuing and run the traps.                                 // c:1037
+// Disable trap queuing and run the traps.                                 // c:1041
 /// Direct port of `void unqueue_traps(void)` from
 /// `Src/signals.c:1041`. Disables `trap_queueing_enabled` and
 /// flushes the pending queue by dispatching each sig through
 /// `handletrap()`.
 pub fn unqueue_traps() {                                                     // c:1041
-    // c:1044 — `trap_queueing_enabled = 0;`
+    // c:1041 — `trap_queueing_enabled = 0;`
     trap_queueing_enabled.store(0, Ordering::SeqCst);
     // c:1046 — `while (trap_queue_front != trap_queue_rear) (void) handletrap(...);`
     loop {
@@ -204,7 +204,7 @@ pub fn unqueue_traps() {                                                     // 
     }
 }
 
-/// Port of `signal_block(set)` from `Src/signals.c:175`.
+/// Port of `signal_block(sigset_t set)` from `Src/signals.c:175`.
 ///
 /// C body:
 /// ```c
@@ -224,7 +224,7 @@ pub fn signal_block(set: &libc::sigset_t) -> libc::sigset_t {                // 
     oset
 }
 
-/// Port of `signal_unblock(set)` from `Src/signals.c:189`.
+/// Port of `signal_unblock(sigset_t set)` from `Src/signals.c:189`.
 ///
 /// C body: `sigprocmask(SIG_UNBLOCK, &set, &oset); return oset;`
 #[cfg(unix)]
@@ -343,7 +343,7 @@ pub fn is_interact() -> bool {
     interact_lock().load(std::sync::atomic::Ordering::SeqCst)
 }
 
-/// Port of `install_handler(sig)` from `Src/signals.c:100`.
+/// Port of `install_handler(int sig)` from `Src/signals.c:100`.
 ///
 /// C body:
 /// ```c
@@ -361,7 +361,7 @@ pub fn is_interact() -> bool {
 /// signal handlers interrupt blocked reads (so ^C breaks out of
 /// `read` etc.).
 #[cfg(unix)]
-/// Port of `install_handler(sig)` from `Src/signals.c:100`.
+/// Port of `install_handler(int sig)` from `Src/signals.c:100`.
 pub fn install_handler(sig: i32) {                                           // c:100
     unsafe {
         let mut act: libc::sigaction = std::mem::zeroed();
@@ -380,8 +380,8 @@ pub fn install_handler(sig: i32) {                                           // 
     }
 }
 
-// enable ^C interrupts                                                     // c:114
-/// Port of `intr()` from `Src/signals.c:117`.
+// enable ^C interrupts                                                     // c:118
+/// Port of `intr()` from `Src/signals.c:118`.
 ///
 /// C body: `if (interact) install_handler(SIGINT);` — the
 /// interactive-shell-only SIGINT installer used by `bin_set` /
@@ -395,7 +395,7 @@ pub fn intr() {                                                              // 
 
 /// End the current trap scope — restore any traps that were
 /// Direct port of `void endtrapscope(void)` from
-/// `Src/signals.c:880-971`. Pops the pending entries from
+/// `Src/signals.c:880`. Pops the pending entries from
 /// `SAVETRAPS` whose `local > locallevel` (i.e. captured at a
 /// deeper scope) and restores each via `settrap`. The pending
 /// SIGEXIT trap (if any) is split out so it runs AFTER the
@@ -462,7 +462,7 @@ pub fn endtrapscope() {                                                      // 
 /// Total trap count including EXIT and ERR
 
 
-/// Port of `signal_suspend(wait_cmd)` from `Src/signals.c:214`.
+/// Port of `signal_suspend(UNUSED(int sig), int wait_cmd)` from `Src/signals.c:214`.
 ///
 /// C body:
 /// ```c
@@ -485,7 +485,7 @@ pub fn endtrapscope() {                                                      // 
 /// completely wrong (that's job-control suspend, not "wait for
 /// signal delivery"). Now real port via `sigsuspend(2)`.
 #[cfg(unix)]
-/// Port of `signal_suspend(sig, wait_cmd)` from `Src/signals.c:214`.
+/// Port of `signal_suspend(UNUSED(int sig), int wait_cmd)` from `Src/signals.c:214`.
 #[allow(unused_variables)]
 pub fn signal_suspend(sig: i32, wait_cmd: bool) -> i32 {                    // c:214
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
@@ -524,7 +524,7 @@ pub fn signal_suspend(sig: i32, wait_cmd: bool) -> i32 {                    // c
 /// when THIS scope ends, not the outer one's).
 /// Port of `starttrapscope` from `Src/signals.c:855`.
 pub fn starttrapscope() {                                                    // c:855
-    // c:858 — `if (intrap) return`.
+    // c:855 — `if (intrap) return`.
     if intrap.load(Ordering::Relaxed) != 0 {
         return;
     }
@@ -556,7 +556,7 @@ pub fn starttrapscope() {                                                    // 
 /// if (interact)
 ///     signal_ignore(SIGINT);
 /// ```
-// disable ^C interrupts                                                    // c:124
+// disable ^C interrupts                                                    // c:128
 /// Disables SIGINT delivery in interactive mode (sets the
 /// disposition to SIG_IGN). The `if (interact)` gate matches C.
 #[cfg(unix)]
@@ -576,7 +576,7 @@ pub fn nointr() {                                                            // 
 ///     signal_block(signal_mask(SIGINT));
 /// ```
 ///
-// temporarily block ^C interrupts                                          // c:135
+// temporarily block ^C interrupts                                          // c:139
 /// Blocks SIGINT temporarily — used by code paths that can't
 /// handle interruption mid-flight (e.g. after fork before exec).
 #[cfg(unix)]
@@ -594,7 +594,7 @@ pub fn holdintr() {                                                          // 
 /// if (interact)
 ///     signal_unblock(signal_mask(SIGINT));
 /// ```
-// release ^C interrupts                                                    // c:145
+// release ^C interrupts                                                    // c:149
 ///
 /// Inverse of [`holdintr`].
 #[cfg(unix)]
@@ -605,7 +605,7 @@ pub fn noholdintr() {                                                        // 
     }
 }
 
-/// Port of `signal_mask(sig)` from `Src/signals.c:160`.
+/// Port of `signal_mask(int sig)` from `Src/signals.c:160`.
 ///
 /// C body:
 /// ```c
@@ -619,7 +619,7 @@ pub fn noholdintr() {                                                        // 
 /// Builds a sigset containing only the given signal; `sig == 0`
 /// returns an empty set (matches the explicit C check).
 #[cfg(unix)]
-/// Port of `signal_mask(sig)` from `Src/signals.c:160`.
+/// Port of `signal_mask(int sig)` from `Src/signals.c:160`.
 pub fn signal_mask(sig: i32) -> libc::sigset_t {
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
@@ -631,7 +631,7 @@ pub fn signal_mask(sig: i32) -> libc::sigset_t {
     set
 }
 
-/// Port of `signal_setmask(set)` from `Src/signals.c:203`.
+/// Port of `signal_setmask(sigset_t set)` from `Src/signals.c:203`.
 ///
 /// C body: `sigprocmask(SIG_SETMASK, &set, &oset); return oset;`
 ///
@@ -807,15 +807,15 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 }
             }
         }
-        _ => {                                                                // c:494
+        _ => {                                                                // c:506
             let _ = handletrap(sig);
         }
     }
 }
 
 /// Kill all running jobs with the given signal.
-/// Port of `killrunjobs(from_signal)` from Src/signals.c:506.
-// SIGHUP any jobs left running                                             // c:502
+/// Port of `killrunjobs(int from_signal)` from Src/signals.c:506.
+// SIGHUP any jobs left running                                             // c:506
 #[cfg(unix)]
 pub fn killrunjobs(from_signal: i32) {
     // This would need access to the job table
@@ -824,8 +824,8 @@ pub fn killrunjobs(from_signal: i32) {
 }
 
 /// Kill a specific job by process group.
-/// Port of `killjb(jn, sig)` from Src/signals.c:529.
-// send a signal to a job (simply involves kill if monitoring is on)       // c:525
+/// Port of `killjb(Job jn, int sig)` from Src/signals.c:529.
+// send a signal to a job (simply involves kill if monitoring is on)       // c:529
 #[cfg(unix)]
 pub fn killjb(jn: i32, sig: i32) -> i32 {                                 // c:529
     if jn > 0 {
@@ -865,7 +865,7 @@ pub static DONTSAVETRAP: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 
 /// Direct port of `void dosavetrap(int sig, int level)` from
-/// `Src/signals.c:626-690`. Captures the current trap state for
+/// `Src/signals.c:626`. Captures the current trap state for
 /// `sig` into a `savetrap` and pushes it onto `SAVETRAPS`.
 pub fn dosavetrap(sig: i32, level: i32) {                                    // c:626
     let flags = sigtrapped.lock()
@@ -893,19 +893,19 @@ pub fn dosavetrap(sig: i32, level: i32) {                                    // 
 /// trap-only signal at the top of the table.
 // SIGEXIT already declared at line 45.
 
-// sig is index into the table of trapped signals.                         // c:681
-//                                                                          // c:682
-// l is the list to be eval'd for a trap defined with the "trap"            // c:683
-// builtin and should be NULL for a function trap.                          // c:684
+// sig is index into the table of trapped signals.                         // c:693
+//                                                                          // c:693
+// l is the list to be eval'd for a trap defined with the "trap"            // c:693
+// builtin and should be NULL for a function trap.                          // c:693
 /// Direct port of `mod_export int settrap(int sig, Eprog l, int flags)`
-/// from `Src/signals.c:693-757`. Calls `unsettrap` unconditionally
+/// from `Src/signals.c:693`. Calls `unsettrap` unconditionally
 /// (so the previous trap is saved into `SAVETRAPS` if needed), then
 /// writes `l` into `siglists[sig]` and sets `sigtrapped[sig]` to
 /// either `ZSIG_IGNORED` (empty list + non-ZSIG_FUNC) or
 /// `ZSIG_TRAPPED`, then ORs in `flags` and the
 /// `locallevel << ZSIG_SHIFT` scope tag.
 pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> i32 {  // c:693
-    if sig == -1 {                                                            // c:695
+    if sig == -1 {                                                            // c:693
         return 1;
     }
     // c:2563 (zsh.h) — `jobbing` is `isset(MONITOR)`. Options layer
@@ -971,7 +971,7 @@ pub fn settrap(sig: i32, l: Option<crate::ported::zsh_h::Eprog>, flags: i32) -> 
         }
     }
     unqueue_signals();
-    0                                                                         // c:755
+    0                                                                         // c:759
 }
 
 /// Direct port of `mod_export void unsettrap(int sig)` from
@@ -1039,7 +1039,7 @@ pub fn handletrap(sig: i32) -> i32 {                                         // 
     1
 }
 
-// Standard call to execute a trap for a given signal.                     // c:1241
+// Standard call to execute a trap for a given signal.                     // c:1245
 /// Port of `mod_export int dotrap(int sig)` from
 /// `Src/signals.c:1245`. The synchronous trap dispatcher — looks
 /// up `siglists[sig]` (or shfunctab TRAPxxx for ZSIG_FUNC) and
@@ -1063,7 +1063,7 @@ pub fn dotrap(sig: i32) -> i32 {                                             // 
 }
 
 /// Remove a trap completely and reset to default disposition.
-/// Port of `removetrap(sig)` from Src/signals.c:772.
+/// Port of `removetrap(int sig)` from Src/signals.c:772.
 pub fn removetrap(sig: i32) {
     unsettrap(sig);
     // Also restore default handler
@@ -1074,7 +1074,7 @@ pub fn removetrap(sig: i32) {
 }
 
 /// Resolve a real-time signal name to its number.
-/// Port of `rtsigno(signame)` from Src/signals.c:1291 — Linux-only;
+/// Port of `rtsigno(const char* signame)` from Src/signals.c:1291 — Linux-only;
 /// macOS lacks `SIGRTMIN`/`SIGRTMAX`.
 ///
 /// SIGRTMIN is typically 34 on Linux, not available on macOS
@@ -1099,7 +1099,8 @@ pub fn rtsigno(signame: i32) -> Option<i32> {
 }
 
 /// Resolve a real-time signal number to its `RTMIN+N` name.
-/// Port of `rtsigname(signo, alt)` from Src/signals.c:1317.
+/// Port of `rtsigname(int signo, int alt)` from Src/signals.c:1317.
+/// WARNING: param names don't match C — Rust=(sig) vs C=(signo, alt)
 pub fn rtsigname(sig: i32) -> String {
     #[cfg(target_os = "linux")]
     {

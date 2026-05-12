@@ -82,7 +82,7 @@ impl ZleState {
     }
 
     /// Pop the most recent undo snapshot back into the buffer.
-    /// Port of `undo(args)` at Src/Zle/zle_utils.c:1601 against the
+    /// Port of `undo(char **args)` at Src/Zle/zle_utils.c:1601 against the
     /// pair-stack model — pushes the current state to the redo stack
     /// before restoring.
     pub fn undo(&mut self) -> bool {
@@ -97,7 +97,7 @@ impl ZleState {
     }
 
     /// Pop the most recent redo snapshot.
-    /// Port of `redo(args)` at Src/Zle/zle_utils.c:1661 — mirrors the
+    /// Port of `redo(UNUSED(char **args))` at Src/Zle/zle_utils.c:1661 — mirrors the
     /// pair-stack version of undo, pushing the current state back to
     /// the undo stack before restoring.
     pub fn redo(&mut self) -> bool {
@@ -112,7 +112,7 @@ impl ZleState {
     }
 
     /// Push text onto the kill ring (newest-first).
-    /// Port of `cuttext(line, ct, flags)` at Src/Zle/zle_utils.c:946 simplified to a
+    /// Port of `cuttext(ZLE_STRING_T line, int ct, int flags)` at Src/Zle/zle_utils.c:946 simplified to a
     /// front-push without the CUT_FRONT/CUT_REPLACE/CUT_RAW flag
     /// machinery the C source uses. Trims to kill_ring_max via the
     /// LRU pop_back, mirroring zsh's `KILL_RING_SIZE` cap.
@@ -124,7 +124,7 @@ impl ZleState {
     }
 
     /// Insert the most-recent kill-ring entry at the cursor.
-    /// Port of `yank(args)` from Src/Zle/zle_misc.c:533 against the
+    /// Port of `yank(UNUSED(char **args))` from Src/Zle/zle_misc.c:533 against the
     /// String-buffer ZleState model. Records the inserted span in
     /// `last_yank_pos` so a subsequent yank-pop can replace it.
     pub fn yank(&mut self) -> Option<String> {
@@ -152,7 +152,7 @@ impl ZleState {
     }
 
     /// Replace the just-yanked region with the previous kill-ring entry.
-    /// Port of `yankpop(args)` from Src/Zle/zle_misc.c:728 against the
+    /// Port of `yankpop(UNUSED(char **args))` from Src/Zle/zle_misc.c:728 against the
     /// String-buffer model. Drains the prior yank's span and pastes the
     /// next ring entry; the C source rotates `kct` through the
     /// kill-ring + kctbuf pair in the same fashion.
@@ -315,7 +315,7 @@ impl ZleManager {
     }
 
     /// Bind a key sequence to a widget in a named keymap.
-    /// Port of `bindkey(km, seq, bind, str)` from Src/Zle/zle_keymap.c:566 against the
+    /// Port of `bindkey(Keymap km, const char *seq, Thingy bind, char *str)` from Src/Zle/zle_keymap.c:566 against the
     /// KeymapName-keyed table. The key string accepts the canonical
     /// zsh escape forms (^X, \\eX, etc.) — see `Keymap::normalize_keys`
     /// for the conversion.
@@ -353,7 +353,7 @@ impl ZleManager {
     }
 
     /// List every registered widget name (built-in + user).
-    /// Port of `bin_zle_list(args, ops)` at Src/Zle/zle_thingy.c:393 (the
+    /// Port of `bin_zle_list(UNUSED(char *name), char **args, Options ops, UNUSED(char func))` at Src/Zle/zle_thingy.c:393 (the
     /// listing branch of `zle -l` / `zle -la`). The C source iterates
     /// the thingytab hashtable; we union the static BUILTIN_WIDGETS
     /// slice with the user_widgets map.

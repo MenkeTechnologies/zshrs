@@ -280,6 +280,7 @@ pub struct gmatch {
 ///   bits << GS_SHIFT  — same keys, follow-link variant
 ///                       (GS__SIZE / GS__ATIME / …)
 ///   GS_DESC bit       — reverse direction (`O` qualifier instead of `o`)
+/// WARNING: param names don't match C — Rust=(b, specs, numeric_sort) vs C=(a, b)
 pub fn gmatchcmp(                                                            // c:936
                                                                              a: &gmatch,
                                                                              b: &gmatch,
@@ -1474,8 +1475,9 @@ pub fn haswilds(s: &str) -> bool {                                          // c
 
 /// Simple glob pattern matching
 /// Match a glob pattern against a single string.
-/// Port of `matchpat(a, b)` from Src/glob.c:2514 — same
+/// Port of `matchpat(char *a, char *b)` from Src/glob.c:2514 — same
 /// `EXTENDED_GLOB`/`NO_CASE_GLOB` option handling.
+/// WARNING: param names don't match C — Rust=(pattern, text, extended, case_sensitive) vs C=(a, b)
 pub fn matchpat(pattern: &str, text: &str, extended: bool, case_sensitive: bool) -> bool { // c:2514
     let pat = if case_sensitive {
         pattern.to_string()
@@ -1571,11 +1573,12 @@ fn patmatch(pattern: &str, text: &str, extended: bool) -> bool {
 }
 
 /// Match a single character against a `[...]` bracket expression.
-/// Port of `patmatchrange(range, ch, indptr, mtp)` from Src/pattern.c:3856 — the C variant
+/// Port of `patmatchrange(char *range, int ch, int *indptr, int *mtp)` from Src/pattern.c:3856 — the C variant
 /// scans a pre-compiled range buffer with explicit indices; this Rust
 /// port consumes a peekable iterator over the live pattern string and
 /// returns whether `tc` matches (honoring `[!...]` / `[^...]` negation
 /// and `a-z` ranges, like the C source's range walk at line 3870).
+/// WARNING: param names don't match C — Rust=(pi, tc) vs C=(range, ch, indptr, mtp)
 fn patmatchrange(pi: &mut std::iter::Peekable<std::str::Chars>, tc: char) -> bool {
     let mut chars_in_class = Vec::new();
     let mut negate = false;
@@ -1624,7 +1627,7 @@ fn patmatchrange(pi: &mut std::iter::Peekable<std::str::Chars>, tc: char) -> boo
 /// File type character for -F style listing
 /// Render a mode bitmap as the `*` qualifier letter (`d`/`b`/
 /// `c`/`l`/`s`/`p`/etc.).
-/// Port of `file_type(filemode)` from Src/glob.c:2018.
+/// Port of `file_type(mode_t filemode)` from Src/glob.c:2018.
 pub fn file_type(filemode: u32) -> char {                                        // c:2018
     let fmt = filemode & libc::S_IFMT as u32;
     if fmt == libc::S_IFBLK as u32 {
@@ -1656,7 +1659,8 @@ pub fn file_type(filemode: u32) -> char {                                       
 
 /// Check if string has brace expansion
 /// Check whether a string has brace-expansion `{a,b}` content.
-/// Port of `hasbraces(str)` from Src/glob.c:2042.
+/// Port of `hasbraces(char *str)` from Src/glob.c:2042.
+/// WARNING: param names don't match C — Rust=(s, brace_ccl) vs C=(str)
 pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {                         // c:2042
     let mut depth = 0;
     let mut has_comma = false;
@@ -1708,8 +1712,9 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {                         // 
 
 /// Expand braces in a string
 /// Brace-expand a string into a flat list.
-/// Port of `xpandbraces(list, np)` from Src/glob.c:2276 — same
+/// Port of `xpandbraces(LinkList list, LinkNode *np)` from Src/glob.c:2276 — same
 /// `{a,b}` / `{1..10}` / `{a-z}` handling.
+/// WARNING: param names don't match C — Rust=(s, brace_ccl) vs C=(list, np)
 pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {                // c:2276
     if !hasbraces(s, brace_ccl) {
         return vec![s.to_string()];
@@ -2444,7 +2449,7 @@ fn glob_emit_path(path: &std::path::Path) -> String {
 // np points to a node in the list which will be expanded                  // c:1209
 // into a series of nodes.                                                  // c:1210
 /// Top-level glob entry point.
-/// Port of `zglob(list, np, nountok)` from Src/glob.c:1214. Reads all option flags
+/// Port of `zglob(LinkList list, LinkNode np, int nountok)` from Src/glob.c:1214. Reads all option flags
 /// (nullglob / extendedglob / dotglob / caseglob / globstarshort /
 /// bareglobqual / braceccl / markdirs / numericglobsort / …)
 /// directly from the canonical global option store via
@@ -2457,7 +2462,7 @@ pub fn glob(pattern: &str) -> Vec<String> {                                  // 
 
 /// Add path component (from glob.c addpath lines 263-274)
 /// Append a path component to a glob path buffer.
-/// Port of `addpath(s, l)` from Src/glob.c:265.
+/// Port of `addpath(char *s, int l)` from Src/glob.c:265.
 pub fn addpath(s: &mut String, l: &str) {                          // c:265
     s.push_str(l);
     if !s.ends_with('/') {
@@ -2467,7 +2472,7 @@ pub fn addpath(s: &mut String, l: &str) {                          // c:265
 
 /// Stat full path (from glob.c statfullpath lines 282-347)
 /// `stat`/`lstat` a (pathbuf, name) tuple.
-/// Port of `statfullpath(s, st, l)` from Src/glob.c:283.
+/// Port of `statfullpath(const char *s, struct stat *st, int l)` from Src/glob.c:283.
 pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<std::fs::Metadata> { // c:283
     let full = if st.is_empty() {
         if s.is_empty() {
@@ -2503,7 +2508,7 @@ pub fn is_symlink(path: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Match minimum distance for spelling correction (from glob.c mindist lines 3523-3575)
+/// Match minimum distance for spelling correction (from glob.c mindist line 4624)
 /// Edit-distance helper for `setopt CORRECT` glob fallback.
 /// Port of the `spdist()`-driven correction inside
 /// `findcmd()` (Src/exec.c) when adapted for glob targets.
@@ -2533,7 +2538,7 @@ pub fn mindist(dir: &str, name: &str, best: &mut String, exact: bool) -> usize {
 
 /// Parse qualifier (from glob.c qgetnum)
 /// Parse a numeric glob-qualifier argument.
-/// Port of `qgetnum(s)` from Src/glob.c:827.
+/// Port of `qgetnum(char **s)` from Src/glob.c:827.
 pub fn qgetnum(s: &str) -> Option<(i64, &str)> {                             // c:827
     let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     if end == 0 {
@@ -2546,8 +2551,8 @@ pub fn qgetnum(s: &str) -> Option<(i64, &str)> {                             // 
 /// Parse time modifier (from glob.c qualtime)
 /// Parse a time-unit glob-qualifier argument (`m`/`a`/`c`).
 /// Port of the time-conversion arms inside `qgetnum()`
-/// (Src/glob.c:827).
-pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {              // c:827
+/// (Src/glob.c:3872).
+pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {              // c:3872
     let (mut num, rest) = qgetnum(s)?;
 
     match units {
@@ -2564,7 +2569,7 @@ pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {              // c
 /// Parse size modifier (from glob.c qualsize)
 /// Parse a size-unit glob-qualifier argument (`L`).
 /// Port of the size-conversion arms inside `qgetnum()`
-/// (Src/glob.c:827).
+/// (Src/glob.c:3827).
 pub fn qualsize(s: &str, units: char) -> Option<(i64, &str)> {
     let (mut num, rest) = qgetnum(s)?;
 
@@ -2746,8 +2751,8 @@ pub struct MatchData {
     pub replacement: Option<String>,
 }
 
-/// Get match return value (from glob.c get_match_ret lines 2338-2420)
-/// Port of `get_match_ret(imd, b, e)` from `Src/glob.c:2550`.
+/// Get match return value (from glob.c get_match_ret line 2550)
+/// Port of `get_match_ret(Imatchdata imd, int b, int e)` from `Src/glob.c:2550`.
 pub fn get_match_ret(imd: &MatchData, b: usize, e: usize) -> String {
     if b >= e || b >= imd.str.len() {
         return String::new();
@@ -2757,8 +2762,9 @@ pub fn get_match_ret(imd: &MatchData, b: usize, e: usize) -> String {
     imd.str[b..e].to_string()
 }
 
-/// Compile pattern and get match info (from glob.c compgetmatch lines 2430-2510)
-/// Port of `compgetmatch(pat, flp, replstrp)` from `Src/glob.c:2650`.
+/// Compile pattern and get match info (from glob.c compgetmatch line 2650)
+/// Port of `compgetmatch(char *pat, int *flp, char **replstrp)` from `Src/glob.c:2650`.
+/// WARNING: param names don't match C — Rust=(pat) vs C=(pat, flp, replstrp)
 pub fn compgetmatch(pat: &str) -> Option<(String, MatchFlags)> {
     let mut flags = MatchFlags::default();
     let mut pattern = pat.to_string();
@@ -2786,11 +2792,11 @@ pub fn compgetmatch(pat: &str) -> Option<(String, MatchFlags)> {
     Some((pattern, flags))
 }
 
-/// Get pattern match with optional replacement (from glob.c getmatch lines 2520-2680)
+/// Get pattern match with optional replacement (from glob.c getmatch line 2710)
 ///
 /// This implements ${var#pat}, ${var##pat}, ${var%pat}, ${var%%pat},
 /// ${var/pat/repl}, ${var//pat/repl}
-/// Port of `getmatch(sp, pat, fl, n, replstr)` from `Src/glob.c:2710`.
+/// Port of `getmatch(char **sp, char *pat, int fl, int n, char *replstr)` from `Src/glob.c:2710`.
 pub fn getmatch(sp: &str, pat: &str, fl: MatchFlags, n: i32, replstr: Option<&str>) -> String {
     let chars: Vec<char> = sp.chars().collect();
     let len = chars.len();
@@ -2876,7 +2882,7 @@ pub fn getmatch(sp: &str, pat: &str, fl: MatchFlags, n: i32, replstr: Option<&st
 }
 
 /// Get match for array elements (from glob.c getmatcharr lines 2690-2750)
-/// Port of `getmatcharr(ap, pat, fl, n, replstr)` from `Src/glob.c:2727`.
+/// Port of `getmatcharr(char ***ap, char *pat, int fl, int n, char *replstr)` from `Src/glob.c:2727`.
 pub fn getmatcharr(
     ap: &[String],
     pat: &str,
@@ -2889,8 +2895,9 @@ pub fn getmatcharr(
         .collect()
 }
 
-/// Get match list for global replacement (from glob.c getmatchlist lines 2760-2850)
-/// Port of `getmatchlist(str, p, repllistp)` from `Src/glob.c:2749`.
+/// Get match list for global replacement (from glob.c getmatchlist line 2749)
+/// Port of `getmatchlist(char *str, Patprog p, LinkList *repllistp)` from `Src/glob.c:2749`.
+/// WARNING: param names don't match C — Rust=(s, pat) vs C=(str, p, repllistp)
 pub fn getmatchlist(s: &str, pat: &str) -> Vec<(usize, usize)> {
     let mut matches = Vec::new();
     let chars: Vec<char> = s.chars().collect();
@@ -2915,7 +2922,7 @@ pub fn getmatchlist(s: &str, pat: &str) -> Vec<(usize, usize)> {
 }
 
 /// Set pattern start offset (from glob.c set_pat_start)
-/// Port of `set_pat_start(p, offs)` from `Src/glob.c:2780`.
+/// Port of `set_pat_start(Patprog p, int offs)` from `Src/glob.c:2780`.
 pub fn set_pat_start(p: &str, offs: usize) -> String {
     if offs == 0 || offs >= p.len() {
         return p.to_string();
@@ -2924,7 +2931,7 @@ pub fn set_pat_start(p: &str, offs: usize) -> String {
 }
 
 /// Set pattern end (from glob.c set_pat_end)
-/// Port of `set_pat_end(p, null_me)` from `Src/glob.c:2797`.
+/// Port of `set_pat_end(Patprog p, char null_me)` from `Src/glob.c:2797`.
 pub fn set_pat_end(p: &str, null_me: usize) -> String {
     if null_me >= p.len() {
         return p.to_string();
@@ -2957,7 +2964,7 @@ pub enum GlobToken {
 }
 
 // This function tokenizes a zsh glob pattern                               // c:706
-/// Tokenize a glob pattern (from glob.c tokenize lines 3100-3180)
+/// Tokenize a glob pattern (from glob.c tokenize line 3548)
 pub fn tokenize(s: &str) -> Vec<GlobToken> {
     let mut tokens = Vec::new();
     let mut chars = s.chars().peekable();
@@ -2997,9 +3004,9 @@ pub fn tokenize(s: &str) -> Vec<GlobToken> {
     tokens
 }
 
-/// Tokenize for shell (from glob.c shtokenize lines 3190-3250)
+/// Tokenize for shell (from glob.c shtokenize line 3565)
 /// Handles shell-specific quoting
-/// Port of `shtokenize(s)` from `Src/glob.c:3565`.
+/// Port of `shtokenize(char *s)` from `Src/glob.c:3565`.
 pub fn shtokenize(s: &str) -> Vec<GlobToken> {
     let mut tokens = Vec::new();
     let mut chars = s.chars().peekable();
@@ -3048,8 +3055,9 @@ pub fn shtokenize(s: &str) -> Vec<GlobToken> {
     tokens
 }
 
-/// Tokenize with zsh-specific flags (from glob.c zshtokenize lines 3260-3380)
-/// Port of `zshtokenize(s, flags)` from `Src/glob.c:3575`.
+/// Tokenize with zsh-specific flags (from glob.c zshtokenize line 3575)
+/// Port of `zshtokenize(char *s, int flags)` from `Src/glob.c:3575`.
+/// WARNING: param names don't match C — Rust=(s, extended_glob, sh_glob) vs C=(s, flags)
 pub fn zshtokenize(s: &str, extended_glob: bool, sh_glob: bool) -> Vec<GlobToken> {
     let mut tokens = Vec::new();
     let mut chars = s.chars().peekable();
@@ -3084,8 +3092,8 @@ pub fn zshtokenize(s: &str, extended_glob: bool, sh_glob: bool) -> Vec<GlobToken
     tokens
 }
 
-/// Remove null arguments from token list (from glob.c remnulargs lines 3390-3420)
-/// Port of `remnulargs(s)` from `Src/glob.c:3649`.
+/// Remove null arguments from token list (from glob.c remnulargs line 3649)
+/// Port of `remnulargs(char *s)` from `Src/glob.c:3649`.
 pub fn remnulargs(s: &mut Vec<GlobToken>) {
     s.retain(|t| {
         if let GlobToken::Literal(c) = t {
@@ -3110,7 +3118,7 @@ pub struct ModeSpec {
 
 /// Parse mode specification like chmod (from glob.c qgetmodespec lines 790-920)
 /// Examples: u+x, go-w, a=r, 755
-/// Port of `qgetmodespec(s)` from `Src/glob.c:844`.
+/// Port of `qgetmodespec(char **s)` from `Src/glob.c:844`.
 pub fn qgetmodespec(s: &str) -> Option<(ModeSpec, &str)> {
     let mut chars = s.chars().peekable();
     let mut spec = ModeSpec::default();
@@ -3224,8 +3232,9 @@ pub fn apply_modespec(mode: u32, spec: &ModeSpec) -> u32 {
 // Brace char range parsing (from glob.c bracechardots)
 // ============================================================================
 
-/// Parse character range in braces like {a..z} (from glob.c bracechardots lines 1780-1850)
-/// Port of `bracechardots(str, c1p, c2p)` from `Src/glob.c:2222`.
+/// Parse character range in braces like {a..z} (from glob.c bracechardots line 2222)
+/// Port of `bracechardots(char *str, convchar_t *c1p, convchar_t *c2p)` from `Src/glob.c:2222`.
+/// WARNING: param names don't match C — Rust=(s) vs C=(str, c1p, c2p)
 pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
     let chars: Vec<char> = s.chars().collect();
 
@@ -3276,9 +3285,10 @@ pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
 // Exec string for sorting (from glob.c glob_exec_string)
 // ============================================================================
 
-/// Execute a command and capture output for sorting (from glob.c glob_exec_string lines 920-1020)
+/// Execute a command and capture output for sorting (from glob.c glob_exec_string line 1085)
 /// This is used for the `e` glob qualifier: *(e:'cmd':)
-/// Port of `glob_exec_string(sp)` from `Src/glob.c:1085`.
+/// Port of `glob_exec_string(char **sp)` from `Src/glob.c:1085`.
+/// WARNING: param names don't match C — Rust=(cmd, filename) vs C=(sp)
 pub fn glob_exec_string(cmd: &str, filename: &str) -> Option<String> {
     use std::process::Command;
 
@@ -3295,7 +3305,8 @@ pub fn glob_exec_string(cmd: &str, filename: &str) -> Option<String> {
 }
 
 /// Execute a qualifier expression (from glob.c qualsheval full impl)
-/// Port of `qualsheval(name, buf, days, str)` from `Src/glob.c:3907`.
+/// Port of `qualsheval(char *name, UNUSED(struct stat *buf), UNUSED(off_t days), char *str)` from `Src/glob.c:3907`.
+/// WARNING: param names don't match C — Rust=(filename, expr) vs C=(name, buf, days, str)
 pub fn qualsheval(filename: &str, expr: &str) -> bool {
     use std::process::Command;
 
@@ -3659,58 +3670,59 @@ pub(crate) fn find_top_level_tilde(pat: &str) -> Option<usize> {
 // for the drift gate.
 // ===========================================================
 
-/// Port of `insert(s, checked)` from Src/glob.c:346.
-// add a match to the list                                                   // c:342
+/// Port of `insert(char *s, int checked)` from Src/glob.c:346.
+// add a match to the list                                                   // c:346
 /// C: `static void insert(char *s, int checked)` — record one matched
 ///   path `s` into the global glob result list, optionally re-stat'ing
 ///   for type/qualifier checks.
 #[allow(unused_variables)]
 pub fn insert(s: &str, checked: i32) {                                     // c:346
-    // c:351-700+ — full insertion: stat buf, qualifier eval, GF_LCSORT,
+    // c:346-700+ — full insertion: stat buf, qualifier eval, GF_LCSORT,
     // gf_listpos sort. Static-link path: result list lives in the
     // src/ported/exec.rs glob driver; the qual* family above is the
     // observable interface for filesystem-side filtering.
 }
 
 // turn a string into a Complist struct:  this has path components          // c:787
-/// Port of `parsecomplist(instr)` from Src/glob.c:710.
+/// Port of `parsecomplist(char *instr)` from Src/glob.c:710.
 /// C: `static Complist parsecomplist(char *instr)` — parse a multi-
 ///   segment glob path (`/foo/.../bar`) into a Complist.
 #[allow(unused_variables)]
 pub fn parsecomplist(instr: &str) -> Option<Vec<String>> {                  // c:710
-    // c:714-789 — splits on `/` and `**`/`***`, calls patcompile per
+    // c:710-789 — splits on `/` and `**`/`***`, calls patcompile per
     // segment with PAT_FILE|PAT_NOGLD. Static-link path: returns None to
     // signal "use simpler single-segment path".
     None
 }
 
-/// Port of `parsepat(str)` from Src/glob.c:791.
+/// Port of `parsepat(char *str)` from Src/glob.c:791.
 /// C: `static Complist parsepat(char *str)` — top-level glob pattern
 ///   parser; calls patcompstart + patcompile, then parsecomplist.
 pub fn parsepat(str: &str) -> Option<Vec<String>> {                         // c:791
-    // c:795-820 — patcompstart() + patcompile + parsecomplist(str).
+    // c:791-820 — patcompstart() + patcompile + parsecomplist(str).
     parsecomplist(str)                                                      // c:817
 }
 
-/// Port of `insert_glob_match(list, next, data)` from Src/glob.c:1125.
+/// Port of `insert_glob_match(LinkList list, LinkNode next, char *data)` from Src/glob.c:1125.
 /// C: `static void insert_glob_match(LinkList list, LinkNode next,
 ///     char *data)` — insert `data` into `list` at position `next`,
 ///     respecting `gf_pre_words`/`gf_post_words` injection.
 pub fn insert_glob_match(list: &mut Vec<String>, next: usize, data: &str) {  // c:1125
-    // c:1128-1155 — for each gf_pre_words entry, insertlinknode; then
+    // c:1125-1155 — for each gf_pre_words entry, insertlinknode; then
     // insertlinknode(list, next, data); then gf_post_words.
     if next <= list.len() {                                                  // c:1140
-        list.insert(next, data.to_string());                                 // c:1140
+        list.insert(next, data.to_string());                                 // c:1158
     } else {
         list.push(data.to_string());
     }
 }
 
-/// Port of `checkglobqual(str, sl, nobareglob, sp)` from Src/glob.c:1158.
+/// Port of `checkglobqual(char *str, int sl, int nobareglob, char **sp)` from Src/glob.c:1158.
 /// C: `int checkglobqual(char *str, int sl, int nobareglob, char **sp)` —
 ///   confirm the trailing `(...)` is a glob qualifier (not literal).
 ///   Sets `*sp` to the qualifier start position. Returns 0 if not a
 ///   qualifier, non-zero if it is.
+/// WARNING: param names don't match C — Rust=(str, sl, _nobareglob) vs C=(str, sl, nobareglob, sp)
 pub fn checkglobqual(str: &str, sl: i32, _nobareglob: i32,                   // c:1158
                      sp: &mut Option<usize>) -> i32 {
     // c:1163-1164 — `if (str[sl-1] != Outpar) return 0;`
@@ -3739,7 +3751,7 @@ pub fn checkglobqual(str: &str, sl: i32, _nobareglob: i32,                   // 
     0                                                                        // c:1212
 }
 
-/// Port of `zglob(list, np, nountok)` from Src/glob.c:1214.
+/// Port of `zglob(LinkList list, LinkNode np, int nountok)` from Src/glob.c:1214.
 /// C: `void zglob(LinkList list, LinkNode np, int nountok)` — top-level
 ///   glob expansion: parse qualifiers, walk the filesystem, replace
 ///   the placeholder node in `list` with the matches.
@@ -3889,7 +3901,7 @@ pub fn glob_path(pattern: &str) -> Vec<String> {                             // 
     matches
 }
 
-/// Port of `freerepldata(ptr)` from Src/glob.c:2766.
+/// Port of `freerepldata(void *ptr)` from Src/glob.c:2766.
 /// C: `static void freerepldata(void *ptr)` →
 ///   `zfree(ptr, sizeof(struct repldata));`
 #[allow(unused_variables)]
@@ -3897,7 +3909,7 @@ pub fn freerepldata(ptr: *mut std::ffi::c_void) {                           // c
     // Rust drop covers the equivalent.
 }
 
-/// Port of `freematchlist(repllist)` from Src/glob.c:2773.
+/// Port of `freematchlist(LinkList repllist)` from Src/glob.c:2773.
 /// C: `void freematchlist(LinkList repllist)` →
 ///   `freelinklist(repllist, freerepldata);`
 pub fn freematchlist(repllist: Option<&mut Vec<(usize, usize)>>) {           // c:2773
@@ -3906,11 +3918,12 @@ pub fn freematchlist(repllist: Option<&mut Vec<(usize, usize)>>) {           // 
     }
 }
 
-/// Port of `igetmatch(sp, p, fl, n, replstr, repllistp)` from Src/glob.c:2832.
+/// Port of `igetmatch(char **sp, Patprog p, int fl, int n, char *replstr, LinkList *repllistp)` from Src/glob.c:2832.
 /// C: `static int igetmatch(char **sp, Patprog p, int fl, int n,
 ///     char *replstr, LinkList *repllistp)` — pattern-replace inner
 ///     matcher; modifies `*sp` in place, optionally collects match
 ///     positions into `*repllistp`.
+/// WARNING: param names don't match C — Rust=(_sp, _p, _n, _replstr, _repllistp) vs C=(sp, p, fl, n, replstr, repllistp)
 pub fn igetmatch(_sp: &mut String, _p: *mut std::ffi::c_void,                // c:2832
                  _fl: i32, _n: i32,
                  _replstr: Option<&str>,
@@ -3922,124 +3935,126 @@ pub fn igetmatch(_sp: &mut String, _p: *mut std::ffi::c_void,                // 
     0
 }
 
-/// Port of `qualdev(buf, dv)` from Src/glob.c:3688.
+/// Port of `qualdev(UNUSED(char *name), struct stat *buf, off_t dv, UNUSED(char *dummy))` from Src/glob.c:3688.
 /// C: `static int qualdev(UNUSED(char *name), struct stat *buf, off_t dv,
 ///     UNUSED(char *dummy))` → `return (off_t)buf->st_dev == dv;`
 #[allow(unused_variables)]
 pub fn qualdev(name: &str, buf: &libc::stat, dv: i64, dummy: &str) -> i32 { // c:3688
-    (buf.st_dev as i64 == dv) as i32                                          // c:3690
+    (buf.st_dev as i64 == dv) as i32                                          // c:3697
 }
 
-/// Port of `qualnlink(buf, ct)` from Src/glob.c:3697.
+/// Port of `qualnlink(UNUSED(char *name), struct stat *buf, off_t ct, UNUSED(char *dummy))` from Src/glob.c:3697.
 /// C: ternary on `g_range`: < / > / == against `st_nlink`.
 #[allow(unused_variables)]
 pub fn qualnlink(name: &str, buf: &libc::stat, ct: i64, dummy: &str) -> i32 { // c:3697
     let g = G_RANGE.load(std::sync::atomic::Ordering::Relaxed);
-    let nl = buf.st_nlink as i64;                                            // c:3699
+    let nl = buf.st_nlink as i64;                                            // c:3708
     if g < 0 { (nl < ct) as i32 } else if g > 0 { (nl > ct) as i32 } else { (nl == ct) as i32 }
 }
 
-/// Port of `qualuid(buf, uid)` from Src/glob.c:3708.
+/// Port of `qualuid(UNUSED(char *name), struct stat *buf, off_t uid, UNUSED(char *dummy))` from Src/glob.c:3708.
 /// C: `return buf->st_uid == uid;`
 #[allow(unused_variables)]
 pub fn qualuid(name: &str, buf: &libc::stat, uid: i64, dummy: &str) -> i32 { // c:3708
-    (buf.st_uid as i64 == uid) as i32                                        // c:3710
+    (buf.st_uid as i64 == uid) as i32                                        // c:3717
 }
 
-/// Port of `qualgid(buf, gid)` from Src/glob.c:3717.
+/// Port of `qualgid(UNUSED(char *name), struct stat *buf, off_t gid, UNUSED(char *dummy))` from Src/glob.c:3717.
 /// C: `return buf->st_gid == gid;`
 #[allow(unused_variables)]
 pub fn qualgid(name: &str, buf: &libc::stat, gid: i64, dummy: &str) -> i32 { // c:3717
-    (buf.st_gid as i64 == gid) as i32                                        // c:3719
+    (buf.st_gid as i64 == gid) as i32                                        // c:3726
 }
 
-/// Port of `qualisdev(buf)` from Src/glob.c:3726.
+/// Port of `qualisdev(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3726.
 /// C: `return S_ISBLK(buf->st_mode) || S_ISCHR(buf->st_mode);`
 #[allow(unused_variables)]
 pub fn qualisdev(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3726
     let m = buf.st_mode as u32 & libc::S_IFMT as u32;
-    ((m == libc::S_IFBLK as u32) || (m == libc::S_IFCHR as u32)) as i32      // c:3728
+    ((m == libc::S_IFBLK as u32) || (m == libc::S_IFCHR as u32)) as i32      // c:3735
 }
 
-/// Port of `qualisblk(buf)` from Src/glob.c:3735.
+/// Port of `qualisblk(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3735.
 /// C: `return S_ISBLK(buf->st_mode);`
 #[allow(unused_variables)]
 pub fn qualisblk(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3735
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFBLK as u32) as i32 // c:3737
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFBLK as u32) as i32 // c:3744
 }
 
-/// Port of `qualischr(buf)` from Src/glob.c:3744.
+/// Port of `qualischr(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3744.
 /// C: `return S_ISCHR(buf->st_mode);`
 #[allow(unused_variables)]
 pub fn qualischr(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3744
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFCHR as u32) as i32 // c:3746
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFCHR as u32) as i32 // c:3753
 }
 
-/// Port of `qualisdir(buf)` from Src/glob.c:3753.
+/// Port of `qualisdir(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3753.
 /// C: `return S_ISDIR(buf->st_mode);`
 #[allow(unused_variables)]
 pub fn qualisdir(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3753
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFDIR as u32) as i32 // c:3755
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFDIR as u32) as i32 // c:3762
 }
 
-/// Port of `qualisfifo(buf)` from Src/glob.c:3762.
+/// Port of `qualisfifo(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3762.
 /// C: `return S_ISFIFO(buf->st_mode);`
 #[allow(unused_variables)]
 pub fn qualisfifo(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3762
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFIFO as u32) as i32 // c:3764
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFIFO as u32) as i32 // c:3771
 }
 
-/// Port of `qualislnk(buf)` from Src/glob.c:3771.
+/// Port of `qualislnk(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3771.
 /// C: `return S_ISLNK(buf->st_mode);`
 #[allow(unused_variables)]
 pub fn qualislnk(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3771
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFLNK as u32) as i32 // c:3773
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFLNK as u32) as i32 // c:3780
 }
 
-/// Port of `qualisreg(buf)` from Src/glob.c:3780.
+/// Port of `qualisreg(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3780.
 /// C: `return S_ISREG(buf->st_mode);`
 #[allow(unused_variables)]
 pub fn qualisreg(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3780
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFREG as u32) as i32 // c:3782
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFREG as u32) as i32 // c:3789
 }
 
-/// Port of `qualissock(buf)` from Src/glob.c:3789.
+/// Port of `qualissock(UNUSED(char *name), struct stat *buf, UNUSED(off_t junk), UNUSED(char *dummy))` from Src/glob.c:3789.
 /// C: `return S_ISSOCK(buf->st_mode);`
 #[allow(unused_variables)]
 pub fn qualissock(name: &str, buf: &libc::stat, junk: i64, dummy: &str) -> i32 { // c:3789
-    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFSOCK as u32) as i32 // c:3791
+    ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFSOCK as u32) as i32 // c:3798
 }
 
-/// Port of `qualflags(buf, mod)` from Src/glob.c:3798.
+/// Port of `qualflags(UNUSED(char *name), struct stat *buf, off_t mod, UNUSED(char *dummy))` from Src/glob.c:3798.
 /// C: `return mode_to_octal(buf->st_mode) & mod;`
 #[allow(unused_variables)]
-pub fn qualflags(name: &str, buf: &libc::stat, mod: i64, dummy: &str) -> i32 { // c:3798
-    (mode_to_octal(buf.st_mode as u32) as i64 & mod) as i32                 // c:3800
+/// WARNING: param names don't match C — Rust=(name, buf, dummy) vs C=(name, buf, mod, dummy)
+pub fn qualflags(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 { // c:3798
+    (mode_to_octal(buf.st_mode as u32) as i64 & r#mod) as i32                 // c:3807
 }
 
-/// Port of `qualmodeflags(buf, mod)` from Src/glob.c:3807.
+/// Port of `qualmodeflags(UNUSED(char *name), struct stat *buf, off_t mod, UNUSED(char *dummy))` from Src/glob.c:3807.
 /// C: `((v & y) == y && !(v & n))` where `y = mod & 07777`, `n = mod >> 12`.
 #[allow(unused_variables)]
-pub fn qualmodeflags(name: &str, buf: &libc::stat, mod: i64, dummy: &str) -> i32 { // c:3807
-    let v = mode_to_octal(buf.st_mode as u32) as i64;                        // c:3809
-    let y = mod & 0o7777;
-    let n = mod >> 12;
-    (((v & y) == y) && (v & n) == 0) as i32                                  // c:3811
+/// WARNING: param names don't match C — Rust=(name, buf, dummy) vs C=(name, buf, mod, dummy)
+pub fn qualmodeflags(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 { // c:3807
+    let v = mode_to_octal(buf.st_mode as u32) as i64;                        // c:3818
+    let y = r#mod & 0o7777;
+    let n = r#mod >> 12;
+    (((v & y) == y) && (v & n) == 0) as i32                                  // c:3818
 }
 
-/// Port of `qualiscom(buf)` from Src/glob.c:3818.
+/// Port of `qualiscom(UNUSED(char *name), struct stat *buf, UNUSED(off_t mod), UNUSED(char *dummy))` from Src/glob.c:3818.
 /// C: `return S_ISREG(buf->st_mode) && (buf->st_mode & S_IXUGO);`
 #[allow(unused_variables)]
-pub fn qualiscom(name: &str, buf: &libc::stat, mod: i64, dummy: &str) -> i32 { // c:3818
+pub fn qualiscom(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 { // c:3818
     let is_reg = (buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFREG as u32;
     let s_ixugo: u32 = (libc::S_IXUSR | libc::S_IXGRP | libc::S_IXOTH) as u32;
     (is_reg && (buf.st_mode as u32 & s_ixugo) != 0) as i32                   // c:3820
 }
 
-/// Port of `qualnonemptydir(name, buf)` from Src/glob.c:3948.
+/// Port of `qualnonemptydir(char *name, struct stat *buf, UNUSED(off_t days), UNUSED(char *str))` from Src/glob.c:3948.
 /// C: opendir(name) and check if any non-`.`/`..` entries exist.
 pub fn qualnonemptydir(name: &str, buf: &libc::stat, days: i64, str: &str) -> i32 { // c:3948
-    // c:3950 — `if (!S_ISDIR(buf->st_mode)) return 0;`
+    // c:3948 — `if (!S_ISDIR(buf->st_mode)) return 0;`
     if (buf.st_mode as u32 & libc::S_IFMT as u32) != libc::S_IFDIR as u32 {  // c:3950
         return 0;
     }

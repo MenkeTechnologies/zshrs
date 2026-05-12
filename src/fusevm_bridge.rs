@@ -380,7 +380,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     vm.register_builtin(BUILTIN_EVAL, |vm, argc| {
-        // Direct port of `bin_eval(nam, argv, ops, func)` body from Src/builtin.c:6151:
+        // Direct port of `bin_eval(UNUSED(char *nam), char **argv, UNUSED(Options ops), UNUSED(int func))` body from Src/builtin.c:6151:
         //   `if (!*argv) return 0;`
         //   `prog = parse_string(zjoin(argv, ' ', 1), 1);`
         //   `execode(prog, 1, 0, "eval");`
@@ -5854,7 +5854,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_OPTION_SET, |vm, _argc| {
         let name = vm.pop().to_str();
-        // Direct port of `optison(name, s)` at Src/cond.c:502 — `[[ -o NAME ]]`
+        // Direct port of `optison(char *name, char *s)` at Src/cond.c:502 — `[[ -o NAME ]]`
         // reads through the same `opts[]` array that `setopt NAME`
         // writes via `dosetopt`. Earlier code read a duplicate Executor
         // HashMap which never saw `bin_setopt`'s writes (those land in

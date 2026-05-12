@@ -32,14 +32,14 @@ use crate::ported::zsh_h::{
 // Globals from text.c:40 / 48–54
 // ---------------------------------------------------------------------------
 
-/// Port of `int text_expand_tabs` from `Src/text.c:40`.
+/// Port of `int text_expand_tabs` from `Src/text.c:58`.
 pub static TEXT_EXPAND_TABS: AtomicI32 = AtomicI32::new(0);
 
 static COND_BINARY_OPS: &[&str] = &[
     "=", "==", "!=", "<", ">", "-nt", "-ot", "-ef", "-eq", "-ne", "-lt", "-gt", "-le", "-ge", "=~",
 ];
 
-/// Port of `is_cond_binary_op(str)` from `Src/text.c:58`.
+/// Port of `is_cond_binary_op(const char *str)` from `Src/text.c:58`.
 pub fn is_cond_binary_op(str: &str) -> i32 {
     COND_BINARY_OPS.iter().any(|&op| op == str) as i32
 }
@@ -48,7 +48,7 @@ pub fn is_cond_binary_op(str: &str) -> i32 {
 // Internal: file-static text buffer + gettext2 (text.c:53–1015)
 // ---------------------------------------------------------------------------
 
-// File-statics from `Src/text.c:53-54` (`tbuf`/`tptr`/`tlim` modeled as `tbuf` Vec +
+// File-statics from `Src/text.c:396` (`tbuf`/`tptr`/`tlim` modeled as `tbuf` Vec +
 // `tlim` cap; `tpending`/`tindent`/`tnewlins`/`tjob`).
 thread_local! {
     static tbuf: RefCell<Vec<u8>> = RefCell::new(Vec::new());
@@ -59,7 +59,7 @@ thread_local! {
     static tjob: RefCell<bool> = RefCell::new(false);
 }
 
-/// Port of `tpush(code, pop)` from `Src/text.c:127` (append byte to `tbuf`, honour `tlim`).
+/// Port of `tpush(wordcode code, int pop)` from `Src/text.c:396` (append byte to `tbuf`, honour `tlim`).
 fn tpush(c: i32) {
     let b = c as u8;
     tbuf.with(|tb| {
@@ -112,7 +112,7 @@ struct tstack {
     u: tstack_u,
 }
 
-/// Port of `taddassign(code, state, typeset)` from `Src/text.c:184`.
+/// Port of `taddassign(wordcode code, Estate state, int typeset)` from `Src/text.c:184`.
 fn taddassign(code: wordcode, state: &mut estate, typeset: i32) {
     taddstr(&ecgetstr(state, EC_NODUP, None));
     if zsh_h::WC_ASSIGN_TYPE2(code) == zsh_h::WC_ASSIGN_INC {
@@ -134,7 +134,7 @@ fn taddassign(code: wordcode, state: &mut estate, typeset: i32) {
     }
 }
 
-/// Port of `taddlist(state, num)` from `Src/text.c:170`.
+/// Port of `taddlist(Estate state, int num)` from `Src/text.c:170`.
 fn taddlist(state: &mut estate, num: i32) {
     if num == 0 {
         return;
@@ -150,7 +150,7 @@ fn taddlist(state: &mut estate, num: i32) {
     });
 }
 
-/// Port of `taddassignlist(state, count)` from `Src/text.c:213`.
+/// Port of `taddassignlist(Estate state, wordcode count)` from `Src/text.c:213`.
 fn taddassignlist(state: &mut estate, count: wordcode) {
     if count != 0 {
         tpush(b' ' as i32);
@@ -167,7 +167,7 @@ fn taddassignlist(state: &mut estate, count: wordcode) {
     }
 }
 
-/// Port of `taddstr(s)` from `Src/text.c:146`.
+/// Port of `taddstr(const char *s)` from `Src/text.c:146`.
 pub fn taddstr(s: &str) {
     let nl = tnewlins.with(|c| *c.borrow());
     if nl {
@@ -180,7 +180,7 @@ pub fn taddstr(s: &str) {
     }
 }
 
-/// Port of `taddchr(c)` from `Src/text.c:128`.
+/// Port of `taddchr(int c)` from `Src/text.c:128`.
 pub fn taddchr(c: i32) {
     tpush(c);
 }
@@ -195,7 +195,7 @@ pub fn dec_tindent() {
     });
 }
 
-/// Port of `taddpending(str1, str2)` from `Src/text.c:89`.
+/// Port of `taddpending(char *str1, char *str2)` from `Src/text.c:89`.
 pub fn taddpending(str1: &str, str2: &str) {
     let mut v = Vec::with_capacity(str1.len() + str2.len());
     v.extend_from_slice(str1.as_bytes());
@@ -221,7 +221,7 @@ pub fn tdopending() {
     }
 }
 
-/// Port of `taddnl(no_semicolon)` from `Src/text.c:227`.
+/// Port of `taddnl(int no_semicolon)` from `Src/text.c:227`.
 pub fn taddnl(no_semicolon: i32) {
     let newlins = tnewlins.with(|c| *c.borrow());
     let indent = tindent.with(|t| *t.borrow());
@@ -254,7 +254,7 @@ const FSTR: [&str; 18] = [
     "<", ">",
 ];
 
-/// Port of `gettext2(state)` from `Src/text.c:415`.
+/// Port of `gettext2(Estate state)` from `Src/text.c:415`.
 pub fn gettext2(state: &mut estate) {
     let mut tstack: Vec<tstack> = Vec::new();
     let mut stack: i32 = 0;
@@ -1188,7 +1188,7 @@ fn useeprog(_p: &Eprog) {}
 #[inline]
 fn freeeprog(_p: &Eprog) {}
 
-/// Port of `zoutputtab(outf)` from `Src/text.c:263`.
+/// Port of `zoutputtab(FILE *outf)` from `Src/text.c:263`.
 pub fn zoutputtab<W: std::io::Write>(outf: &mut W) -> std::io::Result<()> {
     let expand_tabs = TEXT_EXPAND_TABS.load(Ordering::Relaxed);
     if expand_tabs < 0 {
@@ -1202,7 +1202,7 @@ pub fn zoutputtab<W: std::io::Write>(outf: &mut W) -> std::io::Result<()> {
     }
 }
 
-/// Port of `getpermtext(prog, c, start_indent)` from `Src/text.c:279`.
+/// Port of `getpermtext(Eprog prog, Wordcode c, int start_indent)` from `Src/text.c:279`.
 pub fn getpermtext(prog: Eprog, c: Option<usize>, start_indent: i32) -> String {
     queue_signals();
     useeprog(&prog);
@@ -1231,7 +1231,7 @@ pub fn getpermtext(prog: Eprog, c: Option<usize>, start_indent: i32) -> String {
     lex::untokenize(&raw)
 }
 
-/// Port of `getjobtext(prog, c)` from `Src/text.c:315`.
+/// Port of `getjobtext(Eprog prog, Wordcode c)` from `Src/text.c:315`.
 pub fn getjobtext(prog: Eprog, c: Option<usize>) -> String {
     queue_signals();
     useeprog(&prog);
@@ -1263,9 +1263,9 @@ pub fn getjobtext(prog: Eprog, c: Option<usize>) -> String {
     lex::untokenize(&raw)
 }
 
-/// Port of `getredirs(redirs)` from `Src/text.c:1019`.
+/// Port of `getredirs(LinkList redirs)` from `Src/text.c:1019`.
 pub fn getredirs(redirs: &LinkList<redir>) {
-    queue_signals(); // c:1028
+    queue_signals(); // c:1019
     tpush(b' ' as i32); // c:1030
     for f in redirs.nodes.iter() {
         match f.typ {

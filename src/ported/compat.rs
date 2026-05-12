@@ -21,13 +21,13 @@ use crate::ported::zsh_system_h::timespec;
 
 /// Provide clock time with nanoseconds.
 ///
-/// Port of `zgettime(ts)` from Src/compat.c:101.
+/// Port of `zgettime(struct timespec *ts)` from Src/compat.c:101.
 /// C signature: `int zgettime(struct timespec *ts)`.
 /// Returns 0 on success, -1 if `clock_gettime(CLOCK_REALTIME)`
 /// failed and `gettimeofday` fallback succeeded, -2 if both
 /// failed.
 pub fn zgettime(ts: &mut timespec) -> i32 {                                  // c:101
-    let mut ret: i32 = -1;                                                   // c:103
+    let mut ret: i32 = -1;                                                   // c:101
     unsafe {
         let mut dts: timespec = std::mem::zeroed();
         if libc::clock_gettime(libc::CLOCK_REALTIME, &mut dts) < 0 {         // c:107
@@ -61,12 +61,12 @@ pub fn zgettime(ts: &mut timespec) -> i32 {                                  // 
 /// Falls back to `zgettime` (CLOCK_REALTIME) when CLOCK_MONOTONIC
 /// fails.
 ///
-/// On at least some versions of macOS it appears that CLOCK_MONOTONIC // c:141
-/// is not actually monotonic -- there are reports that it can go     // c:142
-/// backwards. CLOCK_MONOTONIC_RAW does not have this problem. On top // c:143
-/// of that, it is faster to read and it has nanosecond precision.    // c:144
+/// On at least some versions of macOS it appears that CLOCK_MONOTONIC // c:133
+/// is not actually monotonic -- there are reports that it can go     // c:133
+/// backwards. CLOCK_MONOTONIC_RAW does not have this problem. On top // c:133
+/// of that, it is faster to read and it has nanosecond precision.    // c:133
 pub fn zgettime_monotonic_if_available(ts: &mut timespec) -> i32 {           // c:133
-    let mut ret: i32 = -1;                                                   // c:135
+    let mut ret: i32 = -1;                                                   // c:133
     unsafe {
         let mut dts: timespec = std::mem::zeroed();                          // c:138
         // c:147 — Apple prefers CLOCK_MONOTONIC_RAW; other systems
@@ -88,15 +88,15 @@ pub fn zgettime_monotonic_if_available(ts: &mut timespec) -> i32 {           // 
             ts.tv_nsec = dts.tv_nsec;                                        // c:157
         }
     }
-    if ret != 0 {                                                            // c:161
-        ret = zgettime(ts);                                                  // c:162
+    if ret != 0 {                                                            // c:175
+        ret = zgettime(ts);                                                  // c:175
     }
-    ret                                                                      // c:164
+    ret                                                                      // c:175
 }
 
-// compute the difference between two calendar times                        // c:168
+// compute the difference between two calendar times                        // c:175
 /// Compute the difference between two times in seconds.
-/// Port of `difftime(t2, t1)` from Src/compat.c:175 — wraps
+/// Port of `difftime(time_t t2, time_t t1)` from Src/compat.c:175 — wraps
 /// libc's `difftime(3)` for systems lacking the prototype.
 pub fn difftime(t2: i64, t1: i64) -> f64 {                                   // c:175
     (t2 - t1) as f64
@@ -108,7 +108,7 @@ pub fn difftime(t2: i64, t1: i64) -> f64 {                                   // 
 // We'll limit the open maximum to ZSH_INITIAL_OPEN_MAX to                  // c:294
 // avoid probing ridiculous numbers of file descriptors.                    // c:295
 /// Get system's maximum open file descriptors. Direct port of
-/// src/zsh/Src/compat.c:300-328 zopenmax.
+/// src/zsh/Src/compat.c:300 zopenmax.
 ///
 /// Algorithm:
 ///   1. sysconf(_SC_OPEN_MAX). If <1, fallback to OPEN_MAX (256).
@@ -189,7 +189,7 @@ pub fn zgetcwd() -> Option<String> {                                        // c
 // canonical lowercase `dirsav` directly.
 
 /// Get the current directory with optional metadata capture.
-/// Port of `zgetdir(d)` from Src/compat.c:355 — when called with
+/// Port of `zgetdir(struct dirsav *d)` from Src/compat.c:355 — when called with
 /// a `dirsav` slot, fills inode/device the C source uses to
 /// detect rename-replace cases.
 ///
@@ -219,7 +219,7 @@ pub fn zgetdir(d: Option<&mut crate::ported::zsh_h::dirsav>) -> Option<String> {
 }
 
 /// Change directory with long-pathname support.
-/// Port of `zchdir(dir)` from Src/compat.c:579 — falls back to
+/// Port of `zchdir(char *dir)` from Src/compat.c:579 — falls back to
 /// component-by-component descent when a single `chdir(2)` call
 /// fails (typically `ENAMETOOLONG`). Returns `0` on success,
 /// `-1` on normal failure, `-2` if the cwd was lost mid-walk.
@@ -261,7 +261,7 @@ pub fn zchdir(dir: &str) -> i32 {                                           // c
 }
 
 /// Format a 64-bit signed integer for output.
-/// Port of `output64(val)` from Src/compat.c:638 — needed in C
+/// Port of `output64(zlong val)` from Src/compat.c:638 — needed in C
 /// because `%lld` printf support varied; Rust's `to_string()`
 /// handles every target.
 pub fn output64(val: i64) -> String {                                        // c:638
@@ -276,7 +276,7 @@ pub fn output64(val: i64) -> String {                                        // 
 // goes through libc directly via utils.rs).
 
 /// Check whether an ASCII byte is printable.
-/// Port of `isprint_ascii(c)` from Src/compat.c:785 — locale-
+/// Port of `isprint_ascii(int c)` from Src/compat.c:785 — locale-
 /// independent printable check the C source uses when locale
 /// data isn't safe to read (signal handlers, early init).
 pub fn isprint_ascii(c: char) -> bool {                                      // c:785
@@ -285,7 +285,7 @@ pub fn isprint_ascii(c: char) -> bool {                                      // 
 }
 
 /// Get the column width of a Unicode character.
-/// Port of `u9_wcwidth(ucs)` from Src/compat.c:760 — the C source
+/// Port of `u9_wcwidth(wchar_t ucs)` from Src/compat.c:760 — the C source
 /// ships its own Unicode 9 u9_wcwidth fallback because system
 /// `u9_wcwidth(3)` data ages with libc. Rust uses the
 /// `unicode-width` crate which tracks the latest UCD.
@@ -296,7 +296,7 @@ pub fn u9_wcwidth(ucs: char) -> i32 {                                          /
 }
 
 /// Check whether a wide character is printable.
-/// Port of `u9_iswprint(ucs)` from Src/compat.c:770.
+/// Port of `u9_iswprint(wint_t ucs)` from Src/compat.c:770.
 pub fn u9_iswprint(ucs: char) -> bool {                                        // ucs:770
     !ucs.is_control() && u9_wcwidth(ucs) >= 0
 }
@@ -305,7 +305,7 @@ pub fn u9_iswprint(ucs: char) -> bool {                                        /
 // `crate::ported::utils::metafy` and `::unmetafy` (Src/utils.c
 // is the C source, not compat.c). Callers wanting an owned
 // `String` route through `utils::unmeta(&str) -> String` (the
-// real port of `unmeta(file_name)` at Src/utils.c:4994).
+// real port of `unmeta(const char *file_name)` at Src/utils.c:4994).
 //
 // `strstr` / `gettimeofday` / `strtoul` removed — compat.c
 // provides them as `#ifndef HAVE_*` fallback shims. On all
@@ -319,7 +319,7 @@ pub fn u9_iswprint(ucs: char) -> bool {                                        /
 // Rust port had it active for a dead C function.
 
 /// Render an errno value as a human-readable string.
-/// Port of `strerror(errnum)` from Src/compat.c:194 (`#ifndef
+/// Port of `strerror(int errnum)` from Src/compat.c:194 (`#ifndef
 /// HAVE_STRERROR` fallback shim). C body: `return
 /// sys_errlist[errnum]`. On HAVE_STRERROR systems the libc one
 /// is used directly; Rust's `std::io::Error::from_raw_os_error`

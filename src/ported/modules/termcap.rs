@@ -99,14 +99,14 @@ fn ensure_termcap_loaded() -> bool {
     }
 }
 
-/// Port of `ztgetflag(s)` from `Src/Modules/termcap.c:53`. Wraps
+/// Port of `ztgetflag(char *s)` from `Src/Modules/termcap.c:54`. Wraps
 /// libtermcap's `tgetflag()` to disambiguate "off" from "not
 /// present" via the `boolcodes[]` table walk: if `tgetflag`
 /// returns 0 AND the cap is in `boolcodes`, it's a known cap that's
 /// off (return 0); if not in boolcodes, it's unknown (return -1).
 ///
 /// C signature: `static int ztgetflag(char *s)`. Returns 1 / 0 / -1.
-pub fn ztgetflag(s: &str) -> i32 {                                       // c:53
+pub fn ztgetflag(s: &str) -> i32 {                                       // c:54
     if !ensure_termcap_loaded() {
         return -1;                                                        // tgetent failed
     }
@@ -125,16 +125,17 @@ pub fn ztgetflag(s: &str) -> i32 {                                       // c:53
                     return 0;                                             // c:68
                 }
             }
-            -1                                                            // c:74
+            -1                                                            // c:80
         }
     }
 }
 
-/// Port of `bin_echotc(name, argv)` from `Src/Modules/termcap.c:80`. The
+/// Port of `bin_echotc(char *name, char **argv, UNUSED(Options ops), UNUSED(int func))` from `Src/Modules/termcap.c:80`. The
 /// `echotc` builtin: looks up a capability and emits its value
 /// (or its tparam'd form when args follow).
 ///
 /// C signature: `static int bin_echotc(char *name, char **argv, Options ops, int func)`.
+/// WARNING: param names don't match C — Rust=(name, argv, _ops) vs C=(name, argv, ops, func)
 pub fn bin_echotc(name: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 { // c:80
     use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
     use std::sync::atomic::Ordering;
@@ -241,16 +242,17 @@ pub fn bin_echotc(name: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 { // c:8
         }
         print!("{}", out);                                                // c:136
     }
-    0                                                                     // c:138
+    0                                                                     // c:144
 }
 
-/// Port of `gettermcap(name)` from `Src/Modules/termcap.c:144`. The
+/// Port of `gettermcap(UNUSED(HashTable ht), const char *name)` from `Src/Modules/termcap.c:144`. The
 /// magic-assoc lookup callback for `${termcap[name]}`. Looks up
 /// the capability name and returns its (possibly empty) value.
 ///
 /// C signature: `static HashNode gettermcap(HashTable ht, const char *name)`.
 /// Rust returns `Option<String>` — `Some(value)` for known caps,
 /// `None` for unknown (matching C's PM_UNSET on no match).
+/// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
 pub fn gettermcap(name: &str) -> Option<String> {                        // c:144
     if !ensure_termcap_loaded() { return None; }
     let n_c = std::ffi::CString::new(name).ok()?;
@@ -282,14 +284,15 @@ pub fn gettermcap(name: &str) -> Option<String> {                        // c:14
     }
 }
 
-/// Port of `scantermcap(func, flags)` from `Src/Modules/termcap.c:200`. The
+/// Port of `scantermcap(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/termcap.c:200`. The
 /// magic-assoc scan callback for `${(k)termcap}` / `${(kv)termcap}`.
 /// Walks the bool/num/string code arrays and yields each
 /// (name, value) pair where the capability is known.
 ///
 /// C signature: `static void scantermcap(HashTable ht, ScanFunc func, int flags)`.
+/// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
 pub fn scantermcap() -> Vec<(String, String)> {                          // c:200
-    // c:206-235 — walk boolcodes/numcodes/strcodes, emit (name, value)
+    // c:200-235 — walk boolcodes/numcodes/strcodes, emit (name, value)
     // for each cap libtermcap reports as present.
     let mut out = Vec::new();
     if !ensure_termcap_loaded() { return out; }
@@ -318,43 +321,43 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_(m)` from `Src/Modules/termcap.c:323`.
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/termcap.c:323`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {                                    // c:323
     // C body c:325-326 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_(m, features)` from `Src/Modules/termcap.c:330`.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/termcap.c:330`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:330
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_(m, enables)` from `Src/Modules/termcap.c:338`.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/termcap.c:338`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:338
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_(m)` from `Src/Modules/termcap.c:345`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/termcap.c:345`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:345
     // C body c:347-350 — `#ifdef HAVE_TGETENT zsetupterm(); #endif
     //                     return 0`. Initializes the termcap database
     //                     for echotc/$termcap to use.
-    let _ = crate::ported::utils::zsetupterm();                              // c:348
+    let _ = crate::ported::utils::zsetupterm();                              // c:365
     0
 }
 
-/// Port of `cleanup_(m)` from `Src/Modules/termcap.c:355`.
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/termcap.c:355`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:355
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_(m)` from `Src/Modules/termcap.c:365`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/termcap.c:365`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:365
     // C body c:367-368 — `return 0`. Faithful empty-body port; the

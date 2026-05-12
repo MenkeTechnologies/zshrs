@@ -186,7 +186,7 @@ pub static cd_state: std::sync::Mutex<cdstate> =                             // 
         groups: 0, descs: 0, gprew: 0, runs: None,
     });
 
-/// Port of `static int cd_parsed` from `Src/Zle/computil.c:94`. Flag
+/// Port of `static int cd_parsed` from `Src/Zle/computil.c:188`. Flag
 /// signalling whether `cd_state` holds a parsed-but-unconsumed
 /// description set.
 pub static cd_parsed: std::sync::atomic::AtomicI32 =                         // c:94
@@ -198,20 +198,20 @@ pub fn cd_calc() {                                                           // 
 }
 
 /// Direct port of `static int cd_sort(const void *a, const void *b)`
-/// from `Src/Zle/computil.c:233`. qsort comparator.
+/// from `Src/Zle/computil.c:239`. qsort comparator.
 pub fn cd_sort(_a: *const std::ffi::c_void, _b: *const std::ffi::c_void) -> i32 { // c:233
     0
 }
 
 /// Direct port of `static int cd_prep(void)` from
-/// `Src/Zle/computil.c:239`.
+/// `Src/Zle/computil.c:477`.
 pub fn cd_prep() -> i32 {                                                    // c:239
     0
 }
 
 /// Direct port of `static int cd_init(char *nam, char *hide, char *mlen,
 /// char *sep, char **opts, char **args, char **disp, int hideopt)` from
-/// `Src/Zle/computil.c:477`.
+/// `Src/Zle/computil.c:614`.
 #[allow(clippy::too_many_arguments)]
 pub fn cd_init(_nam: &str, _hide: &str, _mlen: &str, _sep: &str,             // c:477
                _opts: &[String], _args: &[String], _disp: &[String],
@@ -220,14 +220,14 @@ pub fn cd_init(_nam: &str, _hide: &str, _mlen: &str, _sep: &str,             // 
 }
 
 /// Direct port of `static int cd_get(char **params)` from
-/// `Src/Zle/computil.c:614`.
+/// `Src/Zle/computil.c:444`.
 pub fn cd_get(_params: &[String]) -> i32 {                                   // c:614
     0
 }
 
 /// Direct port of `static char **cd_arrcat(char **a, char **b)` from
-/// `Src/Zle/computil.c:441`.
-pub fn cd_arrcat(a: &[String], b: &[String]) -> Vec<String> {                // c:441
+/// `Src/Zle/computil.c:599`.
+pub fn cd_arrcat(a: &[String], b: &[String]) -> Vec<String> {                // c:444
     let mut out = a.to_vec();
     out.extend_from_slice(b);
     out
@@ -240,11 +240,11 @@ pub fn cd_arrdup(a: &[String]) -> Vec<String> {                              // 
 }
 
 /// Direct port of `static void freecdsets(Cdset p)` from
-/// `Src/Zle/computil.c:96-122`. Walks the cdset `next` chain
+/// `Src/Zle/computil.c:97`. Walks the cdset `next` chain
 /// freeing each set's opts/strs sub-chains and the cd_state runs
 /// list at the end.
-pub fn freecdsets(mut p: Option<Box<cdset>>) {                               // c:96
-    while let Some(mut set) = p {                                            // c:103 for (; p; ...)
+pub fn freecdsets(mut p: Option<Box<cdset>>) {                               // c:97
+    while let Some(mut set) = p {                                            // c:97 for (; p; ...)
         p = set.next.take();                                                 // c:104 n = p->next
         // c:105-106 — `if (p->opts) freearray(p->opts)`.
         set.opts = None;
@@ -347,29 +347,29 @@ pub struct cadef {                                                           // 
 }
 
 /// Direct port of `static void freecaargs(Caarg a)` from
-/// `Src/Zle/computil.c:996-1010`. Walks the `next` chain and frees
+/// `Src/Zle/computil.c:996`. Walks the `next` chain and frees
 /// each entry. In Rust this is `Box` ownership — dropping the head
 /// recursively drops the chain, but we mirror the C body for ABI
 /// parity with callers that want explicit teardown.
 pub fn freecaargs(mut a: Option<Box<caarg>>) {                               // c:996
-    while let Some(mut node) = a {                                           // c:1000 for (; a; ...)
+    while let Some(mut node) = a {                                           // c:996 for (; a; ...)
         a = node.next.take();                                                // c:1001 n = a->next
         // c:1002-1007 — zsfree on descr/xor/action/end/opt is implicit
         //               via Drop on the String / Vec<String> fields.
-        node.descr = None;                                                   // c:1002
-        node.xor = None;                                                     // c:1003-1004
-        node.action = None;                                                  // c:1005
-        node.end = None;                                                     // c:1006
-        node.opt = None;                                                     // c:1007
-        drop(node);                                                          // c:1008 zfree(a, sizeof(*a))
+        node.descr = None;                                                   // c:1013
+        node.xor = None;                                                     // c:1013-1004
+        node.action = None;                                                  // c:1013
+        node.end = None;                                                     // c:1013
+        node.opt = None;                                                     // c:1013
+        drop(node);                                                          // c:1013 zfree(a, sizeof(*a))
     }
 }
 
 /// Direct port of `static void freecadef(Cadef d)` from
-/// `Src/Zle/computil.c:1013-1040`. Walks the `snext` chain freeing
+/// `Src/Zle/computil.c:1013`. Walks the `snext` chain freeing
 /// each cadef plus its opts/args/rest sub-chains.
 pub fn freecadef(mut d: Option<Box<cadef>>) {                                // c:1013
-    while let Some(mut node) = d {                                           // c:1018 while (d)
+    while let Some(mut node) = d {                                           // c:1013 while (d)
         d = node.snext.take();                                               // c:1019 s = d->snext
         // c:1020-1023 — zsfree match/set, freearray(defs).
         node.r#match = None;
@@ -450,20 +450,20 @@ pub static ca_laststate: std::sync::Mutex<castate> =                         // 
 pub static ca_parsed: std::sync::atomic::AtomicI32 =                         // c:1956
     std::sync::atomic::AtomicI32::new(0);
 
-/// Port of `static int ca_alloced` from `Src/Zle/computil.c:1956`.
-pub static ca_alloced: std::sync::atomic::AtomicI32 =                        // c:1956
+/// Port of `static int ca_alloced` from `Src/Zle/computil.c:1960`.
+pub static ca_alloced: std::sync::atomic::AtomicI32 =                        // c:1960
     std::sync::atomic::AtomicI32::new(0);
 
-/// Port of `static int ca_doff` from `Src/Zle/computil.c:1957`. Count
+/// Port of `static int ca_doff` from `Src/Zle/computil.c:1960`. Count
 /// of chars of ignored prefix (for clumped options or arg to an
 /// option).
-pub static ca_doff: std::sync::atomic::AtomicI32 =                           // c:1957
+pub static ca_doff: std::sync::atomic::AtomicI32 =                           // c:1960
     std::sync::atomic::AtomicI32::new(0);
 
 /// Direct port of `static void freecastate(Castate s)` from
-/// `Src/Zle/computil.c:1959-1970`. Frees the args/oargs lists.
-pub fn freecastate(s: &mut castate) {                                        // c:1959
-    s.args = None;                                                           // c:1965 freelinklist(s->args)
+/// `Src/Zle/computil.c:1960`. Frees the args/oargs lists.
+pub fn freecastate(s: &mut castate) {                                        // c:1960
+    s.args = None;                                                           // c:1960 freelinklist(s->args)
     s.oargs = None;                                                          // c:1966-1969 freelinklist per slot
 }
 
@@ -501,19 +501,19 @@ pub struct cvdef {                                                           // 
 #[allow(non_camel_case_types)]
 pub struct cvval {                                                           // c:2939
     pub next:   Option<Box<cvval>>,                                          // c:2940 Cvval next
-    pub name:   Option<String>,                                              // c:2941 char *name
-    pub descr:  Option<String>,                                              // c:2942 char *descr
-    pub xor:    Option<Vec<String>>,                                         // c:2943 char **xor
-    pub r#type: i32,                                                         // c:2944 int type (CVV_*)
-    pub arg:    Option<Box<caarg>>,                                          // c:2945 Caarg arg
-    pub active: i32,                                                         // c:2946
+    pub name:   Option<String>,                                              // c:2961 char *name
+    pub descr:  Option<String>,                                              // c:2961 char *descr
+    pub xor:    Option<Vec<String>>,                                         // c:2961 char **xor
+    pub r#type: i32,                                                         // c:2961 int type (CVV_*)
+    pub arg:    Option<Box<caarg>>,                                          // c:2961 Caarg arg
+    pub active: i32,                                                         // c:2961
 }
 
 /// Direct port of `static void freecvdef(Cvdef d)` from
-/// `Src/Zle/computil.c:2960-2981`. Walks the vals chain freeing
+/// `Src/Zle/computil.c:2961`. Walks the vals chain freeing
 /// each cvval (which frees its caarg via freecaargs).
-pub fn freecvdef(d: Option<Box<cvdef>>) {                                    // c:2960
-    let Some(mut node) = d else { return; };                                 // c:2963 if (d)
+pub fn freecvdef(d: Option<Box<cvdef>>) {                                    // c:2961
+    let Some(mut node) = d else { return; };                                 // c:2961 if (d)
     node.descr = None;                                                       // c:2966 zsfree(d->descr)
     node.defs = None;                                                        // c:2967-2968 freearray(d->defs)
     let mut p = node.vals.take();
@@ -579,38 +579,38 @@ pub struct ctags {                                                           // 
     pub sets:    Option<Box<ctset>>,                                         // c:3741 Ctset sets
 }
 
-/// Direct port of `struct ctset` from `Src/Zle/computil.c:3746-3751`.
+/// Direct port of `struct ctset` from `Src/Zle/computil.c:3763`.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-pub struct ctset {                                                           // c:3746
-    pub next: Option<Box<ctset>>,                                            // c:3747 Ctset next
-    pub tags: Option<Vec<String>>,                                           // c:3748 char **tags
-    pub tag:  Option<String>,                                                // c:3749 char *tag
-    pub ptr:  i32,                                                           // c:3750 char **ptr (index)
+pub struct ctset {                                                           // c:3763
+    pub next: Option<Box<ctset>>,                                            // c:3763 Ctset next
+    pub tags: Option<Vec<String>>,                                           // c:3763 char **tags
+    pub tag:  Option<String>,                                                // c:3763 char *tag
+    pub ptr:  i32,                                                           // c:3763 char **ptr (index)
 }
 
 /// Direct port of `static void freectset(Ctset s)` from
-/// `Src/Zle/computil.c:3762-3777`.
-pub fn freectset(mut s: Option<Box<ctset>>) {                                // c:3762
-    while let Some(mut node) = s {                                           // c:3767 while (s)
-        s = node.next.take();                                                // c:3768 n = s->next
-        node.tags = None;                                                    // c:3770-3771
-        node.tag = None;                                                     // c:3772
-        drop(node);                                                          // c:3773
+/// `Src/Zle/computil.c:3780`.
+pub fn freectset(mut s: Option<Box<ctset>>) {                                // c:3763
+    while let Some(mut node) = s {                                           // c:3780 while (s)
+        s = node.next.take();                                                // c:3780 n = s->next
+        node.tags = None;                                                    // c:3780-3771
+        node.tag = None;                                                     // c:3780
+        drop(node);                                                          // c:3780
     }
 }
 
 /// Direct port of `static void freectags(Ctags t)` from
-/// `Src/Zle/computil.c:3779-3789`.
-pub fn freectags(t: Option<Box<ctags>>) {                                    // c:3779
-    let Some(mut node) = t else { return; };                                 // c:3782 if (t)
+/// `Src/Zle/computil.c:3780`.
+pub fn freectags(t: Option<Box<ctags>>) {                                    // c:3780
+    let Some(mut node) = t else { return; };                                 // c:3780 if (t)
     node.all = None;                                                         // c:3783-3784
     node.context = None;                                                     // c:3785
     freectset(node.sets.take());                                             // c:3786
     drop(node);                                                              // c:3787
 }
 
-/// Port of `rembslashcolon(s)` from `Src/Zle/computil.c:1046`.
+/// Port of `rembslashcolon(char *s)` from `Src/Zle/computil.c:1046`.
 /// ```c
 /// static char *
 /// rembslashcolon(char *s)
@@ -629,9 +629,8 @@ pub fn freectags(t: Option<Box<ctags>>) {                                    // 
 /// Strip every `\:` two-byte sequence to nothing (the `\` is dropped,
 /// the `:` follows on the next iteration). Used to unescape colon-
 /// bearing description strings produced by `_arguments`.
-/// Port of `rembslashcolon(s)` from `Src/Zle/computil.c:1046`.
-pub fn rembslashcolon(s: &str) -> String {                                   // c:1046
-    let bytes = s.as_bytes();                                                // c:1051 dupstring(s)
+pub fn rembslashcolon(s: &str) -> String {                                   // c:1047
+    let bytes = s.as_bytes();                                                // c:1047 dupstring(s)
     let mut out = Vec::<u8>::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {                                                  // c:1053 while (*s)
@@ -648,7 +647,7 @@ pub fn rembslashcolon(s: &str) -> String {                                   // 
     String::from_utf8(out).unwrap_or_default()                               // c:1060 return r
 }
 
-/// Port of `bslashcolon(s)` from `Src/Zle/computil.c:1065`.
+/// Port of `bslashcolon(char *s)` from `Src/Zle/computil.c:1065`.
 /// ```c
 /// static char *
 /// bslashcolon(char *s)
@@ -667,9 +666,8 @@ pub fn rembslashcolon(s: &str) -> String {                                   // 
 /// Insert a backslash before every `:`, doubling the worst-case
 /// length. Inverse of `rembslashcolon` for description-string
 /// emission.
-/// Port of `bslashcolon(s)` from `Src/Zle/computil.c:1065`.
-pub fn bslashcolon(s: &str) -> String {                                      // c:1065
-    let bytes = s.as_bytes();                                                // c:1070 zhalloc(2*strlen(s)+1)
+pub fn bslashcolon(s: &str) -> String {                                      // c:1066
+    let bytes = s.as_bytes();                                                // c:1066 zhalloc(2*strlen(s)+1)
     let mut out = Vec::<u8>::with_capacity(2 * bytes.len() + 1);
     for &b in bytes {                                                        // c:1072 while (*s)
         if b == b':' {                                                       // c:1073
@@ -681,7 +679,7 @@ pub fn bslashcolon(s: &str) -> String {                                      // 
     String::from_utf8(out).unwrap_or_default()                               // c:1079 return r
 }
 
-/// Port of `single_index(pre, opt)` from `Src/Zle/computil.c:1088`.
+/// Port of `single_index(char pre, char opt)` from `Src/Zle/computil.c:1088`.
 /// ```c
 /// static int
 /// single_index(char pre, char opt)
@@ -697,9 +695,8 @@ pub fn bslashcolon(s: &str) -> String {                                      // 
 ///
 /// `pre` is `-` for the negative-prefix slot and anything else
 /// (typically `+`) for the positive-prefix slot.
-/// Port of `single_index(pre, opt)` from `Src/Zle/computil.c:1088`.
-pub fn single_index(pre: u8, opt: u8) -> i32 {                               // c:1088
-    if opt <= 0x20 || opt > 0x7e {                                           // c:1091
+pub fn single_index(pre: u8, opt: u8) -> i32 {                               // c:1089
+    if opt <= 0x20 || opt > 0x7e {                                           // c:1089
         return -1;                                                           // c:1092
     }
     // c:1094 — `return opt + (pre == '-' ? -0x21 : 94 - 0x21)`.
@@ -1157,7 +1154,8 @@ mod tests {
 // exports). exec.rs's re-export updated to point to the new home.
 
 
-/// Port of `alloc_cadef(args, single, match, nonarg, flags)` from Src/Zle/computil.c:1147.
+/// Port of `alloc_cadef(char **args, int single, char *match, char *nonarg, int flags)` from Src/Zle/computil.c:1147.
+/// WARNING: param names don't match C — Rust=(_args, _single, _matchstr, _flags) vs C=(args, single, match, nonarg, flags)
 pub fn alloc_cadef(_args: &[String], _single: i32, _matchstr: &str,         // c:1147
                    _nonarg: &str, _flags: i32) -> i32 {
     // C body c:1149-1180 — `ret = zalloc(...); ret->next = ret->snext = NULL;
@@ -1171,7 +1169,7 @@ pub fn alloc_cadef(_args: &[String], _single: i32, _matchstr: &str,         // c
     0
 }
 
-/// Port of `arrcontains(a, s, colon)` from Src/Zle/computil.c:3813.
+/// Port of `arrcontains(char **a, char *s, int colon)` from Src/Zle/computil.c:3813.
 pub fn arrcontains(a: &[String], s: &str, colon: bool) -> i32 {              // c:3813
     // C body c:3817-3826: linear scan; if colon, compare up to first
     //                    `:` in either side; else strcmp.
@@ -1189,8 +1187,9 @@ pub fn arrcontains(a: &[String], s: &str, colon: bool) -> i32 {              // 
     0                                                                        // c:3827
 }
 
-/// Port of `bin_comparguments(nam, args)` from Src/Zle/computil.c:2607.
-pub fn bin_comparguments(nam: &str, args: &[String],                         // c:2607
+/// Port of `bin_comparguments(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from Src/Zle/computil.c:2585.
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args)
+pub fn bin_comparguments(nam: &str, args: &[String],                         // c:2585
                          _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
     use crate::ported::zle::complete::INCOMPFUNC;
@@ -1209,8 +1208,9 @@ pub fn bin_comparguments(nam: &str, args: &[String],                         // 
     0
 }
 
-/// Port of `bin_compdescribe(nam, args)` from Src/Zle/computil.c:3447.
-pub fn bin_compdescribe(nam: &str, args: &[String],                          // c:3447
+/// Port of `bin_compdescribe(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from Src/Zle/computil.c:846.
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(d, more)
+pub fn bin_compdescribe(nam: &str, args: &[String],                          // c:846
                         _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
     use crate::ported::zle::complete::INCOMPFUNC;
@@ -1232,8 +1232,9 @@ pub fn bin_compdescribe(nam: &str, args: &[String],                          // 
     0
 }
 
-/// Port of `bin_compfiles(nam, args)` from Src/Zle/computil.c:4944.
-pub fn bin_compfiles(nam: &str, args: &[String],                             // c:4944
+/// Port of `bin_compfiles(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from Src/Zle/computil.c:4970.
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=()
+pub fn bin_compfiles(nam: &str, args: &[String],                             // c:4970
                      _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
     use crate::ported::zle::complete::INCOMPFUNC;
@@ -1251,7 +1252,8 @@ pub fn bin_compfiles(nam: &str, args: &[String],                             // 
     0
 }
 
-/// Port of `bin_compgroups(nam, args)` from Src/Zle/computil.c:5073.
+/// Port of `bin_compgroups(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from Src/Zle/computil.c:5073.
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_compgroups(nam: &str, args: &[String],                            // c:5073
                       _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
@@ -1269,13 +1271,14 @@ pub fn bin_compgroups(nam: &str, args: &[String],                            // 
     0
 }
 
-/// Port of `boot_(m)` from Src/Zle/computil.c:5153.
+/// Port of `boot_(UNUSED(Module m))` from Src/Zle/computil.c:5153.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
 pub fn boot_() -> i32 {                                                      // c:5153
     // C body c:5155-5156 — `return 0`. Faithful empty body.
     0
 }
 
-/// Port of `ca_colonlist(l)` from Src/Zle/computil.c:2428.
+/// Port of `ca_colonlist(LinkList l)` from Src/Zle/computil.c:2428.
 pub fn ca_colonlist(l: &[String]) -> String {                            // c:2428
     // C body c:2430-2459 — joins l with `:`, escapes `:` and `\`
     //                      with `\` per item.
@@ -1297,7 +1300,7 @@ pub fn ca_colonlist(l: &[String]) -> String {                            // c:24
     out
 }
 
-/// Port of `ca_foreign_opt(curset, all, option)` from Src/Zle/computil.c:1787.
+/// Port of `ca_foreign_opt(Cadef curset, Cadef all, char *option)` from Src/Zle/computil.c:1787.
 #[allow(unused_variables)]
 pub fn ca_foreign_opt(curset: i32, all: i32, option: &str) -> i32 {       // c:1787
     // C body c:1789-1801 — walk Cadef snext list, skipping curset,
@@ -1307,7 +1310,7 @@ pub fn ca_foreign_opt(curset: i32, all: i32, option: &str) -> i32 {       // c:1
     0
 }
 
-/// Port of `ca_get_arg(d, n)` from Src/Zle/computil.c:1807.
+/// Port of `ca_get_arg(Cadef d, int n)` from Src/Zle/computil.c:1807.
 #[allow(unused_variables)]
 pub fn ca_get_arg(d: i32, n: i32) -> i32 {                                 // c:1807
     // C body c:1809-1830 — walks Cadef args linked-list to find the
@@ -1316,7 +1319,7 @@ pub fn ca_get_arg(d: i32, n: i32) -> i32 {                                 // c:
     0
 }
 
-/// Port of `ca_get_opt(d, line, full, end)` from Src/Zle/computil.c:1706.
+/// Port of `ca_get_opt(Cadef d, char *line, int full, char **end)` from Src/Zle/computil.c:1706.
 #[allow(unused_variables)]
 pub fn ca_get_opt(d: i32, line: &str, full: i32, end: &mut String) -> i32 { // c:1706
     // C body c:1708-1745 — looks up an option-spec by long-name match
@@ -1325,21 +1328,23 @@ pub fn ca_get_opt(d: i32, line: &str, full: i32, end: &mut String) -> i32 { // c
     0
 }
 
-/// Port of `ca_get_sopt(d, line, end, lp)` from Src/Zle/computil.c:1747.
+/// Port of `ca_get_sopt(Cadef d, char *line, char **end, LinkList *lp)` from Src/Zle/computil.c:1747.
+/// WARNING: param names don't match C — Rust=(_d, _line, _end) vs C=(d, line, end, lp)
 pub fn ca_get_sopt(_d: i32, _line: &str, _end: &mut String) -> i32 {         // c:1747
     // C body c:1749-1785 — short-option variant: matches single-char
     //                      option from `line`, sets `end` past it.
     0
 }
 
-/// Port of `ca_inactive(d, xor, cur, opts)` from Src/Zle/computil.c:1832.
+/// Port of `ca_inactive(Cadef d, char **xor, int cur, int opts)` from Src/Zle/computil.c:1832.
+/// WARNING: param names don't match C — Rust=(_d, _xor) vs C=(d, xor, cur, opts)
 pub fn ca_inactive(_d: i32, _xor: &[String]) {                               // c:1832
     // C body c:1834-1842 — for each xor entry, find matching opt or
     //                      arg in d and clear active flag. Cadef not
     //                      yet hydrated; no-op.
 }
 
-/// Port of `ca_nullist(l)` from Src/Zle/computil.c:2411.
+/// Port of `ca_nullist(LinkList l)` from Src/Zle/computil.c:2411.
 pub fn ca_nullist(l: &[String]) -> Vec<u8> {                             // c:2411
     // C body c:2413-2419 — `if (l) { array = zlinklist2array(l, 0);
     //                              ret = zjoin(array, '\\0', 0); free(array);
@@ -1358,7 +1363,8 @@ pub fn ca_nullist(l: &[String]) -> Vec<u8> {                             // c:24
     out
 }
 
-/// Port of `ca_opt_arg(opt, line)` from Src/Zle/computil.c:1976.
+/// Port of `ca_opt_arg(Caopt opt, char *line)` from Src/Zle/computil.c:1976.
+/// WARNING: param names don't match C — Rust=(opt_name, line, equal_kind) vs C=(opt, line)
 pub fn ca_opt_arg(opt_name: &str, line: &str, equal_kind: bool) -> String {  // c:1976
     // C body c:1978-1996: walks `o = opt->name` and `line` byte-by-byte,
     //                     skipping `\\` escapes; if any quote (`\\` `'` `"`)
@@ -1397,16 +1403,17 @@ pub fn ca_opt_arg(opt_name: &str, line: &str, equal_kind: bool) -> String {  // 
     }
     let rest = &l_bytes[li..];
     let mut s = String::from_utf8_lossy(rest).into_owned();
-    if equal_kind && s.starts_with('\\') {                                   // c:1991
+    if equal_kind && s.starts_with('\\') {                                   // c:2004
         s.remove(0);
     }
     if equal_kind {
-        s = s.strip_prefix('=').map(|t| t.to_string()).unwrap_or(s);         // c:1993
+        s = s.strip_prefix('=').map(|t| t.to_string()).unwrap_or(s);         // c:2004
     }
     s
 }
 
-/// Port of `ca_parse_line(d, all, multi, first)` from Src/Zle/computil.c:2004.
+/// Port of `ca_parse_line(Cadef d, Cadef all, int multi, int first)` from Src/Zle/computil.c:2004.
+/// WARNING: param names don't match C — Rust=(_d, _multi, _first) vs C=(d, all, multi, first)
 pub fn ca_parse_line(_d: i32, _multi: i32, _first: i32) -> i32 {             // c:2004
     // C body c:2006-2407 — the workhorse: walks compwords applying
     //                      ca_get_opt/ca_get_sopt/ca_inactive to build
@@ -1416,7 +1423,7 @@ pub fn ca_parse_line(_d: i32, _multi: i32, _first: i32) -> i32 {             // 
 
 /// Direct port of `static void ca_set_data(LinkList descr, Caarg arg,
 ///                                          int single)` from
-/// `Src/Zle/computil.c:2472-2602`. Populates `$opt_args`, `$line`,
+/// `Src/Zle/computil.c:2472`. Populates `$opt_args`, `$line`,
 /// `$words`, and the per-argument compstate hash entries from
 /// `ca_laststate` (the captured `_arguments` parse result).
 ///
@@ -1435,7 +1442,7 @@ pub fn ca_set_data() {                                                       // 
     // via the same paramtab path callcompfunc uses.
 }
 
-/// Port of `cf_ignore(names, ign, style, path)` from Src/Zle/computil.c:4860.
+/// Port of `cf_ignore(char **names, LinkList ign, char *style, char *path)` from Src/Zle/computil.c:4860.
 pub fn cf_ignore(names: &[String], ign: &mut Vec<String>, style: &str, path: &str) {  // c:4860
     // C body c:4862-4895 — adds to `ign` any directory in `names`
     //                      that is the parent of `path` (style "parent")
@@ -1458,7 +1465,7 @@ pub fn cf_ignore(names: &[String], ign: &mut Vec<String>, style: &str, path: &st
 ///                                       char *skipped, char *matcher,
 ///                                       char *sdirs, char **fake,
 ///                                       char **pats)` from
-/// `Src/Zle/computil.c:4829-4856`. Combines the supplied pattern
+/// `Src/Zle/computil.c:4829`. Combines the supplied pattern
 /// lists into a single resolved pattern array used by
 /// `_path_files` to drive the file-completion path.
 ///
@@ -1479,7 +1486,7 @@ pub fn cf_pats(_dirs: i32, _noopt: i32, names: &[String],                    // 
     out
 }
 
-/// Port of `cf_remove_other(names, pre, amb)` from Src/Zle/computil.c:4899.
+/// Port of `cf_remove_other(char **names, char *pre, int *amb)` from Src/Zle/computil.c:4899.
 pub fn cf_remove_other(names: &[String], pre: &str, amb: &mut i32) -> Vec<String> {  // c:4899
     // C body c:4900-4955 — if `pre` contains `/`, strips the suffix
     //                      and keeps only entries with that prefix;
@@ -1499,7 +1506,8 @@ pub fn cf_remove_other(names: &[String], pre: &str, amb: &mut i32) -> Vec<String
     out
 }
 
-/// Port of `cfp_add_sdirs(final, orig, skipped, sdirs, fake)` from Src/Zle/computil.c:4735.
+/// Port of `cfp_add_sdirs(LinkList final, LinkList orig, char *skipped, char *sdirs, char **fake)` from Src/Zle/computil.c:4735.
+/// WARNING: param names don't match C — Rust=(final_list, orig, sdirs, fake) vs C=(final, orig, skipped, sdirs, fake)
 pub fn cfp_add_sdirs(final_list: &mut Vec<String>, orig: &[String],          // c:4735
                      _skipped: &str, sdirs: &str, fake: &[String]) {
     // C body c:4738-4767: if sdirs ∈ {"yes","true","on","1","..","../"}
@@ -1525,7 +1533,8 @@ pub fn cfp_add_sdirs(final_list: &mut Vec<String>, orig: &[String],          // 
     }
 }
 
-/// Port of `cfp_bld_pats(names, skipped, pats)` from Src/Zle/computil.c:4704.
+/// Port of `cfp_bld_pats(UNUSED(int dirs), LinkList names, char *skipped, char **pats)` from Src/Zle/computil.c:4704.
+/// WARNING: param names don't match C — Rust=(_dirs, _names, _matcher) vs C=(dirs, names, skipped, pats)
 pub fn cfp_bld_pats(_dirs: i32, _names: &[String], _matcher: &str,           // c:4704
                     _pats: &[String]) -> Vec<String> {
     // C body c:4706-4732 — combines `pats` with each name to build
@@ -1534,7 +1543,7 @@ pub fn cfp_bld_pats(_dirs: i32, _names: &[String], _matcher: &str,           // 
     Vec::new()
 }
 
-/// Port of `cfp_matcher_pats(matcher, add)` from Src/Zle/computil.c:4525.
+/// Port of `cfp_matcher_pats(char *matcher, char *add)` from Src/Zle/computil.c:4525.
 #[allow(unused_variables)]
 pub fn cfp_matcher_pats(matcher: &str, add: &[String]) -> Vec<String> {   // c:4525
     // C body c:4527-4619 — applies the Cmatcher equivalences from
@@ -1543,14 +1552,15 @@ pub fn cfp_matcher_pats(matcher: &str, add: &[String]) -> Vec<String> {   // c:4
     Vec::new()
 }
 
-/// Port of `cfp_matcher_range(ms, add)` from Src/Zle/computil.c:4307.
+/// Port of `cfp_matcher_range(Cmatcher *ms, char *add)` from Src/Zle/computil.c:4307.
+/// WARNING: param names don't match C — Rust=(_ml, _matcher, _pat) vs C=(ms, add)
 pub fn cfp_matcher_range(_ml: i32, _matcher: &str, _pat: &str) -> Vec<String> { // c:4307
     // C body c:4309-4523 — expands a `[…]` char class against the
     //                      matcher's class equivalences.
     Vec::new()
 }
 
-/// Port of `cfp_opt_pats(pats, matcher)` from Src/Zle/computil.c:4621.
+/// Port of `cfp_opt_pats(char **pats, char *matcher)` from Src/Zle/computil.c:4621.
 #[allow(unused_variables)]
 pub fn cfp_opt_pats(pats: &[String], matcher: &str) -> Vec<String> {       // c:4621
     // C body c:4623-4702 — optimization pass over `pats`: prunes
@@ -1558,7 +1568,8 @@ pub fn cfp_opt_pats(pats: &[String], matcher: &str) -> Vec<String> {       // c:
     Vec::new()
 }
 
-/// Port of `cfp_test_exact(names, accept, skipped)` from Src/Zle/computil.c:4160.
+/// Port of `cfp_test_exact(LinkList names, char **accept, char *skipped)` from Src/Zle/computil.c:4160.
+/// WARNING: param names don't match C — Rust=(_names, _accept) vs C=(names, accept, skipped)
 pub fn cfp_test_exact(_names: &[String], _accept: &[String],                 // c:4160
                       _skipped: &str) -> Vec<String> {
     // C body c:4162-4305 — tests each name against `accept`-suffix
@@ -1568,14 +1579,15 @@ pub fn cfp_test_exact(_names: &[String], _accept: &[String],                 // 
     Vec::new()
 }
 
-/// Port of `cleanup_(m)` from Src/Zle/computil.c:5160.
+/// Port of `cleanup_(UNUSED(Module m))` from Src/Zle/computil.c:5160.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
 pub fn cleanup_() -> i32 {                                                   // c:5160
     // C body c:5162-5163 — `return setfeatureenables(m, &module_features, NULL)`.
     //                      Static-link path: no per-feature toggle, return 0.
     0
 }
 
-/// Port of `comp_quote(str, prefix)` from Src/Zle/computil.c:3662.
+/// Port of `comp_quote(char *str, int prefix)` from Src/Zle/computil.c:3662.
 pub fn comp_quote(str: &str, prefix: i32) -> String {                          // c:3662
     use crate::ported::zle::complete::COMPQSTACK;
     // c:3667 — `x = (prefix && *str == '=')`.
@@ -1599,7 +1611,7 @@ pub fn comp_quote(str: &str, prefix: i32) -> String {                          /
     ret
 }
 
-/// Port of `cv_get_val(d, name)` from Src/Zle/computil.c:3178.
+/// Port of `cv_get_val(Cvdef d, char *name)` from Src/Zle/computil.c:3178.
 #[allow(unused_variables)]
 pub fn cv_get_val(d: i32, name: &str) -> i32 {                             // c:3178
     // C body c:3180-3186 — `for (p = d->vals; p; p = p->next)
@@ -1608,14 +1620,14 @@ pub fn cv_get_val(d: i32, name: &str) -> i32 {                             // c:
     0
 }
 
-/// Port of `cv_inactive(d, xor)` from Src/Zle/computil.c:3209.
+/// Port of `cv_inactive(Cvdef d, char **xor)` from Src/Zle/computil.c:3209.
 #[allow(unused_variables)]
 pub fn cv_inactive(d: i32, xor: &[String]) {                               // c:3209
     // C body c:3211-3217 — for each xor entry, find via cv_get_val
     //                      and clear active flag. No Cvdef yet; no-op.
 }
 
-/// Port of `cv_next(d, sp, ap)` from Src/Zle/computil.c:3240.
+/// Port of `cv_next(Cvdef d, char **sp, char **ap)` from Src/Zle/computil.c:3240.
 #[allow(unused_variables)]
 pub fn cv_next(d: i32, sp: &mut String, ap: &mut String) -> i32 {         // c:3240
     // C body c:3242-3334 — splits the next value out of *sp using
@@ -1624,7 +1636,7 @@ pub fn cv_next(d: i32, sp: &mut String, ap: &mut String) -> i32 {         // c:3
     0
 }
 
-/// Port of `cv_parse_word(d)` from Src/Zle/computil.c:3336.
+/// Port of `cv_parse_word(Cvdef d)` from Src/Zle/computil.c:3336.
 #[allow(unused_variables)]
 pub fn cv_parse_word(d: i32) {                                              // c:3336
     // C body c:3338-3433 — full word parser: walks compwords/compprefix,
@@ -1632,7 +1644,7 @@ pub fn cv_parse_word(d: i32) {                                              // c
     //                      Substrate not ready; no-op.
 }
 
-/// Port of `cv_quote_get_val(d, name)` from Src/Zle/computil.c:3190.
+/// Port of `cv_quote_get_val(Cvdef d, char *name)` from Src/Zle/computil.c:3190.
 pub fn cv_quote_get_val(d: i32, name: &str) -> i32 {                         // c:3190
     // C body c:3192-3203 — `name = dupstring(name); noerrs=2;
     //                       parse_subst_string(name); noerrs = ne;
@@ -1643,21 +1655,24 @@ pub fn cv_quote_get_val(d: i32, name: &str) -> i32 {                         // 
     cv_get_val(d, name)
 }
 
-/// Port of `enables_(m, enables)` from Src/Zle/computil.c:5146.
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from Src/Zle/computil.c:5146.
+/// WARNING: param names don't match C — Rust=() vs C=(m, enables)
 pub fn enables_() -> i32 {                                                   // c:5146
     // C body c:5148 — `return handlefeatures(m, &module_features, enables)`.
     //                  Static-link no-op.
     0
 }
 
-/// Port of `features_(m, features)` from Src/Zle/computil.c:5138.
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from Src/Zle/computil.c:5138.
+/// WARNING: param names don't match C — Rust=() vs C=(m, features)
 pub fn features_() -> i32 {                                                  // c:5138
     // C body c:5140-5141 — `*features = featuresarray(...); return 0`.
     //                      Features array exposed elsewhere; return 0.
     0
 }
 
-/// Port of `finish_(m)` from Src/Zle/computil.c:5167.
+/// Port of `finish_(UNUSED(Module m))` from Src/Zle/computil.c:5167.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
 pub fn finish_() -> i32 {                                                    // c:5167
     // C body c:5169-5176 — `for (i...) freecadef(cadef_cache[i]);
     //                       for (i...) freecvdef(cvdef_cache[i]); return 0`.
@@ -1666,7 +1681,8 @@ pub fn finish_() -> i32 {                                                    // 
     0
 }
 
-/// Port of `setup_(m)` from Src/Zle/computil.c:5124.
+/// Port of `setup_(UNUSED(Module m))` from Src/Zle/computil.c:5124.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
 pub fn setup_() -> i32 {                                                     // c:5124
     // C body c:5126-5132 — `memset(cadef_cache, 0, ...);
     //                       memset(cvdef_cache, 0, ...);
@@ -1679,7 +1695,7 @@ pub fn setup_() -> i32 {                                                     // 
 // `freecastate` / `freectags` / `freectset` / `freecvdef` real ports
 // landed above with the castate / ctags / ctset / cvdef structs.
 
-/// Port of `get_cadef(nam, args)` from Src/Zle/computil.c:1673.
+/// Port of `get_cadef(char *nam, char **args)` from Src/Zle/computil.c:1673.
 #[allow(unused_variables)]
 pub fn get_cadef(nam: &str, args: &[String]) -> i32 {                      // c:1673
     // C body c:1675-1700 — scans cadef_cache[MAX_CACACHE] for a hit
@@ -1690,14 +1706,14 @@ pub fn get_cadef(nam: &str, args: &[String]) -> i32 {                      // c:
     0
 }
 
-/// Port of `get_cvdef(nam, args)` from Src/Zle/computil.c:3154.
+/// Port of `get_cvdef(char *nam, char **args)` from Src/Zle/computil.c:3154.
 #[allow(unused_variables)]
 pub fn get_cvdef(nam: &str, args: &[String]) -> i32 {                      // c:3154
     // Mirror of get_cadef for cvdef_cache. Same fallback.
     0
 }
 
-/// Port of `parse_cvdef(nam, args)` from Src/Zle/computil.c:2986.
+/// Port of `parse_cvdef(char *nam, char **args)` from Src/Zle/computil.c:2986.
 #[allow(unused_variables)]
 pub fn parse_cvdef(nam: &str, args: &[String]) -> i32 {                    // c:2986
     // C body c:2988-3151 — parses _values style spec into a Cvdef
@@ -1706,7 +1722,8 @@ pub fn parse_cvdef(nam: &str, args: &[String]) -> i32 {                    // c:
     0
 }
 
-/// Port of `set_cadef_opts(def)` from Src/Zle/computil.c:1180.
+/// Port of `set_cadef_opts(Cadef def)` from Src/Zle/computil.c:1180.
+/// WARNING: param names don't match C — Rust=() vs C=(def)
 pub fn set_cadef_opts() {                                                    // c:1180
     // C body c:1182-1190 — walks def->args linked list updating
     //                      argp->min based on argp->num minus
@@ -1714,7 +1731,7 @@ pub fn set_cadef_opts() {                                                    // 
     //                      Rust struct yet; no-op.
 }
 
-/// Port of `settags(level, tags)` from Src/Zle/computil.c:3794.
+/// Port of `settags(int level, char **tags)` from Src/Zle/computil.c:3794.
 pub fn settags(level: i32, tags: &[String]) {                                // c:3794
     // C body c:3796-3810 — `if (comptags[level]) freectags(comptags[level]);
     //                       comptags[level] = (Ctags)zalloc(...);
@@ -1738,7 +1755,7 @@ pub fn settags(level: i32, tags: &[String]) {                                // 
 // / compstate hash / cv_* helpers) that's open work.
 // =====================================================================
 
-/// Direct port of `bin_compquote(nam, args, ops)` from `Src/Zle/computil.c:3679`.
+/// Direct port of `bin_compquote(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Zle/computil.c:3679`.
 /// C body (c:3683-3725):
 /// ```c
 /// if (incompfunc != 1) { error; return 1; }
@@ -1758,7 +1775,7 @@ pub fn settags(level: i32, tags: &[String]) {                                // 
 /// Static-link path: the comp_quote helper currently returns 0 (stub);
 /// without it, every quote() call is a no-op, but the entry still
 /// validates incompfunc + compqstack guards correctly.
-/// Port of `bin_compquote(nam, args, ops, func)` from `Src/Zle/computil.c:3679`.
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_compquote(nam: &str, args: &[String],                             // c:3679
                      ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
@@ -1782,12 +1799,13 @@ pub fn bin_compquote(nam: &str, args: &[String],                             // 
     0                                                                        // c:3725
 }
 
-/// Direct port of `bin_comptags(nam, args)` from `Src/Zle/computil.c:3831`.
+/// Direct port of `bin_comptags(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Zle/computil.c:3831`.
 /// Dispatcher for `comptags -i/-C/-T/-N/-A/-L`. Each subcommand
 /// manipulates the per-completion tag-stack (curtags / curset /
 /// curnos). Static-link path: tag-stack globals aren't yet exposed
 /// in compcore.rs; structural port preserves the dispatch shape so
 /// the subcommand-name parser matches C.
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_comptags(nam: &str, args: &[String],                              // c:3831
                     _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
@@ -1805,14 +1823,15 @@ pub fn bin_comptags(nam: &str, args: &[String],                              // 
     // curtags via cv_* helpers (defined elsewhere in computil.c).
     // Deferred until the tag-stack globals land.
     let _ = args;
-    0                                                                        // c:3955
+    0                                                                        // c:3961
 }
 
-/// Direct port of `bin_comptry(nam, args)` from `Src/Zle/computil.c:3961`.
+/// Direct port of `bin_comptry(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Zle/computil.c:3961`.
 /// C body (c:3965-4138): manages the "tried tags" set per
 /// completion call. Subcommands -i (init), -p (push), -m (mode),
 /// -t (test), -A (assign-to-array). Static-link path: triedtags
 /// global isn't yet stored; structural port for dispatch parity.
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_comptry(nam: &str, args: &[String],                               // c:3961
                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;
@@ -1827,11 +1846,12 @@ pub fn bin_comptry(nam: &str, args: &[String],                               // 
     0                                                                        // c:4137
 }
 
-/// Direct port of `bin_compvalues(nam, args)` from `Src/Zle/computil.c:3475`.
+/// Direct port of `bin_compvalues(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Zle/computil.c:3475`.
 /// C body (c:3479-3656): manages the compvalues parameter table —
 /// the per-context value-list that completion functions populate.
 /// Subcommands -i/-D/-C/-V/-T/-v/-d/-l etc. Static-link path: the
 /// compvalues table isn't yet stored; structural port for parity.
+/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_compvalues(nam: &str, args: &[String],                            // c:3475
                       _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::utils::zwarnnam;

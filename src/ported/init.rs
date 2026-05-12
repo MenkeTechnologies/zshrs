@@ -162,18 +162,18 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {                         // 
         break;
     }
     err = 0;                                                                 // c:245 (errflag stub)
-    if toplevel == 0 {                                                       // c:246
-        // zcontext_restore();                                               // c:247
+    if toplevel == 0 {                                                       // c:263
+        // zcontext_restore();                                               // c:263
     }
-    crate::ported::mem::popheap();                                           // c:248
-    crate::ported::signals::unqueue_signals();                               // c:249
+    crate::ported::mem::popheap();                                           // c:263
+    crate::ported::signals::unqueue_signals();                               // c:263
 
-    if err != 0 { return 2; /* LOOP_ERROR */ }                               // c:251-252
-    if non_empty == 0 { return 1; /* LOOP_EMPTY */ }                         // c:253-254
-    0 /* LOOP_OK */                                                          // c:255
+    if err != 0 { return 2; /* LOOP_ERROR */ }                               // c:263-252
+    if non_empty == 0 { return 1; /* LOOP_EMPTY */ }                         // c:263-254
+    0 /* LOOP_OK */                                                          // c:263
 }
 
-/// Port of `static void parseargs(...)` from Src/init.c:262.
+/// Port of `static void parseargs(...)` from Src/init.c:263.
 fn parseargs(zsh_name: &str, argv: &mut Vec<String>,                         // c:263
              runscript: &mut Option<String>, cmdptr: &mut Option<String>) {
     let mut idx: usize = 0;                                                  // c:265
@@ -204,29 +204,29 @@ fn parseargs(zsh_name: &str, argv: &mut Vec<String>,                         // 
             idx += 1;
         }
     } else if cmdptr.is_none() {                                             // c:307
-        // opts[SHINSTDIN] = 1;                                              // c:308
+        // opts[SHINSTDIN] = 1;                                              // c:328
     }
-    // pparams = ...                                                         // c:316
+    // pparams = ...                                                         // c:328
     let _ = paramlist;
 }
 
-/// Port of `static void parseopts_insert(...)` from Src/init.c:327.
+/// Port of `static void parseopts_insert(...)` from Src/init.c:328.
 ///
 /// Insert into list in order of pointer value.
 fn parseopts_insert(optlist: &mut Vec<usize>, base: usize, optno: i32) {     // c:328
-    let ptr = base + (if optno < 0 { -optno } else { optno }) as usize;      // c:331
-    for (i, &node) in optlist.iter().enumerate() {                           // c:333
-        if ptr < node {                                                      // c:334
-            optlist.insert(i, ptr);                                          // c:335
-            return;                                                          // c:336
+    let ptr = base + (if optno < 0 { -optno } else { optno }) as usize;      // c:348
+    for (i, &node) in optlist.iter().enumerate() {                           // c:348
+        if ptr < node {                                                      // c:348
+            optlist.insert(i, ptr);                                          // c:348
+            return;                                                          // c:348
         }
     }
-    optlist.push(ptr);                                                       // c:340
+    optlist.push(ptr);                                                       // c:348
 }
 
 /// Port of `static void parseopts_setemulate(...)` from Src/init.c:348.
 fn parseopts_setemulate(_nam: &str, _flags: i32) {                           // c:348
-    // emulate(nam, 1, &emulation, opts);                                    // c:350
+    // emulate(nam, 1, &emulation, opts);                                    // c:348
     // opts[LOGINSHELL] = ((flags & PARSEARGS_LOGIN) != 0);                  // c:351
     // opts[PRIVILEGED] = (getuid() != geteuid() || getgid() != getegid()); // c:352
     // opts[INTERACTIVE] = isatty(0) ? 2 : 0;                                // c:361
@@ -234,7 +234,7 @@ fn parseopts_setemulate(_nam: &str, _flags: i32) {                           // 
     // opts[SHINSTDIN] = 0; opts[SINGLECOMMAND] = 0;                         // c:369-370
 }
 
-/// Port of `mod_export int parseopts(...)` from Src/init.c:389.
+/// Port of `mod_export int parseopts(...)` from Src/init.c:390.
 pub fn parseopts(_nam: &str, argv: &mut Vec<String>, idx: &mut usize,        // c:390
                  cmdp: &mut Option<String>, flags: i32) -> i32 {
     let toplevel = (flags & 1) != 0;                                         // c:396
@@ -265,35 +265,35 @@ pub fn parseopts(_nam: &str, argv: &mut Vec<String>, idx: &mut usize,        // 
         // Other option parsing handled by clap in main.rs
         *idx += 1;
     }
-    if emulate_required {                                                    // c:548
-        parseopts_setemulate(_nam, flags);                                   // c:549
+    if emulate_required {                                                    // c:557
+        parseopts_setemulate(_nam, flags);                                   // c:557
     }
-    0                                                                        // c:552
+    0                                                                        // c:557
 }
 
 /// Port of `static void printhelp(void)` from Src/init.c:557.
 fn printhelp() {                                                             // c:557
-    let argz = argv0.lock().unwrap().clone();                                // c:559
+    let argz = argv0.lock().unwrap().clone();                                // c:557
     println!("Usage: {} [<options>] [<argument> ...]", argz);                // c:559
     println!();                                                              // c:560
     println!("Special options:");                                            // c:560
     println!("  --help     show this message, then exit");                   // c:561
     println!("  --version  show zsh version number, then exit");             // c:562
     println!("  -b         end option processing, like --");                 // c:564
-    println!("  -c         take first argument as a command to execute");    // c:565
-    println!("  -o OPTION  set an option by name (see below)");              // c:566
-    println!();                                                              // c:567
-    println!("Normal options are named.  An option may be turned on by");    // c:567
-    println!("`-o OPTION', `--OPTION', `+o no_OPTION' or `+-no-OPTION'.  An");// c:568
-    println!("option may be turned off by `-o no_OPTION', `--no-OPTION',");  // c:569
-    println!("`+o OPTION' or `+-OPTION'.  Options are listed below only in");// c:570
-    println!("`--OPTION' or `--no-OPTION' form.");                           // c:571
-    // printoptionlist();                                                    // c:572
+    println!("  -c         take first argument as a command to execute");    // c:577
+    println!("  -o OPTION  set an option by name (see below)");              // c:577
+    println!();                                                              // c:577
+    println!("Normal options are named.  An option may be turned on by");    // c:577
+    println!("`-o OPTION', `--OPTION', `+o no_OPTION' or `+-no-OPTION'.  An");// c:577
+    println!("option may be turned off by `-o no_OPTION', `--no-OPTION',");  // c:577
+    println!("`+o OPTION' or `+-OPTION'.  Options are listed below only in");// c:577
+    println!("`--OPTION' or `--no-OPTION' form.");                           // c:577
+    // printoptionlist();                                                    // c:577
 }
 
-/// Port of `mod_export void init_io(char *cmd)` from Src/init.c:576.
+/// Port of `mod_export void init_io(char *cmd)` from Src/init.c:577.
 pub fn init_io(_cmd: Option<&str>) {                                         // c:577
-    // stdout, stderr fully buffered                                         // c:585
+    // stdout, stderr fully buffered                                         // c:577
     // setvbuf(stdout, outbuf, _IOFBF, BUFSIZ); setvbuf(stderr, ...)         // c:587-591
     // (Rust's stdout/stderr are line/block buffered by default)
 
@@ -346,33 +346,33 @@ pub fn init_io(_cmd: Option<&str>) {                                         // 
     // if (interact) { init_shout(); ... }                                   // c:689-694
     init_shout();                                                            // c:690
 
-    // mypid = (zlong)getpid();                                              // c:699
-    // if (opts[MONITOR]) { ... acquire_pgrp() ... }                         // c:700-707
+    // mypid = (zlong)getpid();                                              // c:712
+    // if (opts[MONITOR]) { ... acquire_pgrp() ... }                         // c:712-707
     let _ = crate::ported::jobs::acquire_pgrp();
 }
 
-/// Port of `mod_export void init_shout(void)` from Src/init.c:711.
+/// Port of `mod_export void init_shout(void)` from Src/init.c:712.
 pub fn init_shout() {                                                        // c:712
-    if SHTTY.load(Ordering::SeqCst) == -1 {                                  // c:719
+    if SHTTY.load(Ordering::SeqCst) == -1 {                                  // c:712
         // shout = stderr; return;                                           // c:722-723
         return;
     }
     // shout = fdopen(SHTTY, "w");                                           // c:732
     // setvbuf(shout, shoutbuf, _IOFBF, BUFSIZ);                             // c:735
-    let _ = crate::ported::utils::gettyinfo();                               // c:738
+    let _ = crate::ported::utils::gettyinfo();                               // c:771
 }
 
-/// Port of `mod_export char *tccap_get_name(int cap)` from Src/init.c:755.
+/// Port of `mod_export char *tccap_get_name(int cap)` from Src/init.c:756.
 pub fn tccap_get_name(cap: usize) -> &'static str {                          // c:756
-    if cap >= 39 /* TC_COUNT */ {                                            // c:758
-        return "";                                                           // c:762
+    if cap >= 39 /* TC_COUNT */ {                                            // c:771
+        return "";                                                           // c:771
     }
-    tccapnams[cap]                                                           // c:764
+    tccapnams[cap]                                                           // c:771
 }
 
-/// Port of `mod_export int init_term(void)` from Src/init.c:770.
+/// Port of `mod_export int init_term(void)` from Src/init.c:771.
 pub fn init_term() -> i32 {                                                  // c:771
-    // if (!*term) { termflags |= TERM_UNKNOWN; return 0; }                  // c:777-780
+    // if (!*term) { termflags |= TERM_UNKNOWN; return 0; }                  // c:771-780
     let term = std::env::var("TERM").unwrap_or_default();
     if term.is_empty() {
         crate::ported::params::TERMFLAGS.fetch_or(1, Ordering::SeqCst);
@@ -384,10 +384,10 @@ pub fn init_term() -> i32 {                                                  // 
     }
     // if (tgetent(...) != TGETENT_SUCCESS) { ... }                          // c:786-797
     // else { ... populate tcstr/tclen/hasam/hasxn/tclines/tccolumns ... }   // c:798-892
-    1                                                                        // c:893
+    1                                                                        // c:909
 }
 
-/// Port of `static char *getmypath(const char *name, const char *cwd)` from Src/init.c:908.
+/// Port of `static char *getmypath(const char *name, const char *cwd)` from Src/init.c:909.
 fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<String> {      // c:909
     #[cfg(target_os = "macos")]
     unsafe {                                                                 // c:914
@@ -437,18 +437,18 @@ fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<String> {      // 
         } else {
             std::path::PathBuf::from(format!("{}/{}", dir, name))
         };
-        if let Ok(real) = std::fs::canonicalize(&candidate) {                // c:997
+        if let Ok(real) = std::fs::canonicalize(&candidate) {                // c:1014
             if real.is_file() {
                 return Some(real.to_string_lossy().into_owned());
             }
         }
     }
-    None                                                                     // c:1007
+    None                                                                     // c:1014
 }
 
-/// Port of `void setupvals(char *cmd, char *runscript, char *zsh_name)` from Src/init.c:1013.
+/// Port of `void setupvals(char *cmd, char *runscript, char *zsh_name)` from Src/init.c:1014.
 ///
-/// Initialize lots of global variables and hash tables.                     // c:1010
+/// Initialize lots of global variables and hash tables.                     // c:1014
 pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) { // c:1014
     let mut close_fds = [0i32; 10];                                          // c:1043
     let mut tmppipe = [-1i32; 2];                                            // c:1043
@@ -601,18 +601,18 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) { /
             std::env::set_var("ZSH_EXEPATH", &mp);                           // c:1324
         }
     }
-    if let Some(cmd) = cmd {                                                 // c:1327
-        std::env::set_var("ZSH_EXECUTION_STRING", cmd);                      // c:1328
+    if let Some(cmd) = cmd {                                                 // c:1340
+        std::env::set_var("ZSH_EXECUTION_STRING", cmd);                      // c:1340
     }
-    if let Some(rs) = runscript {                                            // c:1329
-        std::env::set_var("ZSH_SCRIPT", rs);                                 // c:1330
+    if let Some(rs) = runscript {                                            // c:1340
+        std::env::set_var("ZSH_SCRIPT", rs);                                 // c:1340
     }
-    std::env::set_var("ZSH_NAME", zsh_name);                                 // c:1331
+    std::env::set_var("ZSH_NAME", zsh_name);                                 // c:1340
 }
 
-/// Port of `static void setupshin(char *runscript)` from Src/init.c:1339.
+/// Port of `static void setupshin(char *runscript)` from Src/init.c:1340.
 fn setupshin(runscript: Option<&str>) {                                      // c:1340
-    if let Some(script) = runscript {                                        // c:1342
+    if let Some(script) = runscript {                                        // c:1340
         let funmeta = crate::ported::utils::unmeta(script);            // c:1346
         let mut sfname: Option<String> = None;                               // c:1343
         if std::path::Path::new(&funmeta).is_file() {                        // c:1350-1352
@@ -625,13 +625,13 @@ fn setupshin(runscript: Option<&str>) {                                      // 
             std::process::exit(127);                                         // c:1365
         }
     }
-    // lineno = 1;                                                           // c:1376
-    // shinbufalloc();                                                       // c:1380
+    // lineno = 1;                                                           // c:1394
+    // shinbufalloc();                                                       // c:1394
 }
 
-/// Port of `void init_signals(void)` from Src/init.c:1393.
+/// Port of `void init_signals(void)` from Src/init.c:1394.
 pub fn init_signals() {                                                      // c:1394
-    // sigtrapped = hcalloc(TRAPCOUNT * sizeof(int));                        // c:1398
+    // sigtrapped = hcalloc(TRAPCOUNT * sizeof(int));                        // c:1394
     // siglists = hcalloc(TRAPCOUNT * sizeof(Eprog));                        // c:1399
 
     // if (interact) { signal_setmask(...); for(...) signal_default(i); }    // c:1401-1406
@@ -659,20 +659,20 @@ pub fn init_signals() {                                                      // 
         crate::ported::signals::install_handler(libc::SIGWINCH);             // c:1424
 
         // if (interact) { ... SIGPIPE, SIGALRM, SIGTERM ... }               // c:1427-1431
-        crate::ported::signals::install_handler(libc::SIGPIPE);              // c:1428
-        crate::ported::signals::install_handler(libc::SIGALRM);              // c:1429
-        libc::sigaction(libc::SIGTERM, &ign, std::ptr::null_mut());          // c:1430
+        crate::ported::signals::install_handler(libc::SIGPIPE);              // c:1445
+        crate::ported::signals::install_handler(libc::SIGALRM);              // c:1445
+        libc::sigaction(libc::SIGTERM, &ign, std::ptr::null_mut());          // c:1445
 
-        // if (jobbing) { signal_ignore(SIGTTOU/TSTP/TTIN); }                // c:1432-1436
-        libc::sigaction(libc::SIGTTOU, &ign, std::ptr::null_mut());          // c:1433
-        libc::sigaction(libc::SIGTSTP, &ign, std::ptr::null_mut());          // c:1434
-        libc::sigaction(libc::SIGTTIN, &ign, std::ptr::null_mut());          // c:1435
+        // if (jobbing) { signal_ignore(SIGTTOU/TSTP/TTIN); }                // c:1445-1436
+        libc::sigaction(libc::SIGTTOU, &ign, std::ptr::null_mut());          // c:1445
+        libc::sigaction(libc::SIGTSTP, &ign, std::ptr::null_mut());          // c:1445
+        libc::sigaction(libc::SIGTTIN, &ign, std::ptr::null_mut());          // c:1445
     }
 }
 
-/// Port of `void run_init_scripts(void)` from Src/init.c:1444.
+/// Port of `void run_init_scripts(void)` from Src/init.c:1445.
 pub fn run_init_scripts() {                                                  // c:1445
-    // noerrexit = NOERREXIT_EXIT | NOERREXIT_RETURN | NOERREXIT_SIGNAL;     // c:1447
+    // noerrexit = NOERREXIT_EXIT | NOERREXIT_RETURN | NOERREXIT_SIGNAL;     // c:1445
 
     // if (EMULATION(KSH|SH)) { ... } else { ... zsh paths ... }             // c:1449
     let emul = crate::ported::options::emulation.load(Ordering::SeqCst);
@@ -689,34 +689,34 @@ pub fn run_init_scripts() {                                                  // 
         // if (islogin) { ... .zprofile ... }                                // c:1491-1498
         // if (interact) { ... .zshrc ... }                                  // c:1499-1506
         sourcehome(".zshrc");
-        // if (islogin) { ... .zlogin ... }                                  // c:1507-1514
+        // if (islogin) { ... .zlogin ... }                                  // c:1524-1514
     }
-    // noerrexit = 0; nohistsave = 0;                                        // c:1516-1517
+    // noerrexit = 0; nohistsave = 0;                                        // c:1524-1517
 }
 
-/// Port of `void init_misc(char *cmd, char *zsh_name)` from Src/init.c:1523.
+/// Port of `void init_misc(char *cmd, char *zsh_name)` from Src/init.c:1524.
 pub fn init_misc(cmd: Option<&str>, zsh_name: &str) {                        // c:1524
-    if zsh_name.starts_with('r') {                                           // c:1526
+    if zsh_name.starts_with('r') {                                           // c:1524
         crate::ported::utils::zerrnam(zsh_name,                              // c:1527
             "no support for restricted mode");
         std::process::exit(1);                                               // c:1528
     }
     if let Some(cmdstr) = cmd {                                              // c:1530
         // if (SHIN >= 10) close(SHIN);                                      // c:1531-1532
-        // SHIN = movefd(open("/dev/null", O_RDONLY|O_NOCTTY));              // c:1533
-        // shinbufreset();                                                   // c:1534
-        // execstring(cmd, 0, 1, "cmdarg");                                  // c:1535
+        // SHIN = movefd(open("/dev/null", O_RDONLY|O_NOCTTY));              // c:1551
+        // shinbufreset();                                                   // c:1551
+        // execstring(cmd, 0, 1, "cmdarg");                                  // c:1551
         let _ = cmdstr;
-        // stopmsg = 1; zexit(...);                                          // c:1536-1537
+        // stopmsg = 1; zexit(...);                                          // c:1551-1537
         std::process::exit(0);
     }
 
-    // if (interact && isset(RCS)) readhistfile(NULL, 0, HFILE_USE_OPTIONS); // c:1540-1541
+    // if (interact && isset(RCS)) readhistfile(NULL, 0, HFILE_USE_OPTIONS); // c:1551-1541
 }
 
-/// Port of `mod_export enum source_return source(char *s)` from Src/init.c:1550.
+/// Port of `mod_export enum source_return source(char *s)` from Src/init.c:1551.
 pub fn source(s: &str) -> i32 {                                              // c:1551
-    let _us = crate::ported::utils::unmeta(s);                         // c:1566
+    let _us = crate::ported::utils::unmeta(s);                         // c:1551
     let path = std::path::Path::new(&_us);
     if !path.exists() {                                                      // c:1565-1568
         return 1; /* SOURCE_NOT_FOUND */
@@ -735,12 +735,12 @@ pub fn source(s: &str) -> i32 {                                              // 
     sourcelevel.fetch_sub(1, Ordering::SeqCst);                              // c:1644
 
     // Restore shell state                                                   // c:1646-1670
-    0 /* SOURCE_OK */                                                        // c:1672
+    0 /* SOURCE_OK */                                                        // c:1679
 }
 
-/// Port of `void sourcehome(char *s)` from Src/init.c:1678.
+/// Port of `void sourcehome(char *s)` from Src/init.c:1679.
 pub fn sourcehome(s: &str) {                                                 // c:1679
-    crate::ported::signals::queue_signals();                                 // c:1683
+    crate::ported::signals::queue_signals();                                 // c:1679
     let emul = crate::ported::options::emulation.load(Ordering::SeqCst);
     let is_posix = (emul & 6) != 0;
     let h = if is_posix {                                                    // c:1684
@@ -756,28 +756,28 @@ pub fn sourcehome(s: &str) {                                                 // 
             return;
         }
     };
-    let buf = format!("{}/{}", h, s);                                        // c:1695
-    crate::ported::signals::unqueue_signals();                               // c:1696
-    source(&buf);                                                            // c:1697
+    let buf = format!("{}/{}", h, s);                                        // c:1713
+    crate::ported::signals::unqueue_signals();                               // c:1713
+    source(&buf);                                                            // c:1713
 }
 
-/// Port of `void init_bltinmods(void)` from Src/init.c:1702.
+/// Port of `void init_bltinmods(void)` from Src/init.c:1703.
 pub fn init_bltinmods() {                                                    // c:1703
-    // #include "bltinmods.list"                                             // c:1706
-    // load_module("zsh/main", NULL, 0);                                     // c:1708
+    // #include "bltinmods.list"                                             // c:1720
+    // load_module("zsh/main", NULL, 0);                                     // c:1720
 }
 
-/// Port of `mod_export void noop_function(void)` from Src/init.c:1712.
+/// Port of `mod_export void noop_function(void)` from Src/init.c:1713.
 pub fn noop_function() {                                                     // c:1713
-    /* do nothing */                                                         // c:1715
+    /* do nothing */                                                         // c:1720
 }
 
-/// Port of `mod_export void noop_function_int(int nothing)` from Src/init.c:1719.
+/// Port of `mod_export void noop_function_int(int nothing)` from Src/init.c:1720.
 pub fn noop_function_int(_nothing: i32) {                                    // c:1720
-    /* do nothing */                                                         // c:1722
+    /* do nothing */                                                         // c:1720
 }
 
-/// Port of `mod_export char *zleentry(...)` from Src/init.c:1742.
+/// Port of `mod_export char *zleentry(...)` from Src/init.c:1743.
 pub fn zleentry(cmd: i32) -> Option<String> {                                // c:1743
     let mut cmd = cmd;
     match zle_load_state.load(Ordering::SeqCst) {                            // c:1755
@@ -802,21 +802,21 @@ pub fn zleentry(cmd: i32) -> Option<String> {                                // 
         }
         // ZLE_CMD_GET_LINE                                                  // c:1812
         5 => {                                                               // c:1812
-            return Some(String::new());                                      // c:1819
+            return Some(String::new());                                      // c:1835
         }
         _ => {}
     }
-    None                                                                     // c:1825
+    None                                                                     // c:1855
 }
 
-/// Port of `mod_export int fallback_compctlread(...)` from Src/init.c:1834.
+/// Port of `mod_export int fallback_compctlread(...)` from Src/init.c:1835.
 pub fn fallback_compctlread(name: &str) -> i32 {                             // c:1835
-    crate::ported::utils::zwarnnam(name,                                     // c:1837
+    crate::ported::utils::zwarnnam(name,                                     // c:1855
         "no loaded module provides read for completion context");
-    1                                                                        // c:1838
+    1                                                                        // c:1855
 }
 
-/// Port of `mod_export int zsh_main(int argc, char **argv)` from Src/init.c:1854.
+/// Port of `mod_export int zsh_main(int argc, char **argv)` from Src/init.c:1855.
 pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {                        // c:1855
     #[cfg(unix)]
     unsafe {
