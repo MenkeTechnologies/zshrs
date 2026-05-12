@@ -19,12 +19,10 @@ use crate::history::HistoryEngine;
 // math API surface is matheval/mathevali/mnumber.
 use crate::options::ZSH_OPTIONS_SET;
 // TcpSessions struct deleted — see modules/tcp.rs ZTCP_SESSIONS thread_local.
-use crate::zftp::zftp_globals;
 // `Profiler`/`ProfileEntry` deleted in the zprof.rs strict-rules
 // rewrite — zprof state now lives in module-level statics
 // (`CALLS`/`NCALLS`/`ARCS`/`NARCS`/`STACK`/`ZPROF_MODULE`) matching
 // the C file-statics at zprof.c:66-71.
-use crate::zutil::style_table;
 use compsys::cache::CompsysCache;
 use compsys::CompInitResult;
 use parking_lot::Mutex;
@@ -389,19 +387,13 @@ pub struct ShellExecutor {
     pub comp_iprefix: String,         // IPREFIX parameter
     pub comp_isuffix: String,         // ISUFFIX parameter
     pub readonly_vars: std::collections::HashSet<String>, // Read-only variables
-    /// Last `:s/X/Y/` history-modifier pair, replayed by `:&`.
-    /// Direct port of `hsubl` / `hsubr` globals in Src/hist.c.
-    /// SubstState mirrors / commits this so all paramsubst calls
-    /// share the most recent value.
-    pub last_subst: Option<(String, String, u8)>,
-    /// SUB_* flag bits set per paramsubst call by the (M)/(R)/(B)/
-    /// (E)/(N)/(S) flag-loop arms. Read by BUILTIN_PARAM_FILTER /
-    /// REPLACE / STRIP to alter their match disposition. Direct
-    /// port of subst.c:2169-2199 — value matches zsh.h:1981-1996
-    /// (SUB_MATCH=0x0008, SUB_REST=0x0010, etc.). Reset by the
-    /// dispatch arm after consumption. C type: `int` (zsh's
-    /// `sub_flags` field on the global subst state; zsh.h:1981).
-    pub sub_flags: i32,
+    // `last_subst` deleted — 0 callers. Canonical `hsubl`/`hsubr`
+    // globals live in `Src/hist.c` and are ported on demand when
+    // `:&` history-modifier replay arrives in zshrs.
+    // `sub_flags` deleted — zero real callers; canonical lives in
+    // `SUB_FLAGS` thread_local at `src/ported/subst.rs:498` (`sub_flags`
+    // global in `Src/subst.c:2169`), accessed via `sub_flags_get` /
+    // `sub_flags_set`.
     /// Current function scope depth for `local` tracking.
     pub local_scope_depth: usize,
     /// Last arg of the currently-running command, deferred into `$_`
@@ -416,16 +408,10 @@ pub struct ShellExecutor {
     /// (`(o)`/`(O)`/`(n)`/`(i)`/`(M)`/`(u)`) — zsh's behaviour: those
     /// flags only fire in array context.
     pub in_dq_context: u32,
-    /// Nesting depth of `${...}` (paramsubst) recursion. Bumped by
-    /// every `substitute_brace` / nested-paramsubst entry in the
-    /// engine. `BUILTIN_PARAM_FLAG` consults `> 1` to decide whether
-    /// to collapse a split-result array back to scalar (top-level
-    /// DQ) or pass through (nested — outer subscript / second-level
-    /// substitution still needs the array shape). Direct port of
-    /// zsh paramsubst's recursive aval threading (Src/subst.c:3245+
-    /// where the inner call returns aval; outer continues without
-    /// re-joining until its own emission point).
-    pub in_paramsubst_nest: u32,
+    // `in_paramsubst_nest` deleted — canonical lives in
+    // `IN_PARAMSUBST_NEST` thread_local at `subst.rs:464` (mirrors
+    // `paramsub_nest` global in `Src/subst.c`). Callers read it
+    // directly via `crate::ported::subst::IN_PARAMSUBST_NEST.with(...)`.
     /// True (>0) while expanding the RHS of a scalar assignment.
     /// Direct port of zsh's `PREFORK_SINGLE` bit set by
     /// Src/exec.c::addvars line 2546 (`prefork(vl, isstr ?
@@ -490,9 +476,12 @@ pub struct ShellExecutor {
     // New module state — TcpSessions struct dissolved into the
     // thread_local ZTCP_SESSIONS in modules/tcp.rs (matches C's
     // file-static `ztcp_sessions` linked list).
-    pub zftp: zftp_globals,
+    // `zftp` field deleted — 0 callers. Module-level state lives in
+    // `ZFTP_STATE_INNER` (Src/Modules/zftp.c file-statics analogue).
     // `profiler: Profiler` deleted — see comment above.
-    pub style_table: style_table,
+    // `style_table` field deleted — 0 callers. Canonical `zstyletab`
+    // lives in `src/ported/modules/zutil.rs::zstyletab` (LazyLock
+    // Mutex matching C's `static HashTable zstyletab` at zutil.c:209).
     // termcap state dissolved per strict-rules audit — no Rust-only
     // Termcap struct; capability_lookup is stateless on $TERM.
     // Watch state — dissolved per PORT_PLAN Phase 2. C
@@ -1081,12 +1070,9 @@ impl ShellExecutor {
             comp_iprefix: String::new(),
             comp_isuffix: String::new(),
             readonly_vars: std::collections::HashSet::new(),
-            last_subst: None,
-            sub_flags: 0,
             local_scope_depth: 0,
             pending_underscore: None,
             in_dq_context: 0,
-            in_paramsubst_nest: 0,
             in_scalar_assign: 0,
             cmd_stack: Vec::new(),
             session_history_ids: Vec::new(),
@@ -1147,8 +1133,6 @@ impl ShellExecutor {
             returning: None,
             breaking: 0,
             continuing: 0,
-            zftp: zftp_globals::new(),
-            style_table: style_table::new(),
             zsh_compat: false,
             bash_compat: false,
             posix_mode: false,

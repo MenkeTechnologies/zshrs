@@ -4559,7 +4559,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             || flags.contains('s')
             || flags.contains('0')
             || flags.contains('=');
-        let is_nested = with_executor(|exec| exec.in_paramsubst_nest > 1);
+        // Canonical paramsubst-nest counter — `IN_PARAMSUBST_NEST`
+        // thread_local in `subst.rs` (mirrors `paramsub_nest` global
+        // in `Src/subst.c`).
+        let is_nested = crate::ported::subst::IN_PARAMSUBST_NEST
+            .with(|c| c.get() > 1);
         if (dq_compile || dq_runtime) && !has_at_subscript && !is_nested && !split_flag_active {
             if let St::A(a) = state {
                 // Pick the join separator. `(F)` (the last F seen) is
