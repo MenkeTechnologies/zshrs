@@ -549,7 +549,7 @@ pub fn zshrs_main() {
             // for the entire bundle (every file sees the same $1..$N).
             let script_args: Vec<String> = args.iter().skip(1).cloned().collect();
             let mut executor = zsh::exec::ShellExecutor::new();
-            executor.positional_params = script_args;
+            executor.set_pparams(script_args);
             let mut last_status = 0;
             for file in &embedded.0 {
                 executor
@@ -791,7 +791,7 @@ pub fn zshrs_main() {
             //   args[2] = the command string
             //   args[3] = $0 name
             //   args[4..] = $1, $2, …
-            executor.positional_params = args[4..].to_vec();
+            executor.set_pparams(args[4..].to_vec());
             args[3].clone()
         } else {
             args[0].clone()
@@ -904,7 +904,7 @@ pub fn zshrs_main() {
                 .ok()
                 .map(|p| p.to_string_lossy().to_string());
             if let Ok(id) = engine.add(code, cwd.as_deref()) {
-                let _ = engine.update_last(id, duration, executor.last_status);
+                let _ = engine.update_last(id, duration, executor.last_status());
             }
         }
 
@@ -918,7 +918,7 @@ pub fn zshrs_main() {
                 "history_append",
                 serde_json::json!({
                     "line": code,
-                    "exit_code": executor.last_status as i64,
+                    "exit_code": executor.last_status() as i64,
                     "cwd": cwd,
                     "duration_ns": duration_ns_total,
                 }),
@@ -929,7 +929,7 @@ pub fn zshrs_main() {
             eprintln!("zshrs: {}", e);
             std::process::exit(1);
         }
-        std::process::exit(executor.last_status);
+        std::process::exit(executor.last_status());
         #[allow(unreachable_code)]
         return;
     }
@@ -955,7 +955,7 @@ pub fn zshrs_main() {
         executor
             .variables
             .insert("0".to_string(), args[1].clone());
-        executor.positional_params = args.iter().skip(2).cloned().collect();
+        executor.set_pparams(args.iter().skip(2).cloned().collect());
         if let Err(e) = executor.execute_script_file(&args[1]) {
             eprintln!("zshrs: {}: {}", args[1], e);
             std::process::exit(1);
@@ -1362,7 +1362,7 @@ fn run_non_interactive() {
             eprintln!("zshrs: {}", e);
             std::process::exit(1);
         }
-        std::process::exit(executor.last_status);
+        std::process::exit(executor.last_status());
     }
 }
 
@@ -1984,7 +1984,7 @@ fn run_interactive() {
                     let cwd = std::env::current_dir()
                         .ok()
                         .map(|p| p.to_string_lossy().to_string());
-                    let status = executor.last_status;
+                    let status = executor.last_status();
                     executor.worker_pool.submit(move || {
                         if let Ok(eng) = engine.lock() {
                             if let Ok(id) = eng.add(&line, cwd.as_deref()) {
@@ -2003,7 +2003,7 @@ fn run_interactive() {
                     let cwd_owned = std::env::current_dir()
                         .ok()
                         .map(|p| p.to_string_lossy().to_string());
-                    let status = executor.last_status as i64;
+                    let status = executor.last_status() as i64;
                     executor.worker_pool.submit(move || {
                         let _ = zsh::daemon::client::call_once_no_spawn(
                             "history_append",
@@ -2048,7 +2048,7 @@ fn process_line(line: &str, executor: &mut ShellExecutor) {
         let code = line.trim_start_matches('@').trim();
         if !code.is_empty() {
             if let Some(status) = zsh::try_stryke_dispatch(code) {
-                executor.last_status = status;
+                executor.set_last_status(status);
                 return;
             }
             // No handler registered (thin binary) — treat @ as normal shell input
@@ -3186,7 +3186,7 @@ fn expand_prompt_escapes(prompt: &str, executor: &ShellExecutor) -> String {
                 }
                 Some('?') => {
                     // Exit status of last command
-                    result.push_str(&executor.last_status.to_string());
+                    result.push_str(&executor.last_status().to_string());
                 }
                 Some('j') => {
                     // Number of jobs
