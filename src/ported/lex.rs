@@ -334,49 +334,33 @@ thread_local! {
 /// commits migrate them to read/write the thread-locals so the struct
 /// can collapse to a unit type and external `lexer.X` accesses become
 /// `lexer.X()` method calls or free-fn calls.
-pub struct ZshLexer<'a> {
-    /// Input source
-    pub(crate) input: &'a str,
-    /// Current position in input
-    pub(crate) pos: usize,
-    // `unget_buf` migrated to LEX_UNGET_BUF thread_local.
-    // P7-batch-7: tokstr + tok migrated to LEX_TOKSTR + LEX_TOK
-    // thread_locals (direct ports of lex.c:170 `char *tokstr` and
-    // lex.c:180 `enum lextok tok`). Accessor methods tokstr()/
-    // set_tokstr()/tok()/set_tok() on impl ZshLexer.
-    // P7-batch-3: lexstop, incondpat, oldpos, dbparens, noaliases,
-    // nocorrect, nocomments, lexflags, isfirstln, lex_add_raw migrated
-    // to LEX_* thread_locals.
-    // P7-batch-5: lineno, incmdpos, incond, incasepat migrated to
-    // LEX_LINENO, LEX_INCMDPOS, LEX_INCOND, LEX_INCASEPAT thread_locals.
-    // P7-batch-6: heredocs migrated to LEX_HEREDOCS thread_local;
-    // callers reach in via heredocs_push/clear/clone/len/etc. methods
-    // on ZshLexer.
-    // `isfirstch` field DELETED — never read for any logic (was
-    // `#[allow(dead_code)]`); the save/restore round-trip through
-    // lex_stack stores a constant zero now.
-    // `heredocs: Vec<HereDoc>` migrated to LEX_HEREDOCS thread_local;
-    // callers use heredocs_push/clear/clone/etc. accessor methods.
-    // `heredoc_pending: u8` migrated to LEX_HEREDOC_PENDING thread_local
-    // (file-static parity with C). Access via LEX_HEREDOC_PENDING.get()/set().
-    // `lexbuf: lexbufstate` migrated to LEX_LEXBUF thread_local
-    // (direct port of C's `static struct lexbufstate lexbuf` at lex.c:210).
-    // P7-batch-4: isnewlin → LEX_ISNEWLIN, error → LEX_ERROR,
-    // toklineno → LEX_TOKLINENO, tokfd → LEX_TOKFD,
-    // inrepeat → LEX_INREPEAT, infor → LEX_INFOR, inredir → LEX_INREDIR,
-    // intypeset → LEX_INTYPESET. Internal access already rewritten.
-    // External callers go through the get/set methods in impl ZshLexer.
-    // `global_iterations` + `recursion_depth` migrated to
-    // LEX_GLOBAL_ITERATIONS + LEX_RECURSION_DEPTH thread_locals.
-    // `lexbuf_raw: lexbufstate` migrated to LEX_LEXBUF_RAW thread_local
-    // (direct port of C's `static struct lexbufstate lexbuf_raw` at
-    // lex.c:166).
-}
+// All state lives in file-scope LEX_* thread_locals (above) matching
+// C's lex.c file-statics. ZshLexer is now a unit struct — kept so call
+// sites `let lexer = ZshLexer::new(input); lexer.zshlex(); ...` retain
+// their familiar shape without leaking implementation. Methods on
+// impl ZshLexer below are thin shims over the thread_local accesses.
+//
+// P7 migration history (PORT_PLAN.md Phase 7 batches):
+//   isfirstch DELETED (was dead code).
+//   batch-1: unget_buf, heredoc_pending, global_iterations,
+//             recursion_depth → LEX_*.
+//   batch-2: lexbuf, lexbuf_raw → LEX_LEXBUF, LEX_LEXBUF_RAW.
+//   batch-3: lexstop, incondpat, oldpos, dbparens, noaliases,
+//             nocorrect, nocomments, lexflags, isfirstln,
+//             lex_add_raw → LEX_*.
+//   batch-4: error, toklineno, tokfd, isnewlin, inrepeat, infor,
+//             inredir, intypeset → LEX_* + accessor methods.
+//   batch-5: lineno, incmdpos, incond, incasepat → LEX_*.
+//   batch-6: heredocs Vec → LEX_HEREDOCS.
+//   batch-7: tokstr, tok → LEX_TOKSTR, LEX_TOK.
+//   batch-8: input, pos → LEX_INPUT (owned String) + LEX_POS;
+//             ZshLexer becomes lifetime-free.
+pub struct ZshLexer;
 
 const MAX_LEXER_RECURSION: usize = 200;
 
 
-impl<'a> ZshLexer<'a> {
+impl ZshLexer {
     // ─── Accessor methods for migrated thread_local fields ───
     // These bridge external callers (parser/context) that read or
     // write the lexer state. Names match the former field identifiers.
@@ -450,9 +434,16 @@ impl<'a> ZshLexer<'a> {
     /// `enum lextok tok` accessors — direct port of lex.c:180 file-static.
     pub fn tok(&self) -> lextok { LEX_TOK.get() }
     pub fn set_tok(&self, v: lextok) { LEX_TOK.set(v); }
+    pub fn pos(&self) -> usize { LEX_POS.get() }
+    pub fn set_pos(&self, v: usize) { LEX_POS.set(v); }
+    /// Slice the input source from `start..end` — used by parse.rs to
+    /// capture function body source text. Returns None if out-of-range.
+    pub fn input_slice(&self, start: usize, end: usize) -> Option<String> {
+        LEX_INPUT.with_borrow(|s| s.get(start..end).map(String::from))
+    }
 
     /// Create a new lexer for the given input
-    pub fn new(input: &'a str) -> Self {
+    pub fn new(input: &str) -> Self {
         // Reset migrated thread-locals so a fresh lexer instance
         // starts from a clean slate (same as the C source's
         // file-static initializers in lex.c).
@@ -492,10 +483,10 @@ impl<'a> ZshLexer<'a> {
         // P7-batch-7 resets.
         LEX_TOKSTR.with_borrow_mut(|t| *t = None);
         LEX_TOK.set(ENDINPUT);
-        ZshLexer {
-            input,
-            pos: 0,
-        }
+        // P7-batch-8: input + pos.
+        LEX_INPUT.with_borrow_mut(|s| { s.clear(); s.push_str(input); });
+        LEX_POS.set(0);
+        ZshLexer
     }
 
     /// Append a char to the raw-input capture buffer. Direct port of
@@ -940,8 +931,8 @@ impl<'a> ZshLexer<'a> {
             return Some(c);
         }
 
-        let c = self.input[self.pos..].chars().next()?;
-        self.pos += c.len_utf8();
+        let c = LEX_INPUT.with_borrow(|s| s[LEX_POS.get()..].chars().next())?;
+        LEX_POS.set(LEX_POS.get() + c.len_utf8());
 
         if c == '\n' {
             LEX_LINENO.set(LEX_LINENO.get() + 1);
@@ -965,7 +956,7 @@ impl<'a> ZshLexer<'a> {
         if let Some(c) = LEX_UNGET_BUF.with_borrow(|b| b.front().copied()) {
             return Some(c);
         }
-        self.input[self.pos..].chars().next()
+        LEX_INPUT.with_borrow(|s| s[LEX_POS.get()..].chars().next())
     }
 
     /// Add character to token buffer
@@ -1102,7 +1093,7 @@ impl<'a> ZshLexer<'a> {
         if self.tok() != NEWLIN {
             LEX_ISNEWLIN.set(0);
         } else {
-            LEX_ISNEWLIN.set(if self.pos < self.input.len() { -1 } else { 1 });
+            LEX_ISNEWLIN.set(if LEX_POS.get() < LEX_INPUT.with_borrow(|s| s.len()) { -1 } else { 1 });
         }
 
         // lex.c:311-312 — fold SEMI / NEWLIN into SEPER unless
