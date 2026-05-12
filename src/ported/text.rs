@@ -82,7 +82,6 @@ fn ecgetstr(st: &mut estate, dup: i32, tok: Option<&mut i32>) -> String {
 }
 
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in text.c
 enum tstack_u {
     None,
     Redir(LinkList<redir>),
@@ -107,7 +106,6 @@ enum tstack_u {
 }
 
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in text.c
 struct tstack {
     code: wordcode,
     pop: i32,

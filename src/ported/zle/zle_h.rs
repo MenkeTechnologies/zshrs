@@ -31,15 +31,12 @@ use crate::ported::zsh_h::{HashNode, zattr};
 // both C paths.
 
 /// Port of `ZLE_CHAR_T` from zle.h:31 / zle.h:107.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub type ZLE_CHAR_T = char;                                                  // c:31
 
 /// Port of `ZLE_STRING_T` from zle.h:32 / zle.h:108.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub type ZLE_STRING_T = String;                                              // c:32
 
 /// Port of `ZLE_INT_T` from zle.h:33 / zle.h:109.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub type ZLE_INT_T = i32;                                                    // c:33
 
 /// Port of `ZLE_CHAR_SIZE` from zle.h:34. Rust `char` is always 4
@@ -59,7 +56,6 @@ pub const ZLEEOF: i32 = -1;                                                  // 
 /// index→name table in `T_THINGY_NAMES` below and forwards to
 /// `lookup_thingy(name)` — same observable contract as the C macro.
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub fn Th(index: i32) -> Option<crate::ported::zle::zle_thingy::Thingy> {     // c:316
     let i: usize = (index as i64).try_into().ok()?;
     let name = T_THINGY_NAMES.get(i)?;
@@ -266,16 +262,13 @@ pub const T_THINGY_NAMES: &[&str] = &[
 // =====================================================================
 
 /// Port of `typedef struct widget *Widget` from zle.h:184.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub type WidgetPtr = Box<widget>;                                            // c:184
 
 /// Port of `typedef struct thingy *Thingy` from zle.h:185.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub type ThingyPtr = Box<thingy>;                                            // c:185
 
 /// Port of `ZleIntFunc` from zle.h:189. C: `int (*)(char **)` —
 /// every internal widget conforms to this signature.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub type ZleIntFunc = fn(args: &[String]) -> i32;                            // c:189
 
 /// Port of `struct widget` from `Src/Zle/zle.h:191-203`.
@@ -290,7 +283,6 @@ pub type ZleIntFunc = fn(args: &[String]) -> i32;                            // 
 ///     } u;
 /// };
 /// ```
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub struct widget {                                                          // c:191
     /// flags (see below).
     pub flags: i32,                                                          // c:192
@@ -303,7 +295,6 @@ pub struct widget {                                                          // 
 /// Tagged port of the `widget.u` union from `Src/Zle/zle.h:194-202`.
 /// C uses an inline anonymous union; Rust enum tags the active
 /// variant.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub enum WidgetImpl {                                                        // c:194
     /// `u.fn` — pointer to internally implemented widget.
     Internal(ZleIntFunc),                                                    // c:195
@@ -339,7 +330,6 @@ pub const ZLE_NOLAST:    i32 = 1 << 14;  /* widget should not alter lbindk */   
 /// Port of `struct thingy` from `Src/Zle/zle.h:224-231`. HashNode
 /// subtype keyed by name; circular list (`samew`) of all thingies
 /// pointing at the same widget.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub struct thingy {                                                          // c:224
     /// next node in the hash chain.
     pub next: Option<HashNode>,                                              // c:225
@@ -365,7 +355,6 @@ pub const TH_IMMORTAL: i32 = 1 << 1;                                         // 
 
 /// Port of `struct modifier` from `Src/Zle/zle.h:245-251`.
 /// Command modifier prefix state (numeric arg, vi cut buffer, etc.).
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub struct modifier {                                                        // c:245
     /// MOD_* flags (see below).
     pub flags: i32,                                                          // c:246
@@ -410,7 +399,6 @@ pub const CUT_YANK:    i32 = 1 << 3;   /* vi yank: use register 0 instead of 1-9
 
 /// Port of `struct change` from `Src/Zle/zle.h:284-295`. The undo
 /// log is a doubly-linked list of these entries.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub struct change {                                                          // c:284
     /// previous adjacent change.
     pub prev: Option<Box<change>>,                                           // c:285
@@ -475,7 +463,6 @@ pub struct vichange {                                                        // 
 
 /// Port of `KeyScanFunc` from zle.h:322.
 /// C: `void (*KeyScanFunc) (char *, Thingy, char *, void *)`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub type KeyScanFunc = fn(seq: &str, t: &thingy, ext: &str, data: usize);    // c:322
 
 // =====================================================================
@@ -487,7 +474,6 @@ pub const NO_INSERT_CHAR: i32 = 256;                                         // 
 
 /// Port of `removesuffix()` from zle.h:333.
 /// C: `iremovesuffix(NO_INSERT_CHAR, 0)`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub fn removesuffix() -> i32 {                                               // c:333
     // c:333 — `iremovesuffix(NO_INSERT_CHAR, 0)`. iremovesuffix is
     // defined in zle_misc.c; the wrapper preserves the call shape.
@@ -503,7 +489,6 @@ pub fn removesuffix() -> i32 {                                               // 
 /// binary data, not NUL-terminated. `len` is a character count
 /// (N.B. number of characters, not size in bytes). `flags` uses the
 /// CUTBUFFER_* constants defined below.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub struct cutbuffer {                                                       // c:342
     pub buf: ZLE_STRING_T,                                                   // c:343
     pub len: usize,                                                          // c:344
@@ -511,7 +496,6 @@ pub struct cutbuffer {                                                       // 
 }
 
 /// Port of `typedef struct cutbuffer *Cutbuffer` from zle.h:348.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub type CutbufferPtr = Box<cutbuffer>;                                      // c:348
 
 pub const CUTBUFFER_LINE: u8 = 1;   /* for vi: buffer contains whole lines of data */      // c:350
@@ -530,7 +514,6 @@ pub const COMP_LIST_EXPAND:     i32 = 5;                                        
 
 /// Port of `COMP_ISEXPAND(X)` from zle.h:362.
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub fn COMP_ISEXPAND(x: i32) -> bool { x >= COMP_EXPAND }                                  // c:362
 
 // =====================================================================
@@ -538,12 +521,10 @@ pub fn COMP_ISEXPAND(x: i32) -> bool { x >= COMP_EXPAND }                       
 // =====================================================================
 
 /// Port of `typedef struct brinfo *Brinfo` from zle.h:366.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub type BrinfoPtr = Box<brinfo>;                                            // c:366
 
 /// Port of `struct brinfo` from `Src/Zle/zle.h:368-375`.
 /// One brace run during brace-expansion completion.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub struct brinfo {                                                          // c:368
     /// next in list.
     pub next: Option<BrinfoPtr>,                                             // c:369
@@ -575,12 +556,10 @@ pub const INVALIDATELISTHOOK: i32 = 5;                                          
 // =====================================================================
 
 /// Port of `typedef struct compldat *Compldat` from zle.h:388.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub type CompldatPtr = Box<compldat>;                                        // c:388
 
 /// Port of `struct compldat` from `Src/Zle/zle.h:390-394`. Payload
 /// passed to the COMPLETEHOOK callback.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub struct compldat {                                                        // c:390
     pub s: String,                                                           // c:391
     pub lst: i32,                                                            // c:392
@@ -589,7 +568,6 @@ pub struct compldat {                                                        // 
 
 /// Port of `listmatches()` from zle.h:398.
 /// C: `runhookdef(LISTMATCHESHOOK, NULL)`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub fn listmatches() {                                                       // c:398
     // c:398 — `runhookdef(LISTMATCHESHOOK, NULL);`. Hook dispatch
     // is handled by the hook registry once `runhookdef` lands.
@@ -597,7 +575,6 @@ pub fn listmatches() {                                                       // 
 
 /// Port of `invalidatelist()` from zle.h:402.
 /// C: `runhookdef(INVALIDATELISTHOOK, NULL)`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub fn invalidatelist() {                                                    // c:402
     // c:402 — `runhookdef(INVALIDATELISTHOOK, NULL);`.
 }
@@ -633,7 +610,6 @@ pub const ZRH_PREDISPLAY: i32 = 1;                                              
 
 /// Port of `struct region_highlight` from `Src/Zle/zle.h:435-461`.
 /// Attributes used for highlighting regions and the mark.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub struct region_highlight {                                                // c:435
     /// Attributes for the region.
     pub atr: zattr,                                                          // c:437
@@ -701,7 +677,6 @@ pub const CURF_BLUE_SHIFT:  i32 = 8;                                            
 
 /// Port of `REFRESH_CHAR` from zle.h:507 (multibyte) / zle.h:509
 /// (non-multibyte). Rust uses `char` since native UTF-8 covers both.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub type REFRESH_CHAR = char;                                                // c:507
 
 /// Port of `REFRESH_ELEMENT` from `Src/Zle/zle.h:515-526`.
@@ -710,7 +685,6 @@ pub type REFRESH_CHAR = char;                                                // 
 /// contains `TXT_MULTIWORD_MASK`, an index into the set of
 /// multiword symbols (only if MULTIBYTE_SUPPORT is present).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub struct REFRESH_ELEMENT {                                                 // c:515
     /// The (possibly wide) character.
     pub chr: REFRESH_CHAR,                                                   // c:521
@@ -719,7 +693,6 @@ pub struct REFRESH_ELEMENT {                                                 // 
 }
 
 /// Port of `REFRESH_STRING` from zle.h:529. A string of screen cells.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub type REFRESH_STRING = Vec<REFRESH_ELEMENT>;                              // c:529
 
 // =====================================================================
@@ -739,7 +712,6 @@ pub const ZSH_INVALID_WCHAR_BASE: u32 = 0xe000;                              // 
 /// Port of `ZSH_INVALID_WCHAR_TEST(x)` from zle.h:544. Detect a
 /// wide character within our range.
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub fn ZSH_INVALID_WCHAR_TEST(x: u32) -> bool {                              // c:544
     x >= ZSH_INVALID_WCHAR_BASE && x <= ZSH_INVALID_WCHAR_BASE + 255
 }
@@ -747,7 +719,6 @@ pub fn ZSH_INVALID_WCHAR_TEST(x: u32) -> bool {                              // 
 /// Port of `ZSH_INVALID_WCHAR_TO_CHAR(x)` from zle.h:548. Turn a
 /// wide character in that range back to single byte.
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub fn ZSH_INVALID_WCHAR_TO_CHAR(x: u32) -> u8 {                             // c:548
     (x - ZSH_INVALID_WCHAR_BASE) as u8
 }
@@ -755,7 +726,6 @@ pub fn ZSH_INVALID_WCHAR_TO_CHAR(x: u32) -> u8 {                             // 
 /// Port of `ZSH_INVALID_WCHAR_TO_INT(x)` from zle.h:550. Turn a
 /// wide character in that range to an integer.
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub fn ZSH_INVALID_WCHAR_TO_INT(x: u32) -> i32 {                             // c:550
     (x - ZSH_INVALID_WCHAR_BASE) as i32
 }
@@ -763,7 +733,6 @@ pub fn ZSH_INVALID_WCHAR_TO_INT(x: u32) -> i32 {                             // 
 /// Port of `ZSH_CHAR_TO_INVALID_WCHAR(x)` from zle.h:553. Turn a
 /// single byte character into a private wide character.
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub fn ZSH_CHAR_TO_INVALID_WCHAR(x: u8) -> u32 {                             // c:553
     (x as u32) + ZSH_INVALID_WCHAR_BASE
 }
@@ -778,7 +747,6 @@ pub fn ZSH_CHAR_TO_INVALID_WCHAR(x: u8) -> u32 {                             // 
 /// Port of `METACHECK()` from zle.h:561.
 /// C: `DPUTS(zlemetaline == NULL, "line not metafied")`.
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub fn METACHECK() {                                                         // c:561
     // c:561 — DPUTS only fires when DEBUG is defined; treat as
     // no-op for release builds, same as C zle.h:566.
@@ -787,7 +755,6 @@ pub fn METACHECK() {                                                         // 
 /// Port of `UNMETACHECK()` from zle.h:563.
 /// C: `DPUTS(zlemetaline != NULL, "line metafied")`.
 #[inline]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub fn UNMETACHECK() {                                                       // c:563
     // c:563 — see METACHECK above.
 }
@@ -797,12 +764,10 @@ pub fn UNMETACHECK() {                                                       // 
 // =====================================================================
 
 /// Port of `typedef struct watch_fd *Watch_fd` from zle.h:570.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub type WatchFdPtr = Box<watch_fd>;                                         // c:570
 
 /// Port of `struct watch_fd` from `Src/Zle/zle.h:572-578`.
 /// One `zle -F` file-descriptor watcher.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_h.c
 pub struct watch_fd {                                                        // c:572
     /// Function to call.
     pub func: String,                                                        // c:574

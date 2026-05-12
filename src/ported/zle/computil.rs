@@ -104,13 +104,10 @@ pub const PATH_MAX2: usize = 8192;                                           // 
 // CRT_* constants already declared above (file scope).
 
 /// Port of `typedef struct cdset *Cdset` from `Src/Zle/computil.c:36`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub type Cdset = Box<cdset>;                                                 // c:36
 /// Port of `typedef struct cdstr *Cdstr` from `computil.c:37`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub type Cdstr = Box<cdstr>;                                                 // c:37
 /// Port of `typedef struct cdrun *Cdrun` from `computil.c:38`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub type Cdrun = Box<cdrun>;                                                 // c:38
 
 /// Direct port of `struct cdstr` from `Src/Zle/computil.c:58-70`.
@@ -118,7 +115,6 @@ pub type Cdrun = Box<cdrun>;                                                 // 
 /// description and the same-description chain.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub struct cdstr {                                                           // c:58
     pub next:    Option<Box<cdstr>>,                                         // c:59 Cdstr next
     pub str:     Option<String>,                                             // c:60 char *str
@@ -138,7 +134,6 @@ pub struct cdstr {                                                           // 
 /// emit as a block.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub struct cdrun {                                                           // c:72
     pub next:   Option<Box<cdrun>>,                                          // c:73 Cdrun next
     pub r#type: i32,                                                         // c:74 int type (CRT_*)
@@ -151,7 +146,6 @@ pub struct cdrun {                                                           // 
 /// compadd options + the cdstr chain.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub struct cdset {                                                           // c:85
     pub next:  Option<Box<cdset>>,                                           // c:86 Cdset next
     pub opts:  Option<Vec<String>>,                                          // c:87 char **opts
@@ -165,7 +159,6 @@ pub struct cdset {                                                           // 
 /// sets/runs/dimensions during a single `_describe` invocation.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub struct cdstate {                                                         // c:40
     pub showd:   i32,                                                        // c:41
     pub sep:     Option<String>,                                             // c:42 char *sep
@@ -287,20 +280,16 @@ pub fn freecdsets(mut p: Option<Box<cdset>>) {                               // 
 // =====================================================================
 
 /// Port of `typedef struct cadef *Cadef` from `Src/Zle/computil.c:899`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub type Cadef = Box<cadef>;                                                 // c:899
 /// Port of `typedef struct caopt *Caopt` from `Src/Zle/computil.c:900`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub type Caopt = Box<caopt>;                                                 // c:900
 /// Port of `typedef struct caarg *Caarg` from `Src/Zle/computil.c:901`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub type Caarg = Box<caarg>;                                                 // c:901
 
 /// Direct port of `struct caarg` from `Src/Zle/computil.c:949-962`.
 /// Description for one `_arguments` argument spec.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub struct caarg {                                                           // c:949
     pub next:   Option<Box<caarg>>,                                          // c:950 Caarg next
     pub descr:  Option<String>,                                              // c:951 char *descr
@@ -320,7 +309,6 @@ pub struct caarg {                                                           // 
 /// Description for one `_arguments` option spec.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub struct caopt {                                                           // c:928
     pub next:   Option<Box<caopt>>,                                          // c:929 Caopt next
     pub name:   Option<String>,                                              // c:930 char *name
@@ -338,7 +326,6 @@ pub struct caopt {                                                           // 
 /// Cache entry for a set of `_arguments` definitions.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub struct cadef {                                                           // c:905
     pub next:       Option<Box<cadef>>,                                      // c:906 Cadef next
     pub snext:      Option<Box<cadef>>,                                      // c:907 Cadef snext
@@ -415,7 +402,6 @@ pub fn freecadef(mut d: Option<Box<cadef>>) {                                // 
 
 /// Port of `typedef struct castate *Castate` from
 /// `Src/Zle/computil.c:1922`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub type Castate = Box<castate>;                                             // c:1922
 
 /// Direct port of `struct castate` from `Src/Zle/computil.c:1928-1953`.
@@ -423,7 +409,6 @@ pub type Castate = Box<castate>;                                             // 
 /// set — used as a linked list (`snext`) with one state per set.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub struct castate {                                                         // c:1928
     pub snext:   Option<Box<castate>>,                                       // c:1929 Castate snext
     pub d:       Option<Box<cadef>>,                                         // c:1930 Cadef d
@@ -489,17 +474,14 @@ pub fn freecastate(s: &mut castate) {                                        // 
 // =====================================================================
 
 /// Port of `typedef struct cvdef *Cvdef` from `Src/Zle/computil.c:2919`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub type Cvdef = Box<cvdef>;                                                 // c:2919
 /// Port of `typedef struct cvval *Cvval` from `computil.c:2920`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub type Cvval = Box<cvval>;                                                 // c:2920
 
 /// Direct port of `struct cvdef` from `Src/Zle/computil.c:2924-2935`.
 /// One parsed `_values` definition entry, cached for reuse.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub struct cvdef {                                                           // c:2924
     pub descr:  Option<String>,                                              // c:2925 char *descr
     pub hassep: i32,                                                         // c:2926
@@ -517,7 +499,6 @@ pub struct cvdef {                                                           // 
 /// One value definition inside a cvdef.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub struct cvval {                                                           // c:2939
     pub next:   Option<Box<cvval>>,                                          // c:2940 Cvval next
     pub name:   Option<String>,                                              // c:2941 char *name
@@ -555,7 +536,6 @@ pub fn freecvdef(d: Option<Box<cvdef>>) {                                    // 
 /// Direct port of `struct cvstate` from `Src/Zle/computil.c:3222-3227`.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub struct cvstate {                                                         // c:3222
     pub d:    Option<Box<cvdef>>,                                            // c:3223 Cvdef d
     pub def:  Option<Box<caarg>>,                                            // c:3224 Caarg def
@@ -584,17 +564,14 @@ pub static cv_alloced: std::sync::atomic::AtomicI32 =                        // 
 // =====================================================================
 
 /// Port of `typedef struct ctags *Ctags` from `Src/Zle/computil.c:3732`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub type Ctags = Box<ctags>;                                                 // c:3732
 /// Port of `typedef struct ctset *Ctset` from `computil.c:3733`.
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub type Ctset = Box<ctset>;                                                 // c:3733
 
 /// Direct port of `struct ctags` from `Src/Zle/computil.c:3737-3742`.
 /// A bunch of tag sets keyed by locallevel.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub struct ctags {                                                           // c:3737
     pub all:     Option<Vec<String>>,                                        // c:3738 char **all
     pub context: Option<String>,                                             // c:3739 char *context
@@ -605,7 +582,6 @@ pub struct ctags {                                                           // 
 /// Direct port of `struct ctset` from `Src/Zle/computil.c:3746-3751`.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/computil.c
 pub struct ctset {                                                           // c:3746
     pub next: Option<Box<ctset>>,                                            // c:3747 Ctset next
     pub tags: Option<Vec<String>>,                                           // c:3748 char **tags

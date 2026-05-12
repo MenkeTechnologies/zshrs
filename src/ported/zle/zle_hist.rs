@@ -954,7 +954,6 @@ pub fn endofhistory(zle: &mut Zle) -> i32 {                                  // 
 /// per-isearch undo stack.
 #[derive(Debug, Default, Clone, Copy)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_hist.c
 pub struct isrch_spot {                                                       // c:948
     pub hl: i32,
     pub pos: u16,

@@ -81,7 +81,6 @@ use crate::zsh_h::{builtin, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, 
 // Now the descriptor carries the actual port-side `HandlerFunc` so
 // `execbuiltin` can parse flags and call through to the real builtin.
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in builtin.c
 fn BUILTIN(
     name: &str,
     flags: u32,
@@ -108,7 +107,6 @@ fn BUILTIN(
 }
 
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in builtin.c
 fn BIN_PREFIX(name: &str, flags: u32) -> builtin {
     BUILTIN(name, flags | BINF_PREFIX, None, 0, 0, 0, None, None)
 }
@@ -1574,7 +1572,6 @@ pub fn shfunctab_table() -> &'static std::sync::Mutex<std::collections::HashMap<
     SHFUNCTAB_INNER.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in builtin.c
 pub struct ShfunctabAccessor;
 impl ShfunctabAccessor {
     pub fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'static, std::collections::HashMap<String, usize>>> {
@@ -4908,7 +4905,6 @@ pub fn traps_table() -> &'static std::sync::Mutex<std::collections::HashMap<Stri
     TRAPS_INNER.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in builtin.c
 pub struct TrapsAccessor;
 impl TrapsAccessor {
     pub fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'static, std::collections::HashMap<String, String>>> {

@@ -6896,7 +6896,21 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
     //          uppercase pattern char is exact-match
     //   (#a<n>) — approximate match: up to <n> errors (Levenshtein
     //          distance, insert/delete/substitute)
-    let (pattern, case_insensitive, l_flag, approx_n, _) = PatternFlags::parse(pattern);
+    // Inline (#i)/(#l)/(#aN) flag pre-parse — direct call to
+    // patgetglobflags + bit-mask extraction, matching how C's
+    // patcompile inlines the same parsing at pattern.c:1066+.
+    let (pattern, case_insensitive, l_flag, approx_n) =
+        if let Some((bits, _assert, consumed)) =
+            crate::ported::pattern::patgetglobflags(pattern)
+        {
+            let ci = (bits & crate::ported::zsh_h::GF_IGNCASE) != 0;
+            let l = (bits & crate::ported::zsh_h::GF_LCMATCHUC) != 0;
+            let errs = bits & 0xff;
+            let approx = if errs != 0 { Some(errs as u32) } else { None };
+            (pattern[consumed..].to_string(), ci, l, approx)
+        } else {
+            (pattern.to_string(), false, false, None)
+        };
 
     if let Some(n) = approx_n {
         // Inline (#aN) approximate-match — direct port of the

@@ -110,7 +110,6 @@ static hist_keep_comment: AtomicI32 = AtomicI32::new(0);                     // 
 
 /// Port of `static struct histfile_stats lasthist` from Src/hist.c:220-226.
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in hist.c
 pub struct histfile_stats {                                                  // c:220
     pub text: Option<String>,                                                // c:221
     pub stim: i64,                                                           // c:222 time_t
@@ -127,7 +126,6 @@ static lasthist: Mutex<histfile_stats> = Mutex::new(histfile_stats {         // 
 
 /// Port of `static struct histsave` from Src/hist.c:228-238.
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in hist.c
 pub struct histsave {                                                        // c:228
     pub lasthist: histfile_stats,                                            // c:229
     pub histfile: Option<String>,                                            // c:230
@@ -1603,7 +1601,6 @@ pub fn addhistnum(hl: i64, mut n: i32, xflags: i32) -> i64 {                 // 
 }
 
 /// Port of `zlong firsthist(void)` from Src/hist.c.
-// WARNING: FAKE IMPL RUST INVENTION — not in hist.c
 pub fn firsthist() -> i64 {
     let ring = hist_ring.lock().unwrap();
     ring.last().map(|h| h.histnum).unwrap_or(1)
@@ -1666,7 +1663,6 @@ pub fn histbackword(line: &str, pos: usize) -> usize {
 }
 
 /// Port of `char *hdynread(int stop)` from Src/hist.c.
-// WARNING: FAKE IMPL RUST INVENTION — not in hist.c
 pub fn hdynread(_stop: i32) -> Option<String> {
     None
 }

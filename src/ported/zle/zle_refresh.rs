@@ -869,7 +869,6 @@ pub fn ZR_memset(                                                            // 
 /// the derived `PartialEq` on `REFRESH_ELEMENT`.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_refresh.c
 pub fn ZR_equal(                                                             // c:74
     a: crate::ported::zle::zle_h::REFRESH_ELEMENT,
     b: crate::ported::zle::zle_h::REFRESH_ELEMENT,
@@ -882,7 +881,6 @@ pub fn ZR_equal(                                                             // 
 /// Copy `l` REFRESH_ELEMENT slots from `src` to `dst`.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_refresh.c
 pub fn ZR_memcpy(                                                            // c:92
     dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
     src: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
@@ -1214,7 +1212,6 @@ pub static CLEARLIST:    std::sync::atomic::AtomicI32 =
 /// video buffer) with `pos`/`end` byte indices for safe access.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_refresh.c
 pub struct rparams {                                                         // c:815
     /// Number of lines we are allowed to scroll.
     pub canscroll: i32,                                                      // c:816

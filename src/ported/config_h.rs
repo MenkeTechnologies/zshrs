@@ -1247,7 +1247,6 @@ pub const ZSH_HAVE_TERM_H: i32 = 1;
 /// Define to the base type of the third argument of accept
 /// (Rust port: type alias rather than const because the C
 /// macro expands to a typename.)
-// WARNING: FAKE IMPL RUST INVENTION — not in config_h.c
 pub type ZSOCKLEN_T = libc::socklen_t;
 
 // Number of bits in a file offset, on hosts where this is settable.

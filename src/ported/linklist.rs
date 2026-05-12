@@ -23,7 +23,6 @@ use std::collections::VecDeque;
 
 /// A doubly-ended list, port of `struct linklist` (`Src/zsh.h:563`).
 /// `flags` carries `LF_ARRAY` and friends from `Src/subst.c:33`.
-// WARNING: FAKE IMPL RUST INVENTION — not in linklist.c
 pub struct LinkList<T> {
     pub nodes: VecDeque<T>,                                                 // c:zsh.h:565,566
     pub flags: u32,                                                          // c:zsh.h:567

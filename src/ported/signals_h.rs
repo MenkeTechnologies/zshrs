@@ -183,7 +183,6 @@ pub fn sigs_number(name: &str) -> Option<i32> {                           // c:j
 /// `SIGRTMIN + (x - VSIGCOUNT)`. Other indexes pass through unchanged.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn SIGNUM(x: i32) -> i32 {                                           // c:39
     #[cfg(target_os = "linux")]
     {
@@ -203,7 +202,6 @@ pub fn SIGNUM(x: i32) -> i32 {                                           // c:39
 /// other numbers pass through unchanged.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn SIGIDX(x: i32) -> i32 {                                           // c:40
     #[cfg(target_os = "linux")]
     {
@@ -246,7 +244,6 @@ pub const MAX_QUEUE_SIZE: usize = 128;                                   // c:76
 /// C body: `(queue_in++, queueing_enabled++)` — both counters bump.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn queue_signals() {                                                 // c:90/112
     crate::ported::signals::queue_in.fetch_add(1, Ordering::SeqCst);
     crate::ported::signals::queueing_enabled.fetch_add(1, Ordering::SeqCst);
@@ -258,7 +255,6 @@ pub fn queue_signals() {                                                 // c:90
 /// `run_queued_signals()`.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn unqueue_signals() {                                               // c:92/114
     crate::ported::signals::queue_in.fetch_sub(1, Ordering::SeqCst);
     let prev = crate::ported::signals::queueing_enabled.fetch_sub(1, Ordering::SeqCst);
@@ -273,7 +269,6 @@ pub fn unqueue_signals() {                                               // c:92
 /// later DPUTS2 invariant check.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn dont_queue_signals() {                                            // c:98/118
     let level = crate::ported::signals::queueing_enabled.swap(0, Ordering::SeqCst);
     crate::ported::signals::queue_in.store(level, Ordering::SeqCst);
@@ -286,7 +281,6 @@ pub fn dont_queue_signals() {                                            // c:98
 /// `dont_queue_signals` or similar).
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn restore_queue_signals(q: i32) {                                   // c:104/123
     crate::ported::signals::queueing_enabled.store(q, Ordering::SeqCst);
 }
@@ -296,7 +290,6 @@ pub fn restore_queue_signals(q: i32) {                                   // c:10
 /// pass to `restore_queue_signals`).
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn queue_signal_level() -> i32 {                                     // c:127
     crate::ported::signals::queueing_enabled.load(Ordering::SeqCst)
 }
@@ -317,7 +310,6 @@ pub fn queue_signal_level() -> i32 {                                     // c:12
 /// ```
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn run_queued_signals() {                                            // c:78
     use crate::ported::signals::{queue_front, queue_rear, signal_queue, signal_mask_queue};
     loop {
@@ -351,7 +343,6 @@ pub fn run_queued_signals() {                                            // c:78
 /// global; until it's ported, this is a no-op stub.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn child_block() {                                                   // c:52
     // signal_block(sigchld_mask) — sigchld_mask not yet wired. No-op.
 }
@@ -360,7 +351,6 @@ pub fn child_block() {                                                   // c:52
 /// Counterpart to `child_block`.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn child_unblock() {                                                 // c:53
     // signal_unblock(sigchld_mask) — see child_block doc.
 }
@@ -370,7 +360,6 @@ pub fn child_unblock() {                                                 // c:53
 /// listing code can read terminal dimensions atomically.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn winch_block() {                                                   // c:56
     // signal_block(signal_mask(SIGWINCH)) — signal_mask not yet wired.
 }
@@ -379,7 +368,6 @@ pub fn winch_block() {                                                   // c:56
 /// Counterpart to `winch_block`.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn winch_unblock() {                                                 // c:57
 }
 
@@ -391,7 +379,6 @@ pub fn winch_unblock() {                                                 // c:57
 /// signal `s` to be ignored. C: `signal(S, SIG_IGN)`.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn signal_ignore(s: i32) {                                           // c:64
     #[cfg(unix)]
     unsafe {
@@ -405,7 +392,6 @@ pub fn signal_ignore(s: i32) {                                           // c:64
 /// signal `s` to its default action. C: `signal(S, SIG_DFL)`.
 #[inline]
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in signals_h.c
 pub fn signal_default(s: i32) {                                          // c:67
     #[cfg(unix)]
     unsafe {

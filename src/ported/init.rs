@@ -131,7 +131,6 @@ const tccapnams: [&str; 39] = [                                              // 
 /// Port of `enum loop_return loop(int toplevel, int justonce)` from Src/init.c:113.
 ///
 /// Keep executing lists until EOF found.                                    // c:109
-// WARNING: FAKE IMPL RUST INVENTION — not in init.c
 pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {                         // c:113
     let mut err: i32;                                                        // c:116
     let mut non_empty: i32 = 0;                                              // c:116

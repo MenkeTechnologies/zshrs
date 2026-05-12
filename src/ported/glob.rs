@@ -159,7 +159,6 @@ pub const MAX_SORTS: usize = 12;                                             // 
 /// Port of the `Qualifier` enum in Src/glob.c — drives the
 /// per-match filter inside `scanner()` (line 500). Each variant
 /// matches one of the C source's `q*` test functions.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub enum Qualifier {
     /// File type qualifiers
     IsRegular,
@@ -242,7 +241,6 @@ pub enum Qualifier {
 /// One glob match result.
 /// Port of `struct gmatch` from Src/glob.c — `gmatchcmp()`
 /// (line 936) sorts arrays of these for the `o`/`O` qualifier.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub struct GlobMatch {
     pub name: String,
     pub path: PathBuf,
@@ -346,7 +344,6 @@ pub fn gmatchcmp(                                                            // 
 /// Mirrors the `struct qual *` linked list `parsepat()`
 /// (Src/glob.c:791) builds — every `(qual)` after a glob pattern
 /// adds to it.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub struct QualifierSet {                                                   // c:138
     pub qualifiers: Vec<Qualifier>,
     pub alternatives: Vec<Vec<Qualifier>>,
@@ -402,7 +399,6 @@ pub struct complist {                                                        // 
 /// `gd_gf_*` glob-flag bag into `options: GlobOptions`, but the
 /// 1:1 correspondence to `struct globdata` is otherwise faithful.
 // struct to easily save/restore current state                              // c:166
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub struct GlobData {                                                       // c:168
     pub matches: Vec<GlobMatch>,
     pub qualifiers: Option<QualifierSet>,
@@ -1443,7 +1439,6 @@ fn apply_selection(state: &mut GlobData) {                                   // 
 
 /// Pattern component
 #[derive(Debug, Clone)]
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 enum PatternComponent {
     Pattern(String),
     Recursive { follow_links: bool },
@@ -1789,7 +1784,6 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {                // 
     results
 }
 
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn expand_range(
     prefix: &str,
     content: &str,
@@ -1901,7 +1895,6 @@ fn expand_range(
     None
 }
 
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn expand_comma(
     prefix: &str,
     content: &str,
@@ -1921,7 +1914,6 @@ fn expand_comma(
     Some(results)
 }
 
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn expand_ccl(prefix: &str, content: &str, suffix: &str) -> Option<Vec<String>> {
     let mut chars_set = HashSet::new();
     let chars: Vec<char> = content.chars().collect();
@@ -1962,7 +1954,6 @@ fn expand_ccl(prefix: &str, content: &str, suffix: &str) -> Option<Vec<String>> 
 /// with `count=1`. Trailing `/` ignored, then drop the last path
 /// component. Edge cases mirror the C: empty result with leading `/`
 /// becomes `/`; otherwise `.`.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn modifier_head(s: &str) -> String {
     if s.is_empty() {
         return ".".to_string();
@@ -1997,7 +1988,6 @@ fn modifier_head(s: &str) -> String {
 /// `:t` — tail/basename. Direct port of zsh/Src/hist.c:2152 `remlpaths`
 /// with `count=1`. Returns the substring after the last `/`. Trailing
 /// slashes are trimmed first so `foo/bar/:t` is `bar`, not empty.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn modifier_tail(s: &str) -> String {
     if s.is_empty() {
         return String::new();
@@ -2021,7 +2011,6 @@ fn modifier_tail(s: &str) -> String {
 /// `:r` — root, strip last extension from the basename. Direct port of
 /// zsh/Src/hist.c:2122 `remtext`. Walks from end, stops at first `/`
 /// or `.`; truncates at `.` when found in the basename.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn modifier_root(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut i = bytes.len();
@@ -2042,7 +2031,6 @@ fn modifier_root(s: &str) -> String {
 /// Walks from end; on first `.` returns the substring after the dot;
 /// on `/` returns empty. `foo.tar.gz` → `gz`; `foo` → ``;
 /// `.bashrc` → `bashrc`.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn modifier_ext(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut i = bytes.len();
@@ -2065,7 +2053,6 @@ fn modifier_ext(s: &str) -> String {
 /// the second occurrence, replacement to the third (or string end).
 /// Backslash-escapes the delimiter inside the body. Returns the
 /// substituted string and the number of bytes consumed from `mods`.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn apply_modifier_subst(input: &str, mods_after_s: &str, global: bool) -> (String, usize) {
     let chars: Vec<char> = mods_after_s.chars().collect();
     if chars.is_empty() {
@@ -2123,7 +2110,6 @@ fn apply_modifier_subst(input: &str, mods_after_s: &str, global: bool) -> (Strin
 /// `:a` — make absolute lexically, no symlink resolution. Direct port
 /// of zsh/Src/subst.c xsymlinks: prepend `$PWD` if relative, then
 /// collapse `.` and `..` components without touching the filesystem.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn modifier_abs(s: &str) -> String {
     let base = if s.starts_with('/') {
         std::path::PathBuf::from(s)
@@ -2147,7 +2133,6 @@ fn modifier_abs(s: &str) -> String {
 /// zsh/Src/subst.c chrealpath / xsymlink (subst.c:4736,4787) — resolve
 /// symlinks where possible. Falls back to `:a` lexical normalization
 /// when the path doesn't exist on disk.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn modifier_realpath(s: &str) -> String {
     let base = if s.starts_with('/') {
         std::path::PathBuf::from(s)
@@ -2165,7 +2150,6 @@ fn modifier_realpath(s: &str) -> String {
 /// already a path and is returned unchanged. Otherwise scan `$PATH`
 /// for an executable file with that basename and return the full
 /// path. Returns the input unchanged on miss.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn modifier_command(s: &str) -> String {
     if s.is_empty() || s.contains('/') {
         return s.to_string();
@@ -2200,14 +2184,12 @@ fn modifier_command(s: &str) -> String {
 
 /// `:l` — lowercase. Direct port of zsh/Src/subst.c:4847 `casemodify(*str,
 /// CASMOD_LOWER)`. Unicode-aware via Rust's `to_lowercase()`.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn modifier_lower(s: &str) -> String {
     s.to_lowercase()
 }
 
 /// `:u` — uppercase. Direct port of zsh/Src/subst.c:4850 `casemodify(*str,
 /// CASMOD_UPPER)`. Unicode-aware via Rust's `to_uppercase()`.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn modifier_upper(s: &str) -> String {
     s.to_uppercase()
 }
@@ -2217,7 +2199,6 @@ fn modifier_upper(s: &str) -> String {
 /// every char that would otherwise be parsed as syntax (whitespace,
 /// quotes, redirects, glob metas, history bangs, `$`, backtick, etc.).
 /// The output is safe to paste back as a literal shell argument.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn modifier_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
@@ -2260,7 +2241,6 @@ fn modifier_quote(s: &str) -> String {
 /// single-quoted runs (literal until next `'`), and double-quoted runs
 /// (only `\\ \" \$ \` \\n` are special). Unmatched quotes consume to
 /// end-of-string per zsh's permissive parse.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn modifier_unquote(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -2309,7 +2289,6 @@ fn modifier_unquote(s: &str) -> String {
 /// Apply `:` history-style modifiers to a string.
 /// Port of `applymod()` (Src/utils.c) — used by glob history
 /// substitution (`!*:t`) and parameter modifiers (`${var:t}`).
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub fn apply_colon_modifiers(input: &str, mods: &str) -> String {
     let mut s = input.to_string();
     let bytes = mods.as_bytes();
@@ -2412,7 +2391,6 @@ pub fn apply_colon_modifiers(input: &str, mods: &str) -> String {
 /// Split a glob pattern into (path-pattern, qualifier-string).
 /// Port of the qualifier-detection step in `parsepat()`
 /// (Src/glob.c:791).
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub fn split_qualifier(pattern: &str) -> (&str, Option<&str>) {
     if !pattern.ends_with(')') {
         return (pattern, None);
@@ -2439,7 +2417,6 @@ pub fn split_qualifier(pattern: &str) -> (&str, Option<&str>) {
 /// Strip redundant `.` / `CurDir` segments from relative match paths for
 /// output. Rust's `read_dir(".")` yields `entry.path()` like `./foo` while
 /// `read_dir("foo")` yields `foo/bar` — zsh prints the latter shape for both.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 fn glob_emit_path(path: &std::path::Path) -> String {
     use std::path::Component;
     match path.components().next() {
@@ -2474,7 +2451,6 @@ fn glob_emit_path(path: &std::path::Path) -> String {
 /// directly from the canonical global option store via
 /// `crate::ported::options::opt_state_get` — same path C uses via
 /// `isset(NULL_GLOB)` etc. on the global `opts[]` array.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub fn glob(pattern: &str) -> Vec<String> {                                  // c:1214
     let mut state = GlobData::new();
     globdata_glob(&mut state, pattern)
@@ -2515,7 +2491,6 @@ pub fn statfullpath(pathbuf: &str, name: &str, follow: bool) -> Option<std::fs::
 /// Check whether a glob match is a directory.
 /// Port of the `S_ISDIR(stat.st_mode)` test scattered through
 /// Src/glob.c.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub fn is_directory(path: &str) -> bool {
     std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
 }
@@ -2523,7 +2498,6 @@ pub fn is_directory(path: &str) -> bool {
 /// Check if path is a symlink
 /// Check whether a glob match is a symlink.
 /// Port of the `S_ISLNK(lstat.st_mode)` test in Src/glob.c.
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub fn is_symlink(path: &str) -> bool {
     std::fs::symlink_metadata(path)
         .map(|m| m.file_type().is_symlink())
@@ -2752,7 +2726,6 @@ pub mod qualifiers {
 
 /// Match flags for getmatch
 #[derive(Debug, Clone, Copy, Default)]
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub struct MatchFlags {
     /// Match at start
     pub anchored_start: bool,
@@ -2766,7 +2739,6 @@ pub struct MatchFlags {
 
 /// Internal match data
 #[derive(Debug, Clone)]
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub struct MatchData {
     pub str: String,
     pub pattern: String,
@@ -2960,7 +2932,6 @@ pub fn set_pat_end(pattern: &str, end: usize) -> String {
 
 /// Token types for glob tokenization
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub enum GlobToken {
     Literal(char),
     Star,         // *
@@ -3122,7 +3093,6 @@ pub fn remnulargs(tokens: &mut Vec<GlobToken>) {
 
 /// Parsed mode specification
 #[derive(Debug, Clone, Copy, Default)]
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub struct ModeSpec {
     pub who: u32,  // u, g, o, a masks
     pub op: char,  // +, -, =
@@ -3287,7 +3257,6 @@ pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
 
 /// Redirect types
 #[derive(Debug, Clone)]
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub struct Redirect {
     pub fd: i32,
     pub target: String,
@@ -3295,7 +3264,6 @@ pub struct Redirect {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// WARNING: FAKE IMPL RUST INVENTION — not in glob.c
 pub enum RedirectType {
     Read,      // <
     Write,     // >

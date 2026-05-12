@@ -446,7 +446,6 @@ pub const CVT_SUFPAT:   i32 = 5;                                             // 
 // =====================================================================
 
 #[allow(non_snake_case)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/complete.c
 struct OrderOpt { name: &'static str, abbrev: usize, oflag: i32 }
 
 static ORDEROPTS: &[OrderOpt] = &[                                           // c:561
@@ -547,7 +546,6 @@ pub fn addcompparams(cp: &[compparam], _pp: &mut Vec<*mut crate::ported::zsh_h::
 /// the gsu reads/writes; for the kparams it's a pointer into the
 /// global completion-state buffers.
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Zle/complete.c
 pub struct compparam {                                                       // c:1215
     pub name: &'static str,                                                  // c:1216 char *name
     pub r#type: i32,                                                         // c:1217 int type

@@ -17,7 +17,6 @@ pub const READ_MAX: usize = 1024 * 1024;                                     // 
 /// `newptycmd()` (line 310), `deleteptycmd()` (line 490) etc.
 /// Same fields (name, args, master fd, pid, echo, nonblock).
 #[derive(Debug)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/zpty.c
 pub struct PtyCmd {
     pub name: String,
     pub args: Vec<String>,

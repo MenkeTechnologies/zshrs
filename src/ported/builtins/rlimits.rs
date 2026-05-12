@@ -44,7 +44,6 @@ use crate::ported::zsh_h::{module, options, OPT_ISSET};
 /// memory, raw count, seconds, microseconds, or "unknown" for
 /// resources the build doesn't recognize.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// WARNING: FAKE IMPL RUST INVENTION — not in builtins/rlimits.c
 pub enum zlimtype {
     ZLIMTYPE_MEMORY,
     ZLIMTYPE_NUMBER,
@@ -72,7 +71,6 @@ pub enum zlimtype {
 ///
 /// Rust port renames `type` (Rust keyword) to `r#type`.
 #[derive(Debug, Clone)]
-// WARNING: FAKE IMPL RUST INVENTION — not in builtins/rlimits.c
 pub struct resinfo_T {
     pub res: i32,
     pub name: &'static str,

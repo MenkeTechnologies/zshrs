@@ -218,7 +218,6 @@ use crate::zsh_h::{INPAR, NULARG, OUTPAR};
 //     low 8 bits hold a palette index 0..=255, where 8 is the
 //     "default" sentinel per Src/prompt.c:1909.
 // Not a new type — same encoding C packs into `TXT_ATTR_FG_COL_MASK`.
-// WARNING: FAKE IMPL RUST INVENTION — not in prompt.c
 pub type Color = u32; // c:Src/zsh.h:2718 (colour slot)
 pub const COLOR_24BIT: Color = 0x0100_0000; // c:zsh.h:2727 (TXT_ATTR_FG_24BIT)
 
@@ -325,7 +324,6 @@ fn zattr_set_bg_rgb(attrs: zattr, r: u8, g: u8, b: u8) -> zattr {
 /// nesting; `in_escape` holds readline `\x01`/`\x02` glue only.
 /// `last` pointer / full trunc `bp1` realloc: TODO.
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in prompt.c
 pub struct buf_vars {                                                        // c:Src/prompt.c:76
     pwd: String,
     home: String,
@@ -1423,20 +1421,17 @@ color_from_name(&name) // c:336
 }
 
 /// Expand a prompt string
-// WARNING: FAKE IMPL RUST INVENTION — not in prompt.c
 pub fn expand_prompt(s: &str) -> String {
     prompt_tls::sync_from_globals();
     buf_vars::new(s).expand() // c:Src/prompt.c:214 (new_vars init)
 }
 
 /// Same as [`expand_prompt`] — C call sites that used implicit globals only.
-// WARNING: FAKE IMPL RUST INVENTION — not in prompt.c
 pub fn expand_prompt_default(s: &str) -> String {
     expand_prompt(s)
 }
 
 /// Count the visible width of an expanded prompt (ignoring escape sequences)
-// WARNING: FAKE IMPL RUST INVENTION — not in prompt.c
 pub fn prompt_width(s: &str) -> usize {
     let mut width = 0;
     let mut in_escape = false;
@@ -1540,7 +1535,6 @@ pub fn output_colour(colour: u8, is_fg: bool) -> String {                    // 
 }
 
 /// Output true color (24-bit) escape sequence
-// WARNING: FAKE IMPL RUST INVENTION — not in prompt.c
 pub fn output_truecolor(r: u8, g: u8, b: u8, is_fg: bool) -> String {
     let mode = if is_fg { 38 } else { 48 };
     format!("\x1b[{};2;{};{};{}m", mode, r, g, b)
@@ -1582,7 +1576,6 @@ pub fn parsehighlight(spec: &str) -> zattr {                             // c:28
 // functions for handling attributes                                        // c:1641
 /// Port of `applytextattributes()` from Src/prompt.c:1645 —
 /// builds one SGR sequence with all active codes joined.
-// WARNING: FAKE IMPL RUST INVENTION — not in prompt.c
 pub fn apply_text_attributes(attrs: zattr) -> String {                   // c:1645
     let mut codes: Vec<String> = Vec::new();
     if attrs & TXTBOLDFACE != 0 { codes.push("1".to_string()); } // c:1645
@@ -1617,7 +1610,6 @@ pub fn apply_text_attributes(attrs: zattr) -> String {                   // c:16
 }
 
 /// Reset all text attributes
-// WARNING: FAKE IMPL RUST INVENTION — not in prompt.c
 pub fn reset_text_attributes() -> &'static str {
     "\x1b[0m"
 }
@@ -1630,7 +1622,6 @@ pub fn set_default_colour_sequences() -> (String, String) {
 }
 
 /// Right prompt handling - compute padding for RPROMPT
-// WARNING: FAKE IMPL RUST INVENTION — not in prompt.c
 pub fn right_prompt_padding(
     left_width: usize,
     right_prompt: &str,
@@ -1647,7 +1638,6 @@ pub fn right_prompt_padding(
 }
 
 /// Transient prompt - return empty string to clear prompt on accept-line
-// WARNING: FAKE IMPL RUST INVENTION — not in prompt.c
 pub fn transient_prompt(_original: &str) -> String {
     String::new()
 }
@@ -1744,7 +1734,6 @@ pub fn zattrescape(attrs: zattr) -> String {                             // c:25
     result
 }
 
-// WARNING: FAKE IMPL RUST INVENTION — not in prompt.c
 fn color_name(c: Color) -> String {
     if let Some((r, g, b)) = color_get_rgb(c) {
         return format!("#{:02x}{:02x}{:02x}", r, g, b);

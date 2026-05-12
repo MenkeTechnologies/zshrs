@@ -63,7 +63,6 @@ use crate::ported::utils::zwarnnam;
 /// type static table; consumers cast back at call time.
 #[derive(Debug, Clone, Copy)]
 #[allow(non_camel_case_types)]
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/param_private.c
 pub struct Gsu_closure {                                                 // c:34
     pub kind: u8,                                                        // c:35-41 union tag
     pub g: usize,                                                        // c:42 void *g

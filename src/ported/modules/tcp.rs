@@ -175,7 +175,6 @@ pub fn zts_alloc(ztflags: i32) -> usize {                                // c:21
 // C `Tcp_session` is `struct tcp_session *` (a pointer into the
 // `ztcp_sessions` linked list). Rust models the same: a handle that
 // indexes into the thread-local `ZTCP_SESSIONS` Vec. NULL → None.
-// WARNING: FAKE IMPL RUST INVENTION — not in Modules/tcp.c
 type TcpSessionHandle = Option<usize>;
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT

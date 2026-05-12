@@ -78,7 +78,6 @@ pub fn deletehookfunc(hook: &str, func: &str) {                              // 
 /// `Src/module.c::register_module()` (line 359) — the C source
 /// classifies module-exported names by builtin / parameter /
 /// condition / mathfunc / hook.
-// WARNING: FAKE IMPL RUST INVENTION — not in module.c
 pub enum FeatureType {
     Builtin,
     Condition,
@@ -94,7 +93,6 @@ pub enum FeatureType {
 /// returns — the C source emits a `(name, type, flags)` tuple
 /// for each Builtin / Param / Conddef / Mathfunc / Hookdef the
 /// module wants to expose.
-// WARNING: FAKE IMPL RUST INVENTION — not in module.c
 pub struct ModuleFeature {
     pub name: String,
     pub feature_type: FeatureType,
@@ -106,7 +104,6 @@ pub struct ModuleFeature {
 /// Module load state.
 /// Mirrors the `MOD_*` flag bits Src/module.c sets on each
 /// `Module` slot — registered, busy (loading), unloading, etc.
-// WARNING: FAKE IMPL RUST INVENTION — not in module.c
 pub enum ModuleState {
     Loaded,
     Autoloaded,
@@ -120,7 +117,6 @@ pub enum ModuleState {
 /// Port of `struct module` from Src/zsh.h — name, hooks, state,
 /// feature list. The C source threads it through every
 /// `addbuiltin()` / `addconddef()` / `addhookdef()` call.
-// WARNING: FAKE IMPL RUST INVENTION — not in module.c
 pub struct Module {
     pub name: String,
     pub state: ModuleState,
@@ -160,7 +156,6 @@ impl Module {
 /// `newmoduletable()` (line 274) creates it, `register_module()`
 /// (line 359) inserts entries, `printmodulenode()` (line 154)
 /// renders for `zmodload`.
-// WARNING: FAKE IMPL RUST INVENTION — not in module.c
 pub struct ModuleTable {
     modules: HashMap<String, Module>,
     /// Builtin name → module name mapping for autoload
