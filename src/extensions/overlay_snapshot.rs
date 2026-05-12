@@ -164,7 +164,7 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
             out.push(("compdef".into(), Value::Object(map)));
         }
 
-        // zstyle: ordered Vec<ZStyle>. Serialize with debug to
+        // zstyle: ordered Vec<zstyle_entry>. Serialize with debug to
         // capture every field deterministically; the daemon side
         // treats the value as opaque text today.
         if !exec.zstyles.is_empty() {

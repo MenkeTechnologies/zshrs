@@ -7147,7 +7147,10 @@ pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> Str
             // shtokenize returns Vec<GlobToken>; for a string-output
             // signature we keep the src as-is. The full token-aware
             // pipeline lives in the canonical glob path.
-            let _ = crate::ported::glob::shtokenize(src); // c:823
+            // shtokenize(src) call elided — `src` is `&str` here; the
+            // tokenization side-effect would write into the dest buffer
+            // C builds at `c:823`, not into the input. The canonical
+            // glob pipeline handles tokenization on its own copy.
         }
         return src.to_string(); // c:821
     }
@@ -7167,7 +7170,7 @@ pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> Str
     if glob_subst {
         // c:829
         // Same shtokenize note as above.
-        let _ = crate::ported::glob::shtokenize(src); // c:830
+        // shtokenize(src) call elided — same reasoning as c:823 above.
     }
     result.push_str(suffix); // c:833
     result // c:835
@@ -7749,7 +7752,8 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
     // proper Vec<GlobToken>-aware caller exists.
     if tok_arg {
         // c:1549
-        let _ = crate::ported::glob::shtokenize(&result); // c:1550
+        // shtokenize call elided — same as c:823 / c:830 above (the
+        // tokenized form isn't consumed by current zshrs pipeline).
                                                           // Result kept as-is; tok_arg is a hint for downstream glob
                                                           // engines that consume the tokenized form directly.
     }

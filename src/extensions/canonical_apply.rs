@@ -38,7 +38,7 @@ use std::path::PathBuf;
 
 use crate::daemon::paths::CachePaths;
 use crate::daemon::shard::{list_shards, read_canonical_shard, CanonicalShard};
-use crate::exec::{AutoloadFlags, ShellExecutor, ZStyle};
+use crate::exec::{AutoloadFlags, ShellExecutor, zstyle_entry};
 
 /// Read the latest recorder shard and apply its canonical state to
 /// the executor. Returns total rows applied (`0` if no shard or
@@ -192,7 +192,7 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
 
     // zstyle: shard stores `Vec<(pattern, "style val val ...")>` —
     // split the joined-rest back into (style, values) so the exec
-    // side has the same `ZStyle { pattern, style, values: Vec<_> }`
+    // side has the same `zstyle_entry { pattern, style, values: Vec<_> }`
     // shape it would build by sourcing `zstyle :ctx style val val …`
     // statements.
     for (pattern, rest) in shard.zstyle {
@@ -202,7 +202,7 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
             None => continue,
         };
         let values: Vec<String> = parts.map(str::to_string).collect();
-        executor.zstyles.push(ZStyle {
+        executor.zstyles.push(zstyle_entry {
             pattern,
             style,
             values,

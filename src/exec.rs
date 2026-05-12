@@ -24,7 +24,7 @@ use crate::zftp::zftp_globals;
 // rewrite — zprof state now lives in module-level statics
 // (`CALLS`/`NCALLS`/`ARCS`/`NARCS`/`STACK`/`ZPROF_MODULE`) matching
 // the C file-statics at zprof.c:66-71.
-use crate::zutil::StyleTable;
+use crate::zutil::style_table;
 use compsys::cache::CompsysCache;
 use compsys::CompInitResult;
 use parking_lot::Mutex;
@@ -228,7 +228,7 @@ use std::process::{Child, Command, Stdio};
 // builtins/sched.rs). Re-exported here so existing call-sites that
 // reference `crate::ported::exec::<Name>` keep compiling.
 pub use crate::bash_complete::{CompSpec, CompMatch, CompGroup, CompState};
-pub use crate::ported::modules::zutil::ZStyle;
+pub use crate::ported::modules::zutil::zstyle_entry;
 // `ProfileEntry` re-export deleted — was unused outside
 // `ShellExecutor::profile_data` (which itself is now removed).
 // `ScheduledCommand` (Rust-only) deleted; use `crate::builtins::sched::schedcmd`
@@ -384,7 +384,7 @@ pub struct ShellExecutor {
     pub comp_matches: Vec<CompMatch>, // Current completion matches
     pub comp_groups: Vec<CompGroup>,  // Completion groups
     pub comp_state: CompState,        // compstate associative array
-    pub zstyles: Vec<ZStyle>,         // zstyle configurations
+    pub zstyles: Vec<zstyle_entry>,         // zstyle configurations
     pub comp_words: Vec<String>,      // words on command line
     pub comp_current: i32,            // current word index (1-based)
     pub comp_prefix: String,          // PREFIX parameter
@@ -495,7 +495,7 @@ pub struct ShellExecutor {
     // file-static `ztcp_sessions` linked list).
     pub zftp: zftp_globals,
     // `profiler: Profiler` deleted — see comment above.
-    pub style_table: StyleTable,
+    pub style_table: style_table,
     // termcap state dissolved per strict-rules audit — no Rust-only
     // Termcap struct; capability_lookup is stateless on $TERM.
     // Watch state — dissolved per PORT_PLAN Phase 2. C
@@ -1152,7 +1152,7 @@ impl ShellExecutor {
             breaking: 0,
             continuing: 0,
             zftp: zftp_globals::new(),
-            style_table: StyleTable::new(),
+            style_table: style_table::new(),
             zsh_compat: false,
             bash_compat: false,
             posix_mode: false,

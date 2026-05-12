@@ -17,7 +17,7 @@ use crate::options::ZSH_OPTIONS_SET;
 // TcpSessions struct deleted — modules/tcp.rs uses ZTCP_SESSIONS thread_local.
 use crate::zftp::zftp_globals;
 // `Profiler` deleted — zprof state is module-level statics now.
-use crate::zutil::StyleTable;
+use crate::zutil::style_table;
 use compsys::cache::CompsysCache;
 use compsys::CompInitResult;
 use parking_lot::Mutex;

@@ -41,7 +41,7 @@ pub const ZOF_GNUS: i32 = 64;                                                // 
 /// `ZOF_GNUL` from `Src/Modules/zutil.c:1538`. GNU-style `--option=value`
 /// long variant.
 pub const ZOF_GNUL: i32 = 128;                                               // c:1538
-// ZStyle is defined below (moved from exec.rs).
+// zstyle_entry is defined below (moved from exec.rs).
 
 /// Save/restore for the per-pattern-match magic vars `$match`,
 /// `$mbegin`, `$mend`. Direct port of `MatchData` and the
@@ -67,8 +67,15 @@ pub struct MatchData {
 /// (line 487) drives every mutation. Stores `stypat` entries
 /// (port of C `struct stypat`, zutil.c:95) per style name,
 /// weight-sorted so the most specific pattern wins.
+// `StyleTable` renamed to `style_table`. C uses `HashTable zstyletab`
+// (`Src/Modules/zutil.c:209`) with `struct style` (zutil.c:91) nodes
+// containing a `Stypat pats` linked list (zutil.c:97-104). Rust port
+// uses a `HashMap<String, Vec<stypat>>` while the canonical
+// `hashtable` port lands; the canonical `style` / `stypat` structs
+// already exist at lines 1608 / 1596 below.
+#[allow(non_camel_case_types)]
 #[derive(Default)]
-pub struct StyleTable {
+pub struct style_table {
     styles: HashMap<String, Vec<stypat>>,
 }
 
@@ -79,10 +86,10 @@ pub struct StyleTable {
 /// since the table is process-global and `bin_zstyle` /
 /// `lookupstyle` / `testforstyle` all need to share it.
 #[allow(non_upper_case_globals)]
-pub static zstyletab: std::sync::LazyLock<std::sync::Mutex<StyleTable>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(StyleTable::new())); // c:209
+pub static zstyletab: std::sync::LazyLock<std::sync::Mutex<style_table>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(style_table::new())); // c:209
 
-impl StyleTable {
+impl style_table {
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
     /// of any function in `Src/Modules/zutil.c`.
     pub fn new() -> Self {
@@ -128,7 +135,7 @@ impl StyleTable {
         weight += tmp;                                                        // c:386
         // c:337-342 — New pattern: build stypat.
         // c:339 — p->prog = prog; the C arg comes from patcompile()
-        // before setstypat is called. The StyleTable::set API takes
+        // before setstypat is called. The style_table::set API takes
         // pattern as &str and compiles at lookup-time via patmatch,
         // so we record None here and rely on get() to match.
         let prog: Option<crate::ported::zsh_h::Patprog> = None;
@@ -538,11 +545,11 @@ mod tests {
     /// Verifies the weight formula matches C's setstypat (zutil.c:344-385):
     /// component count (high 32 bits) + per-component specificity sum
     /// (low 32 bits). More specific = higher weight. Drives weight via
-    /// StyleTable::set's inline weight calc (insertion order reflects
+    /// style_table::set's inline weight calc (insertion order reflects
     /// weight ordering — most specific pattern appears first).
     #[test]
     fn test_style_pattern_weight() {
-        let mut t = StyleTable::new();
+        let mut t = style_table::new();
         t.set("*",                  "s", vec!["broad".to_string()], false);
         t.set(":completion:*",      "s", vec!["mid".to_string()],   false);
         t.set(":completion:zsh:*",  "s", vec!["narrow".to_string()],false);
@@ -568,17 +575,17 @@ mod tests {
 
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
     /// of any function in `Src/Modules/zutil.c`.
-    /// Verifies pattern matching via the StyleTable.get path mirrors
+    /// Verifies pattern matching via the style_table.get path mirrors
     /// C's lookupstyle (zutil.c:443) walking the pats list for the
     /// first weight-sorted match.
     #[test]
     fn test_style_pattern_matches() {
-        let mut t = StyleTable::new();
+        let mut t = style_table::new();
         t.set(":completion:*", "s1", vec!["v".to_string()], false);
         assert!(t.get(":completion:zsh:complete", "s1").is_some());
         assert!(t.get(":other:zsh", "s1").is_none());
 
-        let mut t2 = StyleTable::new();
+        let mut t2 = style_table::new();
         t2.set("*", "s2", vec!["v".to_string()], false);
         assert!(t2.get("anything", "s2").is_some());
     }
@@ -587,7 +594,7 @@ mod tests {
     /// of any function in `Src/Modules/zutil.c`.
     #[test]
     fn test_style_table_set_get() {
-        let mut table = StyleTable::new();
+        let mut table = style_table::new();
         table.set(":completion:*", "verbose", vec!["yes".to_string()], false);
 
         let result = table.get(":completion:zsh", "verbose");
@@ -601,7 +608,7 @@ mod tests {
     /// of any function in `Src/Modules/zutil.c`.
     #[test]
     fn test_style_table_priority() {
-        let mut table = StyleTable::new();
+        let mut table = style_table::new();
         table.set("*", "menu", vec!["no".to_string()], false);
         table.set(":completion:*", "menu", vec!["yes".to_string()], false);
 
@@ -613,7 +620,7 @@ mod tests {
     /// of any function in `Src/Modules/zutil.c`.
     #[test]
     fn test_style_table_delete() {
-        let mut table = StyleTable::new();
+        let mut table = style_table::new();
         table.set("*", "style1", vec!["val".to_string()], false);
         table.set("*", "style2", vec!["val".to_string()], false);
 
@@ -626,7 +633,7 @@ mod tests {
     /// of any function in `Src/Modules/zutil.c`.
     #[test]
     fn test_style_test_bool() {
-        let mut table = StyleTable::new();
+        let mut table = style_table::new();
         table.set("*", "enabled", vec!["yes".to_string()], false);
         table.set("*", "disabled", vec!["no".to_string()], false);
         table.set(
@@ -1517,12 +1524,14 @@ pub fn bin_zformat(nam: &str, args: &[String],                                //
 
 // ─── moved from src/ported/exec.rs (drift extraction) ───
 
-/// zstyle entry for completion configuration
+/// One `zstyle` entry — Rust extension that flattens what C splits
+/// across `struct style` (zutil.c:91, holds the style name) and
+/// `struct stypat` (zutil.c:97, holds pat + vals). The canonical
+/// split structs are at lines 1596 / 1608 above; this flat shape is
+/// kept while the C-style HashTable port lands.
+#[allow(non_camel_case_types)]
 #[derive(Debug, Clone)]
-/// One `zstyle` entry.
-/// Mirrors `struct stypat` from Src/Modules/zutil.c —
-/// `addstyle()` (zutil.c:403) inserts these.
-pub struct ZStyle {
+pub struct zstyle_entry {
     pub pattern: String,
     pub style: String,
     pub values: Vec<String>,
@@ -1716,16 +1725,16 @@ pub fn connectstates(out: &mut Vec<String>, in_: &mut Vec<String>) {          //
 /// char **vals, int eval)` — store/replace a (pat, vals) entry on
 /// the Style's pat list. Returns 1 on parse error, 0 on success.
 ///
-/// Static-link path routes through StyleTable::set on the global
+/// Static-link path routes through style_table::set on the global
 /// zstyletab. The `style_name` arg replaces the C `Style s` since
-/// Rust's StyleTable is keyed by name. The `prog` (Patprog) arg is
-/// ignored because StyleTable::set compiles at lookup-time via patmatch.
+/// Rust's style_table is keyed by name. The `prog` (Patprog) arg is
+/// ignored because style_table::set compiles at lookup-time via patmatch.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(style_name, pat, vals, eval) vs C=(s, pat, prog, vals, eval)
 pub fn setstypat(style_name: &str, pat: &str,                                // c:295
                  _prog: Option<crate::ported::zsh_h::Patprog>,
                  vals: Vec<String>, eval: i32) -> i32 {
-    // c:307-318 — eval branch needs parse_string (unported); StyleTable
+    // c:307-318 — eval branch needs parse_string (unported); style_table
     // records the eval=true flag via the Option<Eprog> sentinel and
     // emits via the evalstyle hook at lookup time.
     if let Ok(mut t) = zstyletab.lock() {
@@ -1851,7 +1860,7 @@ pub fn lookup_opt(str: &str) -> Option<Zoptdesc> {                          // c
 #[allow(non_snake_case)]
 pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {                  // c:443
     // c:443-463 — zstyletab->getnode2 + savematch/pattry/restorematch
-    // loop. StyleTable::get() encapsulates the pat-walk; weight order
+    // loop. style_table::get() encapsulates the pat-walk; weight order
     // is enforced at insert time so first-match wins.
     match zstyletab.lock() {                                                    // c:449
         Ok(t) => t.get(ctxt, style)
