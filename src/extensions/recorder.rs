@@ -20,32 +20,31 @@ impl crate::ported::exec::ShellExecutor {
     pub(crate) fn recorder_attrs_for(&self, name: &str) -> crate::recorder::ParamAttrs {
         let mut a = crate::recorder::ParamAttrs::NONE;
         // Shape: assoc > array > existing var-attrs declared shape > scalar default.
+        // Shape + modifiers — read PM_* bits directly from canonical
+        // paramtab (mirrors C's `pm->node.flags & PM_*` checks).
+        use crate::ported::zsh_h::{
+            PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_EXPORTED, PM_READONLY, PM_UNIQUE,
+        };
+        let flags = self.param_flags(name) as u32;
         if self.has_assoc(name) {
             a.set(crate::recorder::ParamAttrs::ASSOC);
         } else if self.has_array(name) {
             a.set(crate::recorder::ParamAttrs::ARRAY);
-        } else if let Some(va) = self.var_attrs.get(name) {
-            match va.kind {
-                VarKind::Integer => a.set(crate::recorder::ParamAttrs::INTEGER),
-                VarKind::Float => a.set(crate::recorder::ParamAttrs::FLOAT),
-                VarKind::Association => a.set(crate::recorder::ParamAttrs::ASSOC),
-                VarKind::Array => a.set(crate::recorder::ParamAttrs::ARRAY),
-                VarKind::Scalar => a.set(crate::recorder::ParamAttrs::SCALAR),
-            }
+        } else if flags & PM_INTEGER != 0 {
+            a.set(crate::recorder::ParamAttrs::INTEGER);
+        } else if flags & (PM_EFLOAT | PM_FFLOAT) != 0 {
+            a.set(crate::recorder::ParamAttrs::FLOAT);
         } else {
             a.set(crate::recorder::ParamAttrs::SCALAR);
         }
-        // Compose modifier bits regardless of shape.
-        if let Some(va) = self.var_attrs.get(name) {
-            if va.readonly {
-                a.set(crate::recorder::ParamAttrs::READONLY);
-            }
-            if va.export {
-                a.set(crate::recorder::ParamAttrs::EXPORT);
-            }
-            if va.unique {
-                a.set(crate::recorder::ParamAttrs::UNIQUE);
-            }
+        if flags & PM_READONLY != 0 {
+            a.set(crate::recorder::ParamAttrs::READONLY);
+        }
+        if flags & PM_EXPORTED != 0 {
+            a.set(crate::recorder::ParamAttrs::EXPORT);
+        }
+        if flags & PM_UNIQUE != 0 {
+            a.set(crate::recorder::ParamAttrs::UNIQUE);
         }
         if self.readonly_vars.contains(name) {
             a.set(crate::recorder::ParamAttrs::READONLY);
