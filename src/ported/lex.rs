@@ -344,21 +344,11 @@ pub struct ZshLexer<'a> {
     pub tokstr: Option<String>,
     /// Current token type
     pub tok: lextok,
-    /// Current line number
-    pub lineno: u64,
-    // P7-batch-3: lexstop → LEX_LEXSTOP, incondpat → LEX_INCONDPAT,
-    // oldpos → LEX_OLDPOS, dbparens → LEX_DBPARENS, noaliases → LEX_NOALIASES,
-    // nocorrect → LEX_NOCORRECT, nocomments → LEX_NOCOMMENTS,
-    // lexflags → LEX_LEXFLAGS, isfirstln → LEX_ISFIRSTLN,
-    // lex_add_raw → LEX_LEX_ADD_RAW. All bool/i32 fields with zero
-    // cross-file users — internal `self.X` accesses rewired to
-    // LEX_X.get()/set() in this commit.
-    /// In command position (can accept reserved words)
-    pub incmdpos: bool,
-    /// In condition [[ ... ]]
-    pub incond: i32,
-    /// In case pattern
-    pub incasepat: i32,
+    // P7-batch-3: lexstop, incondpat, oldpos, dbparens, noaliases,
+    // nocorrect, nocomments, lexflags, isfirstln, lex_add_raw migrated
+    // to LEX_* thread_locals.
+    // P7-batch-5: lineno, incmdpos, incond, incasepat migrated to
+    // LEX_LINENO, LEX_INCMDPOS, LEX_INCOND, LEX_INCASEPAT thread_locals.
     // `isfirstch` field DELETED — never read for any logic (was
     // `#[allow(dead_code)]`); the save/restore round-trip through
     // lex_stack stores a constant zero now.
@@ -403,6 +393,14 @@ impl<'a> ZshLexer<'a> {
     pub fn set_inredir(&self, v: bool) { LEX_INREDIR.set(v); }
     pub fn intypeset(&self) -> bool { LEX_INTYPESET.get() }
     pub fn set_intypeset(&self, v: bool) { LEX_INTYPESET.set(v); }
+    pub fn lineno(&self) -> u64 { LEX_LINENO.get() }
+    pub fn set_lineno(&self, v: u64) { LEX_LINENO.set(v); }
+    pub fn incmdpos(&self) -> bool { LEX_INCMDPOS.get() }
+    pub fn set_incmdpos(&self, v: bool) { LEX_INCMDPOS.set(v); }
+    pub fn incond(&self) -> i32 { LEX_INCOND.get() }
+    pub fn set_incond(&self, v: i32) { LEX_INCOND.set(v); }
+    pub fn incasepat(&self) -> i32 { LEX_INCASEPAT.get() }
+    pub fn set_incasepat(&self, v: i32) { LEX_INCASEPAT.set(v); }
 
     /// Create a new lexer for the given input
     pub fn new(input: &'a str) -> Self {
@@ -435,15 +433,16 @@ impl<'a> ZshLexer<'a> {
         LEX_INTYPESET.set(false);
         LEX_ISNEWLIN.set(0);
         LEX_ERROR.with_borrow_mut(|e| *e = None);
+        // P7-batch-5 resets.
+        LEX_LINENO.set(1);
+        LEX_INCMDPOS.set(true);
+        LEX_INCOND.set(0);
+        LEX_INCASEPAT.set(0);
         ZshLexer {
             input,
             pos: 0,
             tokstr: None,
             tok: ENDINPUT,
-            lineno: 1,
-            incmdpos: true,
-            incond: 0,
-            incasepat: 0,
             heredocs: Vec::new(),
         }
     }
@@ -544,7 +543,7 @@ impl<'a> ZshLexer<'a> {
             // lex.c:2002-2009 — reserved-word lookup. Fires when in
             // command position OR when the text is bare `}` and
             // IGNOREBRACES is unset (so `}` ends a brace block).
-            if self.incmdpos || lextext == "}" {
+            if LEX_INCMDPOS.get() || lextext == "}" {
                 // lex.c:2002 — `(rw = (Reswd) reswdtab->getnode(reswdtab, tokstr))`
                 let rw_tok: Option<lextok> = {
                     let guard = crate::ported::hashtable::reswdtab_lock()
@@ -558,14 +557,14 @@ impl<'a> ZshLexer<'a> {
                         LEX_INREPEAT.set(1);
                     }
                     if rwtok == DINBRACK {
-                        self.incond = 1;
+                        LEX_INCOND.set(1);
                     }
                 }
-            } else if self.incond > 0 && lextext == "]]" {
+            } else if LEX_INCOND.get() > 0 && lextext == "]]" {
                 // lex.c:2010-2012 — `]]` closes the cond expression.
                 self.tok = DOUTBRACK;
-                self.incond = 0;
-            } else if self.incond == 1 && lextext == "!" {
+                LEX_INCOND.set(0);
+            } else if LEX_INCOND.get() == 1 && lextext == "!" {
                 // lex.c:2013-2014 — `!` inside `[[ ]]` is the BANG
                 // negation, not a literal.
                 self.tok = BANG_TOK;
@@ -613,7 +612,7 @@ impl<'a> ZshLexer<'a> {
             let is_global =
                 (alias.node.flags & crate::ported::zsh_h::ALIAS_GLOBAL) != 0;
             if alias.inuse == 0
-                && (is_global || (self.incmdpos && self.tok == STRING_LEX))
+                && (is_global || (LEX_INCMDPOS.get() && self.tok == STRING_LEX))
             {
                 // lex.c:1918-1927 — if the next char isn't blank,
                 // insert a space so the alias body can't accidentally
@@ -643,7 +642,7 @@ impl<'a> ZshLexer<'a> {
         // lex.c:1934-1943 — suffix-alias lookup. The token must end
         // with `.SUFFIX`, the suffix name must be a registered
         // suffix-alias, AND the lexer must be in command position.
-        if self.incmdpos {
+        if LEX_INCMDPOS.get() {
             if let Some(dot_pos) = lextext.rfind('.') {
                 if dot_pos > 0 && dot_pos + 1 < lextext.len() {
                     let suffix = &lextext[dot_pos + 1..];
@@ -885,7 +884,7 @@ impl<'a> ZshLexer<'a> {
         // separating newline once between statements.
         if let Some(c) = LEX_UNGET_BUF.with_borrow_mut(|b| b.pop_front()) {
             if c == '\n' {
-                self.lineno += 1;
+                LEX_LINENO.set(LEX_LINENO.get() + 1);
             }
             return Some(c);
         }
@@ -894,7 +893,7 @@ impl<'a> ZshLexer<'a> {
         self.pos += c.len_utf8();
 
         if c == '\n' {
-            self.lineno += 1;
+            LEX_LINENO.set(LEX_LINENO.get() + 1);
         }
 
         Some(c)
@@ -903,8 +902,8 @@ impl<'a> ZshLexer<'a> {
     /// Put character back into input
     fn hungetc(&mut self, c: char) {
         LEX_UNGET_BUF.with_borrow_mut(|b| b.push_front(c));
-        if c == '\n' && self.lineno > 1 {
-            self.lineno -= 1;
+        if c == '\n' && LEX_LINENO.get() > 1 {
+            LEX_LINENO.set(LEX_LINENO.get() - 1);
         }
         LEX_LEXSTOP.set(false);
     }
@@ -1027,7 +1026,7 @@ impl<'a> ZshLexer<'a> {
         // position so the loop body can start. zshrs unconditionally
         // does this since the option-lookup lives in exec.rs.
         if LEX_INREPEAT.get() == 3 {
-            self.incmdpos = true;
+            LEX_INCMDPOS.set(true);
         }
 
         // lex.c:275 — `tok = gettok();`
@@ -1069,11 +1068,11 @@ impl<'a> ZshLexer<'a> {
         //   - other reserved words: only when incmdpos (or `}` exception)
         if self.tok == STRING_LEX {
             if let Some(ref s) = self.tokstr {
-                if s == "{" && self.incmdpos {
+                if s == "{" && LEX_INCMDPOS.get() {
                     self.tok = INBRACE_TOK;
                 } else if s == "}" {
                     self.tok = OUTBRACE_TOK;
-                } else if self.incasepat == 0 {
+                } else if LEX_INCASEPAT.get() == 0 {
                     // Skip reserved word checking in case pattern context —
                     // words like `time`, `end` should be patterns, not
                     // keywords.
@@ -1126,7 +1125,7 @@ impl<'a> ZshLexer<'a> {
         }
 
         // Track pattern context inside [[ ... ]] - after = == != =~ the RHS is a pattern
-        if self.incond > 0 {
+        if LEX_INCOND.get() > 0 {
             if let Some(ref s) = self.tokstr {
                 // Check if this token is a comparison operator
                 // Note: single = is also a comparison operator in [[ ]]
@@ -1196,15 +1195,15 @@ impl<'a> ZshLexer<'a> {
             | ELSE
             | DOUTBRACK
             | FUNC => {
-                self.incmdpos = true;
+                LEX_INCMDPOS.set(true);
             }
             BAR_TOK
                 // In case patterns, | is a pattern separator - don't change incmdpos
-                if self.incasepat <= 0 => {
-                    self.incmdpos = true;
+                if LEX_INCASEPAT.get() <= 0 => {
+                    LEX_INCMDPOS.set(true);
                 }
             TYPESET => {
-                self.incmdpos = false;
+                LEX_INCMDPOS.set(false);
                 // typeset / declare / local / export / readonly /
                 // integer / float / autoload accept assignment-shape
                 // args (NAME=value, NAME=()). Set intypeset so the
@@ -1219,7 +1218,7 @@ impl<'a> ZshLexer<'a> {
             | OUTPAR_TOK
             | CASE
             | DINBRACK => {
-                self.incmdpos = false;
+                LEX_INCMDPOS.set(false);
             }
             // Command separators clear the intypeset bit so the next
             // command's args don't get assignment-shape recognition.
@@ -1249,7 +1248,7 @@ impl<'a> ZshLexer<'a> {
         // Handle redirection / for-loop context. Mirrors lex.c:359-368
         // ctxtlex `oldpos` save/restore. The saved value lives in
         // `LEX_OLDPOS.get()` (struct field) so it survives across zshlex
-        // calls — the previous local `let oldpos = self.incmdpos`
+        // calls — the previous local `let oldpos = LEX_INCMDPOS.get()`
         // captured the JUST-updated value (always wrong) and lost the
         // pre-FOR incmdpos. With the field, FOR x → STRING_TOK x → INPAR
         // sequence correctly restores incmdpos=1 before the `(`.
@@ -1259,10 +1258,10 @@ impl<'a> ZshLexer<'a> {
             || self.tok == SELECT
         {
             LEX_INREDIR.set(true);
-            LEX_OLDPOS.set(self.incmdpos);
-            self.incmdpos = false;
+            LEX_OLDPOS.set(LEX_INCMDPOS.get());
+            LEX_INCMDPOS.set(false);
         } else if LEX_INREDIR.get() {
-            self.incmdpos = LEX_OLDPOS.get();
+            LEX_INCMDPOS.set(LEX_OLDPOS.get());
             LEX_INREDIR.set(false);
         }
     }
@@ -1413,7 +1412,7 @@ impl<'a> ZshLexer<'a> {
         };
 
         // lex.c:623 — `toklineno = lineno;`
-        LEX_TOKLINENO.set(self.lineno);
+        LEX_TOKLINENO.set(LEX_LINENO.get());
         // lex.c:626 — `isfirstln = 0;` once we've consumed any non-
         // blank.
         LEX_ISFIRSTLN.set(false);
@@ -1584,7 +1583,7 @@ impl<'a> ZshLexer<'a> {
             '|' => {
                 let d = self.hgetc();
                 match d {
-                    Some('|') if self.incasepat <= 0 => DBAR,
+                    Some('|') if LEX_INCASEPAT.get() <= 0 => DBAR,
                     Some('&') => BARAMP,
                     _ => {
                         if let Some(d) = d {
@@ -1604,7 +1603,7 @@ impl<'a> ZshLexer<'a> {
                             LEX_DBPARENS.set(true);
                             return DINPAR;
                         }
-                        if self.incmdpos {
+                        if LEX_INCMDPOS.get() {
                             // Could be (( arithmetic )) or ( subshell )
                             LEX_LEXBUF.with_borrow_mut(|b| b.clear());
                             match self.cmd_or_math() {
@@ -1637,7 +1636,7 @@ impl<'a> ZshLexer<'a> {
                         // For `for x ( ... )` form, incmdpos is restored
                         // to 1 via the oldpos-save-after-FOR mechanism,
                         // so the next-token `(` correctly INPAR-izes.
-                        if self.incond == 1 || self.incmdpos || self.incasepat >= 1 {
+                        if LEX_INCOND.get() == 1 || LEX_INCMDPOS.get() || LEX_INCASEPAT.get() >= 1 {
                             INPAR_TOK
                         } else {
                             self.gettokstr('(', false)
@@ -1662,7 +1661,7 @@ impl<'a> ZshLexer<'a> {
                 // function body.
                 let next = self.hgetc();
                 let next_is_close = matches!(next, Some('}'));
-                if self.incmdpos {
+                if LEX_INCMDPOS.get() {
                     let is_brace_group = matches!(next, Some(' ' | '\t' | '\n' | '}') | None);
                     if let Some(ch) = next {
                         self.hungetc(ch);
@@ -1701,14 +1700,14 @@ impl<'a> ZshLexer<'a> {
                 // [[ is a conditional expression start
                 // [ can also be a command (test builtin) or array subscript
                 // In case patterns (incasepat > 0), [ is part of glob pattern like [yY]
-                if self.incasepat > 0 {
+                if LEX_INCASEPAT.get() > 0 {
                     self.gettokstr(c, false)
-                } else if self.incmdpos {
+                } else if LEX_INCMDPOS.get() {
                     let next = self.hgetc();
                     if next == Some('[') {
                         // [[ - double bracket conditional
                         self.tokstr = Some("[[".to_string());
-                        self.incond = 1;
+                        LEX_INCOND.set(1);
                         return DINBRACK;
                     }
                     // Single [ - either test command or start of glob pattern
@@ -1724,11 +1723,11 @@ impl<'a> ZshLexer<'a> {
 
             ']' => {
                 // ]] ends a conditional expression started by [[
-                if self.incond > 0 {
+                if LEX_INCOND.get() > 0 {
                     let next = self.hgetc();
                     if next == Some(']') {
                         self.tokstr = Some("]]".to_string());
-                        self.incond = 0;
+                        LEX_INCOND.set(0);
                         return DOUTBRACK;
                     }
                     if let Some(ch) = next {
@@ -1740,7 +1739,7 @@ impl<'a> ZshLexer<'a> {
 
             '<' => {
                 // In pattern context, < is literal (e.g., <-> in glob)
-                if LEX_INCONDPAT.get() || self.incasepat > 0 {
+                if LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
                     self.gettokstr(c, false)
                 } else {
                     self.lex_inang()
@@ -1749,7 +1748,7 @@ impl<'a> ZshLexer<'a> {
 
             '>' => {
                 // In pattern context, > is literal
-                if LEX_INCONDPAT.get() || self.incasepat > 0 {
+                if LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
                     self.gettokstr(c, false)
                 } else {
                     self.lex_outang()
@@ -2153,7 +2152,7 @@ impl<'a> ZshLexer<'a> {
 
                 '>' => {
                     // In pattern context (incondpat), > is literal
-                    if in_brace_param > 0 || sub || LEX_INCONDPAT.get() || self.incasepat > 0 {
+                    if in_brace_param > 0 || sub || LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
                         self.add(c);
                     } else {
                         let e = self.hgetc();
@@ -2176,7 +2175,7 @@ impl<'a> ZshLexer<'a> {
 
                 '<' => {
                     // In pattern context (incondpat), < is literal
-                    if in_brace_param > 0 || sub || LEX_INCONDPAT.get() || self.incasepat > 0 {
+                    if in_brace_param > 0 || sub || LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
                         self.add(c);
                     } else if let Some(range_chars) = self.try_numeric_range_glob() {
                         // zsh numeric range glob `<N-M>`, `<->`, `<N->`,
@@ -2226,10 +2225,10 @@ impl<'a> ZshLexer<'a> {
                                 self.add(EQUALS);
                             }
                         } else if peek != ENVSTRING
-                            && (self.incmdpos || LEX_INTYPESET.get())
+                            && (LEX_INCMDPOS.get() || LEX_INTYPESET.get())
                             && bct == 0
                             && brct == 0
-                            && self.incasepat == 0
+                            && LEX_INCASEPAT.get() == 0
                         {
                             // Check for VAR=value assignment (but not in case pattern context)
                             let tok_so_far = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
@@ -3013,12 +3012,12 @@ impl<'a> ZshLexer<'a> {
             | ELIF
             | ELSE
             | DOUTBRACK => {
-                self.incmdpos = true;
+                LEX_INCMDPOS.set(true);
             }
             // lex.c:345-353 — word/value-shaped tokens leave cmd-pos
             // so subsequent tokens are arguments, not a fresh command.
             TYPESET => {
-                self.incmdpos = false;
+                LEX_INCMDPOS.set(false);
                 // typeset / declare / local / export / readonly /
                 // integer / float / autoload accept assignment-shape
                 // args (NAME=value, NAME=()). Set intypeset so the
@@ -3033,7 +3032,7 @@ impl<'a> ZshLexer<'a> {
             | OUTPAR_TOK
             | CASE
             | DINBRACK => {
-                self.incmdpos = false;
+                LEX_INCMDPOS.set(false);
             }
             SEPER
             | NEWLIN
@@ -3072,10 +3071,10 @@ impl<'a> ZshLexer<'a> {
             || self.tok == SELECT
         {
             LEX_INREDIR.set(true);
-            LEX_OLDPOS.set(self.incmdpos);
-            self.incmdpos = false;
+            LEX_OLDPOS.set(LEX_INCMDPOS.get());
+            LEX_INCMDPOS.set(false);
         } else if LEX_INREDIR.get() {
-            self.incmdpos = LEX_OLDPOS.get();
+            LEX_INCMDPOS.set(LEX_OLDPOS.get());
             LEX_INREDIR.set(false);
         }
     }
@@ -3117,7 +3116,7 @@ impl<'a> ZshLexer<'a> {
     ///   - text is bare `!` and we're at the start of a cond (incond == 1)
     pub fn check_reserved_word(&mut self) -> bool {
         if let Some(ref tokstr) = self.tokstr {
-            if self.incmdpos || (tokstr == "}" && self.tok == STRING_LEX) {
+            if LEX_INCMDPOS.get() || (tokstr == "}" && self.tok == STRING_LEX) {
                 // Port of `Src/lex.c:2002` `if ((rw = (Reswd) reswdtab->getnode(reswdtab, tokstr)))`
                 // — query the canonical `reswdtab` (hashtable.c:1076 reswds[]).
                 // zshrs divergence: `nocorrect` stays as a plain STRING so the
@@ -3134,24 +3133,24 @@ impl<'a> ZshLexer<'a> {
                         LEX_INREPEAT.set(1);
                     }
                     if tok == DINBRACK {
-                        self.incond = 1;
+                        LEX_INCOND.set(1);
                     }
                     return true;
                 }
-                if tokstr == "]]" && self.incond > 0 {
+                if tokstr == "]]" && LEX_INCOND.get() > 0 {
                     self.tok = DOUTBRACK;
-                    self.incond = 0;
+                    LEX_INCOND.set(0);
                     return true;
                 }
             }
             // lex.c:2010-2014 — `]]` and `!` are recognized inside `[[`
             // regardless of incmdpos.
-            if self.incond > 0 && tokstr == "]]" {
+            if LEX_INCOND.get() > 0 && tokstr == "]]" {
                 self.tok = DOUTBRACK;
-                self.incond = 0;
+                LEX_INCOND.set(0);
                 return true;
             }
-            if self.incond == 1 && tokstr == "!" {
+            if LEX_INCOND.get() == 1 && tokstr == "!" {
                 self.tok = BANG_TOK;
                 return true;
             }
@@ -3872,7 +3871,7 @@ mod tests {
             "expected Outbrace, got {:?} tokstr={:?} incmdpos={}",
             lexer.tok,
             lexer.tokstr,
-            lexer.incmdpos
+            lexer.incmdpos()
         );
     }
 
@@ -3901,7 +3900,7 @@ mod tests {
     #[test]
     fn test_env_assignment() {
         let mut lexer = ZshLexer::new("FOO=bar echo");
-        lexer.incmdpos = true;
+        lexer.set_incmdpos(true);
         lexer.zshlex();
         assert_eq!(
             lexer.tok,
@@ -3918,7 +3917,7 @@ mod tests {
     #[test]
     fn test_array_assignment() {
         let mut lexer = ZshLexer::new("arr=(a b c)");
-        lexer.incmdpos = true;
+        lexer.set_incmdpos(true);
         lexer.zshlex();
         assert_eq!(lexer.tok, ENVARRAY);
     }
