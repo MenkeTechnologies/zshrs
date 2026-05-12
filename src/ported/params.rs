@@ -889,7 +889,7 @@ pub const special_params_sh: &[SpecialParamDef] = &[
 // Free functions matching the C API
 // ---------------------------------------------------------------------------
 
-/// Port of `getintvalue()` from `Src/params.c:2601`.
+/// Port of `getintvalue(v)` from `Src/params.c:2601`.
 /// C body:
 /// ```c
 /// if (!v) return 0;
@@ -927,7 +927,7 @@ pub fn getintvalue(v: Option<&mut crate::ported::zsh_h::value>) -> i64 {
     strgetfn(pm).parse::<i64>().unwrap_or(0)
 }
 
-/// Port of `getstrvalue()` from `Src/params.c:2335`.
+/// Port of `getstrvalue(v)` from `Src/params.c:2335`.
 /// Full C body dispatches on `PM_TYPE(v->pm->node.flags)`:
 /// PM_HASHED (KSH path: `[0]` index lookup), PM_ARRAY (sepjoin
 /// when v->scanflags else `ss[v->start]`), PM_INTEGER (`convbase`),
@@ -1086,7 +1086,7 @@ pub fn getstrvalue(v: Option<&mut crate::ported::zsh_h::value>) -> String {
     s
 }
 
-/// Port of `getsparam_u()` from `Src/params.c:3091`. C body:
+/// Port of `getsparam_u(s)` from `Src/params.c:3091`. C body:
 /// ```c
 /// struct value vbuf;
 /// Value v;
@@ -1104,7 +1104,7 @@ pub fn getsparam_u(v: Option<&mut crate::ported::zsh_h::value>) -> Option<String
     Some(getstrvalue(Some(v)))
 }
 
-/// Port of `getaparam()` from `Src/params.c:3100`. C body:
+/// Port of `getaparam(s)` from `Src/params.c:3100`. C body:
 /// ```c
 /// struct value vbuf; Value v; char *t = s;
 /// if (idigit(*s)) return NULL;
@@ -1123,7 +1123,7 @@ pub fn getaparam(v: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<Stri
     Some(arrgetfn(pm))
 }
 
-/// Port of `gethparam()` from `Src/params.c:3115`. C body
+/// Port of `gethparam(s)` from `Src/params.c:3115`. C body
 /// (analogous to getaparam): fetchvalue + return
 /// `paramvalarr(v->pm->gsu.h->getfn(v->pm), SCANPM_WANTVALS)`
 /// when PM_TYPE == PM_HASHED.
@@ -1139,7 +1139,7 @@ pub fn gethparam(v: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<Stri
     Some(Vec::new())
 }
 
-/// Port of `gethkparam()` from `Src/params.c:3130`. Same as
+/// Port of `gethkparam(s)` from `Src/params.c:3130`. Same as
 /// `gethparam` but returns keys via `paramvalarr(..., SCANPM_WANTKEYS)`.
 pub fn gethkparam(v: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<String>> {
     let v = v?;
@@ -1151,7 +1151,7 @@ pub fn gethkparam(v: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<Str
     Some(Vec::new())
 }
 
-/// Port of `getnumvalue()` from `Src/params.c:2624`. Returns an
+/// Port of `getnumvalue(v)` from `Src/params.c:2624`. Returns an
 /// `Mnumber` (tagged int/float). C body dispatches on `valflags &
 /// VALFLAG_INV` (returns start as int), `scanflags` (sepjoin →
 /// matheval), then PM_TYPE: PM_INTEGER → mn.l = pm->gsu.i->getfn,
@@ -1179,14 +1179,14 @@ pub fn getnumvalue(v: Option<&mut crate::ported::zsh_h::value>) -> crate::ported
     Mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
 }
 
-/// Port of `setstrvalue()` from `Src/params.c:2685`. C body is a
+/// Port of `setstrvalue(v, val)` from `Src/params.c:2685`. C body is a
 /// one-liner: `assignstrvalue(v, val, 0);` — the real workhorse
 /// is `assignstrvalue` (params.c:2692).
 pub fn setstrvalue(v: Option<&mut crate::ported::zsh_h::value>, val: &str) {
     assignstrvalue(v, Some(val.to_string()), 0);
 }
 
-/// Port of `assigniparam()` from `Src/params.c:3717` (and its
+/// Port of `assigniparam(s, val, flags)` from `Src/params.c:3717` (and its
 /// internal use as the integer branch of `setvalue`). C body
 /// builds an `mnumber{ .type = MN_INTEGER, .u.l = val }` and
 /// calls `assignnparam(s, mn, ASSPM_WARN)`.
@@ -1195,7 +1195,7 @@ pub fn assigniparam(s: &str, val: i64) {
 }
 
 /// Set array parameter.
-/// Port of `setaparam()` from `Src/params.c:3759` — single-line wrapper
+/// Port of `setaparam(s, aval)` from `Src/params.c:3759` — single-line wrapper
 /// around `assignaparam(s, val, ASSPM_WARN)`. C body:
 /// ```c
 /// mod_export Param setaparam(char *s, char **val) {
@@ -1213,7 +1213,7 @@ pub fn setaparam(name: &str, val: Vec<String>)                              // c
     assignaparam(name, val, crate::ported::zsh_h::ASSPM_WARN)
 }
 
-/// Port of `assignsparam()` from `Src/params.c:3193`. C signature:
+/// Port of `assignsparam(s, val, flags)` from `Src/params.c:3193`. C signature:
 /// `mod_export Param assignsparam(char *s, char *val, int flags)`.
 ///
 /// `s` may carry an embedded `[...]` subscript (matching C's
@@ -1612,7 +1612,7 @@ pub fn sethparam(name: &str, val: Vec<String>)                              // c
 }
 
 /// Unset parameter (from params.c unsetparam_pm)
-/// Port of `unsetparam_pm()` from `Src/params.c:3841`. Full body
+/// Port of `unsetparam_pm(pm, altflag, exp)` from `Src/params.c:3841`. Full body
 /// removes `pm` from `paramtab` (after invoking
 /// `pm->gsu.s->unsetfn(pm, exp)`), tears down the tied alternate
 /// (`pm->ename`) when `!altflag`, deletes the env entry, and
@@ -1658,7 +1658,7 @@ pub fn unsetparam_pm(pm: &mut crate::ported::zsh_h::param, _altflag: i32, exp: i
 /// it directly.
 pub fn shempty() {}
 
-/// Port of `setsparam()` from Src/params.c:3350.
+/// Port of `setsparam(s, val)` from Src/params.c:3350.
 /// C body: `return assignsparam(s, val, ASSPM_WARN);`
 pub fn setsparam(s: &str, val: &str)                                         // c:3350
     -> Option<crate::ported::zsh_h::Param>
@@ -1666,7 +1666,7 @@ pub fn setsparam(s: &str, val: &str)                                         // 
     assignsparam(s, val, ASSPM_WARN as i32)                                  // c:3352
 }
 
-/// Port of `setiparam()` from Src/params.c:3765. The C source
+/// Port of `setiparam(s, val)` from Src/params.c:3765. The C source
 /// constructs an `mnumber` and calls `assignnparam(s, mnval,
 /// ASSPM_WARN)`. The Rust port renders to decimal and routes
 /// through `assignsparam` until the integer-typed `assignnparam`
@@ -1677,7 +1677,7 @@ pub fn setiparam(s: &str, val: i64)                                          // 
     assignsparam(s, &val.to_string(), ASSPM_WARN as i32)
 }
 
-/// Port of `setiparam_no_convert()` from Src/params.c:3781. C
+/// Port of `setiparam_no_convert(s, val)` from Src/params.c:3781. C
 /// source comment: "If the target is already an integer, this
 /// gets converted back. Low technology rules." It uses convbase
 /// to render decimal then calls assignsparam.
@@ -1687,7 +1687,7 @@ pub fn setiparam_no_convert(s: &str, val: i64)                               // 
     assignsparam(s, &val.to_string(), ASSPM_WARN as i32)
 }
 
-/// Port of `getsparam()` from `Src/params.c:3076`.
+/// Port of `getsparam(s)` from `Src/params.c:3076`.
 ///
 /// C body:
 /// ```c
@@ -1759,7 +1759,7 @@ pub fn getsparam(name: &str) -> Option<String> {                             // 
 }
 
 /// Retrieve integer parameter.
-/// Port of `getiparam()` from Src/params.c:3044. C: getvalue +
+/// Port of `getiparam(s)` from Src/params.c:3044. C: getvalue +
 /// getintvalue. Our adaptation reads the scalar string and parses;
 /// returns 0 on missing or unparseable, matching getintvalue's
 /// failure-returns-0 convention (params.c:2601).
@@ -1778,7 +1778,7 @@ pub fn getiparam(name: &str) -> i64 {
 }
 
 /// Retrieve numeric (int-or-float) parameter.
-/// Port of `getnparam()` from Src/params.c:3058. C returns an
+/// Port of `getnparam(s)` from Src/params.c:3058. C returns an
 /// `mnumber` (tagged int/float union); our adaptation returns
 /// `(i64, f64, bool)` where the bool is true for float. Unset
 /// returns `(0, 0.0, false)`, matching the MN_INTEGER zero
@@ -1812,7 +1812,7 @@ pub fn getnparam(name: &str) -> (i64, f64, bool) {
     (0, 0.0, false)
 }
 
-/// Port of `resetparam()` from `Src/params.c:3796`. C body:
+/// Port of `resetparam(pm, flags)` from `Src/params.c:3796`. C body:
 /// ```c
 /// char *s = pm->node.nam;
 /// queue_signals();
@@ -1852,7 +1852,7 @@ pub fn resetparam(pm: &mut crate::ported::zsh_h::param, flags: i32) -> i32 { // 
 }
 
 /// Unset a parameter from all storage.
-/// Port of `unsetparam()` from Src/params.c:3819. C uses a single
+/// Port of `unsetparam(s)` from Src/params.c:3819. C uses a single
 /// HashTable; our SubstState-style storage spans variables /
 /// arrays / assoc_arrays, so removal must touch all three to be
 /// thorough (matches `unsetparam_pm`'s flag-aware tear-down).
@@ -1867,7 +1867,7 @@ pub fn unsetparam(                                                          // c
     assoc_arrays.remove(name);
 }
 
-/// Port of `export_param()` from `Src/params.c:2653`. C body
+/// Port of `export_param(pm)` from `Src/params.c:2653`. C body
 /// converts `pm`'s value to its scalar form per `PM_TYPE`
 /// (`convbase`/`convfloat`/`gsu.s->getfn`) then calls
 /// `addenv(pm, val)`. PM_ARRAY/PM_HASHED early-returns (export
@@ -1979,7 +1979,7 @@ pub fn isident(s: &str) -> bool {                                           // c
     true
 }
 
-/// Port of `valid_refname()` from `Src/params.c:6466`. C body
+/// Port of `valid_refname(val, flags)` from `Src/params.c:6466`. C body
 /// validates a nameref target name. Two paths:
 ///   - PM_UPPER (`typeset -nu`): reject digit-leader (positional
 ///     refs would loop) and the literal `argv`/`ARGC` names.
@@ -2062,7 +2062,7 @@ pub fn valid_refname(val: &str, flags: i32) -> bool {                        // 
 }
 
 /// Colon-separated path to array.
-/// Port of `colonsplit()` from Src/params.c.
+/// Port of `colonsplit(s, uniq)` from Src/params.c.
 pub fn colonsplit(s: &str) -> Vec<String> {
     s.split(':')
         .filter(|s| !s.is_empty())
@@ -2071,14 +2071,14 @@ pub fn colonsplit(s: &str) -> Vec<String> {
 }
 
 /// Array to colon-separated path — inverse of `colonsplit`.
-/// Port of `colonarrgetfn()` from Src/params.c (joins the array
+/// Port of `colonarrgetfn(pm)` from Src/params.c (joins the array
 /// stored in `pm->u.colon` back into the `:`-form for env).
 pub fn colonarrgetfn(arr: &[String]) -> String {
     arr.join(":")
 }
 
 /// Remove duplicate elements from array while preserving order.
-/// Port of `uniqarray()` from Src/params.c.
+/// Port of `uniqarray(x)` from Src/params.c.
 pub fn uniqarray(arr: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     arr.into_iter().filter(|s| seen.insert(s.clone())).collect()
@@ -2086,7 +2086,7 @@ pub fn uniqarray(arr: Vec<String>) -> Vec<String> {
 
 
 /// Slice an indexed array using zsh 1-based inclusive semantics.
-/// Port of `getarrvalue()` from Src/params.c:2548 — the slice
+/// Port of `getarrvalue(v)` from Src/params.c:2548 — the slice
 /// branch that resolves the start/end pair into a Vec. Negative
 /// indices count from the end (`-1` is the last element);
 /// out-of-range bounds collapse to empty (`${a[5,10]}` on len=3
@@ -2370,7 +2370,7 @@ pub fn convbase_underscore(val: i64, base: u32, underscore: i32) -> String {
     result
 }
 
-/// Port of `convfloat()` from `Src/params.c:5689`.
+/// Port of `convfloat(dval, digits, flags, fout)` from `Src/params.c:5689`.
 ///
 /// C signature: `char *convfloat(double dval, int digits, int flags,
 /// FILE *fout)` — picks `%e` / `%f` / `%g` based on PM_EFLOAT /
@@ -3591,13 +3591,13 @@ fn zunderscore_lock() -> &'static Mutex<String> {
 // libc-backed callbacks (UID/GID/EUID/EGID/errno/RANDOM/TTYIDLE).
 // -----------------------------------------------------------
 
-/// Port of `uidgetfn()` from `Src/params.c:4689`. C body:
+/// Port of `uidgetfn(pm)` from `Src/params.c:4689`. C body:
 /// `return getuid();`
 pub fn uidgetfn() -> i64 {
     unsafe { libc::getuid() as i64 }
 }
 
-/// Port of `uidsetfn()` from `Src/params.c:4698`. C body:
+/// Port of `uidsetfn(x)` from `Src/params.c:4698`. C body:
 /// `if (setuid((uid_t)x)) zerr("failed to change user ID: %e", errno);`
 pub fn uidsetfn(x: i64) {
     if unsafe { libc::setuid(x as libc::uid_t) } != 0 {
@@ -3608,13 +3608,13 @@ pub fn uidsetfn(x: i64) {
     }
 }
 
-/// Port of `euidgetfn()` from `Src/params.c:4710`. C body:
+/// Port of `euidgetfn(pm)` from `Src/params.c:4710`. C body:
 /// `return geteuid();`
 pub fn euidgetfn() -> i64 {
     unsafe { libc::geteuid() as i64 }
 }
 
-/// Port of `euidsetfn()` from `Src/params.c:4719`. C body:
+/// Port of `euidsetfn(x)` from `Src/params.c:4719`. C body:
 /// `if (seteuid((uid_t)x)) zerr("failed to change effective user ID: %e", errno);`
 pub fn euidsetfn(x: i64) {
     if unsafe { libc::seteuid(x as libc::uid_t) } != 0 {
@@ -3625,12 +3625,12 @@ pub fn euidsetfn(x: i64) {
     }
 }
 
-/// Port of `gidgetfn()` from `Src/params.c:4731`. C body: `return getgid();`
+/// Port of `gidgetfn(pm)` from `Src/params.c:4731`. C body: `return getgid();`
 pub fn gidgetfn() -> i64 {
     unsafe { libc::getgid() as i64 }
 }
 
-/// Port of `gidsetfn()` from `Src/params.c:4740`. C body:
+/// Port of `gidsetfn(x)` from `Src/params.c:4740`. C body:
 /// `if (setgid((gid_t)x)) zerr("failed to change group ID: %e", errno);`
 pub fn gidsetfn(x: i64) {
     if unsafe { libc::setgid(x as libc::gid_t) } != 0 {
@@ -3641,12 +3641,12 @@ pub fn gidsetfn(x: i64) {
     }
 }
 
-/// Port of `egidgetfn()` from `Src/params.c:4752`. C body: `return getegid();`
+/// Port of `egidgetfn(pm)` from `Src/params.c:4752`. C body: `return getegid();`
 pub fn egidgetfn() -> i64 {
     unsafe { libc::getegid() as i64 }
 }
 
-/// Port of `egidsetfn()` from `Src/params.c:4761`. C body:
+/// Port of `egidsetfn(x)` from `Src/params.c:4761`. C body:
 /// `if (setegid((gid_t)x)) zerr("failed to change effective group ID: %e", errno);`
 pub fn egidsetfn(x: i64) {
     if unsafe { libc::setegid(x as libc::gid_t) } != 0 {
@@ -3657,12 +3657,12 @@ pub fn egidsetfn(x: i64) {
     }
 }
 
-/// Port of `errnogetfn()` from `Src/params.c:5015`. C body: `return errno;`
+/// Port of `errnogetfn(pm)` from `Src/params.c:5015`. C body: `return errno;`
 pub fn errnogetfn() -> i64 {
     std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as i64
 }
 
-/// Port of `errnosetfn()` from `Src/params.c:5004`. C body:
+/// Port of `errnosetfn(x)` from `Src/params.c:5004`. C body:
 /// `errno = (int)x; if ((zlong)errno != x) zwarn("errno truncated on assignment");`
 ///
 /// Rust note: `errno` is a libc thread-local; Rust uses `std::io::Error`
@@ -3692,19 +3692,19 @@ pub fn errnosetfn(x: i64) {
     }
 }
 
-/// Port of `randomgetfn()` from `Src/params.c:4543`. C body:
+/// Port of `randomgetfn(pm)` from `Src/params.c:4543`. C body:
 /// `return rand() & 0x7fff;`
 pub fn randomgetfn() -> i64 {
     (unsafe { libc::rand() } & 0x7fff) as i64
 }
 
-/// Port of `randomsetfn()` from `Src/params.c:4552`. C body:
+/// Port of `randomsetfn(v)` from `Src/params.c:4552`. C body:
 /// `srand((unsigned int)v);`
 pub fn randomsetfn(v: i64) {
     unsafe { libc::srand(v as libc::c_uint) };
 }
 
-/// Port of `ttyidlegetfn()` from `Src/params.c:4771`. C body:
+/// Port of `ttyidlegetfn(pm)` from `Src/params.c:4771`. C body:
 /// ```c
 /// struct stat ttystat;
 /// if (SHTTY == -1 || fstat(SHTTY, &ttystat)) return -1;
@@ -3732,7 +3732,7 @@ pub fn ttyidlegetfn() -> i64 {
 // SECONDS / EPOCHSECONDS family — backed by SHTIMER static.
 // -----------------------------------------------------------
 
-/// Port of `intsecondsgetfn()` from `Src/params.c:4561`. C body:
+/// Port of `intsecondsgetfn(pm)` from `Src/params.c:4561`. C body:
 /// `return (zlong)(now.tv_sec - shtimer.tv_sec - …);`
 pub fn intsecondsgetfn() -> i64 {
     let now = SystemTime::now()
@@ -3746,7 +3746,7 @@ pub fn intsecondsgetfn() -> i64 {
     now_sec - timer_sec - i64::from(now_nsec < timer_nsec)
 }
 
-/// Port of `intsecondssetfn()` from `Src/params.c:4575`. C body:
+/// Port of `intsecondssetfn(x)` from `Src/params.c:4575`. C body:
 /// `shtimer.tv_sec = now.tv_sec - x; shtimer.tv_nsec = now.tv_nsec;`
 pub fn intsecondssetfn(x: i64) {
     let now = SystemTime::now()
@@ -3762,7 +3762,7 @@ pub fn intsecondssetfn(x: i64) {
         Duration::new(new_sec as u64, now.subsec_nanos());
 }
 
-/// Port of `floatsecondsgetfn()` from `Src/params.c:4591`. C body:
+/// Port of `floatsecondsgetfn(pm)` from `Src/params.c:4591`. C body:
 /// `return (double)(now-tv_sec - shtimer.tv_sec) + nsec/1e9;`
 pub fn floatsecondsgetfn() -> f64 {
     let now = SystemTime::now()
@@ -3772,7 +3772,7 @@ pub fn floatsecondsgetfn() -> f64 {
     (now - timer).as_secs_f64()
 }
 
-/// Port of `floatsecondssetfn()` from `Src/params.c:4603`. C body:
+/// Port of `floatsecondssetfn(x)` from `Src/params.c:4603`. C body:
 /// `shtimer.tv_sec = now.tv_sec - (zlong)x; shtimer.tv_nsec = now.tv_nsec - (x-int)*1e9;`
 pub fn floatsecondssetfn(x: f64) {
     let now = SystemTime::now()
@@ -3788,13 +3788,13 @@ pub fn getrawseconds() -> f64 {
     shtimer_lock().lock().expect("shtimer poisoned").as_secs_f64()
 }
 
-/// Port of `setrawseconds()` from `Src/params.c:4622`. C body:
+/// Port of `setrawseconds(x)` from `Src/params.c:4622`. C body:
 /// `shtimer.tv_sec = (zlong)x; shtimer.tv_nsec = (x-int)*1e9;`
 pub fn setrawseconds(x: f64) {
     *shtimer_lock().lock().expect("shtimer poisoned") = Duration::from_secs_f64(x);
 }
 
-/// Port of `setsecondstype()` from `Src/params.c:4630`. C body
+/// Port of `setsecondstype(pm, on, off)` from `Src/params.c:4630`. C body
 /// flips the `gsu.f`/`gsu.i` callback pointer based on the new
 /// param-flag bitset.
 ///
@@ -3835,7 +3835,7 @@ pub fn setsecondstype(                                                       // 
 // $0 / $#
 // -----------------------------------------------------------
 
-/// Port of `argzerogetfn()` from `Src/params.c:4954`. C body:
+/// Port of `argzerogetfn(pm)` from `Src/params.c:4954`. C body:
 /// `return isset(POSIXARGZERO) ? posixzero : argzero;`
 ///
 /// Reads through `crate::ported::utils::argzero()` (the canonical
@@ -3875,7 +3875,7 @@ pub fn argzerosetfn(x: String) {                                             // 
     }
 }
 
-/// Port of `poundgetfn()` from `Src/params.c:4534`. C body:
+/// Port of `poundgetfn(pm)` from `Src/params.c:4534`. C body:
 /// `return arrlen(pparams);`
 pub fn poundgetfn() -> i64 {
     pparams_lock().lock().expect("pparams poisoned").len() as i64
@@ -3885,7 +3885,7 @@ pub fn poundgetfn() -> i64 {
 // $USERNAME
 // -----------------------------------------------------------
 
-/// Port of `usernamegetfn()` from `Src/params.c:4653`. C body:
+/// Port of `usernamegetfn(pm)` from `Src/params.c:4653`. C body:
 /// `return get_username();`
 pub fn usernamegetfn() -> String {
     cached_username_lock()
@@ -3894,7 +3894,7 @@ pub fn usernamegetfn() -> String {
         .clone()
 }
 
-/// Port of `usernamesetfn()` from `Src/params.c:4662`. C body:
+/// Port of `usernamesetfn(x)` from `Src/params.c:4662`. C body:
 /// `getpwnam(x); setgid; setuid; cached_uid = pswd->pw_uid;`
 ///
 /// WARNING: the SUID-changing path requires getpwnam(3) which
@@ -3947,12 +3947,12 @@ pub fn usernamesetfn(x: String) {                                            // 
 // $KEYBOARD_HACK / $HISTCHARS / $_  — string-state callbacks.
 // -----------------------------------------------------------
 
-/// Port of `ifsgetfn()` from `Src/params.c:4784`. C body: `return ifs;`
+/// Port of `ifsgetfn(pm)` from `Src/params.c:4784`. C body: `return ifs;`
 pub fn ifsgetfn() -> String {
     ifs_lock().lock().expect("ifs poisoned").clone()
 }
 
-/// Port of `ifssetfn()` from `Src/params.c:4793`. C body:
+/// Port of `ifssetfn(x)` from `Src/params.c:4793`. C body:
 /// `zsfree(ifs); ifs = x; inittyptab();`
 pub fn ifssetfn(x: String) {
     *ifs_lock().lock().expect("ifs poisoned") = x;
@@ -3960,12 +3960,12 @@ pub fn ifssetfn(x: String) {
     // handle classification natively (utils.rs:1884).
 }
 
-/// Port of `homegetfn()` from `Src/params.c:5109`. C body: `return home;`
+/// Port of `homegetfn(pm)` from `Src/params.c:5109`. C body: `return home;`
 pub fn homegetfn() -> String {
     home_lock().lock().expect("home poisoned").clone()
 }
 
-/// Port of `homesetfn()` from `Src/params.c:5118`. C body:
+/// Port of `homesetfn(x)` from `Src/params.c:5118`. C body:
 /// `zsfree(home); home = x ? x : ""; finddir(NULL);`
 pub fn homesetfn(x: String) {
     *home_lock().lock().expect("home poisoned") = x;
@@ -3973,19 +3973,19 @@ pub fn homesetfn(x: String) {
     // lookups — those don't exist in zshrs yet.
 }
 
-/// Port of `termgetfn()` from `Src/params.c:5176`. C body: `return term;`
+/// Port of `termgetfn(pm)` from `Src/params.c:5176`. C body: `return term;`
 pub fn termgetfn() -> String {
     term_lock().lock().expect("term poisoned").clone()
 }
 
-/// Port of `termsetfn()` from `Src/params.c:5185`. C body:
+/// Port of `termsetfn(x)` from `Src/params.c:5185`. C body:
 /// `zsfree(term); term = x ? x : ""; term_reinit_from_pm();`
 pub fn termsetfn(x: String) {
     *term_lock().lock().expect("term poisoned") = x;
     term_reinit_from_pm();
 }
 
-/// Port of `terminfogetfn()` from `Src/params.c:5196`. C body:
+/// Port of `terminfogetfn(pm)` from `Src/params.c:5196`. C body:
 /// `return zsh_terminfo ? zsh_terminfo : "";`
 pub fn terminfogetfn() -> String {
     zsh_terminfo_lock()
@@ -3994,7 +3994,7 @@ pub fn terminfogetfn() -> String {
         .clone()
 }
 
-/// Port of `terminfosetfn()` from `Src/params.c:5205`. C body:
+/// Port of `terminfosetfn(pm, x)` from `Src/params.c:5205`. C body:
 /// `zsfree(zsh_terminfo); zsh_terminfo = x; addenv if exported; term_reinit_from_pm();`
 pub fn terminfosetfn(x: String) {
     *zsh_terminfo_lock()
@@ -4004,7 +4004,7 @@ pub fn terminfosetfn(x: String) {
     term_reinit_from_pm();
 }
 
-/// Port of `terminfodirsgetfn()` from `Src/params.c:5224`. C body:
+/// Port of `terminfodirsgetfn(pm)` from `Src/params.c:5224`. C body:
 /// `return zsh_terminfodirs ? zsh_terminfodirs : "";`
 pub fn terminfodirsgetfn() -> String {
     zsh_terminfodirs_lock()
@@ -4013,7 +4013,7 @@ pub fn terminfodirsgetfn() -> String {
         .clone()
 }
 
-/// Port of `terminfodirssetfn()` from `Src/params.c:5233`. C body
+/// Port of `terminfodirssetfn(pm, x)` from `Src/params.c:5233`. C body
 /// mirrors `terminfosetfn` for the TERMINFO_DIRS env var.
 pub fn terminfodirssetfn(x: String) {
     *zsh_terminfodirs_lock()
@@ -4048,7 +4048,7 @@ pub static TERMFLAGS: std::sync::atomic::AtomicI32 =
 // `TERM_UNKNOWN` from Src/zsh.h:1986.
 pub const TERM_UNKNOWN: i32 = 1 << 0;
 
-/// Port of `wordcharsgetfn()` from `Src/params.c:5132`. C body:
+/// Port of `wordcharsgetfn(pm)` from `Src/params.c:5132`. C body:
 /// `return wordchars;`
 pub fn wordcharsgetfn() -> String {
     wordchars_lock()
@@ -4057,13 +4057,13 @@ pub fn wordcharsgetfn() -> String {
         .clone()
 }
 
-/// Port of `wordcharssetfn()` from `Src/params.c:5141`. C body:
+/// Port of `wordcharssetfn(x)` from `Src/params.c:5141`. C body:
 /// `zsfree(wordchars); wordchars = x; inittyptab();`
 pub fn wordcharssetfn(x: String) {
     *wordchars_lock().lock().expect("wordchars poisoned") = x;
 }
 
-/// Port of `keyboardhackgetfn()` from `Src/params.c:5024`. C body:
+/// Port of `keyboardhackgetfn(pm)` from `Src/params.c:5024`. C body:
 /// `static char buf[2]; buf[0] = keyboardhackchar; return buf;`
 pub fn keyboardhackgetfn() -> String {
     let c = *keyboardhack_lock()
@@ -4076,7 +4076,7 @@ pub fn keyboardhackgetfn() -> String {
     }
 }
 
-/// Port of `keyboardhacksetfn()` from `Src/params.c:5038`. C body:
+/// Port of `keyboardhacksetfn(x)` from `Src/params.c:5038`. C body:
 /// `unmetafy(x, &len); if (len > 1) zwarn("Only one KEYBOARD_HACK character"); …`
 pub fn keyboardhacksetfn(x: String) {
     let bytes = x.as_bytes();
@@ -4091,7 +4091,7 @@ pub fn keyboardhacksetfn(x: String) {
     *keyboardhack_lock().lock().expect("keyboardhack poisoned") = c;
 }
 
-/// Port of `histcharsgetfn()` from `Src/params.c:5064`. C body:
+/// Port of `histcharsgetfn(pm)` from `Src/params.c:5064`. C body:
 /// `static char buf[4]; buf[0]=bangchar; buf[1]=hatchar; buf[2]=hashchar;`
 pub fn histcharsgetfn() -> String {
     let chars = *histchars_lock().lock().expect("histchars poisoned");
@@ -4104,7 +4104,7 @@ pub fn histcharsgetfn() -> String {
     s
 }
 
-/// Port of `histcharssetfn()` from `Src/params.c:5079`. C body
+/// Port of `histcharssetfn(x)` from `Src/params.c:5079`. C body
 /// validates ASCII, takes up to 3 chars; defaults `!^#` if NULL.
 pub fn histcharssetfn(x: Option<String>) {
     match x {
@@ -4144,7 +4144,7 @@ pub fn set_zunderscore(argv: &[String]) {
         .expect("zunderscore poisoned") = new;
 }
 
-/// Port of `underscoregetfn()` from `Src/params.c:5152`. C body:
+/// Port of `underscoregetfn(pm)` from `Src/params.c:5152`. C body:
 /// `char *u = dupstring(zunderscore); untokenize(u); return u;`
 pub fn underscoregetfn() -> String {
     zunderscore_lock()
@@ -4157,12 +4157,12 @@ pub fn underscoregetfn() -> String {
 // $HISTSIZE / $SAVEHIST
 // -----------------------------------------------------------
 
-/// Port of `histsizegetfn()` from `Src/params.c:4965`. C body: `return histsiz;`
+/// Port of `histsizegetfn(pm)` from `Src/params.c:4965`. C body: `return histsiz;`
 pub fn histsizegetfn() -> i64 {
     *histsiz_lock().lock().expect("histsiz poisoned")
 }
 
-/// Port of `histsizesetfn()` from `Src/params.c:4974`. C body:
+/// Port of `histsizesetfn(v)` from `Src/params.c:4974`. C body:
 /// `if ((histsiz = v) < 1) histsiz = 1; resizehistents();`
 pub fn histsizesetfn(v: i64) {
     *histsiz_lock().lock().expect("histsiz poisoned") = v.max(1);
@@ -4171,13 +4171,13 @@ pub fn histsizesetfn(v: i64) {
     // static and picked up the next time the history layer reads.
 }
 
-/// Port of `savehistsizegetfn()` from `Src/params.c:4985`. C body:
+/// Port of `savehistsizegetfn(pm)` from `Src/params.c:4985`. C body:
 /// `return savehistsiz;`
 pub fn savehistsizegetfn() -> i64 {
     *savehistsiz_lock().lock().expect("savehistsiz poisoned")
 }
 
-/// Port of `savehistsizesetfn()` from `Src/params.c:4994`. C body:
+/// Port of `savehistsizesetfn(v)` from `Src/params.c:4994`. C body:
 /// `if ((savehistsiz = v) < 0) savehistsiz = 0;`
 pub fn savehistsizesetfn(v: i64) {
     *savehistsiz_lock().lock().expect("savehistsiz poisoned") = v.max(0);
@@ -4187,7 +4187,7 @@ pub fn savehistsizesetfn(v: i64) {
 // $pipestatus
 // -----------------------------------------------------------
 
-/// Port of `pipestatgetfn()` from `Src/params.c:5251`. C body
+/// Port of `pipestatgetfn(pm)` from `Src/params.c:5251`. C body
 /// snapshots the `pipestats[]` C array as a heap-allocated
 /// `char **`. Rust port returns the cloned snapshot.
 pub fn pipestatgetfn() -> Vec<String> {
@@ -4199,7 +4199,7 @@ pub fn pipestatgetfn() -> Vec<String> {
         .collect()
 }
 
-/// Port of `pipestatsetfn()` from `Src/params.c:5270`. C body:
+/// Port of `pipestatsetfn(x)` from `Src/params.c:5270`. C body:
 /// `for (i=0; *x && i<MAX_PIPESTATS; i++) pipestats[i] = atoi(*x++); numpipestats = i;`
 pub fn pipestatsetfn(x: Option<Vec<String>>) {
     const MAX_PIPESTATS: usize = 256;
@@ -4235,7 +4235,7 @@ pub fn clear_mbstate() {
     // (Src/utils.c, Src/pattern.c) wire the calls here.
 }
 
-/// Port of `setlang()` from `Src/params.c:4840`. C body:
+/// Port of `setlang(x)` from `Src/params.c:4840`. C body:
 /// `if (LC_ALL set) return; setlocale(LC_ALL, x); for each LC_*: if set, setlocale(category, x);`
 pub fn setlang(x: Option<&str>) {
     if let Ok(lc_all) = env::var("LC_ALL") {
@@ -4249,13 +4249,13 @@ pub fn setlang(x: Option<&str>) {
     clear_mbstate();
 }
 
-/// Port of `langsetfn()` from `Src/params.c:4896`. C body:
+/// Port of `langsetfn(pm, x)` from `Src/params.c:4896`. C body:
 /// `strsetfn(pm, x); setlang(unmeta(x));`
 pub fn langsetfn(x: String) {
     setlang(Some(&x));
 }
 
-/// Port of `lc_allsetfn()` from `Src/params.c:4871`. C body
+/// Port of `lc_allsetfn(pm, x)` from `Src/params.c:4871`. C body
 /// dispatches to `setlang(LANG)` if x empty, else `setlocale(LC_ALL, x)`.
 pub fn lc_allsetfn(x: Option<String>) {
     match x {
@@ -4268,7 +4268,7 @@ pub fn lc_allsetfn(x: Option<String>) {
     }
 }
 
-/// Port of `lcsetfn()` from `Src/params.c:4904`. C body:
+/// Port of `lcsetfn(pm, x)` from `Src/params.c:4904`. C body:
 /// per-category `setlocale` with LC_ALL precedence + LANG fallback.
 pub fn lcsetfn(category: &str, x: Option<String>) {
     if let Ok(lc_all) = env::var("LC_ALL") {
@@ -4289,7 +4289,7 @@ pub fn lcsetfn(category: &str, x: Option<String>) {
 // env management (zsh's wrapper around setenv/unsetenv).
 // -----------------------------------------------------------
 
-/// Port of `zgetenv()` from `Src/params.c:5416`. C body walks
+/// Port of `zgetenv(name)` from `Src/params.c:5416`. C body walks
 /// `environ` byte-by-byte. Rust port uses `std::env::var`.
 pub fn zgetenv(name: &str) -> Option<String> {
     env::var(name).ok()
@@ -4520,7 +4520,7 @@ pub fn split_env_string(env: &str) -> Option<(String, String)> {             // 
     }
 }
 
-/// Port of `arrfixenv()` from `Src/params.c:5285`. C body re-syncs
+/// Port of `arrfixenv(s, t)` from `Src/params.c:5285`. C body re-syncs
 /// the env entry for an array param after mutation, joining with
 /// the param's `joinchar`. Rust port joins with ':' (the default
 /// for PATH-style arrays) and updates the env var.
@@ -4611,7 +4611,7 @@ pub fn arrfixenv(s: &str, t: Option<&[String]>) {                            // 
 // Array uniq helpers.
 // -----------------------------------------------------------
 
-/// Port of `simple_arrayuniq()` from `Src/params.c:4412`. C body:
+/// Port of `simple_arrayuniq(x, freeok)` from `Src/params.c:4412`. C body:
 /// O(n^2) dedupe in place — first occurrence wins.
 pub fn simple_arrayuniq(x: Vec<String>) -> Vec<String> {
     let mut seen: HashSet<String> = HashSet::new();
@@ -4668,11 +4668,11 @@ pub fn zhuniqarray(x: Vec<String>) -> Vec<String> {                          // 
     arrayuniq(x, 0)                                                          // c:4525
 }
 
-/// Port of `arrayuniq_freenode()` from `Src/params.c:4443`. C
+/// Port of `arrayuniq_freenode(hn)` from `Src/params.c:4443`. C
 /// body: `zsfree(((Pathnode)hn)->name); zfree(hn, sizeof…);` —
 /// the freenode callback for the temporary HashTable `arrayuniq`
 /// builds. Rust drop semantics handle this; no-op shim.
-/// Port of `arrayuniq_freenode()` from `Src/params.c:5033`. C body
+/// Port of `arrayuniq_freenode(hn)` from `Src/params.c:5033`. C body
 /// is `(void)hn;` — intentional no-op; passed as freenode callback
 /// to scratch hashtable used by `arrayuniq` so existing entries
 /// aren't freed when the table is torn down.
@@ -4696,24 +4696,24 @@ pub fn newuniqtable(size: i64) -> HashSet<String> {                          // 
 // read-only or write-only special params.
 // -----------------------------------------------------------
 
-/// Port of `nullintsetfn()` from `Src/params.c:4187`. C body:
+/// Port of `nullintsetfn(pm, x)` from `Src/params.c:4187`. C body:
 /// empty (no-op setter for read-only int params).
 pub fn nullintsetfn(_pm: &mut crate::ported::zsh_h::param, _x: i64) {}
 
-/// Port of `nullsethashfn()` from `Src/params.c:4104`. C body:
+/// Port of `nullsethashfn(x)` from `Src/params.c:4104`. C body:
 /// `deleteparamtable(x);` — frees the supplied table, doesn't store.
 pub fn nullsethashfn(_pm: &mut crate::ported::zsh_h::param, _x: crate::ported::zsh_h::HashTable) {
     // Rust drop semantics free `x` when this scope ends.
 }
 
-/// Port of `nullstrsetfn()` from `Src/params.c:4180`. C body:
+/// Port of `nullstrsetfn(x)` from `Src/params.c:4180`. C body:
 /// `zsfree(x);` — frees but doesn't store. Rust drop handles free.
 pub fn nullstrsetfn(_pm: &mut crate::ported::zsh_h::param, _x: String) {}
 
-/// Port of `nullunsetfn()` from `Src/params.c:4192`. C body: empty.
+/// Port of `nullunsetfn(pm, exp)` from `Src/params.c:4192`. C body: empty.
 pub fn nullunsetfn(_pm: &mut crate::ported::zsh_h::param, _exp: i32) {}
 
-/// Port of `stdunsetfn()` from `Src/params.c:3955`. C body:
+/// Port of `stdunsetfn(pm)` from `Src/params.c:3955`. C body:
 /// dispatches `pm->gsu->setfn(pm, NULL)` per `PM_TYPE`, clears
 /// `PM_TIED`/frees ename for tied params, sets PM_UNSET.
 ///
@@ -4747,7 +4747,7 @@ pub fn stdunsetfn(pm: &mut crate::ported::zsh_h::param, _exp: i32) {
     pm.node.flags |= PM_UNSET as i32;
 }
 
-/// Port of `rprompt_indent_unsetfn()` from `Src/params.c:4237`. C
+/// Port of `rprompt_indent_unsetfn(pm, exp)` from `Src/params.c:4237`. C
 /// body: `stdunsetfn(pm, exp); rprompt_indent = 1;` — keeps in
 /// sync with init_term().
 pub fn rprompt_indent_unsetfn(pm: &mut crate::ported::zsh_h::param, exp: i32) {
@@ -4765,37 +4765,37 @@ pub static RPROMPT_INDENT: std::sync::Mutex<i32> = std::sync::Mutex::new(1);
 // fields. C source in Src/params.c:3989-4116.
 // -----------------------------------------------------------
 
-/// Port of `intgetfn()` from `Src/params.c:3993`. C body:
+/// Port of `intgetfn(pm)` from `Src/params.c:3993`. C body:
 /// `return pm->u.val;`
 pub fn intgetfn(pm: &crate::ported::zsh_h::param) -> i64 {
     pm.u_val
 }
 
-/// Port of `intsetfn()` from `Src/params.c:4002`. C body:
+/// Port of `intsetfn(pm, x)` from `Src/params.c:4002`. C body:
 /// `pm->u.val = x;`
 pub fn intsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {
     pm.u_val = x;
 }
 
-/// Port of `floatgetfn()` from `Src/params.c:4011`. C body:
+/// Port of `floatgetfn(pm)` from `Src/params.c:4011`. C body:
 /// `return pm->u.dval;`
 pub fn floatgetfn(pm: &crate::ported::zsh_h::param) -> f64 {
     pm.u_dval
 }
 
-/// Port of `floatsetfn()` from `Src/params.c:4020`. C body:
+/// Port of `floatsetfn(pm, x)` from `Src/params.c:4020`. C body:
 /// `pm->u.dval = x;`
 pub fn floatsetfn(pm: &mut crate::ported::zsh_h::param, x: f64) {
     pm.u_dval = x;
 }
 
-/// Port of `strgetfn()` from `Src/params.c:4029`. C body:
+/// Port of `strgetfn(pm)` from `Src/params.c:4029`. C body:
 /// `return pm->u.str ? pm->u.str : (char *) hcalloc(1);`
 pub fn strgetfn(pm: &crate::ported::zsh_h::param) -> String {
     pm.u_str.clone().unwrap_or_default()
 }
 
-/// Port of `strsetfn()` from `Src/params.c:4038`. C body:
+/// Port of `strsetfn(pm, x)` from `Src/params.c:4038`. C body:
 /// `zsfree(pm->u.str); pm->u.str = x;` plus AUTONAMEDIRS handling.
 /// The `adduserdir()` call is gated on PM_NAMEDDIR/AUTONAMEDIRS.
 pub fn strsetfn(pm: &mut crate::ported::zsh_h::param, x: String) {
@@ -4808,13 +4808,13 @@ pub fn strsetfn(pm: &mut crate::ported::zsh_h::param, x: String) {
     }
 }
 
-/// Port of `arrgetfn()` from `Src/params.c:4057`. C body:
+/// Port of `arrgetfn(pm)` from `Src/params.c:4057`. C body:
 /// `return pm->u.arr ? pm->u.arr : &nullarray;`
 pub fn arrgetfn(pm: &crate::ported::zsh_h::param) -> Vec<String> {
     pm.u_arr.clone().unwrap_or_default()
 }
 
-/// Port of `arrsetfn()` from `Src/params.c:4066`. C body frees
+/// Port of `arrsetfn(pm, x)` from `Src/params.c:4066`. C body frees
 /// the old array, applies PM_UNIQUE filter via `uniqarray()`, then
 /// stores. Calls `arrfixenv(ename, x)` for tied colon-arrays.
 pub fn arrsetfn(pm: &mut crate::ported::zsh_h::param, x: Vec<String>) {
@@ -4829,13 +4829,13 @@ pub fn arrsetfn(pm: &mut crate::ported::zsh_h::param, x: Vec<String>) {
     }
 }
 
-/// Port of `hashgetfn()` from `Src/params.c:4084`. C body:
+/// Port of `hashgetfn(pm)` from `Src/params.c:4084`. C body:
 /// `return pm->u.hash;`
 pub fn hashgetfn(pm: &crate::ported::zsh_h::param) -> Option<&crate::ported::zsh_h::HashTable> {
     pm.u_hash.as_ref()
 }
 
-/// Port of `hashsetfn()` from `Src/params.c:4093`. C body:
+/// Port of `hashsetfn(pm, x)` from `Src/params.c:4093`. C body:
 /// `if (pm->u.hash && pm->u.hash != x) deleteparamtable(pm->u.hash);
 ///  pm->u.hash = x;`
 pub fn hashsetfn(pm: &mut crate::ported::zsh_h::param, x: crate::ported::zsh_h::HashTable) {
@@ -4917,19 +4917,19 @@ pub fn arrhashsetfn(                                                         // 
 // special-params init code (Src/params.c:817 createparamtable).
 // -----------------------------------------------------------
 
-/// Port of `intvargetfn()` from `Src/params.c:4202`. C body:
+/// Port of `intvargetfn(pm)` from `Src/params.c:4202`. C body:
 /// `return *pm->u.valptr;`
 pub fn intvargetfn(pm: &crate::ported::zsh_h::param) -> i64 {
     pm.u_val
 }
 
-/// Port of `intvarsetfn()` from `Src/params.c:4213`. C body:
+/// Port of `intvarsetfn(pm, x)` from `Src/params.c:4213`. C body:
 /// `*pm->u.valptr = x;`
 pub fn intvarsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {
     pm.u_val = x;
 }
 
-/// Port of `zlevarsetfn()` from `Src/params.c:4224`. C body sets
+/// Port of `zlevarsetfn(pm, x)` from `Src/params.c:4224`. C body sets
 /// the int and triggers `adjustwinsize` for LINES/COLUMNS.
 pub fn zlevarsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {
     pm.u_val = x;
@@ -4938,25 +4938,25 @@ pub fn zlevarsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {
     }
 }
 
-/// Port of `strvarsetfn()` from `Src/params.c:4249`. C body:
+/// Port of `strvarsetfn(pm, x)` from `Src/params.c:4249`. C body:
 /// `zsfree(*q); *q = x;` where `q = (char **)pm->u.data`.
 pub fn strvarsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) {
     pm.u_str = x;
 }
 
-/// Port of `strvargetfn()` from `Src/params.c:4263`. C body:
+/// Port of `strvargetfn(pm)` from `Src/params.c:4263`. C body:
 /// `s = *((char **)pm->u.data); return s ? s : hcalloc(1);`
 pub fn strvargetfn(pm: &crate::ported::zsh_h::param) -> String {
     pm.u_str.clone().unwrap_or_default()
 }
 
-/// Port of `arrvargetfn()` from `Src/params.c:4279`. C body:
+/// Port of `arrvargetfn(pm)` from `Src/params.c:4279`. C body:
 /// `arrptr = *((char ***)pm->u.data); return arrptr ?: &nullarray;`
 pub fn arrvargetfn(pm: &crate::ported::zsh_h::param) -> Vec<String> {
     pm.u_arr.clone().unwrap_or_default()
 }
 
-/// Port of `arrvarsetfn()` from `Src/params.c:4294`. C body
+/// Port of `arrvarsetfn(pm, x)` from `Src/params.c:4294`. C body
 /// frees old, applies PM_UNIQUE, handles PM_SPECIAL+NULL → mkarray.
 pub fn arrvarsetfn(pm: &mut crate::ported::zsh_h::param, x: Vec<String>) {
     let val = if (pm.node.flags as u32 & PM_UNIQUE) != 0 {
@@ -4967,7 +4967,7 @@ pub fn arrvarsetfn(pm: &mut crate::ported::zsh_h::param, x: Vec<String>) {
     pm.u_arr = Some(val);
 }
 
-/// Port of `colonarrsetfn()` from `Src/params.c:4329`. C body
+/// Port of `colonarrsetfn(pm, x)` from `Src/params.c:4329`. C body
 /// splits the colon-string into an array and stores via the
 /// generic arrvarsetfn.
 pub fn colonarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) {
@@ -4978,7 +4978,7 @@ pub fn colonarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) {
     arrvarsetfn(pm, arr);
 }
 
-/// Port of `tiedarrgetfn()` from `Src/params.c:4348`. C body:
+/// Port of `tiedarrgetfn(pm)` from `Src/params.c:4348`. C body:
 /// `return *((Tieddata)pm->u.data)->arrptr;`
 pub fn tiedarrgetfn(pm: &crate::ported::zsh_h::param) -> Vec<String> {
     pm.u_arr.clone().unwrap_or_default()
@@ -5043,7 +5043,7 @@ pub fn tiedarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) { /
     }
 }
 
-/// Port of `tiedarrunsetfn()` from `Src/params.c:4393`. C body
+/// Port of `tiedarrunsetfn(pm)` from `Src/params.c:4393`. C body
 /// frees the tied storage and calls stdunsetfn.
 /// Direct port of `void tiedarrunsetfn(Param pm, UNUSED(int exp))`
 /// from `Src/params.c:4393-4408`. Special unset for tied arrays:
@@ -5079,13 +5079,13 @@ pub fn tiedarrunsetfn(pm: &mut crate::ported::zsh_h::param, _exp: i32) {     // 
 // real C signatures.
 // -----------------------------------------------------------
 
-/// Port of `assignnparam()` from `Src/params.c:3664`. C body
+/// Port of `assignnparam(s, val, flags)` from `Src/params.c:3664`. C body
 /// looks up the param via `gethashnode2(realparamtab, s)`,
 /// dispatches on PM_TYPE: PM_INTEGER → `intsetfn(pm, val.u.l)`;
 /// PM_FFLOAT/EFLOAT → `floatsetfn(pm, val.u.d)`; otherwise
 /// `assignstrvalue(&v, conv_to_string(val), flags)`. Stub
 /// pending HashTable backend; signature mirrors C `mnumber val`.
-/// Port of `assignnparam()` from `Src/params.c:3664`. Real C
+/// Port of `assignnparam(s, val, flags)` from `Src/params.c:3664`. Real C
 /// flow: isident guard → unset(EXECOPT) bail → `getvalue(&vbuf,&s,1)`
 /// → if existing array/hashed (non-special, non-tied, non-KSHARRAYS,
 /// no subscript) → unsetparam_pm + recreate → else if no value →
@@ -5170,7 +5170,7 @@ pub fn assignnparam(
     None
 }
 
-/// Port of `assignstrvalue()` from `Src/params.c:2692`. Full
+/// Port of `assignstrvalue(v, val, flags)` from `Src/params.c:2692`. Full
 /// 1:1 port of the C body covering: EXECOPT short-circuit,
 /// PM_READONLY/PM_HASHED/VALFLAG_EMPTY guards, PM_UNSET clear,
 /// per-PM_TYPE dispatch including the SCALAR/NAMEREF subscript
@@ -5384,7 +5384,7 @@ pub fn assignstrvalue(
     export_param(pm);
 }
 
-/// Port of `assigngetset()` from `Src/params.c:994`. C body
+/// Port of `assigngetset(pm)` from `Src/params.c:994`. C body
 /// installs the standard get/set/unset vtable matching the
 /// param's PM_TYPE so subsequent assignment dispatches go
 /// through `pm->gsu.X->setfn`.
@@ -5468,7 +5468,7 @@ pub fn check_warn_pm(
     // and exits.
 }
 
-/// Port of `convbase_ptr()` from `Src/params.c:5586`. C body
+/// Port of `convbase_ptr(s, v, base, ndigits)` from `Src/params.c:5586`. C body
 /// converts `v` into base `base` (negative `base` suppresses the
 /// "0x"/"N#" discriminator), writing the digits into `s` and
 /// returning the digit count via `*ndigits`. Rust port returns
@@ -5526,7 +5526,7 @@ pub fn convbase_ptr(v: i64, base: i32) -> (String, i32) {
     (s, digs)
 }
 
-/// Port of `copyparamtable()` from `Src/params.c:596`. C body:
+/// Port of `copyparamtable(ht, name)` from `Src/params.c:596`. C body:
 /// allocates a fresh paramtable via `newparamtable(ht->hsize, name)`,
 /// sets the global `outtable = nht`, then scans the source via
 /// `scanhashtable(ht, 0, 0, 0, scancopyparams, 0)` and clears
@@ -6046,7 +6046,7 @@ pub fn createspecialhash(name: &str, flags: i32)                             // 
     Some(pm)                                                                 // c:1223
 }
 
-/// Port of `createparam()` from `Src/params.c:1030`. C body
+/// Port of `createparam(name, flags)` from `Src/params.c:1030`. C body
 /// (~130 lines, see comment header at c:1020-1027) creates a
 /// parameter so that it can be assigned to. Returns NULL if the
 /// parameter already exists or can't be created, otherwise
@@ -6172,7 +6172,7 @@ pub fn createparam(                                                          // 
     Some(pm)                                                                 // c:1159
 }
 
-/// Port of `copyparam()` from `Src/params.c:1236`. C body:
+/// Port of `copyparam(tpm, pm, fakecopy)` from `Src/params.c:1236`. C body:
 /// ```c
 /// tpm->node.flags = pm->node.flags;
 /// tpm->base = pm->base;
@@ -6241,7 +6241,7 @@ pub fn copyparam(                                                            // 
     }
 }
 
-/// Port of `deleteparamtable()` from `Src/params.c:616`. C body:
+/// Port of `deleteparamtable(t)` from `Src/params.c:616`. C body:
 /// `int odelunset = delunset; delunset = 1; deletehashtable(t);
 ///  delunset = odelunset;` — flips the global before tearing down
 /// each entry so unset callbacks fire. Rust port: `Drop` cascades
@@ -6260,7 +6260,7 @@ pub fn deleteparamtable(t: Option<crate::ported::zsh_h::HashTable>) {
     DELUNSET.store(odelunset, std::sync::atomic::Ordering::Relaxed);         // c:623
 }
 
-/// Port of `fetchvalue()` from `Src/params.c:2180` — see real
+/// Port of `fetchvalue(v, pptr, bracks, scanflags)` from `Src/params.c:2180` — see real
 /// implementation below; this slot kept for the C-source linenum
 /// citation and is now an alias.
 // (real fetchvalue is defined later)
@@ -6302,7 +6302,7 @@ pub fn freeparamnode(mut _hn: crate::ported::zsh_h::Param) {                 // 
     // / struct itself when _hn goes out of scope.
 }
 
-/// Port of `getparamnode()` from `Src/params.c:570`. C body:
+/// Port of `getparamnode(ht, nam)` from `Src/params.c:570`. C body:
 /// `pm = loadparamnode(ht, gethashnode2(ht, nam), nam);
 ///  if (pm && ht == realparamtab && !PM_UNSET) pm = resolve_nameref(pm);
 ///  return (HashNode)pm;`
@@ -6326,7 +6326,7 @@ pub fn getparamnode(ht: &crate::ported::zsh_h::HashTable, nam: &str)         // 
     None
 }
 
-/// Port of `getvalue()` from `Src/params.c:2173`. C body:
+/// Port of `getvalue(v, pptr, bracks)` from `Src/params.c:2173`. C body:
 /// `return fetchvalue(v, pptr, bracks, SCANPM_CHECKING);` — pure
 /// wrapper around `fetchvalue` with the SCANPM_CHECKING flag set
 /// so unset params don't trigger creation.
@@ -6489,7 +6489,7 @@ pub fn fetchvalue<'a>(                                                       // 
 }
 
 
-/// Port of `getindex()` from `Src/params.c:2001`. Returns 0 on
+/// Port of `getindex(pptr, v, scanflags)` from `Src/params.c:2001`. Returns 0 on
 /// success, non-zero on parse error. C body parses `[N]`/`[N,M]`/
 /// `[(flags)pat]` after a Value's name and updates v->start/end/
 /// scanflags. Stub: needs subscript expression evaluator.
@@ -6618,7 +6618,7 @@ pub fn getindex(pptr: &mut &str, v: &mut crate::ported::zsh_h::value, scanflags:
     0                                                                        // c:2166
 }
 
-/// Port of `issetvar()` from `Src/params.c:732`. C body:
+/// Port of `issetvar(name)` from `Src/params.c:732`. C body:
 /// ```c
 /// struct value vbuf; Value v; int slice; char **arr;
 /// if (!(v = getvalue(&vbuf, &name, 1)) || *name) return 0;
@@ -6677,7 +6677,7 @@ pub fn issetvar(name: &str) -> i32 {                                         // 
     if crate::ported::utils::arrlen_ge(&arr, bound) { 1 } else { 0 }
 }
 
-/// Port of `getvaluearr()` from `Src/params.c:710`. C body:
+/// Port of `getvaluearr(v)` from `Src/params.c:710`. C body:
 /// ```c
 /// if (v->arr) return v->arr;
 /// else if (PM_TYPE == PM_ARRAY) return v->arr = pm->gsu.a->getfn(pm);
@@ -6774,7 +6774,7 @@ pub fn loadparamnode(                                                        // 
     pm                                                                       // c:566
 }
 
-/// Port of `newparamtable()` from `Src/params.c:519`. C body
+/// Port of `newparamtable(size, name)` from `Src/params.c:519`. C body
 /// allocates a HashTable via `newhashtable(size, name, NULL)`
 /// and wires the vtable. Rust port constructs a fresh
 /// `Box<hashtable>` with the param-specific callbacks left as
@@ -6873,7 +6873,7 @@ pub fn paramvalarr(ht: &crate::ported::zsh_h::HashTable, flags: i32) -> Vec<Stri
     out
 }
 
-/// Port of `printparamnode()` from `Src/params.c:6123`. Real C
+/// Port of `printparamnode(hn, printflags)` from `Src/params.c:6123`. Real C
 /// body is ~200 lines emitting the typeset/declare-style listing
 /// for one param honouring PRINT_NAMEONLY / PRINT_TYPESET /
 /// PRINT_KV_PAIR / PRINT_LINE / PRINT_INCLUDEVALUE /
@@ -6949,7 +6949,7 @@ pub fn printparamnode(p: &mut crate::ported::zsh_h::param, mut printflags: i32) 
     }
 }
 
-/// Port of `printparamvalue()` from `Src/params.c:6035`. C body
+/// Port of `printparamvalue(p, printflags)` from `Src/params.c:6035`. C body
 /// dispatches on `PM_TYPE(p->node.flags)` and writes the value
 /// (no `name=` prefix unless `!PRINT_KV_PAIR`, which prints `=`
 /// first). PM_SCALAR/PM_NAMEREF: `quotedzputs(t)`; PM_INTEGER:
@@ -7019,7 +7019,7 @@ pub fn printparamvalue(p: &mut crate::ported::zsh_h::param, printflags: i32) {
     }
 }
 
-/// Port of `resolve_nameref()` from `Src/params.c:6325`. C body:
+/// Port of `resolve_nameref(pm)` from `Src/params.c:6325`. C body:
 /// ```c
 /// mod_export Param
 /// resolve_nameref(Param pm)
@@ -7036,7 +7036,7 @@ pub fn resolve_nameref(                                                      // 
     resolve_nameref_rec(pm, None, 0)                                         // c:6327
 }
 
-/// Port of `resolve_nameref_rec()` from `Src/params.c:6332`. C
+/// Port of `resolve_nameref_rec(pm, stop, keep_lastref)` from `Src/params.c:6332`. C
 /// recursive helper for `resolve_nameref()`. Walks the chain of
 /// `${(P)var}` indirections via `gethashnode2(realparamtab, refname)`
 /// + `loadparamnode(paramtab, upscope(pm, ref), refname)`,
@@ -7070,7 +7070,7 @@ pub fn resolve_nameref_rec(
     pm
 }
 
-/// Port of `scancopyparams()` from `Src/params.c:584`. C body:
+/// Port of `scancopyparams(hn)` from `Src/params.c:584`. C body:
 /// ```c
 /// Param tpm = (Param) zshcalloc(sizeof *tpm);
 /// tpm->node.nam = ztrdup(pm->node.nam);
@@ -7116,7 +7116,7 @@ pub fn scancopyparams(
     outtable.insert(nam, Box::new(tpm));
 }
 
-/// Port of `scancountparams()` from `Src/params.c:630`. C body:
+/// Port of `scancountparams(flags)` from `Src/params.c:630`. C body:
 /// ```c
 /// ++numparamvals;
 /// if ((flags & SCANPM_WANTKEYS) && (flags & SCANPM_WANTVALS))
@@ -7132,7 +7132,7 @@ pub fn scancountparams(_hn: &crate::ported::zsh_h::param, flags: i32, numparamva
     }
 }
 
-/// Port of `scanendscope()` from `Src/params.c:5900`. Per-node
+/// Port of `scanendscope(hn)` from `Src/params.c:5900`. Per-node
 /// callback used by `endparamscope` (params.c:5867 calls
 /// `scanhashtable(paramtab, 0, 0, 0, scanendscope, 0)`) when a
 /// function returns. C body:
@@ -7285,7 +7285,7 @@ fn paramvals_lock() -> &'static std::sync::Mutex<Vec<String>> {
     PARAMVALS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
-/// Port of `scanparamvals()` from `Src/params.c:644`. Real C body
+/// Port of `scanparamvals(hn, flags)` from `Src/params.c:644`. Real C body
 /// is the per-node callback for `paramvalarr`: applies SCANPM_MATCHKEY
 /// (pattry on name) / SCANPM_MATCHVAL (pattry on value) / SCANPM_KEYMATCH
 /// (compile pm.nam as pattern, match against scanstr) / SCANPM_WANTKEYS
@@ -7370,7 +7370,7 @@ fn pattry(prog: &str, s: &str) -> bool {
     prog == s
 }
 
-/// Port of `setloopvar()` from `Src/params.c:6362`. C body:
+/// Port of `setloopvar(name, value)` from `Src/params.c:6362`. C body:
 /// ```c
 /// Param pm = (Param) gethashnode2(realparamtab, name);
 /// if (pm && (pm->node.flags & PM_NAMEREF)) {
@@ -7399,14 +7399,14 @@ pub fn setloopvar(name: &str, value: &str) {
     //   setsparam(name, value);
 }
 
-/// Port of `setnparam()` from `Src/params.c:3744`. C body:
+/// Port of `setnparam(s, val)` from `Src/params.c:3744`. C body:
 /// `return assignnparam(s, val, ASSPM_WARN);` — single-line
 /// wrapper. Stub until `assignnparam` is implemented.
 pub fn setnparam(s: &str, val: f64) {
     assignnparam(s, crate::ported::math::Mnumber { l: 0, d: val, type_: MN_FLOAT }, crate::ported::zsh_h::ASSPM_WARN);
 }
 
-/// Port of `setnumvalue()` from `Src/params.c:2856`. C body
+/// Port of `setnumvalue(v, val)` from `Src/params.c:2856`. C body
 /// dispatches on `PM_TYPE(v->pm->node.flags)`:
 /// PM_SCALAR/PM_NAMEREF/PM_ARRAY → convbase_underscore /
 /// convfloat_underscore + setstrvalue; PM_INTEGER →
@@ -7436,7 +7436,7 @@ pub fn setnumvalue(v: Option<&mut crate::ported::zsh_h::value>, val: crate::port
     }
 }
 
-/// Port of `setscope()` from `Src/params.c:6382`. C body for
+/// Port of `setscope(pm)` from `Src/params.c:6382`. C body for
 /// PM_NAMEREF: extract `refname = GETREFNAME(pm)`, locate first
 /// `[` to split name vs subscript (sets pm->width), look up the
 /// base param via `gethashnode2(realparamtab, refname)` →
@@ -7480,7 +7480,7 @@ pub fn setscope(pm: &mut crate::ported::zsh_h::param) {
     crate::ported::signals::unqueue_signals();
 }
 
-/// Port of `setscope_base()` from `Src/params.c:6436`. C body:
+/// Port of `setscope_base(pm, base)` from `Src/params.c:6436`. C body:
 /// ```c
 /// if ((pm->base = base) > pm->level) {
 ///     LinkList refs;
@@ -7503,7 +7503,7 @@ pub fn setscope_base(pm: &mut crate::ported::zsh_h::param, base: i32) {
     }
 }
 
-/// Port of `upscope()` from `Src/params.c:6455`. C body:
+/// Port of `upscope(pm, ref)` from `Src/params.c:6455`. C body:
 /// ```c
 /// if (ref->node.flags & PM_UPPER)
 ///     while (pm->level > ref->level - 1 && (pm = pm->old));

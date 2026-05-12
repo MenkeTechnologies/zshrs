@@ -5,7 +5,7 @@
 //! (`bin_zsocket`, `setup_`/`features_`/`enables_`/`boot_`/
 //! `cleanup_`/`finish_`).
 
-/// Direct port of `bin_zsocket()` from `Src/Modules/socket.c:57`.
+/// Direct port of `bin_zsocket(nam, args, ops)` from `Src/Modules/socket.c:57`.
 /// C signature matches exactly: `static int bin_zsocket(char *nam,
 /// char **args, Options ops, UNUSED(int func))`.
 pub fn bin_zsocket(nam: &str, args: &[String],                           // c:57
@@ -231,36 +231,36 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/socket.c:291`.
+/// Port of `setup_(m)` from `Src/Modules/socket.c:291`.
 pub fn setup_(_m: *const module) -> i32 {                                // c:291
     0                                                                    // c:294
 }
 
-/// Port of `features_()` from `Src/Modules/socket.c:298`.
+/// Port of `features_(m, features)` from `Src/Modules/socket.c:298`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 { // c:298
     *features = featuresarray(m, module_features());
     0                                                                    // c:302
 }
 
-/// Port of `enables_()` from `Src/Modules/socket.c:306`.
+/// Port of `enables_(m, enables)` from `Src/Modules/socket.c:306`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:306
     handlefeatures(m, module_features(), enables) // c:310
 }
 
-/// Port of `boot_()` from `Src/Modules/socket.c:313`.
+/// Port of `boot_(m)` from `Src/Modules/socket.c:313`.
 pub fn boot_(_m: *const module) -> i32 {                                 // c:313
     0                                                                    // c:316
 }
 
-/// Port of `cleanup_()` from `Src/Modules/socket.c:320`.
+/// Port of `cleanup_(m)` from `Src/Modules/socket.c:320`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                              // c:320
     setfeatureenables(m, module_features(), None) // c:323
 }
 
-/// Port of `finish_()` from `Src/Modules/socket.c:327`.
+/// Port of `finish_(m)` from `Src/Modules/socket.c:327`.
 pub fn finish_(_m: *const module) -> i32 {                               // c:327
     0                                                                    // c:330
 }

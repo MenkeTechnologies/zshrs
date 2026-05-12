@@ -409,11 +409,11 @@ pub fn comp_str(untok: bool) -> (String, i32, i32) {                         // 
     }
     let lp = p.len() as i32;                                                 // c:1417
     let lip = ip.len() as i32;                                               // c:1419
-    let mut str_ = String::with_capacity(ip.len() + p.len() + s.len() + 1);  // c:1420
-    str_.push_str(&ip);                                                      // c:1421
-    str_.push_str(&p);                                                       // c:1422
-    str_.push_str(&s);                                                       // c:1423
-    (str_, lip, lp)                                                          // c:1425-1430
+    let mut str = String::with_capacity(ip.len() + p.len() + s.len() + 1);  // c:1420
+    str.push_str(&ip);                                                      // c:1421
+    str.push_str(&p);                                                       // c:1422
+    str.push_str(&s);                                                       // c:1423
+    (str, lip, lp)                                                          // c:1425-1430
 }
 
 // =====================================================================
@@ -626,9 +626,9 @@ pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {         // 
 
 /// Port of `static void addmatch(char *str, int flags, char ***dispp,
 ///                                int line)` from compcore.c:2041.
-pub fn addmatch(str_: &str, flags: i32, disp: Option<&str>, line: bool) {    // c:2041
+pub fn addmatch(str: &str, flags: i32, disp: Option<&str>, line: bool) {    // c:2041
     let mut cm = Cmatch::default();                                          // c:2043
-    cm.str_ = Some(str_.to_string());                                        // c:2047
+    cm.str = Some(str.to_string());                                        // c:2047
     // c:2049-2051 — inline read of `complist` parameter, parse `packed`/
     // `rows` substrings into CMF_PACKED/CMF_ROWS flag bits.
     let complist_extra = {
@@ -731,7 +731,7 @@ pub fn addexpl(always: bool) {                                               // 
         let cell = curexpl.get_or_init(|| Mutex::new(None));
         cell.lock().ok().and_then(|g| g.clone())
     };
-    let curexpl_str = match curexpl_snap.as_ref().and_then(|e| e.str_.clone()) {
+    let curexpl_str = match curexpl_snap.as_ref().and_then(|e| e.str.clone()) {
         Some(s) => s,
         None => return,
     };
@@ -741,7 +741,7 @@ pub fn addexpl(always: bool) {                                               // 
     let elist = expls.get_or_init(|| Mutex::new(Vec::new()));
     if let Ok(mut g) = elist.lock() {
         for e in g.iter_mut() {                                              // c:3145
-            if e.str_.as_deref() == Some(curexpl_str.as_str()) {             // c:3147
+            if e.str.as_deref() == Some(curexpl_str.as_str()) {             // c:3147
                 e.count  += curexpl_count;                                   // c:3148
                 e.fcount += curexpl_fcount;                                  // c:3149
                 if always {                                                  // c:3150
@@ -782,8 +782,8 @@ pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {              // 
 
     let cmp = (b.disp.is_some() as i32) - (a.disp.is_some() as i32);         // c:3176
     let (as_, bs) = if (order & CGF_MATSORT) != 0 || (cmp == 0 && a.disp.is_none()) {
-        (a.str_.clone().unwrap_or_default(),                                 // c:3181
-         b.str_.clone().unwrap_or_default())                                 // c:3182
+        (a.str.clone().unwrap_or_default(),                                 // c:3181
+         b.str.clone().unwrap_or_default())                                 // c:3182
     } else {
         if cmp != 0 {                                                        // c:3184
             let raw = (cmp as i32) * sortdir;
@@ -828,7 +828,7 @@ pub fn matcheq(a: &Cmatch, b: &Cmatch) -> bool {                             // 
     matchstreq(a.ppre.as_ref(),  b.ppre.as_ref())  &&                        // c:3211
     matchstreq(a.psuf.as_ref(),  b.psuf.as_ref())  &&                        // c:3212
     matchstreq(a.suf.as_ref(),   b.suf.as_ref())   &&                        // c:3213
-    matchstreq(a.str_.as_ref(),  b.str_.as_ref())                            // c:3214
+    matchstreq(a.str.as_ref(),  b.str.as_ref())                            // c:3214
 }
 
 // =====================================================================
@@ -996,7 +996,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
             let mut all: Vec<String> = Vec::new();
             for g in groups {
                 for m in g.matches {
-                    if let Some(s) = m.str_ { all.push(s); }
+                    if let Some(s) = m.str { all.push(s); }
                 }
             }
             let buf = ZLEMETALINE.get_or_init(|| Mutex::new(String::new()))
@@ -1027,7 +1027,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // 
                 let groups = amatches.get_or_init(|| Mutex::new(Vec::new()))
                     .lock().map(|g| g.clone()).unwrap_or_default();
                 let all: Vec<String> = groups.into_iter()
-                    .flat_map(|g| g.matches.into_iter().filter_map(|m| m.str_))
+                    .flat_map(|g| g.matches.into_iter().filter_map(|m| m.str))
                     .collect();
                 crate::ported::zle::compresult::do_ambiguous(&all)
             };
@@ -1875,7 +1875,7 @@ pub fn addmatches(dat: &mut crate::ported::zle::comp_h::Cadata,              // 
         let mut e = Cexpl::default();                                        // c:2123
         e.always = if dat.mesg.is_some() { 1 } else { 0 };                   // c:2124
         e.count = 0; e.fcount = 0;                                           // c:2125
-        e.str_ = Some(dat.mesg.clone()                                       // c:2126
+        e.str = Some(dat.mesg.clone()                                       // c:2126
             .or_else(|| dat.exp.clone())
             .unwrap_or_default());
         if let Ok(mut g) = curexpl.get_or_init(|| Mutex::new(None)).lock() {
@@ -1979,7 +1979,7 @@ fn autoq_set(s: &str) {                                                       //
 #[allow(clippy::too_many_arguments)]
 pub fn add_match_data(                                                       // c:2643
     alt:   i32,
-    str_:  &str,
+    str:  &str,
     orig:  &str,
     _line: Option<&str>,                                                     // Cline placeholder
     ipre_: &str,
@@ -2015,7 +2015,7 @@ pub fn add_match_data(                                                       // 
     let qipl_v = qipre_get();                                               // c:2686
     let _qipl = qipl_v.len();
 
-    let _stl  = str_.len();
+    let _stl  = str.len();
     let _lpl  = ripre_.len();
     let _lsl  = suf.len();
     let _ml   = ipl;
@@ -2028,7 +2028,7 @@ pub fn add_match_data(                                                       // 
 
     // c:3052 — `cm` populated, then queued into `matches` LinkList.
     let mut cm = Cmatch::default();                                          // c:3052
-    cm.str_  = Some(str_.to_string());                                       // c:3053
+    cm.str  = Some(str.to_string());                                       // c:3053
     cm.orig  = Some(orig.to_string());                                       // c:3054
     cm.ipre  = if ipre_.is_empty()  { None } else { Some(ipre_.into())  };
     cm.ripre = if ripre_.is_empty() { None } else { Some(ripre_.into()) };
@@ -2230,7 +2230,7 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {                  // 
     } else {                                                                 // c:1038
         // c:1040-1047 — compctl dispatch via COMPCTLMAKEHOOK.
         let mut dat = crate::ported::zle::comp_h::Ccmakedat {
-            str_:  Some(s_owned.clone()),                                    // c:1042
+            str:  Some(s_owned.clone()),                                    // c:1042
             incmd,                                                           // c:1043
             lst,                                                             // c:1044
         };
@@ -2288,7 +2288,7 @@ fn runhookdef_compctlmake(                                               // init
     dat: &mut crate::ported::zle::comp_h::Ccmakedat,
 ) {
     // c:compctl.c:2305 makecomplistctl is the hook entrypoint.
-    let s = dat.str_.clone().unwrap_or_default();
+    let s = dat.str.clone().unwrap_or_default();
     let _ = crate::ported::zle::compctl::makecomplistctl(dat.lst);
     let _ = s;
 }
@@ -2336,7 +2336,7 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                     while bp + 1 < rp.len()
                         && rp[ap].disp.is_none()
                         && rp[bp + 1].disp.is_none()                         // c:3282 !disp
-                        && rp[ap].str_ == rp[bp + 1].str_
+                        && rp[ap].str == rp[bp + 1].str
                     {
                         rp[bp + 1].flags |= CMF_MULT;                        // c:3284
                         dup = 1;                                             // c:3285
@@ -2376,7 +2376,7 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                             }
                         }
                     } else if w[0].disp.is_none() {
-                        if w[1].disp.is_none() && w[0].str_ == w[1].str_ {   // c:3322
+                        if w[1].disp.is_none() && w[0].str == w[1].str {   // c:3322
                             for m in rp.iter_mut() {
                                 if matcheq(m, &w[1]) {
                                     m.flags |= CMF_MULT;                     // c:3324
@@ -2410,7 +2410,7 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                     while bp + 1 < rp.len()
                         && rp[ap].disp.is_none()
                         && rp[bp + 1].disp.is_none()
-                        && rp[ap].str_ == rp[bp + 1].str_
+                        && rp[ap].str == rp[bp + 1].str
                     {
                         rp[bp + 1].flags |= CMF_MULT;                        // c:3352
                         dup = 1;                                             // c:3353
@@ -2474,7 +2474,7 @@ pub fn makearray_strings(mut rp: Vec<String>, flags: i32) -> (Vec<String>, i32) 
 /// nbeg/nend per the C body's nbeg/nend-sized `zalloc` + element copy.
 pub fn dupmatch(m: &Cmatch, nbeg: i32, nend: i32) -> Cmatch {                // c:3370
     let mut r = Cmatch::default();                                           // c:3373-3374
-    r.str_  = m.str_.clone();                                                // c:3376 ztrdup
+    r.str  = m.str.clone();                                                // c:3376 ztrdup
     r.orig  = m.orig.clone();                                                // c:3377
     r.ipre  = m.ipre.clone();                                                // c:3378
     r.ripre = m.ripre.clone();                                               // c:3379
@@ -2636,7 +2636,7 @@ pub fn permmatches(last: i32) -> i32 {                                       // 
                     count:  if fi != 0 { o.fcount } else { o.count },        // c:3520
                     always: o.always,                                        // c:3521
                     fcount: 0,                                               // c:3522
-                    str_:   o.str_.clone(),                                  // c:3523 ztrdup
+                    str:   o.str.clone(),                                  // c:3523 ztrdup
                 }).collect();
                 n_grp.ecount = g.ecount;
             } else {
@@ -2720,15 +2720,15 @@ mod tests {
 
     #[test]
     fn matcheq_equal_strings() {
-        let mut a = Cmatch::default(); a.str_ = Some("foo".into());
-        let mut b = Cmatch::default(); b.str_ = Some("foo".into());
+        let mut a = Cmatch::default(); a.str = Some("foo".into());
+        let mut b = Cmatch::default(); b.str = Some("foo".into());
         assert!(matcheq(&a, &b));
     }
 
     #[test]
     fn matcheq_different_strings() {
-        let mut a = Cmatch::default(); a.str_ = Some("foo".into());
-        let mut b = Cmatch::default(); b.str_ = Some("bar".into());
+        let mut a = Cmatch::default(); a.str = Some("foo".into());
+        let mut b = Cmatch::default(); b.str = Some("bar".into());
         assert!(!matcheq(&a, &b));
     }
 
@@ -2767,8 +2767,8 @@ mod tests {
     #[test]
     fn matchcmp_str_sort_default() {
         MATCHORDER.store(CGF_MATSORT, Ordering::Relaxed);
-        let mut a = Cmatch::default(); a.str_ = Some("apple".into());
-        let mut b = Cmatch::default(); b.str_ = Some("banana".into());
+        let mut a = Cmatch::default(); a.str = Some("apple".into());
+        let mut b = Cmatch::default(); b.str = Some("banana".into());
         assert_eq!(matchcmp(&a, &b), std::cmp::Ordering::Less);
         assert_eq!(matchcmp(&b, &a), std::cmp::Ordering::Greater);
         assert_eq!(matchcmp(&a, &a), std::cmp::Ordering::Equal);
@@ -2779,7 +2779,7 @@ mod tests {
     fn dupmatch_clones_strings_and_truncates_braces() {
         // C body c:3370: deep-copy strings, truncate brpl/brsl to nbeg/nend.
         let mut src = Cmatch::default();
-        src.str_ = Some("foo".into());
+        src.str = Some("foo".into());
         src.ipre = Some("ipre".into());
         src.flags = 7;
         src.brpl = vec![10, 20, 30, 40];
@@ -2790,7 +2790,7 @@ mod tests {
         src.modec = 'd';
 
         let r = dupmatch(&src, 2, 1);
-        assert_eq!(r.str_.as_deref(), Some("foo"));
+        assert_eq!(r.str.as_deref(), Some("foo"));
         assert_eq!(r.ipre.as_deref(), Some("ipre"));
         assert_eq!(r.flags, 7);
         assert_eq!(r.brpl, vec![10, 20]);      // truncated to nbeg=2
@@ -2814,27 +2814,27 @@ mod tests {
     fn makearray_sorted_and_deduped() {
         // c:3262-3291: sort + dedup with matcheq. Same str + nil disp =>
         // collapses into one entry with CMF_FMULT set on the survivor.
-        let mut a = Cmatch::default(); a.str_ = Some("z".into());
-        let mut b = Cmatch::default(); b.str_ = Some("a".into());
-        let mut c = Cmatch::default(); c.str_ = Some("a".into());
+        let mut a = Cmatch::default(); a.str = Some("z".into());
+        let mut b = Cmatch::default(); b.str = Some("a".into());
+        let mut c = Cmatch::default(); c.str = Some("a".into());
         let (arr, n, _nl, _ll) = makearray(vec![a, b, c], CGF_MATSORT);
         // Two distinct visible strings after dedup ("a", "z").
         assert_eq!(arr.len(), 2);
         assert_eq!(n, 2);
-        assert_eq!(arr[0].str_.as_deref(), Some("a"));
-        assert_eq!(arr[1].str_.as_deref(), Some("z"));
+        assert_eq!(arr[0].str.as_deref(), Some("a"));
+        assert_eq!(arr[1].str.as_deref(), Some("z"));
     }
 
     #[test]
     fn makearray_nosort_unchanged_order() {
         // c:3300: CGF_NOSORT branch; with no UNIQ flags, order preserved.
-        let mut a = Cmatch::default(); a.str_ = Some("z".into());
-        let mut b = Cmatch::default(); b.str_ = Some("a".into());
+        let mut a = Cmatch::default(); a.str = Some("z".into());
+        let mut b = Cmatch::default(); b.str = Some("a".into());
         let (arr, n, _, _) = makearray(vec![a, b], CGF_NOSORT | CGF_UNIQALL);
         // UNIQALL active so no dedup pass runs.
         assert_eq!(n, 2);
-        assert_eq!(arr[0].str_.as_deref(), Some("z"));
-        assert_eq!(arr[1].str_.as_deref(), Some("a"));
+        assert_eq!(arr[0].str.as_deref(), Some("z"));
+        assert_eq!(arr[1].str.as_deref(), Some("a"));
     }
 
     #[test]
@@ -2941,7 +2941,7 @@ mod tests {
             "psuf", None,
             "suf", 0, 0,
         );
-        assert_eq!(cm.str_.as_deref(), Some("match"));
+        assert_eq!(cm.str.as_deref(), Some("match"));
         assert_eq!(cm.orig.as_deref(), Some("match-orig"));
         assert_eq!(cm.pre.as_deref(),  Some("pre"));
         assert_eq!(cm.suf.as_deref(),  Some("suf"));
@@ -3043,7 +3043,7 @@ mod tests {
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
             let mut cm = Cmatch::default();
-            cm.str_ = Some("x".into());
+            cm.str = Some("x".into());
             g.cur = Some(Box::new(cm));
             g.asked = 1;
         }

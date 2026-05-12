@@ -1465,10 +1465,10 @@ pub fn prompt_width(s: &str) -> usize {
 // ---------------------------------------------------------------------------
 
 /// Truncate the prompt to a maximum width.
-/// Port of `prompttrunc()` from Src/prompt.c:1276 — the C source
+/// Port of `prompttrunc(arg, truncchar, doprint, endchar)` from Src/prompt.c:1276 — the C source
 /// implements the `%N>string>` (right-truncate) and `%N<string<`
 /// (left-truncate) sequences with a configurable indicator.
-/// Port of `countprompt()` from `Src/prompt.c:1140`.
+/// Port of `countprompt(str, wp, hp, overf)` from `Src/prompt.c:1140`.
 ///
 /// C signature:
 /// `void countprompt(char *str, int *wp, int *hp, int overf);`
@@ -1505,7 +1505,7 @@ pub fn prompt_width(s: &str) -> usize {
 // `cmdpush()`/`cmdpop()` thread-local stack mirrors C file-statics.
 
 /// Resolve a color name to an ANSI base index.
-/// Port of `match_named_colour()` from Src/prompt.c:1915 —
+/// Port of `match_named_colour(teststrp)` from Src/prompt.c:1915 —
 /// walks `colour_names[]` (now `COLOUR_NAMES` at file head), then
 /// falls through to numeric parsing. Returns palette index 0-7
 /// for basic colours, 8 for "default" sentinel (per C:1909),
@@ -1521,7 +1521,7 @@ pub fn match_named_colour(name: &str) -> Option<u8> {                        // 
 }
 
 /// Build an ANSI escape for an indexed colour.
-/// Port of `output_colour()` from Src/prompt.c:2136.
+/// Port of `output_colour(colour, fg_bg, truecol, buf)` from Src/prompt.c:2136.
 pub fn output_colour(colour: u8, is_fg: bool) -> String {                    // c:2136
     let base = if is_fg { 30 } else { 40 };
     if colour < 8 {
@@ -1541,7 +1541,7 @@ pub fn output_truecolor(r: u8, g: u8, b: u8, is_fg: bool) -> String {
 }
 
 /// Parse a `,`-separated highlight specification.
-/// Port of `parsehighlight()` from Src/prompt.c:285 — handles
+/// Port of `parsehighlight(arg, endchar, atr, mask)` from Src/prompt.c:285 — handles
 // Parse the argument for %H                                                // c:282
 /// `bold` / `underline` / `standout` / `none` plus `fg=NAME` and
 /// `bg=NAME` color targets.
@@ -1574,7 +1574,7 @@ pub fn parsehighlight(spec: &str) -> zattr {                             // c:28
 
 /// Apply text attributes as a single ANSI SGR escape.
 // functions for handling attributes                                        // c:1641
-/// Port of `applytextattributes()` from Src/prompt.c:1645 —
+/// Port of `applytextattributes(flags)` from Src/prompt.c:1645 —
 /// builds one SGR sequence with all active codes joined.
 pub fn apply_text_attributes(attrs: zattr) -> String {                   // c:1645
     let mut codes: Vec<String> = Vec::new();
@@ -1647,7 +1647,7 @@ pub fn transient_prompt(_original: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Get a prompt-friendly path with optional tilde substitution.
-/// Port of `promptpath()` from Src/prompt.c:134 — used for `%~`,
+/// Port of `promptpath(p, npath, tilde)` from Src/prompt.c:134 — used for `%~`,
 /// `%/`, `%c`, etc. The `npath` argument trims to the last N
 /// components.
 pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String { // c:134
@@ -1682,7 +1682,7 @@ pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
 // returns a `(String, Option<usize>, Option<usize>)` tuple
 // matching C's outparam shape directly.
 
-/// Port of `promptexpand()` from `Src/prompt.c:182`.
+/// Port of `promptexpand(s, ns, marker, rs, Rs)` from `Src/prompt.c:182`.
 ///
 /// C signature:
 /// `char *promptexpand(char *s, int ns, const char *marker,
@@ -1710,7 +1710,7 @@ pub fn promptexpand(                                                         // 
 }
 
 /// Escape text attributes back to a `%`-prefixed prompt string.
-/// Port of `zattrescape()` from Src/prompt.c:257 — inverse of
+/// Port of `zattrescape(atr, len)` from Src/prompt.c:257 — inverse of
 /// `parsehighlight()`; used by the `print -P` output path.
 pub fn zattrescape(attrs: zattr) -> String {                             // c:257
     let mut result = String::new();
@@ -1746,7 +1746,7 @@ fn color_name(c: Color) -> String {
 }
 
 /// Parse a single colour character from a `%F{...}` argument.
-/// Port of `parsecolorchar()` from Src/prompt.c:318.
+/// Port of `parsecolorchar(arg, is_fg)` from Src/prompt.c:318.
 pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {   // c:318
     let color = color_from_name(arg)?; // c:336 (match_colour)
     let ansi = color_to_ansi(color, is_fg); // c:2440
@@ -1754,7 +1754,7 @@ pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {   // 
 }
 
 /// Internal prompt char output.
-/// Port of `pputc()` from Src/prompt.c:976 — the C source's
+/// Port of `pputc(c)` from Src/prompt.c:976 — the C source's
 /// per-character buffer-append helper. Rust's `String::push`
 /// covers it directly; this wrapper exists for call-site parity.
 pub fn pputc(buf: &mut String, c: char) {                                    // c:976
@@ -1763,7 +1763,7 @@ pub fn pputc(buf: &mut String, c: char) {                                    // 
 
 // Make sure there is room for `need' more characters in the buffer.       // c:987
 /// Ensure the prompt buffer has at least `need` bytes free.
-/// Port of `addbufspc()` from Src/prompt.c:991 — the C source
+/// Port of `addbufspc(need)` from Src/prompt.c:991 — the C source
 /// reallocates the heap buffer; Rust's `String` does this
 /// automatically so this is a no-op.
 pub fn addbufspc(_buf: &mut String, _need: usize) {                         // c:991
@@ -1771,13 +1771,13 @@ pub fn addbufspc(_buf: &mut String, _need: usize) {                         // c
 }
 
 /// Append a string to the prompt buffer.
-/// Port of `stradd()` from Src/prompt.c:1016.
+/// Port of `stradd(d)` from Src/prompt.c:1016.
 pub fn stradd(buf: &mut String, s: &str) {                                   // c:1016
     buf.push_str(s);
 }
 
 /// Look up a terminal capability and emit its escape.
-/// Port of `tsetcap()` from Src/prompt.c:1083 — the C source
+/// Port of `tsetcap(cap, flags)` from Src/prompt.c:1083 — the C source
 /// resolves termcap/terminfo names; we map the most-common ones
 /// directly onto ANSI sequences.
 pub fn tsetcap(cap: &str) -> String {                                        // c:1083
@@ -1794,13 +1794,13 @@ pub fn tsetcap(cap: &str) -> String {                                        // 
 }
 
 /// Output a string from a terminal capability.
-/// Port of `putstr()` from Src/prompt.c:1121.
+/// Port of `putstr(d)` from Src/prompt.c:1121.
 pub fn putstr(cap: &str) -> String {
     tsetcap(cap)
 }
 
 /// Replace one set of text attributes with another.
-/// Port of `treplaceattrs()` from Src/prompt.c:1719 — emits the
+/// Port of `treplaceattrs(newattrs)` from Src/prompt.c:1719 — emits the
 /// minimal SGR delta between two attribute states.
 pub fn treplaceattrs(old: zattr, new: zattr) -> String {             // c:1719
     let mut result = String::new();
@@ -1852,13 +1852,13 @@ pub fn treplaceattrs(old: zattr, new: zattr) -> String {             // c:1719
 }
 
 /// Set text attributes (full apply).
-/// Port of `tsetattrs()` from Src/prompt.c:1737.
+/// Port of `tsetattrs(newattrs)` from Src/prompt.c:1737.
 pub fn tsetattrs(attrs: zattr) -> String {                               // c:1737
     apply_text_attributes(attrs)
 }
 
 /// Unset (clear) text attributes via SGR-22/24/27 + 39/49.
-/// Port of `tunsetattrs()` from Src/prompt.c:1755.
+/// Port of `tunsetattrs(newattrs)` from Src/prompt.c:1755.
 pub fn tunsetattrs(attrs: zattr) -> String {                             // c:1755
     let mut result = String::new();
     if attrs & TXTBOLDFACE != 0 { result.push_str("\x1b[22m"); }
@@ -1872,7 +1872,7 @@ pub fn tunsetattrs(attrs: zattr) -> String {                             // c:17
 }
 
 /// Match a `%F`/`%K` argument as a colour spec.
-/// Port of `match_colour()` from Src/prompt.c:1957 — accepts
+/// Port of `match_colour(teststrp, is_fg, colour)` from Src/prompt.c:1957 — accepts
 /// named, numeric, and `#RRGGBB` truecolor forms.
 pub fn match_colour(spec: &str, is_fg: bool) -> Option<String> {
     // Try named colour
@@ -1894,7 +1894,7 @@ pub fn match_colour(spec: &str, is_fg: bool) -> Option<String> {
 }
 
 /// Match a highlight specification, returning attrs + mask.
-/// Port of `match_highlight()` from Src/prompt.c:2031 — the
+/// Port of `match_highlight(teststr, on_var, setmask, layer)` from Src/prompt.c:2031 — the
 /// mask records which fields were explicitly set so callers can
 /// merge against a default. Both values are canonical `zattr`
 /// bitfields (c:Src/zsh.h:2685); the mask carries the same
@@ -1911,7 +1911,7 @@ pub fn match_highlight(spec: &str) -> (zattr, zattr) {
 }
 
 /// Emit highlight attributes as an ANSI escape string.
-/// Port of `output_highlight()` from Src/prompt.c:2179.
+/// Port of `output_highlight(atr, mask, buf)` from Src/prompt.c:2179.
 pub fn output_highlight(attrs: zattr) -> String {
     apply_text_attributes(attrs)
 }
@@ -1926,7 +1926,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
 }
 
 /// Mix two sets of text attributes through a mask.
-/// Port of `mixattrs()` from Src/prompt.c:1802 — primary wins
+/// Port of `mixattrs(primary, mask, secondary)` from Src/prompt.c:1802 — primary wins
 /// where the mask says "set"; secondary fills the rest.
 pub fn mixattrs(primary: zattr, mask: zattr, secondary: zattr) -> zattr {
     // Bit-level mix: for each TXT* bit set in `mask`, take the
@@ -1962,7 +1962,7 @@ pub fn truecolor_terminal() -> bool {
 }
 
 /// Build a colour escape string from a specification.
-/// Port of `set_colour_code()` from Src/prompt.c:2353.
+/// Port of `set_colour_code(str, var)` from Src/prompt.c:2353.
 pub fn set_colour_code(spec: &str) -> Option<String> {
     match_colour(spec, true)
 }
@@ -1982,7 +1982,7 @@ pub fn free_colour_buffer() {
 }
 
 /// Apply a parsed colour attribute as an ANSI escape.
-/// Port of `set_colour_attribute()` from Src/prompt.c:2440.
+/// Port of `set_colour_attribute(atr, fg_bg, flags)` from Src/prompt.c:2440.
 pub fn set_colour_attribute(color: Color, is_fg: bool) -> String {           // c:2440
 color_to_ansi(color, is_fg) // c:2440
 }
@@ -2033,7 +2033,7 @@ pub fn cmdpop() {
 }
 
 /// Promote the 256-color value embedded in `atr` to an explicit
-/// 24-bit RGB value. Port of `map256toRGB()` from Src/prompt.c.
+/// 24-bit RGB value. Port of `map256toRGB(atr, shift, set24)` from Src/prompt.c.
 /// Used by the prompt-output path when the terminal supports
 /// truecolor and we want to emit RGB rather than the smaller
 /// 256-palette code.
@@ -2112,7 +2112,7 @@ pub fn set_pending_text_attrs(attrs: zattr) {
         .expect("pending_attrs poisoned") = attrs;
 }
 
-/// Port of `applytextattributes()` from `Src/prompt.c:1645`.
+/// Port of `applytextattributes(flags)` from `Src/prompt.c:1645`.
 ///
 /// C body diff-syncs `txtcurrentattrs` against `txtpendingattrs`
 /// and emits the minimal termcap-driven sequence to transition
@@ -2141,7 +2141,7 @@ pub fn applytextattributes(flags: i32) -> String {
 }
 
 /// Handle `%>...>` / `%<...<` / `%[truncchar string]` truncation.
-/// Port of `prompttrunc()` from Src/prompt.c:1276.
+/// Port of `prompttrunc(arg, truncchar, doprint, endchar)` from Src/prompt.c:1276.
 ///
 /// The C implementation mutates `bv` (the `BufVars` scratch struct
 /// in zsh's prompt expander) to insert a truncation string and

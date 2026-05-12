@@ -57,7 +57,7 @@ static BREAK_LEVEL: AtomicI32 = AtomicI32::new(0);
 
 // And this is used to print select lists.                                 // c:343
 /// Select-menu display.
-/// Port of `selectlist()` from Src/loop.c:347 — formats the
+/// Port of `selectlist(l, start)` from Src/loop.c:347 — formats the
 /// numbered menu the C source uses for `select var in words`. Picks
 /// columns automatically when `columns == 0`, mirroring the C
 /// source's terminal-width auto-detection.
@@ -217,39 +217,39 @@ mod tests {
 //   execcase   → compile_zsh.rs::compile_case
 //   exectry    → compile_zsh.rs::compile_try
 
-/// Port of `execfor()` from `Src/loop.c:50`. See module-level note:
+/// Port of `execfor(state, do_exec)` from `Src/loop.c:50`. See module-level note:
 /// fusevm bytecode replaces the tree walker; this entry is
 /// `unreachable!()` to crash if regressed.
 pub fn execfor(_do_exec: i32) -> i32 {                                   // c:50
     unreachable!("execfor: tree-walker disabled — fusevm lowers `for` in compile_zsh.rs")
 }
 
-/// Port of `execselect()` from `Src/loop.c:217`.
+/// Port of `execselect(state)` from `Src/loop.c:217`.
 pub fn execselect(_do_exec: i32) -> i32 {                                // c:217
     unreachable!("execselect: tree-walker disabled — fusevm lowers `select` in compile_zsh.rs")
 }
 
-/// Port of `execwhile()` from `Src/loop.c:413`.
+/// Port of `execwhile(state)` from `Src/loop.c:413`.
 pub fn execwhile(_do_exec: i32) -> i32 {                                 // c:413
     unreachable!("execwhile: tree-walker disabled — fusevm lowers `while`/`until` in compile_zsh.rs")
 }
 
-/// Port of `execrepeat()` from `Src/loop.c:499`.
+/// Port of `execrepeat(state)` from `Src/loop.c:499`.
 pub fn execrepeat(_do_exec: i32) -> i32 {                                // c:499
     unreachable!("execrepeat: tree-walker disabled — fusevm lowers `repeat` in compile_zsh.rs")
 }
 
-/// Port of `execif()` from `Src/loop.c:553`.
+/// Port of `execif(state, do_exec)` from `Src/loop.c:553`.
 pub fn execif(_do_exec: i32) -> i32 {                                    // c:553
     unreachable!("execif: tree-walker disabled — fusevm lowers `if`/`elif`/`else` in compile_zsh.rs")
 }
 
-/// Port of `execcase()` from `Src/loop.c:600`.
+/// Port of `execcase(state, do_exec)` from `Src/loop.c:600`.
 pub fn execcase(_do_exec: i32) -> i32 {                                  // c:600
     unreachable!("execcase: tree-walker disabled — fusevm lowers `case` in compile_zsh.rs")
 }
 
-/// Port of `exectry()` from `Src/loop.c:735`.
+/// Port of `exectry(state, do_exec)` from `Src/loop.c:735`.
 pub fn exectry(_do_exec: i32) -> i32 {                                   // c:735
     unreachable!("exectry: tree-walker disabled — fusevm lowers `try`/`always` in compile_zsh.rs")
 }

@@ -2335,7 +2335,7 @@ impl ShellExecutor {
             }
         }
 
-        // Port of getoutput() from Src/exec.c. Parse and compile via
+        // Port of getoutput(cmd, qt) from Src/exec.c. Parse and compile via
         // the lex+parse free fns + ZshCompiler pipeline, run on a
         // sub-VM with the host wired up. Stdout is captured through
         // an in-process pipe via dup2 — no fork.
@@ -2656,7 +2656,7 @@ impl ShellExecutor {
     // =========================================================================
 
     /// Fork a new process
-    /// Port of zfork() from exec.c
+    /// Port of zfork(ts) from exec.c
     pub fn zfork(&mut self, flags: ForkFlags) -> std::io::Result<ForkResult> {
         // Check for job control
         let can_background = self.options.get("monitor").copied().unwrap_or(false);
@@ -2716,7 +2716,7 @@ impl ShellExecutor {
     }
 
     /// Execute a command in the current process (exec family)
-    /// Port of zexecve() from exec.c
+    /// Port of zexecve(pth, argv, newenvp) from exec.c
     pub fn zexecve(&self, cmd: &str, args: &[String]) -> ! {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
@@ -2758,7 +2758,7 @@ impl ShellExecutor {
     }
 
     /// Enter a subshell
-    /// Port of entersubsh() from exec.c
+    /// Port of entersubsh(flags, retp) from exec.c
     pub fn entersubsh(&mut self, flags: SubshellFlags) {
         // Increment subshell level
         let level = self
@@ -3286,7 +3286,7 @@ impl crate::ported::exec::ShellExecutor {
         match array_name {
             // === ZSH/MAPFILE module ===
             // `${mapfile[/path]}` reads the file's contents. Direct
-            // port of `getpmmapfile()` (Src/Modules/mapfile.c:217)
+            // port of `getpmmapfile(ht, name)` (Src/Modules/mapfile.c:217)
             // which calls `get_contents()` (line 167) on the path.
             // Splice (`@`/`*`) returns the CWD entry list per
             // `scanpmmapfile()` (line 240).
@@ -7427,7 +7427,7 @@ pub fn loadautofn(shf: *mut crate::ported::zsh_h::shfunc,                       
     0
 }
 
-/// Port of `getfpfunc()` from Src/exec.c:5260. Walks `$fpath` (or the
+/// Port of `getfpfunc(s, ksh, fdir, alt_path, test_only)` from Src/exec.c:5260. Walks `$fpath` (or the
 /// supplied `spec_path` slice) for a file named `name` and writes the
 /// resolved directory through `*dir_path_out` (matching the C `char **dir_path`).
 /// Returns `Some(file_contents_path)` on success, `None` when not found.

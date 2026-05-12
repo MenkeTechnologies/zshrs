@@ -195,10 +195,10 @@ pub fn set_shinstdin(v: bool) {
 }
 
 // =====================================================================
-// Port of `zwarning()` from `Src/utils.c:142`.
+// Port of `zwarning(cmd, fmt, ap)` from `Src/utils.c:142`.
 // =====================================================================
 
-/// Port of `zwarning()` from `Src/utils.c:142`.
+/// Port of `zwarning(cmd, fmt, ap)` from `Src/utils.c:142`.
 ///
 /// Internal helper that builds the diagnostic prefix and emits it +
 /// the formatted message to stderr. Direct C body translation:
@@ -297,7 +297,7 @@ pub fn zerr(msg: &str) {                                                     // 
     zwarning(None, msg);                                                     // c:180
 }
 
-/// Port of `zerrnam()` from `Src/utils.c:194`.
+/// Port of `zerrnam(cmd)` from `Src/utils.c:194`.
 ///
 /// ```c
 /// if (errflag || noerrs) return;
@@ -329,7 +329,7 @@ pub fn zwarn(msg: &str) {                                                    // 
     zwarning(None, msg);                                                     // c:218
 }
 
-/// Port of `zwarnnam()` from `Src/utils.c:231`.
+/// Port of `zwarnnam(cmd)` from `Src/utils.c:231`.
 ///
 /// ```c
 /// if (errflag || noerrs) return;
@@ -344,7 +344,7 @@ pub fn zwarnnam(cmd: &str, msg: &str) {                                      // 
     zwarning(Some(cmd), msg);                                                // c:235
 }
 
-/// Port of `zerrmsg()` from `Src/utils.c:289`.
+/// Port of `zerrmsg(file, fmt, ap)` from `Src/utils.c:289`.
 ///
 /// C body emits the formatted message + (when locallevel > 0 or
 /// SHINSTDIN unset) the line number prefix + "\n". The Rust port
@@ -369,7 +369,7 @@ pub fn zerrmsg(msg: &str, errno: Option<i32>) {                              // 
 
 /// Nicely format a string for display (escape unprintable chars)
 /// Render a control character as a printable form.
-/// Port of `nicechar()` from Src/utils.c — same `^X`/`M-X`
+/// Port of `nicechar(c)` from Src/utils.c — same `^X`/`M-X`
 /// /`\xNN` rules used by `print -P` and the prompt path.
 pub fn nicechar(c: char) -> String {                                        // c:520
     if c.is_ascii_control() {
@@ -389,21 +389,21 @@ pub fn nicechar(c: char) -> String {                                        // c
 
 /// Nicely format a string
 /// Render an entire string with `nicechar()` for every byte.
-/// Port of `nicezputs()` from Src/utils.c.
+/// Port of `nicezputs(s, stream)` from Src/utils.c.
 pub fn nicezputs(s: &str) -> String {                                       // c:5313
     s.chars().map(nicechar).collect()
 }
 
 /// Convert character to lowercase
 /// To-lowercase that respects locale.
-/// Port of `tulower()` from Src/utils.c.
+/// Port of `tulower(c)` from Src/utils.c.
 pub fn tulower(c: char) -> char {                                           // c:2302
     c.to_lowercase().next().unwrap_or(c)
 }
 
 /// Convert character to uppercase
 /// To-uppercase that respects locale.
-/// Port of `tuupper()` from Src/utils.c.
+/// Port of `tuupper(c)` from Src/utils.c.
 pub fn tuupper(c: char) -> char {                                           // c:2310
     c.to_uppercase().next().unwrap_or(c)
 }
@@ -461,7 +461,7 @@ pub fn zsleep(us: i64) -> i32 {                                              // 
 
 /// Close a file descriptor
 /// Close an fd with EINTR retry.
-/// Port of `zclose()` from Src/utils.c.
+/// Port of `zclose(fd)` from Src/utils.c.
 // Close the given fd, and clear it from fdtable.                          // c:2123
 pub fn zclose(fd: i32) {                                                    // c:2127
     #[cfg(unix)]
@@ -470,7 +470,7 @@ pub fn zclose(fd: i32) {                                                    // c
     }
 }
 
-/// Port of `adjustcolumns()` from Src/utils.c:1856 — TIOCGWINSZ
+/// Port of `adjustcolumns(signalled)` from Src/utils.c:1856 — TIOCGWINSZ
 /// lookup that seeds `$COLUMNS`. The C variant updates the global
 /// `zterm_columns` and returns whether it changed; this Rust port
 /// returns the column count directly. Falls back to `$COLUMNS` env
@@ -493,7 +493,7 @@ pub fn adjustcolumns() -> usize {                                           // c
 }
 
 // window size changed                                                     // c:1824
-/// Port of `adjustlines()` from Src/utils.c:1831 — TIOCGWINSZ
+/// Port of `adjustlines(signalled)` from Src/utils.c:1831 — TIOCGWINSZ
 /// lookup that seeds `$LINES`. The C variant updates the global
 /// `zterm_lines` and returns whether it changed; this Rust port
 /// returns the row count directly. Falls back to `$LINES` env var,
@@ -577,7 +577,7 @@ fn ispecial(c: char) -> bool {
 /// Quote a string according to the specified type
 /// Port from zsh/Src/utils.c quotestring() (lines 6141-6452)
 /// Quote a string per the requested bslashquote style.
-/// Port of `quotestring()` from Src/utils.c — used by `print
+/// Port of `quotestring(s, instring)` from Src/utils.c — used by `print
 /// -%q`, `${(q)var}`, completion-output escaping, history
 /// re-emission.
 pub fn quotestring(s: &str, quote_type: i32) -> String {                     // c:6141
@@ -710,7 +710,7 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {                     // 
 /// Otherwise splits on the given separator string.
 /// allownull: if true, allows empty strings in result
 /// Split a string on `IFS` separators.
-/// Port of `sepsplit()` from Src/utils.c:3962.
+/// Port of `sepsplit(s, sep, allownull, heap)` from Src/utils.c:3962.
 pub fn sepsplit(s: &str, sep: Option<&str>, allownull: bool) -> Vec<String> { // c:3962
     // Handle Nularg at start (zsh internal marker) - line 3968
     let s = if s.starts_with('\x00') && s.len() > 1 {
@@ -748,7 +748,7 @@ pub fn sepsplit(s: &str, sep: Option<&str>, allownull: bool) -> Vec<String> { //
 /// Splits on whitespace (space, tab, newline), treating consecutive
 /// whitespace as a single separator.
 /// Split on whitespace.
-/// Port of `spacesplit()` from Src/utils.c.
+/// Port of `spacesplit(s, allownull, heap, quote)` from Src/utils.c.
 pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {                 // c:3711
     if allownull {
         s.split([' ', '\t', '\n']).map(|p| p.to_string()).collect()
@@ -761,7 +761,7 @@ pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {                 // 
 ///
 /// If sep is None, uses first char of IFS (defaults to space).
 /// Join an array with separator.
-/// Port of `sepjoin()` from Src/utils.c:3928.
+/// Port of `sepjoin(s, sep, heap)` from Src/utils.c:3928.
 pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {                // c:3928
     if arr.is_empty() {
         return String::new();
@@ -770,7 +770,7 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {                // 
     arr.join(sep)
 }
 
-/// Port of `zstrtol()` from `Src/utils.c:2425`. Convert string to
+/// Port of `zstrtol(s, t, base)` from `Src/utils.c:2425`. Convert string to
 /// zlong with base autodetection. Returns the parsed value AND a
 /// `&str` slice pointing to the first unconsumed character —
 /// matching C's `char **t` out-arg.
@@ -905,7 +905,7 @@ pub fn read_poll(fd: i32, timeout_us: i64) -> bool {                         // 
 /// Check glob qualifier syntax
 /// Port from zsh/Src/utils.c checkglobqual()
 /// Check whether a string contains glob qualifiers `(…)`.
-/// Port of `checkglobqual()` from Src/utils.c.
+/// Port of `checkglobqual(str, sl, nobareglob, sp)` from Src/utils.c.
 pub fn checkglobqual(s: &str) -> bool {                                      // c:glob.c:1158
     if !s.ends_with(')') {
         return false;
@@ -935,7 +935,7 @@ pub fn checkglobqual(s: &str) -> bool {                                      // 
 /// Compute edit distance between two strings (for spelling correction)
 /// Port from zsh/Src/utils.c spdist() lines 4675-4759
 /// Levenshtein-style edit distance for typo correction.
-/// Port of `spdist()` from Src/utils.c — drives the
+/// Port of `spdist(s, t, thresh)` from Src/utils.c — drives the
 /// `setopt CORRECT` typo-prompt machinery.
 pub fn spdist(s: &str, t: &str, max_dist: usize) -> usize {                  // c:4675
     let s_chars: Vec<char> = s.chars().collect();
@@ -1008,7 +1008,7 @@ pub fn arrlen<T>(arr: &[T]) -> usize {                                      // c
     arr.len()
 }
 
-/// Port of `dupstrpfx()` from `Src/utils.c` (~line 1230 — duplicate
+/// Port of `dupstrpfx(s, len)` from `Src/utils.c` (~line 1230 — duplicate
 /// the first `len` BYTES of `s` into a fresh heap string). C body
 /// is `memcpy(zhalloc(len+1), s, len); ret[len] = 0;`. The Rust
 /// port operates on bytes (not chars) to match — multibyte input
@@ -1019,7 +1019,7 @@ pub fn dupstrpfx(s: &str, len: usize) -> String {                            // 
     String::from_utf8_lossy(&bytes[..take]).into_owned()
 }
 
-/// Port of `unmeta()` from `Src/utils.c:4994`.
+/// Port of `unmeta(file_name)` from `Src/utils.c:4994`.
 ///
 /// Convert a zsh internal (metafied) string to a system-call-safe
 /// form (e.g. for passing to `open(2)`).
@@ -1070,7 +1070,7 @@ pub fn ztrlen(s: &str) -> usize {                                            // 
     len
 }
 
-/// Port of `ztrcmp()` from `Src/utils.c:5106`.
+/// Port of `ztrcmp(s1, s2)` from `Src/utils.c:5106`.
 ///
 /// Byte-walking compare with lazy Meta resolution. C body skips
 /// matching bytes wholesale, then on the first differing byte
@@ -1167,7 +1167,7 @@ pub fn bicat(s1: &str, s2: &str) -> String {                                 // 
     format!("{}{}", s1, s2)
 }
 
-/// Port of `wordcount()` from `Src/utils.c:3879`.
+/// Port of `wordcount(s, sep, mul)` from `Src/utils.c:3879`.
 ///
 /// Returns the number of words in `s` that would result from splitting
 /// on `sep` (or `$IFS` when `sep` is None). `mul` controls how
@@ -1311,7 +1311,7 @@ pub fn colonsplit(s: &str, uniq: bool) -> Vec<String> {
     result
 }
 
-/// Port of `skipwsep()` from `Src/utils.c:3680`.
+/// Port of `skipwsep(s)` from `Src/utils.c:3680`.
 ///
 /// Skip whitespace separators (`iwsep`-true bytes) at the start of
 /// `s`. Returns `(remaining_str, count)` — `count` is the number of
@@ -1459,7 +1459,7 @@ pub fn realpath(path: &str) -> Option<String> {
 }
 
 /// Convert to absolute path, normalising `.` and `..` components.
-/// Port of `xsymlinks()` from Src/utils.c — same `realpath(3)`
+/// Port of `xsymlinks(s)` from Src/utils.c — same `realpath(3)`
 /// fallback the C source uses on systems without it. Does NOT
 /// follow symlinks (matches the `physical = 0` mode in C). The
 /// `:a` modifier and the symlink-resolving `:A`/`:P` modifiers
@@ -1694,7 +1694,7 @@ pub fn zbeep() {                                                             // 
     crate::ported::signals::unqueue_signals();                               // c:4115
 }
 
-/// Port of `mode_to_octal()` from `Src/utils.c:7634`.
+/// Port of `mode_to_octal(mode)` from `Src/utils.c:7634`.
 ///
 /// Convert a `mode_t` into the equivalent canonical octal value
 /// by testing each `S_I*` flag explicitly and OR-ing the matching
@@ -1845,7 +1845,7 @@ pub fn checkrmall(path: &str) -> bool {
     }
 }
 
-/// Port of `xsymlink()` from `Src/utils.c:971`.
+/// Port of `xsymlink(s, heap)` from `Src/utils.c:971`.
 ///
 /// ```c
 /// mod_export char *
@@ -1948,7 +1948,7 @@ pub fn privasserted() -> bool {
     false
 }
 
-/// Port of `findpwd()` from `Src/utils.c:792`.
+/// Port of `findpwd(s)` from `Src/utils.c:792`.
 ///
 /// ```c
 /// char *findpwd(char *s)
@@ -2084,7 +2084,7 @@ pub fn write_loop(fd: i32, buf: &[u8]) -> io::Result<usize> {
     }
 }
 
-/// Port of `redup()` from `Src/utils.c:2021`.
+/// Port of `redup(x, y)` from `Src/utils.c:2021`.
 ///
 /// C signature: `int redup(int x, int y)`.
 /// "Move fd x to y. If x == -1, fd y is closed. Returns y for
@@ -2671,7 +2671,7 @@ pub fn zwcwidth(c: char) -> usize {
 }
 
 /// Find program in PATH.
-/// Port of `pathprog()` from Src/utils.c — first hit on
+/// Port of `pathprog(prog, namep)` from Src/utils.c — first hit on
 /// `access(X_OK)`. Absolute or `./`-prefixed paths skip the PATH
 /// walk and check existence directly.
 pub fn pathprog(prog: &str) -> Option<PathBuf> {
@@ -2758,7 +2758,7 @@ pub fn substnamedir(s: &str) -> String {                                     // 
     }
 }
 
-/// Port of `finddir_scan()` from Src/utils.c:1106 — ScanFunc the
+/// Port of `finddir_scan(hn)` from Src/utils.c:1106 — ScanFunc the
 /// C source registers with `scanhashtable(nameddirtab, …)` to pick
 /// the longest-prefix entry. Reads the typed `nameddir` entries
 /// from `crate::ported::hashnameddir::nameddirtab()`.
@@ -3087,7 +3087,7 @@ pub fn addlockfd(fd: i32, cloexec: bool) {
     }
 }
 
-/// Port of `zcloselockfd()` from `Src/utils.c:2156`.
+/// Port of `zcloselockfd(fd)` from `Src/utils.c:2156`.
 ///
 /// C signature: `int zcloselockfd(int fd)`.
 /// "Close an fd returning 0 if used for locking; return -1 if it
@@ -3114,7 +3114,7 @@ pub fn zcloselockfd(fd: i32) -> i32 {                                    // c:21
     0                                                                    // c:2163
 }
 
-/// Port of `zstrtol_underscore()` from `Src/utils.c:2436`.
+/// Port of `zstrtol_underscore(s, t, base, underscore)` from `Src/utils.c:2436`.
 ///
 /// C signature: `zlong zstrtol_underscore(const char *s, char **t,
 ///                                         int base, int underscore)`.
@@ -3353,7 +3353,7 @@ pub fn spscan(name: &str, candidates: &[String], threshold: usize) -> Option<Str
     best
 }
 
-/// Port of `getshfunc()` from `Src/utils.c:3998`.
+/// Port of `getshfunc(nam)` from `Src/utils.c:3998`.
 ///
 /// C body:
 /// ```c
@@ -3464,7 +3464,7 @@ pub fn imeta_byte(b: u8) -> bool {
     b >= Meta
 }
 
-/// Port of `unmetafy()` from `Src/utils.c:4954`.
+/// Port of `unmetafy(s, len)` from `Src/utils.c:4954`.
 ///
 /// Take a metafied byte buffer in `s` and convert it in place to
 /// its literal representation. C signature:
@@ -3530,7 +3530,7 @@ pub fn metalen(s: &str, len: usize) -> usize {
     count
 }
 
-/// Port of `nicedup()` from `Src/utils.c:5289` (single-byte build) and
+/// Port of `nicedup(s, heap)` from `Src/utils.c:5289` (single-byte build) and
 /// `Src/utils.c:5530` (multibyte build). C body:
 /// ```c
 /// char *retstr;
@@ -3547,7 +3547,7 @@ pub fn nicedup(s: &str) -> String {
     sb_niceformat(s)
 }
 
-/// Port of `niceztrlen()` from `Src/utils.c:5324`.
+/// Port of `niceztrlen(s)` from `Src/utils.c:5324`.
 ///
 /// Returns the length (in bytes) of the visible representation of
 /// the metafied string `s`. C body walks each char via `nicechar`
@@ -3558,7 +3558,7 @@ pub fn niceztrlen(s: &str) -> usize {
     sb_niceformat(s).len()
 }
 
-/// Port of `dquotedztrdup()` from `Src/utils.c:6649`.
+/// Port of `dquotedztrdup(s)` from `Src/utils.c:6649`.
 ///
 /// "Double-quote a metafied string." C body has two arms:
 /// - CSHJUNKIEQUOTES set: backslash-escape `"`/`$`/`` ` `` and
@@ -3614,7 +3614,7 @@ pub fn dquotedztrdup(s: &str) -> String {
     metafy(&out)
 }
 
-/// Port of `restoredir()` from `Src/utils.c:7565`.
+/// Port of `restoredir(d)` from `Src/utils.c:7565`.
 ///
 /// ```c
 /// int restoredir(struct dirsav *d) {
@@ -3697,7 +3697,7 @@ pub fn restoredir(d: &mut crate::ported::zsh_h::dirsav) -> i32 {
     err
 }
 
-/// Port of `convfloat()` from `Src/params.c:5690` (the C source has
+/// Port of `convfloat(dval, digits, flags, fout)` from `Src/params.c:5690` (the C source has
 /// it in params.c, not utils.c — re-exported through utils.rs for
 /// caller convenience since math/printf paths reach it from both
 /// directories). See [`crate::params::convfloat`] for the faithful
@@ -3707,14 +3707,14 @@ pub fn convfloat(dval: f64, digits: i32, flags: u32) -> String {
     crate::params::convfloat(dval, digits, flags)
 }
 
-/// Port of `convfloat_underscore()` from `Src/params.c:5765`.
+/// Port of `convfloat_underscore(dval, underscore)` from `Src/params.c:5765`.
 /// See [`crate::params::convfloat_underscore`] for the faithful C
 /// body port.
 pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
     crate::params::convfloat_underscore(dval, underscore)
 }
 
-/// Port of `ucs4tomb()` from `Src/utils.c:6788`.
+/// Port of `ucs4tomb(wval, buf)` from `Src/utils.c:6788`.
 ///
 /// Encode a UCS-4 codepoint into the buffer `buf` using the current
 /// locale's multibyte encoding. Returns the number of bytes written,
@@ -4198,7 +4198,7 @@ pub fn is_nicechar(c: char) -> bool {
     c.is_ascii_control() || !c.is_ascii()
 }
 
-/// Port of `freestr()` from `Src/utils.c:1739`.
+/// Port of `freestr(a)` from `Src/utils.c:1739`.
 ///
 /// C body:
 /// ```c
@@ -4329,7 +4329,7 @@ pub fn setblock_stdin() -> i32 {
     0
 }
 
-/// Port of `ztrftimebuf()` from `Src/utils.c:3312`.
+/// Port of `ztrftimebuf(bufsizeptr, decr)` from `Src/utils.c:3312`.
 ///
 /// ```c
 /// static int ztrftimebuf(int *bufsizeptr, int decr) {
@@ -4424,7 +4424,7 @@ pub fn makebangspecial(yesno: bool) {                                        // 
     }
 }
 
-/// Port of `wcsiblank()` from `Src/utils.c:4302`.
+/// Port of `wcsiblank(wc)` from `Src/utils.c:4302`.
 ///
 /// ```c
 /// mod_export int wcsiblank(wint_t wc) {
@@ -4523,7 +4523,7 @@ pub fn setcbreak() -> bool {
     false
 }
 
-/// Port of `ztrdup_metafy()` from `Src/utils.c:4929`.
+/// Port of `ztrdup_metafy(s)` from `Src/utils.c:4929`.
 ///
 /// ```c
 /// mod_export char *
@@ -4551,7 +4551,7 @@ pub fn unmeta_one(s: &str) -> (char, usize) {
     }
 }
 
-/// Port of `ztrlenend()` from `Src/utils.c:5162`.
+/// Port of `ztrlenend(s, eptr)` from `Src/utils.c:5162`.
 ///
 /// ```c
 /// for (l = 0; s < eptr; l++) {
@@ -4692,7 +4692,7 @@ pub fn dquotedzputs(s: &str) -> String {
 // canonical lowercase struct; deleted in favour of routing through
 // `zsh_h::dirsav` directly.
 
-/// Port of `init_dirsav()` from `Src/utils.c:7468`. Initialize a
+/// Port of `init_dirsav(d)` from `Src/utils.c:7468`. Initialize a
 /// `dirsav` struct to its empty/default state. C body memset's the
 /// fields to 0 (dirfd to -1).
 ///
@@ -4806,7 +4806,7 @@ pub fn nicedupstring(s: &str) -> String {
     sb_niceformat(s)
 }
 
-/// Port of `mailstat()` from `Src/utils.c:7685`.
+/// Port of `mailstat(path, st)` from `Src/utils.c:7685`.
 ///
 /// C signature: `int mailstat(char *path, struct stat *st)`.
 /// Writes maildir aggregate stats into `*st` (or the native stat for
@@ -5097,7 +5097,7 @@ pub(crate) fn ispwd(pwd: &str) -> bool {
 // via the same utils.c path).
 // ===========================================================
 
-/// Port of `quotedzputs()` from `Src/utils.c:6464`.
+/// Port of `quotedzputs(s, stream)` from `Src/utils.c:6464`.
 ///
 /// Quote a string for re-readable output (`set -x`, `typeset -p`,
 /// `set` listing, etc.). zsh's algorithm:
@@ -5303,14 +5303,14 @@ static PREPROMPT_FNS: std::sync::Mutex<Vec<fn()>> = std::sync::Mutex::new(Vec::n
 
 // Add a function to the list of pre-prompt functions.                     // c:1315
 /// Register a callback to run before each prompt.
-/// Port of `addprepromptfn()` from Src/utils.c:1319.
+/// Port of `addprepromptfn(func)` from Src/utils.c:1319.
 pub fn addprepromptfn(func: fn()) {                                         // c:1319
     PREPROMPT_FNS.lock().unwrap().push(func);
 }
 
 // Remove a function from the list of pre-prompt functions.                // c:1328
 /// Remove a previously-registered pre-prompt callback.
-/// Port of `delprepromptfn()` from Src/utils.c:1332.
+/// Port of `delprepromptfn(func)` from Src/utils.c:1332.
 pub fn delprepromptfn(func: fn()) {                                         // c:1332
     let mut list = PREPROMPT_FNS.lock().unwrap();
     if let Some(pos) = list.iter().position(|f| *f as usize == func as usize) {
@@ -5327,7 +5327,7 @@ static TIMED_FNS: std::sync::Mutex<Vec<(i64, fn())>> = std::sync::Mutex::new(Vec
 
 // Add a function to the list of timed functions.                           // c:1367
 /// Register a function to run at `when` (epoch seconds).
-/// Port of `addtimedfn()` from Src/utils.c:1371.
+/// Port of `addtimedfn(func, when)` from Src/utils.c:1371.
 pub fn addtimedfn(func: fn(), when: i64) {                                   // c:1371
     let mut list = TIMED_FNS.lock().unwrap();
     let pos = list.iter().position(|(w, _)| when < *w).unwrap_or(list.len());
@@ -5335,7 +5335,7 @@ pub fn addtimedfn(func: fn(), when: i64) {                                   // 
 }
 
 /// Remove a registered timed function (first occurrence only).
-/// Port of `deltimedfn()` from Src/utils.c:1430.
+/// Port of `deltimedfn(func)` from Src/utils.c:1430.
 pub fn deltimedfn(func: fn()) {                                              // c:1430
     let mut list = TIMED_FNS.lock().unwrap();
     if let Some(pos) = list.iter().position(|(_, f)| *f as usize == func as usize) {
@@ -5344,7 +5344,7 @@ pub fn deltimedfn(func: fn()) {                                              // 
 }
 
 /// Invoke a hook function by name plus any `<name>_functions` array.
-/// Port of `callhookfunc()` from Src/utils.c:1469. Returns 0 if at
+/// Port of `callhookfunc(name, lnklst, arrayp, retval)` from Src/utils.c:1469. Returns 0 if at
 /// least one hook ran, 1 otherwise — the C source uses the same
 /// stat semantics so the prompt machinery can detect "did periodic
 /// fire". Hook dispatch goes through the executor singleton (which
@@ -5426,7 +5426,7 @@ pub fn preprompt() {
 
 /// Emit the `$PS4` xtrace prefix to stderr.
 /// Read terminal mode from a file descriptor.
-/// Port of `fdgettyinfo()` from Src/utils.c:1753. C source uses
+/// Port of `fdgettyinfo(SHTTY, ti)` from Src/utils.c:1753. C source uses
 /// `tcgetattr(SHTTY, &ti->tio)`; we return the populated termios
 /// or an io::Error on failure (caller equivalent to zsh's `zerr`).
 #[cfg(unix)]
@@ -5446,7 +5446,7 @@ pub fn fdgettyinfo(_fd: i32) -> std::io::Result<()> {
 }
 
 /// Apply terminal mode to a file descriptor, with EINTR retry.
-/// Port of `fdsettyinfo()` from Src/utils.c:1785. C source loops
+/// Port of `fdsettyinfo(SHTTY, ti)` from Src/utils.c:1785. C source loops
 /// `while (tcsetattr(SHTTY, TCSADRAIN, &ti->tio) == -1 && errno
 /// == EINTR)` — same retry shape here.
 #[cfg(unix)]
@@ -5469,7 +5469,7 @@ pub fn fdsettyinfo(_fd: i32, _tio: &()) -> std::io::Result<()> {
 }
 
 /// Multibyte-aware nice-format of a string.
-/// Port of `mb_niceformat()` from Src/utils.c:5366. Walks the
+/// Port of `mb_niceformat(s, stream, outstrp, flags)` from Src/utils.c:5366. Walks the
 /// (un-metafied) string char-by-char; for each control byte or
 /// invalid sequence emits a `^X`/`\\xNN` representation, otherwise
 /// passes the char through. The C source threads an
@@ -5486,7 +5486,7 @@ pub fn mb_niceformat(s: &str) -> String {
     out
 }
 
-/// Port of `is_mb_niceformat()` from `Src/utils.c:5474`.
+/// Port of `is_mb_niceformat(s)` from `Src/utils.c:5474`.
 ///
 /// Predicate: would any character in `s` need representation by
 /// `mb_niceformat` / `nicedup`? C body:
@@ -5566,7 +5566,7 @@ pub fn is_mb_niceformat(s: &str) -> bool {
 }
 
 /// Unmetafy a string and write it to stdout.
-/// Port of `zputs()` from Src/utils.c:5265. C source walks the
+/// Port of `zputs(s, stream)` from Src/utils.c:5265. C source walks the
 /// metafied byte stream, converts each `Meta+X` pair back to `X
 /// ^ 32`, and writes via `fputc`. We collapse to one `write_all`
 /// after constructing the unmetafied string. Internal token bytes
@@ -5593,7 +5593,7 @@ pub fn zputs(s: &str) -> std::io::Result<()> {
 }
 
 /// Multibyte-aware metafied-string char advance.
-/// Port of `mb_metacharlenconv()` from Src/utils.c:5611. Returns
+/// Port of `mb_metacharlenconv(s, wcp)` from Src/utils.c:5611. Returns
 /// `(bytes_consumed, scalar_char)` for the next char in `s`. C
 /// source dispatches to `mb_metacharlenconv_r()` for true
 /// multibyte; we use Rust's UTF-8 char iterator which already
@@ -5620,7 +5620,7 @@ pub fn mb_metacharlenconv(s: &str) -> (usize, Option<char>) {
 }
 
 /// Single-byte metafied char advance.
-/// Port of `metacharlenconv()` from Src/utils.c:5811 — the
+/// Port of `metacharlenconv(x, c)` from Src/utils.c:5811 — the
 /// non-MULTIBYTE_SUPPORT branch. Same `Meta+X` two-byte handling
 /// without the multibyte decode.
 pub fn metacharlenconv(s: &str) -> (usize, Option<char>) {
@@ -5636,7 +5636,7 @@ pub fn metacharlenconv(s: &str) -> (usize, Option<char>) {
 }
 
 /// Plain (non-metafy) char advance.
-/// Port of `charlenconv()` from Src/utils.c:5832 — the
+/// Port of `charlenconv(x, len, c)` from Src/utils.c:5832 — the
 /// non-MULTIBYTE_SUPPORT branch. Single-byte read with
 /// `len`-bound check; matches the C source's `if (!len)` early
 /// exit.
@@ -5655,7 +5655,7 @@ pub fn charlenconv(s: &str, len: usize) -> (usize, Option<char>) {
 /// zsh's metafied form: each `imeta(b)` byte becomes `Meta` (0x83)
 /// followed by `b ^ 32`.
 ///
-/// Port of `metafy()` from Src/utils.c:4856. The C source takes a
+/// Port of `metafy(buf, len, heap)` from Src/utils.c:4856. The C source takes a
 /// `heap` mode controlling whether the result is `zalloc`'d /
 /// `zhalloc`'d / written into a static buffer / appended to the
 /// existing buffer; in Rust we always return an owned `String`
@@ -5687,7 +5687,7 @@ pub fn metafy(buf: &str) -> String {                                        // c
 }
 
 /// Set a wide-char array from a multibyte source string.
-/// Port of `set_widearray()` from `Src/utils.c:69`.
+/// Port of `set_widearray(mb_array, wca)` from `Src/utils.c:69`.
 ///
 /// ```c
 /// static void set_widearray(char *mb_array, Widechar_array wca) {

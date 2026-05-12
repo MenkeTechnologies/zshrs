@@ -73,7 +73,7 @@ impl Zle {
 
     /// Set the line from a string while preserving the current cursor
     /// position (clamped to the new length).
-    /// Port of `setline()` from Src/Zle/zle_utils.c:1129 with the
+    /// Port of `setline(s, flags)` from Src/Zle/zle_utils.c:1129 with the
     /// `ZSL_NOCURSOR` flag set. Used by widget bodies that swap in a
     /// fresh line (history navigation, isearch hit) but want to keep
     /// the cursor where it was.
@@ -123,7 +123,7 @@ impl Zle {
     }
 
     /// Paste from a named vi cut buffer.
-    /// Port of `pastebuf()` from Src/Zle/zle_misc.c:558. The C source
+    /// Port of `pastebuf(buf, mult, position)` from Src/Zle/zle_misc.c:558. The C source
     /// looks up `vibuf[zmod.vibuf]` (the vi `"a..z` register table),
     /// uses `cutbuf` for the unnamed buffer, and inserts at zlecs (or
     /// zlecs+1 for `after=true`). zshrs models the 36-slot vibuf array
@@ -199,14 +199,14 @@ impl Zle {
     }
 
     /// Find line number for position
-    /// Port of findline() from zle_utils.c
+    /// Port of findline(a, b) from zle_utils.c
     pub fn find_line(&self, pos: usize) -> usize {
         self.zleline[..pos].iter().filter(|&&c| c == '\n').count()
     }
 
     // make sure that the line buffer has at least sz chars               // c:63
     /// Ensure line has enough space
-    /// Port of sizeline() from zle_utils.c
+    /// Port of sizeline(sz) from zle_utils.c
     pub fn size_line(&mut self, needed: usize) {                            // c:67
         if self.zleline.capacity() < needed {
             self.zleline.reserve(needed - self.zleline.len());
@@ -215,7 +215,7 @@ impl Zle {
 
     // insert space for ct chars at cursor position                        // c:773
     /// Make space in line at position
-    /// Port of spaceinline() from zle_utils.c
+    /// Port of spaceinline(ct) from zle_utils.c
     pub fn space_in_line(&mut self, pos: usize, count: usize) {             // c:777
         for _ in 0..count {
             self.zleline.insert(pos, ' ');
@@ -227,7 +227,7 @@ impl Zle {
     }
 
     /// Shift characters in line
-    /// Port of shiftchars() from zle_utils.c
+    /// Port of shiftchars(to, cnt) from zle_utils.c
     pub fn shift_chars(&mut self, from: usize, count: i32) {                // c:846
         if count > 0 {
             for _ in 0..count {
@@ -287,7 +287,7 @@ impl Zle {
     }
 
     /// Kill forward
-    /// Port of forekill() from zle_utils.c
+    /// Port of forekill(ct, flags) from zle_utils.c
     pub fn fore_kill(&mut self, count: usize, append: bool) {               // c:1064
         let count = count.min(self.zlell - self.zlecs);
         if count == 0 {
@@ -318,7 +318,7 @@ impl Zle {
     }
 
     /// Kill backward
-    /// Port of backkill() from zle_utils.c
+    /// Port of backkill(ct, flags) from zle_utils.c
     pub fn back_kill(&mut self, count: usize, append: bool) {               // c:1045
         let count = count.min(self.zlecs);
         if count == 0 {
@@ -390,19 +390,19 @@ impl Zle {
     }
 
     /// Show a message
-    /// Port of showmsg() from zle_utils.c
+    /// Port of showmsg(msg) from zle_utils.c
     pub fn show_msg(&self, msg: &str) {
         eprintln!("{}", msg);
     }
 
     /// Handle a feep (beep/error)
-    /// Port of handlefeep() from zle_utils.c
+    /// Port of handlefeep(args) from zle_utils.c
     pub fn handle_feep(&self) {
         print!("\x07"); // Bell
     }
 
     /// Add text to line at position
-    /// Port of zleaddtoline() from zle_utils.c
+    /// Port of zleaddtoline(chr) from zle_utils.c
     pub fn add_to_line(&mut self, pos: usize, text: &str) {
         for (i, c) in text.chars().enumerate() {
             self.zleline.insert(pos + i, c);
@@ -421,7 +421,7 @@ impl Zle {
     }
 
     /// Set line from string
-    /// Port of stringaszleline() from zle_utils.c
+    /// Port of stringaszleline(instr, incs, outll, outsz, outcs) from zle_utils.c
     pub fn string_as_line(&mut self, s: &str) {
         self.zleline = s.chars().collect();
         self.zlell = self.zleline.len();
@@ -432,7 +432,7 @@ impl Zle {
     }
 
     /// Get ZLE line
-    /// Port of zlegetline() from zle_utils.c
+    /// Port of zlegetline(ll, cs) from zle_utils.c
     pub fn get_zle_line(&self) -> &[ZleChar] {
         &self.zleline
     }
@@ -464,7 +464,7 @@ impl Zle {
     }
 
     /// Handle the auto-removable completion suffix.
-    /// Port of `handlesuffix()` from Src/Zle/zle_utils.c:1415. The C
+    /// Port of `handlesuffix(args)` from Src/Zle/zle_utils.c:1415. The C
     /// source clears or retains the pending suffix depending on the
     /// invoking widget's flags; without compsys integration in this
     /// crate, we surface a hook so the host can update its compsys
@@ -474,7 +474,7 @@ impl Zle {
     }
 
     /// Set the editor line from a string.
-    /// Port of `setline()` from Src/Zle/zle_utils.c:1129. The C source
+    /// Port of `setline(s, flags)` from Src/Zle/zle_utils.c:1129. The C source
     /// converts the metafied input back to a wide-char buffer; in Rust
     /// we just collect chars into the line buffer and reset the cursor.
     pub fn set_line(&mut self, s: &str) {
@@ -528,7 +528,7 @@ impl Zle {
 // `i32 flags` matching the C signatures verbatim.
 
 /// Format a key sequence for `bindkey -L` listing.
-/// Port of `bindztrdup()` from Src/Zle/zle_utils.c:1238. Produces the
+/// Port of `bindztrdup(str)` from Src/Zle/zle_utils.c:1238. Produces the
 /// dquoted-friendly form (`\C-a`, `\M-x`, escaped backslashes/carets)
 /// that the bindkey command uses for round-trippable output —
 /// distinct from `printbind` below which uses the human-readable
@@ -560,7 +560,7 @@ pub fn bindztrdup(seq: &[u8]) -> String {
 }
 
 /// Print a key binding for display
-/// Port of printbind() from zle_utils.c
+/// Port of printbind(str, stream) from zle_utils.c
 pub fn printbind(seq: &[u8]) -> String {
     let mut result = String::new();
 
@@ -585,7 +585,7 @@ pub fn printbind(seq: &[u8]) -> String {
 
 impl Zle {
     /// Queue a hook for the host to dispatch.
-    /// Port of `zlecallhook()` from Src/Zle/zle_utils.c:1755 — the C source
+    /// Port of `zlecallhook(name, arg)` from Src/Zle/zle_utils.c:1755 — the C source
     /// resolves the widget via `rthingy_nocreate` and runs it inline via
     /// `execzlefunc(thingy, args, 1, 0)`. The Rust port can't reach the
     /// executor from this crate, so it appends to `pending_hooks`; the
@@ -885,7 +885,7 @@ pub fn applychange(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) -> i32 
     if change.flags & CH_NEXT != 0 { 1 } else { 0 }
 }
 
-/// Port of `backdel()` from `Src/Zle/zle_utils.c:1084`. Removes `ct`
+/// Port of `backdel(ct, flags)` from `Src/Zle/zle_utils.c:1084`. Removes `ct`
 /// characters BACKWARD from the cursor (i.e. drops `[zlecs-ct,
 /// zlecs)` from the line) without pushing to the kill-ring.
 ///
@@ -905,7 +905,7 @@ pub fn backdel(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32, _flags: i32
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);                                              // c:1091 CCRIGHT
 }
 
-/// Port of `backkill()` from `Src/Zle/zle_utils.c:1045`. Cuts `ct`
+/// Port of `backkill(ct, flags)` from `Src/Zle/zle_utils.c:1045`. Cuts `ct`
 /// characters BACKWARD from the cursor (i.e. removes `[zlecs-ct,
 /// zlecs)` and pushes them onto the kill-ring head). C: `void
 /// backkill(int ct, int flags)`. Rust port takes `&mut Zle` so the
@@ -928,7 +928,7 @@ pub fn backkill(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32, flags: i32
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);                                              // c:1059 CCRIGHT
 }
 
-/// Port of `cut()` from Src/Zle/zle_utils.c:935.
+/// Port of `cut(i, ct, flags)` from Src/Zle/zle_utils.c:935.
 /// `i` is the start byte offset; `ct` is the count to cut; `dir` is
 /// the cut direction flag (0=after, non-zero=before).
 pub fn cut(zle: &mut crate::ported::zle::zle_main::Zle, i: i32,              // c:935
@@ -949,7 +949,7 @@ pub fn cut(zle: &mut crate::ported::zle::zle_main::Zle, i: i32,              // 
     0
 }
 
-/// Port of `cuttext()` from Src/Zle/zle_utils.c:946.
+/// Port of `cuttext(line, ct, flags)` from Src/Zle/zle_utils.c:946.
 pub fn cuttext(zle: &mut crate::ported::zle::zle_main::Zle, txt: &[char],    // c:946
                dir: i32) {
     use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
@@ -1021,7 +1021,7 @@ pub fn findeol(zle: &crate::ported::zle::zle_main::Zle) -> usize {           // 
     x                                                                        // c:1175 return x
 }
 
-/// Port of `findline()` from `Src/Zle/zle_utils.c:1179`.
+/// Port of `findline(a, b)` from `Src/Zle/zle_utils.c:1179`.
 /// ```c
 /// void
 /// findline(int *a, int *b)
@@ -1035,7 +1035,7 @@ pub fn findline(zle: &crate::ported::zle::zle_main::Zle) -> (usize, usize) {  //
     (findbol(zle), findeol(zle))                                             // c:1182-1183
 }
 
-/// Port of `foredel()` from `Src/Zle/zle_utils.c:1105`. Removes `ct`
+/// Port of `foredel(ct, flags)` from `Src/Zle/zle_utils.c:1105`. Removes `ct`
 /// characters FORWARD from the cursor (i.e. drops `[zlecs, zlecs+ct)`
 /// from the line) without pushing to the kill-ring.
 ///
@@ -1052,7 +1052,7 @@ pub fn foredel(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32, _flags: i32
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);                                              // c:1112 CCRIGHT
 }
 
-/// Port of `forekill()` from `Src/Zle/zle_utils.c:1064`. Cuts `ct`
+/// Port of `forekill(ct, flags)` from `Src/Zle/zle_utils.c:1064`. Cuts `ct`
 /// characters FORWARD from the cursor (i.e. removes `[zlecs,
 /// zlecs+ct)` and pushes them onto the kill-ring head). C: `void
 /// forekill(int ct, int flags)`. Rust port takes `&mut Zle`. The
@@ -1081,7 +1081,7 @@ pub fn free_region_highlights_memos() {                                      // 
     //                    calls zfree on each. Drop covers it; no-op.
 }
 
-/// Port of `freechanges()` from Src/Zle/zle_utils.c:1472.
+/// Port of `freechanges(p)` from Src/Zle/zle_utils.c:1472.
 pub fn freechanges() {                                                       // c:1472
     // C body c:1474-1484 — walks Change linked list, frees del/ins
     //                      strings + the Change node. Drop covers it.
@@ -1093,14 +1093,14 @@ pub fn freeundo() {                                                          // 
     //                      etc. for the whole undo chain`. Drop covers.
 }
 
-/// Port of `get_undo_current_change()` from Src/Zle/zle_utils.c:1785.
+/// Port of `get_undo_current_change(pm)` from Src/Zle/zle_utils.c:1785.
 pub fn get_undo_current_change() -> i64 {                                    // c:1785
     // C body c:1787-1810 — `if (!curchange) return -1; return curchange->changeno`.
     //                      Without curchange tracker: -1 (no change).
     -1
 }
 
-/// Port of `get_undo_limit_change()` from Src/Zle/zle_utils.c:1812.
+/// Port of `get_undo_limit_change(pm)` from Src/Zle/zle_utils.c:1812.
 pub fn get_undo_limit_change() -> i64 {                                      // c:1812
     // C body c:1814-1817 — `return undo_limit_change`. Returns the
     //                      undo-limit anchor change number.
@@ -1115,7 +1115,7 @@ pub fn getzlequery() -> i32 {                                                // 
     -1
 }
 
-/// Port of `handlefeep()` from `Src/Zle/zle_utils.c:1404`.
+/// Port of `handlefeep(args)` from `Src/Zle/zle_utils.c:1404`.
 /// ```c
 /// int
 /// handlefeep(UNUSED(char **args))
@@ -1130,7 +1130,7 @@ pub fn handlefeep() -> i32 {                                                 // 
     0                                                                        // c:1408 return 0
 }
 
-/// Port of `handlesuffix()` from Src/Zle/zle_utils.c:1415.
+/// Port of `handlesuffix(args)` from Src/Zle/zle_utils.c:1415.
 pub fn handlesuffix(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) -> i32 { // c:1415
     // C body c:1417-1444 — peeks the next byte; if SUFFIXLEN is set
     //                      and the byte is in the suffix's noinsert
@@ -1193,14 +1193,14 @@ pub fn redo(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {            // 
     0                                                                        // c:1674
 }
 
-/// Port of `set_undo_limit_change()` from Src/Zle/zle_utils.c:1819.
+/// Port of `set_undo_limit_change(value)` from Src/Zle/zle_utils.c:1819.
 pub fn set_undo_limit_change(_n: i64) -> i32 {                               // c:1819
     // C body c:1821-1825 — `undo_limit_change = n; return 0`.
     //                      Without undo_limit_change global: 0.
     0
 }
 
-/// Port of `setline()` from Src/Zle/zle_utils.c:1129.
+/// Port of `setline(s, flags)` from Src/Zle/zle_utils.c:1129.
 pub fn setline(zle: &mut crate::ported::zle::zle_main::Zle, s: &str,         // c:1129
                flags: i32) {
     // C body c:1131-1156 — replaces zleline with `s`; if !ZSL_KEEPCS
@@ -1215,7 +1215,7 @@ pub fn setline(zle: &mut crate::ported::zle::zle_main::Zle, s: &str,         // 
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// Port of `shiftchars()` from Src/Zle/zle_utils.c:846.
+/// Port of `shiftchars(to, cnt)` from Src/Zle/zle_utils.c:846.
 pub fn shiftchars(zle: &mut crate::ported::zle::zle_main::Zle, to: i32, cnt: i32) { // c:846
     // C body c:848-865 — `if (to + cnt < zlell) memmove(line+to,
     //                     line+to+cnt, (zlell-(to+cnt)) * char_t);
@@ -1230,7 +1230,7 @@ pub fn shiftchars(zle: &mut crate::ported::zle::zle_main::Zle, to: i32, cnt: i32
     zle.zlell = zle.zleline.len();
 }
 
-/// Port of `showmsg()` from Src/Zle/zle_utils.c:1303.
+/// Port of `showmsg(msg)` from Src/Zle/zle_utils.c:1303.
 pub fn showmsg(msg: &str) {                                                  // c:1303
     // C body c:1305-1402 — prints msg below the prompt with cursor
     //                      position save/restore. Without curses
@@ -1238,7 +1238,7 @@ pub fn showmsg(msg: &str) {                                                  // 
     tracing::info!(target: "zle", "{}", msg);
 }
 
-/// Port of `sizeline()` from Src/Zle/zle_utils.c:67.
+/// Port of `sizeline(sz)` from Src/Zle/zle_utils.c:67.
 pub fn sizeline(zle: &mut crate::ported::zle::zle_main::Zle, sz: usize) {    // c:67
     // C body c:69-87 — `if (sz > linesz) { linesz = sz + 256; line =
     //                  zrealloc(line, (linesz+1) * char_t) }`. Vec
@@ -1248,7 +1248,7 @@ pub fn sizeline(zle: &mut crate::ported::zle::zle_main::Zle, sz: usize) {    // 
     }
 }
 
-/// Port of `spaceinline()` from Src/Zle/zle_utils.c:777.
+/// Port of `spaceinline(ct)` from Src/Zle/zle_utils.c:777.
 pub fn spaceinline(zle: &mut crate::ported::zle::zle_main::Zle, ct: i32) {   // c:777
     // C body c:779-844 — opens `ct` chars of space at zlecs by
     //                    moving zleline[zlecs..zlell] forward `ct`,
@@ -1284,7 +1284,7 @@ pub fn splitundo(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {       // 
     0                                                                        // c:1730
 }
 
-/// Port of `stringaszleline()` from Src/Zle/zle_utils.c:375.
+/// Port of `stringaszleline(instr, incs, outll, outsz, outcs)` from Src/Zle/zle_utils.c:375.
 pub fn stringaszleline(s: &str) -> Vec<char> {                               // c:375
     // C body c:377-580 — converts a metafied string into ZLE_CHAR_T
     //                    array (multibyte decode + meta unescape).
@@ -1306,7 +1306,7 @@ pub fn stringaszleline(s: &str) -> Vec<char> {                               // 
     out
 }
 
-/// Port of `unapplychange()` from Src/Zle/zle_utils.c:1634.
+/// Port of `unapplychange(ch)` from Src/Zle/zle_utils.c:1634.
 /// Direct port of `static int unapplychange(struct change *ch)` from
 /// `Src/Zle/zle_utils.c:1634-1652`. Reverse of applychange: deletes
 /// `ch->ins` at `ch->off` and re-inserts `ch->del`.
@@ -1461,7 +1461,7 @@ pub fn zle_free_positions() {                                                // 
     }
 }
 
-/// Port of `zleaddtoline()` from Src/Zle/zle_utils.c:102.
+/// Port of `zleaddtoline(chr)` from Src/Zle/zle_utils.c:102.
 pub fn zleaddtoline(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) {  // c:102
     // C body c:104-115 — `sizeline(zlell+1); zleline[zlell] = ch;
     //                    zleline[++zlell] = '\\0'`.
@@ -1469,7 +1469,7 @@ pub fn zleaddtoline(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) {  // 
     zle.zlell = zle.zleline.len();
 }
 
-/// Port of `zlecallhook()` from Src/Zle/zle_utils.c:1755.
+/// Port of `zlecallhook(name, arg)` from Src/Zle/zle_utils.c:1755.
 pub fn zlecallhook(name: &str, arg: Option<&str>) {                          // c:1755
     // C body c:1757-1840 — looks up shfunc `name` and dispatches via
     //                      execzlefunc. Without exec hook we record
@@ -1477,7 +1477,7 @@ pub fn zlecallhook(name: &str, arg: Option<&str>) {                          // 
     tracing::debug!(target: "zle", "zlecallhook({}, {:?})", name, arg);
 }
 
-/// Port of `zlecharasstring()` from Src/Zle/zle_utils.c:117.
+/// Port of `zlecharasstring(inchar, buf)` from Src/Zle/zle_utils.c:117.
 pub fn zlecharasstring(c: char, buf: &mut String) -> i32 {                   // c:117
     // C body c:119-145 — converts a ZLE_CHAR_T to its display form
     //                    (UTF-8 multibyte if MULTIBYTE_SUPPORT, else
@@ -1488,7 +1488,7 @@ pub fn zlecharasstring(c: char, buf: &mut String) -> i32 {                   // 
     (buf.len() - start) as i32
 }
 
-/// Port of `zlegetline()` from Src/Zle/zle_utils.c:547.
+/// Port of `zlegetline(ll, cs)` from Src/Zle/zle_utils.c:547.
 pub fn zlegetline(zle: &crate::ported::zle::zle_main::Zle,                   // c:148
                   ll: &mut usize, cs: &mut usize) -> Vec<char> {
     // C body c:150-200 — `if (zlemetaline) { *ll=zlemetall; *cs=zlemetacs;

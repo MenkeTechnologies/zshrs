@@ -20,7 +20,7 @@
 //! panic — matching the C behavior of producing a possibly-truncated
 //! byte string.
 
-/// Port of `dupstring()` from `Src/string.c:33`.
+/// Port of `dupstring(s)` from `Src/string.c:33`.
 ///
 /// C body:
 /// ```c
@@ -36,7 +36,7 @@ pub fn dupstring(s: &str) -> String {                                        // 
     s.to_string()
 }
 
-/// Port of `dupstring_wlen()` from `Src/string.c:48`.
+/// Port of `dupstring_wlen(s, len)` from `Src/string.c:48`.
 ///
 /// C body:
 /// ```c
@@ -58,7 +58,7 @@ pub fn dupstring_wlen(s: &str, len: usize) -> String {                       // 
     String::from_utf8_lossy(&bytes[..n]).into_owned()
 }
 
-/// Port of `ztrdup()` from `Src/string.c:62`.
+/// Port of `ztrdup(s)` from `Src/string.c:62`.
 ///
 /// C body:
 /// ```c
@@ -74,7 +74,7 @@ pub fn ztrdup(s: &str) -> String {                                           // 
     s.to_string()
 }
 
-/// Port of `wcs_ztrdup()` from `Src/string.c:77`.
+/// Port of `wcs_ztrdup(s)` from `Src/string.c:77`.
 ///
 /// C body (under `#ifdef MULTIBYTE_SUPPORT`):
 /// ```c
@@ -90,7 +90,7 @@ pub fn wcs_ztrdup(s: &str) -> String {                                       // 
     s.to_string()
 }
 
-/// Port of `tricat()` from `Src/string.c:98`.
+/// Port of `tricat(s1, s2, s3)` from `Src/string.c:98`.
 ///
 /// C body uses three `strcpy` calls into a `zalloc(l1+l2+l3+1)`
 /// buffer. Rust port pre-sizes the `String` to avoid reallocation
@@ -107,7 +107,7 @@ pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {                      // 
     result
 }
 
-/// Port of `zhtricat()` from `Src/string.c:114`.
+/// Port of `zhtricat(s1, s2, s3)` from `Src/string.c:114`.
 ///
 /// Heap-arena variant of [`tricat`] in C. Same Rust impl since
 /// the lanes collapse.
@@ -115,7 +115,7 @@ pub fn zhtricat(s1: &str, s2: &str, s3: &str) -> String {                    // 
     tricat(s1, s2, s3)
 }
 
-/// Port of `dyncat()` from `Src/string.c:131`.
+/// Port of `dyncat(s1, s2)` from `Src/string.c:131`.
 ///
 /// C body:
 /// ```c
@@ -134,7 +134,7 @@ pub fn dyncat(s1: &str, s2: &str) -> String {                                // 
     result
 }
 
-/// Port of `bicat()` from `Src/string.c:145`.
+/// Port of `bicat(s1, s2)` from `Src/string.c:145`.
 ///
 /// Same shape as [`dyncat`], but C uses the permanent-storage
 /// `zalloc` lane. Rust port: identical body.
@@ -145,7 +145,7 @@ pub fn bicat(s1: &str, s2: &str) -> String {                                 // 
     result
 }
 
-/// Port of `dupstrpfx()` from `Src/string.c:161`.
+/// Port of `dupstrpfx(s, len)` from `Src/string.c:161`.
 ///
 /// C body:
 /// ```c
@@ -165,7 +165,7 @@ pub fn dupstrpfx(s: &str, len: usize) -> String {                            // 
     String::from_utf8_lossy(&bytes[..n]).into_owned()
 }
 
-/// Port of `ztrduppfx()` from `Src/string.c:172`.
+/// Port of `ztrduppfx(s, len)` from `Src/string.c:172`.
 ///
 /// Same body as [`dupstrpfx`], but C uses the permanent-storage
 /// lane. Lanes collapse in Rust.
@@ -173,7 +173,7 @@ pub fn ztrduppfx(s: &str, len: usize) -> String {
     dupstrpfx(s, len)
 }
 
-/// Port of `appstr()` from `Src/string.c:186`.
+/// Port of `appstr(base, append)` from `Src/string.c:186`.
 ///
 /// C body:
 /// ```c
@@ -191,7 +191,7 @@ pub fn appstr(base: &mut String, append: &str) {
     base.push_str(append);
 }
 
-/// Port of `strend()` from `Src/string.c:196`.
+/// Port of `strend(str)` from `Src/string.c:196`.
 ///
 /// C body:
 /// ```c

@@ -24,7 +24,7 @@
 // `comp_h.rs` and used by the real porters of `match_str` /
 // `pattern_match` / `add_match_str` etc. below.
 
-/// Port of `cpatterns_same()` from `Src/Zle/compmatch.c:42`.
+/// Port of `cpatterns_same(a, b)` from `Src/Zle/compmatch.c:42`.
 /// ```c
 /// static int
 /// cpatterns_same(Cpattern a, Cpattern b)
@@ -69,7 +69,7 @@ pub fn cpatterns_same(                                                       // 
             x if x == CPAT_CCLASS || x == CPAT_NCLASS || x == CPAT_EQUIV => {  // c:52-54
                 // c:55-58 — equivalent ranges might compare same even when
                 // strings differ; the C source admits this is unhandled.
-                if ap.str_ != bp.str_ {                                      // c:60 strcmp(a->u.str,b->u.str)
+                if ap.str != bp.str {                                      // c:60 strcmp(a->u.str,b->u.str)
                     return false;                                            // c:61
                 }
             }
@@ -88,7 +88,7 @@ pub fn cpatterns_same(                                                       // 
     b.is_none()                                                              // c:77 return !b
 }
 
-/// Port of `cmatchers_same()` from `Src/Zle/compmatch.c:82`.
+/// Port of `cmatchers_same(a, b)` from `Src/Zle/compmatch.c:82`.
 /// ```c
 /// static int
 /// cmatchers_same(Cmatcher a, Cmatcher b)
@@ -149,7 +149,7 @@ pub fn cmatchers_same(                                                       // 
 // — `Src/Zle/compmatch.c:217-281`.
 // =====================================================================
 
-/// Port of `cline_sublen()` from `Src/Zle/compmatch.c:218`.
+/// Port of `cline_sublen(l)` from `Src/Zle/compmatch.c:218`.
 /// ```c
 /// int
 /// cline_sublen(Cline l)
@@ -198,7 +198,7 @@ pub fn cline_sublen(l: &crate::ported::zle::comp_h::Cline) -> i32 {          // 
     len                                                                      // c:233 return len
 }
 
-/// Port of `cline_setlens()` from `Src/Zle/compmatch.c:239`.
+/// Port of `cline_setlens(l, both)` from `Src/Zle/compmatch.c:239`.
 /// ```c
 /// void
 /// cline_setlens(Cline l, int both)
@@ -226,7 +226,7 @@ pub fn cline_setlens(l: &mut Option<Box<crate::ported::zle::comp_h::Cline>>, bot
     }
 }
 
-/// Port of `cline_matched()` from `Src/Zle/compmatch.c:253`.
+/// Port of `cline_matched(p)` from `Src/Zle/compmatch.c:253`.
 /// ```c
 /// void
 /// cline_matched(Cline p)
@@ -253,7 +253,7 @@ pub fn cline_matched(p: &mut Option<Box<crate::ported::zle::comp_h::Cline>>) {  
     }
 }
 
-/// Port of `revert_cline()` from `Src/Zle/compmatch.c:269`.
+/// Port of `revert_cline(p)` from `Src/Zle/compmatch.c:269`.
 /// ```c
 /// Cline
 /// revert_cline(Cline p)
@@ -283,7 +283,7 @@ pub fn revert_cline(                                                         // 
     r                                                                        // c:280 return r
 }
 
-/// Port of `cp_cline()` from `Src/Zle/compmatch.c:189`.
+/// Port of `cp_cline(l, deep)` from `Src/Zle/compmatch.c:189`.
 /// ```c
 /// Cline
 /// cp_cline(Cline l, int deep)
@@ -348,7 +348,7 @@ pub fn cp_cline(                                                             // 
     r                                                                        // c:212 return r
 }
 
-/// Port of `free_cline()` from `Src/Zle/compmatch.c:171`.
+/// Port of `free_cline(l)` from `Src/Zle/compmatch.c:171`.
 /// ```c
 /// void
 /// free_cline(Cline l)
@@ -475,9 +475,9 @@ pub fn pattern_match_equivalence(
     use crate::ported::zle::zle_h::{ZC_tolower, ZC_toupper};
 
     // c:1324 — PATMATCHINDEX(lp->u.str, wind-1, &lchr, &lmtp).
-    // Walk lp.str_'s encoded char-range descriptor finding the
+    // Walk lp.str's encoded char-range descriptor finding the
     // entry at index (wind-1); return CHR_INVALID on miss.
-    let Some(ref s) = lp.str_ else { return u32::MAX; };
+    let Some(ref s) = lp.str else { return u32::MAX; };
     let Some(target_idx) = (wind as i64).checked_sub(1) else { return u32::MAX; };
     if target_idx < 0 { return u32::MAX; }
     let mut lchr: Option<u32> = None;
@@ -539,7 +539,7 @@ mod tests {
     fn test_pattern_match_equivalence_case_cross() {
         // c:1342 — wmtp=PP_UPPER, lmtp=PP_LOWER → tolower(wchr).
         use crate::ported::zle::comp_h::{Cpattern, CPAT_EQUIV};
-        let lp = Cpattern { tp: CPAT_EQUIV, str_: Some("ab".into()), chr: 0, next: None };
+        let lp = Cpattern { tp: CPAT_EQUIV, str: Some("ab".into()), chr: 0, next: None };
         // wind=1 selects 'a' from the equivalence class, exact-char hit.
         let r = pattern_match_equivalence(&lp, 1, 0, b'A' as u32);
         assert_eq!(r, b'a' as u32);
@@ -562,7 +562,7 @@ mod tests {
     fn cpat_class(s: &str) -> Cpattern {
         Cpattern {
             tp: CPAT_CCLASS,
-            str_: Some(s.to_string()),
+            str: Some(s.to_string()),
             ..Default::default()
         }
     }
@@ -588,7 +588,7 @@ mod tests {
         let a = cpat_char('a' as u32);
         let b = Cpattern {
             tp: CPAT_NCLASS,
-            str_: Some("a".into()),
+            str: Some("a".into()),
             ..Default::default()
         };
         // c:49-50 — different tp → not equal.
@@ -886,7 +886,7 @@ pub fn add_bmatchers(m: Option<&crate::ported::zle::comp_h::Cmatcher>) {     // 
                     right: mat.right.clone(),
                     ralen: mat.ralen,
                 }),
-                str_: String::new(),
+                str: String::new(),
             });
             unsafe {
                 *tail_ref = Some(n);
@@ -1194,7 +1194,7 @@ pub fn bld_line(
     consumed                                                                 // c:1991
 }
 
-/// Port of `bld_parts()` from Src/Zle/compmatch.c:1638.
+/// Port of `bld_parts(str, len, plen, lp, lprem)` from Src/Zle/compmatch.c:1638.
 /// Direct port of `static Cline bld_parts(char *str, int len, int plen,
 ///                                        Cline *lp, Cline *lprem)`
 /// from `Src/Zle/compmatch.c:1638-1734`. Splits the candidate string
@@ -1203,13 +1203,13 @@ pub fn bld_line(
 /// trailing remainder (after the last anchor) goes into `*lprem`,
 /// last node into `*lp`.
 pub fn bld_parts(
-    str_: &str, len: i32, mut plen: i32,                                     // c:1638
+    str: &str, len: i32, mut plen: i32,                                     // c:1638
     lp: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
     lprem: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
 ) -> Option<Box<crate::ported::zle::comp_h::Cline>> {
     use crate::ported::zle::comp_h::{Cline, CLF_NEW};
 
-    let bytes = str_.as_bytes();
+    let bytes = str.as_bytes();
     let total: usize = (len as usize).min(bytes.len());
     let mut op = plen;
     let mut p_start = 0usize;
@@ -1287,7 +1287,7 @@ pub fn bld_parts(
 pub struct cmdata {                                                          // c:2142
     pub cl:   Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143
     pub pcl:  Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143
-    pub str_: String,                                                        // c:2144
+    pub str: String,                                                        // c:2144
     pub astr: String,                                                        // c:2144
     pub len:  i32,                                                           // c:2145
     pub alen: i32,                                                           // c:2145
@@ -1311,13 +1311,13 @@ pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {                      // 
     if (next.flags & CLF_LINE) != 0 {                                        // c:2163
         md.line = 1;
         md.len  = next.llen;                                                 // c:2164
-        md.str_ = next.line.clone().unwrap_or_default();                     // c:2165
+        md.str = next.line.clone().unwrap_or_default();                     // c:2165
     } else {
         md.line = 0;
         md.len  = next.wlen;                                                 // c:2168
         md.olen = next.wlen;                                                 // c:2168
         if let Some(ref w) = next.word {
-            md.str_ = if sfx != 0 { w[md.len as usize..].to_string() }       // c:2171
+            md.str = if sfx != 0 { w[md.len as usize..].to_string() }       // c:2171
                       else { w.clone() };
         }
         md.alen = next.llen;                                                 // c:2173
@@ -1449,7 +1449,7 @@ pub fn join_clines(o: i32, n: i32) -> i32 {                                  // 
     n
 }
 
-/// Port of `join_mid()` from Src/Zle/compmatch.c:2608.
+/// Port of `join_mid(o, n)` from Src/Zle/compmatch.c:2608.
 /// Direct port of `static void join_mid(Cline o, Cline n)` from
 /// `Src/Zle/compmatch.c:2608-2640`. Joins the mid-anchor parts of
 /// two Cline lists. If `o` already carries CLF_JOIN, the suffix
@@ -1514,7 +1514,7 @@ pub fn join_mid(o: &mut crate::ported::zle::comp_h::Cline,                   // 
     n.suffix = None;                                                         // c:2639
 }
 
-/// Port of `join_psfx()` from Src/Zle/compmatch.c:2444.
+/// Port of `join_psfx(ot, nt, orest, nrest, sfx)` from Src/Zle/compmatch.c:2444.
 /// Direct port of `static void join_psfx(Cline ot, Cline nt, Cline
 ///                                       *orest, Cline *nrest, int sfx)`
 /// from `Src/Zle/compmatch.c:2444-2606`. Walks both prefix/suffix
@@ -1676,7 +1676,7 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str)               // 
 /// substring `str[..len]` against the data currently in `md` via
 /// one of the no-anchor matchers in `bmatchers`; on success
 /// returns the matched-portion Cline and updates `md`/`*mlen`.
-pub fn join_sub(md: &mut cmdata, str_: &str, len: i32, mlen: &mut i32,       // c:2212
+pub fn join_sub(md: &mut cmdata, str: &str, len: i32, mlen: &mut i32,       // c:2212
                 sfx: i32, join: i32) -> Option<Box<crate::ported::zle::comp_h::Cline>>
 {
     use crate::ported::zle::comp_h::CLF_JOIN;
@@ -1687,8 +1687,8 @@ pub fn join_sub(md: &mut cmdata, str_: &str, len: i32, mlen: &mut i32,       // 
         return None;
     }
 
-    let ow = str_;
-    let nw = md.str_.clone();
+    let ow = str;
+    let nw = md.str.clone();
     let ol = len;
     let nl = md.len;
 
@@ -1716,11 +1716,11 @@ pub fn join_sub(md: &mut cmdata, str_: &str, len: i32, mlen: &mut i32,       // 
                 {
                     // c:2241-2243 — update md.str.
                     if sfx != 0 {
-                        md.str_ = md.str_.chars().take(
-                            md.str_.chars().count().saturating_sub(mp.wlen as usize),
+                        md.str = md.str.chars().take(
+                            md.str.chars().count().saturating_sub(mp.wlen as usize),
                         ).collect();
                     } else {
-                        md.str_ = md.str_.chars()
+                        md.str = md.str.chars()
                             .skip(mp.wlen as usize).collect();
                     }
                     md.len -= mp.wlen;
@@ -1764,11 +1764,11 @@ pub fn join_sub(md: &mut cmdata, str_: &str, len: i32, mlen: &mut i32,       // 
                         let new_nl = if t == 1 { bl } else { mp.wlen };
                         let new_ol = if t == 1 { mp.wlen } else { bl };
                         if sfx != 0 {
-                            md.str_ = md.str_.chars().take(
-                                md.str_.chars().count().saturating_sub(new_nl as usize),
+                            md.str = md.str.chars().take(
+                                md.str.chars().count().saturating_sub(new_nl as usize),
                             ).collect();
                         } else {
-                            md.str_ = md.str_.chars().skip(new_nl as usize).collect();
+                            md.str = md.str.chars().skip(new_nl as usize).collect();
                         }
                         md.len -= new_nl;                                    // c:2281
                         *mlen = new_ol;                                      // c:2283
@@ -1787,7 +1787,7 @@ pub fn join_sub(md: &mut cmdata, str_: &str, len: i32, mlen: &mut i32,       // 
     None                                                                     // c:2298
 }
 
-/// Port of `pattern_match()` from Src/Zle/compmatch.c:1548.
+/// Port of `pattern_match(p, s, wp, ws)` from Src/Zle/compmatch.c:1548.
 /// Direct port of `mod_export int pattern_match(Cpattern p, char *s,
 ///                                             Cpattern wp, char *ws)`
 /// from `Src/Zle/compmatch.c:1547-1614`. Walks two parallel pattern +
@@ -1968,7 +1968,7 @@ pub fn pattern_match_restrict(
     }
 }
 
-/// Port of `pattern_match1()` from Src/Zle/compmatch.c:1269.
+/// Port of `pattern_match1(p, c, mtp)` from Src/Zle/compmatch.c:1269.
 /// Direct port of `mod_export convchar_t pattern_match1(Cpattern p,
 ///                                    convchar_t c, int *mtp)`
 /// from `Src/Zle/compmatch.c:1269-1297`. Tests whether `p` matches
@@ -1983,14 +1983,14 @@ pub fn pattern_match1(p: &crate::ported::zle::comp_h::Cpattern,              // 
     match p.tp {                                                             // c:1274
         x if x == CPAT_CCLASS => {                                           // c:1275
             // PATMATCHRANGE(p->u.str, c, NULL, NULL)
-            patmatchrange(p.str_.as_deref(), c, None, None) as u32           // c:1276
+            patmatchrange(p.str.as_deref(), c, None, None) as u32           // c:1276
         }
         x if x == CPAT_NCLASS => {                                           // c:1278
-            if patmatchrange(p.str_.as_deref(), c, None, None) { 0 } else { 1 } // c:1279
+            if patmatchrange(p.str.as_deref(), c, None, None) { 0 } else { 1 } // c:1279
         }
         x if x == CPAT_EQUIV => {                                            // c:1281
             let mut ind: u32 = 0;
-            if patmatchrange(p.str_.as_deref(), c, Some(&mut ind), Some(mtp)) {
+            if patmatchrange(p.str.as_deref(), c, Some(&mut ind), Some(mtp)) {
                 ind + 1                                                      // c:1283
             } else {
                 0                                                            // c:1285
@@ -2083,9 +2083,9 @@ pub fn sub_join(a: &mut crate::ported::zle::comp_h::Cline,                   // 
 /// as it consumes characters.
 ///
 /// Returns the count of matched bytes — the C source's "ret" value.
-pub fn sub_match(md: &mut cmdata, str_: &str, len: i32, sfx: i32) -> i32 {   // c:2301
+pub fn sub_match(md: &mut cmdata, str: &str, len: i32, sfx: i32) -> i32 {   // c:2301
     let mut ret = 0i32;
-    let str_bytes = str_.as_bytes();
+    let str_bytes = str.as_bytes();
     let mut remaining = len as usize;
     let start_idx: usize = if sfx != 0 { (len as usize).min(str_bytes.len()) } else { 0 };
 
@@ -2096,7 +2096,7 @@ pub fn sub_match(md: &mut cmdata, str_: &str, len: i32, sfx: i32) -> i32 {   // 
             return ret;
         }
 
-        let md_bytes = md.str_.as_bytes();
+        let md_bytes = md.str.as_bytes();
         let mut l: usize = 0;
         let md_len_usize = md.len as usize;
         let cap = remaining.min(md_len_usize);
@@ -2142,12 +2142,12 @@ pub fn sub_match(md: &mut cmdata, str_: &str, len: i32, sfx: i32) -> i32 {   // 
         md.len -= l as i32;
         if sfx != 0 {
             // suffix-mode: strip from the END of md.str.
-            md.str_ = md.str_.chars().take(
-                md.str_.chars().count().saturating_sub(l),
+            md.str = md.str.chars().take(
+                md.str.chars().count().saturating_sub(l),
             ).collect();
         } else {
             // prefix-mode: skip first l bytes.
-            md.str_ = md.str_.chars().skip(l).collect();
+            md.str = md.str.chars().skip(l).collect();
         }
 
         ret += l as i32;                                                     // c:2418
@@ -2160,7 +2160,7 @@ pub fn sub_match(md: &mut cmdata, str_: &str, len: i32, sfx: i32) -> i32 {   // 
     ret                                                                      // c:2441
 }
 
-/// Port of `undo_cmdata()` from Src/Zle/compmatch.c:2188.
+/// Port of `undo_cmdata(md, sfx)` from Src/Zle/compmatch.c:2188.
 /// Direct port of `static Cline undo_cmdata(cmdata md, int sfx)` from
 /// `Src/Zle/compmatch.c:2187-2207`. Puts the not-yet-matched portion
 /// of `md` back into the previous cline node so it can be revisited
@@ -2176,11 +2176,11 @@ pub fn undo_cmdata(md: &cmdata, sfx: i32) -> Option<Box<crate::ported::zle::comp
         r.llen = md.len;                                                     // c:2195
         // c:2197 — line = str - (sfx ? len : 0).
         let off = if sfx != 0 { md.len as usize } else { 0 };
-        r.line = Some(md.str_.chars().skip(md.str_.len().saturating_sub(off + md.len as usize)).collect());
+        r.line = Some(md.str.chars().skip(md.str.len().saturating_sub(off + md.len as usize)).collect());
     } else if md.len != md.olen {                                            // c:2199
         r.wlen = md.len;                                                     // c:2201
         let off = if sfx != 0 { md.len as usize } else { 0 };
-        r.word = Some(md.str_.chars().skip(md.str_.len().saturating_sub(off + md.len as usize)).collect());
+        r.word = Some(md.str.chars().skip(md.str.len().saturating_sub(off + md.len as usize)).collect());
     }
     Some(Box::new(r))                                                        // c:2206
 }

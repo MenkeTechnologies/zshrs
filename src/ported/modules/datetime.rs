@@ -19,7 +19,7 @@ use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use crate::ported::utils::zwarnnam;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Port of `getcurrentsecs()` from `Src/Modules/datetime.c:206`.
+/// Port of `getcurrentsecs(pm)` from `Src/Modules/datetime.c:206`.
 /// Returns the current epoch seconds — backs `$EPOCHSECONDS`.
 /// C body: `return (zlong) time(NULL);`
 pub fn getcurrentsecs() -> i64 {                                         // c:206
@@ -27,7 +27,7 @@ pub fn getcurrentsecs() -> i64 {                                         // c:20
     unsafe { libc::time(std::ptr::null_mut()) as i64 }
 }
 
-/// Port of `getcurrentrealtime()` from `Src/Modules/datetime.c:212`.
+/// Port of `getcurrentrealtime(pm)` from `Src/Modules/datetime.c:212`.
 /// Returns the current high-resolution epoch time as f64 — backs
 /// `$EPOCHREALTIME`.
 ///
@@ -43,7 +43,7 @@ pub fn getcurrentrealtime() -> f64 {                                     // c:21
     (now.tv_sec as f64) + (now.tv_nsec as f64) * 1e-9                    // c:216
 }
 
-/// Port of `getcurrenttime()` from `Src/Modules/datetime.c:220`.
+/// Port of `getcurrenttime(pm)` from `Src/Modules/datetime.c:220`.
 /// Returns the current epoch as `(secs, nanos)` — backs the
 /// `$epochtime` two-element array param.
 ///
@@ -61,7 +61,7 @@ pub fn getcurrenttime() -> (i64, i64) {                                  // c:22
     (now.tv_sec as i64, now.tv_nsec as i64)                              // c:228-231 sprintf %ld
 }
 
-/// Port of `reverse_strftime()` from `Src/Modules/datetime.c:42`.
+/// Port of `reverse_strftime(nam, argv, scalar, quiet)` from `Src/Modules/datetime.c:42`.
 /// Parses a time string per the format string and assigns the
 /// resulting epoch seconds to `scalar` (or stdout if NULL).
 ///
@@ -104,7 +104,7 @@ pub fn reverse_strftime(nam: &str, argv: &[&str],                            // 
     0                                                                     // c:96
 }
 
-/// Port of `output_strftime()` from `Src/Modules/datetime.c:99`.
+/// Port of `output_strftime(nam, argv, ops)` from `Src/Modules/datetime.c:99`.
 /// The `output_strftime` builtin entry. Parses argv (format,
 /// timestamp, nanoseconds), calls `localtime(3)` to convert,
 /// formats via `ztrftime()` with retry-on-overflow, then writes
@@ -224,7 +224,7 @@ pub fn output_strftime(nam: &str, argv: &[&str],                             // 
     0                                                                     // c:185
 }
 
-/// Port of `bin_strftime()` from `Src/Modules/datetime.c:187`. The
+/// Port of `bin_strftime(nam, argv, ops, func)` from `Src/Modules/datetime.c:187`. The
 /// `strftime` builtin entry — wraps `output_strftime` in a local
 /// param-scope that copies `$TZ` so `output_strftime`'s
 /// `localtime(3)` calls see the user's timezone even if a function
@@ -278,26 +278,26 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/datetime.c:270`.
+/// Port of `setup_(m)` from `Src/Modules/datetime.c:270`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:270
     // C body c:272-273 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_()` from `Src/Modules/datetime.c:277`.
+/// Port of `features_(m, features)` from `Src/Modules/datetime.c:277`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {  // c:277
     *features = featuresarray(m, module_features());
     0                                                                    // c:281
 }
 
-/// Port of `enables_()` from `Src/Modules/datetime.c:285`.
+/// Port of `enables_(m, enables)` from `Src/Modules/datetime.c:285`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:285
     handlefeatures(m, module_features(), enables) // c:288
 }
 
-/// Port of `boot_()` from `Src/Modules/datetime.c:292`.
+/// Port of `boot_(m)` from `Src/Modules/datetime.c:292`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:292
     // C body c:294-295 — `return 0`. Faithful empty-body port; the
     //                    strftime builtin + EPOCHREALTIME param register
@@ -305,13 +305,13 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/datetime.c:299`.
+/// Port of `cleanup_(m)` from `Src/Modules/datetime.c:299`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                              // c:299
     setfeatureenables(m, module_features(), None) // c:302
 }
 
-/// Port of `finish_()` from `Src/Modules/datetime.c:306`.
+/// Port of `finish_(m)` from `Src/Modules/datetime.c:306`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:306
     // C body c:308-309 — `return 0`. Faithful empty-body port; the
     //                    strftime builtin + EPOCHREALTIME unregister

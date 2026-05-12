@@ -511,8 +511,8 @@ pub fn sub_flags_set(v: i32) {
 }
 
 /// Check for array assignment with entries like [key]=val
-/// Port of keyvalpairelement() from subst.c lines 47-77
-/// Port of `keyvalpairelement()` from `Src/subst.c:49-79`.
+/// Port of keyvalpairelement(list, node) from subst.c lines 47-77
+/// Port of `keyvalpairelement(list, node)` from `Src/subst.c:49-79`.
 ///
 /// Detects an `[key]=value` or `[key]+=value` shape (assoc-array
 /// element assignment used in `typeset -A foo=([k]=v)`). On match,
@@ -597,9 +597,9 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
 } // c:79
 
 /// Do substitutions before fork
-/// Port of prefork() from subst.c lines 94-183
+/// Port of prefork(list, flags, ret_flags) from subst.c lines 94-183
 /// Phase-1 word-list substitution (tilde/equal/brace/param/cmd/arith).
-/// Port of `prefork()` from Src/subst.c:100 — runs ahead of
+/// Port of `prefork(list, flags, ret_flags)` from Src/subst.c:100 — runs ahead of
 /// glob expansion to fully resolve `${...}` / `$(...)` /
 /// `$((...))` / `~user` / `=cmd` / `{a,b}`.
 // Do substitutions before fork.                                            // c:82
@@ -784,7 +784,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) { // c:100
     } // c:100
 } // c:100
 
-/// Port of `stringsubstquote()` from `Src/subst.c:206-233`.
+/// Port of `stringsubstquote(strstart, pstrdpos)` from `Src/subst.c:206-233`.
 ///
 /// Implements `$'...'` ANSI-C-style quoted-string substitution. The
 /// C signature is `char *stringsubstquote(char *strstart, char **pstrdpos)`
@@ -5373,7 +5373,7 @@ pub fn paramsubst(
 
 // Helper functions
 
-/// Port of `filesubstr()` from `Src/subst.c:737`.
+/// Port of `filesubstr(namptr, assign)` from `Src/subst.c:737`.
 ///
 /// Performs `~` and `=` expansion on a single path component. Returns
 /// `Some(expanded)` on success, `None` if no expansion applies. The
@@ -5569,7 +5569,7 @@ pub fn filesubstr(s: &str, assign: bool) -> Option<String> { // c:737
     None
 }
 
-/// Port of `filesub()` from `Src/subst.c:667-704`.
+/// Port of `filesub(namptr, assign)` from `Src/subst.c:667-704`.
 ///
 /// 1:1 with C: applies filesubstr to the leading `~`/`=`, then in
 /// assign-context walks `=` (TYPESET-only) and `:`-separated path
@@ -5666,7 +5666,7 @@ fn filesub(s: &str, flags: i32) -> String {
     namptr // c:702
 } // c:703
 
-/// Port of `arithsubst()` from `Src/subst.c:4485-4509`.
+/// Port of `arithsubst(a, bptr, rest)` from `Src/subst.c:4485-4509`.
 ///
 /// C body: param-substitute the expression first (`singsub(&a)`),
 /// evaluate as math, then format the integer/float result honoring
@@ -5780,9 +5780,9 @@ use crate::ported::zsh_h::{MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_
 
 /// Perform substitution on a single word
 // perform substitution on a single word                                    // c:510
-/// Port of singsub() from subst.c lines 513-525
+/// Port of singsub(s) from subst.c lines 513-525
 /// Single-string substitution.
-/// Port of `singsub()` from Src/subst.c:514.
+/// Port of `singsub(s)` from Src/subst.c:514.
 // perform substitution on a single word                                    // c:510
 pub fn singsub(s: &str) -> String {                  // c:514
     // c:514
@@ -5968,9 +5968,9 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) { // 
 // (Lower/Upper/Caps) with an extra unused `None` variant.
 
 /// History-style colon modifiers
-/// Port of modify() from subst.c lines 4530-4873
+/// Port of modify(str, ptr, inbrace) from subst.c lines 4530-4873
 /// Apply a `:` modifier chain (`:t:r:s/x/y/`...).
-/// Port of `modify()` from Src/subst.c:4531.
+/// Port of `modify(str, ptr, inbrace)` from Src/subst.c:4531.
 pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
     // c:4531
     let mut result = s.to_string(); // c:4531
@@ -6517,7 +6517,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
 /// The Rust port uses `unicode-width`-style heuristics inline: ASCII
 /// printable + most BMP chars = 1 cell; CJK Unified Ideographs and
 /// other wide blocks = 2 cells; combining/control = 0.
-/// Port of `wcpadwidth()` from `Src/subst.c:848-866`.
+/// Port of `wcpadwidth(wc, multi_width)` from `Src/subst.c:848-866`.
 ///
 /// Returns the display-cell width of a wide char for `dopadding`.
 ///
@@ -6571,7 +6571,7 @@ pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {                       // 
 /// markers back to plain `String`/`Tick` tokens, mirroring the inner
 /// loop at subst.c:1473-1485 that strips the doubled-up bslashquote
 /// recognition.
-/// Port of `subst_parse_str()` from `Src/subst.c:1460-1486`.
+/// Port of `subst_parse_str(sp, single, err)` from `Src/subst.c:1460-1486`.
 ///
 /// C signature: `int subst_parse_str(char **sp, int single, int err)`.
 /// Mutates `*sp` to point at a duplicated, parser-pre-processed copy
@@ -6638,10 +6638,10 @@ pub fn subst_parse_str(s: &str, single: bool, err: bool) -> Option<String> { // 
 } // c:1486
 
 /// Get a directory stack entry
-/// Port of dstackent() from subst.c
+/// Port of dstackent(ch, val) from subst.c
 /// Resolve `~+N`/`~-N` directory-stack entries.
-/// Port of `dstackent()` from Src/subst.c:4902.
-/// Port of `dstackent()` from `Src/subst.c:4902-4922`.
+/// Port of `dstackent(ch, val)` from Src/subst.c:4902.
+/// Port of `dstackent(ch, val)` from `Src/subst.c:4902-4922`.
 ///
 /// Resolves `~+N` / `~-N` directory-stack entries.
 ///
@@ -6889,9 +6889,9 @@ pub fn dopadding(                                                            // 
 } // c:893
 
 /// Get the delimiter argument for flags like (s:x:) or (j:x:)
-/// Port of get_strarg() from subst.c
+/// Port of get_strarg(s, lenp) from subst.c
 /// Parse a `:STR:`-delimited flag argument.
-/// Port of `get_strarg()` from Src/subst.c:1348.
+/// Port of `get_strarg(s, lenp)` from Src/subst.c:1348.
 pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {                 // c:1348
     // c:1348
     let mut chars = s.chars().peekable(); // c:1348
@@ -6933,10 +6933,10 @@ pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {                 // 
 } // c:1348
 
 /// Get integer argument for flags like (l.N.)
-/// Port of get_intarg() from subst.c
+/// Port of get_intarg(s, delmatchp) from subst.c
 /// Parse an `:N:`-delimited integer flag argument.
-/// Port of `get_intarg()` from Src/subst.c:1428.
-/// Port of `get_intarg()` from `Src/subst.c:1428-1457`.
+/// Port of `get_intarg(s, delmatchp)` from Src/subst.c:1428.
+/// Port of `get_intarg(s, delmatchp)` from `Src/subst.c:1428-1457`.
 ///
 /// Parses an `:N:`-delimited integer flag argument (e.g. `(l:5:)`).
 /// The C source returns -1 on error, the absolute value otherwise,
@@ -6988,7 +6988,7 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {                          // 
 } // c:1457
 
 /// Quote substitution for heredoc tags
-/// Port of `quotesubst()` from `Src/subst.c:463-475`.
+/// Port of `quotesubst(str)` from `Src/subst.c:463-475`.
 ///
 /// Simplified version of prefork/singsub that does only the
 /// substitutions appropriate to quoting context — currently just the
@@ -7033,8 +7033,8 @@ pub fn quotesubst(s: &str) -> String {              // c:463
 } // c:475
 
 /// Glob entries in a linked list
-/// Port of globlist() from subst.c lines 468-505
-/// Port of `globlist()` from `Src/subst.c:489-510`.
+/// Port of globlist(list, flags) from subst.c lines 468-505
+/// Port of `globlist(list, flags)` from `Src/subst.c:489-510`.
 ///
 /// Glob-expands each entry in a linked list. Honors two PREFORK_*
 /// flags (per the C body header comment):
@@ -7569,8 +7569,8 @@ pub static NULSTRING_BYTES: [char; 2] = [NULARG, '\0']; // c:3193
 
 
 /// Evaluate character from number (for (#) flag)
-/// Port of substevalchar() from subst.c
-/// Port of `substevalchar()` from `Src/subst.c:1490-1521`.
+/// Port of substevalchar(ptr) from subst.c
+/// Port of `substevalchar(ptr)` from `Src/subst.c:1490-1521`.
 ///
 /// Implements the `(#)` paramsubst flag: evaluate the expression as
 /// a math integer, then convert that codepoint to a UTF-8 string.
@@ -7625,8 +7625,8 @@ pub fn substevalchar(s: &str) -> Option<String> {
 } // c:1521
 
 /// Check for colon subscript in parameter expansion
-/// Port of check_colon_subscript() from subst.c
-/// Port of `check_colon_subscript()` from `Src/subst.c:1566-1597`.
+/// Port of check_colon_subscript(str, endp) from subst.c
+/// Port of `check_colon_subscript(str, endp)` from `Src/subst.c:1566-1597`.
 ///
 /// Detects a `${var:OFFSET[:LEN]}` substring shape vs a history
 /// modifier or other postfix. Returns `Some((subscript_expr, rest))`
@@ -7694,8 +7694,8 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
 } // c:1597
 
 /// Untokenize and escape string for flag argument
-/// Port of untok_and_escape() from subst.c
-/// Port of `untok_and_escape()` from `Src/subst.c:1528-1554`.
+/// Port of untok_and_escape(s, escapes, tok_arg) from subst.c
+/// Port of `untok_and_escape(s, escapes, tok_arg)` from `Src/subst.c:1528-1554`.
 ///
 /// Helper for arguments to parameter flags. Handles two operations
 /// on the input string `s`:
@@ -7784,8 +7784,8 @@ use crate::zsh_h::isset;
 // c:zsh.h:200
 
 /// Equal substitution (=cmd)
-/// Port of equalsubstr() from subst.c lines 706-722
-/// Port of `equalsubstr()` from `Src/subst.c:715-733`.
+/// Port of equalsubstr(str, assign, nomatch) from subst.c lines 706-722
+/// Port of `equalsubstr(str, assign, nomatch)` from `Src/subst.c:715-733`.
 ///
 /// `=cmd` substitution: looks up `cmd` via findcmd (canonical zsh
 /// PATH walker, ported as ShellExecutor::findcmd). Returns the

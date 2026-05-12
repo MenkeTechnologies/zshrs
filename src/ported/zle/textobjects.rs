@@ -6,14 +6,14 @@
 use super::zle_main::Zle;
 use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
 
-/// Port of `blankwordclass()` from `Src/Zle/textobjects.c:34`. The
+/// Port of `blankwordclass(x)` from `Src/Zle/textobjects.c:34`. The
 /// vi blank-word class predicate. Returns 0 for blanks, 1 otherwise.
 pub fn blankwordclass(x: char) -> i32 {                                  // c:34
     // C: `return (ZC_iblank(x) ? 0 : 1);`
     if x == ' ' || x == '\t' { 0 } else { 1 }                            // c:36
 }
 
-/// Port of `selectword()` from `Src/Zle/textobjects.c:41`.
+/// Port of `selectword(args)` from `Src/Zle/textobjects.c:41`.
 /// Faithful 1:1 port of the C body. Variable names track the C
 /// source where possible.
 ///
@@ -271,7 +271,7 @@ pub fn selectword(zle: &mut Zle) -> i32 {                                // c:41
     0                                                                    // c:204
 }
 
-/// Port of `selectargument()` from `Src/Zle/textobjects.c:212`.
+/// Port of `selectargument(args)` from `Src/Zle/textobjects.c:212`.
 ///
 /// **NOT FULLY PORTED — see TODO.md.** The C body uses the shell's
 /// `ctxtlex()` lexer-walk machinery (textobjects.c:233-257) to drive

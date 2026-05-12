@@ -3532,7 +3532,7 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
 
 /// Untokenize a string - convert tokenized chars back to original
 ///
-/// Port of untokenize() from exec.c (but used by lexer too)
+/// Port of untokenize(s) from exec.c (but used by lexer too)
 /// Like `untokenize`, but maps SNULL → `'` and DNULL → `"` instead of
 /// stripping them. Used by callers that need the source form including
 /// quoting (e.g. arithmetic-substitution detection in compile_zsh).
@@ -3587,7 +3587,7 @@ pub fn untokenize_preserve_quotes(s: &str) -> String {
 }
 
 /// Decode `\X` escape sequences for `$'...'` content.
-/// Port of `getkeystring()` from Src/utils.c:6915 with the
+/// Port of `getkeystring(s, len, how, misc)` from Src/utils.c:6915 with the
 /// `GETKEYS_DOLLARS_QUOTE` flag — handles the `\n`/`\t`/`\r`/`\e`/
 /// `\E`/`\a`/`\b`/`\f`/`\v`/`\xNN`/`\uNNNN`/`\UNNNNNNNN`/octal/`\\`/`\'`
 /// arms the C source recognizes inside dollar-single-quoted

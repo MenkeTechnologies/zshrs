@@ -642,7 +642,7 @@ pub trait ModuleLifecycle {
 
 /// Free module node (from module.c freemodulenode)
 /// Free a module table entry.
-/// Port of `freemodulenode()` from Src/module.c:119 — Rust's
+/// Port of `freemodulenode(hn)` from Src/module.c:119 — Rust's
 /// `Drop` handles the per-field free; this exists for API
 /// parity with C callers.
 pub fn freemodulenode(_module: Module) {
@@ -651,7 +651,7 @@ pub fn freemodulenode(_module: Module) {
 
 /// Print module node (from module.c printmodulenode)
 /// Format a module entry for `zmodload -L` listing.
-/// Port of `printmodulenode()` from Src/module.c:154.
+/// Port of `printmodulenode(hn, flags)` from Src/module.c:154.
 pub fn printmodulenode(name: &str, module: &Module) -> String {
     let state = match module.state {
         ModuleState::Loaded => "loaded",
@@ -664,7 +664,7 @@ pub fn printmodulenode(name: &str, module: &Module) -> String {
 
 /// Create new module table (from module.c newmoduletable)
 /// Create an empty module table.
-/// Port of `newmoduletable()` from Src/module.c:274 — the C
+/// Port of `newmoduletable(size, name)` from Src/module.c:274 — the C
 /// source allocates the `modulestab` hash with `createhashtable`.
 pub fn newmoduletable() -> ModuleTable {
     ModuleTable::new()
@@ -814,7 +814,7 @@ pub const FEAT_REMOVE: i32 = 0x0008;                                     // c:76
 /// `enum { FEAT_CHECKAUTO = 0x0010 }` from `Src/module.c:81`.
 pub const FEAT_CHECKAUTO: i32 = 0x0010;                                  // c:81
 
-/// Port of `add_automathfunc()` from `Src/module.c:1410`.
+/// Port of `add_automathfunc(module, fnam, flags)` from `Src/module.c:1410`.
 ///
 /// C body:
 /// ```c
@@ -846,7 +846,7 @@ pub fn add_automathfunc(table: &mut ModuleTable, module: &str, fnam: &str, flags
     0                                                                    // c:1429
 }
 
-/// Port of `add_dep()` from `Src/module.c:2369`.
+/// Port of `add_dep(name, from)` from `Src/module.c:2369`.
 ///
 /// C body:
 /// ```c
@@ -883,7 +883,7 @@ pub fn add_dep(table: &mut ModuleTable, name: &str, from: &str) -> i32 { // c:23
     0
 }
 
-/// Port of `addbuiltins()` from `Src/module.c:544`.
+/// Port of `addbuiltins(nam, binl, size)` from `Src/module.c:544`.
 ///
 /// C body:
 /// ```c
@@ -915,7 +915,7 @@ pub fn add_dep(table: &mut ModuleTable, name: &str, from: &str) -> i32 { // c:23
 // module.c:545 walks the module's bintab pointer; a re-port will
 // land alongside the wider modulestab-as-global refactor.
 
-/// Port of `addhookdeffunc()` from `Src/module.c:939`.
+/// Port of `addhookdeffunc(h, f)` from `Src/module.c:939`.
 ///
 /// C body:
 /// ```c
@@ -937,7 +937,7 @@ pub fn addhookdeffunc(table: &mut ModuleTable, h: &mut crate::ported::zsh_h::hoo
     0                                                                    // c:943
 }
 
-/// Port of `addmathfunc()` from `Src/module.c:1313`.
+/// Port of `addmathfunc(f)` from `Src/module.c:1313`.
 ///
 /// C body: walks the global `mathfuncs` linked list, refuses to
 /// re-register MFF_ADDED entries, replaces autoloadable shims, then
@@ -1027,7 +1027,7 @@ pub fn autofeatures(table: &mut ModuleTable, _cmdnam: &str, module: Option<&str>
     ret
 }
 
-/// Port of `autoloadscan()` from `Src/module.c:2403`.
+/// Port of `autoloadscan(hn, printflags)` from `Src/module.c:2403`.
 ///
 /// C body:
 /// ```c
@@ -1088,7 +1088,7 @@ pub fn autoloadscan(name: &str, optstr: &str, flags: u32, printflags: i32) { // 
     println!();                                                          // c:2426
 }
 
-/// Direct port of `bin_zmodload()` from `Src/module.c:2440`.
+/// Direct port of `bin_zmodload(nam, args, ops)` from `Src/module.c:2440`.
 /// Top-level dispatcher for the `zmodload` builtin. Validates flag
 /// combinations then routes to one of the per-mode helpers:
 ///   -F        → bin_zmodload_features (c:3003)
@@ -1178,7 +1178,7 @@ pub fn bin_zmodload(nam: &str, args: &[String],                              // 
     ret                                                                      // c:2512
 }
 
-/// Port of `bin_zmodload_alias()` from `Src/module.c:2515`.
+/// Port of `bin_zmodload_alias(nam, args, ops)` from `Src/module.c:2515`.
 ///
 /// `zmodload -A [-L|-R] [name=alias ...]`. Three modes:
 /// - no args: list all module aliases (`-L` = long form).
@@ -1321,7 +1321,7 @@ pub fn bin_zmodload_alias(table: &mut ModuleTable, nam: &str, args: &[String], o
     0                                                                    // c:2616
 }
 
-/// Port of `bin_zmodload_auto()` from `Src/module.c:2726`.
+/// Port of `bin_zmodload_auto(nam, args, ops)` from `Src/module.c:2726`.
 ///
 /// `zmodload [-c] [-p] [-f] [-a] module name [name ...]` —
 /// register-autoload of builtins/conditions/params/mathfns. C body
@@ -1394,7 +1394,7 @@ pub fn bin_zmodload_auto(table: &mut ModuleTable, _nam: &str, args: &[String], o
     0                                                                    // c:2805
 }
 
-/// Port of `bin_zmodload_dep()` from `Src/module.c:2649`.
+/// Port of `bin_zmodload_dep(args, ops)` from `Src/module.c:2649`.
 ///
 /// `zmodload -d [-u] [target [dep ...]]`. Three modes:
 /// - `-u target` removes all deps from target; `-u target d1 d2` removes
@@ -1450,7 +1450,7 @@ pub fn bin_zmodload_dep(table: &mut ModuleTable, _nam: &str, args: &[String], op
     0
 }
 
-/// Port of `bin_zmodload_exist()` from `Src/module.c:2623`.
+/// Port of `bin_zmodload_exist(args, ops)` from `Src/module.c:2623`.
 ///
 /// C body:
 /// ```c
@@ -1499,7 +1499,7 @@ pub fn bin_zmodload_exist(table: &mut ModuleTable, _nam: &str, args: &[String], 
     ret                                                                   // c:2641
 }
 
-/// Port of `bin_zmodload_features()` from `Src/module.c:3003`.
+/// Port of `bin_zmodload_features(nam, args, ops)` from `Src/module.c:3003`.
 ///
 /// `zmodload -F [-L|-l|-P|-a|-m|-i] module [+/-feature ...]` —
 /// per-feature enable/disable for an already-loaded module.
@@ -1554,7 +1554,7 @@ pub fn bin_zmodload_features(table: &mut ModuleTable, nam: &str, args: &[String]
     0
 }
 
-/// Port of `bin_zmodload_load()` from `Src/module.c:2971`.
+/// Port of `bin_zmodload_load(nam, args, ops)` from `Src/module.c:2971`.
 ///
 /// C body:
 /// ```c
@@ -1610,7 +1610,7 @@ pub fn bin_zmodload_load(table: &mut ModuleTable, nam: &str, args: &[String], op
     }
 }
 
-/// Port of `boot_()` from `Src/module.c:331`.
+/// Port of `boot_(m)` from `Src/module.c:331`.
 ///
 /// C body: `boot_(UNUSED(Module m)) { return 0; }` — the no-op
 /// boot hook of the module subsystem itself.
@@ -1618,7 +1618,7 @@ pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {           // c:33
     0                                                                    // c:333
 }
 
-/// Port of `boot_module()` from `Src/module.c:1910`.
+/// Port of `boot_module(m)` from `Src/module.c:1910`.
 ///
 /// C body:
 /// ```c
@@ -1637,7 +1637,7 @@ pub fn boot_module(_table: &mut ModuleTable, _name: &str) -> i32 {       // c:19
     0                                                                    // c:1913 (boot)(m) success
 }
 
-/// Port of `checkaddparam()` from `Src/module.c:1026`.
+/// Port of `checkaddparam(nam, opt_i)` from `Src/module.c:1026`.
 ///
 /// C body:
 /// ```c
@@ -1676,7 +1676,7 @@ pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {                   // c:1026
     0
 }
 
-/// Port of `cleanup_()` from `Src/module.c:338`.
+/// Port of `cleanup_(m)` from `Src/module.c:338`.
 ///
 /// C body: `cleanup_(UNUSED(Module m)) { return 0; }` — the no-op
 /// cleanup hook of the module subsystem itself.
@@ -1684,7 +1684,7 @@ pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {        // c:33
     0                                                                    // c:340
 }
 
-/// Port of `cleanup_module()` from `Src/module.c:1918`.
+/// Port of `cleanup_module(m)` from `Src/module.c:1918`.
 ///
 /// C body:
 /// ```c
@@ -1697,7 +1697,7 @@ pub fn cleanup_module(_table: &mut ModuleTable, _name: &str) -> i32 {    // c:19
     0                                                                    // c:1921 (cleanup)(m) success
 }
 
-/// Port of `del_automathfunc()` from `Src/module.c:1436`.
+/// Port of `del_automathfunc(fnam, flags)` from `Src/module.c:1436`.
 ///
 /// C body:
 /// ```c
@@ -1727,7 +1727,7 @@ pub fn del_automathfunc(table: &mut ModuleTable, _modnam: &str, fnam: &str, flag
     0                                                                    // c:1449
 }
 
-/// Port of `delete_module()` from `Src/module.c:1687`.
+/// Port of `delete_module(m)` from `Src/module.c:1687`.
 ///
 /// C body:
 /// ```c
@@ -1745,7 +1745,7 @@ pub fn delete_module(table: &mut ModuleTable, name: &str) -> i32 {       // c:16
     0
 }
 
-/// Port of `deletehookdeffunc()` from `Src/module.c:961`.
+/// Port of `deletehookdeffunc(h, f)` from `Src/module.c:961`.
 ///
 /// C body:
 /// ```c
@@ -1776,7 +1776,7 @@ pub fn deletehookdeffunc(table: &mut ModuleTable, h: &mut crate::ported::zsh_h::
     1                                                                    // c:970
 }
 
-/// Port of `deletemathfunc()` from `Src/module.c:1342`.
+/// Port of `deletemathfunc(f)` from `Src/module.c:1342`.
 ///
 /// C body:
 /// ```c
@@ -1802,7 +1802,7 @@ pub fn deletehookdeffunc(table: &mut ModuleTable, h: &mut crate::ported::zsh_h::
 // `removemathfunc` still operates on `ModuleTable.autoload_mathfuncs`
 // (the autoload registry).
 
-/// Port of `do_boot_module()` from `Src/module.c:2139`.
+/// Port of `do_boot_module(m, enablesarr, silent)` from `Src/module.c:2139`.
 ///
 /// C body:
 /// ```c
@@ -1833,7 +1833,7 @@ pub fn do_boot_module(table: &mut ModuleTable, name: &str, silent: i32) -> i32 {
     ret                                                                   // c:2150
 }
 
-/// Port of `do_cleanup_module()` from `Src/module.c:2159`.
+/// Port of `do_cleanup_module(m)` from `Src/module.c:2159`.
 ///
 /// C body:
 /// ```c
@@ -1852,7 +1852,7 @@ pub fn do_cleanup_module(table: &mut ModuleTable, name: &str) -> i32 {   // c:21
     }
 }
 
-/// Port of `do_load_module()` from `Src/module.c:1610`.
+/// Port of `do_load_module(name, silent)` from `Src/module.c:1610`.
 ///
 /// C body:
 /// ```c
@@ -1881,7 +1881,7 @@ pub fn do_load_module(table: &mut ModuleTable, name: &str, silent: i32) -> i32 {
     ret                                                                   // c:1624
 }
 
-/// Port of `do_module_features()` from `Src/module.c:1998`.
+/// Port of `do_module_features(m, enablesarr, flags)` from `Src/module.c:1998`.
 ///
 /// C body (128 lines): fetches the module's features array via
 /// `features_module()`, fetches its enables via `enables_module()`,
@@ -1937,7 +1937,7 @@ pub fn do_module_features(table: &mut ModuleTable, name: &str, flags: i32) -> i3
     ret                                                                  // c:2120 (approx)
 }
 
-/// Port of `dyn_boot_module()` from `Src/module.c:1747`.
+/// Port of `dyn_boot_module(m)` from `Src/module.c:1747`.
 ///
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(1, m, NULL);`
 /// Calls the dynamic module's exported entry-point with op-code 1
@@ -1946,7 +1946,7 @@ pub fn dyn_boot_module(_m: *const crate::ported::zsh_h::module) -> i32 { // c:17
     0                                                                    // c:1749
 }
 
-/// Port of `dyn_cleanup_module()` from `Src/module.c:1754`.
+/// Port of `dyn_cleanup_module(m)` from `Src/module.c:1754`.
 ///
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(2, m, NULL);`
 /// Op-code 2 = cleanup.
@@ -1954,7 +1954,7 @@ pub fn dyn_cleanup_module(_m: *const crate::ported::zsh_h::module) -> i32 { // c
     0                                                                    // c:1756
 }
 
-/// Port of `dyn_enables_module()` from `Src/module.c:1740`.
+/// Port of `dyn_enables_module(m, enables)` from `Src/module.c:1740`.
 ///
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(5, m, enables);`
 /// Op-code 5 = enables.
@@ -1962,7 +1962,7 @@ pub fn dyn_enables_module(_m: *const crate::ported::zsh_h::module, _enables: &mu
     0                                                                    // c:1742
 }
 
-/// Port of `dyn_features_module()` from `Src/module.c:1733`.
+/// Port of `dyn_features_module(m, features)` from `Src/module.c:1733`.
 ///
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(4, m, features);`
 /// Op-code 4 = features.
@@ -1970,7 +1970,7 @@ pub fn dyn_features_module(_m: *const crate::ported::zsh_h::module, _features: &
     0                                                                    // c:1735
 }
 
-/// Port of `dyn_finish_module()` from `Src/module.c:1761`.
+/// Port of `dyn_finish_module(m)` from `Src/module.c:1761`.
 ///
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(3, m, NULL);`
 /// Op-code 3 = finish.
@@ -1978,7 +1978,7 @@ pub fn dyn_finish_module(_m: *const crate::ported::zsh_h::module) -> i32 { // c:
     0                                                                    // c:1763
 }
 
-/// Port of `dyn_setup_module()` from `Src/module.c:1726`.
+/// Port of `dyn_setup_module(m)` from `Src/module.c:1726`.
 ///
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(0, m, NULL);`
 /// Op-code 0 = setup. AIX-only path that multiplexes all six module
@@ -1987,7 +1987,7 @@ pub fn dyn_setup_module(_m: *const crate::ported::zsh_h::module) -> i32 { // c:1
     0                                                                    // c:1728
 }
 
-/// Port of `enables_()` from `Src/module.c:324`.
+/// Port of `enables_(m, enables)` from `Src/module.c:324`.
 ///
 /// C body: `enables_(UNUSED(Module m), UNUSED(int **enables)) { return 1; }`
 /// — the module subsystem itself doesn't manage feature enables.
@@ -1995,7 +1995,7 @@ pub fn enables_(_m: *const crate::ported::zsh_h::module, _enables: &mut Option<V
     1                                                                    // c:326
 }
 
-/// Port of `enables_module()` from `Src/module.c:1901`.
+/// Port of `enables_module(m, enables)` from `Src/module.c:1901`.
 ///
 /// C body:
 /// ```c
@@ -2009,7 +2009,7 @@ pub fn enables_module(_table: &mut ModuleTable, _name: &str, _enables: &mut Opti
     0                                                                    // c:1904 (enables)(m,enables)
 }
 
-/// Port of `features_()` from `Src/module.c:313`.
+/// Port of `features_(m, features)` from `Src/module.c:313`.
 ///
 /// C body:
 /// ```c
@@ -2024,7 +2024,7 @@ pub fn features_(_m: *const crate::ported::zsh_h::module, _features: &mut Vec<St
     1                                                                    // c:319
 }
 
-/// Port of `features_module()` from `Src/module.c:1892`.
+/// Port of `features_module(m, features)` from `Src/module.c:1892`.
 ///
 /// C body:
 /// ```c
@@ -2059,7 +2059,7 @@ pub const FINDMOD_ALIASP: i32 = 0x0001;                                  // c:11
 /// /* Create an element for the module in the list if not found. */
 pub const FINDMOD_CREATE: i32 = 0x0002;                                  // c:115
 
-/// Port of `find_module()` from `Src/module.c:1659`.
+/// Port of `find_module(name, flags, namep)` from `Src/module.c:1659`.
 ///
 /// C body:
 /// ```c
@@ -2121,7 +2121,7 @@ pub fn find_module(table: &mut ModuleTable, name: &str, flags: i32) -> Option<St
     }
 }
 
-/// Port of `finish_()` from `Src/module.c:345`.
+/// Port of `finish_(m)` from `Src/module.c:345`.
 ///
 /// C body: `finish_(UNUSED(Module m)) { return 0; }` —
 /// the no-op finish hook for the module subsystem itself.
@@ -2129,7 +2129,7 @@ pub fn finish_(_m: *const crate::ported::zsh_h::module) -> i32 {         // c:34
     0                                                                    // c:347
 }
 
-/// Port of `finish_module()` from `Src/module.c:1926`.
+/// Port of `finish_module(m)` from `Src/module.c:1926`.
 ///
 /// C body:
 /// ```c
@@ -2150,7 +2150,7 @@ pub fn finish_module(_table: &mut ModuleTable, _name: &str) -> i32 {     // c:19
 // free-fn re-port belongs in zsh_h.rs once `struct features`
 // carries real bintab/conddefs/etc. pointers.
 
-/// Port of `getmathfunc()` from `Src/module.c:1283`.
+/// Port of `getmathfunc(name, autol)` from `Src/module.c:1283`.
 ///
 /// C body: linear-search `mathfuncs` for `name`; if found and `autol`
 /// is true and the entry is autoloadable, demand-load via
@@ -2179,7 +2179,7 @@ pub fn getmathfunc(table: &mut ModuleTable, name: &str, autol: i32) -> Option<St
 // curses.rs etc.); a canonical free-fn re-port belongs in
 // zsh_h.rs once `struct features` carries real pointers.
 
-/// Port of `hpux_dlsym()` from `Src/module.c:1530`.
+/// Port of `hpux_dlsym(handle, name)` from `Src/module.c:1530`.
 ///
 /// C body:
 /// ```c
@@ -2200,7 +2200,7 @@ pub fn hpux_dlsym(handle: usize, name: &str) -> usize {                // c:1530
     0                                                                    // c:1535 NULL
 }
 
-/// Port of `load_and_bind()` from `Src/module.c:1468`.
+/// Port of `load_and_bind(fn)` from `Src/module.c:1468`.
 ///
 /// C body: AIX-only `load() + loadbind()` wrapper. Iterates the
 /// `modulestab` hash table, binding each loaded module's handle to
@@ -2213,7 +2213,7 @@ pub fn load_and_bind(_fn_path: &str) -> usize {                          // c:14
     0                                                                    // c:1492 NULL
 }
 
-/// Port of `modname_ok()` from `Src/module.c:2173`.
+/// Port of `modname_ok(p)` from `Src/module.c:2173`.
 ///
 /// Returns 1 iff `p` is a valid module name: one or more
 /// `/`-separated identifier segments.
@@ -2252,7 +2252,7 @@ pub fn modname_ok(p: &str) -> i32 {                                       // c:2
     0                                                                    // c:2180
 }
 
-/// Port of `module_func()` from `Src/module.c:1770`.
+/// Port of `module_func(m, name)` from `Src/module.c:1770`.
 ///
 /// C body (DYNAMIC_NAME_CLASH_OK off — the typical case):
 /// ```c
@@ -2285,7 +2285,7 @@ pub fn module_func(m: &Module, name: &str) -> usize {                  // c:1770
 }
 
 
-/// Port of `module_loaded()` from `Src/module.c:1703`.
+/// Port of `module_loaded(name)` from `Src/module.c:1703`.
 ///
 /// C body:
 /// ```c
@@ -2312,7 +2312,7 @@ pub fn module_loaded(table: &ModuleTable, name: &str) -> i32 {           // c:17
     }
 }
 
-/// Port of `printautoparams()` from `Src/module.c:2710`.
+/// Port of `printautoparams(hn, lon)` from `Src/module.c:2710`.
 ///
 /// C body:
 /// ```c
@@ -2344,7 +2344,7 @@ pub fn printautoparams(name: &str, module: &str, flags: u32, lon: i32) { // c:27
     }
 }
 
-/// Port of `removemathfunc()` from `Src/module.c:1267`.
+/// Port of `removemathfunc(previous, current)` from `Src/module.c:1267`.
 ///
 /// C body:
 /// ```c
@@ -2370,7 +2370,7 @@ pub fn printautoparams(name: &str, module: &str, flags: u32, lon: i32) { // c:27
 // linked list (ported here as `MATHFUNCS`) — a re-port operating
 // on `zsh_h::mathfunc` belongs alongside `addmathfunc` above.
 
-/// Port of `require_module()` from `Src/module.c:3338`.
+/// Port of `require_module(module, features, silent)` from `Src/module.c:3338`.
 ///
 /// C: ensures `modname` is loaded with the named features enabled.
 /// Returns 0 on success, non-zero on failure.
@@ -2386,7 +2386,7 @@ pub fn require_module(table: &mut ModuleTable, modname: &str, _features: Option<
     0
 }
 
-/// Port of `ensurefeature()` from `Src/module.c:3415`.
+/// Port of `ensurefeature(modname, prefix, feature)` from `Src/module.c:3415`.
 ///
 /// C body:
 /// ```c
@@ -2427,7 +2427,7 @@ pub fn ensurefeature(table: &mut ModuleTable, modname: &str, prefix: &str, featu
 // in zsh_h.rs / hashtable.rs once `struct features` carries
 // real pointers.
 
-/// Port of `setup_()` from `Src/module.c:306`.
+/// Port of `setup_(m)` from `Src/module.c:306`.
 ///
 /// C body: `setup_(UNUSED(Module m)) { return 0; }` — the no-op
 /// setup hook of the module subsystem itself.
@@ -2435,7 +2435,7 @@ pub fn setup_(_m: *const crate::ported::zsh_h::module) -> i32 {          // c:30
     0                                                                    // c:308
 }
 
-/// Port of `setup_module()` from `Src/module.c:1884`.
+/// Port of `setup_module(m)` from `Src/module.c:1884`.
 ///
 /// C body:
 /// ```c
@@ -2448,7 +2448,7 @@ pub fn setup_module(_table: &mut ModuleTable, _name: &str) -> i32 {      // c:18
     0                                                                    // c:1887 (setup)(m)
 }
 
-/// Port of `try_load_module()` from `Src/module.c:1583`.
+/// Port of `try_load_module(name)` from `Src/module.c:1583`.
 ///
 /// C body iterates `module_path` looking for a loadable file via
 /// `dlopen`. Static-link path: a module is "loadable" iff it's in
@@ -2457,7 +2457,7 @@ pub fn try_load_module(table: &ModuleTable, name: &str) -> i32 {         // c:15
     if table.modules.contains_key(name) { 1 } else { 0 }
 }
 
-/// Port of `unload_named_module()` from Src/module.c:2924. zshrs links
+/// Port of `unload_named_module(modname, nam, silent)` from Src/module.c:2924. zshrs links
 /// modules statically; this entry is a name-parity shim.
 pub fn unload_named_module(table: &mut ModuleTable, name: &str, _nam: &str, _silent: i32) -> i32 {
     // c:2924-2965 — full body: find module, run cleanup, deregister.

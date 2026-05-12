@@ -7,13 +7,13 @@
 
 use std::path::PathBuf;
 
-/// Port of `setup_()` from `Src/Modules/newuser.c:37`. C body is
+/// Port of `setup_(m)` from `Src/Modules/newuser.c:37`. C body is
 /// `return 0;` (UNUSED `Module m`).
 pub fn setup_(_m: *const crate::ported::zsh_h::module) -> i32 {          // c:37
     0                                                                    // c:40
 }
 
-/// Port of `features_()` from `Src/Modules/newuser.c:44`. C body is
+/// Port of `features_(m, features)` from `Src/Modules/newuser.c:44`. C body is
 /// `return 1;` — the newuser module exposes no shell features
 /// (no builtins, no ZLE widgets, no params); the non-zero return
 /// signals "no feature table" to the loader.
@@ -21,7 +21,7 @@ pub fn features_(_m: *const crate::ported::zsh_h::module, _features: &mut Vec<St
     1                                                                    // c:47
 }
 
-/// Port of `enables_()` from `Src/Modules/newuser.c:51`. C body is
+/// Port of `enables_(m, enables)` from `Src/Modules/newuser.c:51`. C body is
 /// `return 0;` — no per-feature enables to manage.
 pub fn enables_(_m: *const crate::ported::zsh_h::module, _enables: &mut Option<Vec<i32>>) -> i32 { // c:51
     0                                                                    // c:54
@@ -39,7 +39,7 @@ pub fn check_dotfile(dotdir: &str, fname: &str) -> i32 {                 // c:58
     if p.exists() { 0 } else { -1 }                                      // c:62
 }
 
-/// Port of `boot_()` from `Src/Modules/newuser.c:68`.
+/// Port of `boot_(m)` from `Src/Modules/newuser.c:68`.
 ///
 /// C body (verbatim):
 /// ```c
@@ -137,13 +137,13 @@ fn source(_buf: &str) -> i32 {
     }
 }
 
-/// Port of `cleanup_()` from `Src/Modules/newuser.c:109`. C body is
+/// Port of `cleanup_(m)` from `Src/Modules/newuser.c:109`. C body is
 /// `return 0;` (UNUSED `Module m`).
 pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {        // c:109
     0                                                                    // c:112
 }
 
-/// Port of `finish_()` from `Src/Modules/newuser.c:116`. C body is
+/// Port of `finish_(m)` from `Src/Modules/newuser.c:116`. C body is
 /// `return 0;` (UNUSED `Module m`).
 pub fn finish_(_m: *const crate::ported::zsh_h::module) -> i32 {         // c:116
     0                                                                    // c:119

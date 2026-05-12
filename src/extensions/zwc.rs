@@ -400,7 +400,7 @@ impl ZwcFile {
 }
 
 /// Builder for emitting `.zwc` files.
-/// Port of `bld_eprog()` from Src/parse.c:547 — accumulates
+/// Port of `bld_eprog(heap)` from Src/parse.c:547 — accumulates
 /// function source / wordcode / strings, then writes them out in
 /// the canonical layout `try_source_file()` (Src/init.c) reads.
 #[derive(Debug)]

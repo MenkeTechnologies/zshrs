@@ -430,7 +430,7 @@ pub fn get_clktck() -> i64 {                                                 // 
 
 /// Format time as hh:mm:ss.xx (from jobs.c printhhmmss lines 752-765)
 /// Format a duration as `H:MM:SS` / `M:SS`.
-/// Port of `printhhmmss()` from Src/jobs.c:752.
+/// Port of `printhhmmss(secs)` from Src/jobs.c:752.
 pub fn printhhmmss(secs: f64) -> String {                                   // c:752
     let mins = (secs / 60.0) as i32;
     let hours = mins / 60;
@@ -448,7 +448,7 @@ pub fn printhhmmss(secs: f64) -> String {                                   // c
 
 /// Time format specifiers (from jobs.c printtime lines 768-949)
 /// Format a CPU/real time triple per `$TIMEFMT`.
-/// Port of `printtime()` from Src/jobs.c:768 — same
+/// Port of `printtime(real, ti, desc)` from Src/jobs.c:768 — same
 /// `%U`/`%S`/`%E`/`%P`/`%J`/`%c`/`%R`/etc. directive set the
 /// `time` keyword's output uses.
 pub fn printtime(                                                            // c:768
@@ -533,7 +533,7 @@ pub const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total";
 
 /// Signal message lookup (from jobs.c sigmsg lines 1106-1118)
 /// Render a signal number as a one-line description.
-/// Port of `sigmsg()` from Src/jobs.c:1107.
+/// Port of `sigmsg(sig)` from Src/jobs.c:1107.
 pub fn sigmsg(sig: i32) -> &'static str {                                    // c:1107
     match sig {
         libc::SIGHUP => "hangup",
@@ -673,25 +673,25 @@ pub fn havefiles(jobtab: &[Job]) -> bool {                                   // 
 
 /// Delete job (from jobs.c deletejob lines 1511-1526)
 /// Port of `deletejob` from `Src/jobs.c:1512`.
-pub fn deletejob(job: &mut Job, disowning: bool) {                          // c:1511
+pub fn deletejob(jn: &mut Job, disowning: bool) {                           // c:1511
     if !disowning {
-        job.filelist.clear();
+        jn.filelist.clear();
     }
-    job.procs.clear();
-    job.auxprocs.clear();
-    job.stat = 0;
+    jn.procs.clear();
+    jn.auxprocs.clear();
+    jn.stat = 0;
 }
 
 /// Free job (from jobs.c freejob lines 1456-1508)
 /// Port of `freejob` from `Src/jobs.c:1457`.
-pub fn freejob(job: &mut Job, notify: bool) {                               // c:1456
-    let _ = notify;
-    job.procs.clear();
-    job.auxprocs.clear();
-    job.filelist.clear();
-    job.stat = 0;
-    job.gleader = 0;
-    job.text.clear();
+pub fn freejob(jn: &mut Job, deleting: bool) {                              // c:1456
+    let _ = deleting;
+    jn.procs.clear();
+    jn.auxprocs.clear();
+    jn.filelist.clear();
+    jn.stat = 0;
+    jn.gleader = 0;
+    jn.text.clear();
 }
 
 /// Add process to job (from jobs.c addproc lines 1537-1597)
@@ -739,7 +739,7 @@ pub fn super_job(jobtab: &[Job], job_idx: usize) -> Option<usize> {          // 
 
 // Convert a job specifier ("%%", "%1", "%foo", "%?bar?", etc.)              // c:2058
 // to a job number.                                                          // c:2059
-/// Port of `getjob()` from `Src/jobs.c:2063`.
+/// Port of `getjob(s, prog)` from `Src/jobs.c:2063`.
 ///
 /// C signature: `mod_export int getjob(const char *s, const char *prog)`
 ///
@@ -859,7 +859,7 @@ pub fn getjob(s: &str, prog: &str) -> i32 {                                  // 
     -1                                                                       // c:2145-2147
 }
 
-/// Port of `findjobnam()` from `Src/jobs.c:3204`.
+/// Port of `findjobnam(s)` from `Src/jobs.c:3204`.
 ///
 /// C signature: `int findjobnam(const char *s)`
 ///
@@ -885,7 +885,7 @@ fn findjobnam(s: &str, jobtab: &[Job], maxjob: i32, thisjob: i32) -> Option<i32>
     None                                                                     // c:2046-2047
 }
 
-/// Port of `isanum()` from `Src/jobs.c:2010`.
+/// Port of `isanum(s)` from `Src/jobs.c:2010`.
 ///
 /// C body:
 /// ```c
@@ -905,7 +905,7 @@ pub fn isanum(s: &str) -> bool {                                             // 
         && s.bytes().all(|b| b == b'-' || b.is_ascii_digit())
 }
 
-/// Port of `init_jobs()` from `Src/jobs.c:2164`.
+/// Port of `init_jobs(argv, envp)` from `Src/jobs.c:2164`.
 ///
 /// C body allocates the `jobtab[]` array sized to `MAXJOBS_ALLOC`,
 /// `memset`s to zero, and seeds the `setproctitle`/argv-rewriting
@@ -916,7 +916,7 @@ pub fn isanum(s: &str) -> bool {                                             // 
 /// `jobs -Z` (argv overwrite) is not yet ported; the argv/envp
 /// scan from C lines 2185-2210 is omitted — that's a separate
 /// init.rs concern when `setproctitle()` lands.
-/// Direct port of `init_jobs()` from `Src/jobs.c:2164`.
+/// Direct port of `init_jobs(argv, envp)` from `Src/jobs.c:2164`.
 /// C body (c:2168-2210): allocates the `jobtab[]` array sized to
 /// MAXJOBS_ALLOC entries via `zalloc`, zero-fills via `memset`,
 /// then (non-HAVE_SETPROCTITLE) walks argv + envp to compute the
@@ -1053,7 +1053,7 @@ pub fn acquire_pgrp() -> bool {                                              // 
     acquired                                                                 // c:3278
 }
 
-/// Port of `storepipestats()` from `Src/jobs.c:420`.
+/// Port of `storepipestats(jn, inforeground, fixlastval)` from `Src/jobs.c:420`.
 ///
 /// C body decodes each process's wait-status into a normalised
 /// pipestats entry (signal-bit-or-exit-code) and tracks the
@@ -1099,7 +1099,7 @@ pub fn storepipestats(job: &Job) -> (Vec<i32>, i32) {
     (stats, pipefail)
 }
 
-/// Port of `clearjobtab()` from `Src/jobs.c:1780`.
+/// Port of `clearjobtab(monitor)` from `Src/jobs.c:1780`.
 ///
 /// C signature: `void clearjobtab(int monitor)`. Body walks the
 /// global `jobtab[1..=maxjob]` and either freejob's each entry
@@ -1179,7 +1179,7 @@ pub fn get_usage() -> ChildTimes {
     ChildTimes::default()
 }
 
-/// Port of `update_process()` from `Src/jobs.c:363`.
+/// Port of `update_process(pn, status)` from `Src/jobs.c:363`.
 ///
 /// C body:
 /// ```c
@@ -1494,7 +1494,7 @@ pub fn spawnjob(job: &mut Job, fg: bool) {                                  // c
 }
 
 // Find the job table for reporting jobs                                   // c:2038
-/// Port of `selectjobtab()` from `Src/jobs.c:2042`.
+/// Port of `selectjobtab(jtabp, jmaxp)` from `Src/jobs.c:2042`.
 ///
 /// C signature: `mod_export void selectjobtab(Job *jtabp, int *jmaxp)`
 ///
@@ -1560,7 +1560,7 @@ pub fn maybeshrinkjobtab(jobtab: &mut Vec<Job>) {
     }
 }
 
-/// Port of `addfilelist()` from `Src/jobs.c:1373`.
+/// Port of `addfilelist(name, fd)` from `Src/jobs.c:1373`.
 ///
 /// C body:
 /// ```c
@@ -1590,7 +1590,7 @@ pub fn addfilelist(job: &mut Job, name: Option<&str>, fd: i32) {
     }
 }
 
-/// Port of `pipecleanfilelist()` from `Src/jobs.c:1397`.
+/// Port of `pipecleanfilelist(filelist, proc_subst_only)` from `Src/jobs.c:1397`.
 ///
 /// `<fd:N>` sentinels (added by `addfilelist(None, fd)`) are
 /// kept in both branches — they're the input/output fds for
@@ -1620,7 +1620,7 @@ pub fn pipecleanfilelist(job: &mut Job, proc_subst_only: bool) {            // c
     }
 }
 
-/// Port of `deletefilelist()` from `Src/jobs.c:1422`.
+/// Port of `deletefilelist(file_list, disowning)` from `Src/jobs.c:1422`.
 ///
 /// C body iterates the filelist linked list; for each Jobfile,
 /// dispatches `unlink(jf->u.name)` if `is_fd == 0` else
@@ -1790,7 +1790,7 @@ pub fn dtime_ts(t1: &Instant, t2: &Instant) -> Duration {
 }
 
 // change job table entry from stopped to running                           // c:163
-/// Port of `makerunning()` from `Src/jobs.c:167`.
+/// Port of `makerunning(jn)` from `Src/jobs.c:167`.
 ///
 /// C body:
 /// ```c
@@ -1828,7 +1828,7 @@ pub fn makerunning(jobtab: &mut [Job], idx: usize) {
     }
 }
 
-/// Port of `hasprocs()` from `Src/jobs.c:243`.
+/// Port of `hasprocs(job)` from `Src/jobs.c:243`.
 ///
 /// C body:
 /// ```c
@@ -1957,7 +1957,7 @@ pub fn getbgstatus(pid: i32) -> Option<i32> {                                // 
     None
 }
 
-/// Port of `gettrapnode()` from `Src/jobs.c:3115`.
+/// Port of `gettrapnode(sig, ignoredisable)` from `Src/jobs.c:3115`.
 ///
 /// C body looks up `TRAP<signame>` in the `shfunctab` (shell-
 /// function hashtable) using either `getnode` (skip disabled) or
@@ -1981,7 +1981,7 @@ pub fn gettrapnode(sig: i32) -> Option<String> {
         .and_then(|f| f.body.clone())
 }
 
-/// Port of `removetrapnode()` from `Src/jobs.c:3157`.
+/// Port of `removetrapnode(sig)` from `Src/jobs.c:3157`.
 ///
 /// C body:
 /// ```c
@@ -2034,7 +2034,7 @@ pub fn release_pgrp() {                                                      // 
     }
 }
 
-/// Direct port of `bin_fg()` from `Src/jobs.c:2421`.
+/// Direct port of `bin_fg(name, argv, ops, func)` from `Src/jobs.c:2421`.
 /// Multi-builtin dispatcher — handles bg, fg, wait, jobs, disown, and
 /// the `-Z` process-rename form. C body is 315 lines (c:2421-2735);
 /// the per-builtin behaviour is selected by `func` (BIN_BG/BIN_FG/
@@ -2263,7 +2263,7 @@ pub fn bin_fg(name: &str, argv: &[String],                                   // 
     returnval                                                                // c:2734 retval
 }
 
-/// Direct port of `bin_kill()` from `Src/jobs.c:2772`.
+/// Direct port of `bin_kill(nam, argv)` from `Src/jobs.c:2772`.
 /// Builtin entry for the `kill` command. Parses signal specifiers
 /// (`-N` numeric, `-s NAME` symbolic, `-l` list-by-number,
 /// `-L` tabular listing, `-n N` numeric explicit, `-q` sigqueue
@@ -2513,7 +2513,7 @@ pub fn bin_kill(nam: &str, argv: &[String],                                  // 
     returnval                                                                // c:3045
 }
 
-/// Direct port of `bin_suspend()` from `Src/jobs.c:3170`.
+/// Direct port of `bin_suspend(name, ops)` from `Src/jobs.c:3170`.
 /// C body (c:3173-3197):
 /// ```c
 /// if (islogin && !OPT_ISSET(ops,'f')) { error; return 1; }

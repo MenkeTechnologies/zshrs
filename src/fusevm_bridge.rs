@@ -5854,7 +5854,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_OPTION_SET, |vm, _argc| {
         let name = vm.pop().to_str();
-        // Direct port of `optison()` at Src/cond.c:502 — `[[ -o NAME ]]`
+        // Direct port of `optison(name, s)` at Src/cond.c:502 — `[[ -o NAME ]]`
         // reads through the same `opts[]` array that `setopt NAME`
         // writes via `dosetopt`. Earlier code read a duplicate Executor
         // HashMap which never saw `bin_setopt`'s writes (those land in

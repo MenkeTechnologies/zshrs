@@ -39,7 +39,7 @@ thread_local! {
     };
 }
 
-/// Port of `get_srandom()` from `Src/Modules/random.c:143`. The
+/// Port of `get_srandom(pm)` from `Src/Modules/random.c:143`. The
 /// `getfn` slot the C source wires for the `$SRANDOM` special
 /// parameter. Refills `rand_buff` via `getrandom_buffer()` when
 /// drained, then returns the next pre-loaded u32.
@@ -121,7 +121,7 @@ pub fn bounded(max: u32) -> u32 {
 }
 
 /// Fill a buffer with cryptographically random bytes.
-/// Port of `getrandom_buffer()` from Src/Modules/random.c:62 — the
+/// Port of `getrandom_buffer(buf, len)` from Src/Modules/random.c:62 — the
 /// C source dispatches to `getentropy(3)` on BSD, `getrandom(2)` on
 /// Linux, or `/dev/urandom` as a portable fallback. We map onto
 /// `arc4random_buf(3)` for macOS (BSD-derived), `getrandom(2)` on
@@ -134,7 +134,7 @@ pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // 
     Ok(())
 }
 
-/// Port of `getrandom_buffer()` from `Src/Modules/random.c:62`,
+/// Port of `getrandom_buffer(buf, len)` from `Src/Modules/random.c:62`,
 /// `#elif defined(HAVE_GETRANDOM)` branch (c:75-76):
 /// `ret = getrandom(bufptr, (len - val), 0);`
 /// with the C EINTR-retry loop at c:80-85.
@@ -165,7 +165,7 @@ pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // 
     Ok(())
 }
 
-/// Port of `getrandom_buffer()` from `Src/Modules/random.c:282`.
+/// Port of `getrandom_buffer(buf, len)` from `Src/Modules/random.c:282`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // c:62
     use std::fs::File;
@@ -177,7 +177,7 @@ pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // 
 }
 
 /// Fill a buffer with bounded random integers.
-/// Port of `get_bound_random_buffer()` from Src/Modules/random.c:104
+/// Port of `get_bound_random_buffer(buffer, count, max)` from Src/Modules/random.c:104
 /// — repeatedly pulls from the kernel and rejection-samples each
 /// slot until the entire buffer is filled with values in `[0, max)`.
 pub fn get_bound_random_buffer(buffer: &mut [u32], max: u32) {               // c:104
@@ -187,7 +187,7 @@ pub fn get_bound_random_buffer(buffer: &mut [u32], max: u32) {               // 
 }
 
 /// `math_zrand_int(upper, lower, inclusive)` math function.
-/// Port of `math_zrand_int()` from Src/Modules/random.c:161 — the
+/// Port of `math_zrand_int(argc, argv)` from Src/Modules/random.c:161 — the
 /// C source's math-function entry point exposed to `${(( ... ))}`.
 /// All three arguments are optional; behaviour matches the C
 /// source's bound-checks (`lower < 0`, `upper < lower`, etc.).
@@ -394,7 +394,7 @@ use crate::ported::zsh_h::module;
 /// Set in `boot_()`, closed in `finish_()`.
 pub static RANDFD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:34
 
-/// Port of `setup_()` from `Src/Modules/random.c:243`.
+/// Port of `setup_(m)` from `Src/Modules/random.c:243`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:243
     // c:245-261 — USE_URANDOM block: stat /dev/urandom; verify
     //              S_ISCHR. We probe via std::fs::metadata + file_type().
@@ -415,18 +415,18 @@ pub fn setup_(_m: *const module) -> i32 {                                    // 
     0                                                                        // c:262
 }
 
-/// Port of `features_()` from `Src/Modules/random.c:267`.
+/// Port of `features_(m, features)` from `Src/Modules/random.c:267`.
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:267
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_()` from `Src/Modules/random.c:275`.
+/// Port of `enables_(m, enables)` from `Src/Modules/random.c:275`.
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:275
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_()` from `Src/Modules/random.c:282`.
+/// Port of `boot_(m)` from `Src/Modules/random.c:282`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:282
     // c:284-308 — USE_URANDOM block: open(/dev/urandom, O_RDONLY),
     //              movefd, addmodulefd to track the fd.
@@ -445,12 +445,12 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
     }
 }
 
-/// Port of `cleanup_()` from `Src/Modules/random.c:312`.
+/// Port of `cleanup_(m)` from `Src/Modules/random.c:312`.
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:312
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_()` from `Src/Modules/random.c:319`.
+/// Port of `finish_(m)` from `Src/Modules/random.c:319`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:319
     // c:321-324 — USE_URANDOM block: `if (randfd >= 0) zclose(randfd)`.
     use std::sync::atomic::Ordering;

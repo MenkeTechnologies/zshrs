@@ -29,7 +29,7 @@ use std::os::unix::io::AsRawFd;
 // dispatch; they are not file-`static` storage in the bucket-1 sense).
 // ---------------------------------------------------------------------------
 
-/// Port of `setpmmapfile()` from `Src/Modules/mapfile.c:67`. Writes
+/// Port of `setpmmapfile(pm, value)` from `Src/Modules/mapfile.c:67`. Writes
 /// `value` to a file named by the Param's name slot, using
 /// `mmap(MAP_SHARED)` + `msync` on `USE_MMAP` builds and `fopen("w")`
 /// + `putc` loop on the fallback path. Both `name` and `value` are
@@ -150,7 +150,7 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:67
     }
 }
 
-/// Port of `unsetpmmapfile()` from `Src/Modules/mapfile.c:126`. Unset
+/// Port of `unsetpmmapfile(pm)` from `Src/Modules/mapfile.c:126`. Unset
 /// callback for an element of `$mapfile`: unlinks the file named by
 /// `pm->node.nam` (unless the param is readonly, c:133).
 ///
@@ -167,7 +167,7 @@ pub fn unsetpmmapfile(name: &str, readonly: bool) {                      // c:12
     // c:136 — free(fname); auto on drop.
 }
 
-/// Port of `setpmmapfiles()` from `Src/Modules/mapfile.c:141`. The
+/// Port of `setpmmapfiles(pm, ht)` from `Src/Modules/mapfile.c:141`. The
 /// bulk-set callback fired when `mapfile=( foo bar baz qux )` assigns
 /// a hashtable. For each (name, value) entry, calls
 /// `setpmmapfile(v.pm, ztrdup(getstrvalue(&v)))` (c:159).
@@ -198,7 +198,7 @@ pub fn setpmmapfiles(entries: &[(String, String)], readonly: bool) {     // c:14
     // No paramtable here in the slice-based Rust port; nothing to free.
 }
 
-/// Port of `get_contents()` from `Src/Modules/mapfile.c:167`. Reads
+/// Port of `get_contents(fname)` from `Src/Modules/mapfile.c:167`. Reads
 /// the file at `fname` and returns its contents as a metafied
 /// zsh-internal string (per `metafy(buf, size, META_HEAPDUP)` at
 /// c:195/202). Returns `None` on any of the C source's
@@ -285,7 +285,7 @@ pub fn get_contents(fname: &str) -> Option<String> {                     // c:16
     Some(metafy(&raw))
 }
 
-/// Port of `getpmmapfile()` from `Src/Modules/mapfile.c:217`. The
+/// Port of `getpmmapfile(name)` from `Src/Modules/mapfile.c:217`. The
 /// magic-assoc lookup callback for `${mapfile[name]}`. C body
 /// allocates a `struct param` from the heap, sets `pm->node.nam`,
 /// `pm->node.flags = PM_SCALAR`, `pm->gsu.s = &mapfile_gsu`,
@@ -303,7 +303,7 @@ pub fn getpmmapfile(name: &str) -> Option<String> {                      // c:21
     get_contents(name)                                                   // c:229
 }
 
-/// Port of `scanpmmapfile()` from `Src/Modules/mapfile.c:241`. The
+/// Port of `scanpmmapfile(func, flags)` from `Src/Modules/mapfile.c:241`. The
 /// magic-assoc scan callback for `${(k)mapfile}` / `${(kv)mapfile}`.
 /// Walks the cwd and yields one entry per file. C source quotes:
 /// "Hmmm, it's rather wasteful always to read the contents.  In
@@ -358,39 +358,39 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/mapfile.c:279`.
+/// Port of `setup_(m)` from `Src/Modules/mapfile.c:279`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:279
     // C body c:280-281 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_()` from `Src/Modules/mapfile.c:286`.
+/// Port of `features_(m, features)` from `Src/Modules/mapfile.c:286`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:286
     *features = featuresarray(m, module_features());
     0                                                                    // c:289
 }
 
-/// Port of `enables_()` from `Src/Modules/mapfile.c:294`.
+/// Port of `enables_(m, enables)` from `Src/Modules/mapfile.c:294`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:294
     handlefeatures(m, module_features(), enables) // c:296
 }
 
-/// Port of `boot_()` from `Src/Modules/mapfile.c:301`.
+/// Port of `boot_(m)` from `Src/Modules/mapfile.c:301`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:301
     // C body c:302-303 — `return 0`. Faithful empty-body port; the
     //                    $mapfile assoc-param registers via pd_list.
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/mapfile.c:308`.
+/// Port of `cleanup_(m)` from `Src/Modules/mapfile.c:308`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:308
     setfeatureenables(m, module_features(), None) // c:310
 }
 
-/// Port of `finish_()` from `Src/Modules/mapfile.c:315`.
+/// Port of `finish_(m)` from `Src/Modules/mapfile.c:315`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:315
     // C body c:316-317 — `return 0`. Faithful empty-body port.
     0

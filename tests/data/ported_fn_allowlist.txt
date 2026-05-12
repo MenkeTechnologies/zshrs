@@ -217,7 +217,6 @@ with_octal_zeroes
 with_lastval
 extract_string_variables
 getmathparams
-peek
 advance
 is_digit
 is_ident_start
@@ -1096,3 +1095,4 @@ utmp_make
 extract_numeric_ranges
 numeric_ranges_to_star
 numeric_range_contains
+peek

@@ -41,10 +41,10 @@ mod ffi {
 }
 
 // =====================================================================
-// Port of `bin_cap()` from Src/Modules/cap.c:36.
+// Port of `bin_cap(nam, argv)` from Src/Modules/cap.c:36.
 // =====================================================================
 
-/// Port of `bin_cap()` from `Src/Modules/cap.c:36`.
+/// Port of `bin_cap(nam, argv)` from `Src/Modules/cap.c:36`.
 ///
 /// `cap [STRING]`: with `STRING`, parse via `cap_from_text` and
 /// install via `cap_set_proc`; without args, print the current
@@ -119,10 +119,10 @@ pub(crate) fn bin_cap(nam: &str, _argv: &[String], _ops: &options, _func: i32) -
 }
 
 // =====================================================================
-// Port of `bin_getcap()` from Src/Modules/cap.c:68.
+// Port of `bin_getcap(nam, argv)` from Src/Modules/cap.c:68.
 // =====================================================================
 
-/// Port of `bin_getcap()` from `Src/Modules/cap.c:68`.
+/// Port of `bin_getcap(nam, argv)` from `Src/Modules/cap.c:68`.
 ///
 /// `getcap FILE...`: print each file's capability set as
 /// `FILE CAPS`. C bails on the first error but iterates the rest;
@@ -175,10 +175,10 @@ pub(crate) fn bin_getcap(nam: &str, _argv: &[String], _ops: &options, _func: i32
 }
 
 // =====================================================================
-// Port of `bin_setcap()` from Src/Modules/cap.c:91.
+// Port of `bin_setcap(nam, argv)` from Src/Modules/cap.c:91.
 // =====================================================================
 
-/// Port of `bin_setcap()` from `Src/Modules/cap.c:91`.
+/// Port of `bin_setcap(nam, argv)` from `Src/Modules/cap.c:91`.
 ///
 /// `setcap STRING FILE...`: parse `STRING` via `cap_from_text`, then
 /// apply via `cap_set_file` to each remaining file argument. Mirrors
@@ -254,36 +254,36 @@ pub(crate) fn bin_setcap(nam: &str, _argv: &[String], _ops: &options, _func: i32
 // Module entry points (cap.c:138-178).
 // =====================================================================
 
-/// Port of `setup_()` from `Src/Modules/cap.c:139`.
+/// Port of `setup_(m)` from `Src/Modules/cap.c:139`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:139
     0                                                                  // c:141
 }
 
-/// Port of `features_()` from `Src/Modules/cap.c:146`.
+/// Port of `features_(m, features)` from `Src/Modules/cap.c:146`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:146
     *features = featuresarray(m, module_features());
     0                                                                  // c:149
 }
 
-/// Port of `enables_()` from `Src/Modules/cap.c:154`.
+/// Port of `enables_(m, enables)` from `Src/Modules/cap.c:154`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:154
     handlefeatures(m, module_features(), enables) // c:156
 }
 
-/// Port of `boot_()` from `Src/Modules/cap.c:161`.
+/// Port of `boot_(m)` from `Src/Modules/cap.c:161`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:161
     0                                                                  // c:163
 }
 
-/// Port of `cleanup_()` from `Src/Modules/cap.c:168`.
+/// Port of `cleanup_(m)` from `Src/Modules/cap.c:168`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:168
     setfeatureenables(m, module_features(), None) // c:170
 }
 
-/// Port of `finish_()` from `Src/Modules/cap.c:175`.
+/// Port of `finish_(m)` from `Src/Modules/cap.c:175`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:175
     0                                                                  // c:177
 }

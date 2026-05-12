@@ -39,7 +39,7 @@ pub static INVCOUNT: std::sync::atomic::AtomicI32 =
 // has to be inserted.                                                       // c:574
 /// Replace `[word_start, word_end)` in `buffer` with `replacement`,
 /// returning the new buffer plus updated cursor position.
-/// Port of `instmatch()` from Src/Zle/compresult.c. The C source
+/// Port of `instmatch(m, scs)` from Src/Zle/compresult.c. The C source
 /// uses this as the lowest-level "swap the partial word for the
 /// chosen completion" primitive used by every other inserter
 /// (`do_single`, `do_ambiguous`, `do_allmatches`).
@@ -63,7 +63,7 @@ pub fn instmatch(                                                            // 
 // to the unambiguous string and cursor position via compstate.             // c:521
 /// completion engine inserts on the first Tab press when matches
 /// are ambiguous.
-/// Port of `unambig_data()` from Src/Zle/compresult.c. The C source
+/// Port of `unambig_data(cp, pp, ip)` from Src/Zle/compresult.c. The C source
 /// also tracks cursor placement within the prefix; ours returns
 /// just the common-prefix string.
 pub fn unambig_data(matches: &[String]) -> String {                          // c:525
@@ -95,7 +95,7 @@ pub fn unambig_data(matches: &[String]) -> String {                          // 
 }
 
 /// Insert the single chosen match, optionally appending a space.
-/// Port of `do_single()` from Src/Zle/compresult.c — fired when
+/// Port of `do_single(m)` from Src/Zle/compresult.c — fired when
 // Insert a single match in the command line.                              // c:959
 /// completion produced exactly one match. The trailing space is
 /// the `AUTO_REMOVE_SLASH`-aware insertion that distinguishes
@@ -133,7 +133,7 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {                         // c:74
 }
 
 /// Insert every match into the buffer joined by `separator`.
-/// Port of `do_allmatches()` from Src/Zle/compresult.c — fires for
+/// Port of `do_allmatches(end)` from Src/Zle/compresult.c — fires for
 /// the `all-matches` widget and for the implicit case when no
 /// listing fits.
 pub fn do_allmatches(                                                        // c:897
@@ -149,7 +149,7 @@ pub fn do_allmatches(                                                        // 
 }
 
 /// Step the menu cursor forward or backward, wrapping at the ends.
-/// Port of `do_menucmp()` from Src/Zle/compresult.c. The C source
+/// Port of `do_menucmp(lst)` from Src/Zle/compresult.c. The C source
 /// also handles per-group menu wrap; this Rust port treats the
 /// match list as flat for the host's menu loop.
 pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, &str) { // c:1253
@@ -185,14 +185,14 @@ pub fn accept_last(                                                          // 
 
 /// Test whether `word` satisfies the required prefix and suffix
 /// constraints (the `compadd -P pre -S suf` requirements).
-/// Port of `valid_match()` from Src/Zle/compresult.c.
+/// Port of `valid_match(m, next)` from Src/Zle/compresult.c.
 pub fn valid_match(word: &str, prefix: &str, suffix: &str) -> bool {         // c:1210
     word.starts_with(prefix) && (suffix.is_empty() || word.ends_with(suffix))
 }
 
 /// Detect whether a string contains brace-expansion metacharacters
 /// that would need quoting on insertion.
-/// Port of `hasbrpsfx()` from Src/Zle/compresult.c — used by the
+/// Port of `hasbrpsfx(m, pre, suf)` from Src/Zle/compresult.c — used by the
 /// brace-suffix tracking that compsys keeps for menu completion.
 pub fn hasbrpsfx(s: &str) -> bool {                                          // c:685
     s.contains('{') || s.contains('}')
@@ -208,7 +208,7 @@ pub fn build_pos_string(current: usize, total: usize) -> String {            // 
 
 /// Truncate a long completion line with `...` so it fits a column
 /// budget.
-/// Port of `cut_cline()` from Src/Zle/compresult.c. The C source
+/// Port of `cut_cline(l)` from Src/Zle/compresult.c. The C source
 /// truncates the Cline's display field to `max_len`; ours emits
 /// `…` (three ASCII dots) when truncation is needed.
 pub fn cut_cline(s: &str, max_len: usize) -> String {                        // c:46
@@ -221,7 +221,7 @@ pub fn cut_cline(s: &str, max_len: usize) -> String {                        // 
 
 /// Concatenate the three text fields of a Cline back into a single
 /// display string.
-/// Port of `cline_str()` from Src/Zle/compresult.c. The C source
+/// Port of `cline_str(l, ins, csp, posl)` from Src/Zle/compresult.c. The C source
 /// emits prefix + matched-region + suffix during list rendering;
 /// the result here is what `compprintlist` writes to the screen.
 pub fn cline_str(prefix: &str, line: &str, suffix: &str) -> String {         // c:165
@@ -241,7 +241,7 @@ pub fn list_lines(matches: &[String], columns: usize) -> usize {             // 
     matches.len().div_ceil(columns)
 }
 
-/// Port of `skipnolist()` from `Src/Zle/compresult.c:1480`.
+/// Port of `skipnolist(p, showall)` from `Src/Zle/compresult.c:1480`.
 /// ```c
 /// mod_export Cmatch *
 /// skipnolist(Cmatch *p, int showall)
@@ -280,7 +280,7 @@ pub fn skipnolist(matches: &[crate::ported::zle::comp_h::Cmatch], showall: i32) 
     p                                                                            // c:1490 return p
 }
 
-/// Port of `comp_list()` from `Src/Zle/compresult.c:1467`.
+/// Port of `comp_list(v)` from `Src/Zle/compresult.c:1467`.
 /// ```c
 /// void
 /// comp_list(char *v)
@@ -323,7 +323,7 @@ pub fn comp_list(v: Option<&str>) {                                             
     onlyexpl.store(val, Ordering::SeqCst);
 }
 
-/// Port of `comp_mod()` from `Src/Zle/compresult.c:1363`.
+/// Port of `comp_mod(v, m)` from `Src/Zle/compresult.c:1363`.
 /// ```c
 /// static int
 /// comp_mod(int v, int m)
@@ -371,7 +371,7 @@ pub fn asklist() -> i32 {                                                       
     0
 }
 
-/// Port of `ztat()` from `Src/Zle/compresult.c:869`.
+/// Port of `ztat(nam, buf, ls)` from `Src/Zle/compresult.c:869`.
 /// `stat()` wrapper that follows symlinks unless `ls` is non-zero.
 /// Returns `Option<Metadata>` mirroring C's `0`/`-1` return where
 /// the metadata is filled into the supplied `struct stat *buf`.
@@ -517,7 +517,7 @@ mod tests {
 // when no matches are available.
 // =====================================================================
 
-/// Port of `bld_all_str()` from `Src/Zle/compresult.c:2187`.
+/// Port of `bld_all_str(all)` from `Src/Zle/compresult.c:2187`.
 /// Direct port of `static void bld_all_str(Cmatch all)` from
 /// `Src/Zle/compresult.c:2187-2240`. Walks the global `amatches`
 /// linked list, collecting every visible match string into a single
@@ -547,9 +547,9 @@ pub fn bld_all_str() -> String {                                             // 
         while mp < g.matches.len() {
             let m = &g.matches[mp];
             let visible = (m.flags & (CMF_ALL | CMF_HIDE)) == 0
-                       && m.str_.is_some();
+                       && m.str.is_some();
             if visible {                                                     // c:2213
-                let s = m.str_.as_deref().unwrap();
+                let s = m.str.as_deref().unwrap();
                 let t = s.len() as i32 + add;
                 if len >= t {                                                // c:2215
                     if add != 0 { buf.push(' '); }                           // c:2216
@@ -580,7 +580,7 @@ pub fn bld_all_str() -> String {                                             // 
     buf                                                                      // c:2238 ztrdup(buf)
 }
 
-/// Port of `calclist()` from `Src/Zle/compresult.c:1495`.
+/// Port of `calclist(showall)` from `Src/Zle/compresult.c:1495`.
 pub fn calclist(_showall: i32) -> i32 {                                      // c:1495
     // C body c:1497-1976 — computes per-match column widths and totals
     //                      for the listing, populates listdat fields
@@ -770,7 +770,7 @@ pub fn invalidate_list() -> i32 {                                            // 
     0                                                                        // c:2358
 }
 
-/// Port of `iprintm()` from `Src/Zle/compresult.c:2241`.
+/// Port of `iprintm(g, mp, lastc, width)` from `Src/Zle/compresult.c:2241`.
 /// Direct port of `static void iprintm(Cmgroup g, Cmatch *mp, int mc,
 ///                                     int ml, int lastc, int width)`
 /// from `Src/Zle/compresult.c:2241-2282`. Renders one match cell to
@@ -813,7 +813,7 @@ pub fn iprintm(
         let _ = write!(stdout, "{}", d);                                     // c:2260 niceformat
         len = d.chars().count() as i32;
     } else {                                                                 // c:2263
-        let s = m.str_.as_deref().unwrap_or("");
+        let s = m.str.as_deref().unwrap_or("");
         let _ = write!(stdout, "{}", s);                                     // c:2266
         len = s.chars().count() as i32;
         // c:2270-2273 — append modec for file-completion groups.
@@ -867,7 +867,7 @@ pub fn list_matches() -> i32 {                                               // 
     ilistmatches()
 }
 
-/// Port of `printlist()` from `Src/Zle/compresult.c:1978`.
+/// Port of `printlist(over, printm, showall)` from `Src/Zle/compresult.c:1978`.
 /// Direct port of `void printlist(int over, CLPrintFunc printm,
 ///                                  int showall)` from
 /// `Src/Zle/compresult.c:1978-2185`. The workhorse listing renderer:
@@ -921,7 +921,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {                           // 
             // c:2017-2018 — printfmt(e.str, count, 1, 1).
             let n = if e.always != 0 { -1 } else { e.count };
             let l = crate::ported::zle::zle_tricky::printfmt(
-                e.str_.as_deref().unwrap_or(""), n, true, true,
+                e.str.as_deref().unwrap_or(""), n, true, true,
             );
             ml += l;
             if cl >= 0 && (cl - l) <= 1 { cl = -1; }

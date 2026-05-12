@@ -531,7 +531,7 @@ pub struct brinfo {                                                          // 
     /// previous (only for closing braces).
     pub prev: Option<BrinfoPtr>,                                             // c:370
     /// the string to insert.
-    pub str_: String,                                                        // c:371
+    pub str: String,                                                        // c:371
     /// original position.
     pub pos: i32,                                                            // c:372
     /// original position, with quoting.

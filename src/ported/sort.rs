@@ -43,7 +43,7 @@ use crate::zsh_h::{
 // `Src/zsh.h:3013-3028`); this file no longer carries a duplicate.
 use crate::ported::zsh_h::sortelt;
 
-/// Port of `zstrcmp()` from `Src/sort.c:191`.
+/// Port of `zstrcmp(as, bs, sortflags)` from `Src/sort.c:191`.
 ///
 /// C fixes `sortdir = 1`, sets only `sortnobslash` and `sortnumeric`
 /// from `sortflags` (`sort.c:207-210`), then calls `eltpcmp`. It does
@@ -204,7 +204,7 @@ pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {              // 
     }
 }
 
-/// Port of `eltpcmp()` from `Src/sort.c:44`.
+/// Port of `eltpcmp(a, b)` from `Src/sort.c:44`.
 ///
 /// The qsort callback. C's signature is
 /// `int(*)(const void*, const void*)` for direct use with
@@ -254,7 +254,7 @@ pub fn eltpcmp(a: &sortelt, b: &sortelt, sort_flags: u32) -> Ordering {      // 
     }
 }
 
-/// Port of `strmetasort()` from `Src/sort.c:234`.
+/// Port of `strmetasort(array, sortwhat, unmetalenp)` from `Src/sort.c:234`.
 // lengths.                                                                 // c:229
 /// C signature: `void strmetasort(char **array, int sortwhat,
 /// int *unmetalenp)`. `unmetalenp = None` (i.e. C's `NULL`) means

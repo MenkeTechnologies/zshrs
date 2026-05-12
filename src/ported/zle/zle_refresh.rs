@@ -205,7 +205,7 @@ impl Zle {
     }
 
     /// Clear the screen
-    /// Port of clearscreen() from zle_refresh.c
+    /// Port of clearscreen(args) from zle_refresh.c
     pub fn clearscreen(&mut self) {                                          // c:2366
         print!("\x1b[2J\x1b[H");
         let _ = io::stdout().flush();
@@ -213,7 +213,7 @@ impl Zle {
     }
 
     /// Redisplay the current line
-    /// Port of redisplay() from zle_refresh.c
+    /// Port of redisplay(args) from zle_refresh.c
     pub fn redisplay(&mut self) {                                            // c:2377
         self.zrefresh();
     }
@@ -221,7 +221,7 @@ impl Zle {
     // move the cursor to line ln (relative to the prompt line),            // c:2100
     // absolute column cl; update vln, vcs - video line and column          // c:2101
     /// Move cursor to position
-    /// Port of moveto() from zle_refresh.c
+    /// Port of moveto(ln, cl) from zle_refresh.c
     pub fn moveto(&mut self, row: usize, col: usize) {                       // c:2105
         // ANSI escape: ESC [ row ; col H (1-indexed)
         print!("\x1b[{};{}H", row + 1, col + 1);
@@ -229,7 +229,7 @@ impl Zle {
     }
 
     /// Move cursor down
-    /// Port of tc_downcurs() from zle_refresh.c  
+    /// Port of tc_downcurs(ct) from zle_refresh.c  
     pub fn tc_downcurs(&mut self, count: usize) {
         if count > 0 {
             print!("\x1b[{}B", count);
@@ -238,7 +238,7 @@ impl Zle {
     }
 
     /// Move cursor right
-    /// Port of tc_rightcurs() from zle_refresh.c
+    /// Port of tc_rightcurs(ct) from zle_refresh.c
     pub fn tc_rightcurs(&mut self, count: usize) {
         if count > 0 {
             print!("\x1b[{}C", count);
@@ -247,7 +247,7 @@ impl Zle {
     }
 
     /// Scroll window up
-    /// Port of scrollwindow() from zle_refresh.c
+    /// Port of scrollwindow(tline) from zle_refresh.c
     pub fn scrollwindow(&mut self, lines: i32) {
         if lines > 0 {
             // Scroll up
@@ -260,25 +260,25 @@ impl Zle {
     }
 
     /// Single line refresh
-    /// Port of singlerefresh() from zle_refresh.c
+    /// Port of singlerefresh(tmpline, tmpll, tmpcs) from zle_refresh.c
     pub fn singlerefresh(&mut self) {                                        // c:2397
         self.zrefresh();
     }
 
     /// Refresh a single line
-    /// Port of refreshline() from zle_refresh.c
+    /// Port of refreshline(ln) from zle_refresh.c
     pub fn refreshline(&mut self, _line: usize) {
         self.zrefresh();
     }
 
     /// Write a wide character
-    /// Port of zwcputc() from zle_refresh.c
+    /// Port of zwcputc(c) from zle_refresh.c
     pub fn zwcputc(&self, c: char) {
         print!("{}", c);
     }
 
     /// Write a string of wide characters
-    /// Port of zwcwrite() from zle_refresh.c
+    /// Port of zwcwrite(s, i) from zle_refresh.c
     pub fn zwcwrite(&self, s: &str) {
         print!("{}", s);
     }
@@ -318,7 +318,7 @@ fn countprompt(s: &str) -> usize {
 // their existing parameter types.
 pub use crate::zle_refresh_state::{HighlightCategory, HighlightManager, RegionHighlight};
 
-/// Terminal output functions. Port of tcout() family from zle_refresh.c.
+/// Terminal output functions. Port of tcout(cap) family from zle_refresh.c.
 pub fn tcout(cap: &str) {
     print!("{}", cap);
 }
@@ -733,7 +733,7 @@ pub fn freevideo(state: &mut RefreshState) {                                 // 
     state.new_video = None;
 }
 
-/// Port of `nextline()` from Src/Zle/zle_refresh.c:842.
+/// Port of `nextline(rpms, wrapped)` from Src/Zle/zle_refresh.c:842.
 pub fn nextline(state: &mut RefreshState, _wrapped: i32) -> i32 {            // c:842
     // C body (c:842-873): advance rpms->ln++; check space against
     // winh; allocate new buffer row if needed; return 1 when display
@@ -762,7 +762,7 @@ pub fn resetvideo(state: &mut RefreshState) {                                // 
     state.need_full_redraw = true;
 }
 
-/// Port of `singmoveto()` from Src/Zle/zle_refresh.c:2687.
+/// Port of `singmoveto(pos)` from Src/Zle/zle_refresh.c:2687.
 pub fn singmoveto(state: &mut RefreshState, pos: usize) {                    // c:singmoveto
     // C body: `singlemoveto()` issues termcap cursor-positioning to
     // `pos` on a single-line display. Without termcap output here
@@ -770,7 +770,7 @@ pub fn singmoveto(state: &mut RefreshState, pos: usize) {                    // 
     state.vcs = pos;
 }
 
-/// Port of `snextline()` from Src/Zle/zle_refresh.c:875.
+/// Port of `snextline(rpms)` from Src/Zle/zle_refresh.c:875.
 pub fn snextline(state: &mut RefreshState) -> i32 {                          // c:875
     // C body (c:875-919): scroll the on-screen display up one line
     // when the new line wraps past the bottom. zshrs decrements
@@ -782,7 +782,7 @@ pub fn snextline(state: &mut RefreshState) -> i32 {                          // 
     0
 }
 
-/// Port of `tcout_via_func()` from Src/Zle/zle_refresh.c:2291.
+/// Port of `tcout_via_func(cap, arg, outc)` from Src/Zle/zle_refresh.c:2291.
 pub fn tcout_via_func(_cap: i32, _arg: i32) -> i32 {                         // c:tcout_via_func
     // C body: looks up `tcout` shell function; if defined, calls it
     // with cap+arg; else falls back to direct termcap output. Without
@@ -791,7 +791,7 @@ pub fn tcout_via_func(_cap: i32, _arg: i32) -> i32 {                         // 
     1
 }
 
-/// Port of `wpfxlen()` from `Src/Zle/zle_refresh.c:1736`.
+/// Port of `wpfxlen(olds, news)` from `Src/Zle/zle_refresh.c:1736`.
 /// ```c
 /// static int
 /// wpfxlen(const REFRESH_ELEMENT *olds, const REFRESH_ELEMENT *news) {
@@ -841,7 +841,7 @@ pub fn zle_free_highlight() {                                                // 
     // happens on the active Zle when invalidate fires.
 }
 
-/// Port of `ZR_memset()` from `Src/Zle/zle_refresh.c:85`.
+/// Port of `ZR_memset(dst, rc, len)` from `Src/Zle/zle_refresh.c:85`.
 /// ```c
 /// static void
 /// ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)
@@ -890,7 +890,7 @@ pub fn ZR_memcpy(                                                            // 
     dst[..l].copy_from_slice(&src[..l]);
 }
 
-/// Port of `ZR_strcpy()` from `Src/Zle/zle_refresh.c:94`.
+/// Port of `ZR_strcpy(dst, src)` from `Src/Zle/zle_refresh.c:94`.
 /// ```c
 /// static void
 /// ZR_strcpy(REFRESH_ELEMENT *dst, const REFRESH_ELEMENT *src)
@@ -919,7 +919,7 @@ pub fn ZR_strcpy(                                                            // 
     }
 }
 
-/// Port of `ZR_strlen()` from `Src/Zle/zle_refresh.c:101`.
+/// Port of `ZR_strlen(wstr)` from `Src/Zle/zle_refresh.c:101`.
 /// ```c
 /// static size_t
 /// ZR_strlen(const REFRESH_ELEMENT *wstr)

@@ -38,7 +38,7 @@ extern "C" {
              p9: libc::c_long) -> *const libc::c_char;
 }
 
-/// Direct port of `bin_echoti()` from `Src/Modules/terminfo.c:64`.
+/// Direct port of `bin_echoti(name, argv)` from `Src/Modules/terminfo.c:64`.
 /// C body (c:67-127): probe `tigetnum` → `tigetflag` → `tigetstr`
 /// in turn; numeric/boolean caps print and return; string caps go
 /// through `tparm` (with up to 9 long args) then `putp`.
@@ -135,7 +135,7 @@ pub fn bin_echoti(name: &str, argv: &[String],                               // 
 }
 
 /// Initialize the terminfo database for the current `$TERM`. Must
-/// Port of `getterminfo()` from `Src/Modules/terminfo.c:135`.
+/// Port of `getterminfo(name)` from `Src/Modules/terminfo.c:135`.
 ///
 /// Also drives `bin_echoti` at line 64. Tries `tigetstr` → `tigetnum`
 /// → `tigetflag` in that order — string first, then numeric, then
@@ -262,26 +262,26 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/terminfo.c:316`.
+/// Port of `setup_(m)` from `Src/Modules/terminfo.c:316`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:316
     // C body c:318-319 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_()` from `Src/Modules/terminfo.c:323`.
+/// Port of `features_(m, features)` from `Src/Modules/terminfo.c:323`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:323
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_()` from `Src/Modules/terminfo.c:331`.
+/// Port of `enables_(m, enables)` from `Src/Modules/terminfo.c:331`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:331
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_()` from `Src/Modules/terminfo.c:338`.
+/// Port of `boot_(m)` from `Src/Modules/terminfo.c:338`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:338
     // C body c:340-344 — `#ifdef USE_TERMINFO_MODULE zsetupterm(); #endif
     //                     return 0`. Initializes the terminfo database
@@ -290,13 +290,13 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/terminfo.c:349`.
+/// Port of `cleanup_(m)` from `Src/Modules/terminfo.c:349`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:349
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_()` from `Src/Modules/terminfo.c:359`.
+/// Port of `finish_(m)` from `Src/Modules/terminfo.c:359`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:359
     // C body c:361-362 — `return 0`. Faithful empty-body port; the
     //                    terminfo database is process-lifetime.
@@ -304,7 +304,7 @@ pub fn finish_(_m: *const module) -> i32 {                                   // 
 }
 
 // === auto-generated stubs ===
-/// Port of `scanterminfo()` from `Src/Modules/terminfo.c:177`. The
+/// Port of `scanterminfo(func, flags)` from `Src/Modules/terminfo.c:177`. The
 /// magic-assoc scan callback for `${(k)terminfo}` /
 /// `${(kv)terminfo}`. Walks the bool/num/string capability-name
 /// tables (`boolnames`/`numnames`/`strnames` from libtermcap, or

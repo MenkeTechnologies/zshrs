@@ -99,7 +99,7 @@ fn ensure_termcap_loaded() -> bool {
     }
 }
 
-/// Port of `ztgetflag()` from `Src/Modules/termcap.c:53`. Wraps
+/// Port of `ztgetflag(s)` from `Src/Modules/termcap.c:53`. Wraps
 /// libtermcap's `tgetflag()` to disambiguate "off" from "not
 /// present" via the `boolcodes[]` table walk: if `tgetflag`
 /// returns 0 AND the cap is in `boolcodes`, it's a known cap that's
@@ -130,7 +130,7 @@ pub fn ztgetflag(s: &str) -> i32 {                                       // c:53
     }
 }
 
-/// Port of `bin_echotc()` from `Src/Modules/termcap.c:80`. The
+/// Port of `bin_echotc(name, argv)` from `Src/Modules/termcap.c:80`. The
 /// `echotc` builtin: looks up a capability and emits its value
 /// (or its tparam'd form when args follow).
 ///
@@ -244,7 +244,7 @@ pub fn bin_echotc(name: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 { // c:8
     0                                                                     // c:138
 }
 
-/// Port of `gettermcap()` from `Src/Modules/termcap.c:144`. The
+/// Port of `gettermcap(name)` from `Src/Modules/termcap.c:144`. The
 /// magic-assoc lookup callback for `${termcap[name]}`. Looks up
 /// the capability name and returns its (possibly empty) value.
 ///
@@ -282,7 +282,7 @@ pub fn gettermcap(name: &str) -> Option<String> {                        // c:14
     }
 }
 
-/// Port of `scantermcap()` from `Src/Modules/termcap.c:200`. The
+/// Port of `scantermcap(func, flags)` from `Src/Modules/termcap.c:200`. The
 /// magic-assoc scan callback for `${(k)termcap}` / `${(kv)termcap}`.
 /// Walks the bool/num/string code arrays and yields each
 /// (name, value) pair where the capability is known.
@@ -318,26 +318,26 @@ use crate::ported::zsh_h::module;
 
 
 
-/// Port of `setup_()` from `Src/Modules/termcap.c:323`.
+/// Port of `setup_(m)` from `Src/Modules/termcap.c:323`.
 pub fn setup_(_m: *const module) -> i32 {                                    // c:323
     // C body c:325-326 — `return 0`. Faithful empty-body port.
     0
 }
 
-/// Port of `features_()` from `Src/Modules/termcap.c:330`.
+/// Port of `features_(m, features)` from `Src/Modules/termcap.c:330`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:330
     *features = featuresarray(m, module_features());
     0
 }
 
-/// Port of `enables_()` from `Src/Modules/termcap.c:338`.
+/// Port of `enables_(m, enables)` from `Src/Modules/termcap.c:338`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:338
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_()` from `Src/Modules/termcap.c:345`.
+/// Port of `boot_(m)` from `Src/Modules/termcap.c:345`.
 pub fn boot_(_m: *const module) -> i32 {                                     // c:345
     // C body c:347-350 — `#ifdef HAVE_TGETENT zsetupterm(); #endif
     //                     return 0`. Initializes the termcap database
@@ -346,13 +346,13 @@ pub fn boot_(_m: *const module) -> i32 {                                     // 
     0
 }
 
-/// Port of `cleanup_()` from `Src/Modules/termcap.c:355`.
+/// Port of `cleanup_(m)` from `Src/Modules/termcap.c:355`.
 /// C body: `return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:355
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_()` from `Src/Modules/termcap.c:365`.
+/// Port of `finish_(m)` from `Src/Modules/termcap.c:365`.
 pub fn finish_(_m: *const module) -> i32 {                                   // c:365
     // C body c:367-368 — `return 0`. Faithful empty-body port; the
     //                    termcap database is process-lifetime, not

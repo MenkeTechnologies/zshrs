@@ -307,11 +307,11 @@ pub(crate) fn free_resinfo() {
 }
 
 // =====================================================================
-// Port of `find_resource()` from Src/Builtins/rlimits.c:239.
+// Port of `find_resource(c)` from Src/Builtins/rlimits.c:239.
 // =====================================================================
 
 // Find resource by its option character                                    // c:235
-/// Port of `find_resource()` from `Src/Builtins/rlimits.c:239`.
+/// Port of `find_resource(c)` from `Src/Builtins/rlimits.c:239`.
 ///
 /// Find a resource by its `ulimit` option character. Returns the
 /// `RLIMIT_*` index, or `-1` on miss.
@@ -334,11 +334,11 @@ pub(crate) fn find_resource(c: char) -> i32 {
 }
 
 // =====================================================================
-// Port of `printrlim()` from Src/Builtins/rlimits.c:253.
+// Port of `printrlim(val, unit)` from Src/Builtins/rlimits.c:253.
 // =====================================================================
 
 // Print a value of type rlim_t                                             // c:249
-/// Port of `printrlim()` from `Src/Builtins/rlimits.c:253`.
+/// Port of `printrlim(val, unit)` from `Src/Builtins/rlimits.c:253`.
 ///
 /// Print a `rlim_t` value with the supplied unit suffix to stdout.
 /// C selects between `%qd` / `%lld` / `%lu` / `%ld` per
@@ -349,10 +349,10 @@ pub(crate) fn printrlim(val: rlim_t, unit: &str) {
 }
 
 // =====================================================================
-// Port of `zstrtorlimt()` from Src/Builtins/rlimits.c:272.
+// Port of `zstrtorlimt(s, t, base)` from Src/Builtins/rlimits.c:272.
 // =====================================================================
 
-/// Port of `zstrtorlimt()` from `Src/Builtins/rlimits.c:272`.
+/// Port of `zstrtorlimt(s, t, base)` from `Src/Builtins/rlimits.c:272`.
 ///
 /// Parse a numeric limit string. Returns `(value, bytes_consumed)`.
 /// Recognises `unlimited` as `RLIM_INFINITY`; for digit input,
@@ -417,10 +417,10 @@ pub(crate) fn zstrtorlimt(_s: &str, _base: i32) -> (u64, usize) {
 }
 
 // =====================================================================
-// Port of `showlimitvalue()` from Src/Builtins/rlimits.c:307.
+// Port of `showlimitvalue(lim, val)` from Src/Builtins/rlimits.c:307.
 // =====================================================================
 
-/// Port of `showlimitvalue()` from `Src/Builtins/rlimits.c:307`.
+/// Port of `showlimitvalue(lim, val)` from `Src/Builtins/rlimits.c:307`.
 ///
 /// Print one limit row: 16-column-padded resource name, then the
 /// value formatted per the resource's `zlimtype` (time as
@@ -487,10 +487,10 @@ fn lookup_resinfo(lim: i32) -> Option<resinfo_T> {
 }
 
 // =====================================================================
-// Port of `showlimits()` from Src/Builtins/rlimits.c:346.
+// Port of `showlimits(nam, hard, lim)` from Src/Builtins/rlimits.c:346.
 // =====================================================================
 
-/// Port of `showlimits()` from `Src/Builtins/rlimits.c:346`.
+/// Port of `showlimits(nam, hard, lim)` from `Src/Builtins/rlimits.c:346`.
 ///
 /// `lim == -1` means show all; `lim >= RLIM_NLIMITS` falls back to a
 /// direct `getrlimit(2)` for resources the table doesn't know.
@@ -534,10 +534,10 @@ pub(crate) fn showlimits(_nam: &str, _hard: bool, _lim: i32) -> i32 {
 }
 
 // =====================================================================
-// Port of `printulimit()` from Src/Builtins/rlimits.c:386.
+// Port of `printulimit(nam, lim, hard, head)` from Src/Builtins/rlimits.c:386.
 // =====================================================================
 
-/// Port of `printulimit()` from `Src/Builtins/rlimits.c:386`.
+/// Port of `printulimit(nam, lim, hard, head)` from `Src/Builtins/rlimits.c:386`.
 ///
 /// `ulimit`-style display. `head` controls whether to emit the
 /// `-X: descr` heading column. `lim >= RLIM_NLIMITS` falls back to
@@ -597,10 +597,10 @@ pub(crate) fn printulimit(_nam: &str, _lim: i32, _hard: bool, _head: bool) -> i3
 }
 
 // =====================================================================
-// Port of `do_limit()` from Src/Builtins/rlimits.c:431.
+// Port of `do_limit(nam, lim, val, hard, soft, set)` from Src/Builtins/rlimits.c:431.
 // =====================================================================
 
-/// Port of `do_limit()` from `Src/Builtins/rlimits.c:431`.
+/// Port of `do_limit(nam, lim, val, hard, soft, set)` from `Src/Builtins/rlimits.c:431`.
 ///
 /// Apply `val` to resource `lim` per the `hard`/`soft`/`set` flags.
 /// `set` corresponds to `OPT_ISSET(ops, 's')` — when false, the
@@ -774,10 +774,10 @@ fn setlimits(_nam: &str) -> i32 {
 }
 
 // =====================================================================
-// Port of `bin_limit()` from Src/Builtins/rlimits.c:519.
+// Port of `bin_limit(nam, argv, ops)` from Src/Builtins/rlimits.c:519.
 // =====================================================================
 
-/// Port of `bin_limit()` from `Src/Builtins/rlimits.c:519`.
+/// Port of `bin_limit(nam, argv, ops)` from `Src/Builtins/rlimits.c:519`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
@@ -933,10 +933,10 @@ pub(crate) fn bin_limit(_nam: &str, _argv: &[String], _ops: &options, _func: i32
 
 
 // =====================================================================
-// Port of `do_unlimit()` from Src/Builtins/rlimits.c:622.
+// Port of `do_unlimit(nam, lim, hard, soft, set, euid)` from Src/Builtins/rlimits.c:622.
 // =====================================================================
 
-/// Port of `do_unlimit()` from `Src/Builtins/rlimits.c:622`.
+/// Port of `do_unlimit(nam, lim, hard, soft, set, euid)` from `Src/Builtins/rlimits.c:622`.
 #[cfg(unix)]
 pub(crate) fn do_unlimit(                                                   // c:622
     nam: &str,
@@ -1014,10 +1014,10 @@ pub(crate) fn do_unlimit(
 }
 
 // =====================================================================
-// Port of `bin_unlimit()` from Src/Builtins/rlimits.c:670.
+// Port of `bin_unlimit(nam, argv, ops)` from Src/Builtins/rlimits.c:670.
 // =====================================================================
 
-/// Port of `bin_unlimit()` from `Src/Builtins/rlimits.c:670`.
+/// Port of `bin_unlimit(nam, argv, ops)` from `Src/Builtins/rlimits.c:670`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
@@ -1116,10 +1116,10 @@ pub(crate) fn bin_unlimit(_nam: &str, _argv: &[String], _ops: &options, _func: i
 }
 
 // =====================================================================
-// Port of `bin_ulimit()` from Src/Builtins/rlimits.c:729.
+// Port of `bin_ulimit(name, argv)` from Src/Builtins/rlimits.c:729.
 // =====================================================================
 
-/// Port of `bin_ulimit()` from `Src/Builtins/rlimits.c:729`.
+/// Port of `bin_ulimit(name, argv)` from `Src/Builtins/rlimits.c:729`.
 ///
 /// C signature mirrored verbatim:
 /// ```c
@@ -1398,39 +1398,39 @@ fn module_features() -> &'static Mutex<features_t> {
 // setup_(UNUSED(Module m))                                           c:881
 // =====================================================================
 
-/// Port of `setup_()` from `Src/Builtins/rlimits.c:883`.
+/// Port of `setup_(m)` from `Src/Builtins/rlimits.c:883`.
 pub fn setup_(_m: *const module) -> i32 {
     0                                                                    // c:885
 }
 
-/// Port of `features_()` from `Src/Builtins/rlimits.c:890`.
+/// Port of `features_(m, features)` from `Src/Builtins/rlimits.c:890`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     *features = featuresarray(m, module_features());                     // c:892
     0                                                                    // c:893
 }
 
-/// Port of `enables_()` from `Src/Builtins/rlimits.c:898`.
+/// Port of `enables_(m, enables)` from `Src/Builtins/rlimits.c:898`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     handlefeatures(m, module_features(), enables)                        // c:900
 }
 
-/// Port of `boot_()` from `Src/Builtins/rlimits.c:905`.
+/// Port of `boot_(m)` from `Src/Builtins/rlimits.c:905`.
 /// C body: `set_resinfo(); return 0;`
 pub fn boot_(_m: *const module) -> i32 {
     set_resinfo();                                                        // c:907
     0                                                                    // c:908
 }
 
-/// Port of `cleanup_()` from `Src/Builtins/rlimits.c:913`.
+/// Port of `cleanup_(m)` from `Src/Builtins/rlimits.c:913`.
 /// C body: `free_resinfo(); return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {
     free_resinfo();                                                       // c:915
     setfeatureenables(m, module_features(), None)                        // c:916
 }
 
-/// Port of `finish_()` from `Src/Builtins/rlimits.c:921`.
+/// Port of `finish_(m)` from `Src/Builtins/rlimits.c:921`.
 pub fn finish_(_m: *const module) -> i32 {
     0                                                                    // c:923
 }

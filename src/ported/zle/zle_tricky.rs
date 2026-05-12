@@ -169,7 +169,7 @@ pub fn unmetafy_line(s: &str) -> String {                                    // 
 }
 
 /// Check if string has real tokens (not escaped)
-/// Port of has_real_token() from zle_tricky.c
+/// Port of has_real_token(s) from zle_tricky.c
 pub fn has_real_token(s: &str) -> bool {
     let special = ['$', '`', '"', '\'', '\\', '{', '}', '[', ']', '*', '?', '~'];
 
@@ -192,7 +192,7 @@ pub fn has_real_token(s: &str) -> bool {
 }
 
 /// Get length of common prefix
-/// Port of pfxlen() from zle_tricky.c
+/// Port of pfxlen(s, t) from zle_tricky.c
 pub fn pfxlen(s1: &str, s2: &str) -> usize {                                 // c:2359
     s1.chars()
         .zip(s2.chars())
@@ -201,7 +201,7 @@ pub fn pfxlen(s1: &str, s2: &str) -> usize {                                 // 
 }
 
 /// Get length of common suffix
-/// Port of sfxlen() from zle_tricky.c
+/// Port of sfxlen(s, t) from zle_tricky.c
 pub fn sfxlen(s1: &str, s2: &str) -> usize {                                 // c:2411
     s1.chars()
         .rev()
@@ -257,13 +257,13 @@ mod tests {
             next: Some(Box::new(brinfo {
                 next: None,
                 prev: None,
-                str_: "second".into(),
+                str: "second".into(),
                 pos: 7,
                 qpos: 8,
                 curpos: 9,
             })),
             prev: None,
-            str_: "first".into(),
+            str: "first".into(),
             pos: 1,
             qpos: 2,
             curpos: 3,
@@ -281,19 +281,19 @@ mod tests {
                 next: Some(Box::new(brinfo {
                     next: None,
                     prev: None,
-                    str_: "C".into(),
+                    str: "C".into(),
                     pos: 30,
                     qpos: 31,
                     curpos: 32,
                 })),
                 prev: None,
-                str_: "B".into(),
+                str: "B".into(),
                 pos: 20,
                 qpos: 21,
                 curpos: 22,
             })),
             prev: None,
-            str_: "A".into(),
+            str: "A".into(),
             pos: 10,
             qpos: 11,
             curpos: 12,
@@ -302,15 +302,15 @@ mod tests {
         assert!(last.is_some());
         let h = head.as_ref().unwrap();
         // c:1043-1046 — fields copied verbatim.
-        assert_eq!(h.str_, "A");
+        assert_eq!(h.str, "A");
         assert_eq!(h.pos, 10);
         assert_eq!(h.qpos, 11);
         assert_eq!(h.curpos, 12);
         let n = h.next.as_ref().unwrap();
-        assert_eq!(n.str_, "B");
+        assert_eq!(n.str, "B");
         assert_eq!(n.pos, 20);
         let n = n.next.as_ref().unwrap();
-        assert_eq!(n.str_, "C");
+        assert_eq!(n.str, "C");
         assert_eq!(n.pos, 30);
         assert!(n.next.is_none());
     }
@@ -342,7 +342,7 @@ mod tests {
     }
 }
 
-/// Port of `acceptandmenucomplete()` from Src/Zle/zle_tricky.c:353.
+/// Port of `acceptandmenucomplete(args)` from Src/Zle/zle_tricky.c:353.
 pub fn acceptandmenucomplete() -> i32 {                                      // c:353
     use std::sync::atomic::Ordering;
     // C body c:355-369 — `if (!menucmp) return 1;
@@ -354,7 +354,7 @@ pub fn acceptandmenucomplete() -> i32 {                                      // 
     docomplete(crate::ported::zle::zle_h::COMP_COMPLETE)
 }
 
-/// Port of `addx()` from Src/Zle/zle_tricky.c:922.
+/// Port of `addx(ptmp)` from Src/Zle/zle_tricky.c:922.
 pub fn addx(zle: &mut crate::ported::zle::zle_main::Zle, ptmp: &mut String) -> i32 { // c:922
     // C body c:924-955 — inserts an "x" placeholder at the cursor so
     //                    the parser sees a complete word; saves the
@@ -377,7 +377,7 @@ pub fn addx(zle: &mut crate::ported::zle::zle_main::Zle, ptmp: &mut String) -> i
     }
 }
 
-/// Port of `checkparams()` from Src/Zle/zle_tricky.c:435.
+/// Port of `checkparams(p)` from Src/Zle/zle_tricky.c:435.
 pub fn checkparams(p: &str) -> i32 {                                         // c:435
     use std::sync::atomic::Ordering;
     // C body c:437-449 — walks `paramtab` directly via `scanhashtable`
@@ -413,7 +413,7 @@ pub fn checkparams(p: &str) -> i32 {                                         // 
     }
 }
 
-/// Port of `cmphaswilds()` from Src/Zle/zle_tricky.c:457.
+/// Port of `cmphaswilds(str)` from Src/Zle/zle_tricky.c:457.
 pub fn cmphaswilds(s: &str) -> i32 {                                         // c:457
     // C body c:459-481 — Inbrack/Outbrack as standalone return 0;
     //                    skip leading "%?"; scan for any unescaped
@@ -442,7 +442,7 @@ pub fn cmphaswilds(s: &str) -> i32 {                                         // 
     0
 }
 
-/// Port of `completecall()` from Src/Zle/zle_tricky.c:202.
+/// Port of `completecall(args)` from Src/Zle/zle_tricky.c:202.
 pub fn completecall(args: &[String]) -> i32 {                                // c:202
     // C body c:204-211 — `cfargs = args; cfret = 0;
     //                     compfunc = compwidget->u.comp.func;
@@ -456,7 +456,7 @@ pub fn completecall(args: &[String]) -> i32 {                                // 
     docomplete(crate::ported::zle::zle_h::COMP_COMPLETE)
 }
 
-/// Port of `completeword()` from Src/Zle/zle_tricky.c:216.
+/// Port of `completeword(args)` from Src/Zle/zle_tricky.c:216.
 pub fn completeword() -> i32 {                                               // c:216
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::{COMP_COMPLETE, COMP_LIST_COMPLETE};
@@ -468,7 +468,7 @@ pub fn completeword() -> i32 {                                               // 
     docomplete(COMP_COMPLETE).max(COMP_LIST_COMPLETE - COMP_LIST_COMPLETE)
 }
 
-/// Port of `deletecharorlist()` from Src/Zle/zle_tricky.c:270.
+/// Port of `deletecharorlist(args)` from Src/Zle/zle_tricky.c:270.
 pub fn deletecharorlist(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 { // c:270
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
@@ -485,7 +485,7 @@ pub fn deletecharorlist(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 { //
 }
 
 // The main entry point for completion.                                     // c:595
-/// Port of `docomplete()` from Src/Zle/zle_tricky.c:599.
+/// Port of `docomplete(lst)` from Src/Zle/zle_tricky.c:599.
 /// `lst` is `COMP_*` from `zle_h.rs`. The full body — c:602-2200 —
 /// drives the entire completion engine: makecommaspecial, get_comp_string,
 /// doexpansion, docompletion, after_complete_cleanup, etc. Without that
@@ -496,7 +496,7 @@ pub fn docomplete(lst: i32) -> i32 {                                         // 
     0
 }
 
-/// Port of `docompletion()` from Src/Zle/zle_tricky.c:2339.
+/// Port of `docompletion(s, lst, incmd)` from Src/Zle/zle_tricky.c:2339.
 /// Direct port of `int docompletion(...)` from
 /// `Src/Zle/zle_tricky.c:2339-2398`. Main driver after
 /// `get_comp_string`: builds the Cmatch list via callcompfunc/
@@ -555,7 +555,7 @@ pub fn doexpandhist() -> i32 {                                               // 
     1                                                                        // c:2864 expanded
 }
 
-/// Port of `doexpansion()` from Src/Zle/zle_tricky.c:2263.
+/// Port of `doexpansion(s, lst, olst, explincmd)` from Src/Zle/zle_tricky.c:2263.
 pub fn doexpansion() -> i32 {                                                // c:2263
     // C body c:2265-2336 — invoked via docomplete(COMP_EXPAND); calls
     //                      callcompfunc when bound, else falls through
@@ -567,7 +567,7 @@ pub fn doexpansion() -> i32 {                                                // 
     0
 }
 
-/// Port of `dupbrinfo()` from `Src/Zle/zle_tricky.c:1032`.
+/// Port of `dupbrinfo(p, last, heap)` from `Src/Zle/zle_tricky.c:1032`.
 /// ```c
 /// mod_export Brinfo
 /// dupbrinfo(Brinfo p, Brinfo *last, int heap)
@@ -612,7 +612,7 @@ pub fn dupbrinfo(                                                            // 
         let cloned = Box::new(crate::ported::zle::zle_h::brinfo {            // c:1038-1039 zhalloc/zalloc
             next: None,                                                      // c:1042
             prev: None,                                                      // brinfo has prev too
-            str_: node.str_.clone(),                                         // c:1043 dupstring(p->str)
+            str: node.str.clone(),                                         // c:1043 dupstring(p->str)
             pos: node.pos,                                                   // c:1044
             qpos: node.qpos,                                                 // c:1045
             curpos: node.curpos,                                             // c:1046
@@ -629,7 +629,7 @@ pub fn dupbrinfo(                                                            // 
     (head, last_ptr)
 }
 
-/// Port of `dupstrspace()` from `Src/Zle/zle_tricky.c:954`.
+/// Port of `dupstrspace(str)` from `Src/Zle/zle_tricky.c:954`.
 /// ```c
 /// mod_export char *
 /// dupstrspace(const char *str)
@@ -651,7 +651,7 @@ pub fn dupstrspace(s: &str) -> String {                                      // 
     out                                                                      // c:961 return t
 }
 
-/// Port of `endoflist()` from Src/Zle/zle_tricky.c:3055.
+/// Port of `endoflist(args)` from Src/Zle/zle_tricky.c:3055.
 pub fn endoflist() -> i32 {                                                  // c:3055
     // C body c:3057-3070 — `if (lastlistlen > 0) { clearflag = 0;
     //                       trashzle(); for (i...) putc('\n'); ... }`.
@@ -659,7 +659,7 @@ pub fn endoflist() -> i32 {                                                  // 
     0
 }
 
-/// Port of `expandcmdpath()` from Src/Zle/zle_tricky.c:2982.
+/// Port of `expandcmdpath(args)` from Src/Zle/zle_tricky.c:2982.
 pub fn expandcmdpath() -> i32 {                                              // c:2982
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_EXPAND;
@@ -669,7 +669,7 @@ pub fn expandcmdpath() -> i32 {                                              // 
     docomplete(COMP_EXPAND)
 }
 
-/// Port of `expandhistory()` from Src/Zle/zle_tricky.c:2921.
+/// Port of `expandhistory(args)` from Src/Zle/zle_tricky.c:2921.
 pub fn expandhistory() -> i32 {                                              // c:2921
     // C body c:2923-2924 — `if (!doexpandhist()) return 1; return 0`.
     if doexpandhist() == 0 {
@@ -678,7 +678,7 @@ pub fn expandhistory() -> i32 {                                              // 
     0
 }
 
-/// Port of `expandorcomplete()` from Src/Zle/zle_tricky.c:299.
+/// Port of `expandorcomplete(args)` from Src/Zle/zle_tricky.c:299.
 pub fn expandorcomplete() -> i32 {                                           // c:299
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_EXPAND_COMPLETE;
@@ -688,7 +688,7 @@ pub fn expandorcomplete() -> i32 {                                           // 
     docomplete(COMP_EXPAND_COMPLETE)                                         // c:314
 }
 
-/// Port of `expandorcompleteprefix()` from Src/Zle/zle_tricky.c:3041.
+/// Port of `expandorcompleteprefix(args)` from Src/Zle/zle_tricky.c:3041.
 pub fn expandorcompleteprefix(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 { // c:3041
     use std::sync::atomic::Ordering;
     COMPPREF.store(1, Ordering::SeqCst);                                     // c:3045
@@ -700,7 +700,7 @@ pub fn expandorcompleteprefix(zle: &mut crate::ported::zle::zle_main::Zle) -> i3
     ret
 }
 
-/// Port of `expandword()` from Src/Zle/zle_tricky.c:287.
+/// Port of `expandword(args)` from Src/Zle/zle_tricky.c:287.
 pub fn expandword() -> i32 {                                                 // c:287
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_EXPAND;
@@ -719,7 +719,7 @@ pub fn fixmagicspace(zle: &mut crate::ported::zle::zle_main::Zle) {          // 
     crate::ported::zle::zle_main::LASTCHAR_WIDE_VALID.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// Port of `freebrinfo()` from `Src/Zle/zle_tricky.c:1015`.
+/// Port of `freebrinfo(p)` from `Src/Zle/zle_tricky.c:1015`.
 /// ```c
 /// mod_export void
 /// freebrinfo(Brinfo p)
@@ -809,7 +809,7 @@ pub fn inststr(zle: &mut crate::ported::zle::zle_main::Zle, s: &str) -> i32 { //
     inststrlen(zle, s, true, -1)
 }
 
-/// Port of `inststrlen()` from Src/Zle/zle_tricky.c:2231.
+/// Port of `inststrlen(str, move, len)` from Src/Zle/zle_tricky.c:2231.
 pub fn inststrlen(                                                           // c:2231
     zle: &mut crate::ported::zle::zle_main::Zle,
     s: &str,
@@ -835,7 +835,7 @@ pub fn inststrlen(                                                           // 
     len
 }
 
-/// Port of `listchoices()` from `Src/Zle/zle_tricky.c:250`.
+/// Port of `listchoices(args)` from `Src/Zle/zle_tricky.c:250`.
 /// ```c
 /// int
 /// listchoices(UNUSED(char **args))
@@ -864,7 +864,7 @@ pub fn listchoices() -> i32 {                                                // 
     docomplete(COMP_LIST_COMPLETE)
 }
 
-/// Port of `listexpand()` from `Src/Zle/zle_tricky.c:333`.
+/// Port of `listexpand(args)` from `Src/Zle/zle_tricky.c:333`.
 /// ```c
 /// int
 /// listexpand(UNUSED(char **args))
@@ -889,7 +889,7 @@ pub fn listexpand() -> i32 {                                                 // 
     docomplete(COMP_LIST_EXPAND)                                             // c:339
 }
 
-/// Port of `listlist()` from Src/Zle/zle_tricky.c:2602.
+/// Port of `listlist(l)` from Src/Zle/zle_tricky.c:2602.
 /// Returns the number of terminal lines used to display `items`.
 /// `cols` is the terminal width.
 pub fn listlist(items: &[String], cols: usize) -> i32 {                      // c:2602
@@ -925,7 +925,7 @@ pub fn listlist(items: &[String], cols: usize) -> i32 {                      // 
     nlines as i32
 }
 
-/// Port of `magicspace()` from Src/Zle/zle_tricky.c:2882.
+/// Port of `magicspace(args)` from Src/Zle/zle_tricky.c:2882.
 pub fn magicspace(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:2882
     // C body c:2891 — `fixmagicspace()` then expandhistory; on success
     //                  insert a literal space.
@@ -938,7 +938,7 @@ pub fn magicspace(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
     ret
 }
 
-/// Port of `menucomplete()` from Src/Zle/zle_tricky.c:238.
+/// Port of `menucomplete(args)` from Src/Zle/zle_tricky.c:238.
 pub fn menucomplete() -> i32 {                                               // c:238
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_COMPLETE;
@@ -948,7 +948,7 @@ pub fn menucomplete() -> i32 {                                               // 
     docomplete(COMP_COMPLETE)                                                // c:246
 }
 
-/// Port of `menuexpandorcomplete()` from Src/Zle/zle_tricky.c:321.
+/// Port of `menuexpandorcomplete(args)` from Src/Zle/zle_tricky.c:321.
 pub fn menuexpandorcomplete() -> i32 {                                       // c:321
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_h::COMP_EXPAND_COMPLETE;
@@ -958,7 +958,7 @@ pub fn menuexpandorcomplete() -> i32 {                                       // 
     docomplete(COMP_EXPAND_COMPLETE)                                         // c:329
 }
 
-/// Port of `parambeg()` from Src/Zle/zle_tricky.c:521.
+/// Port of `parambeg(s)` from Src/Zle/zle_tricky.c:521.
 /// Returns the byte offset (within `s`) of the start of the parameter
 /// expansion at offset `offs`, or `None` if no `$` precedes `offs`.
 /// C's `String`/`Qstring` are zsh's parser-internal markers for `$`
@@ -990,7 +990,7 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {                     // 
     }
 }
 
-/// Port of `printfmt()` from Src/Zle/zle_tricky.c:2431.
+/// Port of `printfmt(fmt, n, dopr, doesc)` from Src/Zle/zle_tricky.c:2431.
 /// `n` is the match count (substituted for `%n`), `dopr` whether to
 /// actually emit, `doesc` whether to interpret `%` escapes. Returns
 /// the visual column count (matches C `cc`).
@@ -1051,7 +1051,7 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {         // 
     cc
 }
 
-/// Port of `processcmd()` from Src/Zle/zle_tricky.c:2971.
+/// Port of `processcmd(args)` from Src/Zle/zle_tricky.c:2971.
 pub fn processcmd(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:2971
     // C body c:2973-2989 — `s = getcurcmd(); if (!s) return 1; zmult=1;
     //                       pushline(); zmult = m; inststr(bindk->nam);
@@ -1102,7 +1102,7 @@ pub fn quotename(s: &str, instring: i32) -> String {                         // 
     crate::ported::utils::quotestring(s, qt)
 }
 
-/// Port of `reversemenucomplete()` from Src/Zle/zle_tricky.c:344.
+/// Port of `reversemenucomplete(args)` from Src/Zle/zle_tricky.c:344.
 pub fn reversemenucomplete(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 { // c:344
     use std::sync::atomic::Ordering;
     WOULDINSTAB.store(0, Ordering::SeqCst);                                  // c:346
@@ -1110,7 +1110,7 @@ pub fn reversemenucomplete(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {
     menucomplete()                                                           // c:348
 }
 
-/// Port of `spellword()` from `Src/Zle/zle_tricky.c:260`.
+/// Port of `spellword(args)` from `Src/Zle/zle_tricky.c:260`.
 /// ```c
 /// int
 /// spellword(UNUSED(char **args))

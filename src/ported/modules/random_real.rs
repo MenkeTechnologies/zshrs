@@ -39,7 +39,7 @@ pub fn clz64(x: u64) -> i32 {
 // _zclz64(uint64_t x)                                                c:48
 // =====================================================================
 
-/// Port of `_zclz64()` from `Src/Modules/random_real.c:48`.
+/// Port of `_zclz64(x)` from `Src/Modules/random_real.c:48`.
 ///
 /// Binary-search clz fallback used when the compiler doesn't provide
 /// `__builtin_clzll`. C source body followed line-by-line.

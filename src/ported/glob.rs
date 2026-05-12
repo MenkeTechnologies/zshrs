@@ -1474,7 +1474,7 @@ pub fn haswilds(s: &str) -> bool {                                          // c
 
 /// Simple glob pattern matching
 /// Match a glob pattern against a single string.
-/// Port of `matchpat()` from Src/glob.c:2514 — same
+/// Port of `matchpat(a, b)` from Src/glob.c:2514 — same
 /// `EXTENDED_GLOB`/`NO_CASE_GLOB` option handling.
 pub fn matchpat(pattern: &str, text: &str, extended: bool, case_sensitive: bool) -> bool { // c:2514
     let pat = if case_sensitive {
@@ -1571,7 +1571,7 @@ fn patmatch(pattern: &str, text: &str, extended: bool) -> bool {
 }
 
 /// Match a single character against a `[...]` bracket expression.
-/// Port of `patmatchrange()` from Src/pattern.c:3856 — the C variant
+/// Port of `patmatchrange(range, ch, indptr, mtp)` from Src/pattern.c:3856 — the C variant
 /// scans a pre-compiled range buffer with explicit indices; this Rust
 /// port consumes a peekable iterator over the live pattern string and
 /// returns whether `tc` matches (honoring `[!...]` / `[^...]` negation
@@ -1624,7 +1624,7 @@ fn patmatchrange(pi: &mut std::iter::Peekable<std::str::Chars>, tc: char) -> boo
 /// File type character for -F style listing
 /// Render a mode bitmap as the `*` qualifier letter (`d`/`b`/
 /// `c`/`l`/`s`/`p`/etc.).
-/// Port of `file_type()` from Src/glob.c:2018.
+/// Port of `file_type(filemode)` from Src/glob.c:2018.
 pub fn file_type(mode: u32) -> char {                                        // c:2018
     let fmt = mode & libc::S_IFMT as u32;
     if fmt == libc::S_IFBLK as u32 {
@@ -1656,7 +1656,7 @@ pub fn file_type(mode: u32) -> char {                                        // 
 
 /// Check if string has brace expansion
 /// Check whether a string has brace-expansion `{a,b}` content.
-/// Port of `hasbraces()` from Src/glob.c:2042.
+/// Port of `hasbraces(str)` from Src/glob.c:2042.
 pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {                         // c:2042
     let mut depth = 0;
     let mut has_comma = false;
@@ -1708,7 +1708,7 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {                         // 
 
 /// Expand braces in a string
 /// Brace-expand a string into a flat list.
-/// Port of `xpandbraces()` from Src/glob.c:2276 — same
+/// Port of `xpandbraces(list, np)` from Src/glob.c:2276 — same
 /// `{a,b}` / `{1..10}` / `{a-z}` handling.
 pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {                // c:2276
     if !hasbraces(s, brace_ccl) {
@@ -2444,7 +2444,7 @@ fn glob_emit_path(path: &std::path::Path) -> String {
 // np points to a node in the list which will be expanded                  // c:1209
 // into a series of nodes.                                                  // c:1210
 /// Top-level glob entry point.
-/// Port of `zglob()` from Src/glob.c:1214. Reads all option flags
+/// Port of `zglob(list, np, nountok)` from Src/glob.c:1214. Reads all option flags
 /// (nullglob / extendedglob / dotglob / caseglob / globstarshort /
 /// bareglobqual / braceccl / markdirs / numericglobsort / …)
 /// directly from the canonical global option store via
@@ -2457,7 +2457,7 @@ pub fn glob(pattern: &str) -> Vec<String> {                                  // 
 
 /// Add path component (from glob.c addpath lines 263-274)
 /// Append a path component to a glob path buffer.
-/// Port of `addpath()` from Src/glob.c:265.
+/// Port of `addpath(s, l)` from Src/glob.c:265.
 pub fn addpath(buf: &mut String, component: &str) {                          // c:265
     buf.push_str(component);
     if !buf.ends_with('/') {
@@ -2467,7 +2467,7 @@ pub fn addpath(buf: &mut String, component: &str) {                          // 
 
 /// Stat full path (from glob.c statfullpath lines 282-347)
 /// `stat`/`lstat` a (pathbuf, name) tuple.
-/// Port of `statfullpath()` from Src/glob.c:283.
+/// Port of `statfullpath(s, st, l)` from Src/glob.c:283.
 pub fn statfullpath(pathbuf: &str, name: &str, follow: bool) -> Option<std::fs::Metadata> { // c:283
     let full = if name.is_empty() {
         if pathbuf.is_empty() {
@@ -2533,7 +2533,7 @@ pub fn mindist(dir: &str, name: &str, best: &mut String, exact: bool) -> usize {
 
 /// Parse qualifier (from glob.c qgetnum)
 /// Parse a numeric glob-qualifier argument.
-/// Port of `qgetnum()` from Src/glob.c:827.
+/// Port of `qgetnum(s)` from Src/glob.c:827.
 pub fn qgetnum(s: &str) -> Option<(i64, &str)> {                             // c:827
     let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     if end == 0 {
@@ -3659,7 +3659,7 @@ pub(crate) fn find_top_level_tilde(pat: &str) -> Option<usize> {
 // for the drift gate.
 // ===========================================================
 
-/// Port of `insert()` from Src/glob.c:346.
+/// Port of `insert(s, checked)` from Src/glob.c:346.
 // add a match to the list                                                   // c:342
 /// C: `static void insert(char *s, int checked)` — record one matched
 ///   path `s` into the global glob result list, optionally re-stat'ing
@@ -3672,7 +3672,7 @@ pub fn insert(_s: &str, _checked: i32) {                                     // 
 }
 
 // turn a string into a Complist struct:  this has path components          // c:787
-/// Port of `parsecomplist()` from Src/glob.c:710.
+/// Port of `parsecomplist(instr)` from Src/glob.c:710.
 /// C: `static Complist parsecomplist(char *instr)` — parse a multi-
 ///   segment glob path (`/foo/.../bar`) into a Complist.
 pub fn parsecomplist(_instr: &str) -> Option<Vec<String>> {                  // c:710
@@ -3682,15 +3682,15 @@ pub fn parsecomplist(_instr: &str) -> Option<Vec<String>> {                  // 
     None
 }
 
-/// Port of `parsepat()` from Src/glob.c:791.
+/// Port of `parsepat(str)` from Src/glob.c:791.
 /// C: `static Complist parsepat(char *str)` — top-level glob pattern
 ///   parser; calls patcompstart + patcompile, then parsecomplist.
-pub fn parsepat(str_: &str) -> Option<Vec<String>> {                         // c:791
+pub fn parsepat(str: &str) -> Option<Vec<String>> {                         // c:791
     // c:795-820 — patcompstart() + patcompile + parsecomplist(str).
-    parsecomplist(str_)                                                      // c:817
+    parsecomplist(str)                                                      // c:817
 }
 
-/// Port of `insert_glob_match()` from Src/glob.c:1125.
+/// Port of `insert_glob_match(list, next, data)` from Src/glob.c:1125.
 /// C: `static void insert_glob_match(LinkList list, LinkNode next,
 ///     char *data)` — insert `data` into `list` at position `next`,
 ///     respecting `gf_pre_words`/`gf_post_words` injection.
@@ -3704,7 +3704,7 @@ pub fn insert_glob_match(list: &mut Vec<String>, next: usize, data: &str) {  // 
     }
 }
 
-/// Port of `checkglobqual()` from Src/glob.c:1158.
+/// Port of `checkglobqual(str, sl, nobareglob, sp)` from Src/glob.c:1158.
 /// C: `int checkglobqual(char *str, int sl, int nobareglob, char **sp)` —
 ///   confirm the trailing `(...)` is a glob qualifier (not literal).
 ///   Sets `*sp` to the qualifier start position. Returns 0 if not a
@@ -3737,7 +3737,7 @@ pub fn checkglobqual(str: &str, sl: i32, _nobareglob: i32,                   // 
     0                                                                        // c:1212
 }
 
-/// Port of `zglob()` from Src/glob.c:1214.
+/// Port of `zglob(list, np, nountok)` from Src/glob.c:1214.
 /// C: `void zglob(LinkList list, LinkNode np, int nountok)` — top-level
 ///   glob expansion: parse qualifiers, walk the filesystem, replace
 ///   the placeholder node in `list` with the matches.
@@ -3886,14 +3886,14 @@ pub fn glob_path(pattern: &str) -> Vec<String> {                             // 
     matches
 }
 
-/// Port of `freerepldata()` from Src/glob.c:2766.
+/// Port of `freerepldata(ptr)` from Src/glob.c:2766.
 /// C: `static void freerepldata(void *ptr)` →
 ///   `zfree(ptr, sizeof(struct repldata));`
 pub fn freerepldata(_ptr: *mut std::ffi::c_void) {                           // c:2766
     // Rust drop covers the equivalent.
 }
 
-/// Port of `freematchlist()` from Src/glob.c:2773.
+/// Port of `freematchlist(repllist)` from Src/glob.c:2773.
 /// C: `void freematchlist(LinkList repllist)` →
 ///   `freelinklist(repllist, freerepldata);`
 pub fn freematchlist(repllist: Option<&mut Vec<(usize, usize)>>) {           // c:2773
@@ -3918,14 +3918,14 @@ pub fn igetmatch(_sp: &mut String, _p: *mut std::ffi::c_void,                // 
     0
 }
 
-/// Port of `qualdev()` from Src/glob.c:3688.
+/// Port of `qualdev(buf, dv)` from Src/glob.c:3688.
 /// C: `static int qualdev(UNUSED(char *name), struct stat *buf, off_t dv,
 ///     UNUSED(char *dummy))` → `return (off_t)buf->st_dev == dv;`
 pub fn qualdev(_name: &str, buf: &libc::stat, dv: i64, _dummy: &str) -> i32 { // c:3688
     (buf.st_dev as i64 == dv) as i32                                          // c:3690
 }
 
-/// Port of `qualnlink()` from Src/glob.c:3697.
+/// Port of `qualnlink(buf, ct)` from Src/glob.c:3697.
 /// C: ternary on `g_range`: < / > / == against `st_nlink`.
 pub fn qualnlink(_name: &str, buf: &libc::stat, ct: i64, _dummy: &str) -> i32 { // c:3697
     let g = G_RANGE.load(std::sync::atomic::Ordering::Relaxed);
@@ -3933,74 +3933,74 @@ pub fn qualnlink(_name: &str, buf: &libc::stat, ct: i64, _dummy: &str) -> i32 { 
     if g < 0 { (nl < ct) as i32 } else if g > 0 { (nl > ct) as i32 } else { (nl == ct) as i32 }
 }
 
-/// Port of `qualuid()` from Src/glob.c:3708.
+/// Port of `qualuid(buf, uid)` from Src/glob.c:3708.
 /// C: `return buf->st_uid == uid;`
 pub fn qualuid(_name: &str, buf: &libc::stat, uid: i64, _dummy: &str) -> i32 { // c:3708
     (buf.st_uid as i64 == uid) as i32                                        // c:3710
 }
 
-/// Port of `qualgid()` from Src/glob.c:3717.
+/// Port of `qualgid(buf, gid)` from Src/glob.c:3717.
 /// C: `return buf->st_gid == gid;`
 pub fn qualgid(_name: &str, buf: &libc::stat, gid: i64, _dummy: &str) -> i32 { // c:3717
     (buf.st_gid as i64 == gid) as i32                                        // c:3719
 }
 
-/// Port of `qualisdev()` from Src/glob.c:3726.
+/// Port of `qualisdev(buf)` from Src/glob.c:3726.
 /// C: `return S_ISBLK(buf->st_mode) || S_ISCHR(buf->st_mode);`
 pub fn qualisdev(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3726
     let m = buf.st_mode as u32 & libc::S_IFMT as u32;
     ((m == libc::S_IFBLK as u32) || (m == libc::S_IFCHR as u32)) as i32      // c:3728
 }
 
-/// Port of `qualisblk()` from Src/glob.c:3735.
+/// Port of `qualisblk(buf)` from Src/glob.c:3735.
 /// C: `return S_ISBLK(buf->st_mode);`
 pub fn qualisblk(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3735
     ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFBLK as u32) as i32 // c:3737
 }
 
-/// Port of `qualischr()` from Src/glob.c:3744.
+/// Port of `qualischr(buf)` from Src/glob.c:3744.
 /// C: `return S_ISCHR(buf->st_mode);`
 pub fn qualischr(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3744
     ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFCHR as u32) as i32 // c:3746
 }
 
-/// Port of `qualisdir()` from Src/glob.c:3753.
+/// Port of `qualisdir(buf)` from Src/glob.c:3753.
 /// C: `return S_ISDIR(buf->st_mode);`
 pub fn qualisdir(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3753
     ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFDIR as u32) as i32 // c:3755
 }
 
-/// Port of `qualisfifo()` from Src/glob.c:3762.
+/// Port of `qualisfifo(buf)` from Src/glob.c:3762.
 /// C: `return S_ISFIFO(buf->st_mode);`
 pub fn qualisfifo(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3762
     ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFIFO as u32) as i32 // c:3764
 }
 
-/// Port of `qualislnk()` from Src/glob.c:3771.
+/// Port of `qualislnk(buf)` from Src/glob.c:3771.
 /// C: `return S_ISLNK(buf->st_mode);`
 pub fn qualislnk(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3771
     ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFLNK as u32) as i32 // c:3773
 }
 
-/// Port of `qualisreg()` from Src/glob.c:3780.
+/// Port of `qualisreg(buf)` from Src/glob.c:3780.
 /// C: `return S_ISREG(buf->st_mode);`
 pub fn qualisreg(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3780
     ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFREG as u32) as i32 // c:3782
 }
 
-/// Port of `qualissock()` from Src/glob.c:3789.
+/// Port of `qualissock(buf)` from Src/glob.c:3789.
 /// C: `return S_ISSOCK(buf->st_mode);`
 pub fn qualissock(_name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3789
     ((buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFSOCK as u32) as i32 // c:3791
 }
 
-/// Port of `qualflags()` from Src/glob.c:3798.
+/// Port of `qualflags(buf, mod)` from Src/glob.c:3798.
 /// C: `return mode_to_octal(buf->st_mode) & mod;`
 pub fn qualflags(_name: &str, buf: &libc::stat, mod_: i64, _dummy: &str) -> i32 { // c:3798
     (mode_to_octal(buf.st_mode as u32) as i64 & mod_) as i32                 // c:3800
 }
 
-/// Port of `qualmodeflags()` from Src/glob.c:3807.
+/// Port of `qualmodeflags(buf, mod)` from Src/glob.c:3807.
 /// C: `((v & y) == y && !(v & n))` where `y = mod & 07777`, `n = mod >> 12`.
 pub fn qualmodeflags(_name: &str, buf: &libc::stat, mod_: i64, _dummy: &str) -> i32 { // c:3807
     let v = mode_to_octal(buf.st_mode as u32) as i64;                        // c:3809
@@ -4009,7 +4009,7 @@ pub fn qualmodeflags(_name: &str, buf: &libc::stat, mod_: i64, _dummy: &str) -> 
     (((v & y) == y) && (v & n) == 0) as i32                                  // c:3811
 }
 
-/// Port of `qualiscom()` from Src/glob.c:3818.
+/// Port of `qualiscom(buf)` from Src/glob.c:3818.
 /// C: `return S_ISREG(buf->st_mode) && (buf->st_mode & S_IXUGO);`
 pub fn qualiscom(_name: &str, buf: &libc::stat, _mod_: i64, _dummy: &str) -> i32 { // c:3818
     let is_reg = (buf.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFREG as u32;
@@ -4017,7 +4017,7 @@ pub fn qualiscom(_name: &str, buf: &libc::stat, _mod_: i64, _dummy: &str) -> i32
     (is_reg && (buf.st_mode as u32 & s_ixugo) != 0) as i32                   // c:3820
 }
 
-/// Port of `qualnonemptydir()` from Src/glob.c:3948.
+/// Port of `qualnonemptydir(name, buf)` from Src/glob.c:3948.
 /// C: opendir(name) and check if any non-`.`/`..` entries exist.
 pub fn qualnonemptydir(name: &str, buf: &libc::stat, _junk: i64, _dummy: &str) -> i32 { // c:3948
     // c:3950 — `if (!S_ISDIR(buf->st_mode)) return 0;`

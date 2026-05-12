@@ -63,7 +63,7 @@ use super::zle_main::Zle; use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD
 #[inline] fn zc_inblank(c: char) -> bool { c == ' ' || c == '\t' || c == '\n' }
 #[inline] fn zc_ipunct(c: char) -> bool { c.is_ascii_punctuation() }
 
-/// Port of `forwardword()` from `Src/Zle/zle_word.c:45`.
+/// Port of `forwardword(args)` from `Src/Zle/zle_word.c:45`.
 ///
 /// C signature: `int forwardword(char **args)`.
 pub fn forwardword(zle: &mut Zle, args: &[String]) -> i32 {              // c:45
@@ -91,7 +91,7 @@ pub fn forwardword(zle: &mut Zle, args: &[String]) -> i32 {              // c:45
     0                                                                    // c:64
 }
 
-/// Port of `wordclass()` from `Src/Zle/zle_word.c:74`. Returns the
+/// Port of `wordclass(x)` from `Src/Zle/zle_word.c:74`. Returns the
 /// vi-mode word class for a character: 0=blank, 1=alnum or `_`,
 /// 2=punctuation, 3=other.
 ///
@@ -105,7 +105,7 @@ pub fn wordclass(x: char) -> i32 {                                       // c:74
     else { 3 }
 }
 
-/// Port of `viforwardword()` from `Src/Zle/zle_word.c:82`.
+/// Port of `viforwardword(args)` from `Src/Zle/zle_word.c:82`.
 pub fn viforwardword(zle: &mut Zle, args: &[String]) -> i32 {            // c:82
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:86
@@ -134,7 +134,7 @@ pub fn viforwardword(zle: &mut Zle, args: &[String]) -> i32 {            // c:82
     0                                                                    // c:107
 }
 
-/// Port of `viforwardblankword()` from `Src/Zle/zle_word.c:112`.
+/// Port of `viforwardblankword(args)` from `Src/Zle/zle_word.c:112`.
 pub fn viforwardblankword(zle: &mut Zle, args: &[String]) -> i32 {       // c:112
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -162,7 +162,7 @@ pub fn viforwardblankword(zle: &mut Zle, args: &[String]) -> i32 {       // c:11
     0
 }
 
-/// Port of `emacsforwardword()` from `Src/Zle/zle_word.c:140`.
+/// Port of `emacsforwardword(args)` from `Src/Zle/zle_word.c:140`.
 pub fn emacsforwardword(zle: &mut Zle, args: &[String]) -> i32 {         // c:140
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:144
@@ -186,7 +186,7 @@ pub fn emacsforwardword(zle: &mut Zle, args: &[String]) -> i32 {         // c:14
     0
 }
 
-/// Port of `viforwardblankwordend()` from `Src/Zle/zle_word.c:164`.
+/// Port of `viforwardblankwordend(args)` from `Src/Zle/zle_word.c:164`.
 pub fn viforwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {    // c:164
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -222,7 +222,7 @@ pub fn viforwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {    // c:16
     0
 }
 
-/// Port of `viforwardwordend()` from `Src/Zle/zle_word.c:198`.
+/// Port of `viforwardwordend(args)` from `Src/Zle/zle_word.c:198`.
 pub fn viforwardwordend(zle: &mut Zle, args: &[String]) -> i32 {         // c:198
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -263,7 +263,7 @@ pub fn viforwardwordend(zle: &mut Zle, args: &[String]) -> i32 {         // c:19
     0
 }
 
-/// Port of `backwardword()` from `Src/Zle/zle_word.c:240`.
+/// Port of `backwardword(args)` from `Src/Zle/zle_word.c:240`.
 pub fn backwardword(zle: &mut Zle, args: &[String]) -> i32 {             // c:240
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {                                                           // c:244
@@ -290,7 +290,7 @@ pub fn backwardword(zle: &mut Zle, args: &[String]) -> i32 {             // c:24
     0
 }
 
-/// Port of `vibackwardword()` from `Src/Zle/zle_word.c:272`.
+/// Port of `vibackwardword(args)` from `Src/Zle/zle_word.c:272`.
 pub fn vibackwardword(zle: &mut Zle, args: &[String]) -> i32 {           // c:272
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -330,7 +330,7 @@ pub fn vibackwardword(zle: &mut Zle, args: &[String]) -> i32 {           // c:27
     0
 }
 
-/// Port of `vibackwardblankword()` from `Src/Zle/zle_word.c:313`.
+/// Port of `vibackwardblankword(args)` from `Src/Zle/zle_word.c:313`.
 pub fn vibackwardblankword(zle: &mut Zle, args: &[String]) -> i32 {      // c:313
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -360,7 +360,7 @@ pub fn vibackwardblankword(zle: &mut Zle, args: &[String]) -> i32 {      // c:31
     0
 }
 
-/// Port of `vibackwardwordend()` from `Src/Zle/zle_word.c:348`.
+/// Port of `vibackwardwordend(args)` from `Src/Zle/zle_word.c:348`.
 pub fn vibackwardwordend(zle: &mut Zle, args: &[String]) -> i32 {        // c:348
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -389,7 +389,7 @@ pub fn vibackwardwordend(zle: &mut Zle, args: &[String]) -> i32 {        // c:34
     0
 }
 
-/// Port of `vibackwardblankwordend()` from `Src/Zle/zle_word.c:375`.
+/// Port of `vibackwardblankwordend(args)` from `Src/Zle/zle_word.c:375`.
 pub fn vibackwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {   // c:375
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -412,7 +412,7 @@ pub fn vibackwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {   // c:37
     0
 }
 
-/// Port of `emacsbackwardword()` from `Src/Zle/zle_word.c:397`.
+/// Port of `emacsbackwardword(args)` from `Src/Zle/zle_word.c:397`.
 pub fn emacsbackwardword(zle: &mut Zle, args: &[String]) -> i32 {        // c:397
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     if n < 0 {
@@ -439,7 +439,7 @@ pub fn emacsbackwardword(zle: &mut Zle, args: &[String]) -> i32 {        // c:39
     0
 }
 
-/// Port of `backwarddeleteword()` from `Src/Zle/zle_word.c:429`.
+/// Port of `backwarddeleteword(args)` from `Src/Zle/zle_word.c:429`.
 pub fn backwarddeleteword(zle: &mut Zle, args: &[String]) -> i32 {       // c:429
     let mut x = zle.zlecs;                                               // c:431
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
@@ -469,7 +469,7 @@ pub fn backwarddeleteword(zle: &mut Zle, args: &[String]) -> i32 {       // c:42
     0
 }
 
-/// Port of `vibackwardkillword()` from `Src/Zle/zle_word.c:462`.
+/// Port of `vibackwardkillword(args)` from `Src/Zle/zle_word.c:462`.
 // this taken from "vibackwardword"                                         // c:469
 pub fn vibackwardkillword(zle: &mut Zle, _args: &[String]) -> i32 {      // c:462
     let mut x = zle.zlecs;                                               // c:464
@@ -515,7 +515,7 @@ pub fn vibackwardkillword(zle: &mut Zle, _args: &[String]) -> i32 {      // c:46
     0
 }
 
-/// Port of `backwardkillword()` from `Src/Zle/zle_word.c:499`.
+/// Port of `backwardkillword(args)` from `Src/Zle/zle_word.c:499`.
 pub fn backwardkillword(zle: &mut Zle, args: &[String]) -> i32 {         // c:499
     let mut x = zle.zlecs;                                               // c:501
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
@@ -545,7 +545,7 @@ pub fn backwardkillword(zle: &mut Zle, args: &[String]) -> i32 {         // c:49
     0
 }
 
-/// Port of `upcaseword()` from `Src/Zle/zle_word.c:533`.
+/// Port of `upcaseword(args)` from `Src/Zle/zle_word.c:533`.
 pub fn upcaseword(zle: &mut Zle, _args: &[String]) -> i32 {              // c:533
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     let neg = n < 0;                                                     // c:536
@@ -567,7 +567,7 @@ pub fn upcaseword(zle: &mut Zle, _args: &[String]) -> i32 {              // c:53
     0
 }
 
-/// Port of `downcaseword()` from `Src/Zle/zle_word.c:555`.
+/// Port of `downcaseword(args)` from `Src/Zle/zle_word.c:555`.
 pub fn downcaseword(zle: &mut Zle, _args: &[String]) -> i32 {            // c:555
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     let neg = n < 0;
@@ -588,7 +588,7 @@ pub fn downcaseword(zle: &mut Zle, _args: &[String]) -> i32 {            // c:55
     0
 }
 
-/// Port of `capitalizeword()` from `Src/Zle/zle_word.c:577`.
+/// Port of `capitalizeword(args)` from `Src/Zle/zle_word.c:577`.
 pub fn capitalizeword(zle: &mut Zle, _args: &[String]) -> i32 {          // c:577
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     let neg = n < 0;
@@ -621,7 +621,7 @@ pub fn capitalizeword(zle: &mut Zle, _args: &[String]) -> i32 {          // c:57
     0
 }
 
-/// Port of `deleteword()` from `Src/Zle/zle_word.c:604`.
+/// Port of `deleteword(args)` from `Src/Zle/zle_word.c:604`.
 pub fn deleteword(zle: &mut Zle, args: &[String]) -> i32 {               // c:604
     let mut x = zle.zlecs;
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
@@ -647,7 +647,7 @@ pub fn deleteword(zle: &mut Zle, args: &[String]) -> i32 {               // c:60
     0
 }
 
-/// Port of `killword()` from `Src/Zle/zle_word.c:628`.
+/// Port of `killword(args)` from `Src/Zle/zle_word.c:628`.
 pub fn killword(zle: &mut Zle, args: &[String]) -> i32 {                 // c:628
     let mut x = zle.zlecs;
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
@@ -673,7 +673,7 @@ pub fn killword(zle: &mut Zle, args: &[String]) -> i32 {                 // c:62
     0
 }
 
-/// Port of `transposewords()` from `Src/Zle/zle_word.c:652`.
+/// Port of `transposewords(args)` from `Src/Zle/zle_word.c:652`.
 pub fn transposewords(zle: &mut Zle, _args: &[String]) -> i32 {          // c:652
     let n = if zle.zmod.flags & MOD_MULT != 0 { zle.zmod.mult } else { 1 };
     let neg = n < 0;
