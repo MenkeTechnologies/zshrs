@@ -7579,9 +7579,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 "errnos" => return crate::modules::system::ERRNO_NAMES.len(),
                 "epochtime" => return 2, // [seconds, nanoseconds]
                 "commands" => return exec.command_hash.len(),
-                "aliases" => return exec.aliases.len(),
-                "galiases" => return exec.global_aliases.len(),
-                "saliases" => return exec.suffix_aliases.len(),
+                "aliases" => return exec.alias_entries().len(),
+                "galiases" => return exec.global_alias_entries().len(),
+                "saliases" => return exec.suffix_alias_entries().len(),
                 "functions" => return exec.function_names().len(),
                 "options" => return exec.options.len(),
                 "sysparams" => return 3, // pid, ppid, procsubstpid
@@ -9193,7 +9193,7 @@ impl fusevm::ShellHost for ZshrsHost {
         let alias_body = if already_expanding {
             None
         } else {
-            with_executor(|exec| exec.aliases.get(name).cloned())
+            with_executor(|exec| exec.alias(name))
         };
         if let Some(body) = alias_body {
             let combined = if args.is_empty() {

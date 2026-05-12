@@ -118,15 +118,15 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
 
     // Aliases (3 flavors).
     for (n, v) in shard.aliases {
-        executor.aliases.insert(n, v);
+        executor.set_alias(n, v);
         total += 1;
     }
     for (n, v) in shard.global_aliases {
-        executor.global_aliases.insert(n, v);
+        executor.set_global_alias(n, v);
         total += 1;
     }
     for (n, v) in shard.suffix_aliases {
-        executor.suffix_aliases.insert(n, v);
+        executor.set_suffix_alias(n, v);
         total += 1;
     }
 

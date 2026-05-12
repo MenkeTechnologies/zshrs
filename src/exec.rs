@@ -332,14 +332,12 @@ pub struct ShellExecutor {
     /// file path, so `%x` inside a function still shows the file
     /// the function was called from.
     pub scriptfilename: Option<String>,
-    pub aliases: IndexMap<String, String>,
-    pub global_aliases: IndexMap<String, String>, // alias -g: expand anywhere
-    pub suffix_aliases: IndexMap<String, String>, // alias -s: expand by file extension
     /// Names whose alias is currently mid-expansion. zsh's lexer disables
     /// an alias from re-expanding inside its own body (so `alias ls='ls
     /// -la'` works without infinite recursion). zshrs expands aliases
     /// at run time, so we need an explicit recursion guard. Cleared
     /// when expansion of that name finishes.
+    //WARNING FAKE AND MUST BE DELETED
     pub expanding_aliases: std::collections::HashSet<String>,
     /// Set by `break`/`continue` keywords when no enclosing loop in the
     /// current chunk's patch lists. Outer-loop builtins (BUILTIN_RUN_SELECT)
@@ -746,6 +744,122 @@ impl ShellExecutor {
             .map(|m| m.remove(name));
     }
 
+    /// Read a regular (non-global) alias value. Reads canonical
+    /// `aliastab` (Src/hashtable.c:1186). Filters out aliases that
+    /// have the ALIAS_GLOBAL flag set so the regular-alias slot is
+    /// distinct from the global-alias slot, mirroring C's two
+    /// separate dispatch paths via `aliasflags` checks.
+    pub fn alias(&self, name: &str) -> Option<String> {
+        let tab = crate::ported::hashtable::aliastab_lock().lock().ok()?;
+        let a = tab.get(name)?;
+        if (a.node.flags & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) != 0 {
+            None
+        } else {
+            Some(a.text.clone())
+        }
+    }
+
+    /// Read a global alias value (`alias -g`). Reads canonical
+    /// `aliastab` and filters to entries with the ALIAS_GLOBAL flag.
+    pub fn global_alias(&self, name: &str) -> Option<String> {
+        let tab = crate::ported::hashtable::aliastab_lock().lock().ok()?;
+        let a = tab.get(name)?;
+        if (a.node.flags & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) != 0 {
+            Some(a.text.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Read a suffix alias value (`alias -s`). Reads canonical
+    /// `sufaliastab` (Src/hashtable.c:1187).
+    pub fn suffix_alias(&self, name: &str) -> Option<String> {
+        let tab = crate::ported::hashtable::sufaliastab_lock().lock().ok()?;
+        Some(tab.get(name)?.text.clone())
+    }
+
+    /// Set a regular alias. Writes canonical aliastab with
+    /// ALIAS_GLOBAL bit cleared.
+    pub fn set_alias(&mut self, name: String, value: String) {
+        if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().lock() {
+            tab.add(crate::ported::hashtable::createaliasnode(&name, &value, 0));
+        }
+    }
+
+    /// Set a global alias (`alias -g`). Writes canonical aliastab
+    /// with ALIAS_GLOBAL bit set.
+    pub fn set_global_alias(&mut self, name: String, value: String) {
+        if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().lock() {
+            tab.add(crate::ported::hashtable::createaliasnode(
+                &name, &value, crate::ported::hashtable::flags::ALIAS_GLOBAL,
+            ));
+        }
+    }
+
+    /// Set a suffix alias (`alias -s ext=cmd`). Writes canonical
+    /// sufaliastab.
+    pub fn set_suffix_alias(&mut self, name: String, value: String) {
+        if let Ok(mut tab) = crate::ported::hashtable::sufaliastab_lock().lock() {
+            tab.add(crate::ported::hashtable::createaliasnode(&name, &value, 0));
+        }
+    }
+
+    /// Unset an alias from canonical aliastab (any flag). Mirrors
+    /// C's `unalias` lookup.
+    pub fn unset_alias(&mut self, name: &str) {
+        if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().lock() {
+            tab.remove(name);
+        }
+    }
+
+    /// Unset a suffix alias.
+    pub fn unset_suffix_alias(&mut self, name: &str) {
+        if let Ok(mut tab) = crate::ported::hashtable::sufaliastab_lock().lock() {
+            tab.remove(name);
+        }
+    }
+
+    /// Snapshot the alias map as a sorted `Vec<(name, value)>`,
+    /// only entries WITHOUT the ALIAS_GLOBAL flag (regular aliases).
+    pub fn alias_entries(&self) -> Vec<(String, String)> {
+        if let Ok(tab) = crate::ported::hashtable::aliastab_lock().lock() {
+            tab.iter_sorted()
+                .into_iter()
+                .filter(|(_, a)| (a.node.flags
+                    & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) == 0)
+                .map(|(k, a)| (k.clone(), a.text.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Snapshot the global-alias entries (ALIAS_GLOBAL flag set).
+    pub fn global_alias_entries(&self) -> Vec<(String, String)> {
+        if let Ok(tab) = crate::ported::hashtable::aliastab_lock().lock() {
+            tab.iter_sorted()
+                .into_iter()
+                .filter(|(_, a)| (a.node.flags
+                    & crate::ported::hashtable::flags::ALIAS_GLOBAL as i32) != 0)
+                .map(|(k, a)| (k.clone(), a.text.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Snapshot the suffix-alias entries.
+    pub fn suffix_alias_entries(&self) -> Vec<(String, String)> {
+        if let Ok(tab) = crate::ported::hashtable::sufaliastab_lock().lock() {
+            tab.iter_sorted()
+                .into_iter()
+                .map(|(k, a)| (k.clone(), a.text.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Unset an array parameter. Direct port of `unsetparam_pm` for
     /// a PM_ARRAY Param. Mirrors are kept for now while the field
     /// transitions.
@@ -945,22 +1059,8 @@ impl ShellExecutor {
             .collect();
         arrays.insert("path".to_string(), path_dirs);
         let mut exec = Self {
-            aliases: {
-                // Mirror the canonical aliastab (the C-port single
-                // source of truth populated by createaliastables
-                // above) into the Executor's typed cache. Replaces an
-                // earlier hardcoded `a.insert("run-help",...)`
-                // duplication that drifted from C's actual defaults.
-                let tab = crate::ported::hashtable::aliastab_lock()
-                    .lock().expect("aliastab poisoned");
-                tab.iter()
-                    .map(|(name, al)| (name.clone(), al.text.clone()))
-                    .collect()
-            },
             scriptname: None,
             scriptfilename: None,
-            global_aliases: IndexMap::new(),
-            suffix_aliases: IndexMap::new(),
             expanding_aliases: std::collections::HashSet::new(),
             loop_signal: None,
             subshell_snapshots: Vec::new(),
@@ -2784,31 +2884,23 @@ impl crate::ported::exec::ShellExecutor {
                     }
                     return Some(tab.get(key).map(|a| a.text.clone()).unwrap_or_default());
                 }
-                Some(self.aliases.get(key).cloned().unwrap_or_default())
+                Some(self.alias(key).unwrap_or_default())
             }
             "galiases" => {
                 if key == "@" || key == "*" {
-                    let mut keys: Vec<&String> = self.global_aliases.keys().collect();
-                    keys.sort();
-                    let vals: Vec<String> = keys
-                        .iter()
-                        .filter_map(|k| self.global_aliases.get(*k).cloned())
-                        .collect();
+                    let entries = self.global_alias_entries();
+                    let vals: Vec<String> = entries.into_iter().map(|(_, v)| v).collect();
                     return Some(vals.join(" "));
                 }
-                Some(self.global_aliases.get(key).cloned().unwrap_or_default())
+                Some(self.global_alias(key).unwrap_or_default())
             }
             "saliases" => {
                 if key == "@" || key == "*" {
-                    let mut keys: Vec<&String> = self.suffix_aliases.keys().collect();
-                    keys.sort();
-                    let vals: Vec<String> = keys
-                        .iter()
-                        .filter_map(|k| self.suffix_aliases.get(*k).cloned())
-                        .collect();
+                    let entries = self.suffix_alias_entries();
+                    let vals: Vec<String> = entries.into_iter().map(|(_, v)| v).collect();
                     return Some(vals.join(" "));
                 }
-                Some(self.suffix_aliases.get(key).cloned().unwrap_or_default())
+                Some(self.suffix_alias(key).unwrap_or_default())
             }
 
             // === TERMINFO (zsh/terminfo module) ===
@@ -5045,6 +5137,7 @@ impl crate::ported::exec::ShellExecutor {
         (pattern.to_string(), String::new())
     }
     /// Check if string looks like glob qualifiers
+    //WARNING FAKE AND MUST BE DELETED
     pub(crate) fn looks_like_glob_qualifiers(&self, s: &str) -> bool {
         if s.is_empty() {
             return false;
@@ -5068,6 +5161,8 @@ impl crate::ported::exec::ShellExecutor {
         s.chars()
             .all(|c| valid_chars.contains(c) || c.is_whitespace())
     }
+
+    //WARNING FAKE AND MUST BE DELETED
     pub(crate) fn filter_by_qualifiers(&self, files: Vec<String>, qualifiers: &str) -> Vec<String> {
         if qualifiers.is_empty() {
             return files;
