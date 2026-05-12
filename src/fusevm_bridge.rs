@@ -789,48 +789,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    //WARNING FAKE AND MUST BE DELETED
     vm.register_builtin(BUILTIN_MKDIR, |vm, argc| {
         let args = pop_args(vm, argc);
-        // Canonical bin_mkdir per files.c:63 — parses -m/-p inline
-        // via the BUILTIN spec "pm:".
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                                argscount: 0, argsalloc: 0 };
-        let mut positional: Vec<String> = Vec::new();
-        let mut i = 0;
-        while i < args.len() {
-            let a = &args[i];
-            if a == "--" { i += 1; positional.extend_from_slice(&args[i..]); break; }
-            if let Some(rest) = a.strip_prefix('-') {
-                if rest.is_empty() { positional.push(a.clone()); i += 1; continue; }
-                let chars: Vec<char> = rest.chars().collect();
-                let mut j = 0;
-                while j < chars.len() {
-                    let c = chars[j] as u8;
-                    if c == b'm' {
-                        ops.ind[c as usize] = (ops.args.len() + 1) as u8;
-                        let rest_after = &rest[j + 1..];
-                        if !rest_after.is_empty() {
-                            ops.args.push(rest_after.to_string());
-                        } else {
-                            i += 1;
-                            ops.args.push(args.get(i).cloned().unwrap_or_default());
-                        }
-                        ops.argscount = ops.args.len() as i32;
-                        break;
-                    }
-                    if c.is_ascii_alphabetic() { ops.ind[c as usize] = 1; }
-                    j += 1;
-                }
-            } else {
-                positional.push(a.clone());
-            }
-            i += 1;
-        }
-        let status = crate::ported::modules::files::bin_mkdir(
-            "mkdir", &positional, &ops, 0);
-        Value::Status(status)
+        // Canonical bin_mkdir wired in BUILTINS table (files.c:63).
+        // execbuiltin handles the "pm:" optstr parsing.
+        Value::Status(dispatch_builtin("mkdir", args))
     });
 
     vm.register_builtin(BUILTIN_STRFTIME, |vm, argc| {
