@@ -70,6 +70,7 @@ pub union tcp_sockaddr {                                                  // c:7
 /// `Src/Modules/tcp.h:81`. The C source uses bare pointers; Rust
 /// wraps in `Box` for ownership clarity at allocation sites and
 /// keeps `*mut tcp_session` for FFI boundaries.
+// WARNING: FAKE IMPL RUST INVENTION — not in Modules/tcp_h.c
 pub type Tcp_session = Box<tcp_session>;                                  // c:81
 
 /// `ZTCP_LISTEN` from `Src/Modules/tcp.h:83`. Set on a session in
@@ -101,6 +102,7 @@ pub const ZTCP_ZFTP:    i32 = 16;                                         // c:8
 
 #[allow(non_camel_case_types)]
 #[repr(C)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Modules/tcp_h.c
 pub struct tcp_session {                                                  // c:87
     pub fd:    i32,                                                       // c:88 — file descriptor
     pub sock:  tcp_sockaddr,                                              // c:89 — local address

@@ -98,6 +98,7 @@ pub(crate) fn keymapnamtab() -> &'static Mutex<HashMap<String, KeymapName>> {
 /// One node in the global `keymapnamtab` — maps a name to a Keymap
 /// + per-node flags (KMN_IMMORTAL for `.safe`).
 #[derive(Debug, Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_keymap.c
 pub struct KeymapName {                                                      // c:54
     pub nam: String,                                                         // c:56 char *nam
     pub flags: i32,                                                          // c:57 int flags
@@ -107,6 +108,7 @@ pub struct KeymapName {                                                      // 
 /// Direct port of `struct keymap` from `Src/Zle/zle_keymap.c:64`.
 /// A keymap — binding of keys to thingies.
 #[derive(Debug, Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_keymap.c
 pub struct Keymap {                                                          // c:64
     /// `Thingy first[256]` — c:65, base binding for each byte.
     pub first: [Option<Thingy>; 256],
@@ -124,6 +126,7 @@ pub struct Keymap {                                                          // 
 /// Direct port of `struct key` from `Src/Zle/zle_keymap.c:85`.
 /// A key binding (either a thingy or a string to send).
 #[derive(Debug, Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_keymap.c
 pub struct KeyBinding {                                                      // c:85
     pub bind: Option<Thingy>,                                                // c:88 Thingy bind
     pub str: Option<String>,                                                 // c:89 char *str
@@ -151,6 +154,7 @@ pub struct KeyBinding {                                                      // 
 /// ```
 #[derive(Debug)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_keymap.c
 pub struct remprefstate {                                                    // c:108
     /// Target keymap (Arc handle for shared ownership).
     pub km: std::sync::Arc<Keymap>,                                          // c:109
@@ -347,6 +351,7 @@ impl Keymap {
 /// has the equivalent 330+ bindkey calls inline in one function;
 /// the Rust port keeps them factored by keymap for readability.
 #[derive(Debug, Default)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_keymap.c
 pub struct KeymapManager;
 
 impl KeymapManager {

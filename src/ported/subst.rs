@@ -78,6 +78,7 @@ use std::sync::atomic::Ordering;
 /// `crate::ported::linklist::LinkList<String>` (port of
 /// `Src/linklist.c` with `LF_ARRAY` (`Src/subst.c:33`) carried in
 /// the `flags` field).
+// WARNING: FAKE IMPL RUST INVENTION — not in subst.c
 pub type LinkList = crate::ported::linklist::LinkList<String>;
 
 /// Returns true if the global `errflag` (Src/utils.c) is set.

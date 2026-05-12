@@ -56,6 +56,7 @@ pub const MAX_MAXJOBS: usize = 1000;
 /// Port of `child_times_t` (Src/zsh.h) — populated by
 /// `update_process()` (Src/jobs.c:363) from `wait4(2)` /
 /// `getrusage(2)`. Same `user` / `system` / `real` triple.
+// WARNING: FAKE IMPL RUST INVENTION — not in jobs.c
 pub struct TimeInfo {
     pub user_time: Duration,
     pub sys_time: Duration,
@@ -66,6 +67,7 @@ pub struct TimeInfo {
 /// One process within a pipeline.
 /// Port of `struct process` from Src/zsh.h — `update_process()`
 /// (Src/jobs.c:363) and `findproc()` (line 191) walk these.
+// WARNING: FAKE IMPL RUST INVENTION — not in jobs.c
 pub struct Process {
     pub pid: i32,
     pub status: i32,
@@ -123,6 +125,7 @@ impl Process {
 /// Port of `struct job` from Src/zsh.h — Src/jobs.c keeps the
 /// `jobtab[]` array of these and dispatches every `bg`/`fg`/
 /// `wait`/`disown` builtin through them.
+// WARNING: FAKE IMPL RUST INVENTION — not in jobs.c
 pub struct Job {
     pub stat: u32,
     pub gleader: i32,           // Process group leader
@@ -574,12 +577,14 @@ pub fn sigmsg(sig: i32) -> &'static str {                                    // 
 /// background process exits so `wait $pid` can read its $?.
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy)]
+// WARNING: FAKE IMPL RUST INVENTION — not in jobs.c
 pub struct bgstatus {                                                        // c:2296
     pub pid: i32,                                                            // c:2297
     pub status: i32,                                                         // c:2298
 }
 
 /// Port of `typedef struct bgstatus *Bgstatus;` (jobs.c:2300).
+// WARNING: FAKE IMPL RUST INVENTION — not in jobs.c
 pub type Bgstatus = Box<bgstatus>;                                           // c:2300
 
 /// Port of `static LinkList bgstatus_list;` (jobs.c:2302). Insertion-
@@ -1131,6 +1136,7 @@ pub fn scanjobs(table: &crate::exec_jobs::JobTable) -> Vec<String> {         // 
 
 /// Shell time accounting (from jobs.c shelltime)
 #[derive(Debug, Clone, Default)]
+// WARNING: FAKE IMPL RUST INVENTION — not in jobs.c
 pub struct ChildTimes {
     pub user_sec: f64,
     pub sys_sec: f64,

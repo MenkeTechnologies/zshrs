@@ -19,6 +19,17 @@
 //!   - `execute_external` / `execute_external_bg`: these are the
 //!     actual fork-exec mechanism — *not* a tree walker. They're the
 //!     leaf operation a bytecode `Op::Exec` should ultimately route to.
+//!
+//! Sibling architectural-invariant tests (per CLAUDE.md "96-test
+//! invariant is load-bearing"):
+//!   - `tests/no_tree_walker_dispatch.rs` — behavioral pin for every
+//!     construct the deleted tree-walker handled.
+//!   - `tests/shared_state_visible.rs` — PORT_PLAN.md Phase 5 bucket-2
+//!     pin: paramtab / opts must remain shared across worker threads.
+//!     Fires if a bucket-2 holder is silently demoted to TLS.
+//!   - `tests/per_evaluator_isolation.rs` — PORT_PLAN.md Phase 5
+//!     bucket-1 pin: math TLS state must remain per-thread. Fires if a
+//!     bucket-1 holder is promoted to shared storage.
 
 use std::fs;
 use std::path::PathBuf;

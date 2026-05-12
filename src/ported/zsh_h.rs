@@ -29,6 +29,7 @@ use std::sync::atomic::AtomicI32;
 /// Port of `#define minimum(a,b)` from `Src/zsh.h:31`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn minimum<T: PartialOrd>(a: T, b: T) -> T {
     // c:31
     if a < b {
@@ -41,10 +42,12 @@ pub fn minimum<T: PartialOrd>(a: T, b: T) -> T {
 /// Port of `typedef ZSH_64_BIT_TYPE zlong;` from `Src/zsh.h:38`.
 /// On every modern platform this is `int64_t` / `i64`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type zlong = i64; // c:38
 
 /// Port of `typedef ZSH_64_BIT_UTYPE zulong;` from `Src/zsh.h:50`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type zulong = u64; // c:50
 
 /// Port of `#define ZLONG_MAX` from `Src/zsh.h:40-57`.
@@ -68,6 +71,7 @@ pub const ZLONG_MAX: zlong = i64::MAX; // c:40-57
 /// of the prior `u` union is live. Read `l` when
 /// `type_ == MN_INTEGER`, read `d` when `type_ == MN_FLOAT`.
 #[derive(Debug, Clone, Copy)] // c:95
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct Mnumber {
     // c:95
     pub l: i64,     // c:97 (u.l)
@@ -82,16 +86,20 @@ pub const MN_FLOAT: u32 = 2; // c:104
 pub const MN_UNSET: u32 = 4; // c:105
 
 /// Port of `typedef struct mathfunc *MathFunc;` from `Src/zsh.h:107`.
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type MathFunc = Box<mathfunc>; // c:107
 
 /// Port of `typedef mnumber (*NumMathFunc)(...)` from `Src/zsh.h:108`.
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type NumMathFunc = fn(name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber;
 
 /// Port of `typedef mnumber (*StrMathFunc)(...)` from `Src/zsh.h:109`.
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type StrMathFunc = fn(name: &str, arg: &str, id: i32) -> Mnumber;
 
 /// Port of `struct mathfunc` from `Src/zsh.h:111-121`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct mathfunc {
     // c:111
     pub next: Option<Box<mathfunc>>, // c:112
@@ -164,6 +172,7 @@ pub const PATCHARS: &str = "#^*()|[]<>?~\\"; // c:232
 /// Port of `#define IS_DASH(x)` from `Src/zsh.h:242`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn IS_DASH(x: char) -> bool {
     x == '-' || x == DASH
 } // c:242
@@ -195,6 +204,7 @@ pub fn QT_IS_SINGLE(x: i32) -> bool {
 // =============================================================================
 
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type lextok = i32;
 pub const NULLTOK: lextok = 0; // c:305
 pub const SEPER: lextok = 1;
@@ -295,26 +305,31 @@ pub fn IS_WRITE_FILE(x: i32) -> bool {
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn IS_APPEND_REDIR(x: i32) -> bool {
     IS_WRITE_FILE(x) && (x & 2) != 0
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn IS_CLOBBER_REDIR(x: i32) -> bool {
     IS_WRITE_FILE(x) && (x & 1) != 0
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn IS_ERROR_REDIR(x: i32) -> bool {
     x >= REDIR_ERRWRITE && x <= REDIR_ERRAPPNOW
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn IS_READFD(x: i32) -> bool {
     (x >= REDIR_READWRITE && x <= REDIR_MERGEIN) || x == REDIR_INPIPE
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn IS_REDIROP(x: lextok) -> bool {
     x >= OUTANG_TOK && x <= TRINANG
 }
@@ -371,6 +386,7 @@ pub const ZCONTEXT_PARSE: i32 = 1 << 2; // c:495
 
 #[derive(Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct entersubsh_ret {
     // c:499
     pub gleader: i32,       // c:501
@@ -382,6 +398,7 @@ pub struct entersubsh_ret {
 // =============================================================================
 
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct linknode {
     // c:557
     pub next: Option<Box<linknode>>,
@@ -389,13 +406,16 @@ pub struct linknode {
     pub dat: usize,
 }
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct linklist {
     // c:563
     pub first: Option<Box<linknode>>,
     pub last: Option<Box<linknode>>,
     pub flags: i32,
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type LinkNode = Box<linknode>; // c:533
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type LinkList = Box<linklist>; // c:534
 
 // Pointer typedefs for the ~50 struct types declared at c:510-549.
@@ -404,48 +424,87 @@ pub type LinkList = Box<linklist>; // c:534
 // here so structs that reference each other (e.g. param.old: Param)
 // can compile.
 
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Alias = Box<alias>; // c:510
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Asgment = Box<asgment>; // c:511
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Builtin = Box<builtin>; // c:512
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Cmdnam = Box<cmdnam>; // c:513
 // `struct complist` body lives in `crate::ported::glob` (mirrors
 // C: declared in zsh.h via typedef alias, body defined in glob.c).
 // The `Complist` alias here resolves to that struct.
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Complist = Box<crate::ported::glob::complist>;                      // c:514
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Conddef = Box<conddef>; // c:515
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Dirsav = Box<dirsav>; // c:516
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Emulation_options = Box<emulation_options>; // c:517
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Execcmd_params = Box<execcmd_params>; // c:518
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Features = Box<features>; // c:519
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Feature_enables = Box<feature_enables>; // c:520
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Funcstack = Box<funcstack>; // c:521
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type FuncWrap = Box<funcwrap>; // c:522
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type HashNode = Box<hashnode>; // c:523
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type HashTable = Box<hashtable>; // c:524
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Heap = Box<heap>; // c:525
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Heapstack = Box<heapstack>; // c:526
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Histent = Box<histent>; // c:527
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Hookdef = Box<hookdef>; // c:528
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Imatchdata = Box<imatchdata>; // c:529
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Job = Box<job>; // c:531
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Jobfile = Box<jobfile>; // c:530
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Linkedmod = Box<linkedmod>; // c:532
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Module = Box<module>; // c:535
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Nameddir = Box<nameddir>; // c:536
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Options = Box<options>; // c:537
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Optname = Box<optname>; // c:538
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Param = Box<param>; // c:539
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Paramdef = Box<paramdef>; // c:540
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Patstralloc = Box<patstralloc>; // c:541
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Patprog = Box<patprog>; // c:542
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Prepromptfn = Box<prepromptfn>; // c:543
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Process = Box<process>; // c:544
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Redir = Box<redir>; // c:545
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Reswd = Box<reswd>; // c:546
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Shfunc = Box<shfunc>; // c:547
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Timedfn = Box<timedfn>; // c:548
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Value = Box<value>; // c:549
 
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type voidvoidfnptr_t = fn(); // c:621
 
 // Body-by-body struct definitions (C source order, fields verbatim
@@ -455,6 +514,7 @@ pub type voidvoidfnptr_t = fn(); // c:621
 
 /// Port of `struct prepromptfn` from `Src/zsh.h:626-628`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct prepromptfn {
     // c:626
     pub func: voidvoidfnptr_t,
@@ -462,6 +522,7 @@ pub struct prepromptfn {
 
 /// Port of `struct timedfn` from `Src/zsh.h:634-637`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct timedfn {
     // c:634
     pub func: voidvoidfnptr_t,
@@ -470,6 +531,7 @@ pub struct timedfn {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub enum CaseMod {
     CASMOD_NONE,  // c:3123
     CASMOD_UPPER, // c:3124
@@ -478,6 +540,7 @@ pub enum CaseMod {
 }
 
 /// Port of `typedef int (*CondHandler)(...)` from `Src/zsh.h:681`.
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type CondHandler = fn(args: &[String], id: i32) -> i32;
 
 /// Port of `struct conddef` from `Src/zsh.h:683-692`.
@@ -496,6 +559,7 @@ pub struct conddef {
 
 /// Port of `struct dirsav` from `Src/zsh.h:1159-1164`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct dirsav {
     // c:1159
     pub dirfd: i32,              // c:1160
@@ -516,22 +580,35 @@ pub struct hashnode {
 }
 
 // hashtable function-pointer typedefs (zsh.h:1175-1193).
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type VFunc = fn(usize) -> usize; // c:1172
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type FreeFunc = fn(usize); // c:1173
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type HashFunc = fn(name: &str) -> u32; // c:1175
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type TableFunc = fn(table: &mut hashtable); // c:1176
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type AddNodeFunc = fn(table: &mut hashtable, name: String, val: usize);
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type GetNodeFunc = fn(table: &hashtable, name: &str) -> Option<HashNode>;
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type RemoveNodeFunc = fn(table: &mut hashtable, name: &str) -> Option<HashNode>;
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type FreeNodeFunc = fn(node: HashNode);
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type CompareFunc = fn(a: &str, b: &str) -> i32;
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type ScanFunc = fn(node: &HashNode, flags: i32);
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type ScanTabFunc = fn(table: &hashtable, func: ScanFunc, flags: i32);
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type PrintTableStats = fn(table: &hashtable);
 
 /// Port of `struct hashtable` from `Src/zsh.h:1200-1222`.
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct hashtable {
     // c:1200
     pub hsize: i32,                         // c:1202
@@ -555,6 +632,7 @@ pub struct hashtable {
 
 /// Port of `struct optname` from `Src/zsh.h:1239-1242`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct optname {
     // c:1239
     pub node: hashnode, // c:1240
@@ -604,6 +682,7 @@ pub struct asgment {
 /// one is set per cmdnam (dispatched by `flags & HASHED`).
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct cmdnam {
     // c:1301
     pub node: hashnode,            // c:1302
@@ -636,6 +715,7 @@ pub struct shfunc {
 /// Port of `struct funcstack` from `Src/zsh.h:1348-1356`.
 #[allow(non_camel_case_types)]
 #[derive(Clone, Default)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct funcstack {
     // c:1348
     pub prev: Option<Funcstack>,  // c:1349
@@ -648,10 +728,12 @@ pub struct funcstack {
 }
 
 /// Port of `typedef int (*WrapFunc)(...)` from `Src/zsh.h:1360`.
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type WrapFunc = fn(prog: Eprog, w: FuncWrap, name: &str) -> i32;
 
 /// Port of `struct funcwrap` from `Src/zsh.h:1362-1367`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct funcwrap {
     // c:1362
     pub next: Option<FuncWrap>,    // c:1363
@@ -675,6 +757,7 @@ pub struct builtin {
 
 /// Port of `struct execcmd_params` from `Src/zsh.h:1492-1501`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct execcmd_params {
     // c:1492
     pub args: Option<LinkList>,  // c:1493
@@ -691,6 +774,7 @@ pub struct execcmd_params {
 /// for handle/linked/alias dispatched implicitly by load type; Rust
 /// port keeps three Options.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct module {
     // c:1503
     pub node: hashnode,              // c:1504
@@ -703,13 +787,18 @@ pub struct module {
 }
 
 /// Port of module fn-pointer typedefs from `Src/zsh.h:1534-1537`.
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Module_generic_func = fn() -> i32;
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Module_void_func = fn(m: &module) -> i32;
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Module_features_func = fn(m: &module, features: &mut Vec<String>) -> i32;
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Module_enables_func = fn(m: &module, enables: &mut Vec<i32>) -> i32;
 
 /// Port of `struct linkedmod` from `Src/zsh.h:1539-1547`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct linkedmod {
     // c:1539
     pub name: String,                           // c:1540
@@ -723,6 +812,7 @@ pub struct linkedmod {
 
 /// Port of `struct features` from `Src/zsh.h:1553-1568`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct features {
     // c:1553
     pub bn_list: Option<Builtin>,  // c:1555
@@ -738,6 +828,7 @@ pub struct features {
 
 /// Port of `struct feature_enables` from `Src/zsh.h:1573-1578`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct feature_enables {
     // c:1573
     pub str_: String,         // c:1575 (Rust keyword `str`)
@@ -745,10 +836,12 @@ pub struct feature_enables {
 }
 
 /// Port of `typedef int (*Hookfn)(...)` from `Src/zsh.h:1582`.
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Hookfn = fn(def: Hookdef, data: usize) -> i32;
 
 /// Port of `struct hookdef` from `Src/zsh.h:1584-1590`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct hookdef {
     // c:1584
     pub next: Option<Hookdef>,   // c:1585
@@ -776,6 +869,7 @@ pub struct patprog {
 
 /// Port of `struct patstralloc` from `Src/zsh.h:1613-1620`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct patstralloc {
     // c:1613
     pub unmetalen: i32,                // c:1614
@@ -787,15 +881,18 @@ pub struct patstralloc {
 
 /// Port of `struct zpc_disables_save` from `Src/zsh.h:1681-1689`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct zpc_disables_save {
     // c:1681
     pub next: Option<Box<zpc_disables_save>>, // c:1682
     pub disables: u32,                        // c:1688
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Zpc_disables_save = Box<zpc_disables_save>; // c:1691
 
 /// Port of `struct imatchdata` from `Src/zsh.h:1740-1760`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct imatchdata {
     // c:1740
     pub mstr: Option<String>,       // c:1742
@@ -808,14 +905,20 @@ pub struct imatchdata {
 }
 
 // gsu_* function-pointer typedefs (zsh.h:1790-1794) + structs.
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type GsuScalar = Box<gsu_scalar>; // c:1790
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type GsuInteger = Box<gsu_integer>; // c:1791
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type GsuFloat = Box<gsu_float>; // c:1792
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type GsuArray = Box<gsu_array>; // c:1793
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type GsuHash = Box<gsu_hash>; // c:1794
 
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct gsu_scalar {
     // c:1796
     pub getfn: fn(pm: &param) -> String,        // c:1797
@@ -824,6 +927,7 @@ pub struct gsu_scalar {
 }
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct gsu_integer {
     // c:1802
     pub getfn: fn(pm: &param) -> i64,
@@ -832,6 +936,7 @@ pub struct gsu_integer {
 }
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct gsu_float {
     // c:1808
     pub getfn: fn(pm: &param) -> f64,
@@ -840,6 +945,7 @@ pub struct gsu_float {
 }
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct gsu_array {
     // c:1814
     pub getfn: fn(pm: &param) -> Vec<String>,
@@ -848,6 +954,7 @@ pub struct gsu_array {
 }
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct gsu_hash {
     // c:1820
     pub getfn: fn(pm: &param) -> Option<&HashTable>,
@@ -887,6 +994,7 @@ pub struct param {
 
 /// Port of `struct tieddata` from `Src/zsh.h:1870-1873`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct tieddata {
     // c:1870
     pub arrptr: Option<Vec<String>>, // c:1871 char ***arrptr
@@ -895,12 +1003,14 @@ pub struct tieddata {
 
 /// Port of `struct repldata` from `Src/zsh.h:2003-2006`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct repldata {
     // c:2003
     pub b: i32,                  // c:2004
     pub e: i32,                  // c:2004
     pub replstr: Option<String>, // c:2005
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Repldata = Box<repldata>; // c:2007
 
 /// Port of `struct paramdef` from `Src/zsh.h:2082-2090`.
@@ -919,6 +1029,7 @@ pub struct paramdef {
 /// Port of `struct nameddir` from `Src/zsh.h:2149-2153`.
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct nameddir {
     // c:2149
     pub node: hashnode, // c:2150
@@ -928,20 +1039,24 @@ pub struct nameddir {
 
 /// Port of `groupmap` from `Src/zsh.h:2161-2166`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct groupmap {
     // c:2161
     pub name: String, // c:2163
     pub gid: u32,     // c:2165 gid_t
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Groupmap = Box<groupmap>; // c:2167
 
 /// Port of `groupset` from `Src/zsh.h:2170-2175`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct groupset {
     // c:2170
     pub array: Vec<groupmap>, // c:2172
     pub num: i32,             // c:2174
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Groupset = Box<groupset>; // c:2176
 
 /// Port of `struct histent` from `Src/zsh.h:2234-2250`.
@@ -962,6 +1077,7 @@ pub struct histent {
 /// Port of `struct emulation_options` from `Src/zsh.h:2570-2585`.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct emulation_options {
     // c:2570
     pub emulation: i32,          // c:2572
@@ -976,6 +1092,7 @@ pub struct emulation_options {
 /// Rust port stores the raw libc `termios` (the path taken on every
 /// modern host).
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct ttyinfo {
     // c:2593
     #[cfg(unix)]
@@ -986,6 +1103,7 @@ pub struct ttyinfo {
 
 /// Port of `struct heapstack` from `Src/zsh.h:2871-2877`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct heapstack {
     // c:2871
     pub next: Option<Heapstack>, // c:2872
@@ -994,6 +1112,7 @@ pub struct heapstack {
 
 /// Port of `struct heap` from `Src/zsh.h:2881-2898`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct heap {
     // c:2881
     pub next: Option<Heap>,    // c:2882
@@ -1004,6 +1123,7 @@ pub struct heap {
 
 /// Port of `struct sortelt` from `Src/zsh.h:3013-3028`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct sortelt {
     // c:3013
     pub orig: String, // c:3015
@@ -1011,6 +1131,7 @@ pub struct sortelt {
     pub origlen: i32, // c:3022
     pub len: i32,     // c:3027
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type SortElt = Box<sortelt>; // c:3030
 
 /// Port of `struct hist_stack` from `Src/zsh.h:3037-3058`.
@@ -1155,6 +1276,7 @@ pub struct job {
 /// Port of `struct funcdump` from `Src/zsh.h:776-786`.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct funcdump {
     // c:776
     pub next: Option<FuncDump>,   // c:777
@@ -1171,6 +1293,7 @@ pub struct funcdump {
 /// Port of `struct eprog` from `Src/zsh.h:805-815`.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Default)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct eprog {
     // c:805
     pub flags: i32,             // c:806 EF_*
@@ -1186,6 +1309,7 @@ pub struct eprog {
 
 /// Port of `struct estate` from `Src/zsh.h:824-828`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct estate {
     // c:824
     pub prog: Eprog,          // c:825
@@ -1267,6 +1391,7 @@ pub struct redir {
 pub const MULTIOUNIT: usize = 8; // c:725
 
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct multio {
     // c:735
     pub ct: i32,
@@ -1280,6 +1405,7 @@ pub struct multio {
 // =============================================================================
 
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct value {
     // c:744
     pub pm: Option<Param>,
@@ -1302,10 +1428,14 @@ pub const MAX_ARRLEN: i32 = 262144; // c:764
 // =============================================================================
 
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type wordcode = u32; // c:770
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Wordcode = Vec<wordcode>; // c:771
 
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type FuncDump = Box<funcdump>; // c:773
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Eprog = Box<eprog>; // c:774
 
 pub const EF_REAL: i32 = 1; // c:817
@@ -1313,7 +1443,9 @@ pub const EF_HEAP: i32 = 2;
 pub const EF_MAP: i32 = 4;
 pub const EF_RUN: i32 = 8;
 
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Estate = Box<estate>; // c:822
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Eccstr = Box<eccstr>; // c:835
 
 pub const EC_NODUP: i32 = 0; // c:869
@@ -1323,21 +1455,25 @@ pub const EC_DUPTOK: i32 = 2; // c:878
 pub const WC_CODEBITS: u32 = 5; // c:882
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn wc_code(c: wordcode) -> wordcode {
     c & ((1 << WC_CODEBITS) - 1)
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn wc_data(c: wordcode) -> wordcode {
     c >> WC_CODEBITS
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn wc_bdata(d: wordcode) -> wordcode {
     d << WC_CODEBITS
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn wc_bld(c: wordcode, d: wordcode) -> wordcode {
     c | (d << WC_CODEBITS)
 }
@@ -1418,182 +1554,218 @@ pub const WC_IF_ELSE: wordcode = 3;
 
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_END() -> wordcode {
     wc_bld(WC_END, 0)
 } // c:918
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_LIST_TYPE(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:920
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_LIST_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> WC_LIST_FREE
 } // c:924
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_LIST(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_LIST, t | (o << WC_LIST_FREE))
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_SUBLIST_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 3
 } // c:927
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_SUBLIST_FLAGS(c: wordcode) -> wordcode {
     wc_data(c) & 0x1c
 } // c:931
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_SUBLIST_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> WC_SUBLIST_FREE
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_SUBLIST(t: wordcode, f: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_SUBLIST, t | f | (o << WC_SUBLIST_FREE))
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_PIPE_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 1
 } // c:940
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_PIPE_LINENO(c: wordcode) -> wordcode {
     wc_data(c) >> 1
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_PIPE(t: wordcode, l: wordcode) -> wordcode {
     wc_bld(WC_PIPE, t | (l << 1))
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_REDIR_TYPE(c: wordcode) -> i32 {
     (wc_data(c) & REDIR_TYPE_MASK as u32) as i32
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_REDIR_VARID(c: wordcode) -> i32 {
     (wc_data(c) & REDIR_VARID_MASK as u32) as i32
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_REDIR_FROM_HEREDOC(c: wordcode) -> i32 {
     (wc_data(c) & REDIR_FROM_HEREDOC_MASK as u32) as i32
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_REDIR(t: wordcode) -> wordcode {
     wc_bld(WC_REDIR, t)
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_REDIR_WORDS(c: wordcode) -> i32 {
     (if WC_REDIR_VARID(c) != 0 { 4 } else { 3 })
         + (if WC_REDIR_FROM_HEREDOC(c) != 0 { 2 } else { 0 })
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_ASSIGN_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 1
 } // c:955
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_ASSIGN_TYPE2(c: wordcode) -> wordcode {
     (wc_data(c) & 2) >> 1
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_ASSIGN_NUM(c: wordcode) -> wordcode {
     wc_data(c) >> 2
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_ASSIGN(t: wordcode, a: wordcode, n: wordcode) -> wordcode {
     wc_bld(WC_ASSIGN, t | (a << 1) | (n << 2))
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_SIMPLE_ARGC(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:970
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_SIMPLE(n: wordcode) -> wordcode {
     wc_bld(WC_SIMPLE, n)
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_TYPESET_ARGC(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:973
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_TYPESET(n: wordcode) -> wordcode {
     wc_bld(WC_TYPESET, n)
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_SUBSH_SKIP(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:976
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_SUBSH(o: wordcode) -> wordcode {
     wc_bld(WC_SUBSH, o)
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_CURSH_SKIP(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:979
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_CURSH(o: wordcode) -> wordcode {
     wc_bld(WC_CURSH, o)
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_TIMED_TYPE(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:982
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_TIMED(t: wordcode) -> wordcode {
     wc_bld(WC_TIMED, t)
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_FUNCDEF_SKIP(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:987
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_FUNCDEF(o: wordcode) -> wordcode {
     wc_bld(WC_FUNCDEF, o)
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_FOR_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 3
 } // c:990
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_FOR_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> 2
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_FOR(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_FOR, t | (o << 2))
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_SELECT_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 1
 } // c:997
@@ -1604,96 +1776,115 @@ pub fn WC_SELECT_SKIP(c: wordcode) -> wordcode {
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_SELECT(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_SELECT, t | (o << 1))
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_WHILE_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 1
 } // c:1003
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_WHILE_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> 1
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_WHILE(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_WHILE, t | (o << 1))
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_REPEAT_SKIP(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:1009
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_REPEAT(o: wordcode) -> wordcode {
     wc_bld(WC_REPEAT, o)
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_TRY_SKIP(c: wordcode) -> wordcode {
     wc_data(c)
 } // c:1012
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_TRY(o: wordcode) -> wordcode {
     wc_bld(WC_TRY, o)
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_CASE_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 7
 } // c:1015
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_CASE_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> WC_CASE_FREE
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_CASE(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_CASE, t | (o << WC_CASE_FREE))
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_IF_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 3
 } // c:1024
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_IF_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> 2
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_IF(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_IF, t | (o << 2))
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_COND_TYPE(c: wordcode) -> wordcode {
     wc_data(c) & 127
 } // c:1032
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WC_COND_SKIP(c: wordcode) -> wordcode {
     wc_data(c) >> 7
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_COND(t: wordcode, o: wordcode) -> wordcode {
     wc_bld(WC_COND, t | (o << 7))
 }
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_ARITH() -> wordcode {
     wc_bld(WC_ARITH, 0)
 } // c:1036
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCB_AUTOFN() -> wordcode {
     wc_bld(WC_AUTOFN, 0)
 } // c:1038
@@ -1710,6 +1901,7 @@ pub const NULLBINCMD: Option<HandlerFunc> = None; // c:1438
 /// static from `crate::ported::options::emulation` directly.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn EMULATION(x: i32) -> bool {                                           // c:2347
     let emul = crate::ported::options::emulation
         .load(std::sync::atomic::Ordering::Relaxed);
@@ -1721,6 +1913,7 @@ pub fn EMULATION(x: i32) -> bool {                                           // 
 /// `emulation` static directly.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn SHELL_EMULATION() -> i32 {                                            // c:2350
     let emul = crate::ported::options::emulation
         .load(std::sync::atomic::Ordering::Relaxed);
@@ -1735,6 +1928,7 @@ pub fn SHELL_EMULATION() -> i32 {                                            // 
 /// `signals::traplocallevel`, `params::locallevel`) inside.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn IN_EVAL_TRAP() -> bool {                                              // c:2962
     use std::sync::atomic::Ordering;
     crate::ported::signals::intrap.load(Ordering::Relaxed) != 0
@@ -1746,6 +1940,7 @@ pub fn IN_EVAL_TRAP() -> bool {                                              // 
 /// Port of `#define ASG_ARRAYP(asg)` from `Src/zsh.h:1288`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn ASG_ARRAYP(asg: &asgment) -> bool {
     (asg.flags & ASG_ARRAY) != 0
 }
@@ -1753,6 +1948,7 @@ pub fn ASG_ARRAYP(asg: &asgment) -> bool {
 /// Port of `#define ASG_VALUEP(asg)` from `Src/zsh.h:1296`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn ASG_VALUEP(asg: &asgment) -> bool {
     ASG_ARRAYP(asg) || asg.scalar.is_some()
 }
@@ -1763,6 +1959,7 @@ pub fn ASG_VALUEP(asg: &asgment) -> bool {
 /// counts metafied chars from `str` up to `eptr` (exclusive).
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn MB_METASTRLEN2END(s: &str, widthp: bool, eptr: usize) -> usize {
     let truncated = if eptr <= s.len() { &s[..eptr] } else { s };
     MB_METASTRLEN2(truncated, widthp)
@@ -1876,6 +2073,7 @@ pub const SGTABTYPE: u32 = 0;
 /// cast. In Rust `&str` is already UTF-8; pass through.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn ZWS(s: &str) -> &str {
     s
 }
@@ -1893,6 +2091,7 @@ pub fn ZWS(s: &str) -> &str {
 /// from `Src/zsh.h:1450`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn BUILTIN(
     name: &str,
     flags: i32,
@@ -1922,6 +2121,7 @@ pub fn BUILTIN(
 /// prefix-builtin entry (no handler, marked with BINF_PREFIX).
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn BIN_PREFIX(name: &str, flags: i32) -> builtin {
     BUILTIN(
         name,
@@ -1939,6 +2139,7 @@ pub fn BIN_PREFIX(name: &str, flags: i32) -> builtin {
 /// `Src/zsh.h:701`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn CONDDEF(
     name: &str,
     flags: i32,
@@ -1962,6 +2163,7 @@ pub fn CONDDEF(
 /// Port of `HOOKDEF(name, func, flags)` from `Src/zsh.h:1594`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn HOOKDEF(name: &str, func: Hookfn, flags: i32) -> hookdef {
     hookdef {
         next: None,
@@ -1975,6 +2177,7 @@ pub fn HOOKDEF(name: &str, func: Hookfn, flags: i32) -> hookdef {
 /// Port of `NUMMATHFUNC(name, func, min, max, id)` from `Src/zsh.h:133`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn NUMMATHFUNC(name: &str, func: NumMathFunc, min: i32, max: i32, id: i32) -> mathfunc {
     mathfunc {
         next: None,
@@ -1992,6 +2195,7 @@ pub fn NUMMATHFUNC(name: &str, func: NumMathFunc, min: i32, max: i32, id: i32) -
 /// Port of `STRMATHFUNC(name, func, id)` from `Src/zsh.h:135`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn STRMATHFUNC(name: &str, func: StrMathFunc, id: i32) -> mathfunc {
     mathfunc {
         next: None,
@@ -2009,6 +2213,7 @@ pub fn STRMATHFUNC(name: &str, func: StrMathFunc, id: i32) -> mathfunc {
 /// Port of `PARAMDEF(name, flags, var, gsu)` from `Src/zsh.h:2096`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn PARAMDEF(name: &str, flags: i32, var: usize, gsu: usize) -> paramdef {
     paramdef {
         name: name.to_string(),
@@ -2024,6 +2229,7 @@ pub fn PARAMDEF(name: &str, flags: i32, var: usize, gsu: usize) -> paramdef {
 /// Port of `INTPARAMDEF(name, var)` from `Src/zsh.h:2105`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn INTPARAMDEF(name: &str, var: usize) -> paramdef {
     PARAMDEF(name, PM_INTEGER as i32, var, 0)
 }
@@ -2031,6 +2237,7 @@ pub fn INTPARAMDEF(name: &str, var: usize) -> paramdef {
 /// Port of `STRPARAMDEF(name, var)` from `Src/zsh.h:2107`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn STRPARAMDEF(name: &str, var: usize) -> paramdef {
     PARAMDEF(name, PM_SCALAR as i32, var, 0)
 }
@@ -2038,6 +2245,7 @@ pub fn STRPARAMDEF(name: &str, var: usize) -> paramdef {
 /// Port of `ARRPARAMDEF(name, var)` from `Src/zsh.h:2109`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn ARRPARAMDEF(name: &str, var: usize) -> paramdef {
     PARAMDEF(name, PM_ARRAY as i32, var, 0)
 }
@@ -2046,6 +2254,7 @@ pub fn ARRPARAMDEF(name: &str, var: usize) -> paramdef {
 /// `Src/zsh.h:2123`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn SPECIALPMDEF(
     name: &str,
     flags: i32,
@@ -2066,6 +2275,7 @@ pub fn SPECIALPMDEF(
 /// Port of `WRAPDEF(func)` from `Src/zsh.h:1371`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WRAPDEF(func: WrapFunc) -> funcwrap {
     funcwrap {
         next: None,
@@ -2080,6 +2290,7 @@ pub fn WRAPDEF(func: WrapFunc) -> funcwrap {
 // =============================================================================
 
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct jobfile {
     // c:1046
     pub name: Option<String>,
@@ -2161,6 +2372,7 @@ pub const MAX_OPS: usize = 128; // c:1396
 
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct options {
     // c:1416
     pub ind: [u8; MAX_OPS],
@@ -2206,6 +2418,7 @@ pub fn OPT_ISSET(ops: &options, c: u8) -> bool {
 /// `((ops)->ind[c] > 3)`. True if option carries an argument.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn OPT_HASARG(ops: &options, c: u8) -> bool {
     ops.ind[c as usize] > 3
 }
@@ -2214,6 +2427,7 @@ pub fn OPT_HASARG(ops: &options, c: u8) -> bool {
 // 21. Builtin types + BINF_* (zsh.h:1436-1486).
 // =============================================================================
 
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type HandlerFunc = fn(name: &str, args: &[String], ops: &options, funcid: i32) -> i32;
 
 pub const BINF_PLUSOPTS:        u32 = 1 << 1;                            // c:1457
@@ -2752,6 +2966,7 @@ pub const USEZLE: i32 = 184;
 pub const DVORAK: i32 = 185;
 pub const OPT_SIZE: i32 = 186;
 
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type OptIndex = u8; // c:2556
 
 // #define isset(X) (opts[X])                                               // c:2559
@@ -3031,6 +3246,7 @@ pub const TC_COUNT: i32 = 39;
 // 37. Text attributes (zattr) (zsh.h:2689-2750).
 // =============================================================================
 
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type zattr = u64; // c:2689
 
 pub const TXTBOLDFACE: zattr = 0x0001;
@@ -3062,12 +3278,14 @@ pub const COL_SEQ_FG: i32 = 0;
 pub const COL_SEQ_BG: i32 = 1;
 
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub struct color_rgb {
     // c:2752
     pub red: u32,
     pub green: u32,
     pub blue: u32,
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Color_rgb = Box<color_rgb>;
 
 pub const TSC_RAW: i32 = 0x0001; // c:2764
@@ -3116,6 +3334,7 @@ pub const CS_COUNT: i32 = 32;
 // 39. Heap memory + Heapid (zsh.h:2826-2862).
 // =============================================================================
 
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type Heapid = u32; // c:2826
 
 pub const HEAPID_PERMANENT: Heapid = u32::MAX; // c:2834
@@ -3232,6 +3451,7 @@ pub const NICEFLAG_NODUP: i32 = 4;
 // 45. Multibyte macros (zsh.h:3271-3375).
 // =============================================================================
 
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub type convchar_t = u32; // c:3276/3357
 
 pub const MB_INCOMPLETE: usize = usize::MAX - 1; // c:3313
@@ -3243,6 +3463,7 @@ pub const MB_CUR_MAX: usize = 6; // c:3324
 /// stateless; no-op.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn MB_METACHARINIT() {} // c:3275
 
 /// Port of `MB_METACHARLEN(str)` from `Src/zsh.h:3278/3359`. Returns
@@ -3251,6 +3472,7 @@ pub fn MB_METACHARINIT() {} // c:3275
 /// (multibyte). Rust returns the same byte length.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn MB_METACHARLEN(s: &[u8]) -> usize {
     // c:3278/3359
     if s.is_empty() {
@@ -3267,6 +3489,7 @@ pub fn MB_METACHARLEN(s: &[u8]) -> usize {
 /// returns `(byte_len, Option<char>)`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn MB_METACHARLENCONV(s: &[u8]) -> (usize, Option<char>) {
     // c:3277
     if s.is_empty() {
@@ -3284,6 +3507,7 @@ pub fn MB_METACHARLENCONV(s: &[u8]) -> (usize, Option<char>) {
 /// metafied characters in the string.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn MB_METASTRLEN(s: &str) -> usize {
     // c:3279
     let mut n = 0;
@@ -3305,6 +3529,7 @@ pub fn MB_METASTRLEN(s: &str) -> usize {
 /// `MB_METASTRLEN`; in multibyte mode it accounts for wide chars.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn MB_METASTRWIDTH(s: &str) -> usize {
     // c:3280
     MB_METASTRLEN(s)
@@ -3315,6 +3540,7 @@ pub fn MB_METASTRWIDTH(s: &str) -> usize {
 /// `widthp`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn MB_METASTRLEN2(s: &str, widthp: bool) -> usize {
     // c:3281
     if widthp {
@@ -3328,12 +3554,14 @@ pub fn MB_METASTRLEN2(s: &str, widthp: bool) -> usize {
 /// counterpart of `MB_METACHARINIT` for unmetafied input.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn MB_CHARINIT() {} // c:3286
 
 /// Port of `MB_CHARLEN(str, len)` from `Src/zsh.h:3288/3367`. Byte
 /// length of the next char in an unmetafied byte string.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn MB_CHARLEN(s: &[u8], len: usize) -> usize {
     // c:3288
     if len == 0 || s.is_empty() {
@@ -3363,6 +3591,7 @@ pub fn MB_CHARLENCONV(s: &[u8], len: usize) -> (usize, Option<char>) {
 /// otherwise.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCWIDTH(wc: char) -> i32 {
     // c:3300
     if wc as u32 == 0 {
@@ -3397,6 +3626,7 @@ pub fn WCWIDTH(wc: char) -> i32 {
 /// 1 in non-multibyte mode; uses WCWIDTH in multibyte mode.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn WCWIDTH_WINT(wc: char) -> i32 {
     // c:3311
     WCWIDTH(wc)
@@ -3406,6 +3636,7 @@ pub fn WCWIDTH_WINT(wc: char) -> i32 {
 /// is a non-zero combining character (zero display width).
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn IS_COMBINING(wc: char) -> bool {
     // c:3343
     wc as u32 != 0 && WCWIDTH(wc) == 0
@@ -3416,6 +3647,7 @@ pub fn IS_COMBINING(wc: char) -> bool {
 /// a combining character).
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn IS_BASECHAR(wc: char) -> bool {
     // c:3352
     !wc.is_whitespace() && !wc.is_control() && WCWIDTH(wc) > 0
@@ -3442,6 +3674,7 @@ pub const fn ZWC(c: char) -> char {
 /// safe).
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn OPT_ARG<'a>(ops: &'a options, c: u8) -> Option<&'a str> {
     let idx = (ops.ind[c as usize] >> 2) as usize;
     if idx == 0 {
@@ -3454,6 +3687,7 @@ pub fn OPT_ARG<'a>(ops: &'a options, c: u8) -> Option<&'a str> {
 /// `(OPT_HASARG(ops,c) ? OPT_ARG(ops,c) : NULL)`.
 #[inline]
 #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in zsh_h.c
 pub fn OPT_ARG_SAFE<'a>(ops: &'a options, c: u8) -> Option<&'a str> {
     if OPT_HASARG(ops, c) {
         OPT_ARG(ops, c)

@@ -87,14 +87,17 @@ pub const P_CLOSE:      u8 = 0x90;  // c:127 Analogous to OPEN.
 
 /// `P_ISBRANCH(p)` macro from pattern.c:200 — `(p->l & 0x20)`.
 #[inline]
+// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub fn P_ISBRANCH(op: u8) -> bool { (op & 0x20) != 0 }
 
 /// `P_ISEXCLUDE(p)` macro from pattern.c:201 — `((p->l & 0x30) == 0x30)`.
 #[inline]
+// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub fn P_ISEXCLUDE(op: u8) -> bool { (op & 0x30) == 0x30 }
 
 /// `P_NOTDOT(p)` macro from pattern.c:202 — `(p->l & 0x40)`.
 #[inline]
+// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub fn P_NOTDOT(op: u8) -> bool { (op & 0x40) != 0 }
 
 // =====================================================================
@@ -133,6 +136,7 @@ pub struct patprog {
 
 /// `typedef struct patprog *Patprog;` from `zsh.h:542`.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub type Patprog = Box<patprog>;
 
 // =====================================================================
@@ -1115,6 +1119,7 @@ pub fn patgetglobflags(s: &str) -> Option<(GlobFlagsResult, Option<PatOp>, usize
 /// Result of `patgetglobflags` — bitfield of active glob flags.
 /// Maps onto the C `patglobflags` int via PAT_LCMATCHUC etc.
 #[derive(Default, Clone, Copy)]
+// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub struct GlobFlagsResult {
     pub case_insensitive: bool,
     pub lcmatchuc: bool,
@@ -1126,6 +1131,7 @@ pub struct GlobFlagsResult {
 
 /// `PatOp` — assertion type from `(#s)` / `(#e)` glob flags.
 #[derive(Debug, Clone, Copy, PartialEq)]
+// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub enum PatOp {
     StartAssert,
     EndAssert,
@@ -1211,6 +1217,7 @@ pub fn charsub(s: &str, pos: usize) -> usize {                                //
 /// **C counterpart**: `struct rpat` at `pattern.c:248`.
 #[derive(Clone)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub struct rpat {
     pub patbeginp: [usize; NSUBEXP],   // c:241 capture starts (byte offsets)
     pub patendp:   [usize; NSUBEXP],   // c:242 capture ends
@@ -1824,6 +1831,7 @@ pub fn haswilds(s: &str) -> bool {                                            //
 // =====================================================================
 
 #[deprecated(note = "use Patprog instead")]
+// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub type PatProg = Patprog;
 
 // =====================================================================
@@ -1842,6 +1850,7 @@ pub type PatProg = Patprog;
 /// pattern engine for callers in exec_shims/fusevm that need a
 /// pre-pattern pass. TODO: migrate callers to pure patcompile usage.
 #[derive(Debug, Clone, Copy)]
+// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub struct NumericRange {
     pub start: usize,
     pub end:   usize,
@@ -1918,6 +1927,7 @@ impl NumericRange {
 /// compile. NOT in pattern.c — C parses these inline via
 /// patgetglobflags during patcompile. Transitional convenience.
 #[derive(Debug, Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in pattern.c
 pub struct PatternFlags {
     pub pattern: String,
     pub case_insensitive: bool,

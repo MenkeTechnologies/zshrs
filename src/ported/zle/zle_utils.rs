@@ -491,6 +491,7 @@ impl Zle {
 /// by `zle_restore_positions()`.
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_utils.c
 pub struct zle_position {                                                    // c:595
     /// `int cs` — c:599, saved cursor position.
     pub cs: usize,
@@ -1402,6 +1403,7 @@ pub fn viundochange(zle: &mut crate::ported::zle::zle_main::Zle,             // 
 /// Port of `struct zle_position` from Src/Zle/zle_utils.c:594.
 /// Saved (cs, mark, ll) for a stacked position.
 #[derive(Debug, Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_utils.c
 pub struct ZlePosition {                                                     // c:594
     /// Cursor position.
     pub cs: usize,                                                           // c:599

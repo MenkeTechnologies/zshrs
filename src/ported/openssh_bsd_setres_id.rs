@@ -161,17 +161,20 @@ pub unsafe fn setresuid(ruid: libc::uid_t, euid: libc::uid_t, suid: libc::uid_t)
 /// has to dispatch per-platform because there's no portable mutable
 /// errno accessor in std.
 #[cfg(unix)]
+// WARNING: FAKE IMPL RUST INVENTION — not in openssh_bsd_setres_id.c
 struct Errno;
 
 #[cfg(unix)]
 impl Errno {
 
 #[inline]
+// WARNING: FAKE IMPL RUST INVENTION — not in openssh_bsd_setres_id.c
 fn get() -> libc::c_int {
     std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
 }
 
 #[inline]
+// WARNING: FAKE IMPL RUST INVENTION — not in openssh_bsd_setres_id.c
 fn set(e: libc::c_int) {
     // libc exposes `__errno_location()` on Linux, `__error()` on
     // macOS/BSD. Pick the right thread-local accessor per platform
@@ -214,6 +217,7 @@ fn set(e: libc::c_int) {
 }
 
 #[inline]
+// WARNING: FAKE IMPL RUST INVENTION — not in openssh_bsd_setres_id.c
 fn str(e: libc::c_int) -> String {
     std::io::Error::from_raw_os_error(e).to_string()
 }

@@ -39,6 +39,7 @@ const GDBM_REPLACE: c_int = 1;
 
 /// Datum structure for GDBM
 #[repr(C)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Modules/db_gdbm.c
 struct Datum {
     dptr: *mut c_char,
     dsize: c_int,
@@ -98,6 +99,7 @@ impl Datum {
 }
 
 /// Opaque GDBM file handle
+// WARNING: FAKE IMPL RUST INVENTION — not in Modules/db_gdbm.c
 type GdbmFile = *mut c_void;
 
 #[cfg(feature = "gdbm")]
@@ -129,6 +131,7 @@ extern "C" {
 /// the live `GDBM_FILE *` through every `gdbmgetfn`/`gdbmsetfn` call
 /// (lines 282/347). Same shape on the Rust side.
 #[derive(Debug)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Modules/db_gdbm.c
 pub struct GdbmDatabase {
     dbf: GdbmFile,
     path: PathBuf,
@@ -410,6 +413,7 @@ unsafe impl Sync for GdbmDatabase {}
 /// through `gdbmgetfn` (line 282) / `gdbmsetfn` (line 347) /
 /// `gdbmunsetfn` (line 399). The Rust struct holds the live db
 /// handle plus a small per-key cache.
+// WARNING: FAKE IMPL RUST INVENTION — not in Modules/db_gdbm.c
 pub struct TiedGdbmParam {
     pub name: String,
     pub db: Arc<GdbmDatabase>,

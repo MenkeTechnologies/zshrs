@@ -16,6 +16,7 @@ use crate::ported::zsh_h::DISABLED;
 /// reference to a widget. `ThingyFlags` deleted — C uses an `int
 /// flags` field with `TH_IMMORTAL` (1<<1) and `DISABLED` (1<<0) bits.
 #[derive(Debug, Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_thingy.c
 pub struct Thingy {                                                          // c:224
     pub nam: String,                                                         // c:226 char *nam
     pub flags: i32,                                                          // c:227 int flags
