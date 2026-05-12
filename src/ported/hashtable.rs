@@ -1853,7 +1853,7 @@ pub fn emptycmdnamtable() {
 /// `CmdNameTable::hash_dir`.
 pub fn hashdir(dir: &str, dir_index: usize) {
     cmdnamtab_lock()
-        .read()
+        .write()
         .expect("cmdnamtab poisoned")
         .hash_dir(dir, dir_index);
 }
@@ -1883,7 +1883,7 @@ pub fn fillcmdnamtable(path: &[String]) {
 /// This helper performs the removal to trigger Drop.
 pub fn freecmdnamnode(nam: &str) {
     cmdnamtab_lock()
-        .read()
+        .write()
         .expect("cmdnamtab poisoned")
         .remove(nam);
 }
@@ -1962,7 +1962,7 @@ pub fn removeshfuncnode(nam: &str) -> Option<ShFunc> {
         }
     }
     shfunctab_lock()
-        .read()
+        .write()
         .expect("shfunctab poisoned")
         .remove(nam)
 }
@@ -2037,7 +2037,7 @@ pub fn enableshfuncnode(nam: &str) {
 /// removes from the table to trigger the drop chain.
 pub fn freeshfuncnode(nam: &str) {
     shfunctab_lock()
-        .read()
+        .write()
         .expect("shfunctab poisoned")
         .remove(nam);
 }
@@ -2318,7 +2318,7 @@ pub fn emptyhisttable() {
 /// (Some) if a duplicate command-text was already present.
 pub fn addhistnode(nam: &str, event_id: i32) -> Option<i32> {
     histtab_lock()
-        .read()
+        .write()
         .expect("histtab poisoned")
         .insert(nam.to_string(), event_id)
 }
@@ -2330,7 +2330,7 @@ pub fn addhistnode(nam: &str, event_id: i32) -> Option<i32> {
 /// equivalent of zfree.
 pub fn freehistnode(nam: &str) {
     histtab_lock()
-        .read()
+        .write()
         .expect("histtab poisoned")
         .remove(nam);
 }

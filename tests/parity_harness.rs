@@ -4,7 +4,7 @@
 //! 1. Invoke `zsh -fc 'zcompile out.zwc input.zsh'` to produce wordcode.
 //! 2. Decode the `.zwc` via `src/zwc_decode.rs::decode_zwc_first` and
 //!    render to canonical sexp.
-//! 3. Parse the same source via `src/parse::ZshParser::parse` and
+//! 3. Parse the same source via `crate::ported::parse::parse` and
 //!    render to canonical sexp via `src/ast_sexp.rs::ast_to_sexp`.
 //! 4. Assert byte-equal sexp strings.
 //!

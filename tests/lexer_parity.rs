@@ -8,7 +8,7 @@
 //!      `cd src/zsh && make Src/Modules/zshrs_dump.so` (or `.dylib` on
 //!      macOS). The harness skips with a clear message if the module
 //!      isn't built.
-//!   2. Drive zshrs's `ZshLexer` over the same source bytes; collect
+//!   2. Drive zshrs lex module over the same source bytes; collect
 //!      `(lextok, tokstr)` pairs.
 //!   3. Render both streams to identical canonical form
 //!      (`TOKNAME\tTOKSTR\n` per token); diff byte-for-byte.

@@ -703,7 +703,7 @@ fn check_alias(lextext: &str) -> bool {
             inject_alias_text(&alias.text);
             // lex.c:1929 — `an->inuse = 1;` (set on the live node).
             let mut guard = crate::ported::hashtable::aliastab_lock()
-                .read()
+                .write()
                 .expect("aliastab poisoned");
             if let Some(a) = guard.get_mut(lextext) {
                 a.inuse = 1;
@@ -738,7 +738,7 @@ fn check_alias(lextext: &str) -> bool {
                         // lex.c:1941 — `an->inuse = 1;` on the
                         // suffix-alias node.
                         let mut guard = crate::ported::hashtable::sufaliastab_lock()
-                            .read()
+                            .write()
                             .expect("sufaliastab poisoned");
                         if let Some(a) = guard.get_mut(suffix) {
                             a.inuse = 1;

@@ -1,4 +1,4 @@
-//! Smoke tests for the ZshParser → ZshCompiler → fusevm::VM pipeline.
+//! Smoke tests for the lex+parse + ZshCompiler → fusevm::VM pipeline.
 //!
 //! These run the real zshrs binary, which routes every script through
 //! the port AST end-to-end. The pipeline is the canonical execution

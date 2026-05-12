@@ -1,4 +1,4 @@
-//! Probe whether the ported ZshParser parses everyday constructs without
+//! Probe whether the ported parser parses everyday constructs without
 //! erroring. We don't validate AST shapes deeply yet — just that the parser
 //! doesn't reject inputs that the corpus expects to handle.
 //!
@@ -10,7 +10,7 @@ fn parse_ok(src: &str) {
     match zsh::parse::parse() {
         Ok(_program) => {}
         Err(errors) => panic!(
-            "ZshParser rejected `{}`: {} errors. First: {:?}",
+            "parser rejected `{}`: {} errors. First: {:?}",
             src,
             errors.len(),
             errors.first()
