@@ -865,13 +865,13 @@ impl<'a> ZshParser<'a> {
         // parse.c:299 — `ps->hdocs = hdocs; hdocs = NULL;`
         ps.hdocs = std::mem::take(&mut self.lexer.heredocs);
         // parse.c:302-310 — save lexer-side state.
-        ps.incmdpos = self.lexer.incmdpos;
+        ps.incmdpos = self.lexer.incmdpos();
         // parse.c:303 — aliasspaceflag — not yet a field on ZshLexer.
         // STUB; Phase 7 wires it. Same for the few below marked STUB.
         ps.aliasspaceflag = 0;
-        ps.incond = self.lexer.incond;
+        ps.incond = self.lexer.incond();
         ps.inredir = self.lexer.inredir();
-        ps.incasepat = self.lexer.incasepat;
+        ps.incasepat = self.lexer.incasepat();
         ps.isnewlin = self.lexer.isnewlin();
         ps.infor = self.lexer.infor();
         ps.inrepeat_ = self.lexer.inrepeat();
@@ -893,10 +893,10 @@ impl<'a> ZshParser<'a> {
         // parse starts from a clean slate.
         self.recursion_depth = 0;
         self.global_iterations = 0;
-        self.lexer.incmdpos = true;
-        self.lexer.incond = 0;
+        self.lexer.set_incmdpos(true);
+        self.lexer.set_incond(0);
         self.lexer.set_inredir(false);
-        self.lexer.incasepat = 0;
+        self.lexer.set_incasepat(0);
         self.lexer.set_infor(0);
         self.lexer.set_inrepeat(0);
         self.lexer.set_intypeset(false);
@@ -914,11 +914,11 @@ impl<'a> ZshParser<'a> {
 
         // parse.c:333-352 — restore saved state.
         self.lexer.heredocs = ps.hdocs.clone();
-        self.lexer.incmdpos = ps.incmdpos;
+        self.lexer.set_incmdpos(ps.incmdpos);
         // aliasspaceflag STUB until Phase 7.
-        self.lexer.incond = ps.incond;
+        self.lexer.set_incond(ps.incond);
         self.lexer.set_inredir(ps.inredir);
-        self.lexer.incasepat = ps.incasepat;
+        self.lexer.set_incasepat(ps.incasepat);
         self.lexer.set_isnewlin(ps.isnewlin);
         self.lexer.set_infor(ps.infor);
         self.lexer.set_inrepeat(ps.inrepeat_);
@@ -943,12 +943,12 @@ impl<'a> ZshParser<'a> {
     pub fn init_parse_status(&mut self) {
         // parse.c:500-502 — `incasepat = incond = inredir = infor =
         // intypeset = 0; inrepeat_ = 0; incmdpos = 1;`
-        self.lexer.incasepat = 0;
-        self.lexer.incond = 0;
+        self.lexer.set_incasepat(0);
+        self.lexer.set_incond(0);
         self.lexer.set_inredir(false);
         self.lexer.set_infor(0);
         self.lexer.set_intypeset(false);
-        self.lexer.incmdpos = true;
+        self.lexer.set_incmdpos(true);
     }
 
     /// Initialize parser for a fresh parse. Direct port of
@@ -1015,7 +1015,7 @@ impl<'a> ZshParser<'a> {
     pub fn parse_event(&mut self, endtok: lextok) -> Option<ZshProgram> {
         // parse.c:616-619 — reset state and prime the lexer.
         self.lexer.tok = ENDINPUT;
-        self.lexer.incmdpos = true;
+        self.lexer.set_incmdpos(true);
         self.lexer.zshlex();
         // parse.c:620 — `init_parse();`
         self.init_parse();
@@ -1571,7 +1571,7 @@ impl<'a> ZshParser<'a> {
                                     pipe: ZshPipe {
                                         cmd: body_simple,
                                         next: None,
-                                        lineno: self.lexer.lineno,
+                                        lineno: self.lexer.lineno(),
                                         merge_stderr: false,
                                     },
                                     next: None,
@@ -1593,7 +1593,7 @@ impl<'a> ZshParser<'a> {
                                     pipe: ZshPipe {
                                         cmd: funcdef,
                                         next: None,
-                                        lineno: self.lexer.lineno,
+                                        lineno: self.lexer.lineno(),
                                         merge_stderr: false,
                                     },
                                     next: None,
@@ -1656,7 +1656,7 @@ impl<'a> ZshParser<'a> {
                                     pipe: ZshPipe {
                                         cmd: funcdef,
                                         next: None,
-                                        lineno: self.lexer.lineno,
+                                        lineno: self.lexer.lineno(),
                                         merge_stderr: false,
                                     },
                                     next: None,
@@ -1678,7 +1678,7 @@ impl<'a> ZshParser<'a> {
                                         pipe: ZshPipe {
                                             cmd,
                                             next: None,
-                                            lineno: self.lexer.lineno,
+                                            lineno: self.lexer.lineno(),
                                             merge_stderr: false,
                                         },
                                         next: None,
@@ -1701,7 +1701,7 @@ impl<'a> ZshParser<'a> {
                                         pipe: ZshPipe {
                                             cmd: funcdef,
                                             next: None,
-                                            lineno: self.lexer.lineno,
+                                            lineno: self.lexer.lineno(),
                                             merge_stderr: false,
                                         },
                                         next: None,
@@ -2174,7 +2174,7 @@ impl<'a> ZshParser<'a> {
                 // The lexer flips incmdpos to false on bare Outpar (which
                 // is correct for subshell-close context), but for an
                 // array-assignment close more assigns/words may follow.
-                self.lexer.incmdpos = true;
+                self.lexer.set_incmdpos(true);
             }
 
             ZshAssignValue::Array(elements)
@@ -2377,7 +2377,7 @@ impl<'a> ZshParser<'a> {
                 // set so `{` lexes as Inbrace (not as a literal). C
                 // analogue: parse.c::par_for sets `incmdpos = 1`
                 // after consuming the OUTPAR before the body parse.
-                self.lexer.incmdpos = true;
+                self.lexer.set_incmdpos(true);
                 self.lexer.zshlex();
             }
             ForList::Words(words)
@@ -2506,7 +2506,7 @@ impl<'a> ZshParser<'a> {
         // Without this the `(` got swallowed into a gettokstr('(', false)
         // call and produced a String like "(foo)" — the parser then saw
         // the `)` inside a string instead of as a separate Outpar.
-        self.lexer.incasepat = 1;
+        self.lexer.set_incasepat(1);
         self.lexer.zshlex();
 
         let mut arms = Vec::new();
@@ -2520,7 +2520,7 @@ impl<'a> ZshParser<'a> {
 
             // Set incasepat BEFORE skipping separators so lexer knows we're in case pattern context
             // This affects how [ and | are lexed
-            self.lexer.incasepat = 1;
+            self.lexer.set_incasepat(1);
 
             self.skip_separators();
 
@@ -2535,14 +2535,14 @@ impl<'a> ZshParser<'a> {
                         .map(|s| s == "esac")
                         .unwrap_or(false));
             if (use_brace && self.lexer.tok == OUTBRACE_TOK) || (!use_brace && is_esac) {
-                self.lexer.incasepat = 0;
+                self.lexer.set_incasepat(0);
                 self.lexer.zshlex();
                 break;
             }
 
             // Also break on EOF
             if self.lexer.tok == ENDINPUT || self.lexer.tok == LEXERR {
-                self.lexer.incasepat = 0;
+                self.lexer.set_incasepat(0);
                 break;
             }
 
@@ -2565,7 +2565,7 @@ impl<'a> ZshParser<'a> {
                 pattern_iterations += 1;
                 if pattern_iterations > 1000 {
                     self.error("parse_case: too many pattern iterations");
-                    self.lexer.incasepat = 0;
+                    self.lexer.set_incasepat(0);
                     return None;
                 }
 
@@ -2576,7 +2576,7 @@ impl<'a> ZshParser<'a> {
                     }
                     patterns.push(self.lexer.tokstr.clone().unwrap_or_default());
                     // After first pattern token, set incasepat=2 so ( is treated as part of pattern
-                    self.lexer.incasepat = 2;
+                    self.lexer.set_incasepat(2);
                     self.lexer.zshlex();
                 } else if self.lexer.tok != BAR_TOK {
                     break;
@@ -2584,13 +2584,13 @@ impl<'a> ZshParser<'a> {
 
                 if self.lexer.tok == BAR_TOK {
                     // Reset to 1 (start of next alternative pattern)
-                    self.lexer.incasepat = 1;
+                    self.lexer.set_incasepat(1);
                     self.lexer.zshlex();
                 } else {
                     break;
                 }
             }
-            self.lexer.incasepat = 0;
+            self.lexer.set_incasepat(0);
 
             // zsh's `(P)` form (parse.c:1320-1360 hack) treats the entire
             // parenthesized contents as ONE zsh pattern with internal `|`
@@ -2626,10 +2626,10 @@ impl<'a> ZshParser<'a> {
             // "command not found: c1=v"). Subsequent statements after
             // `;` parse correctly because the `;` separator restores
             // command position; only the FIRST body word was broken.
-            self.lexer.incmdpos = true;
+            self.lexer.set_incmdpos(true);
             self.lexer.zshlex();
             if had_leading_paren && self.lexer.tok == OUTPAR_TOK {
-                self.lexer.incmdpos = true;
+                self.lexer.set_incmdpos(true);
                 self.lexer.zshlex();
             }
 
@@ -2644,17 +2644,17 @@ impl<'a> ZshParser<'a> {
             // out with "expected ')' in case pattern".
             let terminator = match self.lexer.tok {
                 DSEMI => {
-                    self.lexer.incasepat = 1;
+                    self.lexer.set_incasepat(1);
                     self.lexer.zshlex();
                     CaseTerm::Break
                 }
                 SEMIAMP => {
-                    self.lexer.incasepat = 1;
+                    self.lexer.set_incasepat(1);
                     self.lexer.zshlex();
                     CaseTerm::Continue
                 }
                 SEMIBAR => {
-                    self.lexer.incasepat = 1;
+                    self.lexer.set_incasepat(1);
                     self.lexer.zshlex();
                     CaseTerm::TestNext
                 }
@@ -2971,14 +2971,14 @@ impl<'a> ZshParser<'a> {
         // turning `always { ... }` into a Simple `{` `echo` … and the
         // try/always pairing is silently lost.
         if self.lexer.tok == OUTBRACE_TOK {
-            self.lexer.incmdpos = true; // parse.c:1632 incmdpos = !zsh_construct
+            self.lexer.set_incmdpos(true); // parse.c:1632 incmdpos = !zsh_construct
             self.lexer.zshlex();
 
             // Check for 'always'
             if self.lexer.tok == STRING_LEX {
                 let s = self.lexer.tokstr.as_ref();
                 if s.map(|s| s == "always").unwrap_or(false) {
-                    self.lexer.incmdpos = true; // parse.c:1637 incmdpos = 1
+                    self.lexer.set_incmdpos(true); // parse.c:1637 incmdpos = 1
                     self.lexer.zshlex();
                     self.skip_separators();
 
@@ -3195,7 +3195,7 @@ impl<'a> ZshParser<'a> {
                             pipe: ZshPipe {
                                 cmd,
                                 next: None,
-                                lineno: self.lexer.lineno,
+                                lineno: self.lexer.lineno(),
                                 merge_stderr: false,
                             },
                             next: None,
@@ -3417,21 +3417,21 @@ impl<'a> ZshParser<'a> {
         let op = match self.lexer.tok {
             STRING_LEX => {
                 let s = self.lexer.tokstr.clone().unwrap_or_default();
-                self.lexer.incond += 1;
+                self.lexer.set_incond(self.lexer.incond() + 1);
                 self.lexer.zshlex();
-                self.lexer.incond -= 1;
+                self.lexer.set_incond(self.lexer.incond() - 1);
                 s
             }
             INANG_TOK => {
-                self.lexer.incond += 1;
+                self.lexer.set_incond(self.lexer.incond() + 1);
                 self.lexer.zshlex();
-                self.lexer.incond -= 1;
+                self.lexer.set_incond(self.lexer.incond() - 1);
                 "<".to_string()
             }
             OUTANG_TOK => {
-                self.lexer.incond += 1;
+                self.lexer.set_incond(self.lexer.incond() + 1);
                 self.lexer.zshlex();
-                self.lexer.incond -= 1;
+                self.lexer.set_incond(self.lexer.incond() - 1);
                 ">".to_string()
             }
             _ => return Some(ZshCond::Unary("-n".to_string(), s1)),
