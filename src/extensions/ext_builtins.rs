@@ -122,7 +122,9 @@ impl ShellExecutor {
                 green("missing")
             },
         );
-        println!("  hash table:  {} entries", self.command_hash.len());
+        println!("  hash table:  {} entries",
+            crate::ported::hashtable::cmdnamtab_lock().read()
+                .map(|t| t.len()).unwrap_or(0));
         println!();
 
         // --- FPATH ---

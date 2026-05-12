@@ -473,8 +473,9 @@ pub struct ShellExecutor {
     pub plugin_cache: Option<crate::plugin_cache::PluginCache>,
     // cdreplay - deferred compdef calls for zinit turbo mode
     pub deferred_compdefs: Vec<Vec<String>>,
-    // command hash table (hash builtin)
-    pub command_hash: HashMap<String, String>,
+    // `command_hash` deleted — never-populated dup of canonical
+    // `cmdnamtab` (`hashtable.rs:1780`, port of `Src/exec.c:5260`
+    // findcmd's hash table). Callers route through cmdnamtab.
     // Control flow signals
     pub returning: Option<i32>, // Set by return builtin, cleared after function returns
     pub breaking: i32,          // break level (0 = not breaking, N = break N levels)
@@ -1132,7 +1133,6 @@ impl ShellExecutor {
                 }
             },
             deferred_compdefs: Vec::new(),
-            command_hash: HashMap::new(),
             returning: None,
             breaking: 0,
             continuing: 0,
@@ -2624,8 +2624,13 @@ impl ShellExecutor {
     /// (the C source returns the literal path for slashed names
     /// without walking $PATH).
     pub(crate) fn find_in_path(&self, name: &str) -> Option<String> {
-        if let Some(path) = self.command_hash.get(name) {
-            return Some(path.clone());
+        // Canonical command-hash lives in `cmdnamtab`. `get_full_path`
+        // returns the resolved path for HASHED entries.
+        if let Some(p) = crate::ported::hashtable::cmdnamtab_lock()
+            .read().ok()
+            .and_then(|t| t.get_full_path(name))
+        {
+            return Some(p.display().to_string());
         }
         crate::ported::builtin::findcmd(name, 0, 0)                          // c:exec.c:5260
     }
@@ -3463,10 +3468,13 @@ impl crate::ported::exec::ShellExecutor {
                     let mut seen: std::collections::HashSet<String> =
                         std::collections::HashSet::new();
                     let mut names: Vec<String> = Vec::new();
-                    // Hashed entries first (rehash population).
-                    for k in self.command_hash.keys() {
-                        if seen.insert(k.clone()) {
-                            names.push(k.clone());
+                    // Hashed entries first (rehash population) — read
+                    // from canonical `cmdnamtab` (Src/exec.c:5260).
+                    if let Ok(tab) = crate::ported::hashtable::cmdnamtab_lock().read() {
+                        for (k, _) in tab.iter() {
+                            if seen.insert(k.clone()) {
+                                names.push(k.clone());
+                            }
                         }
                     }
                     for dir in path_var.split(':') {
