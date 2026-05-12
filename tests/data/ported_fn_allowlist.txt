@@ -918,5 +918,4 @@ module_handle
 # deferred-compile path documented on `struct shfunc` in zsh_h.rs.
 shfunc_with_body
 shfunc_autoload
-getkeystring_print
-printf_format_once
+getkeystring_with

@@ -3156,7 +3156,8 @@ pub fn bin_print(name: &str, args: &[String],                                // 
         let echo_E = echo_mode && OPT_ISSET(ops, b'E');
         if !echo_E {
             for a in processed_args.iter_mut() {
-                let (s, _) = crate::ported::utils::getkeystring_print(a);
+                let (s, _) = crate::ported::utils::getkeystring_with(a,
+                    crate::ported::utils::GETKEYS_PRINT);
                 *a = s;
             }
         }
@@ -3182,132 +3183,125 @@ pub fn bin_print(name: &str, args: &[String],                                // 
 /// elaborate (width/precision/flag chars/%b/%q/etc.); this is the
 /// minimal subset that covers the common script patterns.
 fn printf_format(fmt: &str, args: &[String]) -> String {
+    use crate::ported::utils::{getkeystring, getkeystring_with, quotedzputs,
+        GETKEYS_PRINT};
     // c:Src/builtin.c:4711 — `fmt = getkeystring(fmt, &flen, ...,
     // GETKEYS_PRINTF_FMT, ...);`. The format string is first run
     // through getkeystring to interpret backslash escapes (`\n`,
     // `\t`, `\xNN`, etc.) before %-format substitution.
-    let (fmt, _) = crate::ported::utils::getkeystring(fmt);                  // c:builtin.c:4711
+    let (fmt, _) = getkeystring(fmt);                                        // c:builtin.c:4711
     let mut out = String::new();
-    // c:Src/builtin.c:4914-4923 — printf reapplies the format
-    // string until ALL args are consumed. `printf '%s,' a b c` →
-    // "a,b,c," not just "a,". Loop until arg_i stops advancing.
-    let mut arg_i = 0usize;
+    let mut arg_i: usize = 0;
+    // c:Src/builtin.c:4914-4923 — printf reapplies the format string
+    // until ALL args are consumed. `printf '%s,' a b c` → `a,b,c,`,
+    // not `a,`. The outer loop reapplies; the inner do-while body
+    // mirrors C's per-arg conversion loop directly.
     loop {
         let prev = arg_i;
-        let chunk = printf_format_once(&fmt, args, &mut arg_i);
-        out.push_str(&chunk);
-        if arg_i == prev || arg_i >= args.len() { break; }
-    }
-    out
-}
-
-fn printf_format_once(fmt: &str, args: &[String], arg_i_ref: &mut usize) -> String {
-    // Local re-bind so the existing `arg_i` uses read/write through
-    // the caller-owned counter (so the loop in printf_format sees
-    // progress across reapplies of the format string).
-    macro_rules! arg_i { () => { *arg_i_ref }; }
-    let mut out = String::with_capacity(fmt.len() + 16);
-    let mut iter = fmt.chars().peekable();
-    while let Some(c) = iter.next() {
-        if c != '%' {
-            out.push(c);
-            continue;
-        }
-        // c:Src/builtin.c:4791+ — parse width/precision/flag chars
-        // between `%` and the conversion. Capture them so `printf
-        // "%-10s" hi` and `printf "%.3f" 3.14159` render correctly.
-        let mut spec = String::from("%");
-        loop {
-            match iter.peek() {
-                Some(&c) if matches!(c, '-' | '+' | ' ' | '#' | '0') => {
-                    spec.push(c); iter.next();
-                }
-                _ => break,
+        let mut iter = fmt.chars().peekable();
+        while let Some(c) = iter.next() {
+            if c != '%' {
+                out.push(c);
+                continue;
             }
-        }
-        while let Some(&c) = iter.peek() {
-            if c.is_ascii_digit() { spec.push(c); iter.next(); }
-            else { break; }
-        }
-        if iter.peek() == Some(&'.') {
-            spec.push('.'); iter.next();
+            // c:Src/builtin.c:4791+ — parse width/precision/flag chars
+            // between `%` and the conversion. Capture them so `printf
+            // "%-10s" hi` and `printf "%.3f" 3.14159` render correctly.
+            let mut spec = String::from("%");
+            loop {
+                match iter.peek() {
+                    Some(&c) if matches!(c, '-' | '+' | ' ' | '#' | '0') => {
+                        spec.push(c); iter.next();
+                    }
+                    _ => break,
+                }
+            }
             while let Some(&c) = iter.peek() {
                 if c.is_ascii_digit() { spec.push(c); iter.next(); }
                 else { break; }
             }
-        }
-        match iter.next() {
-            Some('%') => out.push('%'),
-            Some('s') => {
-                let a = args.get(arg_i!()).cloned().unwrap_or_default();
-                spec.push('s');
-                out.push_str(&format_spec_str(&spec, &a));
-                arg_i!() += 1;
-            }
-            Some('d') | Some('i') => {
-                let a = args.get(arg_i!()).cloned().unwrap_or_default();
-                let n: i64 = a.parse().unwrap_or(0);
-                spec.push('d');
-                out.push_str(&format_spec_int(&spec, n));
-                arg_i!() += 1;
-            }
-            Some('u') => {
-                let a = args.get(arg_i!()).cloned().unwrap_or_default();
-                let n: u64 = a.parse().unwrap_or(0);
-                spec.push('u');
-                out.push_str(&format_spec_uint(&spec, n));
-                arg_i!() += 1;
-            }
-            Some('x') => {
-                let a = args.get(arg_i!()).cloned().unwrap_or_default();
-                let n: i64 = a.parse().unwrap_or(0);
-                spec.push('x');
-                out.push_str(&format!("{:x}", n));
-                arg_i!() += 1;
-            }
-            Some('X') => {
-                let a = args.get(arg_i!()).cloned().unwrap_or_default();
-                let n: i64 = a.parse().unwrap_or(0);
-                spec.push('X');
-                out.push_str(&format!("{:X}", n));
-                arg_i!() += 1;
-            }
-            Some('o') => {
-                let a = args.get(arg_i!()).cloned().unwrap_or_default();
-                let n: i64 = a.parse().unwrap_or(0);
-                spec.push('o');
-                out.push_str(&format!("{:o}", n));
-                arg_i!() += 1;
-            }
-            Some('f') | Some('F') | Some('g') | Some('G') | Some('e') | Some('E') => {
-                let a = args.get(arg_i!()).cloned().unwrap_or_default();
-                let n: f64 = a.parse().unwrap_or(0.0);
-                spec.push('f');
-                out.push_str(&format_spec_float(&spec, n));
-                arg_i!() += 1;
-            }
-            Some('c') => {
-                if let Some(a) = args.get(arg_i!()) {
-                    if let Some(ch) = a.chars().next() { out.push(ch); }
+            if iter.peek() == Some(&'.') {
+                spec.push('.'); iter.next();
+                while let Some(&c) = iter.peek() {
+                    if c.is_ascii_digit() { spec.push(c); iter.next(); }
+                    else { break; }
                 }
-                arg_i!() += 1;
             }
-            // c:builtin.c:4825 %q — shell-quote the arg.
-            Some('q') => {
-                let a = args.get(arg_i!()).cloned().unwrap_or_default();
-                out.push_str(&crate::ported::utils::quotedzputs(&a));
-                arg_i!() += 1;
+            match iter.next() {
+                Some('%') => out.push('%'),
+                Some('s') => {
+                    let a = args.get(arg_i).cloned().unwrap_or_default();
+                    spec.push('s');
+                    out.push_str(&format_spec_str(&spec, &a));
+                    arg_i += 1;
+                }
+                Some('d') | Some('i') => {
+                    let a = args.get(arg_i).cloned().unwrap_or_default();
+                    let n: i64 = a.parse().unwrap_or(0);
+                    spec.push('d');
+                    out.push_str(&format_spec_int(&spec, n));
+                    arg_i += 1;
+                }
+                Some('u') => {
+                    let a = args.get(arg_i).cloned().unwrap_or_default();
+                    let n: u64 = a.parse().unwrap_or(0);
+                    spec.push('u');
+                    out.push_str(&format_spec_uint(&spec, n));
+                    arg_i += 1;
+                }
+                Some('x') => {
+                    let a = args.get(arg_i).cloned().unwrap_or_default();
+                    let n: i64 = a.parse().unwrap_or(0);
+                    spec.push('x');
+                    out.push_str(&format!("{:x}", n));
+                    arg_i += 1;
+                }
+                Some('X') => {
+                    let a = args.get(arg_i).cloned().unwrap_or_default();
+                    let n: i64 = a.parse().unwrap_or(0);
+                    spec.push('X');
+                    out.push_str(&format!("{:X}", n));
+                    arg_i += 1;
+                }
+                Some('o') => {
+                    let a = args.get(arg_i).cloned().unwrap_or_default();
+                    let n: i64 = a.parse().unwrap_or(0);
+                    spec.push('o');
+                    out.push_str(&format!("{:o}", n));
+                    arg_i += 1;
+                }
+                Some('f') | Some('F') | Some('g') | Some('G') | Some('e') | Some('E') => {
+                    let a = args.get(arg_i).cloned().unwrap_or_default();
+                    let n: f64 = a.parse().unwrap_or(0.0);
+                    spec.push('f');
+                    out.push_str(&format_spec_float(&spec, n));
+                    arg_i += 1;
+                }
+                Some('c') => {
+                    if let Some(a) = args.get(arg_i) {
+                        if let Some(ch) = a.chars().next() { out.push(ch); }
+                    }
+                    arg_i += 1;
+                }
+                // c:builtin.c:4825 %q — shell-quote the arg.
+                Some('q') => {
+                    let a = args.get(arg_i).cloned().unwrap_or_default();
+                    out.push_str(&quotedzputs(&a));
+                    arg_i += 1;
+                }
+                // c:builtin.c:4810 %b — interpret backslash escapes
+                // with GETKEY_EMACS arm (drop unknown backslashes).
+                Some('b') => {
+                    let a = args.get(arg_i).cloned().unwrap_or_default();
+                    let (s, _) = getkeystring_with(&a, GETKEYS_PRINT);
+                    out.push_str(&s);
+                    arg_i += 1;
+                }
+                Some(other) => { out.push('%'); out.push(other); }
+                None => out.push('%'),
             }
-            // c:builtin.c:4810 %b — interpret backslash escapes.
-            Some('b') => {
-                let a = args.get(arg_i!()).cloned().unwrap_or_default();
-                let (s, _) = crate::ported::utils::getkeystring_print(&a);
-                out.push_str(&s);
-                arg_i!() += 1;
-            }
-            Some(other) => { out.push('%'); out.push(other); }
-            None => out.push('%'),
         }
+        if arg_i == prev || arg_i >= args.len() { break; }
     }
     out
 }

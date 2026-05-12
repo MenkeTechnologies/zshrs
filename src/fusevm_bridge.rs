@@ -6505,27 +6505,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             exec.set_last_status(live);
         });
-        // C zsh emits xtrace for `(( … ))` / `[[ … ]]` / `case` via
-        // a `printprompt4(); fprintf(xtrerr, "%s\n", expr)` at
-        // Src/exec.c:5240/5286/etc. XTRACE_LINE is the compiler-emitted
-        // sentinel for those non-simple constructs. We skip emission
-        // for simple commands (XTRACE_ARGS handles those after expansion)
-        // by gating on a "simple-command" flag set immediately before
-        // dispatch by the compiler. Without that flag in place yet, we
-        // emit only when the command text is wrapped in `(( … ))` /
-        // `[[ … ]]` / starts with `case ` / etc. — the construct
-        // markers the compiler attaches.
+        // C zsh emits xtrace for `(( … ))` / `[[ … ]]` / `case` /
+        // `if/while/until/for/repeat` head expressions via
+        // `printprompt4(); fprintf(xtrerr, "%s\n", expr)` at
+        // Src/exec.c:5240 (math), c:5286 (cond), c:4117 (for), etc.
+        // The compiler emits BUILTIN_XTRACE_LINE only at those
+        // construct boundaries (compile_arith / compile_cond /
+        // compile_if / compile_while / compile_for / compile_case);
+        // simple commands route to BUILTIN_XTRACE_ARGS instead. So
+        // this handler always emits when xtrace is on — no prefix-
+        // string heuristic.
         let on = with_executor(|exec|
             exec.options.get("xtrace").copied().unwrap_or(false));
-        let is_construct = cmd_text.starts_with("(( ")
-            || cmd_text.starts_with("[[ ")
-            || cmd_text.starts_with("case ")
-            || cmd_text.starts_with("for ")
-            || cmd_text.starts_with("while ")
-            || cmd_text.starts_with("until ")
-            || cmd_text.starts_with("if ")
-            || cmd_text.starts_with("repeat ");
-        if on && is_construct {
+        if on {
             let already = XTRACE_DONE_PS4.with(|f| f.get());
             if !already {
                 printprompt4();
