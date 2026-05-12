@@ -1050,3 +1050,16 @@ par_sublist_wordcode
 par_pipe_wordcode
 par_cmd_wordcode
 par_simple_wordcode
+par_arith_wordcode
+par_case_wordcode
+par_cond_wordcode
+par_cursh_wordcode
+par_for_wordcode
+par_funcdef_wordcode
+par_if_wordcode
+par_repeat_wordcode
+par_select_wordcode
+par_subsh_wordcode
+par_time_wordcode
+par_until_wordcode
+par_while_wordcode

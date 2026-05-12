@@ -1433,14 +1433,101 @@ impl ShellExecutor {
         (last_status, pc)
     }
 
-    /// P9d stub: direct port of `execcmd_exec` /
-    /// `execcmd_analyze` from `Src/exec.c:2700-3700`. Reads the cmd
-    /// header (WC_SIMPLE / WC_SUBSH / WC_FOR / WC_CASE / ...) and
-    /// dispatches accordingly. Real implementation has the full
-    /// command-form switch (~15 forms); this stub falls through to
-    /// exec_simple_wordcode for every shape.
+    /// P9d: direct port of `execcmd_exec` / `execcmd_analyze` from
+    /// `Src/exec.c:2700-3700`. Reads the cmd header (WC_SIMPLE /
+    /// WC_SUBSH / WC_FOR / WC_CASE / ...) and dispatches accordingly.
     pub fn exec_cmd_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
-        self.exec_simple_wordcode(buf, pc)
+        use crate::ported::zsh_h::{
+            wc_code, WC_ARITH, WC_CASE, WC_COND, WC_CURSH, WC_FOR, WC_FUNCDEF, WC_IF, WC_REPEAT,
+            WC_SELECT, WC_SIMPLE, WC_SUBSH, WC_TIMED, WC_TRY, WC_WHILE,
+        };
+        if pc >= buf.len() {
+            return (0, pc);
+        }
+        match wc_code(buf[pc]) {
+            WC_SIMPLE => self.exec_simple_wordcode(buf, pc),
+            WC_SUBSH => self.exec_subsh_wordcode(buf, pc),
+            WC_CURSH => self.exec_cursh_wordcode(buf, pc),
+            WC_FOR => self.exec_for_wordcode(buf, pc),
+            WC_SELECT => self.exec_select_wordcode(buf, pc),
+            WC_CASE => self.exec_case_wordcode(buf, pc),
+            WC_IF => self.exec_if_wordcode(buf, pc),
+            WC_WHILE => self.exec_while_wordcode(buf, pc),
+            WC_REPEAT => self.exec_repeat_wordcode(buf, pc),
+            WC_FUNCDEF => self.exec_funcdef_wordcode(buf, pc),
+            WC_TIMED => self.exec_timed_wordcode(buf, pc),
+            WC_COND => self.exec_cond_wordcode(buf, pc),
+            WC_ARITH => self.exec_arith_wordcode(buf, pc),
+            WC_TRY => self.exec_try_wordcode(buf, pc),
+            _ => (0, pc + 1),
+        }
+    }
+
+    /// P9d stub: direct port of `execfor` from Src/exec.c. Reads WC_FOR
+    /// header (skip = data >> WC_CODEBITS), advances pc by skip+1.
+    pub fn exec_for_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.skip_form(buf, pc)
+    }
+    /// P9d stub: `execselect`.
+    pub fn exec_select_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.skip_form(buf, pc)
+    }
+    /// P9d stub: `execcase`.
+    pub fn exec_case_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.skip_form(buf, pc)
+    }
+    /// P9d stub: `execif`.
+    pub fn exec_if_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.skip_form(buf, pc)
+    }
+    /// P9d stub: `execwhile`.
+    pub fn exec_while_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.skip_form(buf, pc)
+    }
+    /// P9d stub: `execrepeat`.
+    pub fn exec_repeat_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.skip_form(buf, pc)
+    }
+    /// P9d stub: `execfuncdef`.
+    pub fn exec_funcdef_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.skip_form(buf, pc)
+    }
+    /// P9d stub: `execsubsh` for `(...)` subshell.
+    pub fn exec_subsh_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.skip_form(buf, pc)
+    }
+    /// P9d stub: `execcursh` for `{...}` brace group.
+    pub fn exec_cursh_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.skip_form(buf, pc)
+    }
+    /// P9d stub: `exectimed` for `time pipeline`.
+    pub fn exec_timed_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.skip_form(buf, pc)
+    }
+    /// P9d stub: `execcond` for `[[ ... ]]`.
+    pub fn exec_cond_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.skip_form(buf, pc)
+    }
+    /// P9d stub: `execarith` for `(( ... ))`.
+    pub fn exec_arith_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.skip_form(buf, pc)
+    }
+    /// P9d stub: `exectry` for `{ try } always { finally }`.
+    pub fn exec_try_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        self.skip_form(buf, pc)
+    }
+
+    /// Shared helper for WC_* form dispatch stubs: read the header's
+    /// `skip` field (data >> WC_CODEBITS) and advance pc past the
+    /// payload. Each real production-specific exec_* will replace its
+    /// call to this with the form-specific logic.
+    fn skip_form(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
+        use crate::ported::zsh_h::wc_data;
+        if pc >= buf.len() {
+            return (0, pc);
+        }
+        let skip = wc_data(buf[pc]) as usize;
+        (0, pc + 1 + skip)
     }
 
     /// P9d stub: direct port of `execsimple` from
