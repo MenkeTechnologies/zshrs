@@ -2889,8 +2889,38 @@ impl ShellExecutor {
         crate::ported::builtin::bin_pwd("pwd", args, &ops, 0)
     }
     pub(crate) fn bin_zcompile(&mut self, args: &[String]) -> i32 {
-        // No canonical bin_zcompile yet — return 0 placeholder.
-        let _ = args; 0
+        // C-faithful dispatch via the canonical port in
+        // `src/ported/parse.rs::bin_zcompile` (port of `Src/parse.c:3180`).
+        // The caller's argv is the full builtin command line, e.g.
+        // `["zcompile", "-t", "/path/file.zwc"]`. Parse option chars
+        // into an `options` ind[] bitmap and pass positionals.
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        let mut ops = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let mut positional: Vec<String> = Vec::new();
+        let mut consume_opts = true;
+        // `args` from pop_args holds positional + option words only —
+        // no leading builtin name (matches what `bin_*` entry points
+        // get from C's `bin_X(char *nam, char **args, ...)` arg vector).
+        for a in args.iter() {
+            if consume_opts && a == "--" { consume_opts = false; continue; }
+            if consume_opts && a.starts_with('-') && a.len() > 1 {
+                for c in a.bytes().skip(1) {
+                    let idx = c as usize;
+                    if idx < MAX_OPS {
+                        ops.ind[idx] |= 1; // bit 1 = OPT_MINUS (set as `-X`)
+                    }
+                }
+                continue;
+            }
+            consume_opts = false;
+            positional.push(a.clone());
+        }
+        crate::ported::parse::bin_zcompile("zcompile", &positional, &ops, 0)
     }
 
     // zsh implements echo/printf via funcid dispatch into shared
