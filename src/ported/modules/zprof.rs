@@ -159,10 +159,10 @@ pub fn findpfunc(name: &str) -> Option<usize> {                          // c:97
 /// pair.
 ///
 /// C signature: `static Parc findparc(Pfunc f, Pfunc t)`.
-pub fn findparc(from: usize, to: usize) -> Option<usize> {               // c:109
-    // c:113-115 — `for (a = arcs; a; a = a->next) if (a->from == f && a->to == t) return a;`
+pub fn findparc(f: usize, t: usize) -> Option<usize> {               // c:109
+    // c:113-115 — `for (a = arcs; a; a = a->next) if (a->f == f && a->t == t) return a;`
     let arcs = ARCS.lock().unwrap();
-    arcs.iter().position(|a| a.from == from && a.to == to)
+    arcs.iter().position(|a| a.f == f && a.t == t)
 }
 
 /// Port of `cmpsfuncs(a, b)` from `Src/Modules/zprof.c:121`. The qsort
@@ -406,7 +406,8 @@ use crate::ported::zsh_h::module;
 
 /// Port of `setup_(m)` from `Src/Modules/zprof.c:332`.
 /// C body: `zprof_module = m; return 0;`
-pub fn setup_(_m: *const module) -> i32 {                                // c:332
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                // c:332
     ZPROF_MODULE.store(true, Ordering::SeqCst);                          // c:334
     0                                                                    // c:335
 }
@@ -425,7 +426,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:
 }
 
 /// Port of `boot_(m)` from `Src/Modules/zprof.c:355`.
-pub fn boot_(_m: *const module) -> i32 {                                 // c:355
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                 // c:355
     let mut calls = CALLS.lock().unwrap();
     calls.clear();                                                       // c:357
     NCALLS.store(0, Ordering::SeqCst);                                   // c:358
@@ -448,7 +450,8 @@ pub fn cleanup_(m: *const module) -> i32 {                              // c:367
 }
 
 /// Port of `finish_(m)` from `Src/Modules/zprof.c:377`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:377
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:377
     // C body c:379-380 — `return 0`. Faithful empty-body port; the
     //                    profiling tables get freed by cleanup_ via
     //                    setfeatureenables/zprof_cleanup.

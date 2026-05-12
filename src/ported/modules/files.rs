@@ -401,7 +401,7 @@ where
     pub leaf_func: L,                                                        // c:372
 }
 
-/// Direct port of `recursivecmd()` from `Src/Modules/files.c:378`.
+/// Direct port of `recursivecmd(nam, opt_noerr, opt_recurse, opt_safe, args, dirpre_func, dirpost_func, leaf_func, magic)` from `Src/Modules/files.c:378`.
 /// C body (c:381-446): walk argv, dispatch each via recursivecmd_doone.
 /// The dirsav-based chdir-back stack (c:396-399, c:438-446) is omitted
 /// in the Rust port — std::fs operations take absolute paths so the
@@ -429,7 +429,7 @@ where
     if err != 0 { 1 } else { 0 }                                             // c:445 !!err
 }
 
-/// Direct port of `recursivecmd_doone()` from `Src/Modules/files.c:450`.
+/// Direct port of `recursivecmd_doone(reccmd, arg, rp, ds, first)` from `Src/Modules/files.c:450`.
 /// C body (c:455-462): lstat the path; if recurse + S_ISDIR → dive
 /// via recursivecmd_dorec; else call leaf_func.
 pub fn recursivecmd_doone<P, R, L>(                                          // c:450
@@ -452,7 +452,7 @@ where
     (reccmd.leaf_func)(arg, rp, sp)                                          // c:461
 }
 
-/// Direct port of `recursivecmd_dorec()` from `Src/Modules/files.c:465`.
+/// Direct port of `recursivecmd_dorec(reccmd, arg, rp, sp, ds, first)` from `Src/Modules/files.c:465`.
 /// C body (c:475-525): dirpre callback, opendir + readdir each entry,
 /// recurse via recursivecmd_doone, then dirpost callback.
 pub fn recursivecmd_dorec<P, R, L>(                                          // c:465
@@ -850,7 +850,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/files.c:838`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:838
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:838
     // C body c:840-841 — `return 0`. Faithful empty-body port.
     0
 }
@@ -867,7 +868,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 }
 
 /// Port of `boot_(m)` from `Src/Modules/files.c:860`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:860
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:860
     // C body c:862-863 — `return 0`. Faithful empty-body port; the
     //                    chmod/chown/chgrp/sync/etc. builtins register
     //                    via the bn_list feature dispatch.
@@ -880,7 +882,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/files.c:874`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:874
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:874
     // C body c:876-877 — `return 0`. Faithful empty-body port; the
     //                    builtins unregister via cleanup_'s setfeatureenables.
     0

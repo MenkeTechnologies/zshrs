@@ -525,7 +525,7 @@ pub(crate) static TIED_PARAMS: Lazy<Mutex<HashMap<String, Arc<TiedGdbmParam>>>> 
 /// Appends `name` to the global `zgdbm_tied` array. Rust port:
 /// the array is `ZGDBM_TIED: Mutex<Vec<String>>` below, mirroring
 /// the C global.
-/// Port of `append_tied_name` from `Src/Modules/db_gdbm.c:695`.
+/// Port of `append_tied_name(name)` from `Src/Modules/db_gdbm.c:695`.
 pub fn append_tied_name(name: &str) -> i32 {                             // c:695
     if let Ok(mut tied) = ZGDBM_TIED.lock() {
         tied.push(name.to_string());                                      // c:707 *dst = ztrdup(name)
@@ -716,7 +716,8 @@ pub fn bin_zuntie(nam: &str, args: &[String], ops: &crate::ported::zsh_h::option
 /// static int
 /// bin_zgdbmpath(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))
 /// ```
-pub fn bin_zgdbmpath(nam: &str, args: &[String], _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 { // c:236
+#[allow(unused_variables)]
+pub fn bin_zgdbmpath(nam: &str, args: &[String], ops: &crate::ported::zsh_h::options, func: i32) -> i32 { // c:236
     // c:241 — `pmname = *args;`
     let pmname = match args.first() {
         Some(s) => s.as_str(),
@@ -828,16 +829,16 @@ pub fn gdbmunsetfn(param_name: &str, key: &str, _um: i32) {              // c:39
 /// per key. Used by `${(k)db}` and similar. Rust port: takes a closure
 /// matching C's `ScanFunc func` signature `void func(HashNode, int)` —
 /// callers receive the per-key (param_name, key) tuple to dispatch.
-/// Port of `scangdbmkeys` from `Src/Modules/db_gdbm.c:442`.
-pub fn scangdbmkeys(param_name: &str, mut func: impl FnMut(&str, &str, i32), flags: i32) { // c:442
+/// Port of `scangdbmkeys(ht, func, flags)` from `Src/Modules/db_gdbm.c:442`.
+pub fn scangdbmkeys(ht: &str, mut func: impl FnMut(&str, &str, i32), flags: i32) { // c:442
     let params = match TIED_PARAMS.lock() { Ok(p) => p, Err(_) => return };
-    let tied = match params.get(param_name) { Some(t) => t.clone(), None => return };
+    let tied = match params.get(ht) { Some(t) => t.clone(), None => return };
     drop(params);
     // c:449-466 — gdbm_firstkey / gdbm_nextkey loop
     for key in tied.keys() {
         // c:455 — metafy + getgdbmnode + scanfn
-        let _ = getgdbmnode(param_name, &key);                            // c:456
-        func(param_name, &key, flags);                                    // c:459
+        let _ = getgdbmnode(ht, &key);                            // c:456
+        func(ht, &key, flags);                                    // c:459
     }
 }
 
@@ -932,7 +933,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/db_gdbm.c:613`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:613
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:613
     // C body c:615-616 — `return 0`. Faithful empty-body port.
     0
 }
@@ -949,7 +951,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_(m)` from `Src/Modules/db_gdbm.c:635`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:635
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:635
     // C body c:637-638 — `zgdbm_tied = zshcalloc((1) * sizeof(char *));
     //                     return 0`. Initializes the tied-DB names
     //                     array to empty (zero-element + NULL terminator).
@@ -965,7 +968,8 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_(m)` from `Src/Modules/db_gdbm.c:651`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:651
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:651
     // C body c:653-654 — `return 0`. Faithful empty-body port; tied-DB
     //                     teardown happens in cleanup_ via untie+free.
     0
@@ -1008,7 +1012,7 @@ pub fn unmetafy_zalloc(to_copy: &str) -> (String, usize) {               // c:77
 /// then frees `node.nam` and `ename`. Rust port: dispatches the
 /// gdbm unset via the registry, then drops the entry (Vec/String
 /// drop handles the C `zsfree`/`zfree`).
-/// Port of `myfreeparamnode` from `Src/Modules/db_gdbm.c:799`.
+/// Port of `myfreeparamnode(hn)` from `Src/Modules/db_gdbm.c:799`.
 pub fn myfreeparamnode(param_name: &str, key: &str) {                    // c:799
     /* Upstream: The second argument of unsetfn() is used by modules to
      * differentiate "exp"licit unset from implicit unset, as when
@@ -1054,13 +1058,13 @@ pub fn myfreeparamnode(param_name: &str, key: &str) {                    // c:79
 /// Returns `true` iff the key was already present, `false` if a
 /// fresh placeholder was created. Static-link path uses the
 /// `TiedGdbmParam` registry as the equivalent of `ht`.
-/// Port of `getgdbmnode` from `Src/Modules/db_gdbm.c:407`.
-pub fn getgdbmnode(param_name: &str, name: &str) -> bool {               // c:407
+/// Port of `getgdbmnode(ht, name)` from `Src/Modules/db_gdbm.c:407`.
+pub fn getgdbmnode(ht: &str, name: &str) -> bool {               // c:407
     let params = match TIED_PARAMS.lock() {
         Ok(p) => p,
         Err(_) => return false,
     };
-    let tied = match params.get(param_name) {
+    let tied = match params.get(ht) {
         Some(t) => t.clone(),
         None => return false,
     };
@@ -1086,13 +1090,13 @@ pub fn getgdbmnode(param_name: &str, name: &str) -> bool {               // c:40
 /// Rust port: walks `entries` and dispatches each to the existing
 /// `gdbmsetfn(param_name, key, value)` which delegates to
 /// `TiedGdbmParam::set` → `GdbmDatabase::set` → `gdbm_store`.
-pub fn gdbmhashsetfn(param_name: &str, entries: &[(String, String)]) {   // c:476
+pub fn gdbmhashsetfn(pm: &str, ht: &[(String, String)]) {   // c:476
     // c:484 — for ((Param) (he = ht->nodes[i]); he; he = he->next)
-    let param = match TIED_PARAMS.lock().ok().and_then(|m| m.get(param_name).cloned()) {
+    let param = match TIED_PARAMS.lock().ok().and_then(|m| m.get(pm).cloned()) {
         Some(p) => p,
         None => return,
     };
-    for (key, value) in entries {
+    for (key, value) in ht {
         let _ = param.set(key, value);                                    // c:530 gdbm_store
     }
 }
@@ -1103,9 +1107,9 @@ pub fn gdbmhashsetfn(param_name: &str, entries: &[(String, String)]) {   // c:47
 /// Removes the tied param from the registry, dropping the
 /// `Arc<TiedGdbmParam>` which closes the underlying GDBM handle
 /// (via `Drop` on `GdbmDatabase`).
-pub fn gdbmuntie(param_name: &str) {                                     // c:555
+pub fn gdbmuntie(pm: &str) {                                     // c:555
     if let Ok(mut params) = TIED_PARAMS.lock() {
-        params.remove(param_name);                                        // c:560 gdbm_close + clear
+        params.remove(pm);                                        // c:560 gdbm_close + clear
     }
 }
 

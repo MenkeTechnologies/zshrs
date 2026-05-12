@@ -734,16 +734,17 @@ pub fn freevideo(state: &mut RefreshState) {                                 // 
 }
 
 /// Port of `nextline(rpms, wrapped)` from Src/Zle/zle_refresh.c:842.
-pub fn nextline(state: &mut RefreshState, _wrapped: i32) -> i32 {            // c:842
+#[allow(unused_variables)]
+pub fn nextline(rpms: &mut RefreshState, wrapped: i32) -> i32 {            // c:842
     // C body (c:842-873): advance rpms->ln++; check space against
     // winh; allocate new buffer row if needed; return 1 when display
     // is full (caller should stop emitting). zshrs uses RefreshState
     // for the cursor; this advances vln and signals overflow.
-    state.vln += 1;
-    if state.vln >= state.lines {
+    rpms.vln += 1;
+    if rpms.vln >= rpms.lines {
         return 1;                                                            // out of vertical space
     }
-    state.vcs = 0;
+    rpms.vcs = 0;
     0
 }
 
@@ -771,14 +772,14 @@ pub fn singmoveto(state: &mut RefreshState, pos: usize) {                    // 
 }
 
 /// Port of `snextline(rpms)` from Src/Zle/zle_refresh.c:875.
-pub fn snextline(state: &mut RefreshState) -> i32 {                          // c:875
+pub fn snextline(rpms: &mut RefreshState) -> i32 {                          // c:875
     // C body (c:875-919): scroll the on-screen display up one line
     // when the new line wraps past the bottom. zshrs decrements
     // vln so the next emit lands on the (now-cleared) bottom row.
-    if state.vln > 0 {
-        state.vln -= 1;
+    if rpms.vln > 0 {
+        rpms.vln -= 1;
     }
-    state.vcs = 0;
+    rpms.vcs = 0;
     0
 }
 
@@ -932,7 +933,7 @@ pub fn ZR_strcpy(                                                            // 
 /// ```
 /// Length of a NUL-terminated REFRESH_ELEMENT string.
 #[allow(non_snake_case)]
-/// Port of `ZR_strlen` from `Src/Zle/zle_refresh.c:101`.
+/// Port of `ZR_strlen(wstr)` from `Src/Zle/zle_refresh.c:101`.
 pub fn ZR_strlen(wstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {  // c:101
     let mut len = 0;                                                         // c:104 int len = 0
     while len < wstr.len() && wstr[len].chr != '\0' {                        // c:106 while (wstr++->chr != ZWC('\0'))
@@ -941,7 +942,7 @@ pub fn ZR_strlen(wstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {
     len                                                                      // c:109 return len
 }
 
-/// Port of `ZR_strncmp()` from `Src/Zle/zle_refresh.c:119`.
+/// Port of `ZR_strncmp(oldwstr, newwstr, len)` from `Src/Zle/zle_refresh.c:119`.
 /// ```c
 /// static int
 /// ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr,
@@ -963,7 +964,7 @@ pub fn ZR_strlen(wstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {
 /// (chr+atr pair-equal), 1 otherwise. Stops early at NUL in
 /// either string (treating it as the shorter-string boundary).
 #[allow(non_snake_case)]
-/// Port of `ZR_strncmp` from `Src/Zle/zle_refresh.c:119`.
+/// Port of `ZR_strncmp(oldwstr, newwstr, len)` from `Src/Zle/zle_refresh.c:119`.
 pub fn ZR_strncmp(                                                           // c:119
     oldwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
     newwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],

@@ -378,7 +378,8 @@ use crate::ported::zsh_h::{isset, unset};
 /// optionally `untokenize()`. The Rust port stores already-expanded
 /// argument strings in the cond evaluator, so this collapses to an
 /// indexed read.
-pub fn cond_str(args: &[String], num: usize, _raw: bool) -> String {         // c:525
+#[allow(unused_variables)]
+pub fn cond_str(args: &[String], num: usize, raw: bool) -> String {          // c:525
     args.get(num).cloned().unwrap_or_default()
 }
 

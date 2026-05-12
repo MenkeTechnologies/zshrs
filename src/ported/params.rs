@@ -116,11 +116,11 @@ pub use crate::ported::zsh_h::param;
 /// Port of `IPDEF1(A,B,C)` from `Src/params.c:296` —
 /// `{{NULL,A,PM_INTEGER|PM_SPECIAL|C},BR(NULL),GSU(B),10,0,...}`.
 #[inline] #[allow(non_snake_case)]
-pub fn IPDEF1(name: &str, gsu: usize, extra_flags: i32) -> paramdef {        // c:params.c:296
+pub fn IPDEF1(A: &str, B: usize, C: i32) -> paramdef {        // c:params.c:296
     paramdef {
-        name: name.to_string(),
-        flags: (PM_INTEGER | PM_SPECIAL) as i32 | extra_flags,
-        var: 0, gsu,
+        A: A.to_string(),
+        flags: (PM_INTEGER | PM_SPECIAL) as i32 | C,
+        var: 0, B,
         getnfn: None, scantfn: None, pm: None,
     }
 }
@@ -128,11 +128,11 @@ pub fn IPDEF1(name: &str, gsu: usize, extra_flags: i32) -> paramdef {        // 
 /// Port of `IPDEF2(A,B,C)` from `Src/params.c:309` —
 /// `{{NULL,A,PM_SCALAR|PM_SPECIAL|C},BR(NULL),GSU(B),0,0,...}`.
 #[inline] #[allow(non_snake_case)]
-pub fn IPDEF2(name: &str, gsu: usize, extra_flags: i32) -> paramdef {        // c:params.c:309
+pub fn IPDEF2(A: &str, B: usize, C: i32) -> paramdef {        // c:params.c:309
     paramdef {
-        name: name.to_string(),
-        flags: (PM_SCALAR | PM_SPECIAL) as i32 | extra_flags,
-        var: 0, gsu,
+        A: A.to_string(),
+        flags: (PM_SCALAR | PM_SPECIAL) as i32 | C,
+        var: 0, B,
         getnfn: None, scantfn: None, pm: None,
     }
 }
@@ -141,11 +141,11 @@ pub fn IPDEF2(name: &str, gsu: usize, extra_flags: i32) -> paramdef {        // 
 /// `{{NULL,A,PM_INTEGER|PM_READONLY_SPECIAL},BR((void*)B),
 ///   GSU(varint_readonly_gsu),10,0,...}`.
 #[inline] #[allow(non_snake_case)]
-pub fn IPDEF4(name: &str, var: usize) -> paramdef {                          // c:params.c:344
+pub fn IPDEF4(A: &str, B: usize) -> paramdef {                          // c:params.c:344
     paramdef {
-        name: name.to_string(),
+        A: A.to_string(),
         flags: (PM_INTEGER | PM_READONLY_SPECIAL) as i32,
-        var, gsu: 0,
+        B, gsu: 0,
         getnfn: None, scantfn: None, pm: None,
     }
 }
@@ -153,33 +153,33 @@ pub fn IPDEF4(name: &str, var: usize) -> paramdef {                          // 
 /// Port of `IPDEF5(A,B,F)` from `Src/params.c:353` —
 /// `{{NULL,A,PM_INTEGER|PM_SPECIAL},BR((void*)B),GSU(F),10,0,...}`.
 #[inline] #[allow(non_snake_case)]
-pub fn IPDEF5(name: &str, var: usize, gsu: usize) -> paramdef {              // c:params.c:353
+pub fn IPDEF5(A: &str, B: usize, F: usize) -> paramdef {              // c:params.c:353
     paramdef {
-        name: name.to_string(),
+        A: A.to_string(),
         flags: (PM_INTEGER | PM_SPECIAL) as i32,
-        var, gsu,
+        B, F,
         getnfn: None, scantfn: None, pm: None,
     }
 }
 
 /// Port of `IPDEF5U(A,B,F)` from `Src/params.c:354` — c:353 + PM_UNSET.
 #[inline] #[allow(non_snake_case)]
-pub fn IPDEF5U(name: &str, var: usize, gsu: usize) -> paramdef {             // c:params.c:354
+pub fn IPDEF5U(A: &str, B: usize, F: usize) -> paramdef {             // c:params.c:354
     paramdef {
-        name: name.to_string(),
+        A: A.to_string(),
         flags: (PM_INTEGER | PM_SPECIAL | PM_UNSET) as i32,
-        var, gsu,
+        B, F,
         getnfn: None, scantfn: None, pm: None,
     }
 }
 
 /// Port of `IPDEF6(A,B,F)` from `Src/params.c:362` — c:353 + PM_DONTIMPORT.
 #[inline] #[allow(non_snake_case)]
-pub fn IPDEF6(name: &str, var: usize, gsu: usize) -> paramdef {              // c:params.c:362
+pub fn IPDEF6(A: &str, B: usize, F: usize) -> paramdef {              // c:params.c:362
     paramdef {
-        name: name.to_string(),
+        A: A.to_string(),
         flags: (PM_INTEGER | PM_SPECIAL | PM_DONTIMPORT) as i32,
-        var, gsu,
+        B, F,
         getnfn: None, scantfn: None, pm: None,
     }
 }
@@ -187,33 +187,33 @@ pub fn IPDEF6(name: &str, var: usize, gsu: usize) -> paramdef {              // 
 /// Port of `IPDEF7(A,B)` from `Src/params.c:367` —
 /// `{{NULL,A,PM_SCALAR|PM_SPECIAL},BR((void*)B),GSU(varscalar_gsu),0,0,...}`.
 #[inline] #[allow(non_snake_case)]
-pub fn IPDEF7(name: &str, var: usize) -> paramdef {                          // c:params.c:367
+pub fn IPDEF7(A: &str, B: usize) -> paramdef {                          // c:params.c:367
     paramdef {
-        name: name.to_string(),
+        A: A.to_string(),
         flags: (PM_SCALAR | PM_SPECIAL) as i32,
-        var, gsu: 0,
+        B, gsu: 0,
         getnfn: None, scantfn: None, pm: None,
     }
 }
 
 /// Port of `IPDEF7R(A,B)` from `Src/params.c:368` — c:367 + PM_DONTIMPORT_SUID.
 #[inline] #[allow(non_snake_case)]
-pub fn IPDEF7R(name: &str, var: usize) -> paramdef {                         // c:params.c:368
+pub fn IPDEF7R(A: &str, B: usize) -> paramdef {                         // c:params.c:368
     paramdef {
-        name: name.to_string(),
+        A: A.to_string(),
         flags: (PM_SCALAR | PM_SPECIAL | PM_DONTIMPORT_SUID) as i32,
-        var, gsu: 0,
+        B, gsu: 0,
         getnfn: None, scantfn: None, pm: None,
     }
 }
 
 /// Port of `IPDEF7U(A,B)` from `Src/params.c:369` — c:367 + PM_UNSET.
 #[inline] #[allow(non_snake_case)]
-pub fn IPDEF7U(name: &str, var: usize) -> paramdef {                         // c:params.c:369
+pub fn IPDEF7U(A: &str, B: usize) -> paramdef {                         // c:params.c:369
     paramdef {
-        name: name.to_string(),
+        A: A.to_string(),
         flags: (PM_SCALAR | PM_SPECIAL | PM_UNSET) as i32,
-        var, gsu: 0,
+        B, gsu: 0,
         getnfn: None, scantfn: None, pm: None,
     }
 }
@@ -225,11 +225,11 @@ pub fn IPDEF7U(name: &str, var: usize) -> paramdef {                         // 
 /// since `paramdef` lacks a dedicated colon-arr slot until that's
 /// ported.
 #[inline] #[allow(non_snake_case)]
-pub fn IPDEF8(name: &str, var: usize, _colon: usize, extra_flags: i32) -> paramdef { // c:params.c:394
+pub fn IPDEF8(A: &str, B: usize, C: usize, D: i32) -> paramdef { // c:params.c:394
     paramdef {
-        name: name.to_string(),
-        flags: (PM_SCALAR | PM_SPECIAL) as i32 | extra_flags,
-        var, gsu: 0,
+        A: A.to_string(),
+        flags: (PM_SCALAR | PM_SPECIAL) as i32 | D,
+        B, gsu: 0,
         getnfn: None, scantfn: None, pm: None,
     }
 }
@@ -238,11 +238,11 @@ pub fn IPDEF8(name: &str, var: usize, _colon: usize, extra_flags: i32) -> paramd
 /// `{{NULL,A,D|PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT},BR((void*)B),
 ///   GSU(vararray_gsu),0,0,NULL,C,NULL,0}`.
 #[inline] #[allow(non_snake_case)]
-pub fn IPDEF9(name: &str, var: usize, _colon: usize, extra_flags: i32) -> paramdef { // c:params.c:384
+pub fn IPDEF9(A: &str, B: usize, C: usize, D: i32) -> paramdef { // c:params.c:384
     paramdef {
-        name: name.to_string(),
-        flags: (PM_ARRAY | PM_SPECIAL | PM_DONTIMPORT) as i32 | extra_flags,
-        var, gsu: 0,
+        A: A.to_string(),
+        flags: (PM_ARRAY | PM_SPECIAL | PM_DONTIMPORT) as i32 | D,
+        B, gsu: 0,
         getnfn: None, scantfn: None, pm: None,
     }
 }
@@ -250,11 +250,11 @@ pub fn IPDEF9(name: &str, var: usize, _colon: usize, extra_flags: i32) -> paramd
 /// Port of `IPDEF10(A,B)` from `Src/params.c:406` —
 /// `{{NULL,A,PM_ARRAY|PM_SPECIAL},BR(NULL),GSU(B),10,0,...}`.
 #[inline] #[allow(non_snake_case)]
-pub fn IPDEF10(name: &str, gsu: usize) -> paramdef {                         // c:params.c:406
+pub fn IPDEF10(A: &str, B: usize) -> paramdef {                         // c:params.c:406
     paramdef {
-        name: name.to_string(),
+        A: A.to_string(),
         flags: (PM_ARRAY | PM_SPECIAL) as i32,
-        var: 0, gsu,
+        var: 0, B,
         getnfn: None, scantfn: None, pm: None,
     }
 }
@@ -905,7 +905,7 @@ pub const special_params_sh: &[SpecialParamDef] = &[
 ///     return (zlong)v->pm->gsu.f->getfn(v->pm);
 /// return mathevali(getstrvalue(v));
 /// ```
-/// Port of `getintvalue` from `Src/params.c:2601`.
+/// Port of `getintvalue(v)` from `Src/params.c:2601`.
 pub fn getintvalue(v: Option<&mut crate::ported::zsh_h::value>) -> i64 {
     let v = match v { Some(v) => v, None => return 0 };
     if (v.valflags & VALFLAG_INV) != 0 {
@@ -1114,9 +1114,9 @@ pub fn getsparam_u(v: Option<&mut crate::ported::zsh_h::value>) -> Option<String
 /// return NULL;
 /// ```
 /// Returns `pm->u.arr` when the param is PM_ARRAY.
-pub fn getaparam(v: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<String>> {
-    let v = v?;
-    let pm = v.pm.as_mut()?;
+pub fn getaparam(s: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<String>> {
+    let s = s?;
+    let pm = s.pm.as_mut()?;
     if PM_TYPE(pm.node.flags as u32) != PM_ARRAY {
         return None;
     }
@@ -1127,9 +1127,9 @@ pub fn getaparam(v: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<Stri
 /// (analogous to getaparam): fetchvalue + return
 /// `paramvalarr(v->pm->gsu.h->getfn(v->pm), SCANPM_WANTVALS)`
 /// when PM_TYPE == PM_HASHED.
-pub fn gethparam(v: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<String>> {
-    let v = v?;
-    let pm = v.pm.as_mut()?;
+pub fn gethparam(s: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<String>> {
+    let s = s?;
+    let pm = s.pm.as_mut()?;
     if PM_TYPE(pm.node.flags as u32) != PM_HASHED {
         return None;
     }
@@ -1141,9 +1141,9 @@ pub fn gethparam(v: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<Stri
 
 /// Port of `gethkparam(s)` from `Src/params.c:3130`. Same as
 /// `gethparam` but returns keys via `paramvalarr(..., SCANPM_WANTKEYS)`.
-pub fn gethkparam(v: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<String>> {
-    let v = v?;
-    let pm = v.pm.as_mut()?;
+pub fn gethkparam(s: Option<&mut crate::ported::zsh_h::value>) -> Option<Vec<String>> {
+    let s = s?;
+    let pm = s.pm.as_mut()?;
     if PM_TYPE(pm.node.flags as u32) != PM_HASHED {
         return None;
     }
@@ -1190,8 +1190,8 @@ pub fn setstrvalue(v: Option<&mut crate::ported::zsh_h::value>, val: &str) {
 /// internal use as the integer branch of `setvalue`). C body
 /// builds an `mnumber{ .type = MN_INTEGER, .u.l = val }` and
 /// calls `assignnparam(s, mn, ASSPM_WARN)`.
-pub fn assigniparam(s: &str, val: i64) {
-    assignnparam(s, crate::ported::math::Mnumber { l: val, d: 0.0, type_: MN_INTEGER }, crate::ported::zsh_h::ASSPM_WARN);
+pub fn assigniparam(vbuf: &str, t: i64) {
+    assignnparam(vbuf, crate::ported::math::Mnumber { l: t, d: 0.0, type_: MN_INTEGER }, crate::ported::zsh_h::ASSPM_WARN);
 }
 
 /// Set array parameter.
@@ -1620,7 +1620,8 @@ pub fn sethparam(name: &str, val: Vec<String>)                              // c
 /// HashTable backend (`paramtab->removenode/addnode`) plus the
 /// `delenv`/`adduserdir` helpers — direct port retains only the
 /// in-memory mutation of `pm` that doesn't touch the table.
-pub fn unsetparam_pm(pm: &mut crate::ported::zsh_h::param, _altflag: i32, exp: i32) -> i32 {
+#[allow(unused_variables)]
+pub fn unsetparam_pm(pm: &mut crate::ported::zsh_h::param, altflag: i32, exp: i32) -> i32 {
     // Readonly check (locallevel global not yet ported — assume 0).
     if (pm.node.flags as u32 & PM_READONLY) != 0 && pm.level <= 0 {
         // zerr("read-only %s: %s", ref?"reference":"variable", nam);
@@ -1763,18 +1764,18 @@ pub fn getsparam(name: &str) -> Option<String> {                             // 
 /// getintvalue. Our adaptation reads the scalar string and parses;
 /// returns 0 on missing or unparseable, matching getintvalue's
 /// failure-returns-0 convention (params.c:2601).
-pub fn getiparam(name: &str) -> i64 {
+pub fn getiparam(s: &str) -> i64 {
     // C also honours PM_INTEGER's `pm->u.val` payload directly when
     // the param is typed numeric; check paramtab first for that case.
     if let Ok(tab) = paramtab().read() {
-        if let Some(pm) = tab.get(name) {
+        if let Some(pm) = tab.get(s) {
             if (pm.node.flags as u32 & crate::ported::zsh_h::PM_INTEGER) != 0
             {
                 return pm.u_val;
             }
         }
     }
-    getsparam(name).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0)
+    getsparam(s).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0)
 }
 
 /// Retrieve numeric (int-or-float) parameter.
@@ -1783,9 +1784,9 @@ pub fn getiparam(name: &str) -> i64 {
 /// `(i64, f64, bool)` where the bool is true for float. Unset
 /// returns `(0, 0.0, false)`, matching the MN_INTEGER zero
 /// fallback in the C source's not-found branch.
-pub fn getnparam(name: &str) -> (i64, f64, bool) {
+pub fn getnparam(s: &str) -> (i64, f64, bool) {
     if let Ok(tab) = paramtab().read() {
-        if let Some(pm) = tab.get(name) {
+        if let Some(pm) = tab.get(s) {
             let fl = pm.node.flags as u32;
             if (fl & (crate::ported::zsh_h::PM_EFLOAT
                 | crate::ported::zsh_h::PM_FFLOAT)) != 0
@@ -1797,7 +1798,7 @@ pub fn getnparam(name: &str) -> (i64, f64, bool) {
             }
         }
     }
-    let s = match getsparam(name) {
+    let s = match getsparam(s) {
         Some(s) => s,
         None => return (0, 0.0, false),
     };
@@ -2275,7 +2276,7 @@ pub fn setarrvalue(v: &mut crate::ported::zsh_h::value, val: Vec<String>) {  // 
 // ---------------------------------------------------------------------------
 
 /// Convert integer to string with base (from params.c convbase)
-/// Port of `convbase` from `Src/params.c:5632`.
+/// Port of `convbase(s, v, base)` from `Src/params.c:5632`.
 pub fn convbase(val: i64, base: u32) -> String {
     if base == 0 || base == 10 {
         return val.to_string();
@@ -2327,7 +2328,7 @@ pub fn convbase(val: i64, base: u32) -> String {
 }
 
 /// Convert integer to string with underscores for readability
-/// Port of `convbase_underscore` from `Src/params.c:5646`.
+/// Port of `convbase_underscore(s, v, base, underscore)` from `Src/params.c:5646`.
 pub fn convbase_underscore(val: i64, base: u32, underscore: i32) -> String {
     let s = convbase(val, base);
     if underscore <= 0 {
@@ -2387,7 +2388,7 @@ pub fn convbase_underscore(val: i64, base: u32, underscore: i32) -> String {
 /// integer-valued floats (`5` -> `5.`) is added by the caller (params'
 /// internal printing path) in C zsh; mirrored here for the no-flag case
 /// so `MathNum::(crate::ported::math::mn_format_subst(Float(5.0)))` produces `5.` not `5`.
-/// Port of `convfloat` from `Src/params.c:5690`.
+/// Port of `convfloat(dval, digits, flags, fout)` from `Src/params.c:5690`.
 pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
     if dval.is_infinite() {                                       // c:5742
         return if dval < 0.0 {
@@ -2921,7 +2922,7 @@ pub enum GetargOut<'a> {
 
 /// Subscript-argument parser.
 ///
-/// Port of `getarg()` from Src/params.c:1367. The C function is a
+/// Port of `getarg(str, inv, v, a2, w, prevcharlen, nextcharlen, scanflags)` from Src/params.c:1367. The C function is a
 /// 618-line monolith handling the entire `[...]` body of a
 /// subscripted parameter expansion.
 ///
@@ -3860,7 +3861,7 @@ pub fn argzerogetfn() -> String {
 ///     }
 ///     zsfree(x);
 ///   }
-/// Port of `argzerosetfn` from `Src/params.c:4937`.
+/// Port of `argzerosetfn(pm, x)` from `Src/params.c:4937`.
 pub fn argzerosetfn(x: String) {                                             // c:4937
     // c:4939 — if (x).
     if !x.is_empty() {
@@ -4270,7 +4271,7 @@ pub fn lc_allsetfn(x: Option<String>) {
 
 /// Port of `lcsetfn(pm, x)` from `Src/params.c:4904`. C body:
 /// per-category `setlocale` with LC_ALL precedence + LANG fallback.
-pub fn lcsetfn(category: &str, x: Option<String>) {
+pub fn lcsetfn(pm: &str, x: Option<String>) {
     if let Ok(lc_all) = env::var("LC_ALL") {
         if !lc_all.is_empty() {
             return;
@@ -4280,7 +4281,7 @@ pub fn lcsetfn(category: &str, x: Option<String>) {
         .filter(|s| !s.is_empty())
         .or_else(|| env::var("LANG").ok().filter(|s| !s.is_empty()));
     if let Some(v) = val {
-        env::set_var(category, v);
+        env::set_var(pm, v);
     }
     clear_mbstate();
 }
@@ -4309,7 +4310,7 @@ pub fn zgetenv(name: &str) -> Option<String> {
 /// as the name (with value pointing at the trailing `\0`). Rust
 /// equivalent: split, set_var; the in-place mutation isn't
 /// observable since we copy.
-/// Port of `zputenv` from `Src/params.c:5325`.
+/// Port of `zputenv(str)` from `Src/params.c:5325`.
 pub fn zputenv(str: &str) -> i32 {                                           // c:5325
     if str.is_empty() {
         // c:5328 — DPUTS(!str, ...); treat as no-op.
@@ -4698,20 +4699,24 @@ pub fn newuniqtable(size: i64) -> HashSet<String> {                          // 
 
 /// Port of `nullintsetfn(pm, x)` from `Src/params.c:4187`. C body:
 /// empty (no-op setter for read-only int params).
-pub fn nullintsetfn(_pm: &mut crate::ported::zsh_h::param, _x: i64) {}
+#[allow(unused_variables)]
+pub fn nullintsetfn(pm: &mut crate::ported::zsh_h::param, x: i64) {}
 
 /// Port of `nullsethashfn(x)` from `Src/params.c:4104`. C body:
 /// `deleteparamtable(x);` — frees the supplied table, doesn't store.
-pub fn nullsethashfn(_pm: &mut crate::ported::zsh_h::param, _x: crate::ported::zsh_h::HashTable) {
+#[allow(unused_variables)]
+pub fn nullsethashfn(pm: &mut crate::ported::zsh_h::param, x: crate::ported::zsh_h::HashTable) {
     // Rust drop semantics free `x` when this scope ends.
 }
 
 /// Port of `nullstrsetfn(x)` from `Src/params.c:4180`. C body:
 /// `zsfree(x);` — frees but doesn't store. Rust drop handles free.
-pub fn nullstrsetfn(_pm: &mut crate::ported::zsh_h::param, _x: String) {}
+#[allow(unused_variables)]
+pub fn nullstrsetfn(pm: &mut crate::ported::zsh_h::param, x: String) {}
 
 /// Port of `nullunsetfn(pm, exp)` from `Src/params.c:4192`. C body: empty.
-pub fn nullunsetfn(_pm: &mut crate::ported::zsh_h::param, _exp: i32) {}
+#[allow(unused_variables)]
+pub fn nullunsetfn(pm: &mut crate::ported::zsh_h::param, exp: i32) {}
 
 /// Port of `stdunsetfn(pm)` from `Src/params.c:3955`. C body:
 /// dispatches `pm->gsu->setfn(pm, NULL)` per `PM_TYPE`, clears
@@ -4723,7 +4728,8 @@ pub fn nullunsetfn(_pm: &mut crate::ported::zsh_h::param, _exp: i32) {}
 /// fn-ptrs that aren't generally registered yet, so we open-code
 /// the "setfn(pm, NULL)" effect by zeroing the matching union
 /// member instead of calling through the vtable.
-pub fn stdunsetfn(pm: &mut crate::ported::zsh_h::param, _exp: i32) {
+#[allow(unused_variables)]
+pub fn stdunsetfn(pm: &mut crate::ported::zsh_h::param, exp: i32) {
     match PM_TYPE(pm.node.flags as u32) {
         PM_SCALAR | PM_NAMEREF => {
             pm.u_str = None;
@@ -5184,7 +5190,7 @@ pub fn assignnparam(
 /// `setscope(pm)`, errflag/env/ALLEXPORT/PM_ARRAY/ename gate, and
 /// `export_param`. Width tracking for PM_LEFT/PM_RIGHT_B/PM_RIGHT_Z
 /// preserved.
-/// Port of `assignstrvalue` from `Src/params.c:2692`.
+/// Port of `assignstrvalue(v, val, flags)` from `Src/params.c:2692`.
 pub fn assignstrvalue(
     v: Option<&mut crate::ported::zsh_h::value>,
     val: Option<String>,
@@ -5431,13 +5437,14 @@ pub fn assigngetset(pm: &mut crate::ported::zsh_h::param) {
     }
 }
 
-/// Port of `check_warn_pm()` from `Src/params.c:3158`. C body
+/// Port of `check_warn_pm(pm, pmtype, created, may_warn_about_nested_vars)` from `Src/params.c:3158`. C body
 /// emits the WARN_CREATE_GLOBAL / WARN_NESTED_VAR diagnostics
 /// when a function-local creates/passes a non-local param with
 /// the matching shell options set. Stub: needs option globals.
+#[allow(unused_variables)]
 pub fn check_warn_pm(
     pm: &crate::ported::zsh_h::param,
-    _pmtype: &str,
+    pmtype: &str,
     created: i32,
     may_warn_about_nested_vars: i32,
 ) {
@@ -5556,7 +5563,7 @@ pub fn copyparamtable(ht: Option<&crate::ported::zsh_h::HashTable>, name: &str)
 /// /* OK to import */
 /// return 0;
 /// ```
-/// Port of `dontimport` from `Src/params.c:796`.
+/// Port of `dontimport(flags)` from `Src/params.c:796`.
 fn dontimport(flags: i32) -> i32 {                                           // c:796
     let flags = flags as u32;
     // c:799-800 — `if (flags & PM_DONTIMPORT) return 1`.
@@ -6203,7 +6210,7 @@ pub fn createparam(                                                          // 
 /// param scope-save) and don't need callable get/set callbacks; in
 /// that case `tpm->old`/PM_SPECIAL are preserved untouched and
 /// `assigngetset` is skipped.
-/// Port of `copyparam` from `Src/params.c:1236`.
+/// Port of `copyparam(tpm, pm, fakecopy)` from `Src/params.c:1236`.
 pub fn copyparam(                                                            // c:1236
     tpm: &mut crate::ported::zsh_h::param,
     pm: &mut crate::ported::zsh_h::param,
@@ -6633,7 +6640,7 @@ pub fn getindex(pptr: &mut &str, v: &mut crate::ported::zsh_h::value, scanflags:
 /// Returns 1 if `name` resolves to a set parameter (or a non-empty
 /// slice/element of one). Used by `[[ -v NAME ]]`/`[[ -n …]]`
 /// dispatch in cond.c and the readonly-check inside builtin.c.
-/// Port of `issetvar` from `Src/params.c:732`.
+/// Port of `issetvar(name)` from `Src/params.c:732`.
 pub fn issetvar(name: &str) -> i32 {                                         // c:732
     let mut vbuf = crate::ported::zsh_h::value {
         pm: None,
@@ -6724,7 +6731,7 @@ pub fn getvaluearr(v: Option<&mut crate::ported::zsh_h::value>) -> Vec<String> {
 ///       if (!pm) zerr("autoloading module %s failed...", mn, nam);
 ///   }
 ///   return pm;
-/// Port of `loadparamnode` from `Src/params.c:544`.
+/// Port of `loadparamnode(ht, pm, nam)` from `Src/params.c:544`.
 pub fn loadparamnode(                                                        // c:544
     _ht: &crate::ported::zsh_h::HashTable,
     pm: Option<crate::ported::zsh_h::Param>,
@@ -6781,7 +6788,8 @@ pub fn loadparamnode(                                                        // 
 /// `None` (the hashtable.rs vtable cannot host the typed
 /// param-callback signatures yet — wiring them requires the
 /// hashtable backend refactor).
-pub fn newparamtable(size: i32, _name: &str)
+#[allow(unused_variables)]
+pub fn newparamtable(size: i32, name: &str)
     -> Option<crate::ported::zsh_h::HashTable>
 {
     let hsize = if size == 0 { 17 } else { size };
@@ -6830,7 +6838,7 @@ pub fn newparamtable(size: i32, _name: &str)
 ///
 /// The Rust port takes a `&Mutex<HashMap>` (paramtab handle) so
 /// callers don't need to thread the HashTable wrapper through.
-/// Port of `paramvalarr` from `Src/params.c:689`.
+/// Port of `paramvalarr(ht, flags)` from `Src/params.c:689`.
 #[allow(unused_variables)]
 pub fn paramvalarr(ht: &crate::ported::zsh_h::HashTable, flags: i32) -> Vec<String> {  // c:689
     use crate::ported::zsh_h::{
@@ -6882,12 +6890,12 @@ pub fn paramvalarr(ht: &crate::ported::zsh_h::HashTable, flags: i32) -> Vec<Stri
 /// of the common path: skip-on-`.`-prefix without WITH_NAMESPACE,
 /// skip-on-PM_UNSET (with the POSIX preserve), AUTOLOAD gating,
 /// then `nam` + `=value` via `printparamvalue`.
-pub fn printparamnode(p: &mut crate::ported::zsh_h::param, mut printflags: i32) {
+pub fn printparamnode(hn: &mut crate::ported::zsh_h::param, mut printflags: i32) {
     const PRINT_WITH_NAMESPACE: i32 = 1 << 8; // matches createspecial print enum
-    let f = p.node.flags as u32;
+    let f = hn.node.flags as u32;
     if (f & PM_HASHELEM) == 0
         && (printflags & PRINT_WITH_NAMESPACE) == 0
-        && p.node.nam.starts_with('.')
+        && hn.node.nam.starts_with('.')
     {
         return;
     }
@@ -6915,9 +6923,9 @@ pub fn printparamnode(p: &mut crate::ported::zsh_h::param, mut printflags: i32) 
         if (f & PM_RO_BY_DESIGN) != 0 {
             // C uses `locallevel` global; the Rust port treats it as 0
             // until that global is wired. With locallevel==0, suppress
-            // unless p.level == 0 (matches the C "show anyway in scope
+            // unless hn.level == 0 (matches the C "show anyway in scope
             // of declaration" path).
-            if p.level != 0 {
+            if hn.level != 0 {
                 return;
             }
         }
@@ -6934,7 +6942,7 @@ pub fn printparamnode(p: &mut crate::ported::zsh_h::param, mut printflags: i32) 
     if (printflags & PRINT_KV_PAIR) != 0 {
         // hashelem path: print key without name= leader.
     }
-    print!("{}", p.node.nam);
+    print!("{}", hn.node.nam);
     if (printflags & PRINT_NAMEONLY) != 0 {
         if (printflags & PRINT_KV_PAIR) == 0 { println!(); }
         return;
@@ -6942,7 +6950,7 @@ pub fn printparamnode(p: &mut crate::ported::zsh_h::param, mut printflags: i32) 
     if (printflags & (PRINT_INCLUDEVALUE | PRINT_TYPESET)) != 0
         || (printflags & PRINT_NAMEONLY) == 0
     {
-        printparamvalue(p, printflags);
+        printparamvalue(hn, printflags);
     }
     if (printflags & PRINT_KV_PAIR) == 0 {
         println!();
@@ -7045,10 +7053,11 @@ pub fn resolve_nameref(                                                      // 
 /// for the early-exit path (no NAMEREF / UNSET / has subscript /
 /// empty refname). Full chain walk requires `gethashnode2` on
 /// `realparamtab` — pending the HashTable vtable.
+#[allow(unused_variables)]
 pub fn resolve_nameref_rec(
     pm: Option<crate::ported::zsh_h::Param>,
-    _stop: Option<&crate::ported::zsh_h::param>,
-    _keep_lastref: i32,
+    stop: Option<&crate::ported::zsh_h::param>,
+    keep_lastref: i32,
 ) -> Option<crate::ported::zsh_h::Param> {
     let pm_ref = pm.as_deref()?;
     let f = pm_ref.node.flags as u32;
@@ -7389,7 +7398,7 @@ fn pattry(prog: &str, s: &str) -> bool {
 /// branch falls through to `setsparam`. Stub: requires real
 /// `paramtab` global with HashTable backend; until then the
 /// non-nameref `setsparam` path is the only one that fires.
-/// Port of `setloopvar` from `Src/params.c:6362`.
+/// Port of `setloopvar(name, value)` from `Src/params.c:6362`.
 #[allow(unused_variables)]
 pub fn setloopvar(name: &str, value: &str) {
     // Once paramtab gethashnode2 is wired:
@@ -7449,7 +7458,7 @@ pub fn setnumvalue(v: Option<&mut crate::ported::zsh_h::value>, val: crate::port
 /// are stubbed elsewhere; this port wires the structural path
 /// against existing helpers and falls through cleanly when the
 /// nameref chain backend isn't available.
-/// Port of `setscope` from `Src/params.c:6382`.
+/// Port of `setscope(pm)` from `Src/params.c:6382`.
 pub fn setscope(pm: &mut crate::ported::zsh_h::param) {
     crate::ported::signals::queue_signals();
     if (pm.node.flags as u32 & PM_NAMEREF) != 0 {
@@ -7495,7 +7504,7 @@ pub fn setscope(pm: &mut crate::ported::zsh_h::param) {
 /// stores `base` on the param; the global `scoperefs` LinkList
 /// table is not yet ported, so the bookkeeping push is described
 /// here as architectural intent rather than executed.
-/// Port of `setscope_base` from `Src/params.c:6436`.
+/// Port of `setscope_base(pm, base)` from `Src/params.c:6436`.
 pub fn setscope_base(pm: &mut crate::ported::zsh_h::param, base: i32) {
     pm.base = base;
     if base > pm.level {

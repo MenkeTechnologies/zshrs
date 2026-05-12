@@ -543,7 +543,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/stat.c:651`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:651
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:651
     // C body c:653-654 — `return 0`. Faithful empty-body port.
     0
 }
@@ -562,7 +563,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 }
 
 /// Port of `boot_(m)` from `Src/Modules/stat.c:673`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:673
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:673
     // C body c:675-676 — `return 0`. Faithful empty-body port; the
     //                    zstat builtin registers via the bn_list dispatch.
     0
@@ -575,7 +577,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/stat.c:687`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:687
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:687
     // C body c:689-690 — `return 0`. Faithful empty-body port; the
     //                    zstat builtin unregisters via cleanup_'s setfeatureenables.
     0

@@ -236,7 +236,8 @@ pub fn mapRGBto256(red: i32, green: i32, blue: i32) -> i32 {          // c:110
 /// ```
 /// `Hookdef` and `Color_rgb` are `struct hookdef *` / `struct color_rgb *`
 /// (zsh.h:528 / 2752); ported as `*const hookdef` / `*const color_rgb`.
-pub fn getnearestcolor(_dummy: *const hookdef, col: *const color_rgb) -> i32 { // c:147
+#[allow(unused_variables)]
+pub fn getnearestcolor(dummy: *const hookdef, col: *const color_rgb) -> i32 { // c:147
     /* we add 1 to the colours so that colour 0 (default) is
      * distinguished from runhookdef() indicating that no
      * hook function is registered */                                 // c:149-151
@@ -273,7 +274,8 @@ pub fn getnearestcolor(_dummy: *const hookdef, col: *const color_rgb) -> i32 { /
 // =====================================================================
 
 /// Port of `setup_(m)` from `Src/Modules/nearcolor.c:169`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:169
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:169
     0                                                                  // c:171
 }
 
@@ -292,7 +294,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 
 /// Port of `boot_(m)` from `Src/Modules/nearcolor.c:191`.
 /// C body: `addhookfunc("get_color_attr", (Hookfn) getnearestcolor); return 0;`
-pub fn boot_(_m: *const module) -> i32 {                                     // c:191
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:191
     addhookfunc("get_color_attr", getnearestcolor);              // c:193
     0                                                                  // c:194
 }
@@ -305,7 +308,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/nearcolor.c:207`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:207
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:207
     0                                                                  // c:209
 }
 
@@ -352,8 +356,9 @@ fn gethookdef(_n: &str) -> Option<*const hookdef> {                          // 
 // Port of `addhookdeffunc(h, f)` from Src/module.c:939.
 // C: `int addhookdeffunc(Hookdef h, Hookfn f)` →
 //   `addlinknode(h->funcs, (void *)f); return 0;`
-fn addhookdeffunc(_h: *const hookdef,
-                  _f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 {  // c:939
+#[allow(unused_variables)]
+fn addhookdeffunc(h: *const hookdef,
+                  f: fn(*const hookdef, *const color_rgb) -> i32) -> i32 {  // c:939
     // c:941 — addlinknode(h->funcs, f). Static-link path: registry is static.
     0                                                                        // c:942
 }

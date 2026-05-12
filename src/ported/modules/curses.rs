@@ -1713,7 +1713,7 @@ pub fn zcurses_colorget(nam: &str, colorpair: &str) -> Option<i16> {         // 
 /// Direct port of `freecolorpairnode(hn)` from `Src/Modules/curses.c:422`.
 /// C body (c:424-427): `zsfree(hn->nam); zfree(hn, sizeof(struct
 /// colorpairnode));`. Rust drop handles both via Box ownership.
-pub fn freecolorpairnode(_name: &str) {                                      // c:422
+pub fn freecolorpairnode(hn: &str) {                                      // c:422
     // c:424-426 — frees handled by Rust drop; nothing to do.
 }
 
@@ -1784,7 +1784,8 @@ extern "C" {
 
 /// Port of `setup_(m)` from `Src/Modules/curses.c:1744`. C body:
 /// `return 0;`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:1744
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:1744
     0
 }
 

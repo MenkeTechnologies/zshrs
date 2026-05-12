@@ -227,7 +227,7 @@ pub fn getgroup(_name: &str, _sgr: bool) -> Option<String> {             // c:82
 /// **Strict-rule status: PARTIAL** for the same reason as `getgroup`
 /// (depends on the `$.zle.hlgroups` hash being readable through the
 /// param table). See `TODO.md`.
-/// Port of `scangroup` from `Src/Modules/hlgroup.c:113`.
+/// Port of `scangroup(func, flags, sgr)` from `Src/Modules/hlgroup.c:113`.
 pub fn scangroup(_sgr: bool) -> Vec<(String, String)> {                  // c:113
     // c:123-125 — `if (!(v = getvalue(...)) || ... PM_HASHED) return;`
     // c:126 — hlg = v->pm->gsu.h->getfn(v->pm)
@@ -277,7 +277,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/hlgroup.c:182`.
-pub fn setup_(_m: *const module) -> i32 {                                // c:182
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                // c:182
     0                                                                    // c:184
 }
 
@@ -295,7 +296,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:
 }
 
 /// Port of `boot_(m)` from `Src/Modules/hlgroup.c:204`.
-pub fn boot_(_m: *const module) -> i32 {                                 // c:204
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                 // c:204
     0                                                                    // c:206
 }
 
@@ -306,7 +308,8 @@ pub fn cleanup_(m: *const module) -> i32 {                              // c:211
 }
 
 /// Port of `finish_(m)` from `Src/Modules/hlgroup.c:218`.
-pub fn finish_(_m: *const module) -> i32 {                               // c:218
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                               // c:218
     0                                                                    // c:220
 }
 

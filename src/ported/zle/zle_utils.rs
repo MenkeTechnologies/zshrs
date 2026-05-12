@@ -415,7 +415,7 @@ impl Zle {
     }
 
     /// Get line as string
-    /// Port of zlelineasstring() from zle_utils.c
+    /// Port of zlelineasstring(instr, inll, incs, outllp, outcsp, useheap) from zle_utils.c
     pub fn line_as_string(&self) -> String {
         self.zleline.iter().collect()
     }
@@ -533,9 +533,9 @@ impl Zle {
 /// that the bindkey command uses for round-trippable output —
 /// distinct from `printbind` below which uses the human-readable
 /// `^A` / `^[X` form printed in describe-key-briefly etc.
-pub fn bindztrdup(seq: &[u8]) -> String {
+pub fn bindztrdup(str: &[u8]) -> String {
     let mut buf = String::new();
-    for &b in seq {
+    for &b in str {
         // Meta bit handling: zsh metafies bytes >= 0x80 by inserting
         // 0x83 (Meta) before a (b ^ 0x20) byte. The C source unwinds
         // that here; in our Rust model we don't pastebuf in storage, so
@@ -755,7 +755,7 @@ impl Zle {
 
     /// Reverse the change at `idx` (move zleline back to its pre-change state).
     /// Returns true on success.
-    /// Port of `unapplychange` (zle_utils.c:1633).
+    /// Port of `unapplychange(ch)` (zle_utils.c:1633).
     pub fn unapply_change(&mut self, idx: usize) -> bool {
         if idx >= self.undo_stack.len() {
             return false;
@@ -791,7 +791,7 @@ impl Zle {
         true
     }
 
-    /// Replay the change at `idx`. Port of `applychange` (zle_utils.c:1677).
+    /// Replay the change at `idx`. Port of `applychange(ch)` (zle_utils.c:1677).
     pub fn apply_change(&mut self, idx: usize) -> bool {
         if idx >= self.undo_stack.len() {
             return false;
@@ -822,7 +822,7 @@ impl Zle {
     }
 
     // move backwards through the change list                                 // c:1597
-    /// Walk back one Change. Port of `undo` (zle_utils.c:1601).
+    /// Walk back one Change. Port of `undo(args)` (zle_utils.c:1601).
     pub fn undo_widget(&mut self) -> i32 {                                    // c:1601
         // Capture any in-flight edits into a Change before stepping back.
         self.mkundoent();
@@ -841,7 +841,7 @@ impl Zle {
     }
 
     // move forwards through the change list                                  // c:1657
-    /// Walk forward one Change. Port of `redo` (zle_utils.c:1661).
+    /// Walk forward one Change. Port of `redo(args)` (zle_utils.c:1661).
     pub fn redo_widget(&mut self) -> i32 {                                    // c:1661
         self.mkundoent();
         if self.cur_change >= self.undo_stack.len() {
@@ -1478,29 +1478,29 @@ pub fn zlecallhook(name: &str, arg: Option<&str>) {                          // 
 }
 
 /// Port of `zlecharasstring(inchar, buf)` from Src/Zle/zle_utils.c:117.
-pub fn zlecharasstring(c: char, buf: &mut String) -> i32 {                   // c:117
-    // C body c:119-145 — converts a ZLE_CHAR_T to its display form
+pub fn zlecharasstring(inchar: char, buf: &mut String) -> i32 {                   // inchar:117
+    // C body inchar:119-145 — converts a ZLE_CHAR_T to its display form
     //                    (UTF-8 multibyte if MULTIBYTE_SUPPORT, else
     //                    raw byte). Vec<char> is wide-char already;
     //                    just append.
     let start = buf.len();
-    buf.push(c);
+    buf.push(inchar);
     (buf.len() - start) as i32
 }
 
 /// Port of `zlegetline(ll, cs)` from Src/Zle/zle_utils.c:547.
-pub fn zlegetline(zle: &crate::ported::zle::zle_main::Zle,                   // c:148
+pub fn zlegetline(ll: &crate::ported::ll::zle_main::Zle,                   // c:148
                   ll: &mut usize, cs: &mut usize) -> Vec<char> {
     // C body c:150-200 — `if (zlemetaline) { *ll=zlemetall; *cs=zlemetacs;
     //                     return ztrdup(zlemetaline) } else
     //                     return zlelineasstring(...)`. Snapshot of the
     //                     current line + cursor.
-    *ll = zle.zlell;
-    *cs = zle.zlecs;
-    zle.zleline.clone()
+    *ll = ll.zlell;
+    *cs = ll.zlecs;
+    ll.zleline.clone()
 }
 
-/// Port of `zlelineasstring()` from Src/Zle/zle_utils.c:192.
+/// Port of `zlelineasstring(instr, inll, incs, outllp, outcsp, useheap)` from Src/Zle/zle_utils.c:192.
 pub fn zlelineasstring(line: &[char], ll: usize, _flags: i32) -> String {    // c:282
     // C body c:284-373 — encodes ZLE_CHAR_T array to a metafied
     //                    multibyte string. Vec<char> → String is

@@ -742,7 +742,7 @@ mod tests {
 /// opts[EXTENDEDGLOB] = oldextendedglob;
 /// return ret;
 /// ```
-/// Port of `bin_zregexparse` from `Src/Modules/zutil.c:1486`.
+/// Port of `bin_zregexparse(nam, args, ops, func)` from `Src/Modules/zutil.c:1486`.
 pub fn bin_zregexparse(nam: &str, args: &[String],                            // c:1486
                        ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::OPT_ISSET;
@@ -1540,7 +1540,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/zutil.c:2152`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:2152
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:2152
     0
 }
 
@@ -1558,7 +1559,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 }
 
 /// Port of `boot_(m)` from `Src/Modules/zutil.c:2176`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:2176
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:2176
     0
 }
 
@@ -1569,7 +1571,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/zutil.c:2190`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:2190
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:2190
     0
 }
 
@@ -1732,7 +1735,8 @@ pub fn setstypat(style_name: &str, pat: &str,                                // 
 /// C: `static char **evalstyle(Stypat p)` — execute the eval-prog and
 /// return the resulting `reply`/value array.
 #[allow(non_snake_case)]
-pub fn evalstyle(_p: &Stypat) -> Vec<String> {                               // c:413
+#[allow(unused_variables)]
+pub fn evalstyle(p: &Stypat) -> Vec<String> {                               // c:413
     // c:413
     // c:415-441 — errflag save, execode(p->eval), getaparam("reply").
     Vec::new()
@@ -1808,7 +1812,8 @@ pub fn freestypat(mut p: Stypat, s: Option<&mut style>, prev: Option<&mut stypat
 /// Port of `get_opt_arr(name)` from Src/Modules/zutil.c:1602.
 /// C: `static Zoptarr get_opt_arr(char *name)` — find a Zoptarr by name.
 #[allow(non_snake_case)]
-pub fn get_opt_arr(_name: &str) -> Option<Zoptarr> {                         // c:1602
+#[allow(unused_variables)]
+pub fn get_opt_arr(name: &str) -> Option<Zoptarr> {                         // c:1602
     // c:1602
     // c:1604-1612 — walk opt_arrs linked-list, name-compare.
     None
@@ -1817,7 +1822,8 @@ pub fn get_opt_arr(_name: &str) -> Option<Zoptarr> {                         // 
 /// Port of `get_opt_desc(name)` from Src/Modules/zutil.c:1558.
 /// C: `static Zoptdesc get_opt_desc(char *name)` — find a Zoptdesc.
 #[allow(non_snake_case)]
-pub fn get_opt_desc(_name: &str) -> Option<Zoptdesc> {                       // c:1558
+#[allow(unused_variables)]
+pub fn get_opt_desc(name: &str) -> Option<Zoptdesc> {                       // c:1558
     // c:1558
     // c:1560-1568 — walk opt_descs linked-list, name-compare.
     None
@@ -1827,7 +1833,8 @@ pub fn get_opt_desc(_name: &str) -> Option<Zoptdesc> {                       // 
 /// C: `static Zoptdesc lookup_opt(char *str)` — name-prefix match into
 /// opt_descs; returns the desc or NULL.
 #[allow(non_snake_case)]
-pub fn lookup_opt(_str: &str) -> Option<Zoptdesc> {                          // c:1570
+#[allow(unused_variables)]
+pub fn lookup_opt(str: &str) -> Option<Zoptdesc> {                          // c:1570
     // c:1570
     // c:1572-1600 — walks opt_descs comparing prefix with str.
     None
@@ -1853,7 +1860,8 @@ pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {                  //
 /// C: `static Zoptdesc map_opt_desc(Zoptdesc start)` — maps starting node
 /// through alias chain.
 #[allow(non_snake_case)]
-pub fn map_opt_desc(_start: Option<Zoptdesc>) -> Option<Zoptdesc> {
+#[allow(unused_variables)]
+pub fn map_opt_desc(start: Option<Zoptdesc>) -> Option<Zoptdesc> {
     // c:1614
     // c:1616-1640 — alias-chase via opt_descs links.
     None
@@ -1863,7 +1871,8 @@ pub fn map_opt_desc(_start: Option<Zoptdesc>) -> Option<Zoptdesc> {
 /// C: `static HashTable newzstyletable(int size, char const *name)` —
 /// alloc a fresh style hash table.
 #[allow(non_snake_case)]
-pub fn newzstyletable(_size: i32, _name: &str) -> Option<HashNode> {
+#[allow(unused_variables)]
+pub fn newzstyletable(size: i32, name: &str) -> Option<HashNode> {
     // c:270
     // c:273-285 — newhashtable + assign cmpnodes/freenode/etc handlers.
     None
@@ -1945,7 +1954,8 @@ pub fn rmatch(
 /// C: `static int rparsealt(RParseResult *result, jmp_buf *perr)` — parse
 /// alternation in regex syntax.
 #[allow(non_snake_case)]
-pub fn rparsealt(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i32 {
+#[allow(unused_variables)]
+pub fn rparsealt(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 {
     // c:1345
     // c:1348-1364 — recursive descent: rparseseq | rparseseq | ...
     0
@@ -1953,7 +1963,8 @@ pub fn rparsealt(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i3
 
 /// Port of `rparseclo(result, perr)` from Src/Modules/zutil.c:1252.
 #[allow(non_snake_case)]
-pub fn rparseclo(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i32 {
+#[allow(unused_variables)]
+pub fn rparseclo(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 {
     // c:1252
     // c:1255-1267 — closure: rparseelt followed by * / + / ?.
     0
@@ -1961,7 +1972,8 @@ pub fn rparseclo(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i3
 
 /// Port of `rparseelt(result, perr)` from Src/Modules/zutil.c:1142.
 #[allow(non_snake_case)]
-pub fn rparseelt(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i32 {
+#[allow(unused_variables)]
+pub fn rparseelt(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 {
     // c:1142
     // c:1145-1250 — atom: lit / `[ alt ]` / `( seq )`.
     0
@@ -1969,7 +1981,8 @@ pub fn rparseelt(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i3
 
 /// Port of `rparseseq(result, perr)` from Src/Modules/zutil.c:1294.
 #[allow(non_snake_case)]
-pub fn rparseseq(_result: &mut RParseResult, _perr: *mut std::ffi::c_void) -> i32 {
+#[allow(unused_variables)]
+pub fn rparseseq(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 {
     // c:1294
     // c:1297-1343 — sequence of clos.
     0

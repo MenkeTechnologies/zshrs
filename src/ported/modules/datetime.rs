@@ -279,7 +279,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/datetime.c:270`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:270
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:270
     // C body c:272-273 — `return 0`. Faithful empty-body port.
     0
 }
@@ -298,7 +299,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:
 }
 
 /// Port of `boot_(m)` from `Src/Modules/datetime.c:292`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:292
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:292
     // C body c:294-295 — `return 0`. Faithful empty-body port; the
     //                    strftime builtin + EPOCHREALTIME param register
     //                    via the bn_list/pd_list feature dispatch.
@@ -312,7 +314,8 @@ pub fn cleanup_(m: *const module) -> i32 {                              // c:299
 }
 
 /// Port of `finish_(m)` from `Src/Modules/datetime.c:306`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:306
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:306
     // C body c:308-309 — `return 0`. Faithful empty-body port; the
     //                    strftime builtin + EPOCHREALTIME unregister
     //                    via cleanup_'s setfeatureenables(...).

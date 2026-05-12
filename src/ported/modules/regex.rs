@@ -241,7 +241,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/regex.c:229`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:229
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:229
     // C body c:231-232 — `return 0`. Faithful empty-body port.
     0
 }
@@ -258,7 +259,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 }
 
 /// Port of `boot_(m)` from `Src/Modules/regex.c:251`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:251
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:251
     // C body c:253-254 — `return 0`. Faithful empty-body port; the
     //                    regex-match condition registers via cd_list.
     0
@@ -270,7 +272,8 @@ pub fn cleanup_(m: *const module) -> i32 {
 }
 
 /// Port of `finish_(m)` from `Src/Modules/regex.c:265`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:265
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:265
     // C body c:267-268 — `return 0`. Faithful empty-body port.
     0
 }

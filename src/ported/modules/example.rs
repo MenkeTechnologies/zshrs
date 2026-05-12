@@ -67,7 +67,8 @@ pub static arrparam: Mutex<Option<Vec<String>>> = Mutex::new(None);  // c:37
 /// static int
 /// bin_example(char *nam, char **args, Options ops, UNUSED(int func))
 /// ```
-pub fn bin_example(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 { // c:42
+#[allow(unused_variables)]
+pub fn bin_example(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { // c:42
     let mut stdout = std::io::stdout().lock();
     // c:44 — `unsigned char c;`
     let mut c: u8;
@@ -142,7 +143,8 @@ pub fn bin_example(nam: &str, args: &[String], ops: &options, _func: i32) -> i32
 // =====================================================================
 
 /// Port of `cond_p_len(a)` from `Src/Modules/example.c:80`.
-pub fn cond_p_len(a: &[String], _id: i32) -> i32 {                           // c:80
+#[allow(unused_variables)]
+pub fn cond_p_len(a: &[String], id: i32) -> i32 {                           // c:80
     // c:82 — `char *s1 = cond_str(a, 0, 0);`
     let s1: String = cond_str(a, 0, false);                            // c:82
     if a.len() > 1 {                                                   // c:84 if (a[1])
@@ -160,7 +162,8 @@ pub fn cond_p_len(a: &[String], _id: i32) -> i32 {                           // 
 // =====================================================================
 
 /// Port of `cond_i_ex(a)` from `Src/Modules/example.c:95`.
-pub fn cond_i_ex(a: &[String], _id: i32) -> i32 {                            // c:95
+#[allow(unused_variables)]
+pub fn cond_i_ex(a: &[String], id: i32) -> i32 {                            // c:95
     // c:97 — `char *s1 = cond_str(a, 0, 0), *s2 = cond_str(a, 1, 0);`
     let s1: String = cond_str(a, 0, false);                            // c:97
     let s2: String = cond_str(a, 1, false);                            // c:97
@@ -173,7 +176,8 @@ pub fn cond_i_ex(a: &[String], _id: i32) -> i32 {                            // 
 // =====================================================================
 
 /// Port of `math_sum(argc, argv)` from `Src/Modules/example.c:104`.
-pub fn math_sum(_name: &str, argc: i32, argv: &[Mnumber], _id: i32) -> Mnumber { // c:104
+#[allow(unused_variables)]
+pub fn math_sum(name: &str, argc: i32, argv: &[Mnumber], id: i32) -> Mnumber { // c:104
     // c:106 — `mnumber ret;`
     let mut ret = Mnumber { l: 0, d: 0.0, type_: MN_INTEGER };
     // c:107 — `int f = 0;`
@@ -213,7 +217,8 @@ pub fn math_sum(_name: &str, argc: i32, argv: &[Mnumber], _id: i32) -> Mnumber {
 // =====================================================================
 
 /// Port of `math_length(arg)` from `Src/Modules/example.c:133`.
-pub fn math_length(_name: &str, arg: &str, _id: i32) -> Mnumber {            // c:133
+#[allow(unused_variables)]
+pub fn math_length(name: &str, arg: &str, id: i32) -> Mnumber {            // c:133
     // c:135 — `mnumber ret;`
     // c:137 — `ret.type = MN_INTEGER;`
     // c:138 — `ret.u.l = strlen(arg);`
@@ -276,7 +281,8 @@ pub fn ex_wrapper(prog: *const crate::ported::zsh_h::eprog,                  // 
 // =====================================================================
 
 /// Port of `setup_(m)` from `Src/Modules/example.c:198`.
-pub fn setup_(_m: *const module) -> i32 {
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "The example module has now been set up."); // c:200
     let _ = stdout.flush();                                              // c:201
@@ -344,7 +350,8 @@ pub fn cleanup_(m: *const module) -> i32 {
 // =====================================================================
 
 /// Port of `finish_(m)` from `Src/Modules/example.c:243`.
-pub fn finish_(_m: *const module) -> i32 {
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(
         stdout,

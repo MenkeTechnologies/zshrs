@@ -1251,7 +1251,7 @@ impl ShellExecutor {
         }
     }
 
-    /// Tab expansion — direct port of `zexpandtabs` in zsh/Src/utils.c:5973.
+    /// Tab expansion — direct port of `zexpandtabs(s, len, width, startpos, fout, all)` in zsh/Src/utils.c:5973.
     /// Moved to `crate::ported::utils::zexpandtabs`; re-exported below.
 
     /// Execute a script file with bytecode caching — skips lex+parse+compile on cache hit.
@@ -1460,7 +1460,7 @@ impl ShellExecutor {
         }
     }
 
-    /// P9d: direct port of `execfor` from `Src/exec.c:1232-1350`.
+    /// P9d: direct port of `execfor(state, do_exec)` from `Src/exec.c:1232-1350`.
     /// Reads WC_FOR header via WC_FOR_TYPE/WC_FOR_SKIP, dispatches on
     /// type (PPARAM / LIST / COND), iterates body via recursive
     /// exec_list_wordcode calls.
@@ -1492,7 +1492,7 @@ impl ShellExecutor {
     pub fn exec_select_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
         self.exec_for_wordcode(buf, pc)
     }
-    /// P9d: direct port of `execcase` from `Src/exec.c:1492-1550`.
+    /// P9d: direct port of `execcase(state, do_exec)` from `Src/exec.c:1492-1550`.
     /// Reads WC_CASE_TYPE + WC_CASE_SKIP, walks pattern arms.
     pub fn exec_case_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
         use crate::ported::zsh_h::{WC_CASE_SKIP, WC_CASE_TYPE};
@@ -1514,7 +1514,7 @@ impl ShellExecutor {
         }
         (last_status, end_pc)
     }
-    /// P9d: full port of `execif` from `Src/loop.c:299-340`.
+    /// P9d: full port of `execif(state, do_exec)` from `Src/loop.c:299-340`.
     ///
     /// C body walks the if/elif/else chain. Each cond is an inner
     /// WC_IF header with WC_IF_TYPE distinguishing IF / ELIF / ELSE.
@@ -1580,7 +1580,7 @@ impl ShellExecutor {
         }
         (last_status, end_pc)
     }
-    /// P9d: full port of `execwhile` from `Src/loop.c:432-498`.
+    /// P9d: full port of `execwhile(state, do_exec)` from `Src/loop.c:432-498`.
     ///
     /// Loops {exec cond; check status XOR isuntil; exec body; check
     /// breaks/contflag/retflag/errflag} until termination.
@@ -1658,7 +1658,7 @@ impl ShellExecutor {
         LOOPS.fetch_sub(1, Ordering::SeqCst);
         (last_status, end_pc)
     }
-    /// P9d: full port of `execrepeat` from `Src/loop.c:499-552`.
+    /// P9d: full port of `execrepeat(state, do_exec)` from `Src/loop.c:499-552`.
     ///
     /// C body:
     ///   end = state->pc + WC_REPEAT_SKIP(code);
@@ -1773,7 +1773,7 @@ impl ShellExecutor {
         (0, pc + 1 + skip)
     }
 
-    /// P9d: direct port of `execsimple` from `Src/exec.c:3702-4100`.
+    /// P9d: direct port of `execsimple(state)` from `Src/exec.c:3702-4100`.
     /// Walks WC_SIMPLE header + word slots, decodes the interned
     /// strings via `ecgetstr`, builds argv, invokes the command.
     /// Real implementation handles assignments + redirections inline
@@ -7369,7 +7369,7 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
 /// raw file text on `ShFunc.body` (the Rust-side ShFunc in
 /// `hashtable.rs:362`); the parser pass that converts text →
 /// Eprog runs lazily at first call site.
-/// Port of `loadautofn` from `Src/exec.c:5682`.
+/// Port of `loadautofn(shf, fksh, autol, current_fpath)` from `Src/exec.c:5682`.
 pub fn loadautofn(shf: *mut crate::ported::zsh_h::shfunc,                        // c:5682 (Src/exec.c)
               _ks: i32, test_only: i32, _ignore_loaddir: i32) -> i32 {
     use crate::ported::zsh_h::PM_UNDEFINED;

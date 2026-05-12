@@ -263,7 +263,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/terminfo.c:316`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:316
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:316
     // C body c:318-319 — `return 0`. Faithful empty-body port.
     0
 }
@@ -282,7 +283,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 }
 
 /// Port of `boot_(m)` from `Src/Modules/terminfo.c:338`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:338
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:338
     // C body c:340-344 — `#ifdef USE_TERMINFO_MODULE zsetupterm(); #endif
     //                     return 0`. Initializes the terminfo database
     //                     for echoti/$terminfo to use.
@@ -297,7 +299,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/terminfo.c:359`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:359
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:359
     // C body c:361-362 — `return 0`. Faithful empty-body port; the
     //                    terminfo database is process-lifetime.
     0

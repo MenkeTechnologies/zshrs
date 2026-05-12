@@ -103,7 +103,8 @@ pub fn liitem(name: &str) -> Option<libc::nl_item> {                     // c:37
 /// Port of `liitem(name)` from `Src/Modules/langinfo.c:379`.
 /// Non-Unix fallback for `liitem` — `nl_item` is POSIX-only.
 #[cfg(not(unix))]
-pub fn liitem(_name: &str) -> Option<i32> {                                  // c:379
+#[allow(unused_variables)]
+pub fn liitem(name: &str) -> Option<i32> {                                  // c:379
     None
 }
 
@@ -184,7 +185,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/langinfo.c:472`.
-pub fn setup_(_m: *const module) -> i32 {                                // c:472
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                // c:472
     0                                                                    // c:475
 }
 
@@ -202,7 +204,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 { // c:
 }
 
 /// Port of `boot_(m)` from `Src/Modules/langinfo.c:494`.
-pub fn boot_(_m: *const module) -> i32 {                                 // c:494
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                 // c:494
     0                                                                    // c:497
 }
 
@@ -213,7 +216,8 @@ pub fn cleanup_(m: *const module) -> i32 {                              // c:501
 }
 
 /// Port of `finish_(m)` from `Src/Modules/langinfo.c:508`.
-pub fn finish_(_m: *const module) -> i32 {                               // c:508
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                               // c:508
     0                                                                    // c:511
 }
 

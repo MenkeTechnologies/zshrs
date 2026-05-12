@@ -647,7 +647,8 @@ use crate::ported::zsh_h::module;
 
 
 /// Port of `setup_(m)` from `Src/Modules/watch.c:712`.
-pub fn setup_(_m: *const module) -> i32 {                                    // c:712
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:712
     // C body c:714-718 — `partab[0].gsu = (void *)&colonarr_gsu;
     //                     partab[1].gsu = (void *)&vararray_gsu;
     //                     return 0`. The GSU dispatch isn't part of
@@ -670,7 +671,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 }
 
 /// Port of `boot_(m)` from `Src/Modules/watch.c:738`.
-pub fn boot_(_m: *const module) -> i32 {                                     // c:738
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:738
     // C body c:740-770: ties $watch and $WATCH, creates empty `watch`
     // array, sets WATCHFMT/LOGCHECK defaults IFF unset, installs the
     // checksched preprompt hook. Seed `WATCHFMT` and `LOGCHECK` only
@@ -693,7 +695,8 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 }
 
 /// Port of `finish_(m)` from `Src/Modules/watch.c:776`.
-pub fn finish_(_m: *const module) -> i32 {                                   // c:776
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:776
     // C body c:778-779 — `return 0`. Faithful empty-body port; the
     //                    watch utmpx descriptor is process-lifetime,
     //                    not module-lifetime.

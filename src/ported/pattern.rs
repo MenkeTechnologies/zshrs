@@ -253,7 +253,8 @@ pub const Marker: u8 = 0x80;
 /// C signature: `static long patadd(char *add, int ch, long n, int paflags)`.
 /// Adds `n` bytes (or repeats `ch`) to patout, growing if needed.
 /// Returns offset where the bytes were appended.
-fn patadd(add: Option<&[u8]>, ch: u8, n: i64, _paflags: i32) -> i64 {        // c:412
+#[allow(unused_variables)]
+fn patadd(add: Option<&[u8]>, ch: u8, n: i64, paflags: i32) -> i64 {        // c:412
     let mut buf = patout.lock().unwrap();
     let start = buf.len() as i64;
     if let Some(bytes) = add {
@@ -1017,7 +1018,8 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 { 
 /// **Deferred** (Phase 5): full exclude support requires the matcher
 /// to backtrack between branch and exclude trees. Currently returns -1
 /// (compile failure) so the higher-level switch falls through.
-pub fn patcompnot(_paren: i32, _flagsp: &mut i32) -> i64 {                    // c:1760
+#[allow(unused_variables)]
+pub fn patcompnot(paren: i32, flagsp: &mut i32) -> i64 {                    // c:1760
     -1
 }
 
@@ -1127,8 +1129,8 @@ pub fn charref(s: &str, pos: usize) -> Option<char> {                         //
 
 /// Port of `charnext(x, y)` from `Src/pattern.c:1936`. Advance past the
 /// char at `pos`.
-pub fn charnext(s: &str, pos: usize) -> usize {                               // c:1936
-    metacharinc(s, pos)
+pub fn charnext(x: &str, y: usize) -> usize {                               // c:1936
+    metacharinc(x, y)
 }
 
 /// Port of `charrefinc(x, y, z)` from `Src/pattern.c:1964`. Decode and
@@ -1141,10 +1143,10 @@ pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {                 //
 
 /// Port of `charsub(x, y)` from `Src/pattern.c:1997`. Returns the byte
 /// offset of the char before `pos` (useful for stepping back).
-pub fn charsub(s: &str, pos: usize) -> usize {                                // c:1997
-    if pos == 0 { return 0; }
-    let w = s[..pos].chars().next_back().map(|c| c.len_utf8()).unwrap_or(1);
-    pos - w
+pub fn charsub(x: &str, y: usize) -> usize {                                // c:1997
+    if y == 0 { return 0; }
+    let w = x[..y].chars().next_back().map(|c| c.len_utf8()).unwrap_or(1);
+    y - w
 }
 
 // =====================================================================
@@ -1185,7 +1187,7 @@ pub fn pattry(prog: &Patprog, string: &str) -> bool {                         //
     pattrylen(prog, string, string.len())
 }
 
-/// Port of `pattrylen()` from `Src/pattern.c:2236`. Truncated match.
+/// Port of `pattrylen(prog, string, len, unmetalen, patstralloc, offset)` from `Src/pattern.c:2236`. Truncated match.
 pub fn pattrylen(prog: &Patprog, string: &str, len: usize) -> bool {          // c:2236
     let trial = if len < string.len() { &string[..len] } else { string };
     let mut state = rpat::new();
@@ -1201,7 +1203,7 @@ pub fn pattrylen(prog: &Patprog, string: &str, len: usize) -> bool {          //
     }
 }
 
-/// Port of `pattryrefs()` from `Src/pattern.c:2294`. Run match and
+/// Port of `pattryrefs(prog, string, stringlen, unmetalenin, patstralloc, patoffset, nump, begp, endp)` from `Src/pattern.c:2294`. Run match and
 /// return capture group ranges.
 pub fn pattryrefs(prog: &Patprog, string: &str) -> Option<(bool, Vec<(usize, usize)>)> { // c:2294
     let mut state = rpat::new();
@@ -1697,8 +1699,8 @@ pub fn savepatterndisables() -> Vec<String> {                                 //
 }
 
 /// Port of `restorepatterndisables(disables)` from `Src/pattern.c:4258`.
-pub fn restorepatterndisables(saved: Vec<String>) {                           // c:4258
-    *patterndisables.lock().unwrap() = saved;
+pub fn restorepatterndisables(disables: Vec<String>) {                           // c:4258
+    *patterndisables.lock().unwrap() = disables;
 }
 
 /// Port of `clearpatterndisables()` from `Src/pattern.c:4296`.
@@ -1709,13 +1711,15 @@ pub fn clearpatterndisables() {                                               //
 /// Port of `freepatprog(prog)` from `Src/pattern.c:4161`. Frees a Patprog.
 /// Rust's `Drop` on `Box<patprog>` handles this; the explicit fn
 /// exists for C parity (Rule A).
-pub fn freepatprog(_prog: Patprog) {}                                         // c:4161
+#[allow(unused_variables)]
+pub fn freepatprog(prog: Patprog) {}                                         // c:4161
 
 /// Port of `pat_enables(cmd, patp, enable)` from `Src/pattern.c:4171`. Implements
 /// `enable -p` / `disable -p` for named patterns.
-pub fn pat_enables(_cmd: &str, patterns: &[&str], enable: bool) -> i32 {      // c:4171
+#[allow(unused_variables)]
+pub fn pat_enables(cmd: &str, patp: &[&str], enable: bool) -> i32 {      // c:4171
     let mut disables = patterndisables.lock().unwrap();
-    for p in patterns {
+    for p in patp {
         if enable {
             disables.retain(|d| d != p);
         } else if !disables.iter().any(|d| d == p) {
@@ -1735,7 +1739,7 @@ pub fn pat_enables(_cmd: &str, patterns: &[&str], enable: bool) -> i32 {      //
 /// `int patmatch(Upat prog)` (which takes a bytecode pointer and
 /// reads input/captures from file-statics) — Rust takes both pattern
 /// and text explicitly. Allowlisted as architectural convenience.
-/// Port of `patmatch` from `Src/pattern.c:2694`.
+/// Port of `patmatch(prog)` from `Src/pattern.c:2694`.
 pub fn patmatch(pattern: &str, text: &str) -> bool {
     match patcompile(pattern, PAT_HEAPDUP as i32, None) {
         Some(prog) => pattry(&prog, text),
@@ -1764,8 +1768,8 @@ pub fn patrepeat(prog: &Patprog, s: &str, max: Option<usize>) -> usize {      //
 
 /// Port of `haswilds(str)` from `Src/pattern.c:4306`. Quick check whether
 /// `s` contains any wildcard characters.
-pub fn haswilds(s: &str) -> bool {                                            // c:4306
-    s.chars().any(|c| matches!(c, '*' | '?' | '[' | '\\' | '(' | '|' | '<' | '#' | '^'))
+pub fn haswilds(str: &str) -> bool {                                            // c:4306
+    str.chars().any(|c| matches!(c, '*' | '?' | '[' | '\\' | '(' | '|' | '<' | '#' | '^'))
 }
 
 // =====================================================================

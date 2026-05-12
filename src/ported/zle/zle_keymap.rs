@@ -1071,13 +1071,14 @@ pub fn add_cursor_char(buf: &mut Vec<u8>, c: u8) {                           // 
 }
 
 /// Port of `add_cursor_key(km, tccode, thingy, defchar)` from Src/Zle/zle_keymap.c:1258.
-pub fn add_cursor_key(_km: &mut Keymap, _tccode: i32, _thingy: Thingy, _defchar: i32) {  // c:1258
+#[allow(unused_variables)]
+pub fn add_cursor_key(km: &mut Keymap, tccode: i32, thingy: Thingy, defchar: i32) {  // c:1258
     // C body (c:1260-1300): looks up termcap cursor key string by
     // tccode (TCUPCURSOR/TCDNCURSOR/etc.), falls back to defchar
     // if missing, then bindkey()s it on km. Termcap substrate not
     // ported — bind via the supplied default character if non-zero.
-    if _defchar > 0 && _defchar < 256 {
-        _km.bind_char(_defchar as u8, _thingy);
+    if defchar > 0 && defchar < 256 {
+        km.bind_char(defchar as u8, thingy);
     }
 }
 
@@ -1393,7 +1394,8 @@ pub fn default_bindings() {                                                  // 
 }
 
 /// Port of `deletekeymap(km)` from Src/Zle/zle_keymap.c:364.
-pub fn deletekeymap(_km: Arc<Keymap>) {                                      // c:363
+#[allow(unused_variables)]
+pub fn deletekeymap(km: Arc<Keymap>) {                                      // c:363
     // c:367-372 — `deletehashtable(km->multi); for(i=256;i--;)
     //              unrefthingy(km->first[i]); zfree(km, sizeof(*km))`.
     // Arc<Keymap> drop cascade handles HashMap and array drops.
@@ -1410,14 +1412,14 @@ pub fn emptykeymapnamtab() {                                                 // 
 }
 
 /// Port of `freekeymapnamnode(hn)` from Src/Zle/zle_keymap.c:267.
-pub fn freekeymapnamnode(name: &str) {                                       // c:266
+pub fn freekeymapnamnode(hn: &str) {                                       // c:266
     // c:269-273 — `kmn = (KeymapName)hn; zsfree(kmn->nam);
     //              unrefkeymap_by_name(kmn); zfree(kmn,...)`.
-    keymapnamtab().lock().unwrap().remove(name);
+    keymapnamtab().lock().unwrap().remove(hn);
 }
 
 /// Port of `freekeynode(hn)` from Src/Zle/zle_keymap.c:312.
-pub fn freekeynode(_kb: KeyBinding) {                                        // c:311
+pub fn freekeynode(hn: KeyBinding) {                                        // c:311
     // C body (zle_keymap.c:312):
     //   freekeynode(HashNode hn) {
     //     Key k = (Key) hn;
@@ -1431,7 +1433,7 @@ pub fn freekeynode(_kb: KeyBinding) {                                        // 
     // send-string, and zfrees the Key struct itself. Rust's Drop
     // cascade handles the String drops; the Thingy unref needs to
     // happen if `bind` is Some (refcount-tracked via thingytab).
-    if let Some(t) = _kb.bind {
+    if let Some(t) = hn.bind {
         // Match zle_thingy.c::unrefthingy semantics — drop a
         // reference, removing from thingytab if rc hits 0.
         crate::ported::zle::zle_thingy::unrefthingy(&t.nam);
@@ -1499,7 +1501,7 @@ pub fn getrestchar_keybuf(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 { 
 /// Test whether `seq` is a strict prefix of some longer binding in
 /// `km`. Returns 1 if `seq` is a prefix (incl. empty input), 0 if
 /// `seq` is itself a complete binding or no match exists.
-/// Port of `keyisprefix` from `Src/Zle/zle_keymap.c:683`.
+/// Port of `keyisprefix(km, seq)` from `Src/Zle/zle_keymap.c:683`.
 pub fn keyisprefix(km: &Keymap, seq: &[u8]) -> i32 {                         // c:683
     // c:687-688 — `if(!*seq) return 1`. Empty sequence → trivially prefix.
     if seq.is_empty() {
@@ -1564,21 +1566,21 @@ pub fn linkkeymap(km: Arc<Keymap>, name: &str, imm: i32) -> i32 {            // 
 }
 
 /// Port of `makekeymapnamnode(keymap)` from Src/Zle/zle_keymap.c:173.
-pub fn makekeymapnamnode(km: Arc<Keymap>) -> KeymapName {                    // c:172
+pub fn makekeymapnamnode(keymap: Arc<Keymap>) -> KeymapName {                    // c:172
     // c:175-178 — `kmn = zshcalloc; kmn->keymap = keymap; return kmn`.
     KeymapName {
         nam: String::new(),
         flags: 0,
-        keymap: km,
+        keymap: keymap,
     }
 }
 
 /// Port of `makekeynode(t, str)` from Src/Zle/zle_keymap.c:301.
-pub fn makekeynode(t: Thingy, s: String) -> KeyBinding {                     // c:300
+pub fn makekeynode(t: Thingy, str: String) -> KeyBinding {                     // c:300
     // c:303-307 — `k = zshcalloc; k->bind = t; k->str = str`.
     KeyBinding {
         bind: Some(t),
-        str: Some(s),
+        str: Some(str),
         prefixct: 0,
     }
 }
@@ -1683,9 +1685,9 @@ pub fn refkeymap(km: &mut Keymap) {                                          // 
 /// immutable; promotion only happens on the next `linkkeymap`).
 /// We keep the lookup as a contract check so callers see a working
 /// "did this name exist?" probe.
-/// Port of `refkeymap_by_name` from `Src/Zle/zle_keymap.c:208`.
-pub fn refkeymap_by_name(name: &str) {                                       // c:208
-    let _ = keymapnamtab().lock().unwrap().get(name);                        // c:210 getnode probe
+/// Port of `refkeymap_by_name(kmn)` from `Src/Zle/zle_keymap.c:208`.
+pub fn refkeymap_by_name(kmn: &str) {                                       // c:208
+    let _ = keymapnamtab().lock().unwrap().get(kmn);                        // c:210 getnode probe
 }
 
 /// Port of `reselectkeymap()` from Src/Zle/zle_keymap.c:549.
@@ -1911,7 +1913,7 @@ pub fn unlinkkeymap(name: &str, ignm: i32) -> i32 {                          // 
 /// indicated via the `should_delete` out flag (the caller is expected
 /// to drop the Keymap; Rust ownership doesn't allow self-deletion
 /// from the &mut reference).
-/// Port of `unrefkeymap` from `Src/Zle/zle_keymap.c:479`.
+/// Port of `unrefkeymap(km)` from `Src/Zle/zle_keymap.c:479`.
 pub fn unrefkeymap(km: &mut Keymap) -> i32 {                                 // c:479
     km.rc -= 1;                                                              // c:482 --km->rc
     if km.rc == 0 {

@@ -933,7 +933,8 @@ pub fn cd_able_vars(s: &str) -> Option<String> {                             // 
 /// Port of `cd_try_chdir(pfix, dest, hard)` from Src/builtin.c:1116.
 /// C: `static char *cd_try_chdir(char *pfix, char *dest, int hard)` —
 ///   compose `pfix/dest`, attempt chdir, optionally chase symlinks.
-pub fn cd_try_chdir(pfix: &str, dest: &str, _hard: i32) -> Option<String> {  // c:1116
+#[allow(unused_variables)]
+pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {  // c:1116
     // c:1122 — `dlen = strlen(pfix) + 1; buf = ...; sprintf(buf, "%s/%s", pfix, dest);`
     let buf = if pfix.is_empty() {
         dest.to_string()
@@ -1053,7 +1054,7 @@ pub fn fcsubs(sp: &mut String, sub: &[(String, String)]) -> i32 {            // 
     subbed
 }
 
-/// Port of `fclist()` from Src/builtin.c:1750.
+/// Port of `fclist(f, ops, first, last, subs, pprog, is_command)` from Src/builtin.c:1750.
 /// C: `static int fclist(FILE *f, Options ops, zlong first, zlong last,
 ///     struct asgment *subs, Patprog pprog, int is_command)` — emit the
 ///     history range `first..=last` to `f`, applying subs/pprog filter.
@@ -1199,7 +1200,7 @@ pub fn typeset_setwidth(name: &str, pm: *mut crate::ported::zsh_h::param,    // 
     0                                                                        // c:2018
 }
 
-/// Port of `typeset_single()` from Src/builtin.c:2025.
+/// Port of `typeset_single(cname, pname, pm, func, on, off, roff, asg, altpm, ops, joinchar)` from Src/builtin.c:2025.
 /// C: `static Param typeset_single(char *cname, char *pname, Param pm,
 ///     int func, int on, int off, int roff, Asgment asg, Param altpm,
 ///     Options ops, int joinchar)` — apply attribute changes + assignment
@@ -1635,7 +1636,8 @@ pub static LASTVAL: std::sync::atomic::AtomicI32 =
 /// Port of `zexit(val, from_where)` from Src/builtin.c:5977.
 /// C: `void zexit(int val, enum zexit_t from_where)` — record exit
 ///   value, fire EXIT trap unless already exiting, then realexit.
-pub fn zexit(val: i32, _from_where: i32) {                                   // c:5977
+#[allow(unused_variables)]
+pub fn zexit(val: i32, from_where: i32) {                                   // c:5977
     use std::sync::atomic::Ordering;
     // c:5985 — `exit_val = val;`
     EXIT_VAL.store(val, Ordering::Relaxed);                                  // c:5985

@@ -449,7 +449,7 @@ fn check_recursion() -> bool {
     PARSER_RECURSION_DEPTH.get() > MAX_RECURSION_DEPTH
 }
 
-/// Direct port of `parse_context_save` at `Src/parse.c:295-320`.
+/// Direct port of `parse_context_save(ps, toplevel)` at `Src/parse.c:295-320`.
 /// Snapshots the lexer-side file-statics (which currently live on
 /// `lexer` until Phase 7 dissolution makes them file-scope
 /// thread_local!s) plus the pending heredoc list, plus the
@@ -495,7 +495,7 @@ pub fn parse_context_save(ps: &mut parse_stack) {
     crate::ported::lex::set_intypeset(false);
 }
 
-/// Direct port of `parse_context_restore` at `Src/parse.c:326-355`.
+/// Direct port of `parse_context_restore(ps, toplevel)` at `Src/parse.c:326-355`.
 /// Inverse of `parse_context_save`. Restores lexer-side state +
 /// pending heredocs + Rust-only counters from `ps`, then clears
 /// `errflag & ERRFLAG_ERROR` per parse.c:354.
@@ -804,7 +804,7 @@ pub fn set_sublist_code(p: usize, type_code: i32, flags: i32, skip: i32, cmplx: 
     });
 }
 
-/// Direct port of `ecadd` at `Src/parse.c:396-408`. Append `c` to
+/// Direct port of `ecadd(c)` at `Src/parse.c:396-408`. Append `c` to
 /// the wordcode buffer with grow-on-demand, return the new index.
 pub fn ecadd(c: u32) -> usize {
     // parse.c:399-405 — `if ((eclen - ecused) < 1) grow`.
@@ -831,7 +831,7 @@ pub fn ecadd(c: u32) -> usize {
     idx as usize
 }
 
-/// Direct port of `ecdel` at `Src/parse.c:412-421`. Remove the
+/// Direct port of `ecdel(p)` at `Src/parse.c:412-421`. Remove the
 /// wordcode at position `p`, shift later entries left by one,
 /// decrement ecused, adjust pending heredoc pointers.
 pub fn ecdel(p: usize) {
@@ -849,7 +849,7 @@ pub fn ecdel(p: usize) {
     ecadjusthere(p, -1);
 }
 
-/// Direct port of `ecstrcode` at `Src/parse.c:425-471`. Encode a
+/// Direct port of `ecstrcode(s)` at `Src/parse.c:425-471`. Encode a
 /// string into a single wordcode (short strings ≤4 bytes packed
 /// inline; longer strings get an offset into the deduped registry).
 pub fn ecstrcode(s: &str) -> u32 {
@@ -942,7 +942,7 @@ pub fn ecstrcode(s: &str) -> u32 {
     (s, next)
 }
 
-/// Direct port of `ecispace` at `Src/parse.c:371-388`. Insert `n`
+/// Direct port of `ecispace(p, n)` at `Src/parse.c:371-388`. Insert `n`
 /// empty wordcode slots at position `p`, shifting later entries
 /// right, growing the buffer as needed, adjusting heredoc pointers.
 pub fn ecispace(p: usize, n: usize) {
@@ -985,7 +985,7 @@ pub fn ecispace(p: usize, n: usize) {
     ecadjusthere(p, need);
 }
 
-/// Direct port of `ecadjusthere` at `Src/parse.c:359-367`. Walk
+/// Direct port of `ecadjusthere(p, d)` at `Src/parse.c:359-367`. Walk
 /// the pending-heredocs list and bump each `pc` by `d` if it's
 /// at or after position `p`. Called by `ecispace` / `ecdel` when
 /// wordcodes shift.

@@ -1096,3 +1096,9 @@ extract_numeric_ranges
 numeric_ranges_to_star
 numeric_range_contains
 peek
+set_zsh_defaults
+setoption_canonical
+lookup_optletter
+setoption_by_letter
+install_emulation_defaults
+dash_string
