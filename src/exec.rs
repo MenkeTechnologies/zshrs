@@ -788,6 +788,7 @@ impl ShellExecutor {
     /// in the citation purge (180463e1e7). All call sites that previously
     /// did `exec.singsub(s)` now do `exec.singsub(s)` and route
     /// through the C-faithful `singsub`.
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub fn singsub(&mut self, s: &str) -> String {
         let _ctx = crate::fusevm_bridge::ExecutorContext::enter(self);
         let r = crate::ported::subst::singsub(s);
@@ -2344,10 +2345,12 @@ impl ShellExecutor {
     // you'll get a duplicate-definition error when the recorder
     // feature is enabled.
 
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_cd(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_cd("cd", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_pwd(&mut self, _redirects: &[crate::parse::Redirect]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_pwd("pwd", &[], &ops, 0)
@@ -2356,18 +2359,22 @@ impl ShellExecutor {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_pwd("pwd", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_unset(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_unset("unset", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_dot(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_dot("source", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_test(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_test("test", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_typeset(&mut self, args: &[String]) -> i32 {
         // Route through `execbuiltin` (Src/builtin.c:250) so `bn->optstr`
         // ("AE:%F:%HL:%R:%TUZ:%afghi:%klp:%rtuxmnz") gets parsed against
@@ -2386,6 +2393,7 @@ impl ShellExecutor {
             crate::ported::builtin::bin_typeset("typeset", args, &ops, 0)
         }
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_read(&mut self, args: &[String]) -> i32 {
         // Parse single-letter options inline against the BUILTIN
         // optstr "cd:ek:%lnpqrst:%zu:AE" (zsh.h: zsh_h::builtin entry
@@ -2451,46 +2459,57 @@ impl ShellExecutor {
         }
         crate::ported::builtin::bin_read("read", &positional, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_shift(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_shift("shift", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_eval(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_eval("eval", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_fc(&mut self, args: &[String]) -> i32 {
         let mut ops = Self::_empty_ops();
         crate::ported::builtin::bin_fc("fc", args, &mut ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_trap(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_trap("trap", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_alias(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_alias("alias", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_set(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_set("set", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_getopts(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_getopts("getopts", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_hash(&mut self, name: &str, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_hash(name, args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_let(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_let("let", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_dirs(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_dirs("dirs", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_break(&mut self, name: &str, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         let func = match name {
@@ -2503,18 +2522,22 @@ impl ShellExecutor {
         };
         crate::ported::builtin::bin_break(name, args, &ops, func)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_enable(&mut self, name: &str, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_enable(name, args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_emulate(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_emulate("emulate", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_functions(&self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_functions("functions", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_print(&mut self, args: &[String]) -> i32 {
         // Route through `execbuiltin` (Src/builtin.c:250) so `bn->optstr`
         // ("abcC:Df:ilmnNoOpPrRsSu:v:x:X:z-") parses `-l`, `-n`, `-r`,
@@ -2533,22 +2556,27 @@ impl ShellExecutor {
             crate::ported::builtin::bin_print("print", args, &ops, 0)
         }
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_whence(&self, args: &[String]) -> i32 {
         // No canonical bin_whence yet — return 1 (not found) placeholder.
         let _ = args; 1
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_umask(&self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_umask("umask", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_unhash(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_unhash("unhash", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_times(&self, _args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_times("times", &[], &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_ttyctl(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();
         crate::ported::builtin::bin_ttyctl("ttyctl", args, &ops, 0)
@@ -2663,6 +2691,7 @@ impl ShellExecutor {
     // bin_zstyle/bin_zparseopts/bin_zformat/bin_zregexparse free-fn
     // ports (Src/Modules/zutil.c) will land in zutil.rs at module
     // level; until then these stubs unblock callers.
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_zstyle(&mut self, args: &[String]) -> i32 {
         // Canonical bin_zstyle per zutil.c:487 — BUILTIN spec at
         // zutil.c:2143 ("LRMl:b:s:a:t:T:m:e:Dd"). Inline parse the
@@ -2689,12 +2718,14 @@ impl ShellExecutor {
         }
         crate::ported::modules::zutil::bin_zstyle("zstyle", &positional, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_zparseopts(&mut self, args: &[String]) -> i32 {
         // Canonical bin_zparseopts per zutil.c:1738 — BUILTIN spec at
         // zutil.c:2137 takes no option flags (parses its own opts).
         let ops = Self::_empty_ops();
         crate::ported::modules::zutil::bin_zparseopts("zparseopts", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_zformat(&mut self, args: &[String]) -> i32 {
         // bin_zformat takes no flag options (BUILTIN spec at
         // zutil.c:2138 has none); pass empty `options` and dispatch
@@ -2702,6 +2733,7 @@ impl ShellExecutor {
         let ops = Self::_empty_ops();
         crate::ported::modules::zutil::bin_zformat("zformat", args, &ops, 0)
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_zregexparse(&mut self, args: &[String]) -> i32 {
         // Canonical bin_zregexparse per zutil.c:1486 — BUILTIN spec
         // at zutil.c:2147 takes "-c" only.
@@ -4983,6 +5015,7 @@ impl crate::ported::exec::ShellExecutor {
 
 impl crate::ported::exec::ShellExecutor {
     /// zmodload - load/unload zsh modules (stub)
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_zmodload(&mut self, args: &[String]) -> i32 {
         // PFA-SMR aspect: emit one `zmodload` event per module name (only
         // for load form — listing/query/unload are not state mutations
@@ -5843,6 +5876,7 @@ impl crate::ported::exec::ShellExecutor {
         }
         0
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_fg(&mut self, args: &[String]) -> i32 {
         // zsh in `-c` mode has no real job-control regardless of the
         // `monitor` option. zsh `fg %N` always errors `fg:1: no job
@@ -5961,6 +5995,7 @@ impl crate::ported::exec::ShellExecutor {
         println!("[{}] {} &", id, cmd);
         0
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_kill(&mut self, args: &[String]) -> i32 {
         // kill [ -s signal_name | -n signal_number | -sig ] job ...
         // kill -l [ sig ... ]
@@ -6464,6 +6499,7 @@ impl crate::ported::exec::ShellExecutor {
         }
         status
     }
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_suspend(&self, args: &[String]) -> i32 {
         // Canonical bin_suspend per jobs.c:3170. BUILTIN spec at
         // jobs.c:bintab takes "-f" only.
@@ -8778,6 +8814,7 @@ impl crate::ported::exec::ShellExecutor {
 
 impl crate::ported::exec::ShellExecutor {
     /// zsh compadd - add completion matches
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_compadd(&mut self, args: &[String]) -> i32 {
         // Basic stub for zsh completion system
         // In a full implementation, this would add completion candidates
@@ -8785,6 +8822,7 @@ impl crate::ported::exec::ShellExecutor {
         0
     }
     /// zsh compset - modify completion prefix/suffix
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_compset(&mut self, args: &[String]) -> i32 {
         // Basic stub for zsh completion system
         let _ = args;
@@ -8805,6 +8843,7 @@ impl crate::ported::exec::ShellExecutor {
 
 impl crate::ported::exec::ShellExecutor {
     /// bindkey - key binding management
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_bindkey(&mut self, args: &[String]) -> i32 {
         use crate::zle::{zle, KeymapName};
 
@@ -9020,6 +9059,7 @@ impl crate::ported::exec::ShellExecutor {
         0
     }
     /// zle - line editor control
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_zle(&mut self, args: &[String]) -> i32 {
         use crate::zle::zle;
 
@@ -9344,6 +9384,7 @@ impl crate::ported::exec::ShellExecutor {
     /// the canonical free-fn port at
     /// crate::ported::zle::zle_main::bin_vared which matches the C
     /// signature `bin_vared(name, args, ops, func)` exactly.
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_vared(&mut self, args: &[String]) -> i32 {
         use crate::ported::zsh_h::{options, MAX_OPS};
         let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
@@ -9390,18 +9431,21 @@ impl crate::ported::exec::ShellExecutor {
 
 impl crate::ported::exec::ShellExecutor {
     /// `cap` builtin entry. Bridge to `bin_cap()` above.
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_cap(&self, args: &[String]) -> i32 {
         let ops = crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
         bin_cap("cap", args, &ops, 0)
     }
 
     /// `getcap` builtin entry. Bridge to `bin_getcap()` above.
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_getcap(&self, args: &[String]) -> i32 {
         let ops = crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
         bin_getcap("getcap", args, &ops, 0)
     }
 
     /// `setcap` builtin entry. Bridge to `bin_setcap()` above.
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_setcap(&self, args: &[String]) -> i32 {
         let ops = crate::ported::zsh_h::options { ind: [0u8; crate::ported::zsh_h::MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 };
         bin_setcap("setcap", args, &ops, 0)
@@ -9418,6 +9462,7 @@ impl crate::ported::exec::ShellExecutor {
     /// `Src/Modules/zpty.c`). The named-pty table lives on
     /// `ShellExecutor` so `zpty -w NAME ...` and `zpty -r NAME` can
     /// reach a session started by an earlier `zpty NAME ...` call.
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_zpty(&mut self, args: &[String]) -> i32 {
         use crate::ported::zsh_h::{options, MAX_OPS};
         let mut ops = options {
@@ -9474,6 +9519,7 @@ impl crate::ported::exec::ShellExecutor {
     /// previous shim mapped terminfo→termcap and routed through
     /// bin_echotc; the canonical port now calls libcurses tigetstr/
     /// tigetnum/tigetflag + tparm directly per the C source.
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_echoti(&mut self, args: &[String]) -> i32 {
         use crate::ported::zsh_h::{options, MAX_OPS};
         let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
@@ -9494,6 +9540,7 @@ impl crate::ported::exec::ShellExecutor {
     /// `Src/Modules/watch.c:150-156` file-statics) so login/logout
     /// edge detection survives across calls without a struct on
     /// `ShellExecutor`.
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_log(&mut self, _args: &[String]) -> i32 {
         let user = std::env::var("USER").unwrap_or_default();
         let fmt = crate::ported::params::getsparam("WATCHFMT");
@@ -9515,6 +9562,7 @@ impl crate::ported::exec::ShellExecutor {
     /// `Src/Modules/pcre.c:70`). Builds an `options` struct from the
     /// `-a/-i/-m/-s/-x` flags so the canonical port reads them via
     /// `OPT_ISSET` exactly like C does.
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_pcre_compile(&mut self, args: &[String]) -> i32 {
         use crate::ported::zsh_h::{options, MAX_OPS};
         let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
@@ -9540,6 +9588,7 @@ impl crate::ported::exec::ShellExecutor {
     /// returned capture data into the executor's variable/array
     /// tables — that side-effect cannot live in the canonical port
     /// because it doesn't own those tables.
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_pcre_match(&mut self, args: &[String]) -> i32 {
         use crate::ported::zsh_h::{options, MAX_OPS};
         let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
@@ -9583,6 +9632,7 @@ impl crate::ported::exec::ShellExecutor {
         status
     }
     /// pcre_study - optimize compiled PCRE (no-op in Rust regex)
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_pcre_study(&mut self, _args: &[String]) -> i32 {
         use crate::ported::zsh_h::{options, MAX_OPS};
         let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
@@ -9596,6 +9646,7 @@ impl crate::ported::exec::ShellExecutor {
 // =====================================================================
 
 impl crate::ported::exec::ShellExecutor {
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_ztcp(&mut self, args: &[String]) -> i32 {
         use crate::ported::zsh_h::{options, MAX_OPS};
         let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
@@ -9643,6 +9694,7 @@ impl crate::ported::exec::ShellExecutor {
 impl crate::ported::exec::ShellExecutor {
     /// Tie a parameter to a GDBM database
     /// Usage: ztie -d db/gdbm -f /path/to/db.gdbm [-r] PARAM_NAME
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_ztie(&mut self, args: &[String]) -> i32 {
         let mut db_type: Option<String> = None;
         let mut file_path: Option<String> = None;
@@ -9703,6 +9755,7 @@ impl crate::ported::exec::ShellExecutor {
     }
     /// Untie a parameter from its GDBM database
     /// Usage: zuntie [-u] PARAM_NAME...
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_zuntie(&mut self, args: &[String]) -> i32 {
         use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -9734,6 +9787,7 @@ impl crate::ported::exec::ShellExecutor {
     /// Get the path of a tied GDBM database
     /// Usage: zgdbmpath PARAM_NAME
     /// Sets $REPLY to the path
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_zgdbmpath(&mut self, args: &[String]) -> i32 {
         use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -9766,6 +9820,7 @@ impl crate::ported::exec::ShellExecutor {
 impl crate::ported::exec::ShellExecutor {
     /// `echotc` builtin shim — adapts `&[String]` argv to
     /// `bin_echotc` over a `[bool; 256]` ops bitmask.
+    // WARNING: FAKE DUP IMPL — shadows canonical pub fn in src/ported/. Caller should route to ported version directly.
     pub(crate) fn bin_echotc(&mut self, args: &[String]) -> i32 {
         let argv: Vec<&str> = args.iter().map(String::as_str).collect();
         let ops = [false; 256];
