@@ -41,7 +41,7 @@ use crate::zsh_h::{EC_DUP, EC_NODUP};
 // preserves the API contract (lookup by (nfunc, str) → offs) with
 // simpler ownership semantics.
 thread_local! {
-    static ECBUF: std::cell::RefCell<Vec<u32>> = std::cell::RefCell::new(Vec::new());
+    pub static ECBUF: std::cell::RefCell<Vec<u32>> = std::cell::RefCell::new(Vec::new());
     static ECLEN: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     static ECUSED: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     static ECNPATS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
@@ -1076,6 +1076,31 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>
         }
 
         program
+    }
+
+    /// P9c: wordcode-emission parser entry. Direct port of zsh's
+    /// `parse_event(int endtok)` from `Src/parse.c:683-720`. Emits a
+    /// minimal wordcode stream for the parsed program into the live
+    /// `ECBUF` thread_local via P9b's `ecadd` / `ecstrcode` API and
+    /// returns the start index of the emitted Eprog (matching C's
+    /// `Eprog parse_event(...)` return).
+    ///
+    /// Minimal implementation: emits `WCB_END()` only for now (P9c
+    /// stub). The full par_event/par_list/par_sublist/par_pipe/par_cmd
+    /// recursion that walks the token stream and emits the right
+    /// wordcode for each production is the multi-week rewrite called
+    /// out in PORT_PLAN.md. This stub establishes the entry point and
+    /// drives the live ECBUF emission so downstream consumers (P9d
+    /// exec_wordcode) have a real wordcode buffer to walk.
+    pub fn par_event_wordcode() -> usize {
+        // Reset the wordcode buffer for this parse — parse.c:513
+        // `init_parse` zeros it. P9b's `init_parse` does the full
+        // reset; we just need the start index for the caller.
+        let start = ECUSED.get() as usize;
+        // parse.c:712 — `ecadd(WCB_END());` terminates every parse_event
+        // with the end marker.
+        ecadd(crate::ported::zsh_h::WCB_END());
+        start
     }
 
     /// Parse a program (list of lists)

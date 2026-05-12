@@ -1044,3 +1044,4 @@ parse_sublist
 
 # === P8 followup ===
 parse_init
+par_event_wordcode
