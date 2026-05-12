@@ -870,12 +870,12 @@ impl<'a> ZshParser<'a> {
         // STUB; Phase 7 wires it. Same for the few below marked STUB.
         ps.aliasspaceflag = 0;
         ps.incond = self.lexer.incond;
-        ps.inredir = self.lexer.inredir;
+        ps.inredir = self.lexer.inredir();
         ps.incasepat = self.lexer.incasepat;
-        ps.isnewlin = self.lexer.isnewlin;
-        ps.infor = self.lexer.infor;
-        ps.inrepeat_ = self.lexer.inrepeat;
-        ps.intypeset = self.lexer.intypeset;
+        ps.isnewlin = self.lexer.isnewlin();
+        ps.infor = self.lexer.infor();
+        ps.inrepeat_ = self.lexer.inrepeat();
+        ps.intypeset = self.lexer.intypeset();
         // parse.c:312-317 — wordcode buffer state. STUB until Phase 9b
         // (zshrs has no ecbuf yet).
         ps.eclen = 0;
@@ -895,11 +895,11 @@ impl<'a> ZshParser<'a> {
         self.global_iterations = 0;
         self.lexer.incmdpos = true;
         self.lexer.incond = 0;
-        self.lexer.inredir = false;
+        self.lexer.set_inredir(false);
         self.lexer.incasepat = 0;
-        self.lexer.infor = 0;
-        self.lexer.inrepeat = 0;
-        self.lexer.intypeset = false;
+        self.lexer.set_infor(0);
+        self.lexer.set_inrepeat(0);
+        self.lexer.set_intypeset(false);
     }
 
     /// Direct port of `parse_context_restore` at `Src/parse.c:326-355`.
@@ -917,12 +917,12 @@ impl<'a> ZshParser<'a> {
         self.lexer.incmdpos = ps.incmdpos;
         // aliasspaceflag STUB until Phase 7.
         self.lexer.incond = ps.incond;
-        self.lexer.inredir = ps.inredir;
+        self.lexer.set_inredir(ps.inredir);
         self.lexer.incasepat = ps.incasepat;
-        self.lexer.isnewlin = ps.isnewlin;
-        self.lexer.infor = ps.infor;
-        self.lexer.inrepeat = ps.inrepeat_;
-        self.lexer.intypeset = ps.intypeset;
+        self.lexer.set_isnewlin(ps.isnewlin);
+        self.lexer.set_infor(ps.infor);
+        self.lexer.set_inrepeat(ps.inrepeat_);
+        self.lexer.set_intypeset(ps.intypeset);
         // ecbuf/eclen/ecused/ecnpats/ecstrs/ecsoffs/ecssub/ecnfunc
         // STUB until Phase 9b.
         self.recursion_depth = ps.recursion_depth;
@@ -945,9 +945,9 @@ impl<'a> ZshParser<'a> {
         // intypeset = 0; inrepeat_ = 0; incmdpos = 1;`
         self.lexer.incasepat = 0;
         self.lexer.incond = 0;
-        self.lexer.inredir = false;
-        self.lexer.infor = 0;
-        self.lexer.intypeset = false;
+        self.lexer.set_inredir(false);
+        self.lexer.set_infor(0);
+        self.lexer.set_intypeset(false);
         self.lexer.incmdpos = true;
     }
 
@@ -1051,7 +1051,7 @@ impl<'a> ZshParser<'a> {
         while self.lexer.tok == SEPER {
             // parse.c:640-641 — at top-level (endtok == ENDINPUT),
             // a SEPER on a fresh line ends the event.
-            if self.lexer.isnewlin > 0 && endtok == ENDINPUT {
+            if self.lexer.isnewlin() > 0 && endtok == ENDINPUT {
                 return false;
             }
             self.lexer.zshlex();
@@ -1462,7 +1462,7 @@ impl<'a> ZshParser<'a> {
         // Surface lexer-level errors (unmatched quote/heredoc/etc.)
         // that the parser silently rolls past. zsh aborts with a
         // diagnostic via `zerr` which sets `errflag |= ERRFLAG_ERROR`.
-        if let Some(msg) = self.lexer.error.clone() {
+        if let Some(msg) = self.lexer.error() {
             crate::ported::utils::zerr(&msg);
         }
 
@@ -1835,7 +1835,7 @@ impl<'a> ZshParser<'a> {
             return None;
         }
 
-        let lineno = self.lexer.toklineno;
+        let lineno = self.lexer.toklineno();
         let cmd = match self.parse_cmd() {
             Some(c) => c,
             None => {
@@ -2215,8 +2215,8 @@ impl<'a> ZshParser<'a> {
             _ => return None,
         };
 
-        let fd = if self.lexer.tokfd >= 0 {
-            self.lexer.tokfd
+        let fd = if self.lexer.tokfd() >= 0 {
+            self.lexer.tokfd()
         } else if matches!(
             rtype,
             REDIR_READ
