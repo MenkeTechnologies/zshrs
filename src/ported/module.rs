@@ -40,6 +40,16 @@ pub static MATHFUNCS: Lazy<Mutex<Vec<zh_mathfunc>>> =                       // c
 pub static HOOKTAB: Lazy<Mutex<HashMap<String, Vec<String>>>> =              // c:843
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Port of `mod_export ModuleTable modulestab` from
+/// `Src/Modules/zmodload.c:32`. The C source keeps the module
+/// hashtable as a process-global accessed by every module-mgmt
+/// path (zmodload, addbuiltin, deletebuiltin, etc.). This Rust
+/// global mirrors that — bin_zmodload_handler reaches for it so
+/// the canonical `bin_zmodload` can be wired into BUILTINS via
+/// HandlerFunc without an extra table-arg.
+pub static MODULESTAB: Lazy<Mutex<ModuleTable>> =                            // c:zmodload.c:32
+    Lazy::new(|| Mutex::new(ModuleTable::new()));
+
 /// Port of `void addhookfunc(const char *name, Hookfn fn)` —
 /// the global-scope wrapper used by modules and ZLE boot/cleanup
 /// paths to install hook callbacks without holding a ModuleTable.
@@ -1060,8 +1070,10 @@ pub fn autoloadscan(name: &str, optstr: &str, flags: u32, printflags: i32) { // 
 ///   -a/-b/-c/-p/-f → bin_zmodload_auto (c:2726)
 ///   default   → bin_zmodload_load     (c:2971)
 ///   -A/-R     → bin_zmodload_alias    (c:2515)
-pub fn bin_zmodload(table: &mut ModuleTable, nam: &str, args: &[String],     // c:2440
+pub fn bin_zmodload(nam: &str, args: &[String],                              // c:2440
                     ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    let mut table = MODULESTAB.lock().unwrap();
+    let table = &mut *table;
     use crate::ported::zsh_h::OPT_ISSET;
     use crate::ported::utils::zwarnnam;
 

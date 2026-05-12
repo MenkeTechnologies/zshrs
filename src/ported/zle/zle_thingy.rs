@@ -636,7 +636,8 @@ pub fn deletezlefunction(w: &Arc<Widget>) {                                  // 
 /// `zle` builtin dispatcher — selects per-flag handler from opns[]
 /// table (-l/-D/-A/-N/-C/-R/-M/-U/-K/-I/-f/-F/-T) or falls through
 /// to bin_zle_call when no flag is set.
-pub fn bin_zle(args: &[String]) -> i32 {                                     // c:342
+pub fn bin_zle(_nam: &str, args: &[String],                                  // c:342
+               _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     // c:343-389 — table-driven dispatch on `-l/-D/-A/-N/-C/-R/-M/-U/
     // -K/-I/-f/-F/-T` Options flags; falls through to bin_zle_call
     // when no flag is set. Without an Options-equivalent here we

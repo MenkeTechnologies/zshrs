@@ -668,7 +668,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ZMODLOAD, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_zmodload(&args));
+        let status = dispatch_builtin("zmodload", args);
         Value::Status(status)
     });
 
@@ -680,7 +680,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ZLE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_zle(&args));
+        let status = dispatch_builtin("zle", args);
         Value::Status(status)
     });
 
@@ -2339,7 +2339,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             && !idx.starts_with("(K)")
             && !idx.starts_with("(k)")
         {
-            idx = with_executor(|exec| exec.singsub(&idx));
+            idx = crate::ported::subst::singsub(&idx);
         }
         // `${pipestatus[N]}` / `${PIPESTATUS[N]}` — pipeline exit
         // status array. Populated by BUILTIN_PIPELINE_EXEC after a
@@ -3438,7 +3438,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if print_escapes && !sep.is_empty() {
                         sep = print_escape_str(&sep);
                         if sep.contains('$') || sep.contains('`') {
-                            sep = with_executor(|exec| exec.singsub(&sep));
+                            sep = crate::ported::subst::singsub(&sep);
                         }
                     }
                     if c == 'j' {
@@ -4416,7 +4416,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // `\$var` (literal `$var` in the value) becomes
                     // the value of $var, `\$(cmd)` runs the cmd, etc.
                     let eval_one =
-                        |s: &str| -> String { with_executor(|exec| exec.singsub(s)) };
+                        |s: &str| -> String { crate::ported::subst::singsub(s) };
                     state = match state {
                         St::S(s) => St::S(eval_one(&s)),
                         St::A(a) => St::A(a.into_iter().map(|s| eval_one(&s)).collect()),
@@ -5917,7 +5917,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `${(@)region_highlight:#$_LAST_HIGHLIGHT}` and similar idioms
         // rely on the pattern being expanded first.
         let pattern = if pattern_raw.contains('$') || pattern_raw.contains('`') {
-            with_executor(|exec| exec.singsub(&pattern_raw))
+            crate::ported::subst::singsub(&pattern_raw)
         } else {
             pattern_raw
         };
@@ -6770,7 +6770,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // The default/alt operand may contain `$var` / `$(cmd)` /
         // `$((expr))` — zsh expands these before substitution. Apply
         // expand_string lazily (only when we'll actually use rhs).
-        let expand_rhs = |s: &str| -> String { with_executor(|exec| exec.singsub(s)) };
+        let expand_rhs = |s: &str| -> String { crate::ported::subst::singsub(s) };
         match op {
             0 | 4 => {
                 // `:-` / `-` use default if missing
@@ -7057,7 +7057,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         };
         // Pattern may contain `$var` / `$(cmd)` / `$((expr))` — zsh
         // expands these before applying the strip. Was emitted as-is.
-        let pattern = with_executor(|exec| exec.singsub(&pattern_raw));
+        let pattern = crate::ported::subst::singsub(&pattern_raw);
         // Delegate to the shared `strip_match_op` helper (also used
         // by the flag-aware `expand_braced_variable` path so M-flag
         // inversion works consistently). The compile-time fast path
@@ -7342,7 +7342,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if mode == 5 {
                     exec.in_scalar_assign += 1;
                 }
-                let out = exec.singsub(&prepped);
+                let out = crate::ported::subst::singsub(&prepped);
                 if mode == 5 {
                     exec.in_scalar_assign -= 1;
                 }
@@ -7401,7 +7401,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // but NOT glob or brace. Heredoc lines like `[42]` must
                 // pass through verbatim — running them through the
                 // default pipeline triggers NOMATCH on the literal.
-                fusevm::Value::str(exec.singsub(&text))
+                fusevm::Value::str(crate::ported::subst::singsub(&text))
             }
             _ => {
                 // Default: full expansion pipeline.
@@ -7434,7 +7434,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         prepped.push(c);
                     }
                 }
-                let expanded = exec.singsub(&prepped);
+                let expanded = crate::ported::subst::singsub(&prepped);
                 let brace_expanded = vec![expanded.to_string()];
                 // zsh stores the option as `glob` (default ON);
                 // `setopt noglob` writes `glob=false`. Honor either
@@ -7683,7 +7683,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // and even when it compiles, it matches against tokenized
         // text rather than the user's literal pattern. Direct port
         // of bin_test's `untokenize(pattern)` call before patcompile.
-        let pattern = with_executor(|exec| exec.singsub(&pattern_raw));
+        let pattern = crate::ported::subst::singsub(&pattern_raw);
         let pattern = crate::lex::untokenize(&pattern);
         // Replacement: full singsub with skip_filesub so a literal
         // leading `~` in the replacement reaches the output as-is
@@ -8025,7 +8025,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 exec.set_scalar("MEND".to_string(), m0.end().to_string());
                             }
                         });
-                        with_executor(|exec| exec.singsub(&repl_raw))
+                        crate::ported::subst::singsub(&repl_raw)
                     } else {
                         repl.clone()
                     }
