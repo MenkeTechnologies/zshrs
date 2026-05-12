@@ -240,7 +240,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let status = with_executor(|exec| {
             // Sync executor.last_status to the VM's view BEFORE
             // bin_break("return") reads it for the no-arg fallback.
-            exec.last_status = live_status;
+            exec.set_last_status(live_status);
             exec.bin_break("return", &args)
         });
         Value::Status(status)
@@ -358,8 +358,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     vm.register_builtin(BUILTIN_EVAL, |vm, argc| {
+        // Direct port of `bin_eval` body from Src/builtin.c:6151:
+        //   `if (!*argv) return 0;`
+        //   `prog = parse_string(zjoin(argv, ' ', 1), 1);`
+        //   `execode(prog, 1, 0, "eval");`
+        // The execode invocation lives here (not in the canonical
+        // free-fn) because it must run through the bytecode VM's
+        // current executor — the same VM that's mid-dispatch.
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_eval(&args));
+        if args.is_empty() {
+            return Value::Status(0);                                         // c:6160
+        }
+        let src = args.join(" ");                                            // c:6166
+        let status = with_executor(|exec| {                                  // c:6175 execode
+            exec.execute_script(&src).unwrap_or(1)
+        });
         Value::Status(status)
     });
 
@@ -2813,7 +2826,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // exit status the way `subst_state_commit_to_executor`
             // used to.
             if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-                exec.last_status = 1;
+                exec.set_last_status(1);
             }
             nodes
         });
@@ -5248,7 +5261,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // word semantics matches: each pos-param becomes its own arg.
         // Same for arrays accessed by name (e.g. `$arr` in some contexts).
         let sync_status = |exec: &mut ShellExecutor| {
-            exec.last_status = live_status;
+            exec.set_last_status(live_status);
         };
         if name == "@" || name == "*" {
             return with_executor(|exec| {
@@ -6478,7 +6491,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // every simple command, so it's the natural sync point.
         let live = vm.last_status;
         with_executor(|exec| {
-            exec.last_status = live;
+            exec.set_last_status(live);
         });
         // C zsh emits xtrace for `(( … ))` / `[[ … ]]` / `case` via
         // a `printprompt4(); fprintf(xtrerr, "%s\n", expr)` at
@@ -6525,7 +6538,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let prefix = vm.pop().to_str();
         let live = vm.last_status;
         with_executor(|exec| {
-            exec.last_status = live;
+            exec.set_last_status(live);
         });
         let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
         if on {
@@ -6651,9 +6664,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // (clear last_status during the run).
             with_executor(|exec| {
                 let saved = exec.last_status;
-                exec.last_status = 0;
+                exec.set_last_status(0);
                 let _ = exec.execute_script(&body);
-                exec.last_status = saved;
+                exec.set_last_status(saved);
             });
         }
         let should_exit = with_executor(|exec| {
@@ -7277,7 +7290,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // backtick path above.
         let live_status = vm.last_status;
         let result = with_executor(|exec| {
-            exec.last_status = live_status;
+            exec.set_last_status(live_status);
             exec.run_command_substitution(&cmd)
         });
         // Mirror run_command_substitution's exec.last_status side
@@ -7386,7 +7399,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // Apply the live VM status before running the inner
                 // shell so the inherited $? matches zsh's lastval
                 // propagation.
-                exec.last_status = live_status;
+                exec.set_last_status(live_status);
                 let captured = exec.run_command_substitution(inner);
                 let trimmed = captured.trim_end_matches('\n');
                 if exec.in_dq_context > 0 {
@@ -7718,7 +7731,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let r = crate::ported::subst::singsub(&repl_raw);
             crate::ported::subst::SKIP_FILESUB.with(|c| c.set(saved));
             if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-                exec.last_status = 1;
+                exec.set_last_status(1);
             }
             r
         });
@@ -8300,7 +8313,7 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
         let f = exec.current_command_glob_failed.get();
         if f {
             exec.current_command_glob_failed.set(false);
-            exec.last_status = 1;
+            exec.set_last_status(1);
         }
         f
     });
@@ -9450,7 +9463,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // swallowed — zsh's trap dispatch tolerates body
             // failures.
             let _ = with_executor(|exec| {
-                exec.last_status = status;
+                exec.set_last_status(status);
                 exec.execute_script_zsh_pipeline(&action)
             });
         }

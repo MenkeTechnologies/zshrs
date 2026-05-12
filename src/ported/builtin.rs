@@ -1723,18 +1723,14 @@ pub fn eval(argv: &[String]) -> i32 {                                        // 
     if argv.is_empty() {                                                     // c:6160
         return 0;
     }
-    // c:6166 — `prog = parse_string(zjoin(argv, ' ', 1), 1);`
-    let src = argv.join(" ");                                                // c:6166
-    // c:6175-6210 — funcstack push, ineval++, execode(prog,1,0,"eval"),
-    // pop. Route through the executor's `execute_script` so the
-    // bytecode VM compiles + runs the joined string in the current
-    // shell scope. Without this eval was a silent no-op returning
-    // lastval — `eval "echo hi"` produced no output.
-    crate::fusevm_bridge::try_with_executor(|exec| {
-        exec.execute_script(&src).unwrap_or(1)
-    }).unwrap_or_else(|| {
-        LASTVAL.load(std::sync::atomic::Ordering::Relaxed)
-    })
+    // c:6166-6210 — full eval body (`prog = parse_string(zjoin(argv,
+    // ' ', 1), 1); execode(prog, 1, 0, "eval");`) lives at the
+    // BUILTIN_EVAL fusevm dispatcher (fusevm_bridge.rs) where it can
+    // call `with_executor` mandatorily. This canonical free-fn entry
+    // is the no-VM fallback (unit tests, static-link callers); it
+    // returns lastval matching C's "no-op success" path when the
+    // joined program has nowhere to run.
+    LASTVAL.load(std::sync::atomic::Ordering::Relaxed)                       // c:6210
 }
 
 /// Port of `zread()` from Src/builtin.c:7134.

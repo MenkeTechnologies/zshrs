@@ -629,6 +629,17 @@ impl ShellExecutor {
         self.variables.insert(name, value);
     }
 
+    /// Set the most-recent-command exit status. Writes through to the
+    /// canonical `builtin::LASTVAL` AtomicI32 (`Src/builtin.c:6443`).
+    /// Use this instead of `self.last_status = X` so the global stays
+    /// current for prompt expansion (`%?`, `%(?…)`), `$?` reads via
+    /// `lookup_special_var`, ZERR trap firing, errexit, etc.
+    pub(crate) fn set_last_status(&mut self, status: i32) {
+        self.last_status = status;
+        crate::ported::builtin::LASTVAL
+            .store(status, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Set an indexed array parameter. Mirrors to paramtab via
     /// `setaparam` (`Src/params.c:3595`).
     pub(crate) fn set_array(&mut self, name: String, value: Vec<String>) {
@@ -709,7 +720,7 @@ impl ShellExecutor {
         let _ctx = crate::fusevm_bridge::ExecutorContext::enter(self);
         let r = crate::ported::subst::singsub(s);
         if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            self.last_status = 1;
+            self.set_last_status(1);
         }
         r
     }
@@ -1130,7 +1141,7 @@ impl ShellExecutor {
                     let _ctx = ExecutorContext::enter(self);
                     match vm.run() {
                         fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
-                            self.last_status = vm.last_status;
+                            self.set_last_status(vm.last_status);
                         }
                         fusevm::VMResult::Error(e) => {
                             return Err(format!("VM error: {}", e));
@@ -1178,7 +1189,7 @@ impl ShellExecutor {
             let _ctx = ExecutorContext::enter(self);
             match vm.run() {
                 fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
-                    self.last_status = vm.last_status;
+                    self.set_last_status(vm.last_status);
                 }
                 fusevm::VMResult::Error(e) => {
                     return Err(format!("VM error: {}", e));
@@ -1222,7 +1233,7 @@ impl ShellExecutor {
             let _ctx = ExecutorContext::enter(self);
             match vm.run() {
                 fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
-                    self.last_status = vm.last_status;
+                    self.set_last_status(vm.last_status);
                 }
                 fusevm::VMResult::Error(e) => return Err(format!("VM error: {}", e)),
             }
@@ -1403,10 +1414,10 @@ impl ShellExecutor {
 
         // Honor explicit `return N` from inside the function body.
         if let Some(ret) = self.returning.take() {
-            self.last_status = ret;
+            self.set_last_status(ret);
             Some(ret)
         } else {
-            self.last_status = status;
+            self.set_last_status(status);
             Some(status)
         }
     }
@@ -1808,9 +1819,9 @@ impl ShellExecutor {
         // Without this branch, a prior command's non-zero status
         // leaked through the empty cmd-subst.
         if let Some(status) = cmd_status {
-            self.last_status = status;
+            self.set_last_status(status);
         } else {
-            self.last_status = 0;
+            self.set_last_status(0);
         }
 
         // Flush any buffered Rust-side stdout so it reaches the pipe
