@@ -588,25 +588,9 @@ pub enum CaseTerminator {
     Continue,
 }
 
-/// Parse errors
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParseError {
-    pub message: String,
-    pub line: u64,
-}
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "parse error at line {}: {}", self.line, self.message)
-    }
-}
-
-impl std::error::Error for ParseError {}
-
 /// The Zsh Parser
 pub struct ZshParser<'a> {
     lexer: ZshLexer<'a>,
-    errors: Vec<ParseError>,
     /// Global iteration counter to prevent infinite loops
     global_iterations: usize,
     /// Recursion depth counter to prevent stack overflow
@@ -773,7 +757,6 @@ impl<'a> ZshParser<'a> {
     pub fn new(input: &'a str) -> Self {
         ZshParser {
             lexer: ZshLexer::new(input),
-            errors: Vec::new(),
             global_iterations: 0,
             recursion_depth: 0,
         }
@@ -824,10 +807,11 @@ impl<'a> ZshParser<'a> {
         self.global_iterations = ps.global_iterations;
 
         // parse.c:354 — `errflag &= ~ERRFLAG_ERROR;` — clear the
-        // error flag so the outer parse sees a clean state. zshrs
-        // tracks errors per-parser; clearing means dropping any
-        // partial errors collected during the nested parse.
-        self.errors.clear();
+        // error flag so the outer parse sees a clean state.
+        crate::ported::utils::errflag.fetch_and(
+            !crate::ported::utils::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     /// Initialize parser status. Direct port of zsh/Src/parse.c:489-503
@@ -1205,23 +1189,21 @@ impl<'a> ZshParser<'a> {
         // zshrs no-op.
     }
 
-    /// Parse the complete input
-    pub fn parse(&mut self) -> Result<ZshProgram, Vec<ParseError>> {
+    /// Parse the complete input. Direct port of `parse_event` /
+    /// `parse_list` from `Src/parse.c:614-720`. On syntax error,
+    /// sets `errflag |= ERRFLAG_ERROR` (via `zerr`) and returns the
+    /// partial program — callers check `errflag` to detect failure,
+    /// matching C's `Eprog parse_event(...)` + `if (errflag) {...}`.
+    pub fn parse(&mut self) -> ZshProgram {
         self.lexer.zshlex();
 
         let mut program = self.parse_program_until(None);
 
-        if !self.errors.is_empty() {
-            return Err(std::mem::take(&mut self.errors));
-        }
         // Surface lexer-level errors (unmatched quote/heredoc/etc.)
         // that the parser silently rolls past. zsh aborts with a
-        // diagnostic in this case; mirror it.
+        // diagnostic via `zerr` which sets `errflag |= ERRFLAG_ERROR`.
         if let Some(msg) = self.lexer.error.clone() {
-            return Err(vec![ParseError {
-                message: msg,
-                line: 1,
-            }]);
+            crate::ported::utils::zerr(&msg);
         }
 
         // Post-pass: wire heredoc bodies (collected by lexer.process_heredocs)
@@ -1240,7 +1222,7 @@ impl<'a> ZshParser<'a> {
             fill_heredoc_bodies(&mut program, &bodies);
         }
 
-        Ok(program)
+        program
     }
 
     /// Parse a program (list of lists)
@@ -3269,12 +3251,12 @@ impl<'a> ZshParser<'a> {
         }
     }
 
-    /// Record an error
+    /// Record a parse error. Direct port of zsh's `zerr` invocation
+    /// from `Src/parse.c:625-633 yyerror`. Sets `errflag |=
+    /// ERRFLAG_ERROR` (when `noerrs == 0`) and emits a diagnostic on
+    /// stderr via `zwarning`.
     fn error(&mut self, msg: &str) {
-        self.errors.push(ParseError {
-            message: msg.to_string(),
-            line: self.lexer.lineno,
-        });
+        crate::ported::utils::zerr(msg);
     }
 }
 
@@ -3282,9 +3264,26 @@ impl<'a> ZshParser<'a> {
 mod tests {
     use super::*;
 
-    fn parse(input: &str) -> Result<ZshProgram, Vec<ParseError>> {
+    /// Test helper. Mirrors zsh's `errflag` save/clear/check pattern
+    /// around a parse — see `Src/init.c:loop` which clears errflag
+    /// before parse_event() and tests it after. Returns `Err` if the
+    /// parse set `ERRFLAG_ERROR`; otherwise `Ok(program)`.
+    fn parse(input: &str) -> Result<ZshProgram, String> {
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+        use std::sync::atomic::Ordering;
+        let saved = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
         let mut parser = ZshParser::new(input);
-        parser.parse()
+        let prog = parser.parse();
+        let had_err = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        // Restore prior error bits; don't carry our new error into the
+        // outer test runner.
+        errflag.store(saved, Ordering::Relaxed);
+        if had_err {
+            Err("parse error".to_string())
+        } else {
+            Ok(prog)
+        }
     }
 
     #[test]
@@ -3579,12 +3578,8 @@ esac"#;
 
                     match rx.recv_timeout(Duration::from_secs(2)) {
                         Ok(Ok(_)) => passed += 1,
-                        Ok(Err(errors)) => {
-                            let first_err = errors
-                                .first()
-                                .map(|e| format!("line {}: {}", e.line, e.message))
-                                .unwrap_or_default();
-                            failed_files.push((file_path, first_err));
+                        Ok(Err(err)) => {
+                            failed_files.push((file_path, err));
                         }
                         Err(_) => {
                             timeout_files.push(file_path);
@@ -3674,12 +3669,8 @@ esac"#;
 
                 match rx.recv_timeout(Duration::from_secs(2)) {
                     Ok(Ok(_)) => passed += 1,
-                    Ok(Err(errors)) => {
-                        let first_err = errors
-                            .first()
-                            .map(|e| format!("line {}: {}", e.line, e.message))
-                            .unwrap_or_default();
-                        failed_files.push((file_path, first_err));
+                    Ok(Err(err)) => {
+                        failed_files.push((file_path, err));
                     }
                     Err(_) => {
                         timeout_files.push(file_path);

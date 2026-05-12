@@ -473,8 +473,15 @@ mod tests {
     use crate::parse::ZshParser;
 
     fn parse_to_sexp(src: &str) -> String {
+        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+        use std::sync::atomic::Ordering;
+        let saved = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
         let mut p = ZshParser::new(src);
-        let prog = p.parse().expect("parse failed");
+        let prog = p.parse();
+        let had_err = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        errflag.store(saved, Ordering::Relaxed);
+        assert!(!had_err, "parse failed");
         ast_to_sexp(&prog)
     }
 
