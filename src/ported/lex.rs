@@ -151,58 +151,85 @@ pub use super::zsh_h::{
     LEXFLAGS_NEWLINE, LEXFLAGS_ZLE,
 };
 
-/// Buffer state for building tokens
-#[derive(Debug, Clone)]
-struct LexBuf {
-    data: String,
-    siz: usize,
-}
+// `struct LexBuf` (fake Rust-only paraphrase) DELETED. The canonical
+// port of `struct lexbufstate` (zsh.h:3069-3079) lives at
+// `crate::ported::zsh_h::lexbufstate` with fields `{ptr: Option<String>,
+// siz: i32, len: i32}` — same shape as C. ZshLexer now uses the
+// canonical type directly. The convenience methods below are Rust-only
+// helpers wrapping the flat operations C inlines at lex.c:451+ (`add`,
+// etc.) — they're carried here as helpers rather than re-inlining
+// ~50 lines of ptr/len/siz arithmetic across 24 call sites.
+use crate::ported::zsh_h::lexbufstate;
 
-impl LexBuf {
-    fn new() -> Self {
-        LexBuf {
-            data: String::with_capacity(256),
+// WARNING: NOT IN LEX.C — Rust-only convenience over C's flat lexbuf
+// operations at lex.c:451+ (`add`, plus inline `*lexbuf.ptr = '\0'`
+// terminator-writes, `lexbuf.len > oldlen` truncation loops, etc.).
+// C operates on the file-static `lexbuf` global directly with raw
+// ptr arithmetic; these methods package the equivalent ops on the
+// owned-String buffer that zshrs's `lexbufstate.ptr: Option<String>`
+// carries. Each method's body cites the C source location it mirrors.
+impl lexbufstate {
+    /// New lex buffer with the C-source initial alloc (lex.c:210
+    /// `static struct lexbufstate lexbuf = { NULL, 256, 0 };`). ptr
+    /// is initialized Some("") so subsequent operations can unwrap
+    /// without a None check.
+    pub(crate) fn new() -> Self {
+        Self {
+            ptr: Some(String::with_capacity(256)),
             siz: 256,
+            len: 0,
         }
     }
 
-    fn clear(&mut self) {
-        self.data.clear();
-    }
-
-    fn add(&mut self, c: char) {
-        self.data.push(c);
-        if self.data.len() >= self.siz {
-            self.siz *= 2;
-            self.data.reserve(self.siz - self.data.len());
+    /// Mirrors C `add(int c)` at lex.c:451: push char, bump len,
+    /// double siz on overflow. Skips the C `hrealloc` since Rust's
+    /// String already manages capacity, but matches the doubling
+    /// policy for parity with how downstream code observes `siz`.
+    pub(crate) fn add(&mut self, c: char) {
+        if let Some(p) = self.ptr.as_mut() {
+            p.push(c);
+            self.len = p.len() as i32;
+            if self.len >= self.siz {
+                self.siz *= 2;
+                let want = self.siz as usize;
+                let have = p.capacity();
+                if want > have {
+                    p.reserve(want - have);
+                }
+            }
         }
     }
 
-    #[allow(dead_code)]
-    fn add_str(&mut self, s: &str) {
-        self.data.push_str(s);
+    /// Reset buffer — clears ptr contents, zeros len, leaves siz.
+    /// Mirrors lex.c:235 `tokstr = zshlextext = lexbuf.ptr = NULL;
+    /// lexbuf.siz = 256;` partially (siz reset happens at the
+    /// call site).
+    pub(crate) fn clear(&mut self) {
+        if let Some(p) = self.ptr.as_mut() {
+            p.clear();
+        }
+        self.len = 0;
     }
 
-    fn len(&self) -> usize {
-        self.data.len()
+    /// View buffer as &str. Empty if ptr is None.
+    pub(crate) fn as_str(&self) -> &str {
+        self.ptr.as_deref().unwrap_or("")
     }
 
-    fn as_str(&self) -> &str {
-        &self.data
+    /// Length in chars (NOT bytes). Reads len field which `add()`
+    /// keeps in sync; mirrors C `lexbuf.len`.
+    pub(crate) fn buf_len(&self) -> usize {
+        self.len as usize
     }
 
-    #[allow(dead_code)]
-    fn into_string(self) -> String {
-        self.data
-    }
-
-    #[allow(dead_code)]
-    fn last_char(&self) -> Option<char> {
-        self.data.chars().last()
-    }
-
-    fn pop(&mut self) -> Option<char> {
-        self.data.pop()
+    /// Pop the last char. Mirrors C lex.c:524-526 hungetc-driven
+    /// shrink: `lexbuf.len--; *--lexbuf.ptr = ...`.
+    pub(crate) fn pop(&mut self) -> Option<char> {
+        let c = self.ptr.as_mut().and_then(|p| p.pop());
+        if c.is_some() {
+            self.len -= 1;
+        }
+        c
     }
 }
 
@@ -277,7 +304,7 @@ pub struct ZshLexer<'a> {
     /// Expecting heredoc terminator (0 = no, 1 = <<, 2 = <<-)
     heredoc_pending: u8,
     /// Token buffer
-    lexbuf: LexBuf,
+    lexbuf: lexbufstate,
     /// After newline
     pub isnewlin: i32,
     /// Error message if any
@@ -296,7 +323,7 @@ pub struct ZshLexer<'a> {
     /// `tokstr_raw` / lex.c:166 `lexbuf_raw`. Combined into one
     /// `LexBuf` here since Rust's String tracks both the data and
     /// length internally.
-    lexbuf_raw: LexBuf,
+    lexbuf_raw: lexbufstate,
 }
 
 const MAX_LEXER_RECURSION: usize = 200;
@@ -333,13 +360,13 @@ impl<'a> ZshLexer<'a> {
             isfirstch: true,
             heredocs: Vec::new(),
             heredoc_pending: 0,
-            lexbuf: LexBuf::new(),
+            lexbuf: lexbufstate::new(),
             isnewlin: 0,
             error: None,
             global_iterations: 0,
             recursion_depth: 0,
             lex_add_raw: 0,
-            lexbuf_raw: LexBuf::new(),
+            lexbuf_raw: lexbufstate::new(),
         }
     }
 
@@ -612,7 +639,7 @@ impl<'a> ZshLexer<'a> {
             return 0;
         }
         // lex.c:2057 — `return lexbuf_raw.len + offset;`
-        (self.lexbuf_raw.len() as i64) + offset
+        (self.lexbuf_raw.buf_len() as i64) + offset
     }
 
     /// Restore raw-buffer offset to a previously-saved mark. Direct
@@ -626,16 +653,22 @@ impl<'a> ZshLexer<'a> {
             return;
         }
         // lex.c:2066-2067 — `lexbuf_raw.ptr = tokstr_raw + mark;
-        // lexbuf_raw.len = mark;` — Rust truncate handles both.
+        // lexbuf_raw.len = mark;` — String::truncate handles both.
         let m = mark.max(0) as usize;
-        self.lexbuf_raw.data.truncate(m);
+        if let Some(p) = self.lexbuf_raw.ptr.as_mut() {
+            p.truncate(m);
+        }
+        self.lexbuf_raw.len = m as i32;
     }
 
     /// Take the captured raw-input buffer, clearing it. Useful for
     /// callers that need the literal command-sub body after lexing
     /// (e.g. compile-time string capture for `$(...)`).
     pub fn take_raw_buf(&mut self) -> String {
-        std::mem::take(&mut self.lexbuf_raw.data)
+        let out = self.lexbuf_raw.ptr.take().unwrap_or_default();
+        self.lexbuf_raw.ptr = Some(String::with_capacity(256));
+        self.lexbuf_raw.len = 0;
+        out
     }
 
     /// zsh/Src/lex.c:215-239 `lex_context_save`. After save, the lexer
@@ -652,8 +685,9 @@ impl<'a> ZshLexer<'a> {
         ls.lexflags = self.lexflags;
         ls.tok = self.tok;
         ls.tokstr = self.tokstr.take();
-        ls.lexbuf.ptr = Some(std::mem::take(&mut self.lexbuf.data));
-        ls.lexbuf.siz = self.lexbuf.siz as i32;
+        ls.lexbuf.ptr = self.lexbuf.ptr.take();
+        ls.lexbuf.siz = self.lexbuf.siz;
+        ls.lexbuf.len = self.lexbuf.len;
         ls.lexstop = self.lexstop as i32;
         ls.toklineno = self.toklineno as i64;
         // zshlextext / lex_add_raw / tokstr_raw / lexbuf_raw — these
@@ -666,8 +700,9 @@ impl<'a> ZshLexer<'a> {
         // parse starts from a clean slate. tokstr/lexbuf are zeroed,
         // lexbuf.siz reset to 256 (the C-source initial alloc).
         self.tokstr = None;
-        self.lexbuf.data.clear();
+        self.lexbuf.ptr = Some(String::with_capacity(256));
         self.lexbuf.siz = 256;
+        self.lexbuf.len = 0;
     }
 
     /// zsh/Src/lex.c:244-262 `lex_context_restore`. Inverse of
@@ -680,8 +715,9 @@ impl<'a> ZshLexer<'a> {
         self.lexflags = ls.lexflags;
         self.tok = ls.tok;
         self.tokstr = ls.tokstr.take();
-        self.lexbuf.data = ls.lexbuf.ptr.take().unwrap_or_default();
-        self.lexbuf.siz = ls.lexbuf.siz as usize;
+        self.lexbuf.ptr = Some(ls.lexbuf.ptr.take().unwrap_or_default());
+        self.lexbuf.siz = ls.lexbuf.siz;
+        self.lexbuf.len = ls.lexbuf.len;
         self.lexstop = ls.lexstop != 0;
         self.toklineno = ls.toklineno as u64;
     }
@@ -2572,7 +2608,7 @@ impl<'a> ZshLexer<'a> {
     /// paren of `(( ))`), it's math. Otherwise rewinds and treats as
     /// a command substitution.
     fn cmd_or_math(&mut self) -> i32 {
-        let oldlen = self.lexbuf.len();
+        let oldlen = self.lexbuf.buf_len();
 
         // Per lex.c:498-518 — `cmd_or_math` calls `dquote_parse(')')`
         // which fills lexbuf with ONLY the inner expression, then checks
@@ -2582,7 +2618,7 @@ impl<'a> ZshLexer<'a> {
         // Removed to match C exactly.
         if self.dquote_parse(')', false).is_err() {
             // Back up and try as command
-            while self.lexbuf.len() > oldlen {
+            while self.lexbuf.buf_len() > oldlen {
                 if let Some(c) = self.lexbuf.pop() {
                     self.hungetc(c);
                 }
@@ -2610,7 +2646,7 @@ impl<'a> ZshLexer<'a> {
         self.lexstop = false;
 
         // Back up token
-        while self.lexbuf.len() > oldlen {
+        while self.lexbuf.buf_len() > oldlen {
             if let Some(c) = self.lexbuf.pop() {
                 self.hungetc(c);
             }
@@ -2663,7 +2699,7 @@ impl<'a> ZshLexer<'a> {
             // Not a line continuation, process normally
             if c == Some('(') {
                 // Might be $((...))
-                let lexpos = self.lexbuf.len();
+                let lexpos = self.lexbuf.buf_len();
                 self.add(INPAR);
                 self.add('(');
 
@@ -2679,7 +2715,7 @@ impl<'a> ZshLexer<'a> {
                 }
 
                 // Not math, restore and parse as command
-                while self.lexbuf.len() > lexpos {
+                while self.lexbuf.buf_len() > lexpos {
                     if let Some(ch) = self.lexbuf.pop() {
                         self.hungetc(ch);
                     }
