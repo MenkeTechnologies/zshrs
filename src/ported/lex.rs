@@ -38,6 +38,7 @@ use crate::ztype_h::itok;
 /// Char-level helper: map a single tokenised char back to its source
 /// character (or None if the token has no plain equivalent — Snull/Dnull/
 /// Bnull/etc.). Distinct from the string-level `untokenize(&str)` below.
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn untokenize_char(c: char) -> Option<char> {
     match c {
         POUND => Some('#'),
@@ -342,141 +343,184 @@ thread_local! {
 const MAX_LEXER_RECURSION: usize = 200;
 
 // ─── Accessor fns for the LEX_* thread_locals (Src/lex.c file-statics) ───
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn error() -> Option<String> {
     LEX_ERROR.with_borrow(|e| e.clone())
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_error(v: Option<String>) {
     LEX_ERROR.with_borrow_mut(|e| *e = v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn toklineno() -> u64 {
     LEX_TOKLINENO.get()
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_toklineno(v: u64) {
     LEX_TOKLINENO.set(v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn tokfd() -> i32 {
     LEX_TOKFD.get()
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_tokfd(v: i32) {
     LEX_TOKFD.set(v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn isnewlin() -> i32 {
     LEX_ISNEWLIN.get()
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_isnewlin(v: i32) {
     LEX_ISNEWLIN.set(v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn inrepeat() -> i32 {
     LEX_INREPEAT.get()
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_inrepeat(v: i32) {
     LEX_INREPEAT.set(v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn infor() -> i32 {
     LEX_INFOR.get()
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_infor(v: i32) {
     LEX_INFOR.set(v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn inredir() -> bool {
     LEX_INREDIR.get()
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_inredir(v: bool) {
     LEX_INREDIR.set(v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn intypeset() -> bool {
     LEX_INTYPESET.get()
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_intypeset(v: bool) {
     LEX_INTYPESET.set(v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn lineno() -> u64 {
     LEX_LINENO.get()
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_lineno(v: u64) {
     LEX_LINENO.set(v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn incmdpos() -> bool {
     LEX_INCMDPOS.get()
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_incmdpos(v: bool) {
     LEX_INCMDPOS.set(v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn incond() -> i32 {
     LEX_INCOND.get()
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_incond(v: i32) {
     LEX_INCOND.set(v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn incasepat() -> i32 {
     LEX_INCASEPAT.get()
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_incasepat(v: i32) {
     LEX_INCASEPAT.set(v);
 }
 /// Pending-heredocs accessors. The Vec lives in LEX_HEREDOCS;
 /// these helpers package the common operations so callers don't
 /// touch the thread_local directly.
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn heredocs_take() -> Vec<HereDoc> {
     LEX_HEREDOCS.with_borrow_mut(|v| std::mem::take(v))
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn heredocs_set(v: Vec<HereDoc>) {
     LEX_HEREDOCS.with_borrow_mut(|c| *c = v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn heredocs_clear() {
     LEX_HEREDOCS.with_borrow_mut(|v| v.clear());
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn heredocs_is_empty() -> bool {
     LEX_HEREDOCS.with_borrow(|v| v.is_empty())
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn heredocs_len() -> usize {
     LEX_HEREDOCS.with_borrow(|v| v.len())
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn heredocs_clone() -> Vec<HereDoc> {
     LEX_HEREDOCS.with_borrow(|v| v.clone())
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn heredocs_push(h: HereDoc) {
     LEX_HEREDOCS.with_borrow_mut(|v| v.push(h));
 }
 /// `char *tokstr` accessors — direct port of lex.c:170 file-static.
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn tokstr() -> Option<String> {
     LEX_TOKSTR.with_borrow(|t| t.clone())
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_tokstr(v: Option<String>) {
     LEX_TOKSTR.with_borrow_mut(|t| *t = v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn tokstr_take() -> Option<String> {
     LEX_TOKSTR.with_borrow_mut(|t| t.take())
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn tokstr_is_some() -> bool {
     LEX_TOKSTR.with_borrow(|t| t.is_some())
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn tokstr_is_none() -> bool {
     LEX_TOKSTR.with_borrow(|t| t.is_none())
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn tokstr_eq(s: &str) -> bool {
     LEX_TOKSTR.with_borrow(|t| t.as_deref() == Some(s))
 }
 /// `enum lextok tok` accessors — direct port of lex.c:180 file-static.
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn tok() -> lextok {
     LEX_TOK.get()
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_tok(v: lextok) {
     LEX_TOK.set(v);
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn pos() -> usize {
     LEX_POS.get()
 }
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn set_pos(v: usize) {
     LEX_POS.set(v);
 }
 /// Slice the input source from `start..end` — used by parse.rs to
 /// capture function body source text. Returns None if out-of-range.
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn input_slice(start: usize, end: usize) -> Option<String> {
     LEX_INPUT.with_borrow(|s| s.get(start..end).map(String::from))
 }
 
 /// Create a new lexer for the given input
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn lex_init(input: &str) {
     // Reset migrated thread-locals so a fresh lexer instance
     // starts from a clean slate (same as the C source's
@@ -665,6 +709,7 @@ pub fn exalias() -> bool {
 /// if the lookup matched (regular or suffix alias) AND the alias
 /// text was successfully injected back into the input stream for
 /// re-lexing.
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn check_alias(lextext: &str) -> bool {
     // lex.c:1906-1907 — guard on null lextext.
     if lextext.is_empty() {
@@ -760,6 +805,7 @@ fn check_alias(lextext: &str) -> bool {
 /// at lex.c:1928,1938,1940. zshrs uses the existing `unget_buf`
 /// (a VecDeque<char>) to inject chars in reverse order so the
 /// next hgetc consumes them first.
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn inject_alias_text(text: &str) {
     // Insert at front in reverse so the first char of `text`
     // comes out first.
@@ -819,6 +865,7 @@ pub fn zshlex_raw_back_to_mark(mark: i64) {
 /// Take the captured raw-input buffer, clearing it. Useful for
 /// callers that need the literal command-sub body after lexing
 /// (e.g. compile-time string capture for `$(...)`).
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn take_raw_buf() -> String {
     LEX_LEXBUF_RAW.with_borrow_mut(|b| {
         let out = b.ptr.take().unwrap_or_default();
@@ -904,6 +951,7 @@ pub fn lexinit() {
 
 /// Check recursion depth; returns true if exceeded
 #[inline]
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn check_recursion() -> bool {
     if LEX_RECURSION_DEPTH.get() > MAX_LEXER_RECURSION {
         LEX_ERROR.with_borrow_mut(|e| *e = Some("lexer exceeded max recursion depth".to_string()));
@@ -926,6 +974,7 @@ fn check_recursion() -> bool {
 const LEXER_HGETC_CAP: u64 = 100_000_000;
 
 #[inline]
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn check_iterations() -> bool {
     let next = LEX_GLOBAL_ITERATIONS.get() + 1;
     LEX_GLOBAL_ITERATIONS.set(next);
@@ -945,6 +994,7 @@ fn check_iterations() -> bool {
 }
 
 /// Get next character from input
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn hgetc() -> Option<char> {
     if check_iterations() {
         return None;
@@ -975,6 +1025,7 @@ fn hgetc() -> Option<char> {
 }
 
 /// Put character back into input
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn hungetc(c: char) {
     LEX_UNGET_BUF.with_borrow_mut(|b| b.push_front(c));
     if c == '\n' && LEX_LINENO.get() > 1 {
@@ -985,6 +1036,7 @@ fn hungetc(c: char) {
 
 /// Peek at next character without consuming
 #[allow(dead_code)]
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn peek() -> Option<char> {
     if let Some(c) = LEX_UNGET_BUF.with_borrow(|b| b.front().copied()) {
         return Some(c);
@@ -998,6 +1050,7 @@ fn add(c: char) {
 }
 
 /// Check if character is blank (space or tab)
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn is_blank(c: char) -> bool {
     c == ' ' || c == '\t'
 }
@@ -1006,6 +1059,7 @@ fn is_blank(c: char) -> bool {
 /// captured `N*-M*>` (everything *after* the leading `<`) when the
 /// upcoming chars match `[0-9]*-[0-9]*>` exactly. Otherwise returns
 /// None and leaves the input untouched.
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn try_numeric_range_glob() -> Option<String> {
     let mut buf: Vec<char> = Vec::new();
     // optional leading digits
@@ -1047,22 +1101,26 @@ fn try_numeric_range_glob() -> Option<String> {
 }
 
 /// Check if character is blank (including other whitespace except newline)
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn is_inblank(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\x0b' | '\x0c' | '\r')
 }
 
 /// Check if character is a digit
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn is_digit(c: char) -> bool {
     c.is_ascii_digit()
 }
 
 /// Check if character is identifier start
 #[allow(dead_code)]
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn is_ident_start(c: char) -> bool {
     c.is_ascii_alphabetic() || c == '_'
 }
 
 /// Check if character is identifier continuation
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn is_ident(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
@@ -1342,6 +1400,7 @@ pub fn zshlex() {
 /// reads lines from input until the terminator, and stuffs the body
 /// into `hdoc.content` IN PLACE. The list itself is preserved so the
 /// parser can index into it after parse() finishes.
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn process_heredocs() {
     let n = LEX_HEREDOCS.with_borrow(|v| v.len());
     for i in 0..n {
@@ -1409,6 +1468,7 @@ fn process_heredocs() {
 }
 
 /// Read a line from input (returns partial line at EOF)
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn read_line() -> Option<String> {
     let mut line = String::new();
 
@@ -1551,6 +1611,7 @@ fn gettok() -> lextok {
 }
 
 /// Lex (( ... )) arithmetic expression
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn lex_arith(c: char) -> lextok {
     LEX_LEXBUF.with_borrow_mut(|b| b.clear());
     hungetc(c);
@@ -1583,6 +1644,7 @@ fn lex_arith(c: char) -> lextok {
 }
 
 /// Handle initial character of token
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn lex_initial(c: char) -> lextok {
     // Handle comments
     if c == '#' && !LEX_NOCOMMENTS.get() {
@@ -1845,6 +1907,7 @@ fn lex_initial(c: char) -> lextok {
 }
 
 /// Lex comment
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn lex_comment() -> lextok {
     if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_KEEP != 0 {
         LEX_LEXBUF.with_borrow_mut(|b| b.clear());
@@ -1879,6 +1942,7 @@ fn lex_comment() -> lextok {
 }
 
 /// Lex < and variants
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn lex_inang() -> lextok {
     let d = hgetc();
     match d {
@@ -1924,6 +1988,7 @@ fn lex_inang() -> lextok {
 }
 
 /// Lex > and variants
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn lex_outang() -> lextok {
     let d = hgetc();
     match d {
@@ -2534,6 +2599,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
 /// must NOT be a zsh internal token byte — `$=foo` (where `$` becomes
 /// the STRING_TOK token 0x85) is parameter substitution with the `=` flag,
 /// NOT an envstring assignment.
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn is_valid_assignment_target(s: &str) -> bool {
     let mut chars = s.chars().peekable();
 
@@ -2605,6 +2671,7 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
     result
 }
 
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
     let mut pct = 0; // parenthesis count
     let mut brct = 0; // bracket count
@@ -2935,6 +3002,7 @@ fn cmd_or_math_sub() -> i32 {
 /// throw-away parse. zshrs's standalone walker tracks paren
 /// depth directly without re-entering the parser. Same
 /// invariant: stops at the matching `)`.
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn skip_command_sub() -> Result<(), ()> {
     let mut pct = 1;
     let mut start = true;
@@ -3158,6 +3226,7 @@ pub fn gotword() {
 }
 
 /// Register a heredoc to be processed at next newline
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn register_heredoc(terminator: String, strip_tabs: bool) {
     LEX_HEREDOCS.with_borrow_mut(|v| {
         v.push(HereDoc {
@@ -3177,6 +3246,7 @@ pub fn register_heredoc(terminator: String, strip_tabs: bool) {
 ///   - incmdpos is set (or text is `}` ending a brace block)
 ///   - text is `]]` and we're inside `[[ ]]` (incond > 0)
 ///   - text is bare `!` and we're at the start of a cond (incond == 1)
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn check_reserved_word() -> bool {
     let _t_tokstr = tokstr();
     if let Some(tokstr) = _t_tokstr.as_deref() {
@@ -3303,6 +3373,7 @@ pub fn parsestr(s: &str) -> Result<String, String> {
 }
 
 /// Shared body for parsestr / parsestrnoerr.
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn parsestr_inner(s: &str) -> Result<String, String> {
     let mut result = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();
@@ -3533,6 +3604,7 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
 /// Like `untokenize`, but maps SNULL → `'` and DNULL → `"` instead of
 /// stripping them. Used by callers that need the source form including
 /// quoting (e.g. arithmetic-substitution detection in compile_zsh).
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn untokenize_preserve_quotes(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 4);
     for c in s.chars() {
@@ -3592,6 +3664,7 @@ pub fn untokenize_preserve_quotes(s: &str) -> String {
 /// `(decoded, end_idx)` where `end_idx` points at the terminating
 /// `Snull`. `Bnull \\` and `Bnull '` are user-literal `\` / `'`
 /// per Src/lex.c:1303.
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
     let mut out = String::new();
     let mut i = start;
@@ -3816,6 +3889,7 @@ pub fn has_token(s: &str) -> bool {
 }
 
 /// Convert token characters to their printable form for display
+// WARNING: FAKE IMPL RUST INVENTION — not in lex.c
 pub fn tokens_to_printable(s: &str) -> String {
     untokenize(s)
 }
