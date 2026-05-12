@@ -3262,60 +3262,15 @@ pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
     None
 }
 
-// ============================================================================
-// Redirect expansion (from glob.c xpandredir)
-// ============================================================================
+// `Redirect` struct + `RedirectType` enum + `xpandredir` fn
+// DELETED. Both types were Rust-only duplicates of `parse::Redirect`
+// / `parse::RedirectOp` with no callers. The `xpandredir` impl took
+// the wrong signature anyway — C's `xpandredir(struct redir *fn,
+// LinkList redirtab)` at `Src/glob.c:2150` mutates a linked-list
+// in place and returns int; this Rust version returned `Vec<Redirect>`
+// and operated on the duplicate Redirect type. Port `xpandredir`
+// freshly against `parse::Redirect` when an actual caller appears.
 
-/// Redirect types
-#[derive(Debug, Clone)]
-pub struct Redirect {
-    pub fd: i32,
-    pub target: String,
-    pub rtype: RedirectType,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RedirectType {
-    Read,      // <
-    Write,     // >
-    Append,    // >>
-    ReadWrite, // <>
-    Clobber,   // >|
-    Here,      // <<
-    HereStr,   // <<<
-    Dup,       // >&, <&
-    Pipe,      // |
-}
-
-/// Expand redirections with glob patterns. Port of `xpandredir()`
-/// from `Src/glob.c:1690-1770`. Reads option state from the global
-/// option store (same as C).
-pub fn xpandredir(redir: &Redirect) -> Vec<Redirect> {                       // c:1690
-    // Check if target has wildcards
-    if !haswilds(&redir.target) {
-        return vec![redir.clone()];
-    }
-
-    // Glob expand the target
-    let mut state = GlobData::new();
-    let matches = globdata_glob(&mut state, &redir.target);
-
-    if matches.is_empty() {
-        return vec![redir.clone()];
-    }
-
-    // For redirections, we usually only want one match
-    if matches.len() > 1 {
-        // Ambiguous redirect - return original
-        return vec![redir.clone()];
-    }
-
-    vec![Redirect {
-        fd: redir.fd,
-        target: matches[0].clone(),
-        rtype: redir.rtype,
-    }]
-}
 
 // ============================================================================
 // Exec string for sorting (from glob.c glob_exec_string)

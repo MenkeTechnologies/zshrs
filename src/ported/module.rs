@@ -1669,7 +1669,8 @@ pub fn boot_module(_table: &mut ModuleTable, _name: &str) -> i32 {       // c:19
 /// global. Stub returns 0 (no clash) until the params global-state
 /// port wires gethashnode2(paramtab, ...) in.
 /// Port of `checkaddparam` from `Src/module.c:1026`.
-pub fn checkaddparam(_nam: &str, _opt_i: i32) -> i32 {                   // c:1026
+#[allow(unused_variables)]
+pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {                   // c:1026
     // c:1030 — if (!(pm = gethashnode2(paramtab, nam))) return 0;
     // Static-link: paramtab not yet hooked through; treat unknown.
     0
@@ -2194,7 +2195,8 @@ pub fn getmathfunc(table: &mut ModuleTable, name: &str, autol: i32) -> Option<St
 /// HP-UX-specific dlsym wrapper around `shl_findsym(3)`. Static-link
 /// path: never invoked since zshrs doesn't dlopen modules.
 /// Port of `hpux_dlsym` from `Src/module.c:1530`.
-pub fn hpux_dlsym(_handle: usize, _name: &str) -> usize {                // c:1530
+#[allow(unused_variables)]
+pub fn hpux_dlsym(handle: usize, name: &str) -> usize {                // c:1530
     0                                                                    // c:1535 NULL
 }
 
@@ -2277,7 +2279,8 @@ pub fn modname_ok(p: &str) -> i32 {                                       // c:2
 ///
 /// Static-link path: dlsym not used; returns 0 (NULL handle).
 /// Port of `module_func` from `Src/module.c:1770`.
-pub fn module_func(_m: &Module, _name: &str) -> usize {                  // c:1770
+#[allow(unused_variables)]
+pub fn module_func(m: &Module, name: &str) -> usize {                  // c:1770
     0                                                                    // c:1794 NULL
 }
 

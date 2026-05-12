@@ -7465,7 +7465,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 && (s.starts_with('^') || s.contains('~') || s.contains("/^"));
                         let has_numeric_range = s.contains('<')
                             && s.contains('>')
-                            && !crate::ported::pattern::NumericRange::extract_all(&s).is_empty();
+                            && !crate::ported::pattern::extract_numeric_ranges(&s).is_empty();
                         // Glob alternation `(a|b|c)` is a primary
                         // zsh feature — `/etc/(passwd|hostname)`
                         // should expand to file matches. Detected

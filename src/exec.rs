@@ -292,12 +292,13 @@ pub struct SubshellSnapshot {
 }
 
 /// Variable attribute record + kind enum — moved to params.rs.
-pub use crate::ported::params::{VarAttr, VarKind};
 
 
 // Pattern helpers moved to src/ported/pattern.rs.
 #[allow(unused_imports)]
-pub(crate) use crate::ported::pattern::NumericRange;
+pub(crate) use crate::ported::pattern::{
+    extract_numeric_ranges, numeric_range_contains, numeric_ranges_to_star,
+};
 
 // `impl VarAttr` moved to src/ported/params.rs.
 
@@ -5018,12 +5019,12 @@ impl crate::ported::exec::ShellExecutor {
         // Only fires when the pattern actually contains a `<…-…>` shape
         // — guard with a fast contains() before the regex.
         let numeric_ranges = if glob_pattern.contains('<') {
-            NumericRange::extract_all(&glob_pattern)
+            extract_numeric_ranges(&glob_pattern)
         } else {
             Vec::new()
         };
         let glob_pattern = if !numeric_ranges.is_empty() {
-            NumericRange::replace_all_with_star(&glob_pattern)
+            numeric_ranges_to_star(&glob_pattern)
         } else {
             glob_pattern
         };
@@ -5220,7 +5221,7 @@ impl crate::ported::exec::ShellExecutor {
         // `<` + optional digits + `-` + optional digits + `>` outside
         // any bracket expression.
         let has_numeric_range =
-            body.contains('<') && body.contains('>') && !NumericRange::extract_all(body).is_empty();
+            body.contains('<') && body.contains('>') && !extract_numeric_ranges(body).is_empty();
         has_unescaped_star
             || has_unescaped_question
             || has_bracket_class
@@ -5237,7 +5238,7 @@ impl crate::ported::exec::ShellExecutor {
     pub(crate) fn expand_glob_with_numeric_range(
         &self,
         pattern: &str,
-        ranges: &[NumericRange],
+        ranges: &[(usize, usize, Option<i64>, Option<i64>)],
         dotglob: bool,
         nocaseglob: bool,
     ) -> Vec<String> {
@@ -5370,17 +5371,10 @@ impl crate::ported::exec::ShellExecutor {
                             break;
                         }
                     };
-                    if let Some(lo) = range.lo {
-                        if val < lo {
-                            ok = false;
-                            break;
-                        }
-                    }
-                    if let Some(hi) = range.hi {
-                        if val > hi {
-                            ok = false;
-                            break;
-                        }
+                    // Tuple shape: (_start, _end, lo, hi).
+                    if !numeric_range_contains(range.2, range.3, val) {
+                        ok = false;
+                        break;
                     }
                 }
                 if !ok {
@@ -7351,3 +7345,107 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
         .unwrap_or(false)
 }
 
+
+// =============================================================================
+// Direct ports from Src/exec.c — fns whose Rust home was misplaced in
+// builtin.rs because they're called from `bin_autoload` but actually
+// defined in Src/exec.c.
+// =============================================================================
+
+/// Direct port of `Shfunc loadautofn(Shfunc shf, int ks, int test_only,
+/// int ignore_loaddir)` from `Src/exec.c:5050`. Walks `$fpath` for a
+/// file named `shf->node.nam`, reads it, installs the text body on
+/// the corresponding `shfunctab` entry, and clears `PM_UNDEFINED`.
+///
+/// C body (abridged):
+///   1. `name = shf->node.nam`
+///   2. `getfpfunc(name, &dir_path, NULL, 0)` → resolved file path
+///   3. If !test_only && file found: parse → store eprog on
+///      `shf->funcdef`; clear PM_UNDEFINED; set `shf->filename`.
+///   4. Returns shf on success, NULL on failure.
+///
+/// Rust port: returns 0 = success, 1 = failure (matches the
+/// existing call-site convention in `bin_functions -c`). Stores
+/// raw file text on `ShFunc.body` (the Rust-side ShFunc in
+/// `hashtable.rs:362`); the parser pass that converts text →
+/// Eprog runs lazily at first call site.
+/// Port of `loadautofn` from `Src/exec.c:5682`.
+pub fn loadautofn(shf: *mut crate::ported::zsh_h::shfunc,                        // c:5682 (Src/exec.c)
+              _ks: i32, test_only: i32, _ignore_loaddir: i32) -> i32 {
+    use crate::ported::zsh_h::PM_UNDEFINED;
+    if shf.is_null() {
+        return 1;
+    }
+    // c:5054 — `name = shf->node.nam`.
+    let name = unsafe { (*shf).node.nam.clone() };
+    // c:5070 — `path = getfpfunc(name, &dir_path, NULL, 0)`.
+    let mut dir_path: Option<String> = None;
+    let path = match getfpfunc(&name, &mut dir_path, None, 0) {
+        Some(p) => p,
+        None => return 1,                                                    // c:5074 not found
+    };
+    if test_only != 0 {                                                      // c:5096
+        return 0;                                                            // test passes — file exists
+    }
+    // c:5100-5140 — read the file. C uses zopen + read + parse_string +
+    // execsave; Rust port stores raw text on the ShFunc and defers
+    // parse-to-Eprog until the first call.
+    let body = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return 1,
+    };
+    // c:5142 — `shf->filename = ztrdup(dir_path)`.
+    unsafe {
+        (*shf).filename = dir_path.clone().or(Some(path.clone()));
+    }
+    // c:5148 — `shf->node.flags &= ~PM_UNDEFINED`.
+    unsafe {
+        (*shf).node.flags &= !(PM_UNDEFINED as i32);
+    }
+    // Sync the body string into the Rust-side ShFunc table so the
+    // lazy-parse path can find it later.
+    if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+        if let Some(existing) = tab.get_mut(&name) {
+            existing.body = Some(body);
+            existing.filename = dir_path;
+        } else {
+            tab.add(crate::ported::hashtable::ShFunc {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: name.clone(),
+                    flags: 0,
+                },
+                filename: dir_path,
+                lineno: 0,
+                funcdef: None,
+                redir: None,
+                sticky: None,
+                body: Some(body),
+            });
+        }
+    }
+    0
+}
+
+/// Port of `getfpfunc()` from Src/exec.c:5260. Walks `$fpath` (or the
+/// supplied `spec_path` slice) for a file named `name` and writes the
+/// resolved directory through `*dir_path_out` (matching the C `char **dir_path`).
+/// Returns `Some(file_contents_path)` on success, `None` when not found.
+pub fn getfpfunc(name: &str, dir_path_out: &mut Option<String>,                  // c:5260 (Src/exec.c)
+             spec_path: Option<&[String]>, _all_loaded: i32) -> Option<String> {
+    let dirs: Vec<String> = match spec_path {
+        Some(s) => s.to_vec(),
+        None => std::env::var("FPATH").or_else(|_| std::env::var("fpath"))
+            .ok().map(|v| v.split(':').map(String::from).collect())
+            .unwrap_or_default(),
+    };
+    for dir in &dirs {
+        if dir.is_empty() { continue; }
+        let path = format!("{}/{}", dir, name);
+        if std::path::Path::new(&path).exists() {
+            *dir_path_out = Some(dir.clone());
+            return Some(path);
+        }
+    }
+    None
+}

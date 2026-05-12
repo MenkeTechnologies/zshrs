@@ -1987,12 +1987,12 @@ pub fn removeshfuncnode(nam: &str) -> Option<ShFunc> {
 /// functions, also unsettraps the corresponding signal so the
 /// shell stops invoking the (now-disabled) trap.
 /// Port of `disableshfuncnode` from `Src/hashtable.c:855`.
-pub fn disableshfuncnode(nam: &str) {
+pub fn disableshfuncnode(hn: &str) {
     {
         let mut tab = shfunctab_lock().write().expect("shfunctab poisoned");
-        tab.disable(nam);
+        tab.disable(hn);
     }
-    if let Some(sig_part) = nam.strip_prefix("TRAP") {
+    if let Some(sig_part) = hn.strip_prefix("TRAP") {
         if let Some(sig) = crate::ported::signals::getsigidx(sig_part) {
             crate::ported::signals::unsettrap(sig);
         }
@@ -2014,12 +2014,12 @@ pub fn disableshfuncnode(nam: &str) {
 /// the signal handler with `ZSIG_FUNC` semantics so the shell
 /// dispatches the trap function on the next signal delivery.
 /// Port of `enableshfuncnode` from `Src/hashtable.c:873`.
-pub fn enableshfuncnode(nam: &str) {
+pub fn enableshfuncnode(hn: &str) {
     {
         let mut tab = shfunctab_lock().write().expect("shfunctab poisoned");
-        tab.enable(nam);
+        tab.enable(hn);
     }
-    if let Some(sig_part) = nam.strip_prefix("TRAP") {
+    if let Some(sig_part) = hn.strip_prefix("TRAP") {
         if let Some(sig) = crate::ported::signals::getsigidx(sig_part) {
             // c:882 — `settrap(sigidx, NULL, ZSIG_FUNC)`. The TRAPxxx
             // function body resolves through shfunctab at dispatch

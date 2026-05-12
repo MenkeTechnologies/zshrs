@@ -810,21 +810,21 @@ pub fn createoptiontable() {                                                 // 
 /// }
 /// ```
 /// Port of `printoptionnode` from `Src/options.c:450`.
-pub fn printoptionnode(name: &str, set: bool) {                              // c:450
-    let on = opt_state_get(name).unwrap_or(false);                           // c:454 isset(optno)
-    let default_on = default_on_options().contains(&name);                   // c:455 defset(on, emulation)
+pub fn printoptionnode(hn: &str, set: bool) {                                // c:450
+    let on = opt_state_get(hn).unwrap_or(false);                             // c:454 isset(optno)
+    let default_on = default_on_options().contains(&hn);                     // c:455 defset(on, emulation)
     let kshprint = opt_state_get("kshoptionprint").unwrap_or(false);         // c:456 isset(KSHOPTIONPRINT)
     if kshprint {                                                            // c:456
         if default_on {                                                      // c:457
-            println!("no{:<19} {}", name, if on { "off" } else { "on" });    // c:458
+            println!("no{:<19} {}", hn, if on { "off" } else { "on" });      // c:458
         } else {
-            println!("{:<21} {}", name, if on { "on" } else { "off" });      // c:460
+            println!("{:<21} {}", hn, if on { "on" } else { "off" });        // c:460
         }
     } else if set == (on ^ default_on) {                                     // c:462
         if set ^ on {                                                        // c:463
             print!("no");                                                    // c:464
         }
-        println!("{}", name);                                                // c:465
+        println!("{}", hn);                                                  // c:465
     }
 }
 

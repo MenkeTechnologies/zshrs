@@ -3389,119 +3389,17 @@ pub(crate) fn getarg<'a>(
     Some(GetargOut::Flags { flags, rest: pat })
 }
 
-// ===========================================================
-// VarAttr / VarKind moved from src/ported/exec.rs.
-// Mirrors PM_* flags in Src/zsh.h consumed by Src/params.c.
-// ===========================================================
-
-/// Variable attribute record for `(t)` flag introspection. Mirrors
-/// the type+flag bitmask zsh tracks per Param. Each instance picks
-/// exactly one base kind plus zero-or-more attribute markers.
-#[derive(Debug, Clone, Default)]
-/// Variable attributes (`typeset` flags + scope).
-/// Mirrors the `PM_*` flag set declared in Src/zsh.h that
-/// `Src/builtin.c::bin_typeset()` consults.
-pub struct VarAttr {
-    pub kind: VarKind,
-    pub readonly: bool,
-    pub export: bool,
-    pub left_pad: Option<usize>,
-    pub right_pad: Option<usize>,
-    pub zero_pad: Option<usize>,
-    pub uppercase: bool,
-    pub lowercase: bool,
-    /// `typeset -U arr` — array dedupes its elements on assignment /
-    /// append, keeping the first occurrence. zsh-only.
-    pub unique: bool,
-    /// `typeset -E` — float in scientific notation (vs `-F` for fixed).
-    /// Distinguished from VarKind::Float for `declare -p` printing
-    /// (`-E` vs `-F` flag letter).
-    pub float_exp: bool,
-    /// `typeset -i N` — display integer in base N (2-36). Stored value
-    /// is decimal; the `N#DIGITS` form is computed on read.
-    pub int_base: Option<u32>,
-    /// `typeset -h` — hidden flag (zsh PM_HIDE). zsh hides such names
-    /// from declarative listings (`set`, default `typeset`); they still
-    /// expand normally.
-    pub hidden: bool,
-    /// `typeset -H` — hide-value flag (zsh PM_HIDEVAL). Listings show
-    /// the name (so `typeset -p` is round-trippable) but suppress the
-    /// stored value.
-    pub hide_val: bool,
-    /// `typeset -t` — trace flag (zsh PM_TRACED). Mutations should log
-    /// `+ NAME=VALUE` to stderr like `set -x` for assignments.
-    pub trace: bool,
-    /// `typeset -F N` — fixed-point float precision (digits after the
-    /// decimal point). Default in zsh is 8 when -F is set without N.
-    pub float_precision: Option<usize>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-/// Variable kind (scalar/integer/float/array/hash).
-/// Mirrors the `PM_TYPE` mask the C source uses to dispatch
-/// `setstrvalue()` / `setaparam()` / etc. (Src/params.c).
-pub enum VarKind {
-    #[default]
-    Scalar,
-    Integer,
-    Float,
-    Array,
-    Association,
-}
-
-impl VarAttr {
-    /// Format the attribute as zsh's `(t)` output: a base kind
-    /// (`scalar`, `integer`, `float`, `array`, `association`) followed
-    /// by hyphen-joined modifiers (`-readonly`, `-export`, `-left`,
-    /// `-right_blanks`, `-zero`, `-upper`, `-lower`).
-    pub fn format_zsh(&self) -> String {
-        let base = match self.kind {
-            VarKind::Scalar => "scalar",
-            VarKind::Integer => "integer",
-            VarKind::Float => "float",
-            VarKind::Array => "array",
-            VarKind::Association => "association",
-        };
-        let mut out = String::from(base);
-        if self.left_pad.is_some() {
-            out.push_str("-left");
-        }
-        if self.right_pad.is_some() {
-            out.push_str("-right_blanks");
-        }
-        if self.zero_pad.is_some() {
-            out.push_str("-zero");
-        }
-        if self.lowercase {
-            out.push_str("-lower");
-        }
-        if self.uppercase {
-            out.push_str("-upper");
-        }
-        if self.readonly {
-            out.push_str("-readonly");
-        }
-        if self.export {
-            out.push_str("-export");
-        }
-        if self.unique {
-            out.push_str("-unique");
-        }
-        // PM_HIDE / PM_HIDEVAL / PM_TRACED — surface in `${(t)var}` so
-        // user code that introspects via parameter type strings sees
-        // the new typeset attributes.
-        if self.hidden {
-            out.push_str("-hide");
-        }
-        if self.hide_val {
-            out.push_str("-hideval");
-        }
-        if self.trace {
-            out.push_str("-trace");
-        }
-        out
-    }
-}
+// `VarAttr` struct + `VarKind` enum + `impl VarAttr::format_zsh`
+// DELETED. C zsh stores typeset attributes as bare `PM_*` bit
+// flags on `Param.node.flags` (`Src/zsh.h` PM_* + `Src/params.c`
+// flag tests); the `${(t)var}` flag report (`typeprintparam` at
+// `Src/builtin.c:3050+`) writes those bits to a string directly
+// against the `Param.node.flags` int.
+//
+// Both types had zero external use sites — pure dead-code carryover
+// from an earlier exec.rs refactor. The PM_* bit constants are at
+// `zsh_h.rs:1340+` and the `(t)` formatting routes through
+// `typeset_print_flags` (when wired) reading bare `Param.node.flags`.
 
 // ===========================================================
 // Special-parameter GSU (get/set/unset) callbacks ported from
@@ -6933,7 +6831,8 @@ pub fn newparamtable(size: i32, _name: &str)
 /// The Rust port takes a `&Mutex<HashMap>` (paramtab handle) so
 /// callers don't need to thread the HashTable wrapper through.
 /// Port of `paramvalarr` from `Src/params.c:689`.
-pub fn paramvalarr(_ht: &crate::ported::zsh_h::HashTable, flags: i32) -> Vec<String> {  // c:689
+#[allow(unused_variables)]
+pub fn paramvalarr(ht: &crate::ported::zsh_h::HashTable, flags: i32) -> Vec<String> {  // c:689
     use crate::ported::zsh_h::{
         PM_HASHELEM, PM_UNSET, SCANPM_WANTINDEX, SCANPM_WANTKEYS, SCANPM_WANTVALS,
     };
@@ -7491,7 +7390,8 @@ fn pattry(prog: &str, s: &str) -> bool {
 /// `paramtab` global with HashTable backend; until then the
 /// non-nameref `setsparam` path is the only one that fires.
 /// Port of `setloopvar` from `Src/params.c:6362`.
-pub fn setloopvar(_name: &str, _value: &str) {
+#[allow(unused_variables)]
+pub fn setloopvar(name: &str, value: &str) {
     // Once paramtab gethashnode2 is wired:
     //   if let Some(pm) = paramtab_get(name) {
     //       if (pm.flags & PM_NAMEREF) != 0 { ...nameref branch... return; }

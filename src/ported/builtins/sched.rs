@@ -209,7 +209,7 @@ pub(crate) fn checksched() -> i32 {                                         // c
         if (sch.flags & SCHEDFLAG_TRASH_ZLE) != 0
             && zleactive.load(Ordering::Relaxed) != 0                 // c:120
         {
-            zleentry(ZLE_CMD_TRASH);                                  // c:121
+            crate::ported::init::zleentry(ZLE_CMD_TRASH);             // c:121
         }
         execstring(&sch.cmd, 0, 0, "sched");                          // c:122
         // C: zsfree(sch->cmd); zfree(sch, sizeof(struct schedcmd));
