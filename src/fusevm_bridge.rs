@@ -1361,11 +1361,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // -ra). zsh prints `read-only variable: NAME` and exits 1
             // in -c mode. Mirror that fatal behavior.
             let is_ro = exec.readonly_vars.contains(&name)
-                || exec
-                    .var_attrs
-                    .get(&name)
-                    .map(|a| a.readonly)
-                    .unwrap_or(false);
+                || exec.is_readonly_param(&name);
             if is_ro {
                 eprintln!("zshrs:1: read-only variable: {}", name);
                 std::process::exit(1);
@@ -1412,7 +1408,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             // Mirror array→scalar if name is the array side of a typeset -T tie.
             // `typeset -U arr` dedupes; first-wins per zsh.
-            let is_unique = exec.var_attrs.get(&name).map(|a| a.unique).unwrap_or(false);
+            let is_unique = (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_UNIQUE) != 0;
             if is_unique {
                 let mut seen = std::collections::HashSet::new();
                 values.retain(|v| seen.insert(v.clone()));
@@ -1465,11 +1461,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             // Refuse appends on read-only arrays (declare -ra).
             let is_ro = exec.readonly_vars.contains(&name)
-                || exec
-                    .var_attrs
-                    .get(&name)
-                    .map(|a| a.readonly)
-                    .unwrap_or(false);
+                || exec.is_readonly_param(&name);
             if is_ro {
                 eprintln!("zshrs:1: read-only variable: {}", name);
                 std::process::exit(1);
@@ -1500,7 +1492,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let attrs = exec.recorder_attrs_for(&name);
                 emit_path_or_assign(&name, &values, attrs, true, &ctx);
             }
-            let is_unique = exec.var_attrs.get(&name).map(|a| a.unique).unwrap_or(false);
+            let is_unique = (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_UNIQUE) != 0;
             // Mirror the post-append result back to a tied scalar
             // (`typeset -T PATH path :` — `path+=(/x)` must update
             // `PATH` too). Without this, zinit / OMZ patterns like
@@ -5488,10 +5480,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // zsh: `integer i; i=5*3` stores 15. Mirrors C's PM_TYPE
             // dispatch at Src/params.c assignsparam:3270.
             let is_integer = exec.is_integer_param(&name);
-            // `typeset -i N` base-formatting still consults var_attrs
-            // since int_base is metadata C stores in pm.base (a struct
-            // field, not a flag). TODO: dissolve via Param.base.
-            let int_base = exec.var_attrs.get(&name).and_then(|a| a.int_base);
+            // `typeset -i N` base-formatting reads `Param.base` directly
+            // (Src/zsh.h:1860 — int print base). Per C convfloat /
+            // convbase in params.c, base==0 means default decimal.
+            let int_base: Option<u32> = if is_integer {
+                let b = crate::ported::params::paramtab()
+                    .lock().ok()
+                    .and_then(|t| t.get(&name).map(|pm| pm.base))
+                    .unwrap_or(0);
+                if b > 0 { Some(b as u32) } else { None }
+            } else {
+                None
+            };
             let stored = if is_integer && !value.is_empty() {
                 let evaluated = exec.eval_arith_expr(&value).to_string();
                 if let Some(base) = int_base {
@@ -5583,7 +5583,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // zsh: `setopt allexport; a=42; env | grep ^a=` prints `a=42`.
             // Without this, env didn't see user-set scalars.
             let allexport = exec.options.get("allexport").copied().unwrap_or(false);
-            let already_exported = exec.var_attrs.get(&name).map(|a| a.export).unwrap_or(false);
+            let already_exported = (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
             if allexport || already_exported {
                 std::env::set_var(&name, &stored);
             }

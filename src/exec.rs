@@ -394,11 +394,6 @@ pub struct ShellExecutor {
     pub comp_iprefix: String,         // IPREFIX parameter
     pub comp_isuffix: String,         // ISUFFIX parameter
     pub readonly_vars: std::collections::HashSet<String>, // Read-only variables
-    /// Per-variable attribute table. Tracks the type/flag declared via
-    /// `typeset -i / -F / -E / -L / -R / -Z / -r / -x / -A / -a` so the
-    /// `(t)` parameter flag can return the canonical zsh type string
-    /// (`integer`, `float`, `scalar-left`, `scalar-readonly-export`, …).
-    pub var_attrs: std::collections::HashMap<String, VarAttr>,
     /// Last `:s/X/Y/` history-modifier pair, replayed by `:&`.
     /// Direct port of `hsubl` / `hsubr` globals in Src/hist.c.
     /// SubstState mirrors / commits this so all paramsubst calls
@@ -1012,7 +1007,6 @@ impl ShellExecutor {
             comp_iprefix: String::new(),
             comp_isuffix: String::new(),
             readonly_vars: std::collections::HashSet::new(),
-            var_attrs: std::collections::HashMap::new(),
             last_subst: None,
             sub_flags: 0,
             local_save_stack: Vec::new(),
@@ -3351,11 +3345,6 @@ impl crate::ported::exec::ShellExecutor {
                     if flags & PM_EXPORTED != 0 { out.push_str("-export"); }
                     return Some(out);
                 }
-                // Legacy var_attrs fallback for entries that haven't
-                // migrated to paramtab flags yet.
-                if let Some(attr) = self.var_attrs.get(key) {
-                    return Some(attr.format_zsh());
-                }
                 if self.has_assoc(key) {
                     Some("association".to_string())
                 } else if self.has_array(key) {
@@ -4564,22 +4553,32 @@ impl crate::ported::exec::ShellExecutor {
     /// store. Without this, `typeset -F 3 x; (( x = 2.5 ))` stored
     /// the f64::to_string default instead of the expected `2.500`.
     pub(crate) fn format_for_var_attr(&self, name: &str, value: &str) -> String {
-        let attr = match self.var_attrs.get(name) {
-            Some(a) => a,
-            None => return value.to_string(),
+        // Read PM_FFLOAT/PM_EFLOAT + Param.base (float precision)
+        // directly from canonical paramtab. Mirrors C `floatpf` /
+        // `convfloat` (Src/params.c) which read `pm->base` for the
+        // declared precision and the PM_TYPE bits for fixed vs exp.
+        use crate::ported::zsh_h::{PM_EFLOAT, PM_FFLOAT};
+        let (is_float, is_exp, prec) = if let Ok(tab) = crate::ported::params::paramtab().lock() {
+            match tab.get(name) {
+                Some(pm) => {
+                    let f = pm.node.flags as u32;
+                    let is_e = f & PM_EFLOAT != 0;
+                    let is_f = f & PM_FFLOAT != 0;
+                    (is_e || is_f, is_e, pm.base as usize)
+                }
+                None => return value.to_string(),
+            }
+        } else {
+            return value.to_string();
         };
-        if !matches!(attr.kind, VarKind::Float) {
+        if !is_float || prec == 0 {
             return value.to_string();
         }
-        let prec = match attr.float_precision {
-            Some(p) => p,
-            None => return value.to_string(),
-        };
         let f: f64 = match value.parse() {
             Ok(f) => f,
             Err(_) => return value.to_string(),
         };
-        if attr.float_exp {
+        if is_exp {
             let frac_prec = prec.saturating_sub(1);
             let raw = format!("{:.prec$e}", f, prec = frac_prec);
             if let Some(epos) = raw.rfind('e') {
@@ -5518,11 +5517,8 @@ impl crate::ported::exec::ShellExecutor {
                     // got restored but env::var() lookup-fallback
                     // still saw the leaked value, so `${x:-unset}`
                     // post-fn returned the stale leaked value.
-                    let is_exported = self
-                        .var_attrs
-                        .get(&k)
-                        .map(|a| a.export)
-                        .unwrap_or(false);
+                    let is_exported =
+                        (self.param_flags(&k) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
                     self.set_scalar(k.clone(), formatted.clone());
                     if is_exported {
                         env::set_var(&k, &formatted);
@@ -5723,11 +5719,8 @@ impl crate::ported::exec::ShellExecutor {
                     // got restored but env::var() lookup-fallback
                     // still saw the leaked value, so `${x:-unset}`
                     // post-fn returned the stale leaked value.
-                    let is_exported = self
-                        .var_attrs
-                        .get(&k)
-                        .map(|a| a.export)
-                        .unwrap_or(false);
+                    let is_exported =
+                        (self.param_flags(&k) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
                     self.set_scalar(k.clone(), formatted.clone());
                     if is_exported {
                         env::set_var(&k, &formatted);
