@@ -186,13 +186,13 @@ impl Zle {
 
     /// `;` — repeat last find in same direction.
     /// Port of virepeatfind(char **args) from Src/Zle/zle_move.c:835.
-    pub fn vi_repeat_find(&mut self) -> i32 {                                // c:835
+    pub fn virepeatfind(&mut self) -> i32 {                                // c:835
         self.vi_find_char_inner(true)
     }
 
     /// `,` — repeat last find in reverse direction.
     /// Port of virevrepeatfind(char **args) from Src/Zle/zle_move.c:842.
-    pub fn vi_rev_repeat_find(&mut self) -> i32 {                            // c:842
+    pub fn virevrepeatfind(&mut self) -> i32 {                            // c:842
         let n = self.vi_get_arg();
         if n < 0 {
             return self.vi_find_char_inner(true);
@@ -470,15 +470,15 @@ impl Zle {
         // Mirrors the `MOD_LINE` branch of `getvirange()` in zle_vi.c:281
         // but invoked directly when the user repeats the operator letter.
         if motion == op_char {
-            let bol = self.find_bol(pos);
-            let mut eol = self.find_eol(bol);
+            let bol = self.findbol(pos);
+            let mut eol = self.findeol(bol);
             // Extend by `n - 1` more lines forward to honour the count
             // (vi `3dd` deletes 3 lines).
             for _ in 1..n {
                 if eol >= self.zlell {
                     break;
                 }
-                eol = self.find_eol(eol + 1);
+                eol = self.findeol(eol + 1);
             }
             // Include the trailing newline in the range when there is one,
             // so the operator pulls the whole line including its terminator.
@@ -554,10 +554,10 @@ impl Zle {
                 p
             }
             // Line-internal motions.
-            '0' => self.find_bol(pos),
+            '0' => self.findbol(pos),
             '^' => {
                 // First non-blank — `vifirstnonblank` in zle_move.c:862.
-                let bol = self.find_bol(pos);
+                let bol = self.findbol(pos);
                 let mut p = bol;
                 while p < self.zlell && self.zleline[p].is_whitespace()
                     && self.zleline[p] != '\n'
@@ -566,31 +566,31 @@ impl Zle {
                 }
                 p
             }
-            '$' => self.find_eol(pos),
+            '$' => self.findeol(pos),
             'h' => pos.saturating_sub(n as usize),
             'l' => (pos + n as usize).min(self.zlell),
             // Line mode for j/k — extend the range across `n` lines.
             'j' => {
-                let mut p = self.find_eol(pos);
+                let mut p = self.findeol(pos);
                 for _ in 0..n {
                     if p >= self.zlell {
                         break;
                     }
-                    p = self.find_eol(p + 1);
+                    p = self.findeol(p + 1);
                 }
-                let bol = self.find_bol(pos);
+                let bol = self.findbol(pos);
                 let end = if p < self.zlell { p + 1 } else { p };
                 return Some((bol, end, true));
             }
             'k' => {
-                let mut bol = self.find_bol(pos);
+                let mut bol = self.findbol(pos);
                 for _ in 0..n {
                     if bol == 0 {
                         break;
                     }
-                    bol = self.find_bol(bol - 1);
+                    bol = self.findbol(bol - 1);
                 }
-                let eol = self.find_eol(pos);
+                let eol = self.findeol(pos);
                 let end = if eol < self.zlell { eol + 1 } else { eol };
                 return Some((bol, end, true));
             }
@@ -672,7 +672,7 @@ impl Zle {
             // \n if the cursor now sits past the buffer end, then jump to
             // the first non-blank of the surviving line.
             self.lastcol = -1;
-            let bol = self.find_bol(self.zlecs);
+            let bol = self.findbol(self.zlecs);
             let mut p = bol;
             while p < self.zlell && self.zleline[p].is_whitespace() && self.zleline[p] != '\n' {
                 p += 1;
@@ -719,7 +719,7 @@ impl Zle {
         if line_mode && saved_lastcol != -1 {
             // zle_vi.c:518-531 — for line yanks, restore the column on the
             // current line (clamped to its end-of-line).
-            let eol = self.find_eol(self.zlecs);
+            let eol = self.findeol(self.zlecs);
             self.zlecs += saved_lastcol as usize;
             if self.zlecs >= eol {
                 self.zlecs = eol;
@@ -816,10 +816,10 @@ mod tests {
         assert_eq!(zle.vi_find_char_inner(false), 0);
         assert_eq!(zle.zlecs, 1);
         // Repeat-find advances to the next '-'.
-        assert_eq!(zle.vi_repeat_find(), 0);
+        assert_eq!(zle.virepeatfind(), 0);
         assert_eq!(zle.zlecs, 3);
         // And the next.
-        assert_eq!(zle.vi_repeat_find(), 0);
+        assert_eq!(zle.virepeatfind(), 0);
         assert_eq!(zle.zlecs, 5);
     }
 
@@ -1003,10 +1003,10 @@ mod tests {
         assert_eq!(zle.vi_find_char_inner(false), 0);
         assert_eq!(zle.zlecs, 1);
         // Forward again to '-' at 3.
-        assert_eq!(zle.vi_repeat_find(), 0);
+        assert_eq!(zle.virepeatfind(), 0);
         assert_eq!(zle.zlecs, 3);
         // Reverse repeat — back to index 1.
-        assert_eq!(zle.vi_rev_repeat_find(), 0);
+        assert_eq!(zle.virevrepeatfind(), 0);
         assert_eq!(zle.zlecs, 1);
     }
 }

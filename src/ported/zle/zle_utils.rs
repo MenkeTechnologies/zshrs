@@ -180,7 +180,7 @@ pub fn unmetafy(s: &str) -> String {
 impl Zle {
     /// Find beginning of line from position
     /// Port of findbol() from zle_utils.c
-    pub fn find_bol(&self, pos: usize) -> usize {                            // c:1158
+    pub fn findbol(&self, pos: usize) -> usize {                            // c:1158
         let mut p = pos;
         while p > 0 && self.zleline.get(p - 1) != Some(&'\n') {
             p -= 1;
@@ -190,7 +190,7 @@ impl Zle {
 
     /// Find end of line from position
     /// Port of findeol() from zle_utils.c
-    pub fn find_eol(&self, pos: usize) -> usize {                            // c:1169
+    pub fn findeol(&self, pos: usize) -> usize {                            // c:1169
         let mut p = pos;
         while p < self.zlell && self.zleline.get(p) != Some(&'\n') {
             p += 1;
@@ -200,14 +200,14 @@ impl Zle {
 
     /// Find line number for position
     /// Port of findline(int *a, int *b) from zle_utils.c
-    pub fn find_line(&self, pos: usize) -> usize {
+    pub fn findline(&self, pos: usize) -> usize {
         self.zleline[..pos].iter().filter(|&&c| c == '\n').count()
     }
 
     // make sure that the line buffer has at least sz chars               // c:63
     /// Ensure line has enough space
     /// Port of sizeline(int sz) from zle_utils.c
-    pub fn size_line(&mut self, needed: usize) {                            // c:67
+    pub fn sizeline(&mut self, needed: usize) {                            // c:67
         if self.zleline.capacity() < needed {
             self.zleline.reserve(needed - self.zleline.len());
         }
@@ -216,7 +216,7 @@ impl Zle {
     // insert space for ct chars at cursor position                        // c:773
     /// Make space in line at position
     /// Port of spaceinline(int ct) from zle_utils.c
-    pub fn space_in_line(&mut self, pos: usize, count: usize) {             // c:777
+    pub fn spaceinline(&mut self, pos: usize, count: usize) {             // c:777
         for _ in 0..count {
             self.zleline.insert(pos, ' ');
         }
@@ -228,7 +228,7 @@ impl Zle {
 
     /// Shift characters in line
     /// Port of shiftchars(int to, int cnt) from zle_utils.c
-    pub fn shift_chars(&mut self, from: usize, count: i32) {                // c:846
+    pub fn shiftchars(&mut self, from: usize, count: i32) {                // c:846
         if count > 0 {
             for _ in 0..count {
                 self.zleline.insert(from, ' ');
@@ -288,7 +288,7 @@ impl Zle {
 
     /// Kill forward
     /// Port of forekill(int ct, int flags) from zle_utils.c
-    pub fn fore_kill(&mut self, count: usize, append: bool) {               // c:1064
+    pub fn forekill(&mut self, count: usize, append: bool) {               // c:1064
         let count = count.min(self.zlell - self.zlecs);
         if count == 0 {
             return;
@@ -319,7 +319,7 @@ impl Zle {
 
     /// Kill backward
     /// Port of backkill(int ct, int flags) from zle_utils.c
-    pub fn back_kill(&mut self, count: usize, append: bool) {               // c:1045
+    pub fn backkill(&mut self, count: usize, append: bool) {               // c:1045
         let count = count.min(self.zlecs);
         if count == 0 {
             return;
@@ -391,7 +391,7 @@ impl Zle {
 
     /// Show a message
     /// Port of showmsg(char const *msg) from zle_utils.c
-    pub fn show_msg(&self, msg: &str) {
+    pub fn showmsg(&self, msg: &str) {
         eprintln!("{}", msg);
     }
 
@@ -403,7 +403,7 @@ impl Zle {
 
     /// Add text to line at position
     /// Port of zleaddtoline(int chr) from zle_utils.c
-    pub fn add_to_line(&mut self, pos: usize, text: &str) {
+    pub fn zleaddtoline(&mut self, pos: usize, text: &str) {
         for (i, c) in text.chars().enumerate() {
             self.zleline.insert(pos + i, c);
         }
@@ -416,13 +416,13 @@ impl Zle {
 
     /// Get line as string
     /// Port of zlelineasstring(ZLE_STRING_T instr, int inll, int incs, int *outllp, int *outcsp, int useheap) from zle_utils.c
-    pub fn line_as_string(&self) -> String {
+    pub fn zlelineasstring(&self) -> String {
         self.zleline.iter().collect()
     }
 
     /// Set line from string
     /// Port of stringaszleline(char *instr, int incs, int *outll, int *outsz, int *outcs) from zle_utils.c
-    pub fn string_as_line(&mut self, s: &str) {
+    pub fn stringaszleline(&mut self, s: &str) {
         self.zleline = s.chars().collect();
         self.zlell = self.zleline.len();
         if self.zlecs > self.zlell {
@@ -433,7 +433,7 @@ impl Zle {
 
     /// Get ZLE line
     /// Port of zlegetline(int *ll, int *cs) from zle_utils.c
-    pub fn get_zle_line(&self) -> &[ZleChar] {
+    pub fn zlegetline(&self) -> &[ZleChar] {
         &self.zleline
     }
 

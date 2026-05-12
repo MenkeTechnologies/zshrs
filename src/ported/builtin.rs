@@ -4586,7 +4586,7 @@ pub fn bin_test(name: &str, argv: &[String],                                 // 
         argv.remove(0);                                                      // c:7272
     }
 
-    // c:7276-7301 — zcontext_save + parse_cond + evalcond.
+    // c:7276-7301 — zcontext_save + par_cond + evalcond.
     // Static-link path: route through cond.rs's evalcond which handles
     // the full tokenization + parse + eval inline.
     let args_refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();

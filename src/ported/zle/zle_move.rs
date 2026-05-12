@@ -11,7 +11,7 @@ impl Zle {
     /// Move cursor to the start of the current logical line.
     /// Port of `findbol()` from Src/Zle/zle_utils.c:1158 — same scan,
     /// just mutates zlecs in-place instead of returning the index.
-    /// `find_bol` (in utils.rs) is the side-effect-free equivalent.
+    /// `findbol` (in utils.rs) is the side-effect-free equivalent.
     pub fn move_to_bol(&mut self) {
         while self.zlecs > 0 && self.zleline[self.zlecs - 1] != '\n' {
             self.zlecs -= 1;
@@ -20,7 +20,7 @@ impl Zle {
 
     /// Move cursor to the end of the current logical line.
     /// Port of `findeol()` from Src/Zle/zle_utils.c:1169 — mutating
-    /// counterpart to `find_eol`.
+    /// counterpart to `findeol`.
     pub fn move_to_eol(&mut self) {
         while self.zlecs < self.zlell && self.zleline[self.zlecs] != '\n' {
             self.zlecs += 1;

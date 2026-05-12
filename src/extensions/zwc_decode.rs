@@ -286,7 +286,7 @@ pub struct WcRedir {
 
 #[derive(Debug, Clone)]
 /// Heredoc body record.
-/// Port of the heredoc-handling inside `parse_redir()`
+/// Port of the heredoc-handling inside `par_redir()`
 /// (Src/parse.c) — body is captured separately from the
 /// surrounding command.
 pub struct WcHeredoc {

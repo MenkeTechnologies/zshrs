@@ -498,7 +498,7 @@ fn unalias_unset_emit_removal_events() {
 
 // NOTE on zinit-corpus expected-counts shifts:
 // The parser fix that recognises `function NAME { body }` keyword form
-// (parse/src/parse::parse_funcdef "body opener" branch) plus the
+// (parse/src/parse::par_funcdef "body opener" branch) plus the
 // Envarray fix in parse_assign make the parser advance further into
 // these scripts than it used to. That advance exposes a SEPARATE
 // pre-existing zshrs parser bug: `[[ "$line" = (#i)*foo* ]]` inside

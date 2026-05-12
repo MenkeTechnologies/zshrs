@@ -137,7 +137,7 @@ impl Zle {
 
     /// Self insert unmeta - insert character with meta bit stripped
     /// Port of selfinsertunmeta(char **args) from zle_misc.c
-    pub fn self_insert_unmeta(&mut self, c: char) {                          // c:149
+    pub fn selfinsertunmeta(&mut self, c: char) {                          // c:149
         let unmetaed = if (c as u32) >= 0x80 && (c as u32) < 0x100 {
             char::from_u32((c as u32) & 0x7f).unwrap_or(c)
         } else {
@@ -160,7 +160,7 @@ impl Zle {
 
     /// Quoted insert - insert next char literally
     /// Port of quotedinsert(char **args) from zle_misc.c
-    pub fn quoted_insert(&mut self, c: char) {
+    pub fn quotedinsert(&mut self, c: char) {
         self.zleline.insert(self.zlecs, c);
         self.zlecs += 1;
         self.zlell += 1;
@@ -169,7 +169,7 @@ impl Zle {
 
     /// Bracketed paste - handle paste mode
     /// Port of bracketedpaste(char **args) from zle_misc.c
-    pub fn bracketed_paste(&mut self, text: &str) {
+    pub fn bracketedpaste(&mut self, text: &str) {
         for c in text.chars() {
             if c != '\x1b' {
                 self.zleline.insert(self.zlecs, c);
@@ -182,7 +182,7 @@ impl Zle {
 
     /// Delete char under cursor
     /// Port of deletechar(char **args) from zle_misc.c
-    pub fn delete_char(&mut self) {                                          // c:157
+    pub fn deletechar(&mut self) {                                          // c:157
         if self.zlecs < self.zlell {
             self.zleline.remove(self.zlecs);
             self.zlell -= 1;
@@ -192,7 +192,7 @@ impl Zle {
 
     /// Delete char before cursor
     /// Port of backwarddeletechar(char **args) from zle_misc.c
-    pub fn backward_delete_char(&mut self) {
+    pub fn backwarddeletechar(&mut self) {
         if self.zlecs > 0 {
             self.zlecs -= 1;
             self.zleline.remove(self.zlecs);
@@ -203,7 +203,7 @@ impl Zle {
 
     /// Kill from cursor to end of line
     /// Port of killline(char **args) from zle_misc.c
-    pub fn kill_line(&mut self) {                                            // c:419
+    pub fn killline(&mut self) {                                            // c:419
         if self.zlecs < self.zlell {
             let text: Vec<char> = self.zleline.drain(self.zlecs..).collect();
             self.killring.push_front(text);
@@ -217,7 +217,7 @@ impl Zle {
 
     /// Kill from beginning of line to cursor
     /// Port of backwardkillline(char **args) from zle_misc.c
-    pub fn backward_kill_line(&mut self) {
+    pub fn backwardkillline(&mut self) {
         if self.zlecs > 0 {
             let text: Vec<char> = self.zleline.drain(..self.zlecs).collect();
             self.killring.push_front(text);
@@ -274,7 +274,7 @@ impl Zle {
 
     /// Copy region as kill
     /// Port of copyregionaskill(char **args) from zle_misc.c
-    pub fn copy_region_as_kill(&mut self) {                                  // c:494
+    pub fn copyregionaskill(&mut self) {                                  // c:494
         let (start, end) = if self.zlecs < self.mark {
             (self.zlecs, self.mark)
         } else {
@@ -555,7 +555,7 @@ impl Zle {
 
     /// Universal argument - multiply next command
     /// Port of universalargument(char **args) from zle_misc.c
-    pub fn universal_argument(&mut self) {
+    pub fn universalargument(&mut self) {
         self.mult = self.mult.saturating_mul(4);
     }
 
@@ -1028,7 +1028,7 @@ pub fn deletechar(args: &mut Zle) -> i32 {                                    //
         crate::ported::zle::zle_move::inccs(args);
         n -= 1;
     }
-    // c:174 — `backdel(zmult, 0)`. Method delete_char does forward.
+    // c:174 — `backdel(zmult, 0)`. Method deletechar does forward.
     let count = args.zmod.mult.max(0) as usize;
     for _ in 0..count {
         if args.zlecs > 0 {
