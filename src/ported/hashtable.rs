@@ -2,6 +2,16 @@
 //!
 //! Provides hash tables for commands, shell functions, reserved words, aliases,
 //! and history. Uses Rust's HashMap internally but maintains zsh-compatible APIs.
+//!
+//! `cmdnam_table` / `shfunc_table` / `reswd_table` / `alias_table` are
+//! Rust extensions — C uses one polymorphic `struct hashtable`
+//! (`Src/zsh.h:1175-1235`) with function-pointer callbacks for every
+//! per-table operation; each Rust struct here typed-wraps a
+//! `HashMap` for compile-time safety while the full polymorphic
+//! `hashtable` port lands. The canonical layer will dissolve these
+//! into typed views over a single shared `hashtable` storage.
+
+#![allow(non_camel_case_types)]
 
 use std::collections::HashMap;
 use std::fs;
@@ -220,16 +230,16 @@ pub fn cmdnam_unhashed(name: &str, path_segments: Vec<String>) -> CmdName {  // 
 /// per-table accessor (`cmdnamtab_lock`, `shfunctab_lock`, etc.)
 /// returns a `Mutex<HashTable>` instance with the appropriate
 /// callbacks wired. When the generic-HashTable substrate lands,
-/// CmdNameTable/ShFuncTable/ReswdTable/AliasTable get deleted
+/// cmdnam_table/shfunc_table/reswd_table/alias_table get deleted
 /// in favor of typed views over the shared `HashTable` storage.
-pub struct CmdNameTable {
+pub struct cmdnam_table {
     table: HashMap<String, CmdName>,
     path_checked_index: usize,
     path: Vec<String>,
     hash_executables_only: bool,
 }
 
-impl CmdNameTable {
+impl cmdnam_table {
     pub fn new() -> Self {
         Self {
             table: HashMap::new(),
@@ -371,7 +381,7 @@ impl CmdNameTable {
     }
 }
 
-impl Default for CmdNameTable {
+impl Default for cmdnam_table {
     fn default() -> Self {
         Self::new()
     }
@@ -447,12 +457,12 @@ pub fn shfunc_autoload(name: &str) -> ShFunc {                               // 
 /// `printshfuncnode` / `freeshfuncnode` (Src/builtin.c) hang off
 /// the same shape.
 /// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
-/// `CmdNameTable` for the canonical-port direction.
-pub struct ShFuncTable {
+/// `cmdnam_table` for the canonical-port direction.
+pub struct shfunc_table {
     table: HashMap<String, ShFunc>,
 }
 
-impl ShFuncTable {
+impl shfunc_table {
     pub fn new() -> Self {
         Self {
             table: HashMap::new(),
@@ -524,7 +534,7 @@ impl ShFuncTable {
     }
 }
 
-impl Default for ShFuncTable {
+impl Default for shfunc_table {
     fn default() -> Self {
         Self::new()
     }
@@ -553,12 +563,12 @@ pub use crate::ported::zsh_h::reswd as Reswd;                                // 
 /// Port of the `reswdtab` HashTable from Src/hashtable.c — used
 /// by Src/lex.c to recognize keywords like `if`/`while`/`do`.
 /// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
-/// `CmdNameTable` for the canonical-port direction.
-pub struct ReswdTable {
+/// `cmdnam_table` for the canonical-port direction.
+pub struct reswd_table {
     table: HashMap<String, Reswd>,
 }
 
-impl ReswdTable {
+impl reswd_table {
     pub fn new() -> Self {
         let mut table = HashMap::new();
 
@@ -662,7 +672,7 @@ impl ReswdTable {
     }
 }
 
-impl Default for ReswdTable {
+impl Default for reswd_table {
     fn default() -> Self {
         Self::new()
     }
@@ -700,12 +710,12 @@ pub fn createaliasnode(name: &str, text: &str, flags: u32) -> Alias {        // 
 /// `bin_alias()` (Src/builtin.c) drives every mutation. Suffix
 /// aliases live in a separate `sufaliastab` instance.
 /// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
-/// `CmdNameTable` for the canonical-port direction.
-pub struct AliasTable {
+/// `cmdnam_table` for the canonical-port direction.
+pub struct alias_table {
     table: HashMap<String, Alias>,
 }
 
-impl AliasTable {
+impl alias_table {
     pub fn new() -> Self {
         Self {
             table: HashMap::new(),
@@ -784,7 +794,7 @@ impl AliasTable {
     }
 }
 
-impl Default for AliasTable {
+impl Default for alias_table {
     fn default() -> Self {
         Self::new()
     }
@@ -793,7 +803,7 @@ impl Default for AliasTable {
 // `SuffixAliasTable` type alias deleted — Rust-only convenience.
 // C has no `SuffixAliasTable`; the same generic `HashTable` powers
 // both `aliastab` and `sufaliastab` (declared identically at
-// hashtable.c:1177-1182). Callers can use `AliasTable` directly
+// hashtable.c:1177-1182). Callers can use `alias_table` directly
 // for both. (When the canonical HashTable substrate is wired,
 // both will share the same generic type.)
 
@@ -1078,7 +1088,7 @@ mod tests {
 
     #[test]
     fn test_cmdnam_table() {
-        let mut table = CmdNameTable::new();
+        let mut table = cmdnam_table::new();
         table.add(cmdnam_hashed("ls", "/bin/ls"));
 
         assert!(table.get("ls").is_some());
@@ -1091,7 +1101,7 @@ mod tests {
 
     #[test]
     fn test_shfunc_table() {
-        let mut table = ShFuncTable::new();
+        let mut table = shfunc_table::new();
         table.add(shfunc_with_body("myfunc", "echo hello"));
         table.add(shfunc_autoload("lazy"));
 
@@ -1113,7 +1123,7 @@ mod tests {
 
     #[test]
     fn test_reswd_table() {
-        let table = ReswdTable::new();
+        let table = reswd_table::new();
 
         assert!(table.is_reserved("if"));
         assert!(table.is_reserved("while"));
@@ -1126,7 +1136,7 @@ mod tests {
 
     #[test]
     fn test_alias_table() {
-        let mut table = AliasTable::with_defaults();
+        let mut table = alias_table::with_defaults();
 
         assert!(table.get("run-help").is_some());
         assert_eq!(table.get("run-help").unwrap().text, "man");
@@ -1175,7 +1185,7 @@ mod tests {
 
     #[test]
     fn test_format_reswd() {
-        let table = ReswdTable::new();
+        let table = reswd_table::new();
         let if_rw = table.get("if").unwrap();
 
         let output = format_reswd(if_rw, print_flags::WHENCE_VERBOSE);
@@ -1432,7 +1442,7 @@ mod tests {
 // command/alias/reswd/shfunc tables as `HashMap`-backed wrappers
 // (above), so most of these are free-fn shims for ABI/name
 // parity. Callers in the Rust executor reach the live state via
-// the typed table structs (`AliasTable`, `ShFuncTable`, etc.).
+// the typed table structs (`alias_table`, `shfunc_table`, etc.).
 // ===========================================================
 
 /// Port of `newhashtable(int size, UNUSED(char const *name), UNUSED(PrintTableStats printinfo))` from `Src/hashtable.c:100`.
@@ -1776,10 +1786,10 @@ impl HashNodeFlags for Reswd {
 /// lookups proceed without serialising on a single mutex. Holder
 /// accessor keeps the `_lock` suffix for source-stability (call
 /// sites use `.read()`/`.write()` directly).
-pub fn cmdnamtab_lock() -> &'static std::sync::RwLock<CmdNameTable> {       // c:594
-    static CMDNAMTAB: std::sync::OnceLock<std::sync::RwLock<CmdNameTable>> =
+pub fn cmdnamtab_lock() -> &'static std::sync::RwLock<cmdnam_table> {       // c:594
+    static CMDNAMTAB: std::sync::OnceLock<std::sync::RwLock<cmdnam_table>> =
         std::sync::OnceLock::new();
-    CMDNAMTAB.get_or_init(|| std::sync::RwLock::new(CmdNameTable::new()))
+    CMDNAMTAB.get_or_init(|| std::sync::RwLock::new(cmdnam_table::new()))
 }
 
 // hash table containing the aliases                                        // c:1174
@@ -1787,19 +1797,19 @@ pub fn cmdnamtab_lock() -> &'static std::sync::RwLock<CmdNameTable> {       // c
 /// Mirrors C's `mod_export HashTable aliastab` (hashtable.c:1186).
 /// Bucket-2 read-mostly: aliases are looked up on every command word,
 /// mutated only by `alias`/`unalias`. `RwLock` per PORT_PLAN.md.
-pub fn aliastab_lock() -> &'static std::sync::RwLock<AliasTable> {          // c:1186
-    static ALIASTAB: std::sync::OnceLock<std::sync::RwLock<AliasTable>> =
+pub fn aliastab_lock() -> &'static std::sync::RwLock<alias_table> {          // c:1186
+    static ALIASTAB: std::sync::OnceLock<std::sync::RwLock<alias_table>> =
         std::sync::OnceLock::new();
-    ALIASTAB.get_or_init(|| std::sync::RwLock::new(AliasTable::with_defaults()))
+    ALIASTAB.get_or_init(|| std::sync::RwLock::new(alias_table::with_defaults()))
 }
 
 /// Singleton accessor for the global `sufaliastab`.
 /// Mirrors C's `mod_export HashTable sufaliastab` (hashtable.c:1187).
 /// Bucket-2 read-mostly: same rationale as `aliastab`.
-pub fn sufaliastab_lock() -> &'static std::sync::RwLock<AliasTable> {
-    static SUFALIASTAB: std::sync::OnceLock<std::sync::RwLock<AliasTable>> =
+pub fn sufaliastab_lock() -> &'static std::sync::RwLock<alias_table> {
+    static SUFALIASTAB: std::sync::OnceLock<std::sync::RwLock<alias_table>> =
         std::sync::OnceLock::new();
-    SUFALIASTAB.get_or_init(|| std::sync::RwLock::new(AliasTable::new()))
+    SUFALIASTAB.get_or_init(|| std::sync::RwLock::new(alias_table::new()))
 }
 
 // hash table containing the reserved words                                 // c:1111
@@ -1808,10 +1818,10 @@ pub fn sufaliastab_lock() -> &'static std::sync::RwLock<AliasTable> {
 /// Bucket-2 read-mostly (effectively read-only post-init): every
 /// command word is checked against reserved words; the table is
 /// populated once at startup. `RwLock` per PORT_PLAN.md.
-pub fn reswdtab_lock() -> &'static std::sync::RwLock<ReswdTable> {          // c:1115
-    static RESWDTAB: std::sync::OnceLock<std::sync::RwLock<ReswdTable>> =
+pub fn reswdtab_lock() -> &'static std::sync::RwLock<reswd_table> {          // c:1115
+    static RESWDTAB: std::sync::OnceLock<std::sync::RwLock<reswd_table>> =
         std::sync::OnceLock::new();
-    RESWDTAB.get_or_init(|| std::sync::RwLock::new(ReswdTable::new()))
+    RESWDTAB.get_or_init(|| std::sync::RwLock::new(reswd_table::new()))
 }
 
 /// Singleton accessor for the global `histtab` (history events).
@@ -1858,7 +1868,7 @@ pub fn emptycmdnamtable() {
 /// C body opendir's the directory, reads each entry, and adds
 /// any executable to `cmdnamtab` (skipping names already present
 /// from earlier PATH entries). Rust port routes through
-/// `CmdNameTable::hash_dir`.
+/// `cmdnam_table::hash_dir`.
 /// WARNING: param names don't match C — Rust=(dir, dir_index) vs C=(dirp)
 pub fn hashdir(dir: &str, dir_index: usize) {
     cmdnamtab_lock()
@@ -1908,7 +1918,7 @@ pub fn freecmdnamnode(hn: &str) {
 // C zsh dispatches every `function f() { … }` definition,
 // `unfunction`, `disable -f`, `enable -f`, `whence`, and trap-
 // function lookup through `shfunctab`. zshrs uses a singleton
-// `OnceLock<Mutex<ShFuncTable>>` exposed via `shfunctab_lock()`
+// `OnceLock<Mutex<shfunc_table>>` exposed via `shfunctab_lock()`
 // so the GSU-style C names below can mutate it without taking a
 // `ShellExecutor` parameter (matching the C signatures, where
 // the table is global).
@@ -1920,10 +1930,10 @@ pub fn freecmdnamnode(hn: &str) {
 /// functions are looked up on every function-call dispatch, mutated
 /// only by `function f()` / `unfunction` / `autoload`. `RwLock`
 /// per PORT_PLAN.md.
-pub fn shfunctab_lock() -> &'static std::sync::RwLock<ShFuncTable> {        // c:808
-    static SHFUNCTAB: std::sync::OnceLock<std::sync::RwLock<ShFuncTable>> =
+pub fn shfunctab_lock() -> &'static std::sync::RwLock<shfunc_table> {        // c:808
+    static SHFUNCTAB: std::sync::OnceLock<std::sync::RwLock<shfunc_table>> =
         std::sync::OnceLock::new();
-    SHFUNCTAB.get_or_init(|| std::sync::RwLock::new(ShFuncTable::new()))
+    SHFUNCTAB.get_or_init(|| std::sync::RwLock::new(shfunc_table::new()))
 }
 
 /// Port of `createshfunctable()` from `Src/hashtable.c:812`.
@@ -2155,7 +2165,7 @@ fn glob_match_inner(pat: &[u8], name: &[u8]) -> bool {
 /// C body wires up the reswdtab GSU vtable then iterates the
 /// static `reswds` array calling `addnode` for each. Rust port:
 /// touches the singleton (which seeds the table from the static
-/// word list in `ReswdTable::new`).
+/// word list in `reswd_table::new`).
 pub fn createreswdtable() {
     let _ = reswdtab_lock();
 }
@@ -2185,12 +2195,12 @@ pub fn printreswdnode(hn: &str, printflags: u32) -> String {
 /// Port of `createaliastable(HashTable ht)` from `Src/hashtable.c:1188`.
 /// C: `void createaliastable(HashTable ht)` — assign 12 GSU vtable
 ///   slots on `ht` (hasher/cmpnodes/addnode/getnode/getnode2/removenode/
-///   disablenode/enablenode/freenode/printnode). Rust port: AliasTable's
+///   disablenode/enablenode/freenode/printnode). Rust port: alias_table's
 ///   methods already implement these semantics directly, so no vtable
 ///   to install — call site doesn't need a per-table dispatch.
 #[allow(unused_variables)]
 pub fn createaliastable(ht: *mut crate::ported::zsh_h::hashtable) {         // c:1188
-    // c:1188-1201 — vtable wireup. Rust path: AliasTable already
+    // c:1188-1201 — vtable wireup. Rust path: alias_table already
     // exposes add/get/remove/disable/enable/free/print as inherent methods.
 }
 

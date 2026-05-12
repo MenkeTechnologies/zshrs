@@ -99,8 +99,8 @@ pub use super::zsh_h::{
 // `super::zsh_h::IS_DASH(c)` at call sites.
 
 // Reserved-word table — the canonical port of `Src/hashtable.c:1076`
-// `static struct reswd reswds[]` lives in `ported::hashtable::ReswdTable`
-// (built in `ReswdTable::new()` at hashtable.rs:561 with the 31 entries
+// `static struct reswd reswds[]` lives in `ported::hashtable::reswd_table`
+// (built in `reswd_table::new()` at hashtable.rs:561 with the 31 entries
 // from `reswds[]`). The lexer queries it via `reswdtab_lock()` from
 // `check_reserved_word()` below; no duplicate table here.
 
