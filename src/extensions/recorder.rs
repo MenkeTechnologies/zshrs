@@ -20,7 +20,7 @@ impl crate::ported::exec::ShellExecutor {
     pub(crate) fn recorder_attrs_for(&self, name: &str) -> crate::recorder::ParamAttrs {
         let mut a = crate::recorder::ParamAttrs::NONE;
         // Shape: assoc > array > existing var-attrs declared shape > scalar default.
-        if self.assoc_arrays.contains_key(name) {
+        if self.has_assoc(name) {
             a.set(crate::recorder::ParamAttrs::ASSOC);
         } else if self.has_array(name) {
             a.set(crate::recorder::ParamAttrs::ARRAY);

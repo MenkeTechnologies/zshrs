@@ -855,7 +855,11 @@ impl crate::ported::exec::ShellExecutor {
             } else {
                 std::collections::HashSet::new()
             },
-            assoc_arrays: self.assoc_arrays.keys().cloned().collect(),
+            assoc_arrays: if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
+                m.keys().cloned().collect()
+            } else {
+                std::collections::HashSet::new()
+            },
             fpath: self.fpath.clone(),
             options: self.options.clone(),
             hooks: self.hook_functions.clone(),
@@ -986,11 +990,18 @@ impl crate::ported::exec::ShellExecutor {
         // returned "" on every subsequent shell start. Direct port of
         // zsh's plugin-replay model — assoc deltas are first-class
         // captures alongside scalars and arrays.
-        let mut assoc_keys: Vec<&String> = self.assoc_arrays.keys().collect();
-        assoc_keys.sort();
-        for name in assoc_keys {
-            if !snap.assoc_arrays.contains(name) {
-                let map = self.assoc_arrays.get(name).unwrap();
+        let assoc_entries: Vec<(String, indexmap::IndexMap<String, String>)> =
+            if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
+                let mut v: Vec<(String, indexmap::IndexMap<String, String>)> = m.iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                v.sort_by(|a, b| a.0.cmp(&b.0));
+                v
+            } else {
+                Vec::new()
+            };
+        for (name, map) in assoc_entries {
+            if !snap.assoc_arrays.contains(&name) {
                 // Executor's assoc storage is IndexMap (insertion-
                 // ordered, required by `(kv)` etc.). The plugin_cache
                 // delta uses a plain HashMap since the cache replay
@@ -998,7 +1009,7 @@ impl crate::ported::exec::ShellExecutor {
                 // the script's own typeset ordering. Convert here.
                 let plain: HashMap<String, String> =
                     map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                delta.assoc_arrays.push((name.clone(), plain));
+                delta.assoc_arrays.push((name, plain));
             }
         }
 
@@ -1132,10 +1143,12 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         // Completions
-        for (cmd, func) in &delta.completions {
-            if let Some(ref mut comps) = self.assoc_arrays.get_mut("_comps") {
+        if !delta.completions.is_empty() {
+            let mut comps = self.assoc("_comps").unwrap_or_default();
+            for (cmd, func) in &delta.completions {
                 comps.insert(cmd.clone(), func.clone());
             }
+            self.set_assoc("_comps".to_string(), comps);
         }
 
         // Options

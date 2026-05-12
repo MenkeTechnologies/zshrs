@@ -98,7 +98,13 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
             } else {
                 Vec::new()
             };
-        if !scalar_entries.is_empty() || !array_entries.is_empty() || !exec.assoc_arrays.is_empty() {
+        let assoc_entries: Vec<(String, indexmap::IndexMap<String, String>)> =
+            if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
+                m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            } else {
+                Vec::new()
+            };
+        if !scalar_entries.is_empty() || !array_entries.is_empty() || !assoc_entries.is_empty() {
             let mut params = serde_json::Map::new();
             for (k, v) in scalar_entries {
                 params.insert(k, Value::String(v));
@@ -109,12 +115,12 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
                     Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
                 );
             }
-            for (k, v) in &exec.assoc_arrays {
+            for (k, v) in assoc_entries {
                 let inner: serde_json::Map<String, Value> = v
                     .iter()
                     .map(|(ik, iv)| (ik.clone(), Value::String(iv.clone())))
                     .collect();
-                params.insert(k.clone(), Value::Object(inner));
+                params.insert(k, Value::Object(inner));
             }
             out.push(("params".into(), Value::Object(params)));
         }
