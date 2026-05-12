@@ -2347,8 +2347,69 @@ impl ShellExecutor {
         }
     }
     pub(crate) fn bin_read(&mut self, args: &[String]) -> i32 {
-        let ops = Self::_empty_ops();
-        crate::ported::builtin::bin_read("read", args, &ops, 0)
+        // Parse single-letter options inline against the BUILTIN
+        // optstr "cd:ek:%lnpqrst:%zu:AE" (zsh.h: zsh_h::builtin entry
+        // for "read"). Direct execbuiltin routing consumed the stdin
+        // somewhere along the way, so this inline parse keeps stdin
+        // intact for the read body while still recognizing `-A`/`-r`/
+        // `-d DELIM`/`-k N`/`-u FD`.
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        const OPTSTR: &str = "cd:ek:%lnpqrst:%zu:AE";
+        let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                                argscount: 0, argsalloc: 0 };
+        let mut positional: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < args.len() {
+            let a = &args[i];
+            if a == "--" {
+                i += 1;
+                positional.extend_from_slice(&args[i..]);
+                break;
+            }
+            if let Some(rest) = a.strip_prefix('-') {
+                if rest.is_empty() || rest.starts_with(|c: char| c.is_ascii_digit()) {
+                    positional.push(a.clone()); i += 1; continue;
+                }
+                let chars: Vec<char> = rest.chars().collect();
+                let mut j = 0;
+                while j < chars.len() {
+                    let c = chars[j] as u8;
+                    if !c.is_ascii_alphabetic() { j += 1; continue; }
+                    // Look up the optstr entry to know if it takes
+                    // an arg. Format: `<letter>:` (required arg) or
+                    // `<letter>:%` (optional arg).
+                    let bytes = OPTSTR.as_bytes();
+                    let mut takes_arg = false;
+                    let mut k = 0;
+                    while k < bytes.len() {
+                        if bytes[k] == c {
+                            takes_arg = k + 1 < bytes.len() && bytes[k + 1] == b':';
+                            break;
+                        }
+                        k += 1;
+                    }
+                    if takes_arg {
+                        ops.ind[c as usize] = (ops.args.len() + 1) as u8;
+                        let rest_after: String = chars[j + 1..].iter().collect();
+                        if !rest_after.is_empty() {
+                            ops.args.push(rest_after);
+                        } else {
+                            i += 1;
+                            ops.args.push(args.get(i).cloned().unwrap_or_default());
+                        }
+                        ops.argscount = ops.args.len() as i32;
+                        j = chars.len();
+                    } else {
+                        ops.ind[c as usize] = 1;
+                        j += 1;
+                    }
+                }
+            } else {
+                positional.push(a.clone());
+            }
+            i += 1;
+        }
+        crate::ported::builtin::bin_read("read", &positional, &ops, 0)
     }
     pub(crate) fn bin_shift(&mut self, args: &[String]) -> i32 {
         let ops = Self::_empty_ops();

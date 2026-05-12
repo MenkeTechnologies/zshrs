@@ -3007,10 +3007,59 @@ pub fn bin_read(name: &str, args: &[String],                                 // 
         }
     }
 
-    // Assign to scalar reply or split into array.
+    // Assign to scalar reply, multi-var split, or array.
+    // c:6685-6735 — `read x y z` splits buf by IFS, fills the first
+    // N-1 vars with one IFS-separated field each, and stores the
+    // REST of the line (including embedded IFS chars) into the last
+    // var. zsh's read is stable on `print "a b c d" | read x y z`:
+    // x="a", y="b", z="c d".
     if want_array {
         let parts: Vec<String> = buf.split_whitespace().map(String::from).collect();
-        crate::ported::params::setsparam(&reply, &parts.join(":"));
+        crate::ported::params::setaparam(&reply, parts);                 // c:setaparam
+    } else if argi < args.len() {
+        // Multi-var: `read x y [z]`. First var = reply (already
+        // consumed); rest are args[argi..]. Split with at most
+        // `vars.len()` chunks using IFS.
+        let mut vars: Vec<String> = Vec::with_capacity(args.len() - argi + 1);
+        vars.push(reply);
+        for n in &args[argi..] { vars.push(n.clone()); }
+        let ifs = crate::ported::params::getsparam("IFS")
+            .unwrap_or_else(|| " \t\n".to_string());
+        // C zsh splits by ANY char from IFS (whitespace or not).
+        let is_ifs = |c: char| ifs.contains(c);
+        // Trim leading IFS-whitespace per zsh's read semantics
+        // (`a   b c` → x=a, y="b c", not x="" y=…).
+        let trimmed = buf.trim_start_matches(|c: char| is_ifs(c) && c.is_whitespace());
+        let mut remaining = trimmed.to_string();
+        for (i, var) in vars.iter().enumerate() {
+            if i + 1 == vars.len() {
+                // Last var: store the remainder, trim trailing IFS.
+                let final_val = remaining.trim_end_matches(|c: char|
+                    is_ifs(c) && c.is_whitespace()).to_string();
+                crate::ported::params::setsparam(var, &final_val);
+            } else {
+                // Find next IFS char.
+                match remaining.find(is_ifs) {
+                    Some(idx) => {
+                        let field = remaining[..idx].to_string();
+                        // Skip the IFS char + any leading
+                        // whitespace-IFS that follows (zsh-style
+                        // whitespace coalescing).
+                        let rest = &remaining[idx + remaining[idx..]
+                            .chars().next().map(|c| c.len_utf8()).unwrap_or(1)..];
+                        let rest = rest.trim_start_matches(|c: char|
+                            is_ifs(c) && c.is_whitespace());
+                        crate::ported::params::setsparam(var, &field);
+                        remaining = rest.to_string();
+                    }
+                    None => {
+                        // No more IFS: this var gets remaining, others empty.
+                        crate::ported::params::setsparam(var, &remaining);
+                        remaining.clear();
+                    }
+                }
+            }
+        }
     } else {
         crate::ported::params::setsparam(&reply, &buf);
     }
