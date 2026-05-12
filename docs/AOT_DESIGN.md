@@ -56,8 +56,8 @@ The fusevm side already has `cranelift-jit` for runtime codegen. Adding `craneli
 ```
 script.zsh
   │
-  ├─ ZshLexer  ─────────────────────────────┐
-  ├─ ZshParser ─────────────────────────────│  (existing)
+  ├─ lex module  ─────────────────────────────┐
+  ├─ parse.rs free fns ────────────────────────│  (existing)
   ├─ ZshCompiler → fusevm::Chunk ───────────┘
   │
   ├─ cranelift-object → script.o  ─── (NEW: AOT codegen pass)

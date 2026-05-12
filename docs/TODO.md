@@ -202,7 +202,7 @@ Honest gaps that remain (each its own multi-day session):
 
 The endgame "trust-complete" bar — full zpwr load + every-day usage on the maintainer's `.zshrc` without panic, hang, or behavioral divergence — is the Phase H dogfood gate. Per ROADMAP, that's a 14-day calendar test, not a session-bounded code task.
 
-## Session 2026-04-27 — new-pipeline cut-over (default = ZshLexer+ZshParser+ZshCompiler)
+## Session 2026-04-27 — new-pipeline cut-over (default = lex+parse+ZshCompiler)
 
 The hand-rolled `ShellLexer + ShellParser + ShellCompiler` path is no longer the default. `execute_script` now routes to `execute_script_zsh_pipeline` unconditionally; the old path is opt-out via `ZSHRS_OLD_PIPELINE=1`.
 
@@ -300,7 +300,7 @@ The bridge in `compile_word_str` round-trips raw zsh-tokenized words through `un
 
 **Bug closed in step 3b**: `Op::Div` is float-only in fusevm 0.10.1. ArithCompiler emits it for `/`. zsh integer-divides `10/3 = 3`. Bypassing ArithCompiler entirely for `$((expr))` and going through the executor's MathEval (which preserves int semantics) is correct AND simpler than patching ArithCompiler.
 
-**Bug closed in step 3**: my naive `Op::CmdSubst(sub_idx)` path fed the inner cmd through ZshParser+ZshCompiler. Some sub-chunk word-emit difference (vs shell_compiler's same-shaped emit) loses quotes — `$(printf "a\nb")` produced "anb" instead of "a\nb". Workaround: pass the raw cmd text to a builtin that calls `run_command_substitution` (uses ShellParser internally — to be migrated to ZshParser as part of Phase 2's type-deletion sweep).
+**Bug closed in step 3**: my naive `Op::CmdSubst(sub_idx)` path fed the inner cmd through parse_init+parse+ZshCompiler. Some sub-chunk word-emit difference (vs shell_compiler's same-shaped emit) loses quotes — `$(printf "a\nb")` produced "anb" instead of "a\nb". Workaround: pass the raw cmd text to a builtin that calls `run_command_substitution` (uses ShellParser internally — to be migrated to parser module as part of Phase 2's type-deletion sweep).
 
 After Phase 1, the bridge is hit only for: tilde non-leading, brace expansion with vars, nested `${${var}[1]}`/`${var/${pat}/repl}`, `${(P)var}` indirect. All niche. Bridge usage in real scripts (zpwr, .zshrc) drops to a small fraction of what it was.
 
@@ -316,13 +316,13 @@ Purpose: chip away at runtime callers of `ShellParser`/`ShellWord`/`ShellCommand
 
 | Caller | From | To |
 |---|---|---|
-| `run_command_substitution` | `ShellParser → ShellCompiler → execute_command` (internal) + `Command::new` (external) split | `ZshParser → ZshCompiler → sub-VM` with stdout-capture pipe; one path handles both |
-| `execute_script_file` (cache-miss) | `ShellParser + ShellCompiler` | `ZshParser + ZshCompiler` |
+| `run_command_substitution` | `ShellParser → ShellCompiler → execute_command` (internal) + `Command::new` (external) split | `parse_init+parse + ZshCompiler → sub-VM` with stdout-capture pipe; one path handles both |
+| `execute_script_file` (cache-miss) | `ShellParser + ShellCompiler` | `parse_init+parse + ZshCompiler` |
 | `execute_script` legacy body (`ZSHRS_OLD_PIPELINE=1` opt-out) | full ShellParser+ShellCompiler+VM body + EXIT trap | one-line delegate to `execute_script_zsh_pipeline` (env-var is now a no-op) |
-| `builtin_pmap` / `pgrep` / `peach` | `ShellParser + ShellCompiler` per-arg | `ZshParser + ZshCompiler` per-arg |
+| `builtin_pmap` / `pgrep` / `peach` | `ShellParser + ShellCompiler` per-arg | `parse_init+parse + ZshCompiler` per-arg |
 | **The bridge in `compile_word_str`** | `ShellParser → ShellWord → JSON → BUILTIN_EXPAND_WORD_RUNTIME → expand_word_glob → expand_word → expand_string` | `untokenize_preserve_quotes(s) + mode_byte → BUILTIN_EXPAND_TEXT → expand_string + braces + glob` (mode 0=Default, 1=DoubleQuoted, 2=SingleQuoted, 3=Backquote) |
 | Heredoc body var-expansion | `ShellWord::Literal` JSON + `BUILTIN_EXPAND_WORD_RUNTIME` | `BUILTIN_EXPAND_TEXT` direct |
-| `run_process_sub_in/out` | `ShellParser → ShellCommand::Simple` words via `expand_word(ShellWord)` | new `simple_cmd_words` helper: `ZshParser → ZshSimple` + `expand_string` per word |
+| `run_process_sub_in/out` | `ShellParser → ShellCommand::Simple` words via `expand_word(ShellWord)` | new `simple_cmd_words` helper: `parse_init+parse → ZshSimple` + `expand_string` per word |
 
 ### What had to be solved mid-flight
 
@@ -345,7 +345,7 @@ Reference counts of the legacy types (lower = closer to deletable):
 | `src/text.rs` | 58 | 58 | pretty-printing of legacy AST |
 | `src/zwc.rs` | 45 | 45 | autoload bytecode cache |
 
-`ShellParser` callers in `exec.rs`: **10 → 4 → 2** (this iteration: compsys cache backfill loops at the old line 16818 and 16915 migrated to `ZshParser` + `ZshCompiler`; the SQLite blob format is fusevm `Chunk` so the cache hit path is unchanged). Two callers remain in `load_autoload_function`: the cached-body fast path (still needs the `ShellParser`-produced `Vec<ShellCommand>` for `wrap_autoload_commands`) and the filesystem slow path. Both now also populate `self.functions_compiled` via the ported pipeline so call dispatch hits the bytecode cache directly without a second-pass compile.
+`ShellParser` callers in `exec.rs`: **10 → 4 → 2** (this iteration: compsys cache backfill loops at the old line 16818 and 16915 migrated to `crate::ported::parse::parse` + `ZshCompiler`; the SQLite blob format is fusevm `Chunk` so the cache hit path is unchanged). Two callers remain in `load_autoload_function`: the cached-body fast path (still needs the `ShellParser`-produced `Vec<ShellCommand>` for `wrap_autoload_commands`) and the filesystem slow path. Both now also populate `self.functions_compiled` via the ported pipeline so call dispatch hits the bytecode cache directly without a second-pass compile.
 
 Plus: `load_function_from_zwc` (ZWC autoload path) now compiles the loaded body into `functions_compiled` immediately, removing the lazy compile-on-demand at `Op::CallFunction`.
 
@@ -357,7 +357,7 @@ The remaining work to remove `ShellParser`/`ShellLexer`/`ShellCommand`/`ShellWor
 2. Rename / re-type `executor.functions` to `HashMap<String, ZshProgram>`.
 3. Migrate `ZshrsHost::call_function`'s "compile AST on demand" path to `ZshCompiler`.
 4. Migrate `BUILTIN_REGISTER_FUNCTION`'s body-decode (currently deserializes `ShellCommand` JSON).
-5. Migrate the compsys cache prefetch loop (lines 16796 / 16893) to ZshParser.
+5. Migrate the compsys cache prefetch loop (lines 16796 / 16893) to parser module.
 6. Migrate `run_process_sub_in/out`-style `simple_cmd_words` to handle non-Simple commands (or accept the Simple-only restriction permanently).
 7. Delete `ShellExecutor::execute_command` (used only by legacy `call_function`).
 8. Delete `ShellExecutor::call_function(&ShellCommand, ...)` (legacy tree-walker fallback).
@@ -377,7 +377,7 @@ Test count: **876 across 9 suites, all green on the new (default) pipeline.**
 This iteration's deltas:
 
 - **`load_function_from_zwc` populates `functions_compiled` on load.** Previously the ZWC autoload path inserted only into the legacy `executor.functions` AST table; call dispatch then re-compiled the AST on first invocation via `ShellCompiler.compile`. Now the function body is compiled inline via `ShellCompiler` and persisted in `functions_compiled` directly. The legacy `functions` table stays populated for the introspection surface (`whence`, `which`, function listings) until the cascade migrates fully.
-- **Compsys cache backfill loops migrated to `ZshParser` + `ZshCompiler`.** The two batch loops that pre-parse autoload bodies and serialize fusevm `Chunk` blobs into SQLite — one for backfill-missing-bytecode, one for first-time compinit — both now feed through the ported pipeline. Persisted blob format is unchanged (`bincode::serialize::<fusevm::Chunk>`), so the cache-hit fast path at the top of `load_autoload_function` deserializes the same `Chunk` it always did.
+- **Compsys cache backfill loops migrated to `crate::ported::parse::parse` + `ZshCompiler`.** The two batch loops that pre-parse autoload bodies and serialize fusevm `Chunk` blobs into SQLite — one for backfill-missing-bytecode, one for first-time compinit — both now feed through the ported pipeline. Persisted blob format is unchanged (`bincode::serialize::<fusevm::Chunk>`), so the cache-hit fast path at the top of `load_autoload_function` deserializes the same `Chunk` it always did.
 - **`load_autoload_function` cached-body path compiles via `ZshCompiler` AND populates `functions_compiled`.** Both the in-process compiled-functions table and the persistent SQLite blob now come from the ported pipeline. The legacy `ShellParser` still runs alongside it to produce the `Vec<ShellCommand>` that `wrap_autoload_commands` needs for `self.functions` registration.
 
 Net `ShellParser::new` references in `exec.rs`: **4 → 2**. The remaining 2 (cached-body fallback + filesystem fallback in `load_autoload_function`) are gated by the `executor.functions: HashMap<String, ShellCommand>` cascade — until function lookup, `whence`, `which`, `functions[name]=…`, and `unfunction` all migrate to a `functions_compiled`-only world, the autoload paths must keep producing `ShellCommand` for back-compat.
@@ -386,7 +386,7 @@ Targeted-test gate (`zsh_construct_corpus` + `no_tree_walker_dispatch` + `ztst_r
 
 Subsequent loop iteration:
 
-- **`load_autoload_function` filesystem-fallback path** also populates `functions_compiled` via `ZshParser` + `ZshCompiler`. All three autoload entry points (ZWC, cached-body, fpath file) now feed the new pipeline.
+- **`load_autoload_function` filesystem-fallback path** also populates `functions_compiled` via `crate::ported::parse::parse` + `ZshCompiler`. All three autoload entry points (ZWC, cached-body, fpath file) now feed the new pipeline.
 - **Legacy `compiler.rs` (828 LOC) + `ast_opt.rs` (236 LOC) deleted.** Both were orphan modules with zero call sites in `src/` or `tests/`. `compiler.rs`'s standalone `Compiler` struct was a predecessor of `ShellCompiler` in `shell_compiler.rs`; `ast_opt.rs`'s `optimize` AST-mutation pass was never invoked. Closes step 13 of the deletion plan partially — `text.rs::getpermtext` still required by `whence`/`which` so it stays.
 - **`ZshrsHost::call_function` re-checks `functions_compiled` after autoload triggers.** Was checked once before autoload, then fell through to legacy AST recompile even after autoload populated the new table. Now skips the recompile when the new pipeline already produced the Chunk.
 
@@ -396,9 +396,9 @@ Final cascade pushed through. `ShellParser::new` now appears in **zero productio
 
 - **Function-call legacy paths migrated to compiled dispatch.** New `ShellExecutor::dispatch_function_call(name, args) -> Option<i32>` mirrors `ZshrsHost::call_function`'s resolution order — `functions_compiled` first, then autoload, then legacy AST recompile. `run_original_command`, ZLE `WidgetResult::CallFunction`, and `commandnotfound()` now route through it. The legacy `call_function(&ShellCommand, args)` (57 LOC), `doshfunc(&ShellCommand)` (37 LOC), and `exectime(&ShellCommand)` (22 LOC) all deleted with zero remaining callers.
 - **`function_source: HashMap<String, String>` field added.** Holds canonical source text for autoloaded functions (raw cache-body / file-content). Introspection (`whence`, `which`, `typeset -f`, `functions`) reads from there first, falls back to `text::getpermtext(self.functions[name])` only when the legacy AST is the only source. New helpers: `function_exists(name)`, `function_definition_text(name)`, `function_names()`.
-- **`load_autoload_function` ShellParser parses dropped.** Both cached-body and filesystem-fallback paths now ONLY use `ZshParser` + `ZshCompiler` to populate `functions_compiled` + `function_source`. The legacy AST table `self.functions` is no longer touched by autoload at all. `maybe_autoload` was updated to treat `function_exists(name)` as the success signal so the contract change is invisible to callers.
-- **`tests/zpwr_parse_test.rs` migrated to `ZshParser`.** Exercises ~1000 .zsh files end-to-end through the parser; result-shape adapter is a one-liner since the test only cares about success/failure.
-- **`tests/zsh_parser_probe.rs`**: four ShellParser-vs-ZshParser comparison probes deleted (no longer meaningful).
+- **`load_autoload_function` ShellParser parses dropped.** Both cached-body and filesystem-fallback paths now ONLY use `crate::ported::parse::parse` + `ZshCompiler` to populate `functions_compiled` + `function_source`. The legacy AST table `self.functions` is no longer touched by autoload at all. `maybe_autoload` was updated to treat `function_exists(name)` as the success signal so the contract change is invisible to callers.
+- **`tests/zpwr_parse_test.rs` migrated to parse_init+parse.** Exercises ~1000 .zsh files end-to-end through the parser; result-shape adapter is a one-liner since the test only cares about success/failure.
+- **`tests/zsh_parser_probe.rs`**: four ShellParser-vs-new-parser comparison probes deleted (no longer meaningful).
 - **`exec.rs` drops `ShellParser` from its `use crate::parser::{...}` import.** All references now live in comments only.
 
 Counts after this iteration:
@@ -421,12 +421,12 @@ Targeted-test gate (`zsh_construct_corpus` + `no_tree_walker_dispatch` + `ztst_r
 
 Continuation of the same session. After Phase 2 hit "production code is ShellParser-free", the cascade kept going through shell_compiler.rs and the dead-builtin layer:
 
-- **`src/shell_compiler.rs` deleted (~3273 LOC).** Production runtime path now consists only of `ZshLexer → ZshParser → ZshCompiler → fusevm`. `ArithCompiler` was first extracted to its own module (`src/arith_compiler.rs`) so `compile_zsh.rs` no longer imports `shell_compiler`. Then the legacy file went.
+- **`src/shell_compiler.rs` deleted (~3273 LOC).** Production runtime path now consists only of `lex+parse + ZshCompiler → fusevm`. `ArithCompiler` was first extracted to its own module (`src/arith_compiler.rs`) so `compile_zsh.rs` no longer imports `shell_compiler`. Then the legacy file went.
 - **`BUILTIN_EXPAND_WORD_RUNTIME` (id 281) + `BUILTIN_REGISTER_FUNCTION` (id 282) deleted.** Both were emitted only by the deleted shell_compiler. ZshCompiler emits `BUILTIN_EXPAND_TEXT` (314) and `BUILTIN_REGISTER_COMPILED_FN` (305) instead. IDs stay reserved as gap comments.
 - **`expand_word_glob` (~36 LOC) + `expand_word_split` (~60 LOC) deleted.** Zero callers after `BUILTIN_EXPAND_WORD_RUNTIME` removed. The remaining `expand_word(&ShellWord)` chain stays — reached via `ZshrsHost::expand_param → apply_var_modifier → expand_word`, which is the live host-trait path the new pipeline uses for parameter modifiers.
 - **`function_source: HashMap<String, String>` field added.** Holds canonical function source. Autoload paths (ZWC, cached-body, fpath file) populate it. Introspection (`whence`, `which`, `typeset -f`, `${functions[name]}`) reads from it via new helpers `function_exists`, `function_definition_text`, `function_names`, `remove_function`.
 - **Latent autoload bugs fixed.** `dispatch_function_call` and `ZshrsHost::call_function` now trigger `maybe_autoload` BEFORE `function_exists` — was a regression where the autoload stub registered in `self.functions` made `function_exists("foo")` return true even though no Chunk had landed in `functions_compiled` yet, so dispatch returned None instead of triggering the load. Plus `autoload -X` immediate-load + ZWC reload gate + plugin-cache replay all migrated to the union-aware checks.
-- **`execute_command` + `execute_command_capture` migrated to round-trip through `getpermtext → ZshParser → ZshCompiler` (no ShellCompiler fallback).** Tree_walker_absent invariants strengthened to FORBID `ShellCompiler::new()` in either function — the new pipeline is the only execution path. Same round-trip pattern applied to `BUILTIN_REGISTER_FUNCTION` handler and `load_function_from_zwc`.
+- **`execute_command` + `execute_command_capture` migrated to round-trip through `getpermtext → parser module → ZshCompiler` (no ShellCompiler fallback).** Tree_walker_absent invariants strengthened to FORBID `ShellCompiler::new()` in either function — the new pipeline is the only execution path. Same round-trip pattern applied to `BUILTIN_REGISTER_FUNCTION` handler and `load_function_from_zwc`.
 - **Dead legacy modules deleted earlier this session: `compiler.rs` (828 LOC) + `ast_opt.rs` (236 LOC).** Both were orphans with zero call sites.
 
 Net session deletion (cumulative across all iterations): **~5000 LOC of legacy parser/compiler/expansion machinery** plus ~12 latent autoload bugs surfaced during the cascade.
