@@ -136,7 +136,12 @@ impl ShellExecutor {
             println!("  {} {} missing fpath directories", red("!"), fpath_missing);
         }
         println!("  functions:   {} loaded", self.function_names().len());
-        println!("  autoload:    {} pending", self.autoload_pending.len());
+        // Count canonical shfunctab entries with PM_UNDEFINED set.
+        use crate::ported::zsh_h::PM_UNDEFINED;
+        let autoload_count = crate::ported::hashtable::shfunctab_lock().read()
+            .map(|t| t.iter().filter(|(_, shf)| (shf.node.flags as u32 & PM_UNDEFINED) != 0).count())
+            .unwrap_or(0);
+        println!("  autoload:    {} pending", autoload_count);
         println!();
 
         // --- SQLite Caches ---
