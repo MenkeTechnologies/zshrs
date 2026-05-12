@@ -2067,23 +2067,7 @@ pub static WATCH_FDS: std::sync::Mutex<Vec<super::zle_h::watch_fd>> =        // 
 pub fn zleaftertrap() -> i32 {                                               // c:2113
     use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2116
-        // c:2117 — `endparamscope()`. The canonical Rust endparamscope
-        // takes a `&mut HashTable` reference for vtable dispatch
-        // (params.rs:1603); the global-scope unwind work it does
-        // (dec_locallevel + saveandpophiststack) is what we care about
-        // here, so we feed it a stub HashTable — the side effects on
-        // locallevel + history fire correctly.
-        let mut stub: crate::ported::zsh_h::HashTable = Box::new(
-            crate::ported::zsh_h::hashtable {
-                hsize: 0, ct: 0, nodes: Vec::new(), tmpdata: 0,
-                hash: None, emptytable: None, filltable: None,
-                cmpnodes: None, addnode: None, getnode: None,
-                getnode2: None, removenode: None, disablenode: None,
-                enablenode: None, freenode: None, printnode: None,
-                scantab: None,
-            },
-        );
-        crate::ported::params::endparamscope(&mut stub);
+        crate::ported::params::endparamscope();                              // c:2117
     }
     0                                                                        // c:2119 return 0
 }

@@ -289,26 +289,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Variable declaration
     vm.register_builtin(BUILTIN_LOCAL, |vm, argc| {
         let args = pop_args(vm, argc);
-        // PM_LOCAL save: snapshot the outer value of each name BEFORE
-        // canonical bin_typeset writes the local one. Direct port of
-        // Src/params.c createparam's `pm->old = oldpm` chain — the
-        // unwind at fn exit (fusevm_bridge.rs ~9520) pops each saved
-        // pair and restores. Done at the dispatcher because canonical
-        // bin_typeset is in src/ported/ where it has no access to
-        // exec.local_save_stack without going through try_with_executor.
-        with_executor(|exec| {
-            if exec.local_scope_depth > 0 {
-                for a in &args {
-                    if a.starts_with('-') || a.starts_with('+') { continue; }
-                    let name: &str = match a.find('=') {
-                        Some(i) => &a[..i],
-                        None => a.as_str(),
-                    };
-                    let old = exec.scalar(name);
-                    exec.local_save_stack.push((name.to_string(), old));
-                }
-            }
-        });
+        // Canonical bin_local handles the entire scope chain
+        // (`pm->old = oldpm` at Src/params.c:1137 inside createparam,
+        // `pm->level = locallevel` at Src/builtin.c:2576 inside
+        // typeset_single). The dispatcher only routes args.
         let status = with_executor(|exec| exec.builtin_local(&args));
         Value::Status(status)
     });
@@ -9316,9 +9300,6 @@ impl fusevm::ShellHost for ZshrsHost {
         let saved_options = with_executor(|exec| exec.options.clone());
         let (
             saved_params,
-            saved_local_count,
-            saved_local_arr_count,
-            saved_local_assoc_count,
             saved_zero,
             saved_scriptname,
             saved_funcstack,
@@ -9326,10 +9307,13 @@ impl fusevm::ShellHost for ZshrsHost {
         ) = with_executor(|exec| {
             let prev = exec.pparams();
             exec.set_pparams(args.clone());
-            let count = exec.local_save_stack.len();
-            let arr_count = exec.local_array_save_stack.len();
-            let assoc_count = exec.local_assoc_save_stack.len();
             exec.local_scope_depth += 1;
+            // c:Src/exec.c doshfunc startparamscope() — bump
+            // canonical locallevel before the function body runs
+            // so any inner `local`/`typeset` writes Params at the
+            // right scope. endparamscope at exit restores.
+            crate::ported::params::locallevel
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             // Save and clear EXIT trap before function body
             // runs. Direct port of zsh's exec.c
             // `dotrapargs(SIGEXIT, ...)` deferred-fire pattern
@@ -9394,9 +9378,6 @@ impl fusevm::ShellHost for ZshrsHost {
             exec.pending_underscore = Some(dollar_underscore);
             (
                 prev,
-                count,
-                arr_count,
-                assoc_count,
                 prev_zero,
                 prev_scriptname,
                 prev_stack,
@@ -9489,47 +9470,10 @@ impl fusevm::ShellHost for ZshrsHost {
                     exec.unset_array("funcstack");
                 }
             }
-            // Unwind any `local` declarations made during the function call.
-            while exec.local_save_stack.len() > saved_local_count {
-                if let Some((var_name, old_val)) = exec.local_save_stack.pop() {
-                    match old_val {
-                        Some(v) => {
-                            exec.set_scalar(var_name, v);
-                        }
-                        None => {
-                            exec.unset_scalar(&var_name);
-                        }
-                    }
-                }
-            }
-            // Same for `local arr=(...)` array bindings — restore the
-            // outer array's elements (or remove if there was none).
-            while exec.local_array_save_stack.len() > saved_local_arr_count {
-                if let Some((arr_name, old_arr)) = exec.local_array_save_stack.pop() {
-                    match old_arr {
-                        Some(items) => {
-                            exec.set_array(arr_name, items);
-                        }
-                        None => {
-                            exec.unset_array(&arr_name);
-                        }
-                    }
-                }
-            }
-            // Same for `typeset -A h=(...)` assoc bindings — restore
-            // the outer assoc (or remove if there was none).
-            while exec.local_assoc_save_stack.len() > saved_local_assoc_count {
-                if let Some((assoc_name, old_assoc)) = exec.local_assoc_save_stack.pop() {
-                    match old_assoc {
-                        Some(map) => {
-                            exec.set_assoc(assoc_name, map);
-                        }
-                        None => {
-                            exec.unset_assoc(&assoc_name);
-                        }
-                    }
-                }
-            }
+            // c:Src/exec.c doshfunc → endparamscope(). Walks paramtab
+            // restoring Param.old chain for every local declaration
+            // made during the call.
+            crate::ported::params::endparamscope();
         });
 
         Some(status)

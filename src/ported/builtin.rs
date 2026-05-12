@@ -3899,6 +3899,24 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
     let is_hashed = (on & PM_HASHED) != 0;                                   // c:2655 `-A`
     let is_array  = (on & PM_ARRAY)  != 0;                                   // c:2655 `-a`
     for arg in argv {
+        // c:Src/builtin.c typeset_single — when PM_LOCAL is in
+        // flags, createparam first to install pm.old chain at
+        // locallevel (createparam c:1132-1147). Applies uniformly
+        // to all forms: `local x`, `local x=v`, `local arr=(...)`,
+        // `local -A h`. endparamscope unwinds via Param.old.
+        let arg_name: &str = match arg.find('=') {
+            Some(i) => &arg[..i],
+            None => arg.as_str(),
+        };
+        if (on & PM_LOCAL) != 0
+            && !arg_name.is_empty()
+            && !arg_name.starts_with('-')
+            && !arg_name.starts_with('+')
+        {
+            let kind = if is_hashed { PM_HASHED } else if is_array { PM_ARRAY } else { 0 };
+            let _ = crate::ported::params::createparam(
+                arg_name, on as i32 | kind as i32 | PM_LOCAL as i32);
+        }
         if let Some(eq) = arg.find('=') {
             let n = &arg[..eq];
             let raw_v = &arg[eq + 1..];
@@ -3946,29 +3964,20 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
                     }
                     let n_owned = n.to_string();
                     crate::fusevm_bridge::with_executor(|exec| {
-                        exec.set_assoc(n_owned.clone(), map.clone());
-                        exec.unset_scalar(&n_owned);
+                        exec.set_assoc(n_owned, map.clone());
                     });
                 } else {
                     // c:2980-2995 — plain array.
                     let n_owned = n.to_string();
                     let elems_owned = elems.clone();
                     crate::fusevm_bridge::with_executor(|exec| {
-                        exec.set_array(n_owned.clone(), elems_owned.clone());
-                        exec.unset_scalar(&n_owned);
+                        exec.set_array(n_owned, elems_owned);
                     });
                 }
             } else {
                 // c:3010-3030 — `name=value` scalar assign. C-canonical
                 // `setsparam` (Src/params.c:3350) writes paramtab; the
                 // env mirror at `Src/params.c:3024 addenv` follows.
-                //
-                // PM_LOCAL save now happens in the BUILTIN_LOCAL
-                // dispatcher (fusevm_bridge.rs) before this canonical
-                // bin_typeset runs, since the unwind stack lives on
-                // ShellExecutor and `local`'s scope-save semantics
-                // are at the dispatcher boundary.
-                let _ = on & PM_LOCAL;
                 // c:Src/params.c PM_LOWER/PM_UPPER setstrvalue arms:
                 // when typeset -l or -u is set, the assigned value is
                 // case-folded BEFORE storage. Without this, `typeset -l
@@ -3986,7 +3995,15 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
                     raw_v.to_string()
                 };
                 crate::ported::params::setsparam(n, &folded);                // c:params.c:3350
-                std::env::set_var(n, &folded);                               // c:3024 addenv
+                // c:Src/params.c:3024 addenv — only mirror to OS env
+                // when PM_EXPORTED is in flags or already-exported.
+                // The unconditional env::set_var here was a pre-
+                // existing bug exposed by Task 25: local scalars
+                // were leaking to env, surviving endparamscope.
+                let already_exported = std::env::var_os(n).is_some();
+                if (on & crate::ported::zsh_h::PM_EXPORTED) != 0 || already_exported {
+                    std::env::set_var(n, &folded);                           // c:3024 addenv
+                }
                 // C-canonical: typeset -i / -F / -E / -l / -u / -r set
                 // PM_INTEGER / PM_FFLOAT / PM_EFLOAT / PM_LOWER /
                 // PM_UPPER / PM_READONLY on the Param (Src/builtin.c

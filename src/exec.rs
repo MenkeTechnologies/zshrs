@@ -407,16 +407,6 @@ pub struct ShellExecutor {
     /// dispatch arm after consumption. C type: `int` (zsh's
     /// `sub_flags` field on the global subst state; zsh.h:1981).
     pub sub_flags: i32,
-    /// Stack for `local` variable save/restore (name, old_value).
-    pub local_save_stack: Vec<(String, Option<String>)>,
-    /// Parallel stack for `local arr=(...)` array save/restore.
-    /// `Some(prev)` means restore on exit; `None` means the name had no
-    /// outer array binding and should be removed.
-    pub local_array_save_stack: Vec<(String, Option<Vec<String>>)>,
-    /// Parallel stack for `local -A h=(...)` assoc save/restore. zsh
-    /// shadows the outer assoc binding; without this, `typeset -A h`
-    /// inside a function leaked into the parent.
-    pub local_assoc_save_stack: Vec<(String, Option<IndexMap<String, String>>)>,
     /// Current function scope depth for `local` tracking.
     pub local_scope_depth: usize,
     /// Last arg of the currently-running command, deferred into `$_`
@@ -1009,9 +999,6 @@ impl ShellExecutor {
             readonly_vars: std::collections::HashSet::new(),
             last_subst: None,
             sub_flags: 0,
-            local_save_stack: Vec::new(),
-            local_array_save_stack: Vec::new(),
-            local_assoc_save_stack: Vec::new(),
             local_scope_depth: 0,
             pending_underscore: None,
             in_dq_context: 0,
@@ -1395,9 +1382,6 @@ impl ShellExecutor {
         // ZshrsHost::call_function.
         let saved_params = self.pparams();
         self.set_pparams(args.to_vec());
-        let saved_local_count = self.local_save_stack.len();
-        let saved_local_arr_count = self.local_array_save_stack.len();
-        let saved_local_assoc_count = self.local_assoc_save_stack.len();
         // FUNCTION_ARGZERO: zsh sets `\$0` inside a function to the
         // function name (default-on option). The bytecode-level
         // call_function path already does this; the dispatch path
@@ -1414,6 +1398,11 @@ impl ShellExecutor {
         let saved_zero = crate::ported::params::getsparam("0");
         self.set_scalar("0".to_string(), display_name);
         self.local_scope_depth += 1;
+        // c:Src/exec.c doshfunc startparamscope(): bump canonical
+        // `locallevel` so any `local`/`typeset` inside the body
+        // installs Params at the correct scope. endparamscope at
+        // exit decrements + restores Param.old chain.
+        crate::ported::params::locallevel.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let line_base = self
             .function_line_base
             .get(name)
@@ -1432,6 +1421,10 @@ impl ShellExecutor {
 
         self.set_pparams(saved_params);
         self.prompt_funcstack.pop();
+        // c:Src/exec.c doshfunc → endparamscope(). Decrements
+        // canonical locallevel and walks paramtab restoring the
+        // Param.old chain for every entry installed at this depth.
+        crate::ported::params::endparamscope();
         self.local_scope_depth -= 1;
         match saved_zero {
             Some(v) => {
@@ -1439,42 +1432,6 @@ impl ShellExecutor {
             }
             None => {
                 self.unset_scalar("0");
-            }
-        }
-        while self.local_save_stack.len() > saved_local_count {
-            if let Some((var_name, old_val)) = self.local_save_stack.pop() {
-                match old_val {
-                    Some(v) => {
-                        self.set_scalar(var_name, v);
-                    }
-                    None => {
-                        self.unset_scalar(&var_name);
-                    }
-                }
-            }
-        }
-        while self.local_array_save_stack.len() > saved_local_arr_count {
-            if let Some((arr_name, old_arr)) = self.local_array_save_stack.pop() {
-                match old_arr {
-                    Some(items) => {
-                        self.set_array(arr_name, items);
-                    }
-                    None => {
-                        self.unset_array(&arr_name);
-                    }
-                }
-            }
-        }
-        while self.local_assoc_save_stack.len() > saved_local_assoc_count {
-            if let Some((assoc_name, old_assoc)) = self.local_assoc_save_stack.pop() {
-                match old_assoc {
-                    Some(map) => {
-                        self.set_assoc(assoc_name, map);
-                    }
-                    None => {
-                        self.unset_assoc(&assoc_name);
-                    }
-                }
             }
         }
 

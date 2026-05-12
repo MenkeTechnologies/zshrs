@@ -89,7 +89,6 @@ pub fn set_foundparam(nam: Option<String>) {
 pub static locallevel: std::sync::atomic::AtomicI32 =                        // c:54
     std::sync::atomic::AtomicI32::new(0);
 
-
 // ---------------------------------------------------------------------------
 // Real `param` struct lives in Src/zsh.h:1829 (port at zsh_h.rs:750).
 // It uses C-union flattening: u_str / u_arr / u_val / u_dval / u_hash
@@ -1899,31 +1898,36 @@ pub fn startparamscope(_table: &mut crate::ported::zsh_h::HashTable) {
     crate::ported::utils::inc_locallevel();
 }
 
-/// Port of `endparamscope()` from `Src/params.c:5857`. Decrements
-/// `locallevel`, pops any pushed history stack, then iterates
-/// `paramtab` calling `scanendscope` to restore/unset every param
-/// whose `level` exceeds the new `locallevel`. Finally walks any
-/// nameref refs recorded for the outgoing scope and resets their
-/// scope via `setscope` if they pointed into the dead frame.
-pub fn endparamscope(table: &mut crate::ported::zsh_h::HashTable) {
+/// Port of `endparamscope()` from `Src/params.c:5857`. C signature:
+/// `mod_export void endparamscope(void)`. Decrements `locallevel`,
+/// pops any pushed history stack, then iterates `paramtab` calling
+/// `scanendscope` to restore/unset every param whose `level`
+/// exceeds the new `locallevel`. Operates on the global `paramtab`
+/// just like C — no parameter, no fake injection wrapper.
+pub fn endparamscope() {
     queue_signals();
-    crate::ported::utils::dec_locallevel();
+    crate::ported::utils::dec_locallevel();                                  // c:5861 locallevel--
     crate::ported::hist::saveandpophiststack(crate::ported::zsh_h::HFILE_USE_OPTIONS as i32);
     let ll = crate::ported::utils::locallevel();
-    // `scanhashtable(paramtab, 0, 0, 0, scanendscope, 0)` walks the
-    // table and invokes scanendscope for every entry. The hashtable
-    // iterator vtable is not exported on `Box<hashtable>` yet; the
-    // structural call is preserved as a single-pass over the table's
-    // node array so the vtable can replace it transparently later.
-    for slot in table.nodes.iter() {
-        // Each `slot` is `Option<HashNode>`; the cast `(Param)hn` in C
-        // is type-equivalent to taking a reference at the param-shaped
-        // record offset. Without a typed downcast helper here, we
-        // exercise the structural walk and let scanendscope process
-        // entries as the typed table backend is wired.
-        let _ = slot;
+    // c:5867 scanhashtable(paramtab, 0, 0, 0, scanendscope, 0). Walk
+    // the live paramtab (HashMap-backed until the hashtable.c vtable
+    // is wired) and apply scanendscope's `pm->level > locallevel`
+    // filter, restoring the `pm.old` chain or removing the entry.
+    if let Ok(mut tab) = paramtab().lock() {
+        let stale: Vec<String> = tab.iter()
+            .filter_map(|(k, pm)| if pm.level > ll { Some(k.clone()) } else { None })
+            .collect();
+        for n in stale {
+            // c:scanendscope:5903 — non-special path: restore pm.old
+            // (or remove if no outer binding existed).
+            if let Some(pm) = tab.remove(&n) {
+                if let Some(prev) = pm.old {                                 // c:scanendscope:5933 pm->old = tpm->old
+                    tab.insert(n, prev);                                     // restore outer binding (Box<param>)
+                }
+                // else: c:5966 unsetparam_pm — name unset entirely
+            }
+        }
     }
-    let _ = ll;
     unqueue_signals();
 }
 
@@ -6168,6 +6172,17 @@ pub fn createparam(                                                          // 
     //   Without paramtab backend, we cannot consult the table; treat
     //   the param as new. The PM_RO_BY_DESIGN / PM_NAMEREF / hidden
     //   branches (c:1043-1147) collapse to "allocate fresh".
+    // c:1037-1041 — `oldpm = gethashnode2(paramtab, name)`. Look up
+    // any existing Param at this name so the c:1108/1135 branches
+    // can decide reuse-vs-shadow. PM_RO_BY_DESIGN / PM_NAMEREF
+    // chase branches (c:1043-1104) elided — covered when nameref
+    // / readonly-by-design Params are wired.
+    let oldpm: Option<crate::ported::zsh_h::Param> = if !name.is_empty() {
+        paramtab().lock().ok().and_then(|t| t.get(name).cloned())
+    } else {
+        None
+    };
+
     if !name.is_empty() {
         // c:1149-1150 — `if (isset(ALLEXPORT) && !(flags & PM_HASHELEM)) flags |= PM_EXPORTED;`
         if isset(crate::ported::zsh_h::ALLEXPORT)
@@ -6176,40 +6191,65 @@ pub fn createparam(                                                          // 
             flags |= PM_EXPORTED as i32;
         }
     }
-    // c:1136 zshcalloc(sizeof *pm) — fresh-param fallback (also used
-    // for the empty-name `nulstring` path at c:1152). Same zero-init
-    // either way; only `nam` differs.
-    let mut pm: crate::ported::zsh_h::Param = Box::new(crate::ported::zsh_h::param {
-        node: crate::ported::zsh_h::hashnode {
-            next: None,
-            nam: name.to_string(),
-            flags: 0,
-        },
-        u_data: 0,
-        u_arr: None,
-        u_str: None,
-        u_val: 0,
-        u_dval: 0.0,
-        u_hash: None,
-        gsu_s: None,
-        gsu_i: None,
-        gsu_f: None,
-        gsu_a: None,
-        gsu_h: None,
-        base: 0,
-        width: 0,
-        env: None,
-        ename: None,
-        old: None,
-        level: 0,
-    });
+
+    // c:1108 — `if (oldpm && (oldpm->level == locallevel || !(flags
+    // & PM_LOCAL)))`: reuse the existing Param in place. c:1135 —
+    // else allocate a fresh pm and chain pm.old = oldpm (the
+    // local-shadow path). The reuse arm just returns the existing
+    // pm with reset base/width; the shadow arm does the chain
+    // installation that endparamscope later unwinds.
+    let cur_locallevel = locallevel.load(std::sync::atomic::Ordering::Relaxed);
+    let reuse = match &oldpm {
+        Some(op) => op.level == cur_locallevel || (flags as u32 & PM_LOCAL) == 0,
+        None => false,
+    };
+
+    let mut pm: crate::ported::zsh_h::Param = if reuse {
+        // c:1132-1134 — `pm = oldpm; pm->base = pm->width = 0;
+        // oldpm = pm->old;` Reuse the entry already in paramtab.
+        let mut existing = oldpm.unwrap();                                   // safe: reuse=true requires Some
+        existing.base = 0;                                                   // c:1133
+        existing.width = 0;                                                  // c:1133
+        existing
+    } else {
+        // c:1136 zshcalloc(sizeof *pm) — fresh allocation; chain the
+        // outer Param into pm.old (c:1137) so endparamscope can
+        // restore it. c:1144 paramtab->removenode is implicit since
+        // we re-insert below.
+        Box::new(crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: name.to_string(),
+                flags: 0,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: oldpm,                                                      // c:1137 pm->old = oldpm
+            level: cur_locallevel,                                           // c:builtin.c:2576 PM_LOCAL → pm->level = locallevel
+        })
+    };
+
     pm.node.flags = flags & !(PM_LOCAL as i32);                              // c:1155
     if (pm.node.flags as u32 & PM_SPECIAL) == 0 {                            // c:1157
         assigngetset(&mut pm);                                               // c:1158
     }
-    // c:1146 `paramtab->addnode(paramtab, ztrdup(name), pm)`. Without
-    // this, callers that re-fetch the param via paramtab->getnode would
-    // miss it. Empty-name (nulstring) path c:1152-1153 stays paramtab-less.
+    // c:1146 `paramtab->addnode(paramtab, ztrdup(name), pm)`. For
+    // the reuse arm this overwrites the same entry; for the shadow
+    // arm it installs the new chained pm on top of the (now-
+    // displaced) old.
     if !name.is_empty() {
         let cloned = pm.clone();
         paramtab().lock().unwrap().insert(name.to_string(), pm);
