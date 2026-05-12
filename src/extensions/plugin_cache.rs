@@ -876,7 +876,17 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 m
             },
-            autoloads: self.autoload_pending.keys().cloned().collect(),
+            autoloads: {
+                // Walk canonical shfunctab for autoload-pending entries
+                // (PM_UNDEFINED set). Snapshot is keyed by function name.
+                use crate::ported::zsh_h::PM_UNDEFINED;
+                crate::ported::hashtable::shfunctab_lock().read().ok()
+                    .map(|t| t.iter()
+                        .filter(|(_, shf)| (shf.node.flags as u32 & PM_UNDEFINED) != 0)
+                        .map(|(name, _)| name.clone())
+                        .collect())
+                    .unwrap_or_default()
+            },
         }
     }
     /// Compute the delta between current state and a previous snapshot.
@@ -1050,13 +1060,22 @@ impl crate::ported::exec::ShellExecutor {
             }
         }
 
-        // New autoloads
-        let mut autoload_keys: Vec<&String> = self.autoload_pending.keys().collect();
+        // New autoloads — read PM_UNDEFINED entries from canonical shfunctab.
+        use crate::ported::zsh_h::PM_UNDEFINED;
+        let current_autoloads: Vec<String> = crate::ported::hashtable::shfunctab_lock()
+            .read().ok()
+            .map(|t| t.iter()
+                .filter(|(_, shf)| (shf.node.flags as u32 & PM_UNDEFINED) != 0)
+                .map(|(name, _)| name.clone())
+                .collect())
+            .unwrap_or_default();
+        let mut autoload_keys: Vec<&String> = current_autoloads.iter().collect();
         autoload_keys.sort();
         for name in autoload_keys {
             if !snap.autoloads.contains(name) {
-                let flags = self.autoload_pending.get(name).unwrap();
-                delta.autoloads.push((name.clone(), format!("{:?}", flags)));
+                // Flags stub-string: canonical autoload sets only PM_UNDEFINED
+                // (the -U/-z/-k/-t/-d details were never consumed by replay).
+                delta.autoloads.push((name.clone(), String::new()));
             }
         }
 

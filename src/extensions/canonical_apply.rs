@@ -191,11 +191,16 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     // with the standard `-Uz` flag set (NO_ALIAS + ZSH_STYLE), what
     // every modern compsys / plugin does. The body lookup happens on
     // first call via the autoload resolver; we don't pre-compile.
-    let auto_flags = AutoloadFlags::NO_ALIAS | AutoloadFlags::ZSH_STYLE;
+    // Register each autoload-pending function via the canonical
+    // shfunctab stub with `PM_UNDEFINED` set — matches C's
+    // `autoload_func` at `Src/exec.c:5215+` flow. `AutoloadFlags`
+    // (-U/-z/-k/-t/-d) details were never consumed elsewhere; the
+    // canonical bit is just "shfunc exists with PM_UNDEFINED".
+    let _ = AutoloadFlags::NO_ALIAS;
     for name in shard.autoload_functions.keys() {
-        executor
-            .autoload_pending
-            .insert(name.clone(), auto_flags);
+        if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+            tab.add(crate::ported::hashtable::shfunc_autoload(name));
+        }
         total += 1;
     }
 

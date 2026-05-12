@@ -438,7 +438,11 @@ pub struct ShellExecutor {
     /// the script-added entries (matches zsh's `-c` semantics where
     /// session history is the only thing visible to the script).
     pub session_history_ids: Vec<i64>,
-    pub autoload_pending: HashMap<String, AutoloadFlags>, // Functions marked for autoload
+    // `autoload_pending` deleted — dup of canonical shfunctab entries
+    // with PM_UNDEFINED flag bit (port of C autoload_func stub at
+    // `Src/exec.c:5215`). The -U/-z/-k/-t/-d AutoloadFlags details
+    // were never consumed beyond serialization, dropped along with
+    // the field.
     // `hook_functions` deleted — Rust-only side-store duplicating zsh's
     // canonical `<hook>_functions` paramtab arrays (the add-zsh-hook
     // idiom). `add_hook` / `delete_hook` now mutate those arrays
@@ -1081,7 +1085,6 @@ impl ShellExecutor {
             in_dq_context: 0,
             in_scalar_assign: 0,
             session_history_ids: Vec::new(),
-            autoload_pending: HashMap::new(),
             open_fds: HashMap::new(),
             next_fd: 10,
             profiling_enabled: false,
@@ -1879,7 +1882,15 @@ impl ShellExecutor {
     /// itself; use `maybe_autoload` first if you need to load before
     /// introspecting.
     pub fn function_exists(&self, name: &str) -> bool {
-        self.functions_compiled.contains_key(name) || self.autoload_pending.contains_key(name)
+        // Either compiled (already loaded) or shfunctab has an
+        // autoload stub with PM_UNDEFINED set (pending). Matches C's
+        // `lookupshfunc(name)` semantics at `Src/exec.c:5215`.
+        if self.functions_compiled.contains_key(name) {
+            return true;
+        }
+        crate::ported::hashtable::shfunctab_lock().read().ok()
+            .map(|t| t.get(name).is_some())
+            .unwrap_or(false)
     }
 
     /// Canonical source text for a function. Returns from `function_source`
