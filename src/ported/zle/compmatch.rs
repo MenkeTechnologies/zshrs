@@ -1276,6 +1276,7 @@ pub fn bld_parts(
 /// Working state for `check_cmdata` / `undo_cmdata` / `sub_match`.
 #[derive(Default, Clone, Debug)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/compmatch.c
 pub struct cmdata {                                                          // c:2142
     pub cl:   Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143
     pub pcl:  Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143

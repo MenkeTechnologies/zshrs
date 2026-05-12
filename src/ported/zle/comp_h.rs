@@ -251,6 +251,7 @@ pub const CM_SPACE: i32 = 2;                                             // c:47
 /// string entry attached to a match group.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/comp_h.c
 pub struct Cexpl {                                                       // c:40
     /// Display even without matches.
     pub always: i32,                                                     // c:41
@@ -266,6 +267,7 @@ pub struct Cexpl {                                                       // c:40
 /// completion matches (one per `compadd -J GROUP`).
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/comp_h.c
 pub struct Cmgroup {                                                     // c:49
     /// Group name.
     pub name: Option<String>,                                            // c:50
@@ -331,6 +333,7 @@ pub struct Cmgroup {                                                     // c:49
 /// completion match.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/comp_h.c
 pub struct Cmatch {                                                      // c:99
     /// The match itself.
     pub str_: Option<String>,                                            // c:100 (Rust keyword)
@@ -388,6 +391,7 @@ pub struct Cmatch {                                                      // c:99
 /// list of global matchers.
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/comp_h.c
 pub struct Cmlist {                                                      // c:147
     /// Next entry in the list.
     pub next: Option<Box<Cmlist>>,                                       // c:148
@@ -402,6 +406,7 @@ pub struct Cmlist {                                                      // c:14
 /// with optional left/right anchors.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/comp_h.c
 pub struct Cmatcher {                                                    // c:153
     /// Reference counter.
     pub refc: i32,                                                       // c:154
@@ -439,6 +444,7 @@ pub struct Cmatcher {                                                    // c:15
 /// `Option`s so the dispatcher reads only the live one.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/comp_h.c
 pub struct Cpattern {                                                    // c:197
     /// Next sub-pattern.
     pub next: Option<Box<Cpattern>>,                                     // c:198
@@ -457,6 +463,7 @@ pub struct Cpattern {                                                    // c:19
 /// suffix sub-lists via the `prefix`/`suffix` fields.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/comp_h.c
 pub struct Cline {                                                       // c:245
     /// Next sibling word-part.
     pub next: Option<Box<Cline>>,                                        // c:246
@@ -491,6 +498,7 @@ pub struct Cline {                                                       // c:24
 /// ignored and one for normal completion.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/comp_h.c
 pub struct Aminfo {                                                      // c:274
     /// The first match.
     pub firstm: Option<Box<Cmatch>>,                                     // c:275
@@ -508,6 +516,7 @@ pub struct Aminfo {                                                      // c:27
 /// Menu-completion state.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/comp_h.c
 pub struct Menuinfo {                                                    // c:284
     /// Position in the group list.
     pub group: Option<Box<Cmgroup>>,                                     // c:285
@@ -535,6 +544,7 @@ pub struct Menuinfo {                                                    // c:28
 /// data passed to the compctl-make path.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/comp_h.c
 pub struct Ccmakedat {                                                   // c:455
     /// String passed to the hook.
     pub str_: Option<String>,                                            // c:456
@@ -548,6 +558,7 @@ pub struct Ccmakedat {                                                   // c:45
 /// given to `offered` hooks.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/comp_h.c
 pub struct Chdata {                                                      // c:465
     /// The matches generated.
     pub matches: Option<Box<Cmgroup>>,                                   // c:466
@@ -563,6 +574,7 @@ pub struct Chdata {                                                      // c:46
 /// passed to compadd / addmatches().
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/comp_h.c
 pub struct Cadata {                                                      // c:315
     /// Ignored prefix (-i).
     pub ipre: Option<String>,                                            // c:316
@@ -612,6 +624,7 @@ pub struct Cadata {                                                      // c:31
 /// for the matches-listing path.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/comp_h.c
 pub struct Cldata {                                                      // c:343
     /// Screen width.
     pub zterm_columns: i32,                                              // c:344

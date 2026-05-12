@@ -28,6 +28,7 @@ pub static emulation: AtomicI32 = AtomicI32::new(0);                         // 
 /// argument onto these and `installemulation()` (line 523) flips
 /// the option flags to match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+// WARNING: FAKE IMPL RUST INVENTION — not in options.c
 pub enum Emulation {
     Zsh = 1,
     Csh = 2,
@@ -163,6 +164,7 @@ pub static KSH_LETTERS: &[(char, &str, bool)] = &[
 /// `unsetopt` mutation through `dosetopt()` (line 735) and every
 /// emulation flip through `installemulation()` (line 523).
 #[derive(Debug, Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in options.c
 pub struct ShellOptions {
     // the options; e.g. if opts[SHGLOB] != 0, SH_GLOB is turned on          // c:43
     /// Current option values (true = set)

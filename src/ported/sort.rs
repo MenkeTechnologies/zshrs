@@ -54,6 +54,7 @@ use crate::zsh_h::{
 ///   `unmetalenp` array element. Read back after sort to pair the
 ///   sorted strings with their original lengths.
 #[derive(Clone, Debug)]
+// WARNING: FAKE IMPL RUST INVENTION — not in sort.c
 pub struct SortElt {
     pub orig: String,
     pub cmp: String,

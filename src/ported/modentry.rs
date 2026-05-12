@@ -14,6 +14,7 @@ use crate::module::ModuleLifecycle;
 /// to `setup_`/`getrandom_buffer`/`cleanup_`/`finish_`/`features_`/`enables_`.
 /// We give each integer a typed name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// WARNING: FAKE IMPL RUST INVENTION — not in modentry.c
 pub enum ModOp {
     Setup = 0,
     Boot = 1,

@@ -17,6 +17,7 @@ use super::parse::{ParseStack};
 
 /// Port of `struct context_stack` from Src/context.c:38-44.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in context.c
 pub struct context_stack {                                                   // c:38
     pub next: Option<Box<context_stack>>,                                    // c:39
     pub hist_stack: hist_stack,                                              // c:41

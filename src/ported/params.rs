@@ -116,6 +116,7 @@ pub use crate::ported::zsh_h::param;
 /// Port of `IPDEF1(A,B,C)` from `Src/params.c:296` —
 /// `{{NULL,A,PM_INTEGER|PM_SPECIAL|C},BR(NULL),GSU(B),10,0,...}`.
 #[inline] #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub fn IPDEF1(name: &str, gsu: usize, extra_flags: i32) -> paramdef {        // c:params.c:296
     paramdef {
         name: name.to_string(),
@@ -128,6 +129,7 @@ pub fn IPDEF1(name: &str, gsu: usize, extra_flags: i32) -> paramdef {        // 
 /// Port of `IPDEF2(A,B,C)` from `Src/params.c:309` —
 /// `{{NULL,A,PM_SCALAR|PM_SPECIAL|C},BR(NULL),GSU(B),0,0,...}`.
 #[inline] #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub fn IPDEF2(name: &str, gsu: usize, extra_flags: i32) -> paramdef {        // c:params.c:309
     paramdef {
         name: name.to_string(),
@@ -141,6 +143,7 @@ pub fn IPDEF2(name: &str, gsu: usize, extra_flags: i32) -> paramdef {        // 
 /// `{{NULL,A,PM_INTEGER|PM_READONLY_SPECIAL},BR((void*)B),
 ///   GSU(varint_readonly_gsu),10,0,...}`.
 #[inline] #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub fn IPDEF4(name: &str, var: usize) -> paramdef {                          // c:params.c:344
     paramdef {
         name: name.to_string(),
@@ -153,6 +156,7 @@ pub fn IPDEF4(name: &str, var: usize) -> paramdef {                          // 
 /// Port of `IPDEF5(A,B,F)` from `Src/params.c:353` —
 /// `{{NULL,A,PM_INTEGER|PM_SPECIAL},BR((void*)B),GSU(F),10,0,...}`.
 #[inline] #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub fn IPDEF5(name: &str, var: usize, gsu: usize) -> paramdef {              // c:params.c:353
     paramdef {
         name: name.to_string(),
@@ -164,6 +168,7 @@ pub fn IPDEF5(name: &str, var: usize, gsu: usize) -> paramdef {              // 
 
 /// Port of `IPDEF5U(A,B,F)` from `Src/params.c:354` — c:353 + PM_UNSET.
 #[inline] #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub fn IPDEF5U(name: &str, var: usize, gsu: usize) -> paramdef {             // c:params.c:354
     paramdef {
         name: name.to_string(),
@@ -175,6 +180,7 @@ pub fn IPDEF5U(name: &str, var: usize, gsu: usize) -> paramdef {             // 
 
 /// Port of `IPDEF6(A,B,F)` from `Src/params.c:362` — c:353 + PM_DONTIMPORT.
 #[inline] #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub fn IPDEF6(name: &str, var: usize, gsu: usize) -> paramdef {              // c:params.c:362
     paramdef {
         name: name.to_string(),
@@ -187,6 +193,7 @@ pub fn IPDEF6(name: &str, var: usize, gsu: usize) -> paramdef {              // 
 /// Port of `IPDEF7(A,B)` from `Src/params.c:367` —
 /// `{{NULL,A,PM_SCALAR|PM_SPECIAL},BR((void*)B),GSU(varscalar_gsu),0,0,...}`.
 #[inline] #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub fn IPDEF7(name: &str, var: usize) -> paramdef {                          // c:params.c:367
     paramdef {
         name: name.to_string(),
@@ -198,6 +205,7 @@ pub fn IPDEF7(name: &str, var: usize) -> paramdef {                          // 
 
 /// Port of `IPDEF7R(A,B)` from `Src/params.c:368` — c:367 + PM_DONTIMPORT_SUID.
 #[inline] #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub fn IPDEF7R(name: &str, var: usize) -> paramdef {                         // c:params.c:368
     paramdef {
         name: name.to_string(),
@@ -209,6 +217,7 @@ pub fn IPDEF7R(name: &str, var: usize) -> paramdef {                         // 
 
 /// Port of `IPDEF7U(A,B)` from `Src/params.c:369` — c:367 + PM_UNSET.
 #[inline] #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub fn IPDEF7U(name: &str, var: usize) -> paramdef {                         // c:params.c:369
     paramdef {
         name: name.to_string(),
@@ -225,6 +234,7 @@ pub fn IPDEF7U(name: &str, var: usize) -> paramdef {                         // 
 /// since `paramdef` lacks a dedicated colon-arr slot until that's
 /// ported.
 #[inline] #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub fn IPDEF8(name: &str, var: usize, _colon: usize, extra_flags: i32) -> paramdef { // c:params.c:394
     paramdef {
         name: name.to_string(),
@@ -238,6 +248,7 @@ pub fn IPDEF8(name: &str, var: usize, _colon: usize, extra_flags: i32) -> paramd
 /// `{{NULL,A,D|PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT},BR((void*)B),
 ///   GSU(vararray_gsu),0,0,NULL,C,NULL,0}`.
 #[inline] #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub fn IPDEF9(name: &str, var: usize, _colon: usize, extra_flags: i32) -> paramdef { // c:params.c:384
     paramdef {
         name: name.to_string(),
@@ -250,6 +261,7 @@ pub fn IPDEF9(name: &str, var: usize, _colon: usize, extra_flags: i32) -> paramd
 /// Port of `IPDEF10(A,B)` from `Src/params.c:406` —
 /// `{{NULL,A,PM_ARRAY|PM_SPECIAL},BR(NULL),GSU(B),10,0,...}`.
 #[inline] #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub fn IPDEF10(name: &str, gsu: usize) -> paramdef {                         // c:params.c:406
     paramdef {
         name: name.to_string(),
@@ -262,6 +274,7 @@ pub fn IPDEF10(name: &str, gsu: usize) -> paramdef {                         // 
 /// Port of `LCIPDEF(name)` from `Src/params.c:324` —
 /// `IPDEF2(name, lc_blah_gsu, PM_UNSET)`.
 #[inline] #[allow(non_snake_case)]
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub fn LCIPDEF(name: &str) -> paramdef {                                     // c:params.c:324
     IPDEF2(name, 0, PM_UNSET as i32)                                         // c:324 lc_blah_gsu (slot 0)
 }
@@ -305,6 +318,7 @@ pub fn LCIPDEF(name: &str) -> paramdef {                                     // 
 /// Mirrors the `IPDEF*` macro entries in Src/params.c:297-... —
 /// each special parameter (e.g. `RANDOM`, `EPOCHSECONDS`,
 /// `HISTFILE`) provides a `gsu` (get/set/unset) callback set.
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub struct SpecialParamDef {
     pub name: &'static str,
     pub pm_type: u32,  // PM_INTEGER | PM_SCALAR | PM_ARRAY
@@ -2910,6 +2924,7 @@ mod tests {
 /// search itself. `Value` is the result of an in-getarg array/hash
 /// pattern search — direct port of getarg's pprog/pattry arm at
 /// Src/params.c:1672-1719 (array) and 1581-1660 (hash).
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub enum GetargOut<'a> {
     Flags { flags: &'a str, rest: &'a str },
     Value(fusevm::Value),
@@ -3397,6 +3412,7 @@ pub(crate) fn getarg<'a>(
 /// Variable attributes (`typeset` flags + scope).
 /// Mirrors the `PM_*` flag set declared in Src/zsh.h that
 /// `Src/builtin.c::bin_typeset()` consults.
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub struct VarAttr {
     pub kind: VarKind,
     pub readonly: bool,
@@ -3436,6 +3452,7 @@ pub struct VarAttr {
 /// Variable kind (scalar/integer/float/array/hash).
 /// Mirrors the `PM_TYPE` mask the C source uses to dispatch
 /// `setstrvalue()` / `setaparam()` / etc. (Src/params.c).
+// WARNING: FAKE IMPL RUST INVENTION — not in params.c
 pub enum VarKind {
     #[default]
     Scalar,

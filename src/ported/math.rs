@@ -202,6 +202,7 @@ static OP_TYPE: [u16; TOKCOUNT] = [
 /// the first comma encountered at the top level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in math.c
 pub enum prec_type {
     MPREC_TOP,
     MPREC_ARG,
@@ -419,6 +420,7 @@ pub fn lastbase() -> i32 { M_LASTBASE.with(|c| c.get()) }
 /// `restore_state()` so the parent's evaluator state survives the
 /// inner call's thread_local mutations.
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in math.c
 struct xyy_locals {
     input: String,
     pos: usize,
@@ -497,6 +499,7 @@ fn restore_state(saved: xyy_locals) {
 /// };
 /// ```
 #[derive(Clone)]
+// WARNING: FAKE IMPL RUST INVENTION — not in math.c
 pub(crate) struct MathValue {
     pub val: Mnumber,
     pub lval: Option<String>,

@@ -25,12 +25,15 @@ use super::zle_thingy::Thingy;
 use super::widget::{Widget, WidgetFlags};
 
 /// ZLE character type - always char in Rust (Unicode native)
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_main.c
 pub type ZleChar = char;
 
 /// ZLE string type
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_main.c
 pub type ZleString = Vec<ZleChar>;
 
 /// ZLE integer type for character values
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_main.c
 pub type ZleInt = i32;
 
 /// EOF marker
@@ -60,6 +63,7 @@ pub const ZLEEOF: ZleInt = -1;
 /// Command modifier prefixes — `zmod` reads/writes this.
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_main.c
 pub struct modifier {                                                        // c:245
     pub flags: i32,                                                          // c:246 int flags
     pub mult: i32,                                                           // c:247 int mult
@@ -94,6 +98,7 @@ use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL,
 /// (1<<1) bits (zle.h:297-298, ported in zle_h.rs as i32).
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_main.c
 pub struct change {                                                          // c:284
     pub flags: i32,                                                          // c:286 int flags
     pub hist: i32,                                                           // c:287 zlong hist
@@ -133,6 +138,7 @@ pub const MAXFOUND: usize = 4;                                               // 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_main.c
 pub enum ztmouttp {                                                          // c:398
     ZTM_NONE = 0,                                                            // c:401
     ZTM_KEY  = 1,                                                            // c:406
@@ -144,6 +150,7 @@ pub enum ztmouttp {                                                          // 
 /// active timeout type plus expiration in 100ths of a second.
 #[derive(Debug, Clone, Copy)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_main.c
 pub struct ztmout {                                                          // c:432
     pub tp: ztmouttp,                                                        // c:434 enum ztmouttp tp
     pub exp100ths: i64,                                                      // c:438 time_t exp100ths
@@ -154,6 +161,7 @@ pub struct ztmout {                                                          // 
 /// found-binding hits up to `MAXFOUND` and a status message.
 #[derive(Debug, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_main.c
 pub struct findfunc {                                                        // c:1927
     /// Target Thingy we're searching for; matched against scan key.
     /// Cell holds `None` until set; `usize` indexes into THINGYTAB.
@@ -170,6 +178,7 @@ pub struct findfunc {                                                        // 
 /// keymaps, history, ...) into one struct. Each field corresponds
 /// to a C global declared inline at zle_main.c — see the per-field
 /// citations below. The struct itself has no C counterpart.
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_main.c
 pub struct Zle {
     // The input line assembled so far                                       // c:40
     /// The input line assembled so far

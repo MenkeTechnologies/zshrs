@@ -202,6 +202,7 @@ pub fn bin_rmdir(nam: &str, args: &[String],                                 // 
 /// files.c:198`. C has a `MoveFunc` typedef (`int (*)(const char *,
 /// const char *)`); Rust uses an enum so each branch can call the
 /// right libc fn directly.
+// WARNING: FAKE IMPL RUST INVENTION — not in Modules/files.c
 pub enum MoveFunc {
     Link,                                                                    // c:226
     Symlink,                                                                 // c:222
@@ -502,6 +503,7 @@ pub fn recurse_donothing(_arg: &str, _rp: &str,                              // 
 // =====================================================================
 
 /// Port of `struct rmmagic` from `Src/Modules/files.c:537`.
+// WARNING: FAKE IMPL RUST INVENTION — not in Modules/files.c
 pub struct rmmagic<'a> {
     pub nam: &'a str,                                                        // c:538
     pub opt_force: i32,                                                      // c:539
@@ -604,6 +606,7 @@ pub fn bin_rm(nam: &str, args: &[String],                                    // 
 // =====================================================================
 
 /// Port of `struct chmodmagic` from `Src/Modules/files.c:635`.
+// WARNING: FAKE IMPL RUST INVENTION — not in Modules/files.c
 pub struct chmodmagic<'a> {
     pub nam: &'a str,                                                        // c:636
     pub mode: u32,                                                           // c:637
@@ -657,6 +660,7 @@ pub fn bin_chmod(nam: &str, args: &[String],                                 // 
 // =====================================================================
 
 /// Port of `struct chownmagic` from `Src/Modules/files.c:674`.
+// WARNING: FAKE IMPL RUST INVENTION — not in Modules/files.c
 pub struct chownmagic<'a> {
     pub nam: &'a str,                                                        // c:675
     pub uid: i64,                                                            // c:676 (uid_t but -1 sentinel)

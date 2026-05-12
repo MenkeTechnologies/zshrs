@@ -42,6 +42,7 @@ pub static SUFFIXLEN: AtomicI32 = AtomicI32::new(0);                         // 
 /// in the auto-removable suffix list.
 #[derive(Debug, Clone, Default)]
 #[allow(non_camel_case_types)]
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_misc.c
 pub struct suffixset {                                                       // c:1530
     /// Type bits (SUFTYP_POSSTR/POSRNG/etc.).
     pub tp: i32,

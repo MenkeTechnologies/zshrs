@@ -202,6 +202,7 @@ pub fn pfxlen(s1: &str, s2: &str) -> usize {                                 // 
 
 /// Get length of common suffix
 /// Port of sfxlen() from zle_tricky.c
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_tricky.c
 pub fn sfxlen(s1: &str, s2: &str) -> usize {                                 // c:2411
     s1.chars()
         .rev()
@@ -802,6 +803,7 @@ pub fn getcurcmd(zle: &crate::ported::zle::zle_main::Zle) -> Option<String> { //
 /// `#define inststr(X) inststrlen((X),1,-1)` — insert string `X` at
 /// cursor with auto-len + cursor-advance semantics. Most common
 /// inserter wrapper used across the completion engine.
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_tricky.c
 pub fn inststr(zle: &mut crate::ported::zle::zle_main::Zle, s: &str) -> i32 { // c:278
     inststrlen(zle, s, true, -1)
 }
@@ -1078,6 +1080,7 @@ pub fn processcmd(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
 /// The real `quotestring` lives in Src/Zsh/utils.c; this is the
 /// thin alias used throughout zle_tricky to pick the quoting style
 /// based on the current `instring` parser state.
+// WARNING: FAKE IMPL RUST INVENTION — not in Zle/zle_tricky.c
 pub fn quotename(s: &str, instring: i32) -> String {                         // c:427
     use crate::ported::utils::QuoteType;
     use crate::ported::zsh_h::{

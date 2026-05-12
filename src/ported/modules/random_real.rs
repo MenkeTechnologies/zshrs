@@ -30,6 +30,7 @@ use crate::ported::utils::zwarn;
 /// or to `_zclz64()` as the portable fallback. C resolves this at
 /// preprocessor time; Rust resolves at the call site.
 #[inline]
+// WARNING: FAKE IMPL RUST INVENTION — not in Modules/random_real.c
 pub fn clz64(x: u64) -> i32 {
     // Equivalent to C's `__builtin_clzll(x)` branch (c:43).
     if x == 0 { 64 } else { x.leading_zeros() as i32 }
