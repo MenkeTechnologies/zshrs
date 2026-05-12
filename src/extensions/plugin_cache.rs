@@ -847,7 +847,14 @@ impl crate::ported::exec::ShellExecutor {
             } else {
                 std::collections::HashMap::new()
             },
-            arrays: self.arrays.keys().cloned().collect(),
+            arrays: if let Ok(tab) = crate::ported::params::paramtab().lock() {
+                tab.iter()
+                    .filter(|(_, pm)| pm.u_arr.is_some())
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            } else {
+                std::collections::HashSet::new()
+            },
             assoc_arrays: self.assoc_arrays.keys().cloned().collect(),
             fpath: self.fpath.clone(),
             options: self.options.clone(),
@@ -956,13 +963,20 @@ impl crate::ported::exec::ShellExecutor {
             }
         }
 
-        // New arrays
-        let mut arr_keys: Vec<&String> = self.arrays.keys().collect();
-        arr_keys.sort();
-        for name in arr_keys {
-            if !snap.arrays.contains(name) {
-                let values = self.arrays.get(name).unwrap();
-                delta.arrays.push((name.clone(), values.clone()));
+        // New arrays — iterate paramtab for PM_ARRAY entries.
+        let arr_entries: Vec<(String, Vec<String>)> =
+            if let Ok(tab) = crate::ported::params::paramtab().lock() {
+                let mut v: Vec<(String, Vec<String>)> = tab.iter()
+                    .filter_map(|(k, pm)| pm.u_arr.clone().map(|a| (k.clone(), a)))
+                    .collect();
+                v.sort_by(|a, b| a.0.cmp(&b.0));
+                v
+            } else {
+                Vec::new()
+            };
+        for (name, values) in arr_entries {
+            if !snap.arrays.contains(&name) {
+                delta.arrays.push((name, values));
             }
         }
 

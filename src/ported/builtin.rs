@@ -4012,11 +4012,11 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
             let n_owned = arg.clone();
             crate::fusevm_bridge::with_executor(|exec| {
                 if is_hashed {
-                    exec.assoc_arrays.entry(n_owned.clone())
-                        .or_insert_with(indexmap::IndexMap::new);
-                } else {
-                    exec.arrays.entry(n_owned.clone())
-                        .or_insert_with(Vec::new);
+                    if exec.assoc(&n_owned).is_none() {
+                        exec.set_assoc(n_owned.clone(), indexmap::IndexMap::new());
+                    }
+                } else if exec.array(&n_owned).is_none() {
+                    exec.set_array(n_owned.clone(), Vec::new());
                 }
             });
         } else {
@@ -4715,12 +4715,15 @@ pub fn bin_unset(name: &str, argv: &[String],                                // 
                     // c:3893 assoc subscript: `m[key]` delete.
                     if let Some(map) = exec.assoc_arrays.get_mut(&nm_owned) {
                         map.shift_remove(&key_owned);                        // c:3893
-                    } else if let Some(arr) = exec.arrays.get_mut(&nm_owned) {
+                    } else if let Some(mut arr) = exec.array(&nm_owned) {
                         // c:3895 array subscript: `arr[N]` set to empty.
                         if let Ok(i) = key_owned.parse::<i32>() {
                             let idx = if i > 0 { (i - 1) as usize }
                                       else { return; };
-                            if idx < arr.len() { arr[idx] = String::new(); }
+                            if idx < arr.len() {
+                                arr[idx] = String::new();
+                                exec.set_array(nm_owned.clone(), arr);
+                            }
                         }
                     }
                 });
@@ -4730,7 +4733,7 @@ pub fn bin_unset(name: &str, argv: &[String],                                // 
                 let nm_owned = nm.to_string();
                 crate::fusevm_bridge::with_executor(|exec| {
                     exec.unset_scalar(&nm_owned);
-                    exec.arrays.remove(&nm_owned);
+                    exec.unset_array(&nm_owned);
                     exec.assoc_arrays.remove(&nm_owned);
                 });
                 let _ = crate::ported::params::paramtab()

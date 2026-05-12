@@ -191,7 +191,7 @@ impl ShellExecutor {
         println!("  global:      {} aliases", self.global_aliases.len());
         println!("  suffix:      {} aliases", self.suffix_aliases.len());
         println!("  variables:   {}", crate::ported::params::paramtab().lock().map(|t| t.iter().filter(|(_, p)| p.u_arr.is_none()).count()).unwrap_or(0));
-        println!("  arrays:      {}", self.arrays.len());
+        println!("  arrays:      {}", crate::ported::params::paramtab().lock().map(|t| t.iter().filter(|(_, p)| p.u_arr.is_some()).count()).unwrap_or(0));
         println!("  assoc:       {}", self.assoc_arrays.len());
         println!(
             "  options:     {} set",
@@ -2688,8 +2688,8 @@ impl ShellExecutor {
         match args[0].as_str() {
             "-l" | "--list" => {
                 println!("Available prompt themes:");
-                if let Some(themes) = self.arrays.get("prompt_themes") {
-                    for theme in themes {
+                if let Some(themes) = self.array("prompt_themes") {
+                    for theme in &themes {
                         println!("  {}", theme);
                     }
                 }

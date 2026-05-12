@@ -1422,7 +1422,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.set_scalar(scalar_name, joined);
                 exec.set_array(name.clone(), values.clone());
             } else {
-                exec.unset_scalar(&name);
                 exec.set_array(name.clone(), values.clone());
             }
             // PFA-SMR aspect: array SET (`name=(...)`). emit_path_or_assign
@@ -1490,7 +1489,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.set_assoc(name, map);
                 return;
             }
-            exec.unset_scalar(&name);
             // `typeset -U arr` dedupes — append must respect existing
             // elements too. Skip values that are already present.
             // PFA-SMR aspect: array APPEND (`name+=(...)`). Same
@@ -4712,7 +4710,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     arr.push(String::new());
                 }
                 arr[idx] = value;
-                exec.unset_scalar(&name);
                 exec.set_array(name, arr);
                 return;
             }
@@ -5223,8 +5220,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let write_fd = p2c[1];
                 with_executor(|exec| {
                     exec.unset_scalar(&name);
-                    exec.arrays
-                        .insert(name, vec![read_fd.to_string(), write_fd.to_string()]);
+                    exec.set_array(name, vec![read_fd.to_string(), write_fd.to_string()]);
                 });
                 Value::Status(0)
             }
@@ -6043,7 +6039,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let lo_idx = (lo - 1) as usize;
                 let hi_idx = ((hi as usize).min(arr.len())).max(lo_idx);
                 let _: Vec<String> = arr.splice(lo_idx..hi_idx, values).collect();
-                exec.unset_scalar(&name);
                 exec.set_array(name, arr);
                 return;
             }
@@ -6074,7 +6069,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let end = (idx + 1).min(arr.len());
                 let _: Vec<String> = arr.splice(idx..end, values).collect();
             }
-            exec.unset_scalar(&name);
             exec.set_array(name, arr);
         });
         fusevm::Value::Status(0)
@@ -6855,8 +6849,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // Numeric index: 1-based, must be in range.
                             if let Ok(n) = key.parse::<i64>() {
                                 let len = exec
-                                    .arrays
-                                    .get(arr_name)
+                                    .array(arr_name)
                                     .map(|a| a.len() as i64)
                                     .unwrap_or(0);
                                 if n > 0 && n <= len {
@@ -9004,7 +8997,6 @@ impl fusevm::ShellHost for ZshrsHost {
                 .map(|m| m.clone())
                 .unwrap_or_default();
             exec.subshell_snapshots.push(SubshellSnapshot {
-                arrays: exec.arrays.clone(),
                 assoc_arrays: exec.assoc_arrays.clone(),
                 paramtab: paramtab_snap,
                 paramtab_hashed_storage: paramtab_hashed_snap,
@@ -9055,7 +9047,6 @@ impl fusevm::ShellHost for ZshrsHost {
         }
         with_executor(|exec| {
             if let Some(snap) = exec.subshell_snapshots.pop() {
-                exec.arrays = snap.arrays;
                 exec.assoc_arrays = snap.assoc_arrays;
                 // Restore paramtab + hashed storage so subshell-scoped
                 // writes via setsparam/setaparam/sethparam don't leak
@@ -9501,7 +9492,7 @@ impl fusevm::ShellHost for ZshrsHost {
                     exec.set_array("funcstack".to_string(), s);
                 }
                 None => {
-                    exec.arrays.remove("funcstack");
+                    exec.unset_array("funcstack");
                 }
             }
             // Unwind any `local` declarations made during the function call.
@@ -9526,7 +9517,7 @@ impl fusevm::ShellHost for ZshrsHost {
                             exec.set_array(arr_name, items);
                         }
                         None => {
-                            exec.arrays.remove(&arr_name);
+                            exec.unset_array(&arr_name);
                         }
                     }
                 }

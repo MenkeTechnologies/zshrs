@@ -159,7 +159,7 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
         std::env::set_var("PATH", &joined);
         executor.set_scalar("PATH".to_string(), joined);
         total += shard.path.len();
-        executor.arrays.insert("path".to_string(), shard.path);
+        executor.set_array("path".to_string(), shard.path);
     }
     if !shard.fpath.is_empty() {
         let joined = shard.fpath.join(":");
@@ -167,7 +167,7 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
         executor.set_scalar("FPATH".to_string(), joined);
         total += shard.fpath.len();
         executor.fpath = shard.fpath.iter().map(PathBuf::from).collect();
-        executor.arrays.insert("fpath".to_string(), shard.fpath);
+        executor.set_array("fpath".to_string(), shard.fpath);
     }
 
     // named_dir (hash -d): direct insert into executor.named_dirs.

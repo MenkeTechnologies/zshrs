@@ -22,7 +22,7 @@ impl crate::ported::exec::ShellExecutor {
         // Shape: assoc > array > existing var-attrs declared shape > scalar default.
         if self.assoc_arrays.contains_key(name) {
             a.set(crate::recorder::ParamAttrs::ASSOC);
-        } else if self.arrays.contains_key(name) {
+        } else if self.has_array(name) {
             a.set(crate::recorder::ParamAttrs::ARRAY);
         } else if let Some(va) = self.var_attrs.get(name) {
             match va.kind {
@@ -63,7 +63,7 @@ impl crate::ported::exec::ShellExecutor {
         let line = self
             .scalar("LINENO")
             .and_then(|s| s.parse::<u32>().ok());
-        let fn_chain = self.arrays.get("funcstack").and_then(|s| {
+        let fn_chain = self.array("funcstack").and_then(|s| {
             if s.is_empty() {
                 None
             } else {
