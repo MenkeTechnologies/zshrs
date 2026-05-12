@@ -2396,7 +2396,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // through to the scalar-slice path which slices the joined
         // string instead.
         if matches!(name.as_str(), "@" | "*" | "argv") {
-            let arr = with_executor(|exec| exec.positional_params.clone());
+            let arr = with_executor(|exec| exec.pparams());
             // Slice form `N,M`.
             if let Some((s_str, e_str)) = idx.split_once(',') {
                 let s_opt: Option<i64> = s_str.trim().parse().ok();
@@ -5082,7 +5082,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| " ".to_string());
             if name == "@" || name == "*" || name == "argv" {
-                return exec.positional_params.join(&sep);
+                return exec.pparams().join(&sep);
             }
             if let Some(arr) = exec.array(&name) {
                 arr.join(&sep)
@@ -5098,7 +5098,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             // Special positional names — splice the positional list.
             if name == "@" || name == "*" || name == "argv" {
-                return Value::Array(exec.positional_params.iter().map(Value::str).collect());
+                return Value::Array(exec.pparams().iter().map(Value::str).collect());
             }
             match exec.array(&name) {
                 Some(v) => Value::Array(v.iter().map(Value::str).collect()),
@@ -5260,7 +5260,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return with_executor(|exec| {
                 sync_status(exec);
                 fusevm::Value::Array(
-                    exec.positional_params
+                    exec.pparams()
                         .iter()
                         .map(fusevm::Value::str)
                         .collect(),
@@ -5679,7 +5679,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if n == 0 {
                         return exec.variables.contains_key("0");
                     }
-                    return n <= exec.positional_params.len();
+                    return n <= exec.pparams().len();
                 }
             }
             exec.variables.contains_key(&name)
@@ -6739,7 +6739,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if idx == 0 {
                         return true; // $0 always set
                     }
-                    return idx <= exec.positional_params.len();
+                    return idx <= exec.pparams().len();
                 }
             }
             // zsh-special "always set" params: their getter computes
@@ -7229,7 +7229,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let in_dq = dq_flag || exec.in_dq_context > 0;
             if name == "@" || name == "*" {
                 if in_dq {
-                    let joined = exec.positional_params.join(" ");
+                    let joined = exec.pparams().join(" ");
                     return StripResult::Scalar(strip_one(&joined, op, &pattern));
                 }
                 let stripped: Vec<String> = exec
@@ -7617,7 +7617,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // which returned the IFS-joined positional string and
             // we counted chars (5 for "a b c" instead of 3).
             if name == "@" || name == "*" || name == "argv" {
-                return exec.positional_params.len();
+                return exec.pparams().len();
             }
             // Magic-array specials whose length is data-driven, not
             // taken from `exec.arrays`/`exec.assoc_arrays`. Direct
@@ -9016,7 +9016,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 assoc_arrays: exec.assoc_arrays.clone(),
                 paramtab: paramtab_snap,
                 paramtab_hashed_storage: paramtab_hashed_snap,
-                positional_params: exec.positional_params.clone(),
+                positional_params: exec.pparams(),
                 env_vars: std::env::vars().collect(),
                 // Save the LOGICAL pwd ($PWD env), not `current_dir()`'s
                 // symlink-resolved path. zsh's subshell isolation per
@@ -9078,7 +9078,7 @@ impl fusevm::ShellHost for ZshrsHost {
                     .lock().ok().as_deref_mut() {
                     *m = snap.paramtab_hashed_storage;
                 }
-                exec.positional_params = snap.positional_params;
+                exec.set_pparams(snap.positional_params);
                 // Restore the OS env to its pre-subshell state.
                 // Removes any `export` writes the subshell made, and
                 // restores any vars the subshell unset. Without this
@@ -9351,7 +9351,8 @@ impl fusevm::ShellHost for ZshrsHost {
             saved_funcstack,
             saved_exit_trap,
         ) = with_executor(|exec| {
-            let prev = std::mem::replace(&mut exec.positional_params, args.clone());
+            let prev = exec.pparams();
+            exec.set_pparams(args.clone());
             let count = exec.local_save_stack.len();
             let arr_count = exec.local_array_save_stack.len();
             let assoc_count = exec.local_assoc_save_stack.len();
@@ -9480,7 +9481,7 @@ impl fusevm::ShellHost for ZshrsHost {
             exec.variables
                 .insert("_".to_string(), last_call_arg.clone());
             exec.pending_underscore = Some(last_call_arg);
-            exec.positional_params = saved_params;
+            exec.set_pparams(saved_params);
             exec.local_scope_depth -= 1;
             // LOCAL_OPTIONS: when set at function exit, restore all
             // options to the snapshot taken at entry. `emulate -L`
