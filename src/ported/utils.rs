@@ -2412,14 +2412,26 @@ pub fn getkeystring(s: &str) -> (String, usize) {                           // c
     (result, consumed)
 }
 
-/// Print-mode variant of `getkeystring` — mirrors C's
+/// Port of C's `GETKEY_*` flag enumeration from `Src/zsh.h:3143`.
+/// Passed to `getkeystring_with` to alter escape interpretation:
+///   - GETKEY_OCTAL_ESC: `\NNN` octal escapes are interpreted (1<<0)
+///   - GETKEY_EMACS: unknown `\<char>` drops the backslash (1<<1)
+///   - GETKEY_BACKSLASH_C: `\c` truncates the result (1<<3)
+pub const GETKEY_OCTAL_ESC: u32 = 1 << 0;                                    // c:zsh.h:3143
+pub const GETKEY_EMACS: u32 = 1 << 1;                                        // c:zsh.h:3150
+pub const GETKEY_BACKSLASH_C: u32 = 1 << 3;                                  // c:zsh.h:3154
+
 /// `GETKEYS_PRINT = GETKEY_OCTAL_ESC | GETKEY_BACKSLASH_C |
-/// GETKEY_EMACS` (zsh.h:3185). The crucial difference vs the
-/// non-EMACS default arm at utils.c:7180-7184: when an unknown
-/// `\<char>` appears, the leading backslash is DROPPED (only the
-/// literal char survives). This is what `print` and `echo` expect —
-/// `print -- "he\ llo"` becomes `he llo`, not `he\ llo`.
-pub fn getkeystring_print(s: &str) -> (String, usize) {                       // c:6915 + GETKEYS_PRINT
+/// GETKEY_EMACS` per Src/zsh.h:3185 — the flag set `bin_print` /
+/// `bin_echo` use when interpreting escapes.
+pub const GETKEYS_PRINT: u32 = GETKEY_OCTAL_ESC | GETKEY_EMACS | GETKEY_BACKSLASH_C; // c:zsh.h:3185
+
+/// `getkeystring` with the C `how` parameter (Src/utils.c:6915).
+/// The plain `getkeystring(s)` shim above defaults `how=0` for
+/// non-EMACS callers (zbeep, dollar-quote — they keep unknown
+/// `\<char>` as literal `\<char>`). Pass `GETKEYS_PRINT` to get
+/// the print/echo behavior (drop backslash on unknown).
+pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {              // c:utils.c:6915
     let mut result = String::new();
     let mut chars = s.chars().peekable();
     let mut consumed = 0;
@@ -2456,8 +2468,9 @@ pub fn getkeystring_print(s: &str) -> (String, usize) {                       //
                     result.push(val as char);
                 }
             }
-            // Octal escape: \NNN (1-3 octal digits) per GETKEY_OCTAL_ESC.
-            Some(d) if d.is_digit(8) => {
+            // Octal escape: \NNN (1-3 octal digits). Gated on
+            // GETKEY_OCTAL_ESC per c:utils.c:7156-7178.
+            Some(d) if d.is_digit(8) && (how & GETKEY_OCTAL_ESC) != 0 => {
                 consumed += 1;
                 let mut oct = String::from(d);
                 for _ in 0..2 {
@@ -2472,9 +2485,15 @@ pub fn getkeystring_print(s: &str) -> (String, usize) {                       //
                     result.push(val as char);
                 }
             }
-            // c:utils.c:7180 GETKEY_EMACS arm — unknown escape:
-            // drop the backslash, push only the char.
-            Some(c) => { consumed += 1; result.push(c); }
+            // c:utils.c:7180-7184 — default arm. With GETKEY_EMACS
+            // set, drop the backslash; otherwise keep `\<char>`.
+            Some(c) => {
+                consumed += 1;
+                if (how & GETKEY_EMACS) == 0 {
+                    result.push('\\');
+                }
+                result.push(c);
+            }
             None => { result.push('\\'); }
         }
     }

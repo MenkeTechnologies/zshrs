@@ -908,6 +908,11 @@ impl ShellExecutor {
             crate::ported::params::histcharsgetfn());                                       // c:params.c:5064
 
         // c:Src/params.c:858-860 standard non-special param defaults.
+        // The full createparamtable() body installs SpecialParamDef
+        // entries (LINENO/PPID/EUID/etc) as PM_READONLY which would
+        // block subsequent BUILTIN_SET_LINENO writes; the readonly-
+        // special bypass at setsparam isn't ported yet. Inline these
+        // three setiparam-equivalent values in the meantime.
         variables.insert("MAILCHECK".to_string(), "60".to_string());                    // c:858
         variables.insert("KEYTIMEOUT".to_string(), "40".to_string());                   // c:859
         variables.insert("LISTMAX".to_string(), "100".to_string());                     // c:860
