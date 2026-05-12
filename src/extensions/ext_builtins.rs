@@ -200,10 +200,12 @@ impl ShellExecutor {
             self.options.iter().filter(|(_, v)| **v).count()
         );
         println!("  traps:       {} active", self.traps.len());
-        println!(
-            "  hooks:       {} registered",
-            self.hook_functions.values().map(|v| v.len()).sum::<usize>()
-        );
+        // Count entries across all `<hook>_functions` arrays in paramtab.
+        let hook_count: usize = ["chpwd", "precmd", "preexec", "periodic", "zshexit", "zshaddhistory"]
+            .iter()
+            .map(|h| self.array(&format!("{}_functions", h)).map_or(0, |a| a.len()))
+            .sum();
+        println!("  hooks:       {} registered", hook_count);
         println!();
 
         // --- Log ---
@@ -1225,12 +1227,8 @@ impl ShellExecutor {
         };
 
         if delete {
-            // Remove function from hook
-            if let Some(funcs) = self.hook_functions.get_mut(hook.as_str()) {
-                funcs.retain(|f| f != func);
-            }
+            self.delete_hook(hook, func);
         } else {
-            // Add function to hook
             self.add_hook(hook, func);
         }
         0

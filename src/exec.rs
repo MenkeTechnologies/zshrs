@@ -447,8 +447,10 @@ pub struct ShellExecutor {
     /// session history is the only thing visible to the script).
     pub session_history_ids: Vec<i64>,
     pub autoload_pending: HashMap<String, AutoloadFlags>, // Functions marked for autoload
-    // zsh hooks (precmd, preexec, chpwd, etc.)
-    pub hook_functions: HashMap<String, Vec<String>>, // hook_name -> [function_names]
+    // `hook_functions` deleted — Rust-only side-store duplicating zsh's
+    // canonical `<hook>_functions` paramtab arrays (the add-zsh-hook
+    // idiom). `add_hook` / `delete_hook` now mutate those arrays
+    // directly via `setaparam`.
     // `named_dirs` deleted — canonical `nameddirtab` lives in
     // `src/ported/hashnameddir.rs:36` (port of C `nameddirtab` in
     // `Src/hashnameddir.c`). Callers route through that Mutex.
@@ -1082,7 +1084,6 @@ impl ShellExecutor {
             cmd_stack: Vec::new(),
             session_history_ids: Vec::new(),
             autoload_pending: HashMap::new(),
-            hook_functions: HashMap::new(),
             open_fds: HashMap::new(),
             next_fd: 10,
             profiling_enabled: false,
