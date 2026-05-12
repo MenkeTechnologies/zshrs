@@ -357,7 +357,7 @@ fn probe_assoc_two_in_dquote() {
 #[test]
 fn probe_lex_pure_funcdef() {
     use zsh::lex::ZshLexer;
-    use zsh::tokens::LexTok;
+    use zsh::tokens::lextok;
     let mut lex = ZshLexer::new("f() { :; }; f");
     for _ in 0..15 {
         lex.zshlex();
@@ -365,7 +365,7 @@ fn probe_lex_pure_funcdef() {
             "tok={:?} tokstr={:?} incmdpos={}",
             lex.tok, lex.tokstr, lex.incmdpos
         );
-        if lex.tok == LexTok::Endinput {
+        if lex.tok == ENDINPUT {
             break;
         }
     }
@@ -374,12 +374,12 @@ fn probe_lex_pure_funcdef() {
 #[test]
 fn probe_lex_array_then_funcdef() {
     use zsh::lex::ZshLexer;
-    use zsh::tokens::LexTok;
+    use zsh::tokens::lextok;
     let mut lex = ZshLexer::new("g=(o1); f() { :; }; f");
     for _ in 0..15 {
         lex.zshlex();
         eprintln!("tok={:?} tokstr={:?}", lex.tok, lex.tokstr);
-        if lex.tok == LexTok::Endinput {
+        if lex.tok == ENDINPUT {
             break;
         }
     }
@@ -388,12 +388,12 @@ fn probe_lex_array_then_funcdef() {
 #[test]
 fn probe_lex_printf() {
     use zsh::lex::ZshLexer;
-    use zsh::tokens::LexTok;
+    use zsh::tokens::lextok;
     let mut lex = ZshLexer::new(r#"printf "a\nb""#);
     for _ in 0..10 {
         lex.zshlex();
         eprintln!("tok={:?} tokstr={:?}", lex.tok, lex.tokstr);
-        if lex.tok == LexTok::Endinput {
+        if lex.tok == ENDINPUT {
             break;
         }
     }
@@ -434,7 +434,7 @@ fn probe_for_implicit_pos() {
 #[test]
 fn probe_lex_regex_paren() {
     use zsh::lex::ZshLexer;
-    use zsh::tokens::LexTok;
+    use zsh::tokens::lextok;
     let src = r#"[[ "1.2" =~ ([0-9]+).([0-9]+) ]]"#;
     let mut lex = ZshLexer::new(src);
     for _ in 0..15 {
@@ -443,7 +443,7 @@ fn probe_lex_regex_paren() {
             "tok={:?} tokstr={:?} incondpat={}",
             lex.tok, lex.tokstr, lex.incondpat
         );
-        if lex.tok == LexTok::Endinput {
+        if lex.tok == ENDINPUT {
             break;
         }
     }

@@ -93,13 +93,16 @@ pub mod daemon {
 #[path = "extensions/fds.rs"] pub mod fds;
 #[path = "extensions/fish_features.rs"] pub mod fish_features;
 #[path = "extensions/ast_sexp.rs"] pub mod ast_sexp;
-// `tokens`, `lexer`, `parser` live in the standalone `zshrs-parse` crate
-// so the daemon can use them too. Re-export so existing call sites
-// (`crate::tokens::...`, `zsh::lexer::...`, etc.) keep resolving without
-// touching consumers.
-pub use zshrs_parse::lex;
-pub use zshrs_parse::parse;
-pub use zshrs_parse::tokens;
+// Lexer + parser were absorbed back into `src/ported/` (was the standalone
+// `zshrs-parse` workspace crate). Re-export the modules so existing call
+// sites (`zsh::lex::…`, `zsh::parse::…`, `zsh::tokens::…`) keep resolving.
+// `tokens` aliases `lex` because tokens.rs's contents (lextok enum +
+// reserved-word table) now live inside lex.rs. Char tokens (POUND / INPAR /
+// EQUALS / …) and the REDIR_* / COND_* constants are not duplicated — they
+// live as flat `pub const` items in `ported::zsh_h` per `Src/zsh.h:144-679`.
+pub use ported::lex;
+pub use ported::lex as tokens;
+pub use ported::parse;
 #[path = "extensions/history.rs"] pub mod history;
 #[path = "extensions/zle_history.rs"] pub mod zle_history;
 #[path = "extensions/zle_refresh_state.rs"] pub mod zle_refresh_state;
@@ -200,7 +203,7 @@ pub use fish_features::{
 };
 pub use lex::ZshLexer;
 pub use parse::ZshParser;
-pub use tokens::{char_tokens, LexTok};
+pub use tokens::lextok;
 
 // ── Stryke integration hook ──
 // The fat binary registers a handler for @ prefix dispatch.

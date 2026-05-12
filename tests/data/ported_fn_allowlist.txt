@@ -920,3 +920,65 @@ shfunc_with_body
 shfunc_autoload
 getkeystring_with
 apply_history_modifiers
+
+# === lex.rs / parse.rs — absorbed from the standalone `zshrs-parse`
+# workspace crate (2026-05-12). The crate's lexer + parser predate the
+# strict-port discipline of `src/ported/`; many helpers below either
+# wrap real zsh lexer state with idiomatic Rust safety guards
+# (check_recursion / check_iterations are recursion-depth limiters; C
+# uses raw stack overflow), do byte-level scratch work that lives
+# inline inside `Src/lex.c::gettok` (read_line / lex_initial /
+# lex_arith / process_heredocs / dquote_parse_inner are extracts of
+# the C function body), or expose token-classification predicates
+# that C inlines via `itok()` / `inblank()` / `iblank()` macros
+# (is_token / is_blank / is_inblank). Long-term these all collapse
+# into the canonical `gettok` body when that is fully ported.
+check_recursion
+check_iterations
+is_blank
+try_numeric_range_glob
+is_inblank
+process_heredocs
+read_line
+lex_arith
+lex_initial
+is_valid_assignment_target
+dquote_parse_inner
+untokenize_char
+check_alias
+inject_alias_text
+take_raw_buf
+
+# parse.rs Rust-only heredoc / inoutpar resolution — zsh's parser
+# patches heredoc bodies directly into the wordcode buffer
+# (`Src/parse.c::setheredoc` rewrites pc[1] / pc[2]). zshrs's AST
+# parser threads a `HereDocInfo` list through and resolves redirs
+# in a post-parse walk. simple_name_with_inoutpar reconstructs the
+# `fna fnb fnc()` multi-name shorthand from the simple-command's
+# wordlist — C parses this inline inside `par_funcdef`.
+fill_heredoc_bodies
+fill_in_sublist
+fill_in_pipe
+fill_in_command
+resolve_redir
+simple_name_with_inoutpar
+
+# lex.rs `mod tests {}` test functions — build.rs's brace counter
+# drifts on lex.rs (string literals containing `{` / `}` in the lexer
+# scanner) so the `mod tests` exemption misses these. They are
+# bona-fide `#[test]` fns under `#[cfg(test)] mod tests`. Long-term
+# fix: make build.rs's collect_free_fns string-aware. Short-term:
+# allowlist by name.
+test_simple_command
+test_pipeline
+test_redirections
+test_heredoc
+test_single_quotes
+test_function_tokens
+test_double_quotes
+test_command_substitution
+test_env_assignment
+test_array_assignment
+test_process_substitution
+test_arithmetic
+test_semicolon_variants

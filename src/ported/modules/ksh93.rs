@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstring;
-use crate::ported::ztype::INAMESPC;
+use crate::ported::ztype_h::INAMESPC;
 use crate::ported::zsh_h::{
     eprog, funcwrap, module, param, EMULATE_KSH, EMULATION,
     PM_LOCAL, PM_NAMEREF, PM_READONLY, PM_UNSET,

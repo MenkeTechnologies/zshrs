@@ -46,8 +46,13 @@
 //! metadata.
 
 use crate::parse::{
-    CaseTerm, ForList, ListFlags, RedirType, SublistOp, ZshAssign, ZshAssignValue, ZshCommand,
-    ZshCond, ZshList, ZshPipe, ZshProgram, ZshRedir, ZshSimple, ZshSublist,
+    CaseTerm, ForList, ListFlags, SublistOp, ZshAssign, ZshAssignValue, ZshCommand, ZshCond,
+    ZshList, ZshPipe, ZshProgram, ZshRedir, ZshSimple, ZshSublist,
+};
+use crate::ported::zsh_h::{
+    REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP, REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW,
+    REDIR_HEREDOC, REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT,
+    REDIR_OUTPIPE, REDIR_READ, REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW,
 };
 
 /// Convert a parsed `ZshProgram` to canonical sexp.
@@ -413,25 +418,26 @@ fn emit_redir(r: &ZshRedir, out: &mut String) {
     out.push(')');
 }
 
-fn redir_type_tag(t: RedirType) -> &'static str {
+fn redir_type_tag(t: i32) -> &'static str {
     match t {
-        RedirType::Write => "Write",
-        RedirType::Writenow => "Writenow",
-        RedirType::Append => "Append",
-        RedirType::Appendnow => "Appendnow",
-        RedirType::Read => "Read",
-        RedirType::ReadWrite => "ReadWrite",
-        RedirType::Heredoc => "Heredoc",
-        RedirType::HeredocDash => "HeredocDash",
-        RedirType::Herestr => "Herestr",
-        RedirType::MergeIn => "MergeIn",
-        RedirType::MergeOut => "MergeOut",
-        RedirType::ErrWrite => "ErrWrite",
-        RedirType::ErrWritenow => "ErrWritenow",
-        RedirType::ErrAppend => "ErrAppend",
-        RedirType::ErrAppendnow => "ErrAppendnow",
-        RedirType::InPipe => "InPipe",
-        RedirType::OutPipe => "OutPipe",
+        REDIR_WRITE => "Write",
+        REDIR_WRITENOW => "Writenow",
+        REDIR_APP => "Append",
+        REDIR_APPNOW => "Appendnow",
+        REDIR_READ => "Read",
+        REDIR_READWRITE => "ReadWrite",
+        REDIR_HEREDOC => "Heredoc",
+        REDIR_HEREDOCDASH => "HeredocDash",
+        REDIR_HERESTR => "Herestr",
+        REDIR_MERGEIN => "MergeIn",
+        REDIR_MERGEOUT => "MergeOut",
+        REDIR_ERRWRITE => "ErrWrite",
+        REDIR_ERRWRITENOW => "ErrWritenow",
+        REDIR_ERRAPP => "ErrAppend",
+        REDIR_ERRAPPNOW => "ErrAppendnow",
+        REDIR_INPIPE => "InPipe",
+        REDIR_OUTPIPE => "OutPipe",
+        _ => "Unknown",
     }
 }
 
