@@ -1486,15 +1486,15 @@ impl<'a> ZshLexer<'a> {
                             // Could be (( arithmetic )) or ( subshell )
                             self.lexbuf.clear();
                             match self.cmd_or_math() {
-                                CmdOrMath::Math => {
+                                CMD_OR_MATH_MATH => {
                                     self.tokstr = Some(self.lexbuf.as_str().to_string());
                                     return DINPAR;
                                 }
-                                CmdOrMath::Cmd => {
+                                CMD_OR_MATH_CMD => {
                                     self.tokstr = None;
                                     return INPAR_TOK;
                                 }
-                                CmdOrMath::Err => return LEXERR,
+                                CMD_OR_MATH_ERR | _ => return LEXERR,
                             }
                         }
                         self.hungetc('(');
@@ -1868,9 +1868,9 @@ impl<'a> ZshLexer<'a> {
                             // $(...) or $((...))
                             self.add(STRING_TOK);
                             match self.cmd_or_math_sub() {
-                                CmdOrMath::Cmd => self.add(OUTPAR),
-                                CmdOrMath::Math => self.add(OUTPARMATH),
-                                CmdOrMath::Err => {
+                                CMD_OR_MATH_CMD => self.add(OUTPAR),
+                                CMD_OR_MATH_MATH => self.add(OUTPARMATH),
+                                CMD_OR_MATH_ERR | _ => {
                                     peek = LEXERR;
                                     break;
                                 }
@@ -2475,9 +2475,9 @@ impl<'a> ZshLexer<'a> {
                         Some('(') => {
                             self.add(QSTRING);
                             match self.cmd_or_math_sub() {
-                                CmdOrMath::Cmd => self.add(OUTPAR),
-                                CmdOrMath::Math => self.add(OUTPARMATH),
-                                CmdOrMath::Err => return Err(()),
+                                CMD_OR_MATH_CMD => self.add(OUTPAR),
+                                CMD_OR_MATH_MATH => self.add(OUTPARMATH),
+                                CMD_OR_MATH_ERR | _ => return Err(()),
                             }
                         }
                         Some('[') => {
@@ -2579,7 +2579,7 @@ impl<'a> ZshLexer<'a> {
     /// if it succeeds AND the next char is `)` (closing the second
     /// paren of `(( ))`), it's math. Otherwise rewinds and treats as
     /// a command substitution.
-    fn cmd_or_math(&mut self) -> CmdOrMath {
+    fn cmd_or_math(&mut self) -> i32 {
         let oldlen = self.lexbuf.len();
 
         // Per lex.c:498-518 — `cmd_or_math` calls `dquote_parse(')')`
@@ -2598,9 +2598,9 @@ impl<'a> ZshLexer<'a> {
             self.hungetc('(');
             self.lexstop = false;
             return if self.skip_command_sub().is_err() {
-                CmdOrMath::Err
+                CMD_OR_MATH_ERR
             } else {
-                CmdOrMath::Cmd
+                CMD_OR_MATH_CMD
             };
         }
 
@@ -2608,7 +2608,7 @@ impl<'a> ZshLexer<'a> {
         // means `((..))` was math. Don't add `)` to lexbuf.
         let c = self.hgetc();
         if c == Some(')') {
-            return CmdOrMath::Math;
+            return CMD_OR_MATH_MATH;
         }
 
         // Not math, back up
@@ -2626,9 +2626,9 @@ impl<'a> ZshLexer<'a> {
         self.hungetc('(');
 
         if self.skip_command_sub().is_err() {
-            CmdOrMath::Err
+            CMD_OR_MATH_ERR
         } else {
-            CmdOrMath::Cmd
+            CMD_OR_MATH_CMD
         }
     }
 
@@ -2638,7 +2638,7 @@ impl<'a> ZshLexer<'a> {
     /// math parse via `cmd_or_math` → arithmetic substitution (with
     /// the open-paren retroactively rewritten to Inparmath); else
     /// command substitution via skip_command_sub.
-    fn cmd_or_math_sub(&mut self) -> CmdOrMath {
+    fn cmd_or_math_sub(&mut self) -> i32 {
         const MAX_CONTINUATIONS: usize = 10_000;
         let mut continuations = 0;
 
@@ -2646,7 +2646,7 @@ impl<'a> ZshLexer<'a> {
             continuations += 1;
             if continuations > MAX_CONTINUATIONS {
                 self.error = Some("cmd_or_math_sub: too many line continuations".to_string());
-                return CmdOrMath::Err;
+                return CMD_OR_MATH_ERR;
             }
 
             let c = self.hgetc();
@@ -2659,9 +2659,9 @@ impl<'a> ZshLexer<'a> {
                     self.hungetc('\\');
                     self.lexstop = false;
                     return if self.skip_command_sub().is_err() {
-                        CmdOrMath::Err
+                        CMD_OR_MATH_ERR
                     } else {
-                        CmdOrMath::Cmd
+                        CMD_OR_MATH_CMD
                     };
                 }
                 // Line continuation, try again (loop instead of recursion)
@@ -2679,7 +2679,7 @@ impl<'a> ZshLexer<'a> {
                     let c2 = self.hgetc();
                     if c2 == Some(')') {
                         self.add(')');
-                        return CmdOrMath::Math;
+                        return CMD_OR_MATH_MATH;
                     }
                     if let Some(c2) = c2 {
                         self.hungetc(c2);
@@ -2702,9 +2702,9 @@ impl<'a> ZshLexer<'a> {
             }
 
             return if self.skip_command_sub().is_err() {
-                CmdOrMath::Err
+                CMD_OR_MATH_ERR
             } else {
-                CmdOrMath::Cmd
+                CMD_OR_MATH_CMD
             };
         }
     }
@@ -3038,12 +3038,14 @@ impl<'a> ZshLexer<'a> {
     }
 }
 
-/// Result of determining if (( is arithmetic or command
-enum CmdOrMath {
-    Cmd,
-    Math,
-    Err,
-}
+// Direct port of the anonymous enum at `Src/lex.c:483-487`:
+//   enum { CMD_OR_MATH_CMD, CMD_OR_MATH_MATH, CMD_OR_MATH_ERR };
+// `cmd_or_math()` and `cmd_or_math_sub()` return one of these as `int`.
+// Following the same flat-const pattern zshrs uses for lextok
+// (zsh_h.rs:198-251) so call sites read the C identifier verbatim.
+pub const CMD_OR_MATH_CMD: i32 = 0;
+pub const CMD_OR_MATH_MATH: i32 = 1;
+pub const CMD_OR_MATH_ERR: i32 = 2;
 
 // ============================================================================
 // Additional parsing functions ported from lex.c
