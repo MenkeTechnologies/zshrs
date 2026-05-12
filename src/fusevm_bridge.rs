@@ -9200,7 +9200,17 @@ impl fusevm::ShellHost for ZshrsHost {
         // disables an alias inside its own body (so `alias ls='ls -la'`
         // works without recursion). We do the same via a HashSet guard
         // since we expand at run time, not parse time.
-        let already_expanding = with_executor(|exec| exec.expanding_aliases.contains(name));
+        // C uses the `alias.inuse` field on the alias node itself
+        // (`Src/zsh.h:1256` `struct alias { ... int inuse; }`) — the
+        // lexer bumps it before splicing the body and clears it after,
+        // so a recursive use within the body sees `inuse != 0` and
+        // refuses to re-expand. Mirror that here against the canonical
+        // `aliastab` instead of a side HashSet on ShellExecutor.
+        let already_expanding = crate::ported::hashtable::aliastab_lock()
+            .read()
+            .ok()
+            .and_then(|tab| tab.get(name).map(|a| a.inuse != 0))
+            .unwrap_or(false);
         let alias_body = if already_expanding {
             None
         } else {
@@ -9219,9 +9229,14 @@ impl fusevm::ShellHost for ZshrsHost {
                     .collect();
                 format!("{} {}", body, quoted.join(" "))
             };
-            with_executor(|exec| exec.expanding_aliases.insert(name.to_string()));
+            // Bump inuse → run → clear, matching C's lexer behavior.
+            if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
+                if let Some(a) = tab.get_mut(name) { a.inuse += 1; }
+            }
             let status = with_executor(|exec| exec.execute_script(&combined).unwrap_or(1));
-            with_executor(|exec| exec.expanding_aliases.remove(name));
+            if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
+                if let Some(a) = tab.get_mut(name) { a.inuse = (a.inuse - 1).max(0); }
+            }
             return Some(status);
         }
 

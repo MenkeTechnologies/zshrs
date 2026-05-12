@@ -332,13 +332,10 @@ pub struct ShellExecutor {
     /// file path, so `%x` inside a function still shows the file
     /// the function was called from.
     pub scriptfilename: Option<String>,
-    /// Names whose alias is currently mid-expansion. zsh's lexer disables
-    /// an alias from re-expanding inside its own body (so `alias ls='ls
-    /// -la'` works without infinite recursion). zshrs expands aliases
-    /// at run time, so we need an explicit recursion guard. Cleared
-    /// when expansion of that name finishes.
-    //WARNING FAKE AND MUST BE DELETED
-    pub expanding_aliases: std::collections::HashSet<String>,
+    // `expanding_aliases` deleted — was a Rust-only HashSet recursion
+    // guard duplicating C's `alias.inuse` field (`Src/zsh.h:1256`).
+    // Callers now bump/clear `inuse` on the canonical alias node in
+    // `aliastab` (`hashtable.rs:1804`), matching C's lexer behavior.
     /// Set by `break`/`continue` keywords when no enclosing loop in the
     /// current chunk's patch lists. Outer-loop builtins (BUILTIN_RUN_SELECT)
     /// observe + clear this after each body run.
@@ -1058,7 +1055,6 @@ impl ShellExecutor {
         let mut exec = Self {
             scriptname: None,
             scriptfilename: None,
-            expanding_aliases: std::collections::HashSet::new(),
             loop_signal: None,
             subshell_snapshots: Vec::new(),
             inline_env_stack: Vec::new(),
