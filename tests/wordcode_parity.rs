@@ -156,7 +156,8 @@ fn dump_via_zshrs(src: &str) -> String {
     zsh::lex::set_tok(ENDINPUT);
     zsh::parse::init_parse();
     zsh::lex::zshlex();
-    let _ = zsh::parse::par_event_wordcode();
+    // Mirror C parse_list (parse.c:691-708) — par_list, not par_event.
+    zsh::parse::par_list_wordcode();
     if zsh::lex::tok() != ENDINPUT {
         return "PARSE_ERR\n".to_string();
     }
@@ -192,13 +193,30 @@ fn dump_via_zshrs(src: &str) -> String {
     }
     let _ = writeln!(buf, "STRS {}", entries.len());
     for (i, e) in entries.iter().enumerate() {
-        let as_str = String::from_utf8_lossy(e);
-        let plain = zsh::lex::untokenize(&as_str);
+        // Match C output byte-for-byte by walking raw bytes — strs
+        // holds unmetafied bytes; lossy UTF-8 conversion would
+        // replace single-byte zsh markers with U+FFFD.
         let _ = write!(buf, "STR[{}]=\"", i);
-        esc(&mut buf, &plain);
+        esc_bytes(&mut buf, e);
         buf.push_str("\"\n");
     }
     buf
+}
+
+fn esc_bytes(out: &mut String, bytes: &[u8]) {
+    for &b in bytes {
+        match b {
+            b'\n' => out.push_str("\\n"),
+            b'\t' => out.push_str("\\t"),
+            b'\\' => out.push_str("\\\\"),
+            b'"' => out.push_str("\\\""),
+            0 => out.push_str("\\0"),
+            c if c < 0x20 || c >= 0x7f => {
+                let _ = write!(out, "\\x{:02x}", c);
+            }
+            c => out.push(c as char),
+        }
+    }
 }
 
 fn first_divergence(a: &str, b: &str) -> usize {

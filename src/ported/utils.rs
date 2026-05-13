@@ -1021,9 +1021,16 @@ pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> { //
 
 /// Check if metafied - port from zsh/Src/utils.c has_token()
 // Check if a string contains a token                                       // c:2282
-// Check if a string contains a token                                       // c:2282
+/// Port of `has_token(const char *s)` from `Src/utils.c:2282` — used by
+/// `ecstrcode` (parse.rs:989) to flip the token-marker bit on the
+/// encoded string offset. Token markers live in 0x83..=0x9f (Pound,
+/// Stringg, Hat, Star, ..., Bnull, Nularg). Earlier impl checked
+/// only 0x83 (Meta) which missed Dash/Equals/Inbrack/Inbrace/etc.,
+/// so any string containing those (e.g. `dart-lang/dart` →
+/// `dart\u{9b}lang/dart`) got encoded with the no-token bit set,
+/// breaking byte parity with C's wordcode-emitter output.
 pub fn has_token(s: &str) -> bool {                                         // c:2282
-    s.bytes().any(|b| b == 0x83) // Meta character
+    s.bytes().any(|b| (0x83..=0x9f).contains(&b))
 }
 
 /// Array length - port from arrlen()
