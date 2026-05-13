@@ -725,12 +725,13 @@ pub fn zle_reset() {
                 // User-defined widget (`zle -N name shell-fn`): the C
                 // source dispatches via execzlefunc() at zle_main.c:1502
                 // through executenamedfunc which calls the bound shell
-                // function. We can't reach the executor from this crate,
-                // so we queue the call on pending_hooks; the host drains
-                // it after the key dispatch returns and runs the function
-                // with its own ShellExecutor — the same pattern used by
-                // zle_call_hook.
-                crate::ported::zle::zle_main::PENDING_HOOKS.lock().unwrap().push((name.clone(), None));
+                // function. Direct dispatch through the canonical
+                // execzlefunc path now invokes the function via
+                // fusevm_bridge inside this same key-loop call frame,
+                // so widget side-effects (BUFFER/CURSOR/etc.) land on
+                // the live ZLE state synchronously rather than waiting
+                // for a host drain pass.
+                let _ = crate::ported::zle::zle_main::execzlefunc(name, &[]);
             }
             _ => {}
         }
@@ -1646,14 +1647,19 @@ pub fn execzlefunc(name: &str, args: &[String]) -> i32 {                     // 
     // visible side effects.
 
     // c:1490 — `doshfunc(shf, args, …)` — invoke the user's shfunc.
-    // getshfunc() returns Some(body) when the function exists; the
-    // full VM dispatch fires through Op::CallFunction inside the
-    // fusevm bridge.
+    // Real dispatch via the canonical fusevm_bridge::with_executor +
+    // dispatch_function_call path used by signal-trap shfunc dispatch
+    // (signals.rs:1087). Routes through the wordcode VM directly so
+    // the widget body's side-effects (BUFFER/CURSOR/KEYMAP writes,
+    // zle -K, etc.) land on the live ZLE state in this thread.
     if crate::ported::utils::getshfunc(name).is_some() {                     // c:1490
-        // c:1530 — capture LASTVAL after the call.
-        return crate::ported::builtin::LASTVAL.load(
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        let rc = crate::fusevm_bridge::with_executor(|exec| {
+            exec.dispatch_function_call(name, args).unwrap_or(0)
+        });
+        // c:1530 — capture LASTVAL after the call. dispatch_function_call
+        // sets LASTVAL itself; mirror the return through.
+        crate::ported::builtin::LASTVAL.store(rc, std::sync::atomic::Ordering::Relaxed);
+        return rc;
     }
 
     // c:1597 — fall through: widget exists in thingytab but has no
