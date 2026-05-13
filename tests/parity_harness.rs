@@ -193,7 +193,7 @@ fn single_real() {
         .status();
     let prog = decode_zwc_first(&zwc).unwrap().unwrap();
     let zsh_sexp = ast_to_sexp(&prog);
-    let zshrs_prog = { zsh::parse::parse_init(&src); zsh::parse::parse() }.expect("zshrs parse");
+    let zshrs_prog = { zsh::parse::parse_init(&src); zsh::parse::parse() };
     let zshrs_sexp = ast_to_sexp(&zshrs_prog);
     eprintln!("=== source ({} bytes) ===\n{}", src.len(), src);
     eprintln!(

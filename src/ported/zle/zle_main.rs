@@ -22,13 +22,14 @@ use std::time::{Duration, Instant};
 
 use super::zle_keymap::Keymap;
 use super::zle_thingy::Thingy;
-use super::widget::{Widget, WidgetFlags};
+use super::zle_h::widget as Widget;
+use super::zle_h::{ZLE_LASTCOL, ZLE_NOTCOMMAND};
 
 /// ZLE character type - always char in Rust (Unicode native)
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::extensions::widget::*;
+use crate::ported::zle::zle_h::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_misc::*;
 #[allow(unused_imports)]
@@ -51,7 +52,7 @@ use crate::ported::zle::zle_tricky::*;
 use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
-use crate::zle::zle_h::{change, modifier};
+use crate::zle::zle_h::{change, modifier, widget};
 
 pub type ZleChar = char;
 
@@ -706,9 +707,9 @@ pub fn zle_reset() {
     ///   * `handleundo()` snapshot pre-call + `mkundoent()` capture
     ///     post-call (zle_main.c calls `handleundo()` from the zlecore
     ///     loop after each widget).
-    fn execute_widget(widget: &Widget) {
+    fn execute_widget(widget: &widget) {
         // Reset sticky column unless the widget keeps it.
-        if !widget.flags.contains(super::widget::WidgetFlags::LASTCOL) {
+        if (widget.flags & ZLE_LASTCOL) == 0 {
             crate::ported::zle::zle_main::LASTCOL.store(-1, std::sync::atomic::Ordering::SeqCst);
         }
 
@@ -716,11 +717,11 @@ pub fn zle_reset() {
         // Port of setlastline()/handleundo() framing in zle_main.c:1161.
         handleundo();
 
-        match &widget.func {
-            super::widget::WidgetFunc::Internal(f) => {
-                f();
+        match &widget.u {
+            super::zle_h::WidgetImpl::Internal(f) => {
+                let _ = f(&[]);
             }
-            super::widget::WidgetFunc::User(name) => {
+            super::zle_h::WidgetImpl::UserFunc(name) => {
                 // User-defined widget (`zle -N name shell-fn`): the C
                 // source dispatches via execzlefunc() at zle_main.c:1502
                 // through executenamedfunc which calls the bound shell
@@ -731,12 +732,13 @@ pub fn zle_reset() {
                 // zle_call_hook.
                 crate::ported::zle::zle_main::PENDING_HOOKS.lock().unwrap().push((name.clone(), None));
             }
+            _ => {}
         }
 
         // Update lastcmd for yank-pop / next-widget chains, unless the
         // widget is NOTCOMMAND (digit-arg, prefix, etc.) — zle_main.c:1497.
-        if !widget.flags.contains(super::widget::WidgetFlags::NOTCOMMAND) {
-            LASTCMD.store(widget.flags.bits(), std::sync::atomic::Ordering::SeqCst);
+        if (widget.flags & ZLE_NOTCOMMAND) == 0 {
+            LASTCMD.store(widget.flags as u32, std::sync::atomic::Ordering::SeqCst);
         }
 
         // Capture the change (if any) into the undo stack. undo/redo widgets
@@ -1100,8 +1102,7 @@ pub fn zle_reset() {
 
     /// Check if last command was yank
     pub fn was_yank() -> bool {
-        WidgetFlags::from_bits_truncate(LASTCMD.load(std::sync::atomic::Ordering::SeqCst))
-            .contains(WidgetFlags::YANK)
+        (LASTCMD.load(std::sync::atomic::Ordering::SeqCst) as i32 & ZLE_YANK) != 0
     }
 
 
@@ -1888,7 +1889,7 @@ pub static KEYTIMEOUT: std::sync::atomic::AtomicU64 =
 
 /// Port of `int lastcmd` from `Src/Zle/zle_main.c:145`. Flags of
 /// the most-recently-executed widget — drives `yank`/`yank-pop`
-/// chaining, `WidgetFlags::YANK`/`YANKAFTER` membership tests, etc.
+/// chaining, `ZLE_YANK`/`YANKAFTER` membership tests, etc.
 /// Stored as the raw bits of `WidgetFlags` (u32) in an atomic.
 pub static LASTCMD: std::sync::atomic::AtomicU32 =                           // c:145
     std::sync::atomic::AtomicU32::new(0);

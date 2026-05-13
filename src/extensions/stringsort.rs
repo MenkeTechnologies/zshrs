@@ -1,12 +1,4 @@
 //! String manipulation and sorting for zshrs
-//!
-//! Direct port from zsh/Src/string.c and zsh/Src/sort.c
-//!
-//! Provides:
-//! - String duplication and concatenation utilities
-//! - Locale-aware string comparison
-//! - Numeric-aware string sorting
-//! - Case-insensitive and backslash-ignoring comparison
 
 use std::cmp::Ordering;
 

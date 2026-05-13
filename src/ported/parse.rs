@@ -213,8 +213,8 @@ pub fn ecgetredirs(s: &mut estate) -> Vec<redir> {
 // P9d rewrite (par_* emitting wordcode + exec.rs reading wordcode)
 // retires them entirely — until then, callers reach them via this
 // re-export.
-pub use crate::extensions::heredoc_ast::HereDoc;
-pub use crate::extensions::zsh_ast::{
+pub use crate::heredoc_ast::HereDoc;
+pub use crate::zsh_ast::{
     CaseArm, CaseTerm, CaseTerminator, CompoundCommand, ForList, HereDocInfo, ListFlags, ListOp,
     Redirect, RedirectOp, ShellCommand, ShellWord, SimpleCommand, SublistFlags, SublistOp,
     VarModifier, ZshAssign, ZshAssignValue, ZshCase, ZshCommand, ZshCond, ZshFor, ZshFuncDef,
