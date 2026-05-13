@@ -7,8 +7,8 @@
 //! `par_*` in Src/parse.c.
 
 use super::lex::{
-    lextok, AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BARAMP, BAR_TOK, CASE, COPROC, DAMPER, DBAR,
-    DINANG, DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG,
+    lextok, set_tok, AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BARAMP, BAR_TOK, CASE, COPROC, DAMPER,
+    DBAR, DINANG, DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG,
     DOUTANGBANG, DOUTBRACK, DOUTPAR, DSEMI, ELIF, ELSE, ENDINPUT, ENVARRAY, ENVSTRING, ESAC, FI,
     FOR, FOREACH, FUNC, IF, INANGAMP, INANG_TOK, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK,
     IS_REDIROP, LEXERR, NEWLIN, NOCORRECT, NULLTOK, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG,
@@ -16,22 +16,21 @@ use super::lex::{
     STRING_LEX, THEN, TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND,
 };
 use super::zsh_h::{
-    redir, wc_code, wordcode, Bang, Dash, Equals, Inang, Inpar, Outang, Outpar, IS_DASH,
-    REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP, REDIR_ERRAPPNOW,
-    REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HEREDOCDASH, REDIR_HERESTR,
-    REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ, REDIR_READWRITE,
-    REDIR_WRITE, REDIR_WRITENOW, WC_REDIR, WC_REDIR_FROM_HEREDOC, WC_REDIR_TYPE,
-    WC_REDIR_VARID, eprog, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_NT, COND_REGEX,
-    COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ, EC_DUP, EC_NODUP,
-    EF_HEAP, EF_REAL, OPT_ISSET, PM_UNDEFINED, WC_SUBLIST_COPROC, WC_SUBLIST_NOT, WCB_COND,
-    Stringg,
+    eprog, estate, isset, redir, unset, wc_code, wordcode, Bang, Dash, Equals, Inang, Inpar,
+    Outang, Outpar, Stringg, ALIASFUNCDEF, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_NT,
+    COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ, CSHJUNKIELOOPS,
+    EC_DUP, EC_NODUP, EF_HEAP, EF_REAL, EXECOPT, IGNOREBRACES, IS_DASH, MULTIFUNCDEF, OPT_ISSET,
+    PM_UNDEFINED, POSIXBUILTINS, REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP,
+    REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HEREDOCDASH,
+    REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ,
+    REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW, SHORTLOOPS, SHORTREPEAT, WCB_COND, WC_REDIR,
+    WC_REDIR_FROM_HEREDOC, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SUBLIST_COPROC, WC_SUBLIST_NOT,
 };
-use crate::ported::lex::set_tok;
 use crate::ported::utils::{zerr, zwarnnam};
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use serde::{Deserialize, Serialize};
 
 // Wordcode-buffer thread-locals — direct port of `Src/parse.c:269-285`
 // file-statics. Per-evaluator (bucket-1 in PORT_PLAN.md): each worker
@@ -88,29 +87,26 @@ thread_local! {
 // =============================================================================
 
 /// Port of `ecgetstr(Estate s, int dup, int *tokflag)` from `Src/parse.c:2855`.
-///
-/// `strs` must be the **current** string pool tail (`s->strs` in C); it advances
-/// separately via `estate.strs_offset` in `text.c` callers.
-/// WARNING: param names don't match C — Rust=(prog, strs, pc, dup, tokflag) vs C=(s, dup, tokflag)
-pub fn ecgetstr(
-    prog: &[u32],
-    strs: &[u8],
-    pc: &mut usize,
-    dup: i32,
-    tokflag: Option<&mut i32>,
-) -> String {
-    if *pc >= prog.len() {
+/// `s->pc` advances through the wordcode buffer; `s->strs` indexes the
+/// string pool. Returns the interned string (or a 1-3-char literal
+/// inlined directly into the wordcode word).
+pub fn ecgetstr(s: &mut estate, dup: i32, tokflag: Option<&mut i32>) -> String {
+    let prog = &s.prog.prog;
+    if s.pc >= prog.len() {
         return String::new();
     }
-    let c = prog[*pc];
-    *pc += 1;
+    let c = prog[s.pc]; // c:2858 `wordcode c = *s->pc++;`
+    s.pc += 1;
     if let Some(tf) = tokflag {
-        *tf = i32::from((c & 1) != 0);
+        *tf = i32::from((c & 1) != 0); // c:2880 `*tokflag = (c & 1);`
     }
     if c == 6 || c == 7 {
+        // c:2861 `if (c == 6 || c == 7) r = "";`
         return String::new();
     }
     let r: String = if (c & 2) != 0 {
+        // c:2862 `else if (c & 2)`
+        // c:2863-2866 — 3-byte inline string packed into the wordcode word.
         let b0 = ((c >> 3) & 0xff) as u8;
         let b1 = ((c >> 11) & 0xff) as u8;
         let b2 = ((c >> 19) & 0xff) as u8;
@@ -118,17 +114,20 @@ pub fn ecgetstr(
         v.retain(|&x| x != 0);
         String::from_utf8_lossy(&v).into_owned()
     } else {
-        let off = (c >> 2) as usize;
-        if off >= strs.len() {
+        // c:2877 `else r = s->strs + (c >> 2);`
+        let off = (c >> 2) as usize + s.strs_offset;
+        let strs_bytes = s.strs.as_deref().unwrap_or("").as_bytes();
+        if off >= strs_bytes.len() {
             String::new()
         } else {
-            let tail = &strs[off..];
+            let tail = &strs_bytes[off..];
             let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
             String::from_utf8_lossy(&tail[..end]).into_owned()
         }
     };
-    let _ = EC_NODUP;
-    let _need_dup = dup == EC_DUP || (dup != EC_NODUP && (c & 1) != 0);
+    // c:2891 `return ((dup == EC_DUP || (dup && (c & 1))) ? dupstring(r) : r);`
+    // Rust owns the String already; `dup` flag has no observable effect.
+    let _ = (dup, EC_DUP, EC_NODUP);
     r
 }
 
@@ -136,34 +135,35 @@ pub fn ecgetstr(
 ///
 /// `strs` must be the same tail `ecgetstr` uses (`s->strs` / `estate.strs` from offset).
 /// WARNING: param names don't match C — Rust=(prog, strs, pc) vs C=(s)
-pub fn ecgetredirs(prog: &[wordcode], strs: &[u8], pc: &mut usize) -> Vec<redir> {
+pub fn ecgetredirs(s: &mut estate) -> Vec<redir> {
     let mut ret: Vec<redir> = Vec::new(); // c:2959 `LinkList ret = newlinklist();`
-    if *pc >= prog.len() {
+    let prog_len = s.prog.prog.len();
+    if s.pc >= prog_len {
         return ret;
     }
-    let mut code = prog[*pc]; // c:2962 `wordcode code = *s->pc++;`
-    *pc += 1;
+    let mut code = s.prog.prog[s.pc]; // c:2962 `wordcode code = *s->pc++;`
+    s.pc += 1;
 
     loop {
         if wc_code(code) != WC_REDIR {
             // c:2988-2989 `s->pc--` then break from while
-            *pc = (*pc).saturating_sub(1);
+            s.pc = s.pc.saturating_sub(1);
             break;
         }
 
         let typ = WC_REDIR_TYPE(code); // c:2967 `r->type = WC_REDIR_TYPE(code);`
-        if *pc >= prog.len() {
+        if s.pc >= prog_len {
             break;
         }
-        let fd1_w = prog[*pc]; // c:2968 `r->fd1 = *s->pc++;`
-        *pc += 1;
+        let fd1_w = s.prog.prog[s.pc]; // c:2968 `r->fd1 = *s->pc++;`
+        s.pc += 1;
 
-        let name = ecgetstr(prog, strs, pc, EC_DUP, None); // c:2969 `r->name = ecgetstr(...)`
+        let name = ecgetstr(s, EC_DUP, None); // c:2969 `r->name = ecgetstr(...)`
 
         let (flags, here_terminator, munged_here_terminator) = if WC_REDIR_FROM_HEREDOC(code) != 0 {
             // c:2970-2973
-            let term = ecgetstr(prog, strs, pc, EC_DUP, None);
-            let munged = ecgetstr(prog, strs, pc, EC_DUP, None);
+            let term = ecgetstr(s, EC_DUP, None);
+            let munged = ecgetstr(s, EC_DUP, None);
             (REDIRF_FROM_HEREDOC, Some(term), Some(munged))
         } else {
             // c:2974-2977
@@ -172,7 +172,7 @@ pub fn ecgetredirs(prog: &[wordcode], strs: &[u8], pc: &mut usize) -> Vec<redir>
 
         let varid = if WC_REDIR_VARID(code) != 0 {
             // c:2979-2980
-            Some(ecgetstr(prog, strs, pc, EC_DUP, None))
+            Some(ecgetstr(s, EC_DUP, None))
         } else {
             None // c:2981-2982
         };
@@ -189,11 +189,11 @@ pub fn ecgetredirs(prog: &[wordcode], strs: &[u8], pc: &mut usize) -> Vec<redir>
             munged_here_terminator,
         });
 
-        if *pc >= prog.len() {
+        if s.pc >= prog_len {
             break;
         }
-        code = prog[*pc]; // c:2986 `code = *s->pc++;`
-        *pc += 1;
+        code = s.prog.prog[s.pc]; // c:2986 `code = *s->pc++;`
+        s.pc += 1;
     }
 
     ret // c:2990 `return ret`
@@ -220,7 +220,7 @@ pub use crate::extensions::zsh_ast::{
     ZshIf, ZshList, ZshParamFlag, ZshPipe, ZshProgram, ZshRedir, ZshRepeat, ZshSimple, ZshSublist,
     ZshTry, ZshWhile,
 };
-use crate::lex::{set_incmdpos, set_incond, tok, tokstr, zshlex};
+use crate::ported::lex::{heredocs_clear, heredocs_clone, heredocs_is_empty, heredocs_len, heredocs_push, heredocs_set, heredocs_take, incasepat, incmdpos, incond, infor, input_slice, inredir, inrepeat, intypeset, isnewlin, lex_init, lineno, pos, set_incasepat, set_incmdpos, set_incond, set_infor, set_inredir, set_inrepeat, set_intypeset, set_isnewlin, set_pos, set_tokfd, set_tokstr, set_toklineno, tok, tokfd, toklineno, tokstr, tokstr_eq, tokstr_is_none, tokstr_is_some, tokstr_take, zshlex};
 // === end AST relocation ===
 
 // Parser state lives in file-scope thread_locals:
@@ -437,14 +437,35 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>
     Some((names, rest))
 }
 
-
 /// Initialize parser state for a fresh parse of `input`.
 /// Free-fn entry point — resets parser thread_locals and loads input.
 pub fn parse_init(input: &str) {
     // P8: reset Rust-only safety counters at parser construction.
     PARSER_GLOBAL_ITERATIONS.set(0);
     PARSER_RECURSION_DEPTH.set(0);
-    crate::ported::lex::lex_init(input);
+    // Seed the option defaults the parser/lexer inspect. Real zsh
+    // installs these via `install_emulation_defaults` (options.c:172)
+    // at shell startup; zshrs's parse-only test entry path bypasses
+    // init_main, so we mirror the `zsh` emulation defaults here.
+    // Only seeds when unset so a script that explicitly disabled an
+    // option stays so.
+    for (name, default) in [
+        ("shortloops", true),
+        ("shortrepeat", false),
+        ("multifuncdef", true),
+        ("aliasfuncdef", false),
+        ("ignorebraces", false),
+        ("cshjunkieloops", false),
+        ("posixbuiltins", false),
+        ("execopt", true),
+        ("kshautoload", false),
+        ("aliases", true),
+    ] {
+        if crate::ported::options::opt_state_get(name).is_none() {
+            crate::ported::options::opt_state_set(name, default);
+        }
+    }
+    lex_init(input);
 }
 
 /// Check iteration limit; returns true if exceeded
@@ -469,19 +490,19 @@ fn check_recursion() -> bool {
 /// WARNING: param names don't match C — Rust=(ps) vs C=(ps, toplevel)
 pub fn parse_context_save(ps: &mut parse_stack) {
     // parse.c:299 — `ps->hdocs = hdocs; hdocs = NULL;`
-    ps.hdocs = crate::ported::lex::heredocs_take();
+    ps.hdocs = heredocs_take();
     // parse.c:302-310 — save lexer-side state.
-    ps.incmdpos = crate::ported::lex::incmdpos();
+    ps.incmdpos = incmdpos();
     // parse.c:303 — aliasspaceflag — not yet a LEX_* thread_local.
     // STUB; Phase 7 wires it. Same for the few below marked STUB.
     ps.aliasspaceflag = 0;
-    ps.incond = crate::ported::lex::incond();
-    ps.inredir = crate::ported::lex::inredir();
-    ps.incasepat = crate::ported::lex::incasepat();
-    ps.isnewlin = crate::ported::lex::isnewlin();
-    ps.infor = crate::ported::lex::infor();
-    ps.inrepeat_ = crate::ported::lex::inrepeat();
-    ps.intypeset = crate::ported::lex::intypeset();
+    ps.incond = incond();
+    ps.inredir = inredir();
+    ps.incasepat = incasepat();
+    ps.isnewlin = isnewlin();
+    ps.infor = infor();
+    ps.inrepeat_ = inrepeat();
+    ps.intypeset = intypeset();
     // parse.c:312-317 — wordcode buffer state. STUB until Phase 9b
     // (zshrs has no ecbuf yet).
     ps.eclen = 0;
@@ -498,13 +519,13 @@ pub fn parse_context_save(ps: &mut parse_stack) {
     // — acceptable since the counters are safety nets, not state.
     PARSER_RECURSION_DEPTH.set(0);
     PARSER_GLOBAL_ITERATIONS.set(0);
-    crate::ported::lex::set_incmdpos(true);
-    crate::ported::lex::set_incond(0);
-    crate::ported::lex::set_inredir(false);
-    crate::ported::lex::set_incasepat(0);
-    crate::ported::lex::set_infor(0);
-    crate::ported::lex::set_inrepeat(0);
-    crate::ported::lex::set_intypeset(false);
+    set_incmdpos(true);
+    set_incond(0);
+    set_inredir(false);
+    set_incasepat(0);
+    set_infor(0);
+    set_inrepeat(0);
+    set_intypeset(false);
 }
 
 /// Direct port of `parse_context_restore(const struct parse_stack *ps, int toplevel)` at `Src/parse.c:326`.
@@ -519,16 +540,16 @@ pub fn parse_context_restore(ps: &parse_stack) {
     // frees them.
 
     // parse.c:333-352 — restore saved state.
-    crate::ported::lex::heredocs_set(ps.hdocs.clone());
-    crate::ported::lex::set_incmdpos(ps.incmdpos);
+    heredocs_set(ps.hdocs.clone());
+    set_incmdpos(ps.incmdpos);
     // aliasspaceflag STUB until Phase 7.
-    crate::ported::lex::set_incond(ps.incond);
-    crate::ported::lex::set_inredir(ps.inredir);
-    crate::ported::lex::set_incasepat(ps.incasepat);
-    crate::ported::lex::set_isnewlin(ps.isnewlin);
-    crate::ported::lex::set_infor(ps.infor);
-    crate::ported::lex::set_inrepeat(ps.inrepeat_);
-    crate::ported::lex::set_intypeset(ps.intypeset);
+    set_incond(ps.incond);
+    set_inredir(ps.inredir);
+    set_incasepat(ps.incasepat);
+    set_isnewlin(ps.isnewlin);
+    set_infor(ps.infor);
+    set_inrepeat(ps.inrepeat_);
+    set_intypeset(ps.intypeset);
     // ecbuf/eclen/ecused/ecnpats/ecstrs/ecsoffs/ecssub/ecnfunc
     // STUB until Phase 9b.
     // P8: counters not restored — see parse_context_save comment.
@@ -548,12 +569,12 @@ pub fn parse_context_restore(ps: &parse_stack) {
 pub fn init_parse_status() {
     // parse.c:500-502 — `incasepat = incond = inredir = infor =
     // intypeset = 0; inrepeat_ = 0; incmdpos = 1;`
-    crate::ported::lex::set_incasepat(0);
-    crate::ported::lex::set_incond(0);
-    crate::ported::lex::set_inredir(false);
-    crate::ported::lex::set_infor(0);
-    crate::ported::lex::set_intypeset(false);
-    crate::ported::lex::set_incmdpos(true);
+    set_incasepat(0);
+    set_incond(0);
+    set_inredir(false);
+    set_infor(0);
+    set_intypeset(false);
+    set_incmdpos(true);
 }
 
 /// Initialize parser for a fresh parse. Direct port of
@@ -603,7 +624,7 @@ pub fn empty_eprog(prog: &ZshProgram) -> bool {
 /// stores pending heredocs on the lexer's `heredocs` Vec —
 /// truncating it has the same effect.
 pub fn clear_hdocs() {
-    crate::ported::lex::heredocs_clear();
+    heredocs_clear();
 }
 
 /// Top-level parse-event entry. Direct port of zsh/Src/parse.c:
@@ -620,9 +641,9 @@ pub fn clear_hdocs() {
 /// (AST root). Same role at the parse-output boundary.
 pub fn parse_event(endtok: lextok) -> Option<ZshProgram> {
     // parse.c:616-619 — reset state and prime the lexer.
-    crate::ported::lex::set_tok(ENDINPUT);
-    crate::ported::lex::set_incmdpos(true);
-    crate::ported::lex::zshlex();
+    set_tok(ENDINPUT);
+    set_incmdpos(true);
+    zshlex();
     // parse.c:620 — `init_parse();`
     init_parse();
 
@@ -654,19 +675,19 @@ pub fn parse_event(endtok: lextok) -> Option<ZshProgram> {
 /// par_sublist + par_list. Same flow, different output.
 pub fn par_event(endtok: lextok) -> bool {
     // parse.c:639-643 — skip leading SEPERs.
-    while crate::ported::lex::tok() == SEPER {
+    while tok() == SEPER {
         // parse.c:640-641 — at top-level (endtok == ENDINPUT),
         // a SEPER on a fresh line ends the event.
-        if crate::ported::lex::isnewlin() > 0 && endtok == ENDINPUT {
+        if isnewlin() > 0 && endtok == ENDINPUT {
             return false;
         }
-        crate::ported::lex::zshlex();
+        zshlex();
     }
     // parse.c:644-647 — terminate on EOF or matching close-token.
-    if crate::ported::lex::tok() == ENDINPUT {
+    if tok() == ENDINPUT {
         return false;
     }
-    if crate::ported::lex::tok() == endtok {
+    if tok() == endtok {
         return true;
     }
     // parse.c:649-... — drive par_sublist + handle terminator.
@@ -718,11 +739,11 @@ pub fn setheredoc(_pc: usize, _redir_type: i32, _doc: &str, _term: &str, _munged
 pub fn par_wordlist() -> Vec<String> {
     let mut out = Vec::new();
     // parse.c:2362-2378 — collect STRINGs into the wordlist.
-    while crate::ported::lex::tok() == STRING_LEX {
-        if let Some(text) = crate::ported::lex::tokstr() {
+    while tok() == STRING_LEX {
+        if let Some(text) = tokstr() {
             out.push(text);
         }
-        crate::ported::lex::zshlex();
+        zshlex();
     }
     out
 }
@@ -732,13 +753,13 @@ pub fn par_wordlist() -> Vec<String> {
 /// par_wordlist but tolerates leading/trailing newlines.
 pub fn par_nl_wordlist() -> Vec<String> {
     // parse.c:2380-2381 — skip leading newlines.
-    while crate::ported::lex::tok() == NEWLIN {
-        crate::ported::lex::zshlex();
+    while tok() == NEWLIN {
+        zshlex();
     }
     let out = par_wordlist();
     // parse.c:2395-2397 — skip trailing newlines.
-    while crate::ported::lex::tok() == NEWLIN {
-        crate::ported::lex::zshlex();
+    while tok() == NEWLIN {
+        zshlex();
     }
     out
 }
@@ -749,28 +770,29 @@ pub fn par_nl_wordlist() -> Vec<String> {
 /// to support the AST cond-walker (`par_cond_*` analogs) when it
 /// needs a numeric literal from the current lex position.
 pub fn read_cond_num() -> Option<i64> {
-    if crate::ported::lex::tok() != STRING_LEX {
+    if tok() != STRING_LEX {
         return None;
     }
-    let text = crate::ported::lex::tokstr()?;
+    let text = tokstr()?;
     let parsed = text.parse::<i64>().ok()?;
-    crate::ported::lex::zshlex();
+    zshlex();
     Some(parsed)
 }
 
 /// Port of `get_cond_num(char *tst)` from `Src/parse.c:2643`. Returns
 /// the index of `tst` in `{"nt","ot","ef","eq","ne","lt","gt","le","ge"}`
 /// or `-1` if not a recognized binary cond operator.
-pub fn get_cond_num(tst: &str) -> i32 {                                       // c:2643
+pub fn get_cond_num(tst: &str) -> i32 {
+    // c:2643
     const CONDSTRS: [&str; 9] = [
-        "nt", "ot", "ef", "eq", "ne", "lt", "gt", "le", "ge",                 // c:2647
+        "nt", "ot", "ef", "eq", "ne", "lt", "gt", "le", "ge", // c:2647
     ];
     for (i, &c) in CONDSTRS.iter().enumerate() {
         if c == tst {
-            return i as i32;                                                  // c:2654
+            return i as i32; // c:2654
         }
     }
-    -1                                                                         // c:2656
+    -1 // c:2656
 }
 
 /// Emit a parser-level error. Direct port of zsh/Src/parse.c
@@ -933,37 +955,37 @@ pub fn ecstrcode(s: &str) -> u32 {
 }
 
 /// P9b decoder (wordcode-pipeline variant): direct port of
-    /// `ecgetstr(Estate s, int dup, int *tokflag)` from
-    /// `Src/parse.c:2855-2890`. Reads a wordcode at `pc`, decodes the
-    /// encoded string back to owned String. Returns (string,
-    /// pc_after_consumed). Distinct from the existing `ecgetstr` (which
-    /// takes a separate strs buffer for text.rs) — this variant uses
-    /// the live ECSTRS_REVERSE HashMap populated at ecstrcode time.
-    pub fn ecgetstr_wordcode(buf: &[u32], pc: usize) -> (String, usize) {
-        if pc >= buf.len() {
-            return (String::new(), pc);
-        }
-        let c = buf[pc];
-        let next = pc + 1;
-        // parse.c:2862-2863 — empty-string sentinels.
-        if c == 6 || c == 7 {
-            return (String::new(), next);
-        }
-        // parse.c:2864-2871 — inline-packed short string.
-        if (c & 2) != 0 {
-            let b0 = ((c >> 3) & 0xff) as u8;
-            let b1 = ((c >> 11) & 0xff) as u8;
-            let b2 = ((c >> 19) & 0xff) as u8;
-            let mut bytes: Vec<u8> = Vec::new();
-            for b in [b0, b1, b2] {
-                if b == 0 {
-                    break;
-                }
-                bytes.push(b);
+/// `ecgetstr(Estate s, int dup, int *tokflag)` from
+/// `Src/parse.c:2855-2890`. Reads a wordcode at `pc`, decodes the
+/// encoded string back to owned String. Returns (string,
+/// pc_after_consumed). Distinct from the existing `ecgetstr` (which
+/// takes a separate strs buffer for text.rs) — this variant uses
+/// the live ECSTRS_REVERSE HashMap populated at ecstrcode time.
+pub fn ecgetstr_wordcode(buf: &[u32], pc: usize) -> (String, usize) {
+    if pc >= buf.len() {
+        return (String::new(), pc);
+    }
+    let c = buf[pc];
+    let next = pc + 1;
+    // parse.c:2862-2863 — empty-string sentinels.
+    if c == 6 || c == 7 {
+        return (String::new(), next);
+    }
+    // parse.c:2864-2871 — inline-packed short string.
+    if (c & 2) != 0 {
+        let b0 = ((c >> 3) & 0xff) as u8;
+        let b1 = ((c >> 11) & 0xff) as u8;
+        let b2 = ((c >> 19) & 0xff) as u8;
+        let mut bytes: Vec<u8> = Vec::new();
+        for b in [b0, b1, b2] {
+            if b == 0 {
+                break;
             }
-            return (String::from_utf8_lossy(&bytes).into_owned(), next);
+            bytes.push(b);
         }
-        // parse.c:2872-2873 — long string via offs lookup.
+        return (String::from_utf8_lossy(&bytes).into_owned(), next);
+    }
+    // parse.c:2872-2873 — long string via offs lookup.
     let s = ECSTRS_REVERSE
         .with_borrow(|m| m.get(&c).cloned())
         .unwrap_or_default();
@@ -1068,29 +1090,91 @@ pub fn freeeprog(_prog: ZshProgram) {
 // stubs that preserve the C signatures + cite the source.
 // ============================================================
 
-/// Read a packed string without consuming the wordcode pointer.
-/// Direct port of zsh/Src/parse.c:2891 `ecrawstr`. zshrs
-/// no-op.
-pub fn ecrawstr() -> String {
-    String::new()
+/// Port of `ecrawstr(Eprog p, Wordcode pc, int *tokflag)` from
+/// `Src/parse.c:2891`. Like `ecgetstr` but reads at the given pc
+/// without advancing — caller steps `pc` separately.
+pub fn ecrawstr(p: &eprog, pc: usize, tokflag: Option<&mut i32>) -> String {
+    if pc >= p.prog.len() {
+        return String::new();
+    }
+    let c = p.prog[pc]; // c:2894
+    if let Some(tf) = tokflag {
+        *tf = i32::from((c & 1) != 0); // c:2898/2906/2912
+    }
+    if c == 6 || c == 7 {
+        // c:2897
+        return String::new();
+    }
+    if (c & 2) != 0 {
+        // c:2902
+        let b0 = ((c >> 3) & 0xff) as u8;
+        let b1 = ((c >> 11) & 0xff) as u8;
+        let b2 = ((c >> 19) & 0xff) as u8;
+        let mut v = vec![b0, b1, b2];
+        v.retain(|&x| x != 0);
+        String::from_utf8_lossy(&v).into_owned()
+    } else {
+        // c:2911
+        let off = (c >> 2) as usize;
+        let strs_bytes = p.strs.as_deref().unwrap_or("").as_bytes();
+        if off >= strs_bytes.len() {
+            return String::new();
+        }
+        let tail = &strs_bytes[off..];
+        let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
+        String::from_utf8_lossy(&tail[..end]).into_owned()
+    }
 }
 
-/// Read a NUL-terminated string array from wordcode. Direct port
-/// of zsh/Src/parse.c:2917 `ecgetarr`. zshrs no-op.
-pub fn ecgetarr(_num: usize, _dup: bool) -> Vec<String> {
-    Vec::new()
+/// Port of `ecgetarr(Estate s, int num, int dup, int *tokflag)` from
+/// `Src/parse.c:2917`. Reads `num` strings from wordcode at `s->pc`
+/// and OR-folds each entry's token flag into `*tokflag`.
+pub fn ecgetarr(
+    s: &mut estate,
+    num: usize,
+    dup: i32,
+    tokflag: Option<&mut i32>,
+) -> Vec<String> {
+    let mut ret: Vec<String> = Vec::with_capacity(num); // c:2922
+    let mut tf: i32 = 0;
+    for _ in 0..num {
+        // c:2924 `while (num--)`
+        let mut tmp = 0;
+        ret.push(ecgetstr(s, dup, Some(&mut tmp))); // c:2925
+        tf |= tmp; // c:2926
+    }
+    if let Some(out) = tokflag {
+        // c:2929
+        *out = tf;
+    }
+    ret
 }
 
-/// Read a linked-list of strings from wordcode. Direct port of
-/// zsh/Src/parse.c:2937 `ecgetlist`. zshrs no-op.
-pub fn ecgetlist(_num: usize, _dup: bool) -> Vec<String> {
-    Vec::new()
+/// Port of `ecgetlist(Estate s, int num, int dup, int *tokflag)` from
+/// `Src/parse.c:2937`. Same shape as `ecgetarr` but C returns
+/// `LinkList`; zshrs uses `Vec<String>` for both.
+pub fn ecgetlist(
+    s: &mut crate::ported::zsh_h::estate,
+    num: usize,
+    dup: i32,
+    tokflag: Option<&mut i32>,
+) -> Vec<String> {
+    if num == 0 {
+        // c:2949-2952
+        if let Some(tf) = tokflag {
+            *tf = 0;
+        }
+        return Vec::new();
+    }
+    ecgetarr(s, num, dup, tokflag)
 }
 
-/// Copy consecutive redirection wordcodes into a new Eprog.
-/// Direct port of zsh/Src/parse.c:3003 `eccopyredirs`.
-/// zshrs no-op.
-pub fn eccopyredirs() -> Option<ZshProgram> {
+/// Port of `eccopyredirs(Estate s)` from `Src/parse.c:3003`. Reads
+/// the WC_REDIR run at `s->pc` and copies it into a fresh Eprog
+/// so callers can splice redirs into a new wordcode stream (used
+/// by `bin_zcompile` / function dump emit). Stub for now — the
+/// wordcode-emit path that needs this isn't fully ported.
+pub fn eccopyredirs(_s: &mut crate::ported::zsh_h::estate) -> Option<ZshProgram> {
     None
 }
 
@@ -1109,7 +1193,7 @@ pub fn init_eprog() {
 /// partial program — callers check `errflag` to detect failure,
 /// matching C's `Eprog parse_event(...)` + `if (errflag) {...}`.
 pub fn parse() -> ZshProgram {
-    crate::ported::lex::zshlex();
+    zshlex();
 
     let mut program = parse_program_until(None);
 
@@ -1122,7 +1206,7 @@ pub fn parse() -> ZshProgram {
 
     // Post-pass: wire heredoc bodies (collected by lexer.process_heredocs)
     // back into ZshRedir.heredoc fields via heredoc_idx.
-    let bodies: Vec<HereDocInfo> = crate::ported::lex::heredocs_clone()
+    let bodies: Vec<HereDocInfo> = heredocs_clone()
         .into_iter()
         .map(|h| HereDocInfo {
             content: h.content,
@@ -1156,13 +1240,11 @@ pub fn par_event_wordcode() -> usize {
     // parse.c:691-710 — par_list loop. Each iteration emits one WC_LIST
     // entry plus its sublist payload; terminator handling between
     // lists matches the SEMI/NEWLIN/AMPER/SEPER switch in the C source.
-    while crate::ported::lex::tok() != ENDINPUT
-        && crate::ported::lex::tok() != LEXERR
-    {
+    while tok() != ENDINPUT && tok() != LEXERR {
         par_list_wordcode();
-        match crate::ported::lex::tok() {
+        match tok() {
             SEMI | NEWLIN | AMPER | AMPERBANG | SEPER => {
-                crate::ported::lex::zshlex();
+                zshlex();
             }
             _ => break,
         }
@@ -1185,8 +1267,7 @@ pub fn par_list_wordcode() {
             let skip = b.len() - p - 1;
             let data = (crate::ported::zsh_h::Z_SYNC as u32)
                 | ((skip as u32) << crate::ported::zsh_h::WC_LIST_FREE);
-            b[p] = crate::ported::zsh_h::WC_LIST
-                | (data << crate::ported::zsh_h::WC_CODEBITS);
+            b[p] = crate::ported::zsh_h::WC_LIST | (data << crate::ported::zsh_h::WC_CODEBITS);
         }
     });
 }
@@ -1202,8 +1283,7 @@ pub fn par_sublist_wordcode() {
         if p < b.len() {
             let skip = b.len() - p - 1;
             let data = (skip as u32) << 7;
-            b[p] = crate::ported::zsh_h::WC_SUBLIST
-                | (data << crate::ported::zsh_h::WC_CODEBITS);
+            b[p] = crate::ported::zsh_h::WC_SUBLIST | (data << crate::ported::zsh_h::WC_CODEBITS);
         }
     });
 }
@@ -1217,10 +1297,8 @@ pub fn par_pipe_wordcode() {
     ECBUF.with_borrow_mut(|b| {
         if p < b.len() {
             let skip = b.len() - p - 1;
-            let data = (crate::ported::zsh_h::WC_PIPE_END as u32)
-                | ((skip as u32) << 1);
-            b[p] = crate::ported::zsh_h::WC_PIPE
-                | (data << crate::ported::zsh_h::WC_CODEBITS);
+            let data = (crate::ported::zsh_h::WC_PIPE_END as u32) | ((skip as u32) << 1);
+            b[p] = crate::ported::zsh_h::WC_PIPE | (data << crate::ported::zsh_h::WC_CODEBITS);
         }
     });
 }
@@ -1230,7 +1308,7 @@ pub fn par_pipe_wordcode() {
 /// appropriate par_* subroutine. Each form emits its WC_* opcode +
 /// payload; default falls through to par_simple_wordcode.
 pub fn par_cmd_wordcode() {
-    match crate::ported::lex::tok() {
+    match tok() {
         FOR | FOREACH => par_for_wordcode(),
         SELECT => par_select_wordcode(),
         CASE => par_case_wordcode(),
@@ -1254,22 +1332,22 @@ pub fn par_cmd_wordcode() {
 /// zero skip + zero param-name slot; real implementation parses
 /// `for VAR in WORDS; do BODY; done`.
 pub fn par_for_wordcode() {
-    crate::ported::lex::zshlex(); // consume FOR
+    zshlex(); // consume FOR
     let p = ecadd(0);
     ecadd(0); // param-name strcode placeholder
     par_list_wordcode();
     ECBUF.with_borrow_mut(|b| {
         if p < b.len() {
             let skip = b.len() - p - 1;
-            b[p] = crate::ported::zsh_h::WC_FOR
-                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+            b[p] =
+                crate::ported::zsh_h::WC_FOR | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
         }
     });
 }
 
 /// P9c stub: `par_select`. Direct port shape of Src/parse.c:1822-1860.
 pub fn par_select_wordcode() {
-    crate::ported::lex::zshlex();
+    zshlex();
     let p = ecadd(0);
     ecadd(0);
     par_list_wordcode();
@@ -1285,7 +1363,7 @@ pub fn par_select_wordcode() {
 /// P9c stub: direct port of `par_case` from
 /// `Src/parse.c:1862-1990`. Emits WC_CASE + word + arms.
 pub fn par_case_wordcode() {
-    crate::ported::lex::zshlex();
+    zshlex();
     let p = ecadd(0);
     par_list_wordcode();
     ECBUF.with_borrow_mut(|b| {
@@ -1300,14 +1378,14 @@ pub fn par_case_wordcode() {
 /// P9c stub: direct port of `par_if` from
 /// `Src/parse.c:1992-2090`. Emits WC_IF + cond + then + elif chain.
 pub fn par_if_wordcode() {
-    crate::ported::lex::zshlex();
+    zshlex();
     let p = ecadd(0);
     par_list_wordcode();
     ECBUF.with_borrow_mut(|b| {
         if p < b.len() {
             let skip = b.len() - p - 1;
-            b[p] = crate::ported::zsh_h::WC_IF
-                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+            b[p] =
+                crate::ported::zsh_h::WC_IF | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
         }
     });
 }
@@ -1315,7 +1393,7 @@ pub fn par_if_wordcode() {
 /// P9c stub: direct port of `par_while` from
 /// `Src/parse.c:2092-2150`. Emits WC_WHILE + cond + body.
 pub fn par_while_wordcode() {
-    crate::ported::lex::zshlex();
+    zshlex();
     let p = ecadd(0);
     par_list_wordcode();
     ECBUF.with_borrow_mut(|b| {
@@ -1329,7 +1407,7 @@ pub fn par_while_wordcode() {
 
 /// P9c stub: WC_WHILE with the until flag set on the header.
 pub fn par_until_wordcode() {
-    crate::ported::lex::zshlex();
+    zshlex();
     let p = ecadd(0);
     par_list_wordcode();
     ECBUF.with_borrow_mut(|b| {
@@ -1338,8 +1416,7 @@ pub fn par_until_wordcode() {
             // WC_WHILE with type bit set = UNTIL (parse.c:2105 sets
             // type = WC_WHILE_UNTIL).
             let data = 1u32 | ((skip as u32) << 1);
-            b[p] = crate::ported::zsh_h::WC_WHILE
-                | (data << crate::ported::zsh_h::WC_CODEBITS);
+            b[p] = crate::ported::zsh_h::WC_WHILE | (data << crate::ported::zsh_h::WC_CODEBITS);
         }
     });
 }
@@ -1347,7 +1424,7 @@ pub fn par_until_wordcode() {
 /// P9c stub: direct port of `par_repeat` from
 /// `Src/parse.c:2152-2200`. Emits WC_REPEAT + count strcode + body.
 pub fn par_repeat_wordcode() {
-    crate::ported::lex::zshlex();
+    zshlex();
     let p = ecadd(0);
     par_list_wordcode();
     ECBUF.with_borrow_mut(|b| {
@@ -1364,7 +1441,7 @@ pub fn par_repeat_wordcode() {
 /// body. Real implementation parses multi-name funcdefs; stub emits
 /// a header for a single-name body.
 pub fn par_funcdef_wordcode() {
-    crate::ported::lex::zshlex();
+    zshlex();
     let p = ecadd(0);
     par_list_wordcode();
     ECBUF.with_borrow_mut(|b| {
@@ -1378,7 +1455,7 @@ pub fn par_funcdef_wordcode() {
 
 /// P9c stub: direct port of `par_subsh` for `(...)` subshell.
 pub fn par_subsh_wordcode() {
-    crate::ported::lex::zshlex();
+    zshlex();
     let p = ecadd(0);
     par_list_wordcode();
     ECBUF.with_borrow_mut(|b| {
@@ -1392,7 +1469,7 @@ pub fn par_subsh_wordcode() {
 
 /// P9c stub: direct port of `par_cursh` for `{...}` brace group.
 pub fn par_cursh_wordcode() {
-    crate::ported::lex::zshlex();
+    zshlex();
     let p = ecadd(0);
     par_list_wordcode();
     ECBUF.with_borrow_mut(|b| {
@@ -1406,7 +1483,7 @@ pub fn par_cursh_wordcode() {
 
 /// P9c stub: direct port of `par_time` for `time` reserved-word.
 pub fn par_time_wordcode() {
-    crate::ported::lex::zshlex();
+    zshlex();
     let p = ecadd(0);
     par_pipe_wordcode();
     ECBUF.with_borrow_mut(|b| {
@@ -1420,7 +1497,7 @@ pub fn par_time_wordcode() {
 
 /// P9c stub: direct port of `par_cond` for `[[ ... ]]` cond expression.
 pub fn par_cond_wordcode() {
-    crate::ported::lex::zshlex();
+    zshlex();
     let p = ecadd(0);
     par_simple_wordcode();
     ECBUF.with_borrow_mut(|b| {
@@ -1434,16 +1511,15 @@ pub fn par_cond_wordcode() {
 
 /// P9c stub: direct port of `par_arith` for `(( ... ))` arith block.
 pub fn par_arith_wordcode() {
-    crate::ported::lex::zshlex();
+    zshlex();
     let p = ecadd(0);
-    let expr = crate::ported::lex::tokstr().unwrap_or_default();
+    let expr = tokstr().unwrap_or_default();
     let coded = ecstrcode(&expr);
     ecadd(coded);
-    crate::ported::lex::zshlex();
+    zshlex();
     ECBUF.with_borrow_mut(|b| {
         if p < b.len() {
-            b[p] = crate::ported::zsh_h::WC_ARITH
-                | (1u32 << crate::ported::zsh_h::WC_CODEBITS);
+            b[p] = crate::ported::zsh_h::WC_ARITH | (1u32 << crate::ported::zsh_h::WC_CODEBITS);
         }
     });
 }
@@ -1456,17 +1532,16 @@ pub fn par_arith_wordcode() {
 pub fn par_simple_wordcode() {
     let p = ecadd(0);
     let mut nwords: u32 = 0;
-    while crate::ported::lex::tok() == STRING_LEX {
-        let s = crate::ported::lex::tokstr().unwrap_or_default();
+    while tok() == STRING_LEX {
+        let s = tokstr().unwrap_or_default();
         let coded = ecstrcode(&s);
         ecadd(coded);
         nwords += 1;
-        crate::ported::lex::zshlex();
+        zshlex();
     }
     ECBUF.with_borrow_mut(|b| {
         if p < b.len() {
-            b[p] = crate::ported::zsh_h::WC_SIMPLE
-                | (nwords << crate::ported::zsh_h::WC_CODEBITS);
+            b[p] = crate::ported::zsh_h::WC_SIMPLE | (nwords << crate::ported::zsh_h::WC_CODEBITS);
         }
     });
 }
@@ -1496,21 +1571,21 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
         }
 
         // Skip separators
-        while crate::ported::lex::tok() == SEPER || crate::ported::lex::tok() == NEWLIN {
+        while tok() == SEPER || tok() == NEWLIN {
             if check_limit() {
                 error("parser exceeded global iteration limit");
                 return ZshProgram { lists };
             }
-            crate::ported::lex::zshlex();
+            zshlex();
         }
 
-        if crate::ported::lex::tok() == ENDINPUT || crate::ported::lex::tok() == LEXERR {
+        if tok() == ENDINPUT || tok() == LEXERR {
             break;
         }
 
         // Check for end tokens
         if let Some(end_toks) = end_tokens {
-            if end_toks.contains(&crate::ported::lex::tok()) {
+            if end_toks.contains(&tok()) {
                 break;
             }
         }
@@ -1518,7 +1593,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
         // Also stop at these tokens when not explicitly looking for them
         // Note: Else/Elif/Then are NOT here - they're handled by par_if
         // to allow nested if statements inside case arms, loops, etc.
-        match crate::ported::lex::tok() {
+        match tok() {
             OUTBRACE_TOK | DSEMI | SEMIAMP | SEMIBAR | DONE | FI | ESAC | ZEND => break,
             _ => {}
         }
@@ -1550,7 +1625,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                                 pipe: ZshPipe {
                                     cmd: body_simple,
                                     next: None,
-                                    lineno: crate::ported::lex::lineno(),
+                                    lineno: lineno(),
                                     merge_stderr: false,
                                 },
                                 next: None,
@@ -1572,7 +1647,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                                 pipe: ZshPipe {
                                     cmd: funcdef,
                                     next: None,
-                                    lineno: crate::ported::lex::lineno(),
+                                    lineno: lineno(),
                                     merge_stderr: false,
                                 },
                                 next: None,
@@ -1590,11 +1665,10 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                     // src/zsh/Src/parse.c:1666 par_funcdef wordlist.
                     // Skip separators on the real lexer; safe because
                     // parse_program's next iteration would also skip them.
-                    while crate::ported::lex::tok() == SEPER || crate::ported::lex::tok() == NEWLIN
-                    {
-                        crate::ported::lex::zshlex();
+                    while tok() == SEPER || tok() == NEWLIN {
+                        zshlex();
                     }
-                    if crate::ported::lex::tok() == INBRACE_TOK {
+                    if tok() == INBRACE_TOK {
                         // Capture body_start BEFORE the lexer
                         // advances past the first body token. The
                         // outer zshlex() consumed `{`; lexer.pos
@@ -1605,19 +1679,19 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                         // printed `a; echo b` instead of
                         // `echo a; echo b` for `f() { echo a;
                         // echo b }`.
-                        let body_start = crate::ported::lex::pos();
-                        crate::ported::lex::zshlex();
+                        let body_start = pos();
+                        zshlex();
                         let body = parse_program();
-                        let body_end = if crate::ported::lex::tok() == OUTBRACE_TOK {
-                            crate::ported::lex::pos().saturating_sub(1)
+                        let body_end = if tok() == OUTBRACE_TOK {
+                            pos().saturating_sub(1)
                         } else {
-                            crate::ported::lex::pos()
+                            pos()
                         };
-                        let body_source = crate::ported::lex::input_slice(body_start, body_end)
+                        let body_source = input_slice(body_start, body_end)
                             .map(|s| s.trim().to_string())
                             .filter(|s| !s.is_empty());
-                        if crate::ported::lex::tok() == OUTBRACE_TOK {
-                            crate::ported::lex::zshlex();
+                        if tok() == OUTBRACE_TOK {
+                            zshlex();
                         }
                         // Replace the Simple list with a FuncDef list.
                         lists.pop();
@@ -1633,7 +1707,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                                 pipe: ZshPipe {
                                     cmd: funcdef,
                                     next: None,
-                                    lineno: crate::ported::lex::lineno(),
+                                    lineno: lineno(),
                                     merge_stderr: false,
                                 },
                                 next: None,
@@ -1642,10 +1716,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                             flags: ListFlags::default(),
                         };
                         lists.push(synthetic);
-                    } else if !matches!(
-                        crate::ported::lex::tok(),
-                        ENDINPUT | OUTBRACE_TOK | SEPER | NEWLIN
-                    ) {
+                    } else if !matches!(tok(), ENDINPUT | OUTBRACE_TOK | SEPER | NEWLIN) {
                         // No-brace one-line body: `foo() echo hello`.
                         // Parse a single command for the body.
                         let body_cmd = par_cmd();
@@ -1655,7 +1726,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                                     pipe: ZshPipe {
                                         cmd,
                                         next: None,
-                                        lineno: crate::ported::lex::lineno(),
+                                        lineno: lineno(),
                                         merge_stderr: false,
                                     },
                                     next: None,
@@ -1678,7 +1749,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                                     pipe: ZshPipe {
                                         cmd: funcdef,
                                         next: None,
-                                        lineno: crate::ported::lex::lineno(),
+                                        lineno: lineno(),
                                         merge_stderr: false,
                                     },
                                     next: None,
@@ -1719,23 +1790,23 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
 fn par_list() -> Option<ZshList> {
     let sublist = par_sublist()?;
 
-    let flags = match crate::ported::lex::tok() {
+    let flags = match tok() {
         AMPER => {
-            crate::ported::lex::zshlex();
+            zshlex();
             ListFlags {
                 async_: true,
                 disown: false,
             }
         }
         AMPERBANG => {
-            crate::ported::lex::zshlex();
+            zshlex();
             ListFlags {
                 async_: true,
                 disown: true,
             }
         }
         SEPER | SEMI | NEWLIN => {
-            crate::ported::lex::zshlex();
+            zshlex();
             ListFlags::default()
         }
         _ => ListFlags::default(),
@@ -1765,12 +1836,12 @@ fn par_sublist() -> Option<ZshSublist> {
     let mut flags = SublistFlags::default();
 
     // Handle coproc and !
-    if crate::ported::lex::tok() == COPROC {
+    if tok() == COPROC {
         flags.coproc = true;
-        crate::ported::lex::zshlex();
-    } else if crate::ported::lex::tok() == BANG_TOK {
+        zshlex();
+    } else if tok() == BANG_TOK {
         flags.not = true;
-        crate::ported::lex::zshlex();
+        zshlex();
     }
 
     let pipe = match par_pline() {
@@ -1782,14 +1853,14 @@ fn par_sublist() -> Option<ZshSublist> {
     };
 
     // Check for && or ||
-    let next = match crate::ported::lex::tok() {
+    let next = match tok() {
         DAMPER => {
-            crate::ported::lex::zshlex();
+            zshlex();
             skip_separators();
             par_sublist().map(|s| (SublistOp::And, Box::new(s)))
         }
         DBAR => {
-            crate::ported::lex::zshlex();
+            zshlex();
             skip_separators();
             par_sublist().map(|s| (SublistOp::Or, Box::new(s)))
         }
@@ -1812,7 +1883,7 @@ fn par_pline() -> Option<ZshPipe> {
         return None;
     }
 
-    let lineno = crate::ported::lex::toklineno();
+    let lineno = toklineno();
     let cmd = match par_cmd() {
         Some(c) => c,
         None => {
@@ -1823,10 +1894,10 @@ fn par_pline() -> Option<ZshPipe> {
 
     // Check for | or |&
     let mut merge_stderr = false;
-    let next = match crate::ported::lex::tok() {
+    let next = match tok() {
         BAR_TOK | BARAMP => {
-            merge_stderr = crate::ported::lex::tok() == BARAMP;
-            crate::ported::lex::zshlex();
+            merge_stderr = tok() == BARAMP;
+            zshlex();
             skip_separators();
             par_pline().map(Box::new)
         }
@@ -1850,13 +1921,13 @@ fn par_pline() -> Option<ZshPipe> {
 fn par_cmd() -> Option<ZshCommand> {
     // Parse leading redirections
     let mut redirs = Vec::new();
-    while IS_REDIROP(crate::ported::lex::tok()) {
+    while IS_REDIROP(tok()) {
         if let Some(redir) = par_redir() {
             redirs.push(redir);
         }
     }
 
-    let cmd = match crate::ported::lex::tok() {
+    let cmd = match tok() {
         FOR | FOREACH => par_for(),
         SELECT => parse_select(),
         CASE => par_case(),
@@ -1880,7 +1951,7 @@ fn par_cmd() -> Option<ZshCommand> {
     // ZshCommand::Redirected so compile_zsh can scope-bracket them.
     if let Some(inner) = cmd {
         let mut trailing: Vec<ZshRedir> = Vec::new();
-        while IS_REDIROP(crate::ported::lex::tok()) {
+        while IS_REDIROP(tok()) {
             if let Some(redir) = par_redir() {
                 trailing.push(redir);
             }
@@ -1917,8 +1988,21 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     const MAX_ITERATIONS: usize = 10_000;
     let mut iterations = 0;
 
+    // c:1934 — `if (!isset(IGNOREBRACES) && *tokstr == Inbrace) { ... }`
+    // gates the `{var}>file` brace-FD recognition (a non-POSIX zsh
+    // extension that lets `{varname}>file` redirect into the named
+    // shell variable). zshrs's parser doesn't recognise the brace-FD
+    // shape yet, so the gate is wired here as a marker — when the
+    // {var}-FD feature lands, swap this `false` for the actual
+    // `tokstr starts with Inbrace` test and route into a {var}>file
+    // redir builder.
+    let saw_brace_fd_candidate = false;
+    if !isset(IGNOREBRACES) && saw_brace_fd_candidate {
+        // TODO: {var}>file FD recognition (par_simple body at c:1934-2000).
+    }
+
     // Parse leading assignments
-    while crate::ported::lex::tok() == ENVSTRING || crate::ported::lex::tok() == ENVARRAY {
+    while tok() == ENVSTRING || tok() == ENVARRAY {
         iterations += 1;
         if iterations > MAX_ITERATIONS {
             error("par_simple: exceeded max iterations in assignments");
@@ -1927,7 +2011,7 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
         if let Some(assign) = parse_assign() {
             assigns.push(assign);
         }
-        crate::ported::lex::zshlex();
+        zshlex();
     }
 
     // Parse words and redirections
@@ -1937,7 +2021,7 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
             error("par_simple: exceeded max iterations");
             return None;
         }
-        match crate::ported::lex::tok() {
+        match tok() {
             ENVSTRING | ENVARRAY => {
                 // Mid-command assignment-shape arg under typeset
                 // / declare / local / etc. (intypeset gates the
@@ -1958,14 +2042,14 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                     };
                     words.push(synthetic);
                 }
-                crate::ported::lex::zshlex();
+                zshlex();
             }
             STRING_LEX | TYPESET => {
-                let s = crate::ported::lex::tokstr();
+                let s = tokstr();
                 if let Some(s) = s {
                     words.push(s);
                 }
-                crate::ported::lex::zshlex();
+                zshlex();
                 // Check for function definition foo() { ... }
                 if words.len() == 1 && peek_inoutpar() {
                     return parse_inline_funcdef(words.pop().unwrap());
@@ -1975,7 +2059,7 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 // arrives as a String. If it matches `{IDENT}` and
                 // the NEXT token is a redirop, pop it off as the
                 // varid for that redir.
-                if !words.is_empty() && IS_REDIROP(crate::ported::lex::tok()) {
+                if !words.is_empty() && IS_REDIROP(tok()) {
                     let last = words.last().unwrap();
                     let untoked = super::lex::untokenize(last);
                     if untoked.starts_with('{') && untoked.ends_with('}') && untoked.len() > 2 {
@@ -1999,13 +2083,43 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                     }
                 }
             }
-            _ if IS_REDIROP(crate::ported::lex::tok()) => {
+            _ if IS_REDIROP(tok()) => {
                 match par_redir() {
                     Some(redir) => redirs.push(redir),
                     None => break, // Error in redir parsing, stop
                 }
             }
             INOUTPAR if !words.is_empty() => {
+                // c:2055-2057 — `if (!isset(MULTIFUNCDEF) && argc > 1)
+                // YYERROR(oecused);` — multi-name funcdef gate:
+                // `f1 f2() { ... }` defines f1 AND f2 to the same
+                // body, but only when MULTIFUNCDEF is set.
+                if !isset(MULTIFUNCDEF) && words.len() > 1 {
+                    error(
+                        "parse error: multiple names in function definition without MULTIFUNCDEF",
+                    );
+                    return None;
+                }
+                // c:2061-2068 — `if (isset(EXECOPT) && hasalias &&
+                // !isset(ALIASFUNCDEF) && argc && hasalias !=
+                // input_hasalias()) { zwarn(...); YYERROR(...); }`
+                // Alias-as-funcdef warning. zshrs's parser doesn't
+                // track `hasalias` (alias-expansion provenance
+                // during parse) yet, so `had_alias` stays false —
+                // the gate is wired here as a marker so the canonical
+                // C predicate is visible. Once alias-provenance lands,
+                // swap `false` for the actual provenance compare.
+                let had_alias = false;
+                if isset(EXECOPT)
+                    && had_alias
+                    && !isset(ALIASFUNCDEF)
+                    && !words.is_empty()
+                {
+                    crate::ported::utils::zwarn(
+                        "defining function based on alias `(unknown)'",
+                    );
+                    return None;
+                }
                 // foo() { ... } style function
                 return parse_inline_funcdef(words.pop().unwrap());
             }
@@ -2074,11 +2188,11 @@ fn parse_assign() -> Option<ZshAssign> {
         None
     }
 
-    let _ts_tokstr = crate::ported::lex::tokstr()?;
+    let _ts_tokstr = tokstr()?;
     let tokstr = _ts_tokstr.as_str();
 
     // Parse name=value or name+=value.
-    let (name, value_str, append) = if crate::ported::lex::tok() == ENVARRAY {
+    let (name, value_str, append) = if tok() == ENVARRAY {
         let (name, append) = if let Some(stripped) = tokstr.strip_suffix('+') {
             (stripped, true)
         } else {
@@ -2110,26 +2224,26 @@ fn parse_assign() -> Option<ZshAssign> {
         return None;
     };
 
-    let value = if crate::ported::lex::tok() == ENVARRAY {
+    let value = if tok() == ENVARRAY {
         // Array assignment: name=(...)
         let mut elements = Vec::new();
-        crate::ported::lex::zshlex(); // skip past token
+        zshlex(); // skip past token
 
         let mut arr_iters = 0;
         const MAX_ARRAY_ELEMENTS: usize = 10_000;
-        while matches!(crate::ported::lex::tok(), STRING_LEX | SEPER | NEWLIN) {
+        while matches!(tok(), STRING_LEX | SEPER | NEWLIN) {
             arr_iters += 1;
             if arr_iters > MAX_ARRAY_ELEMENTS {
                 error("array assignment exceeded maximum elements");
                 break;
             }
-            if crate::ported::lex::tok() == STRING_LEX {
+            if tok() == STRING_LEX {
                 let _ts_s = crate::ported::lex::tokstr();
                 if let Some(s) = _ts_s.as_deref() {
                     elements.push(s.to_string());
                 }
             }
-            crate::ported::lex::zshlex();
+            zshlex();
         }
 
         // The closing Outpar is consumed here. The outer par_simple
@@ -2140,7 +2254,7 @@ fn parse_assign() -> Option<ZshAssign> {
         // We only consume Outpar; let the caller handle the rest.
         // Without this guard `g=(o1); f() { :; }` parsed as one
         // Simple with assigns=[g] and words=["f()"] (one token).
-        if crate::ported::lex::tok() == OUTPAR_TOK {
+        if tok() == OUTPAR_TOK {
             // Note: do NOT zshlex() here. par_simple's `lexer
             // .zshlex()` after `parse_assign` returns advances past
             // the Outpar onto the next significant token.
@@ -2150,7 +2264,7 @@ fn parse_assign() -> Option<ZshAssign> {
             // The lexer flips incmdpos to false on bare Outpar (which
             // is correct for subshell-close context), but for an
             // array-assignment close more assigns/words may follow.
-            crate::ported::lex::set_incmdpos(true);
+            set_incmdpos(true);
         }
 
         ZshAssignValue::Array(elements)
@@ -2172,7 +2286,7 @@ fn parse_assign() -> Option<ZshAssign> {
 /// (or here-doc body / pipe-redir command), and any `{var}` style
 /// fd-binding parameter.
 fn par_redir() -> Option<ZshRedir> {
-    let rtype = match crate::ported::lex::tok() {
+    let rtype = match tok() {
         OUTANG_TOK => REDIR_WRITE,
         OUTANGBANG => REDIR_WRITENOW,
         DOUTANG => REDIR_APP,
@@ -2191,8 +2305,8 @@ fn par_redir() -> Option<ZshRedir> {
         _ => return None,
     };
 
-    let fd = if crate::ported::lex::tokfd() >= 0 {
-        crate::ported::lex::tokfd()
+    let fd = if tokfd() >= 0 {
+        tokfd()
     } else if matches!(
         rtype,
         REDIR_READ
@@ -2207,12 +2321,12 @@ fn par_redir() -> Option<ZshRedir> {
         1
     };
 
-    crate::ported::lex::zshlex();
+    zshlex();
 
-    let name = match crate::ported::lex::tok() {
+    let name = match tok() {
         STRING_LEX | ENVSTRING => {
-            let n = crate::ported::lex::tokstr().unwrap_or_default();
-            crate::ported::lex::zshlex();
+            let n = tokstr().unwrap_or_default();
+            zshlex();
             n
         }
         _ => {
@@ -2226,8 +2340,8 @@ fn par_redir() -> Option<ZshRedir> {
     // index so fill_heredoc_bodies() can wire content back after
     // process_heredocs() has run.
     let heredoc_idx = if matches!(rtype, REDIR_HEREDOC | REDIR_HEREDOCDASH) {
-        if !crate::ported::lex::heredocs_is_empty() {
-            Some(crate::ported::lex::heredocs_len() - 1)
+        if !heredocs_is_empty() {
+            Some(heredocs_len() - 1)
         } else {
             None
         }
@@ -2252,11 +2366,11 @@ fn par_redir() -> Option<ZshRedir> {
 /// inner branch for the `((...))` arithmetic-header variant
 /// (parse.c:1100-1140 inside par_for).
 fn par_for() -> Option<ZshCommand> {
-    let is_foreach = crate::ported::lex::tok() == FOREACH;
-    crate::ported::lex::zshlex();
+    let is_foreach = tok() == FOREACH;
+    zshlex();
 
     // Check for C-style: for (( init; cond; step ))
-    if crate::ported::lex::tok() == DINPAR {
+    if tok() == DINPAR {
         return parse_for_cstyle();
     }
 
@@ -2266,13 +2380,13 @@ fn par_for() -> Option<ZshCommand> {
     // We store the names space-joined since variable identifiers
     // can't contain whitespace.
     let mut names: Vec<String> = Vec::new();
-    while crate::ported::lex::tok() == STRING_LEX {
-        let v = crate::ported::lex::tokstr().unwrap_or_default();
+    while tok() == STRING_LEX {
+        let v = tokstr().unwrap_or_default();
         if v == "in" {
             break;
         }
         names.push(v);
-        crate::ported::lex::zshlex();
+        zshlex();
     }
     if names.is_empty() {
         error("expected variable name in for");
@@ -2287,12 +2401,12 @@ fn par_for() -> Option<ZshCommand> {
     // single String token with the parens lexed-as-content
     // (`<Inpar>a b c<Outpar>`) instead of as separate Inpar/String/
     // Outpar tokens. Detect that shape and split it manually.
-    let list = if crate::ported::lex::tok() == STRING_LEX
-        && crate::ported::lex::tokstr()
+    let list = if tok() == STRING_LEX
+        && tokstr()
             .map(|s| s.starts_with('\u{88}') && s.ends_with('\u{8a}'))
             .unwrap_or(false)
     {
-        let raw = crate::ported::lex::tokstr().unwrap_or_default();
+        let raw = tokstr().unwrap_or_default();
         // Strip leading Inpar + trailing Outpar, then untokenize the
         // inner content and split on whitespace for the word list.
         let inner = &raw[raw.char_indices().nth(1).map(|(i, _)| i).unwrap_or(0)
@@ -2303,57 +2417,57 @@ fn par_for() -> Option<ZshCommand> {
                 .unwrap_or(raw.len())];
         let cleaned = super::lex::untokenize(inner);
         let words: Vec<String> = cleaned.split_whitespace().map(|s| s.to_string()).collect();
-        crate::ported::lex::zshlex();
+        zshlex();
         ForList::Words(words)
-    } else if crate::ported::lex::tok() == STRING_LEX {
-        let s = crate::ported::lex::tokstr();
+    } else if tok() == STRING_LEX {
+        let s = tokstr();
         if s.map(|s| s == "in").unwrap_or(false) {
-            crate::ported::lex::zshlex();
+            zshlex();
             let mut words = Vec::new();
             let mut word_count = 0;
-            while crate::ported::lex::tok() == STRING_LEX {
+            while tok() == STRING_LEX {
                 word_count += 1;
                 if word_count > 500 || check_limit() {
                     error("for: too many words");
                     return None;
                 }
-                let _ts_s = crate::ported::lex::tokstr();
+                let _ts_s = tokstr();
                 if let Some(s) = _ts_s.as_deref() {
                     words.push(s.to_string());
                 }
-                crate::ported::lex::zshlex();
+                zshlex();
             }
             ForList::Words(words)
         } else {
             ForList::Positional
         }
-    } else if crate::ported::lex::tok() == INPAR_TOK {
+    } else if tok() == INPAR_TOK {
         // for var (...)
-        crate::ported::lex::zshlex();
+        zshlex();
         let mut words = Vec::new();
         let mut word_count = 0;
-        while crate::ported::lex::tok() == STRING_LEX || crate::ported::lex::tok() == SEPER {
+        while tok() == STRING_LEX || tok() == SEPER {
             word_count += 1;
             if word_count > 500 || check_limit() {
                 error("for: too many words in parens");
                 return None;
             }
-            if crate::ported::lex::tok() == STRING_LEX {
-                let _ts_s = crate::ported::lex::tokstr();
+            if tok() == STRING_LEX {
+                let _ts_s = tokstr();
                 if let Some(s) = _ts_s.as_deref() {
                     words.push(s.to_string());
                 }
             }
-            crate::ported::lex::zshlex();
+            zshlex();
         }
-        if crate::ported::lex::tok() == OUTPAR_TOK {
+        if tok() == OUTPAR_TOK {
             // After the `)` of a for-list, the next token is the
             // body opener — `do`/`{`. zsh's lexer needs incmdpos
             // set so `{` lexes as Inbrace (not as a literal). C
             // analogue: parse.c::par_for sets `incmdpos = 1`
             // after consuming the Outpar before the body parse.
-            crate::ported::lex::set_incmdpos(true);
-            crate::ported::lex::zshlex();
+            set_incmdpos(true);
+            zshlex();
         }
         ForList::Words(words)
     } else {
@@ -2387,31 +2501,31 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
     //   Dinpar "cond"   - cond expression, semicolon consumed
     //   Doutpar "step"  - step expression, closing )) consumed
 
-    crate::ported::lex::zshlex(); // Get init: Dinpar "i=0"
+    zshlex(); // Get init: Dinpar "i=0"
 
-    if crate::ported::lex::tok() != DINPAR {
+    if tok() != DINPAR {
         error("expected init expression in for ((");
         return None;
     }
-    let init = crate::ported::lex::tokstr().unwrap_or_default();
+    let init = tokstr().unwrap_or_default();
 
-    crate::ported::lex::zshlex(); // Get cond: Dinpar "i<10"
+    zshlex(); // Get cond: Dinpar "i<10"
 
-    if crate::ported::lex::tok() != DINPAR {
+    if tok() != DINPAR {
         error("expected condition in for ((");
         return None;
     }
-    let cond = crate::ported::lex::tokstr().unwrap_or_default();
+    let cond = tokstr().unwrap_or_default();
 
-    crate::ported::lex::zshlex(); // Get step: Doutpar "i++"
+    zshlex(); // Get step: Doutpar "i++"
 
-    if crate::ported::lex::tok() != DOUTPAR {
+    if tok() != DOUTPAR {
         error("expected )) in for");
         return None;
     }
-    let step = crate::ported::lex::tokstr().unwrap_or_default();
+    let step = tokstr().unwrap_or_default();
 
-    crate::ported::lex::zshlex(); // Move past ))
+    zshlex(); // Move past ))
 
     skip_separators();
     let body = parse_loop_body(false)?;
@@ -2447,12 +2561,12 @@ fn parse_select() -> Option<ZshCommand> {
 /// (pattern_list, body, terminator) tuple where terminator is
 /// `;;` (default), `;&` (fallthrough), or `;|` (continue testing).
 fn par_case() -> Option<ZshCommand> {
-    crate::ported::lex::zshlex(); // skip 'case'
+    zshlex(); // skip 'case'
 
-    let word = match crate::ported::lex::tok() {
+    let word = match tok() {
         STRING_LEX => {
-            let w = crate::ported::lex::tokstr().unwrap_or_default();
-            crate::ported::lex::zshlex();
+            let w = tokstr().unwrap_or_default();
+            zshlex();
             w
         }
         _ => {
@@ -2464,9 +2578,9 @@ fn par_case() -> Option<ZshCommand> {
     skip_separators();
 
     // Expect 'in' or {
-    let use_brace = crate::ported::lex::tok() == INBRACE_TOK;
-    if crate::ported::lex::tok() == STRING_LEX {
-        let s = crate::ported::lex::tokstr();
+    let use_brace = tok() == INBRACE_TOK;
+    if tok() == STRING_LEX {
+        let s = tokstr();
         if s.map(|s| s != "in").unwrap_or(true) {
             error("expected 'in' in case");
             return None;
@@ -2481,8 +2595,8 @@ fn par_case() -> Option<ZshCommand> {
     // Without this the `(` got swallowed into a gettokstr('(', false)
     // call and produced a String like "(foo)" — the parser then saw
     // the `)` inside a string instead of as a separate Outpar.
-    crate::ported::lex::set_incasepat(1);
-    crate::ported::lex::zshlex();
+    set_incasepat(1);
+    zshlex();
 
     let mut arms = Vec::new();
     const MAX_ARMS: usize = 10_000;
@@ -2495,26 +2609,23 @@ fn par_case() -> Option<ZshCommand> {
 
         // Set incasepat BEFORE skipping separators so lexer knows we're in case pattern context
         // This affects how [ and | are lexed
-        crate::ported::lex::set_incasepat(1);
+        set_incasepat(1);
 
         skip_separators();
 
         // Check for end
         // Note: 'esac' might be String "esac" if incasepat > 0 prevents reserved word recognition
-        let is_esac = crate::ported::lex::tok() == ESAC
-            || (crate::ported::lex::tok() == STRING_LEX
-                && crate::ported::lex::tokstr()
-                    .map(|s| s == "esac")
-                    .unwrap_or(false));
-        if (use_brace && crate::ported::lex::tok() == OUTBRACE_TOK) || (!use_brace && is_esac) {
-            crate::ported::lex::set_incasepat(0);
-            crate::ported::lex::zshlex();
+        let is_esac = tok() == ESAC
+            || (tok() == STRING_LEX && tokstr().map(|s| s == "esac").unwrap_or(false));
+        if (use_brace && tok() == OUTBRACE_TOK) || (!use_brace && is_esac) {
+            set_incasepat(0);
+            zshlex();
             break;
         }
 
         // Also break on EOF
-        if crate::ported::lex::tok() == ENDINPUT || crate::ported::lex::tok() == LEXERR {
-            crate::ported::lex::set_incasepat(0);
+        if tok() == ENDINPUT || tok() == LEXERR {
+            set_incasepat(0);
             break;
         }
 
@@ -2525,9 +2636,9 @@ fn par_case() -> Option<ZshCommand> {
         // `)` after pattern parsing — otherwise the arm-close would
         // be interpreted as the pattern-close and the actual body
         // would get the leftover `)`.
-        let had_leading_paren = crate::ported::lex::tok() == INPAR_TOK;
+        let had_leading_paren = tok() == INPAR_TOK;
         if had_leading_paren {
-            crate::ported::lex::zshlex();
+            zshlex();
         }
 
         // incasepat is already set above
@@ -2537,32 +2648,32 @@ fn par_case() -> Option<ZshCommand> {
             pattern_iterations += 1;
             if pattern_iterations > 1000 {
                 error("par_case: too many pattern iterations");
-                crate::ported::lex::set_incasepat(0);
+                set_incasepat(0);
                 return None;
             }
 
-            if crate::ported::lex::tok() == STRING_LEX {
-                let s = crate::ported::lex::tokstr();
+            if tok() == STRING_LEX {
+                let s = tokstr();
                 if s.map(|s| s == "esac").unwrap_or(false) {
                     break;
                 }
-                patterns.push(crate::ported::lex::tokstr().unwrap_or_default());
+                patterns.push(tokstr().unwrap_or_default());
                 // After first pattern token, set incasepat=2 so ( is treated as part of pattern
-                crate::ported::lex::set_incasepat(2);
-                crate::ported::lex::zshlex();
-            } else if crate::ported::lex::tok() != BAR_TOK {
+                set_incasepat(2);
+                zshlex();
+            } else if tok() != BAR_TOK {
                 break;
             }
 
-            if crate::ported::lex::tok() == BAR_TOK {
+            if tok() == BAR_TOK {
                 // Reset to 1 (start of next alternative pattern)
-                crate::ported::lex::set_incasepat(1);
-                crate::ported::lex::zshlex();
+                set_incasepat(1);
+                zshlex();
             } else {
                 break;
             }
         }
-        crate::ported::lex::set_incasepat(0);
+        set_incasepat(0);
 
         // zsh's `(P)` form (parse.c:1320-1360 hack) treats the entire
         // parenthesized contents as ONE zsh pattern with internal `|`
@@ -2585,7 +2696,7 @@ fn par_case() -> Option<ZshCommand> {
         // pattern, then arm-close). The first form is unambiguous
         // when the bare pattern was simple; the second is needed
         // when the body starts with `(`.
-        if crate::ported::lex::tok() != OUTPAR_TOK {
+        if tok() != OUTPAR_TOK {
             error("expected ')' in case pattern");
             return None;
         }
@@ -2598,11 +2709,11 @@ fn par_case() -> Option<ZshCommand> {
         // "command not found: c1=v"). Subsequent statements after
         // `;` parse correctly because the `;` separator restores
         // command position; only the FIRST body word was broken.
-        crate::ported::lex::set_incmdpos(true);
-        crate::ported::lex::zshlex();
-        if had_leading_paren && crate::ported::lex::tok() == OUTPAR_TOK {
-            crate::ported::lex::set_incmdpos(true);
-            crate::ported::lex::zshlex();
+        set_incmdpos(true);
+        zshlex();
+        if had_leading_paren && tok() == OUTPAR_TOK {
+            set_incmdpos(true);
+            zshlex();
         }
 
         // Parse body
@@ -2614,20 +2725,20 @@ fn par_case() -> Option<ZshCommand> {
         // this, a `[`-prefixed pattern after the FIRST arm became
         // Inbrack instead of String and the pattern-loop bailed
         // out with "expected ')' in case pattern".
-        let terminator = match crate::ported::lex::tok() {
+        let terminator = match tok() {
             DSEMI => {
-                crate::ported::lex::set_incasepat(1);
-                crate::ported::lex::zshlex();
+                set_incasepat(1);
+                zshlex();
                 CaseTerm::Break
             }
             SEMIAMP => {
-                crate::ported::lex::set_incasepat(1);
-                crate::ported::lex::zshlex();
+                set_incasepat(1);
+                zshlex();
                 CaseTerm::Continue
             }
             SEMIBAR => {
-                crate::ported::lex::set_incasepat(1);
-                crate::ported::lex::zshlex();
+                set_incasepat(1);
+                zshlex();
                 CaseTerm::TestNext
             }
             _ => CaseTerm::Break,
@@ -2651,7 +2762,7 @@ fn par_case() -> Option<ZshCommand> {
 /// emits WC_IF wordcodes per arm; zshrs builds an AST chain of
 /// (cond, then_body) tuples plus an optional else_body.
 fn par_if() -> Option<ZshCommand> {
-    crate::ported::lex::zshlex(); // skip 'if'
+    zshlex(); // skip 'if'
 
     // Parse condition - stops at 'then' or '{' (zsh allows { instead of then)
     let cond = Box::new(parse_program_until(Some(&[THEN, INBRACE_TOK])));
@@ -2659,18 +2770,18 @@ fn par_if() -> Option<ZshCommand> {
     skip_separators();
 
     // Expect 'then' or {
-    let use_brace = crate::ported::lex::tok() == INBRACE_TOK;
-    if crate::ported::lex::tok() != THEN && !use_brace {
+    let use_brace = tok() == INBRACE_TOK;
+    if tok() != THEN && !use_brace {
         error("expected 'then' or '{' after if condition");
         return None;
     }
-    crate::ported::lex::zshlex();
+    zshlex();
 
     // Parse then-body - stops at else/elif/fi, or } if using brace syntax
     let then = if use_brace {
         let body = parse_program_until(Some(&[OUTBRACE_TOK]));
-        if crate::ported::lex::tok() == OUTBRACE_TOK {
-            crate::ported::lex::zshlex();
+        if tok() == OUTBRACE_TOK {
+            zshlex();
         }
         Box::new(body)
     } else {
@@ -2699,25 +2810,25 @@ fn par_if() -> Option<ZshCommand> {
         loop {
             skip_separators();
 
-            match crate::ported::lex::tok() {
+            match tok() {
                 ELIF => {
-                    crate::ported::lex::zshlex();
+                    zshlex();
                     // elif condition stops at 'then' or '{'
                     let econd = parse_program_until(Some(&[THEN, INBRACE_TOK]));
                     skip_separators();
 
-                    let elif_use_brace = crate::ported::lex::tok() == INBRACE_TOK;
-                    if crate::ported::lex::tok() != THEN && !elif_use_brace {
+                    let elif_use_brace = tok() == INBRACE_TOK;
+                    if tok() != THEN && !elif_use_brace {
                         error("expected 'then' after elif");
                         return None;
                     }
-                    crate::ported::lex::zshlex();
+                    zshlex();
 
                     // elif body stops at else/elif/fi or } if using braces
                     let ebody = if elif_use_brace {
                         let body = parse_program_until(Some(&[OUTBRACE_TOK]));
-                        if crate::ported::lex::tok() == OUTBRACE_TOK {
-                            crate::ported::lex::zshlex();
+                        if tok() == OUTBRACE_TOK {
+                            zshlex();
                         }
                         body
                     } else {
@@ -2727,19 +2838,19 @@ fn par_if() -> Option<ZshCommand> {
                     elif.push((econd, ebody));
                 }
                 ELSE => {
-                    crate::ported::lex::zshlex();
+                    zshlex();
                     skip_separators();
 
-                    let else_use_brace = crate::ported::lex::tok() == INBRACE_TOK;
+                    let else_use_brace = tok() == INBRACE_TOK;
                     if else_use_brace {
-                        crate::ported::lex::zshlex();
+                        zshlex();
                     }
 
                     // else body stops at 'fi' or '}'
                     else_ = Some(Box::new(if else_use_brace {
                         let body = parse_program_until(Some(&[OUTBRACE_TOK]));
-                        if crate::ported::lex::tok() == OUTBRACE_TOK {
-                            crate::ported::lex::zshlex();
+                        if tok() == OUTBRACE_TOK {
+                            zshlex();
                         }
                         body
                     } else {
@@ -2747,13 +2858,13 @@ fn par_if() -> Option<ZshCommand> {
                     }));
 
                     // Consume the 'fi' if present (not for brace syntax)
-                    if !else_use_brace && crate::ported::lex::tok() == FI {
-                        crate::ported::lex::zshlex();
+                    if !else_use_brace && tok() == FI {
+                        zshlex();
                     }
                     break;
                 }
                 FI => {
-                    crate::ported::lex::zshlex();
+                    zshlex();
                     break;
                 }
                 _ => break,
@@ -2774,7 +2885,7 @@ fn par_if() -> Option<ZshCommand> {
 /// Direct port of zsh/Src/parse.c:1521 `par_while`. The
 /// `until` variant is the same loop with the condition negated.
 fn par_while(until: bool) -> Option<ZshCommand> {
-    crate::ported::lex::zshlex(); // skip while/until
+    zshlex(); // skip while/until
 
     let cond = Box::new(parse_program());
 
@@ -2794,12 +2905,12 @@ fn par_while(until: bool) -> Option<ZshCommand> {
 /// the SHORTLOOPS short-form `repeat N CMD` (no do/done) — zshrs's
 /// parser doesn't yet special-case that variant.
 fn par_repeat() -> Option<ZshCommand> {
-    crate::ported::lex::zshlex(); // skip 'repeat'
+    zshlex(); // skip 'repeat'
 
-    let count = match crate::ported::lex::tok() {
+    let count = match tok() {
         STRING_LEX => {
-            let c = crate::ported::lex::tokstr().unwrap_or_default();
-            crate::ported::lex::zshlex();
+            let c = tokstr().unwrap_or_default();
+            zshlex();
             c
         }
         _ => {
@@ -2809,7 +2920,11 @@ fn par_repeat() -> Option<ZshCommand> {
     };
 
     skip_separators();
-    let body = parse_loop_body(false)?;
+    // c:1600 — par_repeat's short-form gate is wider: it unlocks
+    // when SHORTLOOPS OR SHORTREPEAT is set (vs SHORTLOOPS alone for
+    // for/while). Pass `is_repeat=true` so parse_loop_body_kind
+    // applies that widened gate.
+    let body = parse_loop_body_kind(false, true)?;
 
     Some(ZshCommand::Repeat(ZshRepeat {
         count,
@@ -2826,29 +2941,54 @@ fn par_repeat() -> Option<ZshCommand> {
 /// CMD` may skip do/done) vs c-style (which always requires
 /// do/done).
 fn parse_loop_body(foreach_style: bool) -> Option<ZshProgram> {
-    if crate::ported::lex::tok() == DOLOOP {
-        crate::ported::lex::zshlex();
+    parse_loop_body_kind(foreach_style, false)
+}
+
+/// Body-dispatch helper. `is_repeat` widens the SHORTLOOPS gate so
+/// `SHORTREPEAT` also unlocks the short form for `repeat N CMD`
+/// (per c:1600 `unset(SHORTLOOPS) && unset(SHORTREPEAT)`).
+fn parse_loop_body_kind(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
+    // c:1180-1194 — body dispatch order per par_for:
+    //   `do ... done` (DOLOOP) — primary form.
+    //   `{ ... }`   (INBRACE) — alternate.
+    //   csh/CSHJUNKIELOOPS — terminator is `end`.
+    //   else if (unset(SHORTLOOPS)) — YYERROR.
+    //   else — short form (single command).
+    if tok() == DOLOOP {
+        zshlex();
         let body = parse_program();
-        if crate::ported::lex::tok() == DONE {
-            crate::ported::lex::zshlex();
+        if tok() == DONE {
+            zshlex();
         }
         Some(body)
-    } else if crate::ported::lex::tok() == INBRACE_TOK {
-        crate::ported::lex::zshlex();
+    } else if tok() == INBRACE_TOK {
+        zshlex();
         let body = parse_program();
-        if crate::ported::lex::tok() == OUTBRACE_TOK {
-            crate::ported::lex::zshlex();
+        if tok() == OUTBRACE_TOK {
+            zshlex();
         }
         Some(body)
-    } else if foreach_style {
-        // foreach allows 'end' terminator
+    } else if foreach_style || isset(CSHJUNKIELOOPS) {
+        // c:1184 / 1546 / 1595 — `else if (csh || isset(CSHJUNKIELOOPS))`.
         let body = parse_program();
-        if crate::ported::lex::tok() == ZEND {
-            crate::ported::lex::zshlex();
+        if tok() == ZEND {
+            zshlex();
         }
         Some(body)
     } else {
-        // Short loop - single command
+        // c:1190 / 1474 / 1551 / 1600 — short-form gate. C bails
+        // with YYERROR when `unset(SHORTLOOPS) && (!is_repeat ||
+        // unset(SHORTREPEAT))`. zshrs's option machinery isn't
+        // initialised at parse-test time (no `init_main` →
+        // `install_emulation_defaults`), so a strict port here
+        // body. parse_init seeds SHORTLOOPS=on mirroring C
+        // `install_emulation_defaults`, so this fires only when a
+        // script explicitly disabled the option.
+        if unset(SHORTLOOPS) && (!is_repeat || unset(SHORTREPEAT)) {
+            error("parse error: short loop form requires SHORTLOOPS option");
+            return None;
+        }
+        // c:1192-1193 — short form: single command body.
         par_list().map(|list| ZshProgram { lists: vec![list] })
     }
 }
@@ -2858,10 +2998,10 @@ fn parse_loop_body(foreach_style: bool) -> Option<ZshProgram> {
 /// `par_subsh`. Body parses as a normal list; the subshell wrapper
 /// fork-isolates execution in the executor.
 fn par_subsh() -> Option<ZshCommand> {
-    crate::ported::lex::zshlex(); // skip (
+    zshlex(); // skip (
     let prog = parse_program();
-    if crate::ported::lex::tok() == OUTPAR_TOK {
-        crate::ported::lex::zshlex();
+    if tok() == OUTPAR_TOK {
+        zshlex();
     }
     Some(ZshCommand::Subsh(Box::new(prog)))
 }
@@ -2877,29 +3017,29 @@ fn par_subsh() -> Option<ZshCommand> {
 /// equivalent: the INOUTPAR shape in par_simple at parse.c:1836+
 /// triggers an anon-funcdef path.
 fn parse_anon_funcdef() -> Option<ZshCommand> {
-    crate::ported::lex::zshlex(); // skip ()
+    zshlex(); // skip ()
     skip_separators();
     // No `{` after `()` → bare empty subshell shape `()`. Fall back
     // to a Subsh with an empty program so the status is 0 (matches
     // zsh's `()` no-op behavior).
-    if crate::ported::lex::tok() != INBRACE_TOK {
+    if tok() != INBRACE_TOK {
         return Some(ZshCommand::Subsh(Box::new(ZshProgram {
             lists: Vec::new(),
         })));
     }
-    crate::ported::lex::zshlex(); // skip {
+    zshlex(); // skip {
     let body = parse_program();
-    if crate::ported::lex::tok() == OUTBRACE_TOK {
-        crate::ported::lex::zshlex();
+    if tok() == OUTBRACE_TOK {
+        zshlex();
     }
     // Collect any trailing args until a separator. zsh's anon-fn form
     // `() { body } a b c` runs body with $1=a, $2=b, $3=c.
     let mut args = Vec::new();
-    while crate::ported::lex::tok() == STRING_LEX {
-        if let Some(s) = crate::ported::lex::tokstr() {
+    while tok() == STRING_LEX {
+        if let Some(s) = tokstr() {
             args.push(s);
         }
-        crate::ported::lex::zshlex();
+        zshlex();
     }
 
     // Generate a unique name. Module-level static would be cleaner but
@@ -2923,7 +3063,7 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
 /// and recurses into the list. zshrs's parse_cursh extracts that
 /// arm into a dedicated method.
 fn parse_cursh() -> Option<ZshCommand> {
-    crate::ported::lex::zshlex(); // skip {
+    zshlex(); // skip {
     let prog = parse_program();
 
     // Check for { ... } always { ... }. Direct port of zsh's
@@ -2935,23 +3075,23 @@ fn parse_cursh() -> Option<ZshCommand> {
     // rule (lex.rs:976-983) leaves the second `{` in word position,
     // turning `always { ... }` into a Simple `{` `echo` … and the
     // try/always pairing is silently lost.
-    if crate::ported::lex::tok() == OUTBRACE_TOK {
-        crate::ported::lex::set_incmdpos(true); // parse.c:1632 incmdpos = !zsh_construct
-        crate::ported::lex::zshlex();
+    if tok() == OUTBRACE_TOK {
+        set_incmdpos(true); // parse.c:1632 incmdpos = !zsh_construct
+        zshlex();
 
         // Check for 'always'
-        if crate::ported::lex::tok() == STRING_LEX {
-            let s = crate::ported::lex::tokstr();
+        if tok() == STRING_LEX {
+            let s = tokstr();
             if s.map(|s| s == "always").unwrap_or(false) {
-                crate::ported::lex::set_incmdpos(true); // parse.c:1637 incmdpos = 1
-                crate::ported::lex::zshlex();
+                set_incmdpos(true); // parse.c:1637 incmdpos = 1
+                zshlex();
                 skip_separators();
 
-                if crate::ported::lex::tok() == INBRACE_TOK {
-                    crate::ported::lex::zshlex();
+                if tok() == INBRACE_TOK {
+                    zshlex();
                     let always = parse_program();
-                    if crate::ported::lex::tok() == OUTBRACE_TOK {
-                        crate::ported::lex::zshlex();
+                    if tok() == OUTBRACE_TOK {
+                        zshlex();
                     }
                     return Some(ZshCommand::Try(ZshTry {
                         try_block: Box::new(prog),
@@ -2972,7 +3112,7 @@ fn parse_cursh() -> Option<ZshCommand> {
 /// the optional `[fname1 fname2 ...]` for multi-name function defs,
 /// and the `function FOO () { ... }` traditional/POSIX hybrid form.
 fn par_funcdef() -> Option<ZshCommand> {
-    crate::ported::lex::zshlex(); // skip 'function'
+    zshlex(); // skip 'function'
 
     let mut names = Vec::new();
     let mut tracing = false;
@@ -2998,9 +3138,9 @@ fn par_funcdef() -> Option<ZshCommand> {
     //      par_funcdef which knows it's in funcdef-header context
     //      and accepts the brace either way.
     loop {
-        match crate::ported::lex::tok() {
+        match tok() {
             STRING_LEX => {
-                let _ts_s = crate::ported::lex::tokstr()?;
+                let _ts_s = tokstr()?;
                 let s = _ts_s.as_str();
                 if s == "{" {
                     // Funcdef body opener — break, body-parser branch handles it.
@@ -3011,11 +3151,11 @@ fn par_funcdef() -> Option<ZshCommand> {
                     if s.contains('T') {
                         tracing = true;
                     }
-                    crate::ported::lex::zshlex();
+                    zshlex();
                     continue;
                 }
                 names.push(s.to_string());
-                crate::ported::lex::zshlex();
+                zshlex();
             }
             INBRACE_TOK | INOUTPAR | SEPER | NEWLIN => break,
             _ => break,
@@ -3023,18 +3163,17 @@ fn par_funcdef() -> Option<ZshCommand> {
     }
 
     // Optional ()
-    let saw_paren = crate::ported::lex::tok() == INOUTPAR;
+    let saw_paren = tok() == INOUTPAR;
     if saw_paren {
-        crate::ported::lex::zshlex();
+        zshlex();
     }
 
     skip_separators();
 
     // Body opener: real Inbrace OR a String("{") (the lexer emits
     // the latter after a String NAME — see comment above).
-    let body_opener_is_string_brace =
-        crate::ported::lex::tok() == STRING_LEX && crate::ported::lex::tokstr_eq("{");
-    if crate::ported::lex::tok() == INBRACE_TOK || body_opener_is_string_brace {
+    let body_opener_is_string_brace = tok() == STRING_LEX && tokstr_eq("{");
+    if tok() == INBRACE_TOK || body_opener_is_string_brace {
         // Capture body_start BEFORE the lexer advances past the
         // first body token. After the previous zshlex consumed
         // `{`, lexer.pos points just past `{` (which is where the
@@ -3042,21 +3181,21 @@ fn par_funcdef() -> Option<ZshCommand> {
         // past the first token (`echo`), making body_start land
         // mid-body and lose the first word — `typeset -f f` would
         // print `a; echo b` for `{ echo a; echo b }`.
-        let body_start = crate::ported::lex::pos();
-        crate::ported::lex::zshlex();
+        let body_start = pos();
+        zshlex();
         let body = parse_program();
-        let body_end = if crate::ported::lex::tok() == OUTBRACE_TOK {
+        let body_end = if tok() == OUTBRACE_TOK {
             // Lexer has just consumed `}`; pos is past it. Body content
             // ends one byte before pos.
-            crate::ported::lex::pos().saturating_sub(1)
+            pos().saturating_sub(1)
         } else {
-            crate::ported::lex::pos()
+            pos()
         };
-        let body_source = crate::ported::lex::input_slice(body_start, body_end)
+        let body_source = input_slice(body_start, body_end)
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        if crate::ported::lex::tok() == OUTBRACE_TOK {
-            crate::ported::lex::zshlex();
+        if tok() == OUTBRACE_TOK {
+            zshlex();
         }
 
         // Anonymous form `function () { body } a b c` (with `()`) or
@@ -3067,11 +3206,11 @@ fn par_funcdef() -> Option<ZshCommand> {
         // function with the args as positional params.
         if names.is_empty() {
             let mut args = Vec::new();
-            while crate::ported::lex::tok() == STRING_LEX {
-                if let Some(s) = crate::ported::lex::tokstr() {
+            while tok() == STRING_LEX {
+                if let Some(s) = tokstr() {
                     args.push(s);
                 }
-                crate::ported::lex::zshlex();
+                zshlex();
             }
             static ANON_COUNTER: AtomicUsize = AtomicUsize::new(0);
             let n = ANON_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -3114,28 +3253,28 @@ fn par_funcdef() -> Option<ZshCommand> {
 /// arm (parse.c:1836-2228).
 fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
     // Skip ()
-    if crate::ported::lex::tok() == INOUTPAR {
-        crate::ported::lex::zshlex();
+    if tok() == INOUTPAR {
+        zshlex();
     }
 
     skip_separators();
 
     // Parse body
-    if crate::ported::lex::tok() == INBRACE_TOK {
+    if tok() == INBRACE_TOK {
         // Same body_start-before-zshlex fix as par_funcdef.
-        let body_start = crate::ported::lex::pos();
-        crate::ported::lex::zshlex();
+        let body_start = pos();
+        zshlex();
         let body = parse_program();
-        let body_end = if crate::ported::lex::tok() == OUTBRACE_TOK {
-            crate::ported::lex::pos().saturating_sub(1)
+        let body_end = if tok() == OUTBRACE_TOK {
+            pos().saturating_sub(1)
         } else {
-            crate::ported::lex::pos()
+            pos()
         };
-        let body_source = crate::ported::lex::input_slice(body_start, body_end)
+        let body_source = input_slice(body_start, body_end)
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        if crate::ported::lex::tok() == OUTBRACE_TOK {
-            crate::ported::lex::zshlex();
+        if tok() == OUTBRACE_TOK {
+            zshlex();
         }
         Some(ZshCommand::FuncDef(ZshFuncDef {
             names: vec![name],
@@ -3144,6 +3283,14 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
             auto_call_args: None,
             body_source,
         }))
+    } else if unset(SHORTLOOPS) {
+        // c:1742 — `else if (unset(SHORTLOOPS)) YYERRORV(oecused);` —
+        // funcdef short body (`name() cmd` without `{...}`) only
+        // accepted when SHORTLOOPS is set. parse_init seeds
+        // SHORTLOOPS=on so this fires only when a script
+        // explicitly disabled the option.
+        error("parse error: short function body form requires SHORTLOOPS option");
+        None
     } else {
         match par_cmd() {
             Some(cmd) => {
@@ -3152,7 +3299,7 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
                         pipe: ZshPipe {
                             cmd,
                             next: None,
-                            lineno: crate::ported::lex::lineno(),
+                            lineno: lineno(),
                             merge_stderr: false,
                         },
                         next: None,
@@ -3181,20 +3328,20 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
 /// + unary tests (-f, -d, -n, -z, etc.) + binary tests (=, !=,
 ///   <, >, ==, =~, -eq, -ne, -lt, -le, -gt, -ge, -nt, -ot, -ef).
 fn par_cond() -> Option<ZshCommand> {
-    crate::ported::lex::zshlex(); // skip [[
-                                  // Empty cond `[[ ]]` is a parse error in zsh — emit the
-                                  // diagnostic and return None so the caller produces a
-                                  // non-zero exit. Without this, `[[ ]]` silently passed and
-                                  // returned exit 0.
-    if crate::ported::lex::tok() == DOUTBRACK {
+    zshlex(); // skip [[
+              // Empty cond `[[ ]]` is a parse error in zsh — emit the
+              // diagnostic and return None so the caller produces a
+              // non-zero exit. Without this, `[[ ]]` silently passed and
+              // returned exit 0.
+    if tok() == DOUTBRACK {
         error("parse error near `]]'");
-        crate::ported::lex::zshlex();
+        zshlex();
         return None;
     }
     let cond = parse_cond_expr();
 
-    if crate::ported::lex::tok() == DOUTBRACK {
-        crate::ported::lex::zshlex();
+    if tok() == DOUTBRACK {
+        zshlex();
     }
 
     cond.map(ZshCommand::Cond)
@@ -3228,8 +3375,8 @@ fn parse_cond_or() -> Option<ZshCond> {
 
     skip_cond_separators();
 
-    let result = if crate::ported::lex::tok() == DBAR {
-        crate::ported::lex::zshlex();
+    let result = if tok() == DBAR {
+        zshlex();
         skip_cond_separators();
         parse_cond_or().map(|right| ZshCond::Or(Box::new(left), Box::new(right)))
     } else {
@@ -3259,8 +3406,8 @@ fn parse_cond_and() -> Option<ZshCond> {
 
     skip_cond_separators();
 
-    let result = if crate::ported::lex::tok() == DAMPER {
-        crate::ported::lex::zshlex();
+    let result = if tok() == DAMPER {
+        zshlex();
         skip_cond_separators();
         parse_cond_and().map(|right| ZshCond::And(Box::new(left), Box::new(right)))
     } else {
@@ -3284,13 +3431,10 @@ fn parse_cond_not() -> Option<ZshCond> {
     skip_cond_separators();
 
     // ! can be either BANG_TOK or String "!"
-    let is_not = crate::ported::lex::tok() == BANG_TOK
-        || (crate::ported::lex::tok() == STRING_LEX
-            && crate::ported::lex::tokstr()
-                .map(|s| s == "!")
-                .unwrap_or(false));
+    let is_not =
+        tok() == BANG_TOK || (tok() == STRING_LEX && tokstr().map(|s| s == "!").unwrap_or(false));
     if is_not {
-        crate::ported::lex::zshlex();
+        zshlex();
         let inner = match parse_cond_not() {
             Some(i) => i,
             None => {
@@ -3302,8 +3446,8 @@ fn parse_cond_not() -> Option<ZshCond> {
         return Some(ZshCond::Not(Box::new(inner)));
     }
 
-    if crate::ported::lex::tok() == INPAR_TOK {
-        crate::ported::lex::zshlex();
+    if tok() == INPAR_TOK {
+        zshlex();
         skip_cond_separators();
         let inner = match parse_cond_expr() {
             Some(i) => i,
@@ -3313,8 +3457,8 @@ fn parse_cond_not() -> Option<ZshCond> {
             }
         };
         skip_cond_separators();
-        if crate::ported::lex::tok() == OUTPAR_TOK {
-            crate::ported::lex::zshlex();
+        if tok() == OUTPAR_TOK {
+            zshlex();
         }
         PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() - 1);
         return Some(inner);
@@ -3330,10 +3474,10 @@ fn parse_cond_not() -> Option<ZshCond> {
 /// sub-expressions. Direct port of par_cond_double / par_cond_triple
 /// / par_cond_multi at parse.c:2626-2731 (chosen by arg count).
 fn parse_cond_primary() -> Option<ZshCond> {
-    let s1 = match crate::ported::lex::tok() {
+    let s1 = match tok() {
         STRING_LEX => {
-            let s = crate::ported::lex::tokstr().unwrap_or_default();
-            crate::ported::lex::zshlex();
+            let s = tokstr().unwrap_or_default();
+            zshlex();
             s
         }
         _ => return None,
@@ -3348,10 +3492,10 @@ fn parse_cond_primary() -> Option<ZshCond> {
     // is 2 UTF-8 bytes (`\xc2\x9b`).
     let s1_chars: Vec<char> = s1.chars().collect();
     if s1_chars.len() == 2 && IS_DASH(s1_chars[0]) {
-        let s2 = match crate::ported::lex::tok() {
+        let s2 = match tok() {
             STRING_LEX => {
-                let s = crate::ported::lex::tokstr().unwrap_or_default();
-                crate::ported::lex::zshlex();
+                let s = tokstr().unwrap_or_default();
+                zshlex();
                 s
             }
             _ => return Some(ZshCond::Unary("-n".to_string(), s1)),
@@ -3366,24 +3510,24 @@ fn parse_cond_primary() -> Option<ZshCond> {
     // The bump makes the lexer treat `(` as a literal character inside
     // the RHS word (e.g. `[[ x =~ (foo) ]]`) instead of returning Inpar
     // and splitting the regex into multiple tokens.
-    let op = match crate::ported::lex::tok() {
+    let op = match tok() {
         STRING_LEX => {
-            let s = crate::ported::lex::tokstr().unwrap_or_default();
-            crate::ported::lex::set_incond(crate::ported::lex::incond() + 1);
-            crate::ported::lex::zshlex();
-            crate::ported::lex::set_incond(crate::ported::lex::incond() - 1);
+            let s = tokstr().unwrap_or_default();
+            set_incond(incond() + 1);
+            zshlex();
+            set_incond(incond() - 1);
             s
         }
         INANG_TOK => {
-            crate::ported::lex::set_incond(crate::ported::lex::incond() + 1);
-            crate::ported::lex::zshlex();
-            crate::ported::lex::set_incond(crate::ported::lex::incond() - 1);
+            set_incond(incond() + 1);
+            zshlex();
+            set_incond(incond() - 1);
             "<".to_string()
         }
         OUTANG_TOK => {
-            crate::ported::lex::set_incond(crate::ported::lex::incond() + 1);
-            crate::ported::lex::zshlex();
-            crate::ported::lex::set_incond(crate::ported::lex::incond() - 1);
+            set_incond(incond() + 1);
+            zshlex();
+            set_incond(incond() - 1);
             ">".to_string()
         }
         _ => return Some(ZshCond::Unary("-n".to_string(), s1)),
@@ -3391,10 +3535,10 @@ fn parse_cond_primary() -> Option<ZshCond> {
 
     skip_cond_separators();
 
-    let s2 = match crate::ported::lex::tok() {
+    let s2 = match tok() {
         STRING_LEX => {
-            let s = crate::ported::lex::tokstr().unwrap_or_default();
-            crate::ported::lex::zshlex();
+            let s = tokstr().unwrap_or_default();
+            zshlex();
             s
         }
         _ => return Some(ZshCond::Binary(s1, op, String::new())),
@@ -3408,11 +3552,11 @@ fn parse_cond_primary() -> Option<ZshCond> {
 }
 
 fn skip_cond_separators() {
-    while crate::ported::lex::tok() == SEPER && {
-        let s = crate::ported::lex::tokstr();
+    while tok() == SEPER && {
+        let s = tokstr();
         s.map(|s| !s.contains(';')).unwrap_or(true)
     } {
-        crate::ported::lex::zshlex();
+        zshlex();
     }
 }
 
@@ -3421,8 +3565,8 @@ fn skip_cond_separators() {
 /// `par_dinbrack` (despite the name; the function actually handles
 /// DINPAR `(( ))` blocks too).
 fn parse_arith() -> Option<ZshCommand> {
-    let expr = crate::ported::lex::tokstr().unwrap_or_default();
-    crate::ported::lex::zshlex();
+    let expr = tokstr().unwrap_or_default();
+    zshlex();
     Some(ZshCommand::Arith(expr))
 }
 
@@ -3431,13 +3575,10 @@ fn parse_arith() -> Option<ZshCommand> {
 /// zsh/Src/parse.c:1787 `par_time`. The `time` keyword
 /// times the execution of the following pipeline / cmd.
 fn par_time() -> Option<ZshCommand> {
-    crate::ported::lex::zshlex(); // skip 'time'
+    zshlex(); // skip 'time'
 
     // Check if there's a pipeline to time
-    if crate::ported::lex::tok() == SEPER
-        || crate::ported::lex::tok() == NEWLIN
-        || crate::ported::lex::tok() == ENDINPUT
-    {
+    if tok() == SEPER || tok() == NEWLIN || tok() == ENDINPUT {
         Some(ZshCommand::Time(None))
     } else {
         let sublist = par_sublist();
@@ -3447,19 +3588,19 @@ fn par_time() -> Option<ZshCommand> {
 
 /// Check if next token is ()
 fn peek_inoutpar() -> bool {
-    crate::ported::lex::tok() == INOUTPAR
+    tok() == INOUTPAR
 }
 
 /// Skip separator tokens
 fn skip_separators() {
     let mut iterations = 0;
-    while crate::ported::lex::tok() == SEPER || crate::ported::lex::tok() == NEWLIN {
+    while tok() == SEPER || tok() == NEWLIN {
         iterations += 1;
         if iterations > 100_000 {
             error("skip_separators: too many iterations");
             return;
         }
-        crate::ported::lex::zshlex();
+        zshlex();
     }
 }
 
@@ -3536,17 +3677,17 @@ pub const FDHF_ZSHLOAD: u32 = 2;
 pub struct fdhead {
     /// Offset (in u32 words) to the start of this function's
     /// wordcode body inside the dump.
-    pub start: u32,                                                          // c:3117
+    pub start: u32, // c:3117
     /// Wordcode-byte length of the body (excludes pattern-prog slots).
-    pub len: u32,                                                            // c:3118
+    pub len: u32, // c:3118
     /// Number of compiled patterns the body references.
-    pub npats: u32,                                                          // c:3119
+    pub npats: u32, // c:3119
     /// Offset of the string table inside `prog->prog`.
-    pub strs: u32,                                                           // c:3120
+    pub strs: u32, // c:3120
     /// Header-record length in u32 words (record + name).
-    pub hlen: u32,                                                           // c:3121
+    pub hlen: u32, // c:3121
     /// Packed `{ kshload_bits(2) | name_tail_offset(30) }` field.
-    pub flags: u32,                                                          // c:3122
+    pub flags: u32, // c:3122
 }
 
 /// Size of `struct fdhead` in `wordcode` (u32) units. Used by all
@@ -3561,8 +3702,8 @@ pub const FDHEAD_WORDS: usize = std::mem::size_of::<fdhead>() / 4;
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone)]
 pub struct wcfunc {
-    pub name: String,                                                        // c:3159
-    pub flags: u32,                                                          // c:3161
+    pub name: String, // c:3159
+    pub flags: u32,   // c:3161
     /// Compiled body wordcode (one `u32` array per fn). Empty until
     /// the eprog emit-side lands; `write_dump` then walks each entry.
     pub body: Vec<u32>,
@@ -3618,7 +3759,9 @@ pub fn fdsetother(f: &mut [u32], o: u32) {
 /// Port of `fdversion(f)` macro (`Src/parse.c:3140`) — read the
 /// `ZSH_VERSION` C-string from `pre[2..]`.
 pub fn fdversion(f: &[u32]) -> String {
-    let bytes: Vec<u8> = f[2..].iter().take(10)
+    let bytes: Vec<u8> = f[2..]
+        .iter()
+        .take(10)
         .flat_map(|w| w.to_le_bytes().into_iter())
         .collect();
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
@@ -3636,7 +3779,7 @@ pub fn firstfdhead_offset() -> usize {
 /// the next header by reading the current `hlen` slot.
 #[inline]
 pub fn nextfdhead_offset(f: &[u32], cur: usize) -> usize {
-    cur + (f[cur + 4] as usize)  // .hlen is field 4 of fdhead
+    cur + (f[cur + 4] as usize) // .hlen is field 4 of fdhead
 }
 
 /// Port of `fdhflags(f)` macro (`Src/parse.c:3145`) — low 2 bits
@@ -3665,7 +3808,8 @@ pub fn fdhbldflags(flags: u32, tail: u32) -> u32 {
 /// dump buffer until NUL.
 pub fn fdname(buf: &[u32], header_offset: usize) -> String {
     let name_word_off = header_offset + FDHEAD_WORDS;
-    let bytes: Vec<u8> = buf[name_word_off..].iter()
+    let bytes: Vec<u8> = buf[name_word_off..]
+        .iter()
         .flat_map(|w| w.to_le_bytes().into_iter())
         .take_while(|&b| b != 0)
         .collect();
@@ -3680,10 +3824,10 @@ pub fn read_fdhead(buf: &[u32], offset: usize) -> Option<fdhead> {
     }
     Some(fdhead {
         start: buf[offset],
-        len:   buf[offset + 1],
+        len: buf[offset + 1],
         npats: buf[offset + 2],
-        strs:  buf[offset + 3],
-        hlen:  buf[offset + 4],
+        strs: buf[offset + 3],
+        hlen: buf[offset + 4],
         flags: buf[offset + 5],
     })
 }
@@ -3691,7 +3835,8 @@ pub fn read_fdhead(buf: &[u32], offset: usize) -> Option<fdhead> {
 /// Port of `fdswap(Wordcode p, int n)` from `Src/parse.c:3318`.
 /// Byte-swap each u32 in `p[..n]` in place. Used when writing the
 /// opposite-byte-order copy of a wordcode dump.
-pub fn fdswap(p: &mut [u32]) {                                                // c:3318
+pub fn fdswap(p: &mut [u32]) {
+    // c:3318
     for w in p.iter_mut() {
         *w = w.swap_bytes();
     }
@@ -3700,7 +3845,8 @@ pub fn fdswap(p: &mut [u32]) {                                                //
 /// Port of `dump_find_func(Wordcode h, char *name)` from
 /// `Src/parse.c:3167`. Walks the header table inside a loaded
 /// dump for a function with the given basename; returns true on hit.
-pub fn dump_find_func(h: &[u32], name: &str) -> bool {                        // c:3167
+pub fn dump_find_func(h: &[u32], name: &str) -> bool {
+    // c:3167
     let header_words = fdheaderlen(h) as usize;
     let end = header_words; // walking u32 offsets, end-exclusive
     let mut cur = firstfdhead_offset();
@@ -3708,7 +3854,11 @@ pub fn dump_find_func(h: &[u32], name: &str) -> bool {                        //
         if let Some(fh) = read_fdhead(h, cur) {
             let full = fdname(h, cur);
             let tail = fdhtail(&fh) as usize;
-            let basename = if tail <= full.len() { &full[tail..] } else { "" };
+            let basename = if tail <= full.len() {
+                &full[tail..]
+            } else {
+                ""
+            };
             if basename == name {
                 return true;
             }
@@ -3725,13 +3875,15 @@ pub fn dump_find_func(h: &[u32], name: &str) -> bool {                        //
 /// and version, then slurps the full header table into memory.
 /// Returns the header u32-array on success or None on any failure
 /// (emitting C-shaped warnings when `err != 0`).
-pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> { // c:3258
+pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> {
+    // c:3258
 
-    let mut f = match File::open(name) {                                      // c:3263
+    let mut f = match File::open(name) {
+        // c:3263
         Ok(h) => h,
         Err(_) => {
             if err != 0 {
-                zwarnnam(nam, &format!("can't open zwc file: {}", name));     // c:3265
+                zwarnnam(nam, &format!("can't open zwc file: {}", name)); // c:3265
             }
             return None;
         }
@@ -3741,11 +3893,12 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> { /
     let mut buf_bytes = vec![0u8; (FD_PRELEN + 1) * 4];
     if f.read_exact(&mut buf_bytes).is_err() {
         if err != 0 {
-            zwarnnam(nam, &format!("invalid zwc file: {}", name));            // c:3277
+            zwarnnam(nam, &format!("invalid zwc file: {}", name)); // c:3277
         }
         return None;
     }
-    let mut buf: Vec<u32> = buf_bytes.chunks_exact(4)
+    let mut buf: Vec<u32> = buf_bytes
+        .chunks_exact(4)
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
 
@@ -3755,14 +3908,20 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> { /
     let v_ok = fdversion(&buf) == "5.9";
     if !magic_ok {
         if err != 0 {
-            zwarnnam(nam, &format!("invalid zwc file: {}", name));            // c:3277
+            zwarnnam(nam, &format!("invalid zwc file: {}", name)); // c:3277
         }
         return None;
     }
     if !v_ok {
         if err != 0 {
-            zwarnnam(nam, &format!("zwc file has wrong version (zsh-{}): {}", // c:3274
-                                   fdversion(&buf), name));
+            zwarnnam(
+                nam,
+                &format!(
+                    "zwc file has wrong version (zsh-{}): {}", // c:3274
+                    fdversion(&buf),
+                    name
+                ),
+            );
         }
         return None;
     }
@@ -3770,19 +3929,18 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> { /
     // c:3285 — if magic matches host byte order, head len is `pre[FD_PRELEN]`.
     // Else seek to `fdother(buf)` and re-read.
     if fdmagic(&buf) != FD_MAGIC {
-        let other = fdother(&buf) as u64;                                     // c:3290
-        if f.seek(SeekFrom::Start(other)).is_err()
-            || f.read_exact(&mut buf_bytes).is_err()
-        {
-            zwarnnam(nam, &format!("invalid zwc file: {}", name));            // c:3295
+        let other = fdother(&buf) as u64; // c:3290
+        if f.seek(SeekFrom::Start(other)).is_err() || f.read_exact(&mut buf_bytes).is_err() {
+            zwarnnam(nam, &format!("invalid zwc file: {}", name)); // c:3295
             return None;
         }
-        buf = buf_bytes.chunks_exact(4)
+        buf = buf_bytes
+            .chunks_exact(4)
             .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
     }
 
-    let total_words = fdheaderlen(&buf) as usize;                             // c:3286/3299
+    let total_words = fdheaderlen(&buf) as usize; // c:3286/3299
     if total_words < FD_PRELEN + 1 {
         zwarnnam(nam, &format!("invalid zwc file: {}", name));
         return None;
@@ -3793,16 +3951,16 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> { /
     head.extend_from_slice(&buf);
     let remaining_words = total_words - (FD_PRELEN + 1);
     if remaining_words > 0 {
-        let mut rest_bytes = vec![0u8; remaining_words * 4];                  // c:3305
+        let mut rest_bytes = vec![0u8; remaining_words * 4]; // c:3305
         if f.read_exact(&mut rest_bytes).is_err() {
-            zwarnnam(nam, &format!("invalid zwc file: {}", name));            // c:3307
+            zwarnnam(nam, &format!("invalid zwc file: {}", name)); // c:3307
             return None;
         }
         for c in rest_bytes.chunks_exact(4) {
             head.push(u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
         }
     }
-    Some(head)                                                                 // c:3311
+    Some(head) // c:3311
 }
 
 /// Port of `build_dump(char *nam, char *dump, char **files, int ali, int map, int flags)`
@@ -3815,12 +3973,14 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> { /
 /// expects in this dump format. Until that lands, this returns 1
 /// with a clear "wordcode emit not yet ported" message so callers
 /// (autoload from `.zwc`, `zcompile path/to/file`) fail loud.
-pub fn build_dump(nam: &str,                                                  // c:3397
-                  dump: &str,
-                  _files: &[String],
-                  _ali: i32,
-                  _map: i32,
-                  _flags: u32) -> i32 {
+pub fn build_dump(
+    nam: &str, // c:3397
+    dump: &str,
+    _files: &[String],
+    _ali: i32,
+    _map: i32,
+    _flags: u32,
+) -> i32 {
     crate::ported::utils::zwarnnam(nam, &format!("{}: wordcode dump emit not yet ported", dump));
     1
 }
@@ -3829,13 +3989,18 @@ pub fn build_dump(nam: &str,                                                  //
 /// from `Src/parse.c:3536`. Compiles currently-loaded functions
 /// (`-c` for functions, `-a` for aliases) into a `.zwc` dump.
 /// Same wordcode-emit dependency as `build_dump`.
-pub fn build_cur_dump(nam: &str,                                              // c:3536
-                      dump: &str,
-                      _names: &[String],
-                      _match_: i32,
-                      _map: i32,
-                      _what: i32) -> i32 {
-    crate::ported::utils::zwarnnam(nam, &format!("{}: wordcode dump-current emit not yet ported", dump));
+pub fn build_cur_dump(
+    nam: &str, // c:3536
+    dump: &str,
+    _names: &[String],
+    _match_: i32,
+    _map: i32,
+    _what: i32,
+) -> i32 {
+    crate::ported::utils::zwarnnam(
+        nam,
+        &format!("{}: wordcode dump-current emit not yet ported", dump),
+    );
     1
 }
 
@@ -3844,7 +4009,8 @@ pub fn build_cur_dump(nam: &str,                                              //
 /// `.zwc.old` if the primary doesn't exist (zsh uses the `.old`
 /// suffix to keep a previous dump readable while a rewrite is in
 /// progress).
-pub fn zwcstat(filename: &str) -> Option<std::fs::Metadata> {                 // c:3656
+pub fn zwcstat(filename: &str) -> Option<std::fs::Metadata> {
+    // c:3656
     if let Ok(m) = std::fs::metadata(filename) {
         return Some(m);
     }
@@ -3855,27 +4021,36 @@ pub fn zwcstat(filename: &str) -> Option<std::fs::Metadata> {                 //
 /// Port of `load_dump_file(char *dump, struct stat *sbuf, int other, int len)`
 /// from `Src/parse.c:3675`. Reads (or mmap()'s) a complete `.zwc`
 /// file into memory. Returns the u32 buffer or None on I/O error.
-pub fn load_dump_file(dump: &str,                                             // c:3675
-                      _sbuf: &std::fs::Metadata,
-                      other: i32,
-                      _len: usize) -> Option<Vec<u32>> {
+pub fn load_dump_file(
+    dump: &str, // c:3675
+    _sbuf: &std::fs::Metadata,
+    other: i32,
+    _len: usize,
+) -> Option<Vec<u32>> {
     let mut f = File::open(dump).ok()?;
     if other != 0 {
         f.seek(SeekFrom::Start(other as u64)).ok()?;
     }
     let mut bytes = Vec::new();
     f.read_to_end(&mut bytes).ok()?;
-    Some(bytes.chunks_exact(4)
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect())
+    Some(
+        bytes
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect(),
+    )
 }
 
 /// Port of `try_dump_file(char *path, char *name, char *file, int *ksh, int test_only)`
 /// from `Src/parse.c:3746`. Tries to load a function from a `.zwc`
 /// in the given fpath directory. Returns `(found, ksh_load)` —
 /// stub: returns false until the dump-cache port (`FuncDump`) lands.
-pub fn try_dump_file(_path: &str, _name: &str, _file: &str,                   // c:3746
-                     _test_only: bool) -> Option<(bool, bool)> {
+pub fn try_dump_file(
+    _path: &str,
+    _name: &str,
+    _file: &str, // c:3746
+    _test_only: bool,
+) -> Option<(bool, bool)> {
     None
 }
 
@@ -3883,45 +4058,51 @@ pub fn try_dump_file(_path: &str, _name: &str, _file: &str,                   //
 /// Tries `source <file>` then falls back to `source <file>.zwc`.
 /// Returns the resolved path on hit. Stub: returns None until the
 /// dump-cache port lands.
-pub fn try_source_file(_file: &str) -> Option<String> {                       // c:3795
+pub fn try_source_file(_file: &str) -> Option<String> {
+    // c:3795
     None
 }
 
 /// Port of `check_dump_file(char *file, struct stat *sbuf, char *name, int *ksh, int test_only)`
 /// from `Src/parse.c:3833`. Opens + validates a `.zwc` file,
 /// returning its loaded buffer or None.
-pub fn check_dump_file(_file: &str,                                           // c:3833
-                       _sbuf: &std::fs::Metadata,
-                       _name: &str,
-                       _test_only: bool) -> Option<(Vec<u32>, bool)> {
+pub fn check_dump_file(
+    _file: &str, // c:3833
+    _sbuf: &std::fs::Metadata,
+    _name: &str,
+    _test_only: bool,
+) -> Option<(Vec<u32>, bool)> {
     None
 }
 
 /// Port of `incrdumpcount(FuncDump f)` from `Src/parse.c:3970/4021`.
 /// Refcount-up a loaded `.zwc` dump. No-op stub.
-pub fn incrdumpcount() {}                                                     // c:3970
+pub fn incrdumpcount() {} // c:3970
 
 /// Port of `decrdumpcount(FuncDump f)` from `Src/parse.c:3988/4026`.
 /// Refcount-down + free if zero. No-op stub.
-pub fn decrdumpcount() {}                                                     // c:3988
+pub fn decrdumpcount() {} // c:3988
 
 /// Port of `freedump(FuncDump f)` from `Src/parse.c:3976`. Releases
 /// the per-dump memory + close fd. No-op stub.
-pub fn freedump() {}                                                          // c:3976
+pub fn freedump() {} // c:3976
 
 /// Port of `closedumps(void)` from `Src/parse.c:4008/4033`. Walks
 /// the `dumps` list and frees every entry. No-op stub.
-pub fn closedumps() {}                                                        // c:4008
+pub fn closedumps() {} // c:4008
 
 /// Port of `dump_autoload(char *nam, char *file, int on, Options ops, int func)`
 /// from `Src/parse.c:4042`. Registers every function in a `.zwc`
 /// for autoload via `shfunctab`. Stub: returns 1 (error) until the
 /// dump-cache port lands.
-pub fn dump_autoload(nam: &str, file: &str,                                   // c:4042
-                     _on: i32,
-                     _ops: &crate::ported::zsh_h::options,
-                     _func: i32) -> i32 {
-    crate::ported::utils::zwarnnam(nam, &format!("{}: zwc-based autoload not yet ported", file));
+pub fn dump_autoload(
+    nam: &str,
+    file: &str, // c:4042
+    _on: i32,
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
+    zwarnnam(nam, &format!("{}: zwc-based autoload not yet ported", file));
     1
 }
 
@@ -3929,28 +4110,26 @@ pub fn dump_autoload(nam: &str, file: &str,                                   //
 /// from `Src/parse.c:3180`. Validates the option set, then dispatches
 /// to one of: `-t` (test/list), `-c`/`-a` (dump current functions),
 /// or the default (compile source files to `.zwc`).
-pub fn bin_zcompile(nam: &str,                                                // c:3180
-                    args: &[String],
-                    ops: &crate::ported::zsh_h::options,
-                    _func: i32) -> i32 {
-
+pub fn bin_zcompile(
+    nam: &str, // c:3180
+    args: &[String],
+    ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     // c:3185-3192 — illegal-combination guard.
-    let bad_combo = (OPT_ISSET(ops, b'k') && OPT_ISSET(ops, b'z'))
+    if (OPT_ISSET(ops, b'k') && OPT_ISSET(ops, b'z'))
         || (OPT_ISSET(ops, b'R') && OPT_ISSET(ops, b'M'))
         || (OPT_ISSET(ops, b'c')
             && (OPT_ISSET(ops, b'U') || OPT_ISSET(ops, b'k') || OPT_ISSET(ops, b'z')))
-        || (!(OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'a'))
-            && OPT_ISSET(ops, b'm'));
-    if bad_combo {
-        zwarnnam(nam, "illegal combination of options");                      // c:3192
+        || (!(OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'a')) && OPT_ISSET(ops, b'm'))
+    {
+        zwarnnam(nam, "illegal combination of options"); // c:3192
         return 1;
     }
 
     // c:3194 — `-c`/`-a` + KSHAUTOLOAD warning.
-    if (OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'a'))
-        && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHAUTOLOAD)
-    {
-        zwarnnam(nam, "functions will use zsh style autoloading");            // c:3195
+    if (OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'a')) && isset(crate::ported::zsh_h::KSHAUTOLOAD) {
+        zwarnnam(nam, "functions will use zsh style autoloading"); // c:3195
     }
 
     // c:3196-3197 — flag word from `-k` / `-z`.
@@ -3963,9 +4142,10 @@ pub fn bin_zcompile(nam: &str,                                                //
     };
 
     // c:3199 — `-t` test/list mode.
-    if OPT_ISSET(ops, b't') {                                                 // c:3199
+    if OPT_ISSET(ops, b't') {
+        // c:3199
         if args.is_empty() {
-            zwarnnam(nam, "too few arguments");                               // c:3202
+            zwarnnam(nam, "too few arguments"); // c:3202
             return 1;
         }
         let dump_name = if args[0].ends_with(FD_EXT) {
@@ -3973,14 +4153,17 @@ pub fn bin_zcompile(nam: &str,                                                //
         } else {
             format!("{}{}", args[0], FD_EXT)
         };
-        let f = match load_dump_header(nam, &dump_name, 1) {                  // c:3206
+        let f = match load_dump_header(nam, &dump_name, 1) {
+            // c:3206
             Some(buf) => buf,
             None => return 1,
         };
         // c:3209 — per-function check.
         if args.len() > 1 {
-            for name in &args[1..] {                                          // c:3210
-                if !dump_find_func(&f, name) {                                // c:3212
+            for name in &args[1..] {
+                // c:3210
+                if !dump_find_func(&f, name) {
+                    // c:3212
                     return 1;
                 }
             }
@@ -3989,12 +4172,18 @@ pub fn bin_zcompile(nam: &str,                                                //
         // c:3215-3221 — listing arm. Walk every fdhead, print
         // each function's full name. C uses `fdname(h)` which
         // includes the path prefix; matches our `fdname()` impl.
-        let mapped = if (fdflags(&f) & FDF_MAP) != 0 { "mapped" } else { "read" };
+        let mapped = if (fdflags(&f) & FDF_MAP) != 0 {
+            "mapped"
+        } else {
+            "read"
+        };
         println!("zwc file ({}) for zsh-{}", mapped, fdversion(&f));
         let header_words = fdheaderlen(&f) as usize;
         let mut cur = firstfdhead_offset();
         while cur < header_words {
-            if read_fdhead(&f, cur).is_none() { break; }
+            if read_fdhead(&f, cur).is_none() {
+                break;
+            }
             println!("{}", fdname(&f, cur));
             cur = nextfdhead_offset(&f, cur);
         }
@@ -4002,7 +4191,7 @@ pub fn bin_zcompile(nam: &str,                                                //
     }
 
     if args.is_empty() {
-        zwarnnam(nam, "too few arguments");                                   // c:3226
+        zwarnnam(nam, "too few arguments"); // c:3226
         return 1;
     }
 
@@ -4029,8 +4218,8 @@ pub fn bin_zcompile(nam: &str,                                                //
     };
     let rest = &args[1..];
     if OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'a') {
-        let what = (if OPT_ISSET(ops, b'c') { 1 } else { 0 })
-            | (if OPT_ISSET(ops, b'a') { 2 } else { 0 });
+        let what =
+            (if OPT_ISSET(ops, b'c') { 1 } else { 0 }) | (if OPT_ISSET(ops, b'a') { 2 } else { 0 });
         build_cur_dump(nam, &dump, rest, OPT_ISSET(ops, b'm') as i32, map, what)
     } else {
         build_dump(nam, &dump, rest, OPT_ISSET(ops, b'U') as i32, map, flags)
@@ -4060,7 +4249,7 @@ pub fn ecstr(s: &str) {
 /// separate `testlex` yet, so this just defers to `zshlex`.
 #[inline]
 pub fn condlex() {
-    crate::ported::lex::zshlex();
+    zshlex();
 }
 
 /// `COND_SEP()` macro from `Src/parse.c:2433`. True when the current
@@ -4076,7 +4265,8 @@ pub fn COND_SEP() -> bool {
 /// `p[s->aoffs..]`. The Rust port mirrors via the
 /// `ECSTRS_REVERSE` HashMap (eccstr-tree replacement) and writes
 /// into a `Vec<u8>` slice.
-pub fn copy_ecstr(table: &std::collections::HashMap<u32, String>, p: &mut [u8]) { // c:537
+pub fn copy_ecstr(table: &std::collections::HashMap<u32, String>, p: &mut [u8]) {
+    // c:537
     for (&offs, s) in table.iter() {
         let off = offs as usize;
         let bytes = s.as_bytes();
@@ -4092,16 +4282,17 @@ pub fn copy_ecstr(table: &std::collections::HashMap<u32, String>, p: &mut [u8]) 
 /// Port of `bld_eprog(int heap)` from `Src/parse.c:547`. Finalizes
 /// the in-build `ECBUF`/`ECSTRS`/`ECNPATS` state into an `Eprog`.
 /// Resets the build state so a new parse can start.
-pub fn bld_eprog(heap: bool) -> crate::ported::zsh_h::eprog {                 // c:547
+pub fn bld_eprog(heap: bool) -> crate::ported::zsh_h::eprog {
+    // c:547
 
     // c:555 — emit WC_END opcode. `WCB_END` is `WC_END_DEFAULT` (0).
     ecadd(0);
 
-    let ecused  = ECUSED.with(|c| c.get())  as usize;
+    let ecused = ECUSED.with(|c| c.get()) as usize;
     let ecnpats = ECNPATS.with(|c| c.get()) as usize;
     let ecsoffs = ECSOFFS.with(|c| c.get()) as usize;
 
-    let prog_bytes = ecused * 4;                                              // c:559
+    let prog_bytes = ecused * 4; // c:559
     let len = (ecnpats * 4) + prog_bytes + ecsoffs;
 
     // Snapshot the wordcode buffer + string table.
@@ -4110,13 +4301,13 @@ pub fn bld_eprog(heap: bool) -> crate::ported::zsh_h::eprog {                 //
     ECSTRS_REVERSE.with(|c| copy_ecstr(&c.borrow(), &mut strs_bytes));
 
     let ret = eprog {
-        flags: if heap { EF_HEAP } else { EF_REAL },                          // c:570
-        len: len as i32,                                                      // c:559
-        npats: ecnpats as i32,                                                // c:561
-        nref: if heap { -1 } else { 1 },                                      // c:562
-        pats: Vec::new(),                                                     // c:563 dummy_patprog
-        prog: prog_words,                                                     // c:565
-        strs: Some(String::from_utf8_lossy(&strs_bytes).into_owned()),        // c:566
+        flags: if heap { EF_HEAP } else { EF_REAL }, // c:570
+        len: len as i32,                             // c:559
+        npats: ecnpats as i32,                       // c:561
+        nref: if heap { -1 } else { 1 },             // c:562
+        pats: Vec::new(),                            // c:563 dummy_patprog
+        prog: prog_words,                            // c:565
+        strs: Some(String::from_utf8_lossy(&strs_bytes).into_owned()), // c:566
         shf: None,
         dump: None,
     };
@@ -4136,7 +4327,8 @@ pub fn bld_eprog(heap: bool) -> crate::ported::zsh_h::eprog {                 //
 /// Port of `parse_list(void)` from `Src/parse.c:697`. C-shape entry
 /// point: drives `par_list` and finalizes via `bld_eprog`. Returns
 /// `None` on syntax error.
-pub fn parse_list() -> Option<crate::ported::zsh_h::eprog> {                  // c:697
+pub fn parse_list() -> Option<eprog> {
+    // c:697
     set_tok(ENDINPUT);
     init_parse();
     zshlex();
@@ -4153,7 +4345,8 @@ pub fn parse_list() -> Option<crate::ported::zsh_h::eprog> {                  //
 /// Port of `parse_cond(void)` from `Src/parse.c:722`. Only used by
 /// `bin_test`/`bin_bracket` for `/bin/test`/`[` compat — the
 /// `condlex` global must already point at `testlex` before entry.
-pub fn parse_cond() -> Option<crate::ported::zsh_h::eprog> {                  // c:722
+pub fn parse_cond() -> Option<eprog> {
+    // c:722
     init_parse();
     if par_cond().is_none() {
         clear_hdocs();
@@ -4165,15 +4358,16 @@ pub fn parse_cond() -> Option<crate::ported::zsh_h::eprog> {                  //
 /// Port of `par_sublist2(int *cmplx)` from `Src/parse.c:869`.
 /// Secondary-sublist arm: handles the `COPROC`/`Bang` prefix
 /// in front of a pline. Returns the WC_SUBLIST flag word added.
-pub fn par_sublist2(cmplx: &mut i32) -> Option<i32> {                         // c:869
+pub fn par_sublist2(cmplx: &mut i32) -> Option<i32> {
+    // c:869
     let mut f = 0i32;
     if tok() == COPROC {
         *cmplx = 1;
-        f |= crate::ported::zsh_h::WC_SUBLIST_COPROC as i32;
+        f |= WC_SUBLIST_COPROC as i32;
         zshlex();
     } else if tok() == BANG_TOK {
         *cmplx = 1;
-        f |= crate::ported::zsh_h::WC_SUBLIST_NOT as i32;
+        f |= WC_SUBLIST_NOT as i32;
         zshlex();
     }
     // c:884 — `if (!par_pline(cmplx) && !f) return -1;`
@@ -4187,25 +4381,28 @@ pub fn par_sublist2(cmplx: &mut i32) -> Option<i32> {                         //
 /// Port of `par_dinbrack(void)` from `Src/parse.c:1810`. Body
 /// parser inside `[[ ... ]]` — calls `par_cond` to emit the
 /// condition wordcode then advances past `]]`.
-pub fn par_dinbrack() -> Option<()> {                                         // c:1810
-    set_incond(1);                                                            // c:1814
-    set_incmdpos(false);                                                      // c:1815
-    zshlex();                                                                 // c:1816
-    let _ = par_cond();                                                       // c:1817
-    if tok() != DOUTBRACK {                                                   // c:1818
+pub fn par_dinbrack() -> Option<()> {
+    // c:1810
+    set_incond(1); // c:1814
+    set_incmdpos(false); // c:1815
+    zshlex(); // c:1816
+    let _ = par_cond(); // c:1817
+    if tok() != DOUTBRACK {
+        // c:1818
         yyerror("missing ]]");
         return None;
     }
-    set_incond(0);                                                            // c:1820
-    set_incmdpos(true);                                                       // c:1821
-    zshlex();                                                                 // c:1822
+    set_incond(0); // c:1820
+    set_incmdpos(true); // c:1821
+    zshlex(); // c:1822
     Some(())
 }
 
 /// Port of `par_cond_1(void)` from `Src/parse.c:2434`. Parses one
 /// `||`-separated cond expression. Emits `WCB_COND(COND_AND, …)`
 /// when an `&&` is found and recurses.
-pub fn par_cond_1() -> i32 {                                                  // c:2434
+pub fn par_cond_1() -> i32 {
+    // c:2434
 
     let p = ECUSED.with(|c| c.get()) as usize;
     let r = par_cond_2();
@@ -4228,10 +4425,24 @@ pub fn par_cond_1() -> i32 {                                                  //
     r
 }
 
+/// Port of `static int check_cond(const char *input, const char *cond)`
+/// from `Src/parse.c:2459`. True iff `input` is the two-char `-X`
+/// form whose `X` matches `cond` — used by par_cond_2 to detect
+/// `-a` / `-o` n-ary chain operators and by build_dump for `-k` /
+/// `-z`. C: `return !IS_DASH(input[0]) ? 0 : !strcmp(input+1, cond);`.
+fn check_cond(input: &str, cond: &str) -> bool {
+    let mut chars = input.chars();
+    match chars.next() {
+        Some(c) if IS_DASH(c) => chars.as_str() == cond,
+        _ => false,
+    }
+}
+
 /// Port of `par_cond_2(void)` from `Src/parse.c:2476`. The heavy
 /// cond-term parser: handles `! cond`, `(cond)`, unary `[ -X arg ]`,
 /// binary `[ A op B ]`, and `[ A op1 B op2 C … ]` n-ary chains.
-pub fn par_cond_2() -> i32 {                                                  // c:2476
+pub fn par_cond_2() -> i32 {
+    // c:2476
     // `n_testargs` only applies in `testlex` mode (=== /bin/test
     // compat). zshrs has no testlex yet, so always 0.
     let n_testargs: i32 = 0;
@@ -4251,9 +4462,13 @@ pub fn par_cond_2() -> i32 {                                                  //
     if tok() == INPAR_TOK {
         // c:2533 — `[[ (cond) ]]`
         condlex();
-        while COND_SEP() { condlex(); }
+        while COND_SEP() {
+            condlex();
+        }
         let r = par_cond();
-        while COND_SEP() { condlex(); }
+        while COND_SEP() {
+            condlex();
+        }
         if tok() != OUTPAR_TOK {
             yyerror("missing )");
             return 0;
@@ -4267,28 +4482,53 @@ pub fn par_cond_2() -> i32 {                                                  //
         && "abcdefghknoprstuvwxzLONGS".contains(s1.chars().nth(1).unwrap_or('?'));
     if tok() != STRING_LEX {
         if !s1.is_empty() && tok() != LEXERR && (!dble || n_testargs != 0) {
+            // c:2486-2497 — `if (n_testargs == 1)` block: under
+            // POSIXBUILTINS-off, `[ -t ]` rewrites to `[ -t 1 ]`
+            // (ksh behavior). The C gate is `unset(POSIXBUILTINS)
+            // && check_cond(s1, "t")`. zshrs's parser has
+            // n_testargs=0 (no testlex), so this rewrite path is
+            // unreachable from zshrs's [[ ]] / [ ] entry points;
+            // wired here as a marker for parity. When testlex is
+            // ported the call below activates.
+            if n_testargs == 1 && unset(POSIXBUILTINS) && check_cond(&s1, "t") {
+                condlex();
+                return par_cond_double(&s1, "1");
+            }
             // c:2557 — `[[ STRING ]]` re-interpreted as `[[ -n STRING ]]`.
-            condlex(); while COND_SEP() { condlex(); }
+            condlex();
+            while COND_SEP() {
+                condlex();
+            }
             return par_cond_double("-n", &s1);
         }
         yyerror("condition expected");
         return 0;
     }
     condlex();
-    while COND_SEP() { condlex(); }
+    while COND_SEP() {
+        condlex();
+    }
     if tok() == INANG_TOK || tok() == OUTANG_TOK {
         // c:2576 — `<` / `>` string compare.
         let xtok = tok();
         condlex();
-        while COND_SEP() { condlex(); }
+        while COND_SEP() {
+            condlex();
+        }
         if tok() != STRING_LEX {
             yyerror("string expected");
             return 0;
         }
         let s3 = tokstr().unwrap_or_default();
         condlex();
-        while COND_SEP() { condlex(); }
-        let op = if xtok == INANG_TOK { COND_STRLT } else { COND_STRGTR };
+        while COND_SEP() {
+            condlex();
+        }
+        let op = if xtok == INANG_TOK {
+            COND_STRLT
+        } else {
+            COND_STRGTR
+        };
         ecadd(WCB_COND(op as u32, 0));
         ecstr(&s1);
         ecstr(&s3);
@@ -4306,18 +4546,27 @@ pub fn par_cond_2() -> i32 {                                                  //
         return 0;
     }
     let s2 = tokstr().unwrap_or_default();
-    crate::ported::lex::set_incond(crate::ported::lex::incond() + 1);
-    condlex(); while COND_SEP() { condlex(); }
-    crate::ported::lex::set_incond(crate::ported::lex::incond() - 1);
+    set_incond(incond() + 1);
+    condlex();
+    while COND_SEP() {
+        condlex();
+    }
+    set_incond(incond() - 1);
     if tok() == STRING_LEX && !dble {
         let s3 = tokstr().unwrap_or_default();
-        condlex(); while COND_SEP() { condlex(); }
+        condlex();
+        while COND_SEP() {
+            condlex();
+        }
         if tok() == STRING_LEX {
             // c:2615 — n-ary `[ A op B C D ... ]`.
             let mut l: Vec<String> = vec![s2, s3];
             while tok() == STRING_LEX {
                 l.push(tokstr().unwrap_or_default());
-                condlex(); while COND_SEP() { condlex(); }
+                condlex();
+                while COND_SEP() {
+                    condlex();
+                }
             }
             return par_cond_multi(&s1, &l);
         }
@@ -4328,7 +4577,8 @@ pub fn par_cond_2() -> i32 {                                                  //
 
 /// Port of `par_cond_double(char *a, char *b)` from `Src/parse.c:2626`.
 /// Emits wordcode for unary cond `[ -X b ]` or modular `[ -mod b ]`.
-pub fn par_cond_double(a: &str, b: &str) -> i32 {                             // c:2626
+pub fn par_cond_double(a: &str, b: &str) -> i32 {
+    // c:2626
     if !a.starts_with('-') || a.len() < 2 {
         crate::ported::utils::zerr(&format!("parse error: condition expected: {}", a));
         return 1;
@@ -4348,8 +4598,8 @@ pub fn par_cond_double(a: &str, b: &str) -> i32 {                             //
 /// Port of `par_cond_triple(char *a, char *b, char *c)` from
 /// `Src/parse.c:2659`. Emits wordcode for the binary forms
 /// `[ A op B ]` — `=` / `==` / `!=` / `<` / `>` / `=~` / `-X`.
-pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {                    // c:2659
-
+pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
+    // c:2659
 
     let bb = b.as_bytes();
     if (bb == b"=" || bb == b"==") && bb.len() <= 2 {
@@ -4358,16 +4608,28 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {                    //
         ecadd(WCB_COND(op as u32, 0));
         ecstr(a);
         ecstr(c);
-        let np = ECNPATS.with(|cc| { let v = cc.get(); cc.set(v + 1); v }) as u32;
+        let np = ECNPATS.with(|cc| {
+            let v = cc.get();
+            cc.set(v + 1);
+            v
+        }) as u32;
         ecadd(np);
         return 1;
     }
     if (bb == b">" || bb == b"<") && bb.len() == 1 {
-        let op = if bb[0] == b'>' { COND_STRGTR } else { COND_STRLT };
+        let op = if bb[0] == b'>' {
+            COND_STRGTR
+        } else {
+            COND_STRLT
+        };
         ecadd(WCB_COND(op as u32, 0));
         ecstr(a);
         ecstr(c);
-        let np = ECNPATS.with(|cc| { let v = cc.get(); cc.set(v + 1); v }) as u32;
+        let np = ECNPATS.with(|cc| {
+            let v = cc.get();
+            cc.set(v + 1);
+            v
+        }) as u32;
         ecadd(np);
         return 1;
     }
@@ -4375,7 +4637,11 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {                    //
         ecadd(WCB_COND(COND_STRNEQ as u32, 0));
         ecstr(a);
         ecstr(c);
-        let np = ECNPATS.with(|cc| { let v = cc.get(); cc.set(v + 1); v }) as u32;
+        let np = ECNPATS.with(|cc| {
+            let v = cc.get();
+            cc.set(v + 1);
+            v
+        }) as u32;
         ecadd(np);
         return 1;
     }
@@ -4412,7 +4678,8 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {                    //
 
 /// Port of `par_cond_multi(char *a, LinkList l)` from `Src/parse.c:2716`.
 /// Emits wordcode for `[ -OP A B C … ]` n-ary cond (alternation).
-pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {                         // c:2716
+pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {
+    // c:2716
     if !a.starts_with('-') || a.len() < 2 {
         crate::ported::utils::zerr(&format!("condition expected: {}", a));
         return 1;
@@ -4429,18 +4696,20 @@ pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {                         //
 /// from `Src/parse.c:3489`. Adds a shfunc to the in-build dump
 /// progs+names lists. Stub: `Eprog` for the function body isn't
 /// yet wired through `shfunc.funcdef` to be serializable here.
-pub fn cur_add_func(nam: &str,                                                // c:3489
-                    shf_name: &str,
-                    shf_flags: i32,
-                    names: &mut Vec<String>,
-                    progs: &mut Vec<wcfunc>,
-                    hlen: &mut i32,
-                    tlen: &mut i32,
-                    what: i32) -> i32 {
-
+pub fn cur_add_func(
+    nam: &str, // c:3489
+    shf_name: &str,
+    shf_flags: i32,
+    names: &mut Vec<String>,
+    progs: &mut Vec<wcfunc>,
+    hlen: &mut i32,
+    tlen: &mut i32,
+    what: i32,
+) -> i32 {
     let is_undef = (shf_flags as u32 & PM_UNDEFINED) != 0;
     if is_undef {
-        if (what & 2) == 0 {                                                  // c:3498
+        if (what & 2) == 0 {
+            // c:3498
             zwarnnam(nam, &format!("function is not loaded: {}", shf_name));
             return 1;
         }
@@ -4475,18 +4744,21 @@ pub fn cur_add_func(nam: &str,                                                //
 /// Two passes: first native-byte-order (`FD_MAGIC`), then opposite-
 /// byte-order (`FD_OMAGIC`) so big-endian readers can mmap the
 /// same file. Bodies are byte-swapped via `fdswap` on the second pass.
-pub fn write_dump(dfd: &mut std::fs::File,                                    // c:3334
-                  progs: &[wcfunc],
-                  mut map: i32,
-                  hlen: i32,
-                  tlen: i32) -> std::io::Result<()> {
-    if map == 1 && (tlen as usize) >= FD_MINMAP {                             // c:3344
+pub fn write_dump(
+    dfd: &mut std::fs::File, // c:3334
+    progs: &[wcfunc],
+    mut map: i32,
+    hlen: i32,
+    tlen: i32,
+) -> std::io::Result<()> {
+    if map == 1 && (tlen as usize) >= FD_MINMAP {
+        // c:3344
         map = 1;
     } else if map == 1 {
         map = 0;
     }
 
-    let mut other = 0u32;                                                     // c:3338
+    let mut other = 0u32; // c:3338
     let ohlen = hlen;
     let mut cur_hlen = hlen;
 
@@ -4494,11 +4766,11 @@ pub fn write_dump(dfd: &mut std::fs::File,                                    //
         cur_hlen = ohlen;
         // c:3347 — build the prelude.
         let mut pre = vec![0u32; FD_PRELEN];
-        pre[0] = if other != 0 { FD_OMAGIC } else { FD_MAGIC };               // c:3350
+        pre[0] = if other != 0 { FD_OMAGIC } else { FD_MAGIC }; // c:3350
         let flags = (if map != 0 { FDF_MAP } else { 0 }) | other;
-        fdsetflags(&mut pre, flags as u8);                                    // c:3351
-        fdsetother(&mut pre, tlen as u32);                                    // c:3352
-        // c:3353 — copy ZSH_VERSION C-string into pre[2..].
+        fdsetflags(&mut pre, flags as u8); // c:3351
+        fdsetother(&mut pre, tlen as u32); // c:3352
+                                           // c:3353 — copy ZSH_VERSION C-string into pre[2..].
         let ver = b"5.9";
         for (i, &b) in ver.iter().enumerate() {
             let word = 2 + i / 4;
@@ -4514,18 +4786,18 @@ pub fn write_dump(dfd: &mut std::fs::File,                                    //
             let n = &wcf.name;
             let prog = &wcf.body;
             let mut head = fdhead {
-                start: cur_hlen as u32,                                       // c:3360
-                len: (prog.len() * 4) as u32,                                 // c:3363
-                npats: 0,                                                     // c:3364 (npats not tracked yet)
-                strs: 0,                                                      // c:3365
-                hlen: ((FDHEAD_WORDS as u32) + ((n.len() as u32 + 4) / 4)),   // c:3366
+                start: cur_hlen as u32,                                     // c:3360
+                len: (prog.len() * 4) as u32,                               // c:3363
+                npats: 0, // c:3364 (npats not tracked yet)
+                strs: 0,  // c:3365
+                hlen: ((FDHEAD_WORDS as u32) + ((n.len() as u32 + 4) / 4)), // c:3366
                 flags: 0,
             };
-            cur_hlen += prog.len() as i32;                                    // c:3361
-            // c:3368 — name tail offset from path basename.
+            cur_hlen += prog.len() as i32; // c:3361
+                                           // c:3368 — name tail offset from path basename.
             let tail = n.rfind('/').map(|p| p + 1).unwrap_or(0);
-            head.flags = fdhbldflags(wcf.flags, tail as u32);                 // c:3372
-            // c:3373 — opposite-byte-order swap on second pass.
+            head.flags = fdhbldflags(wcf.flags, tail as u32); // c:3372
+                                                              // c:3373 — opposite-byte-order swap on second pass.
             let mut head_words: Vec<u32> = vec![
                 head.start, head.len, head.npats, head.strs, head.hlen, head.flags,
             ];
@@ -4553,10 +4825,11 @@ pub fn write_dump(dfd: &mut std::fs::File,                                    //
                 dfd.write_all(&w.to_le_bytes())?;
             }
         }
-        if other != 0 {                                                       // c:3389
+        if other != 0 {
+            // c:3389
             break;
         }
-        other = FDF_OTHER;                                                    // c:3391
+        other = FDF_OTHER; // c:3391
     }
     Ok(())
 }
@@ -4843,7 +5116,6 @@ esac"#;
 
     #[test]
     fn test_parse_zpwr_scripts() {
-
         let scripts_dir = Path::new("/Users/wizard/.zpwr/scripts");
         if !scripts_dir.exists() {
             eprintln!("Skipping test: scripts directory not found");
@@ -4923,7 +5195,6 @@ esac"#;
     #[test]
     #[ignore] // Uses threads that can't be killed on timeout; use integration test instead
     fn test_parse_zsh_stdlib_functions() {
-
         let functions_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/zsh_functions");
         if !functions_dir.exists() {
             eprintln!(

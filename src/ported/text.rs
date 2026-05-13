@@ -73,12 +73,11 @@ fn tpush(c: i32) {
     });
 }
 
-/// WARNING: NOT IN `text.c` — `ecgetstr(Estate, …)` is defined in `Src/parse.c`
-/// (zshrs calls `parse::ecgetstr` with `Estate.strs_offset` until `parse.c` is mirrored).
+/// WARNING: NOT IN `text.c` — `ecgetstr(Estate, …)` is defined in `Src/parse.c`.
+/// Local shim renamed to avoid name-clashing with the canonical
+/// `parse::ecgetstr(&mut estate, ...)`; the body delegates directly.
 fn ecgetstr(st: &mut estate, dup: i32, tok: Option<&mut i32>) -> String {
-    let pool = st.prog.strs.as_deref().map(|s| s.as_bytes()).unwrap_or(&[]);
-    let tail = pool.get(st.strs_offset..).unwrap_or(&[]);
-    parse::ecgetstr(&st.prog.prog, tail, &mut st.pc, dup, tok)
+    parse::ecgetstr(st, dup, tok)
 }
 
 #[allow(non_camel_case_types)]
@@ -458,9 +457,7 @@ pub fn gettext2(state: &mut estate) {
             WC_REDIR => {
                 if !s_active && spopped.is_none() {
                     state.pc = state.pc.saturating_sub(1); // c:505
-                    let pool = state.prog.strs.as_deref().map(|s| s.as_bytes()).unwrap_or(&[]);
-                    let tail = pool.get(state.strs_offset..).unwrap_or(&[]);
-                    let rows = parse::ecgetredirs(&state.prog.prog, tail, &mut state.pc); // c:507
+                    let rows = parse::ecgetredirs(state); // c:507
                     let mut lst = LinkList::new();
                     for pr in rows {
                         lst.push_back(redir {
