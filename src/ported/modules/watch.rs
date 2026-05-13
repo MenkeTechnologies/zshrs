@@ -166,10 +166,12 @@ pub fn should_check() -> bool {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
-    let interval = std::env::var("LOGCHECK")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(60);
+    // C: `getiparam("LOGCHECK")`. Was reading OS env directly which
+    //     misses shell-side `LOGCHECK=N` assignments.
+    let interval = {
+        let raw = crate::ported::params::getiparam("LOGCHECK");
+        if raw > 0 { raw } else { 60 }
+    };
     now - LASTWATCH.with(|t| t.get()) > interval
 }
 
@@ -508,7 +510,7 @@ pub fn bin_log(current_user: &str, fmt: Option<&str>) -> String {            // 
     let fmt_str = fmt
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
-            std::env::var("WATCHFMT").unwrap_or_else(|_| DEFAULT_WATCHFMT.to_string())
+            crate::ported::params::getsparam("WATCHFMT").unwrap_or_else(|| DEFAULT_WATCHFMT.to_string())
         });
     WTAB.with(|t| t.borrow_mut().clear());
     LASTUTMPCHECK.with(|t| t.set(0));
@@ -791,7 +793,10 @@ pub fn readwtab() -> Vec<libc::utmpx> {                                  // c:53
 /// C signature: `static void watchlog(int inout, WATCH_STRUCT_UTMP *u, char **w, char *fmt)`.
 pub fn watchlog(inout: i32, u: &libc::utmpx, w: &[String], fmt: &str) {  // c:458
     // c:458 — `*str` and `*p` locals. Rust port walks `w` directly.
-    let current_user = std::env::var("USER").unwrap_or_default();
+    // C: `getsparam("USERNAME")` / `cached_username`. Read from paramtab.
+    let current_user = crate::ported::params::getsparam("USERNAME")
+        .or_else(|| crate::ported::params::getsparam("USER"))
+        .unwrap_or_default();
     if !check_entry(u, &current_user) {                                  // c:474 watchlog_match
         return;
     }
@@ -835,12 +840,16 @@ pub fn checksched() {                                                    // c:65
     if !watch_set { return; }
     let now = unsafe { libc::time(std::ptr::null_mut()) as i64 };        // c:654 time(NULL)
     let last = LASTWATCH.with(|t| t.get());                              // c:654 lastwatch
-    let logcheck: i64 = std::env::var("LOGCHECK")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(60);                                                  // c:654 getiparam("LOGCHECK")
+    // c:654 — `getiparam("LOGCHECK")`. Read paramtab; fall back to 60.
+    let logcheck: i64 = {
+        let raw = crate::ported::params::getiparam("LOGCHECK");
+        if raw > 0 { raw } else { 60 }
+    };
     if (now - last) > logcheck {                                         // c:654 difftime > LOGCHECK
-        let user = std::env::var("USER").unwrap_or_default();
+        // c:655 — `getsparam("USERNAME")`. paramtab read.
+        let user = crate::ported::params::getsparam("USERNAME")
+            .or_else(|| crate::ported::params::getsparam("USER"))
+            .unwrap_or_default();
         let _ = dowatch(&user);                                          // c:655 dowatch()
     }
 }

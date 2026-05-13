@@ -2481,10 +2481,13 @@ pub fn bin_kill(nam: &str, argv: &[String],                                  // 
 pub fn bin_suspend(name: &str, _argv: &[String],                             // c:3170
                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
 
-    // c:3173 — `if (islogin && !OPT_ISSET(ops,'f'))`. islogin is a C
-    // global set when zsh's argv[0] starts with `-`. Static-link path:
-    // probe $0 directly.
-    let islogin = std::env::var("0").map(|s| s.starts_with('-')).unwrap_or(false);
+    // c:3173 — `if (islogin && !OPT_ISSET(ops,'f'))`. C reads the
+    //          `islogin` global, set when zsh's `argv[0]` started with
+    //          `-`. Probe `$0` via paramtab (was reading the OS env,
+    //          which never carries a literal `$0`).
+    let islogin = crate::ported::params::getsparam("0")
+        .map(|s| s.starts_with('-'))
+        .unwrap_or(false);
     //won't suspend a login shell, unless forced
     if islogin && !OPT_ISSET(ops, b'f') {                                    // c:3173
         zwarnnam(name, "can't suspend login shell");                         // c:3174

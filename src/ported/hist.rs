@@ -1963,28 +1963,77 @@ pub fn apply_history_modifiers(val: &str, modifiers: &str) -> String {
                     result = real.to_string_lossy().to_string();
                 }
             }
-            'g' => {
-                // `:g` is a prefix to `:s` (or `:&`) meaning "global
-                // substitution". Peek next char — if `s` or `&`,
-                // route through the substitution arm with global=true.
-                let global = true;
-                let next = chars.next();
-                match next {
-                    Some('s') => {
-                        /* :g substitute — stubbed pending faithful subst.c modify() port */ let _ = global;
+            'g' | 's' | '&' => {
+                // c:3743 — `modify()` `:s/:g/:&` arm inlined here per
+                //          build.rs invariant. C uses one branch for
+                //          all three via `c == 's' || c == 'g' || c == '&'`.
+                //          We dispatch on (c, peek) to decide
+                //          single/global and parse-fresh/repeat-last.
+                let (global, do_parse) = match c {
+                    's' => (false, true),
+                    '&' => (false, false),
+                    _ => {                                                   // 'g'
+                        match chars.next() {
+                            Some('s') => (true, true),
+                            Some('&') => (true, false),
+                            _ => break,
+                        }
                     }
-                    _ => {
-                        // Stray `:g` without `:s`/`:&` follow-up —
-                        // unrecognized in zsh, exit modifier loop.
-                        break;
+                };
+                // c:3760 — read delimiter, parse old/new bracketed by it,
+                //          backslash-escapes for embedded delimiters.
+                let (pat, rep) = if do_parse {
+                    let delim = chars.next().unwrap_or('/');
+                    let mut old = String::new();
+                    while let Some(&ch) = chars.peek() {
+                        if ch == delim { chars.next(); break; }
+                        chars.next();
+                        if ch == '\\' {
+                            if let Some(&n) = chars.peek() {
+                                if n == delim { chars.next(); old.push(delim); continue; }
+                            }
+                        }
+                        old.push(ch);
                     }
+                    let mut new = String::new();
+                    while let Some(&ch) = chars.peek() {
+                        if ch == delim { chars.next(); break; }
+                        chars.next();
+                        if ch == '\\' {
+                            if let Some(&n) = chars.peek() {
+                                if n == delim { chars.next(); new.push(delim); continue; }
+                            }
+                        }
+                        new.push(ch);
+                    }
+                    // c:3811 — cache for `:&`/`:g&`. Empty `old` re-uses
+                    //          the previously cached value.
+                    if !old.is_empty() {
+                        LAST_SUBST_OLD.with(|c| *c.borrow_mut() = old.clone());
+                        LAST_SUBST_NEW.with(|c| *c.borrow_mut() = new.clone());
+                    }
+                    if old.is_empty() {
+                        let lo = LAST_SUBST_OLD.with(|c| c.borrow().clone());
+                        let ln = LAST_SUBST_NEW.with(|c| c.borrow().clone());
+                        (lo, ln)
+                    } else {
+                        (old, new)
+                    }
+                } else {
+                    // c:3784 — `:&`/`:g&` reads cached last_str/last_rep.
+                    (
+                        LAST_SUBST_OLD.with(|c| c.borrow().clone()),
+                        LAST_SUBST_NEW.with(|c| c.borrow().clone()),
+                    )
+                };
+                if !pat.is_empty() {
+                    // c:3830 — `subststr(s, &pat, &rep, gbal)`.
+                    result = if global {
+                        result.replace(&pat, &rep)
+                    } else {
+                        result.replacen(&pat, &rep, 1)
+                    };
                 }
-            }
-            's' => {
-                // `:s/old/new/` — single substitution. Delimiter is
-                // the char after `s` (typically `/`). Final delim
-                // optional.
-                /* :s/old/new/ — stubbed pending faithful subst.c modify() port */
             }
             // Bash-only modifiers — zsh rejects with "unrecognized
             // modifier". Match that error format. Without these arms,
@@ -1999,4 +2048,64 @@ pub fn apply_history_modifiers(val: &str, modifiers: &str) -> String {
         }
     }
     result
+}
+
+thread_local! {
+    /// Port of file-static `last_str`/`last_rep` from
+    /// `Src/subst.c::modify()` — the last `:s/old/new/` pair so `:&`
+    /// and `:g&` can repeat it.
+    static LAST_SUBST_OLD: std::cell::RefCell<String> =
+        const { std::cell::RefCell::new(String::new()) };
+    static LAST_SUBST_NEW: std::cell::RefCell<String> =
+        const { std::cell::RefCell::new(String::new()) };
+}
+
+#[cfg(test)]
+mod subst_modifier_tests {
+    use super::*;
+
+    #[test]
+    fn s_replaces_first_occurrence() {
+        // c:3743 — `:s/old/new/` single substitution.
+        assert_eq!(apply_history_modifiers("foo bar foo", ":s/foo/baz/"),
+                   "baz bar foo");
+    }
+
+    #[test]
+    fn gs_replaces_all_occurrences() {
+        // c:3743 — `:gs/old/new/` global substitution.
+        assert_eq!(apply_history_modifiers("foo bar foo", ":gs/foo/baz/"),
+                   "baz bar baz");
+    }
+
+    #[test]
+    fn ampersand_repeats_last_subst() {
+        // c:3784 — `:&` repeats the cached last_str/last_rep pair.
+        // First call caches old="x" new="y"; second `:&` reuses it.
+        let first  = apply_history_modifiers("xxx", ":s/x/y/");
+        let second = apply_history_modifiers("xxxx", ":&");
+        assert_eq!(first, "yxx");
+        assert_eq!(second, "yxxx");
+    }
+
+    #[test]
+    fn g_ampersand_repeats_last_subst_globally() {
+        // c:3784 — `:g&` global form of `:&`.
+        let _ = apply_history_modifiers("init", ":s/i/X/");
+        // Now LAST_SUBST_OLD="i", LAST_SUBST_NEW="X". Global re-apply:
+        assert_eq!(apply_history_modifiers("aiibii", ":g&"), "aXXbXX");
+    }
+
+    #[test]
+    fn s_alternate_delimiter() {
+        // c:3760 — first char after `s` is the delimiter; not bound
+        //          to `/`.
+        assert_eq!(apply_history_modifiers("a-b-c", ":s|-|+|"), "a+b-c");
+    }
+
+    #[test]
+    fn s_escaped_delimiter_in_pattern() {
+        // c:3768 — `\/` inside the pattern emits a literal `/`.
+        assert_eq!(apply_history_modifiers("a/b", r":s/\//#/"), "a#b");
+    }
 }

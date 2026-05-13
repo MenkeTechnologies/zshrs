@@ -1888,10 +1888,15 @@ fn terminal_size() -> Option<(usize, usize)> {
             return Some((ws.ws_row as usize, ws.ws_col as usize));
         }
     }
-    std::env::var("LINES")
-        .ok()
-        .and_then(|l| l.parse().ok())
-        .zip(std::env::var("COLUMNS").ok().and_then(|c| c.parse().ok()))
+    // C falls back to `getiparam("LINES")` / `getiparam("COLUMNS")`
+    // when TIOCGWINSZ fails. Read paramtab; convert i64→usize.
+    let lines = crate::ported::params::getiparam("LINES");
+    let cols  = crate::ported::params::getiparam("COLUMNS");
+    if lines > 0 && cols > 0 {
+        Some((lines as usize, cols as usize))
+    } else {
+        None
+    }
 }
 
 // WARNING: NOT IN CURSES.C — termios shim replacing libncurses's

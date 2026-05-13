@@ -1374,12 +1374,41 @@ pub fn zleaddtoline(ch: i32) {  // c:102
      ZLELL.store( ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
 }
 
-/// Port of `zlecallhook(char *name, char *arg)` from Src/Zle/zle_utils.c:1755.
+/// Direct port of `void zlecallhook(char *name, char *arg)` from
+/// `Src/Zle/zle_utils.c:1755`. Looks up the ZLE function `name`,
+/// dispatches it via `execzlefunc` with `arg` as the single argv
+/// element, then unrefs the Thingy and preserves errflag/retflag
+/// across the call (except for ERRFLAG_INT which is propagated so
+/// `^C` during the hook still cancels the outer command).
 pub fn zlecallhook(name: &str, arg: Option<&str>) {                          // c:1755
-    // C body c:1757-1840 — looks up shfunc `name` and dispatches via
-    //                      execzlefunc. Without exec hook we record
-    //                      via tracing.
-    tracing::debug!(target: "zle", "zlecallhook({}, {:?})", name, arg);
+    use std::sync::atomic::Ordering;
+    use crate::ported::utils::errflag;
+    use crate::ported::zsh_h::ERRFLAG_INT;
+    use crate::ported::builtin::RETFLAG;
+
+    // c:1757 — `Thingy thingy = rthingy_nocreate(name); if (!thingy) return;`
+    if !crate::ported::zle::zle_thingy::rthingy_nocreate(name) {
+        return;
+    }
+
+    // c:1763-1764 — snapshot errflag/retflag.
+    let saverrflag = errflag.load(Ordering::Relaxed);
+    let savretflag = RETFLAG.load(Ordering::Relaxed);
+
+    // c:1768 — `args[0] = arg; args[1] = NULL; execzlefunc(thingy, args, 1, 0);`
+    let args: Vec<String> = match arg {
+        Some(a) => vec![a.to_string()],
+        None    => Vec::new(),
+    };
+    let _ = crate::ported::zle::zle_main::execzlefunc(name, &args);          // c:1768
+
+    // c:1771 — `unrefthingy(thingy);`
+    crate::ported::zle::zle_thingy::unrefthingy(name);
+
+    // c:1774 — `errflag = saverrflag | (errflag & ERRFLAG_INT);`
+    let cur_errflag = errflag.load(Ordering::Relaxed);
+    errflag.store(saverrflag | (cur_errflag & ERRFLAG_INT), Ordering::Relaxed);
+    RETFLAG.store(savretflag, Ordering::Relaxed);                            // c:1775
 }
 
 /// Port of `zlecharasstring(ZLE_CHAR_T inchar, char *buf)` from Src/Zle/zle_utils.c:117.

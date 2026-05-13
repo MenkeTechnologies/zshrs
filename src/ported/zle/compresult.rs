@@ -257,14 +257,80 @@ pub fn cut_cline(s: &str, max_len: usize) -> String {                        // 
     }
 }
 
-/// Concatenate the three text fields of a Cline back into a single
-/// display string.
-/// Port of `cline_str(Cline l, int ins, int *csp, LinkList posl)` from Src/Zle/compresult.c. The C source
-/// emits prefix + matched-region + suffix during list rendering;
-/// the result here is what `compprintlist` writes to the screen.
-/// WARNING: param names don't match C — Rust=(prefix, line, suffix) vs C=(l, ins, csp, posl)
-pub fn cline_str(prefix: &str, line: &str, suffix: &str) -> String {         // c:165
-    format!("{}{}{}", prefix, line, suffix)
+/// Direct port of `char *cline_str(Cline l, int ins, int *csp,
+/// LinkList posl)` from `Src/Zle/compresult.c:165`. Walks the Cline
+/// chain and produces a visible string by emitting, for each node:
+///
+/// 1. If `olen != 0 && !(flags & CLF_SUF) && !prefix`: emit `orig`
+///    (the unjoined original).
+/// 2. Else walk the `prefix` sub-list, emitting each part's
+///    `line` (if CLF_LINE) or `word` (otherwise).
+/// 3. Emit the node's anchor — `line` (if CLF_LINE) or `word`.
+/// 4. If `olen != 0 && (flags & CLF_SUF) && !suffix`: emit `orig`.
+/// 5. Else walk the `suffix` sub-list.
+///
+/// The C source also integrates with `inststrlen` (buffer edit),
+/// `brbeg`/`brend` (brace chains), and `posl` (position-list output).
+/// The Rust port handles the `ins=0` / `csp=NULL` / `posl=NULL` case
+/// — pure visible-text rendering — which is what `unambig_data` and
+/// the listing path need. Caller-side buffer integration is deferred
+/// pending the `zlemetaline` edit primitives.
+/// WARNING: signature change — C=(l, ins, csp, posl) vs Rust=(l) -> String
+pub fn cline_str(                                                            // c:165
+    l: Option<&crate::ported::zle::comp_h::Cline>,
+) -> String {
+    use crate::ported::zle::comp_h::{CLF_LINE, CLF_SUF};
+    let mut out = String::new();
+    let mut cur = l;
+    while let Some(node) = cur {
+        // c:214 — `if (l->olen && !(l->flags & CLF_SUF) && !l->prefix)`
+        if node.olen != 0 && (node.flags & CLF_SUF) == 0 && node.prefix.is_none() {
+            // c:216 — emit `orig`.
+            if let Some(o) = &node.orig {
+                out.push_str(o);
+            }
+        } else {
+            // c:219-235 — walk prefix sub-list.
+            let mut p = node.prefix.as_deref();
+            while let Some(part) = p {
+                let s = if (part.flags & CLF_LINE) != 0 {
+                    part.line.as_deref()
+                } else {
+                    part.word.as_deref()
+                };
+                if let Some(s) = s { out.push_str(s); }
+                p = part.next.as_deref();
+            }
+        }
+        // c:282-285 — emit the anchor.
+        let anchor = if (node.flags & CLF_LINE) != 0 {
+            node.line.as_deref()
+        } else {
+            node.word.as_deref()
+        };
+        if let Some(a) = anchor { out.push_str(a); }
+
+        // c:336-338 — `if (l->olen && (l->flags & CLF_SUF) && !l->suffix)`
+        if node.olen != 0 && (node.flags & CLF_SUF) != 0 && node.suffix.is_none() {
+            if let Some(o) = &node.orig {
+                out.push_str(o);
+            }
+        } else {
+            // c:374-382 — walk suffix sub-list.
+            let mut p = node.suffix.as_deref();
+            while let Some(part) = p {
+                let s = if (part.flags & CLF_LINE) != 0 {
+                    part.line.as_deref()
+                } else {
+                    part.word.as_deref()
+                };
+                if let Some(s) = s { out.push_str(s); }
+                p = part.next.as_deref();
+            }
+        }
+        cur = node.next.as_deref();
+    }
+    out
 }
 
 /// Compute how many rows the list will take given a fixed column
@@ -525,6 +591,80 @@ mod tests {
         assert_eq!(unambig_data(&["foobar".into(), "foobaz".into()]), "fooba");
         assert_eq!(unambig_data(&["abc".into()]), "abc");
         assert_eq!(unambig_data(&[]), "");
+    }
+
+    #[test]
+    fn cline_str_none_returns_empty() {
+        // c:165 — null Cline → empty string.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert_eq!(cline_str(None), "");
+    }
+
+    #[test]
+    fn cline_str_emits_word_anchor() {
+        // c:282 — non-CLF_LINE node emits `word`.
+        use crate::ported::zle::comp_h::Cline;
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut n = Cline::default();
+        n.word = Some("hello".to_string());
+        n.wlen = 5;
+        assert_eq!(cline_str(Some(&n)), "hello");
+    }
+
+    #[test]
+    fn cline_str_emits_line_anchor_when_clf_line_set() {
+        // c:282 — CLF_LINE node emits `line` instead of `word`.
+        use crate::ported::zle::comp_h::{Cline, CLF_LINE};
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut n = Cline::default();
+        n.flags = CLF_LINE;
+        n.line = Some("LINE".to_string());
+        n.word = Some("word-should-not-emit".to_string());
+        assert_eq!(cline_str(Some(&n)), "LINE");
+    }
+
+    #[test]
+    fn cline_str_emits_orig_when_olen_set_and_no_prefix() {
+        // c:214 — olen!=0 && !CLF_SUF && !prefix → emit `orig` (not
+        //          the prefix-walk + word path).
+        use crate::ported::zle::comp_h::Cline;
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut n = Cline::default();
+        n.orig = Some("original".to_string());
+        n.olen = 8;
+        n.word = Some("anchor".to_string());
+        // Output = orig + word anchor (the C path emits both).
+        assert_eq!(cline_str(Some(&n)), "originalanchor");
+    }
+
+    #[test]
+    fn cline_str_walks_prefix_chain() {
+        // c:219-235 — prefix sub-list walked when olen==0 or
+        //              CLF_SUF set.
+        use crate::ported::zle::comp_h::Cline;
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut p2 = Cline::default();
+        p2.word = Some("ond".to_string());
+        let mut p1 = Cline::default();
+        p1.word = Some("sec".to_string());
+        p1.next = Some(Box::new(p2));
+        let mut n = Cline::default();
+        n.prefix = Some(Box::new(p1));
+        n.word = Some("anchor".to_string());
+        assert_eq!(cline_str(Some(&n)), "secondanchor");
+    }
+
+    #[test]
+    fn cline_str_walks_next_chain() {
+        // c:165 — top-level walk via `l = l->next`.
+        use crate::ported::zle::comp_h::Cline;
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut n2 = Cline::default();
+        n2.word = Some("B".to_string());
+        let mut n1 = Cline::default();
+        n1.word = Some("A".to_string());
+        n1.next = Some(Box::new(n2));
+        assert_eq!(cline_str(Some(&n1)), "AB");
     }
 
     #[test]

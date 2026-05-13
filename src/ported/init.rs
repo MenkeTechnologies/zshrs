@@ -593,8 +593,10 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) { /
     {
         let exename = argv0.lock().unwrap().clone();                         // c:1318
         let exename = crate::ported::utils::unmeta(&exename);                // c:1318
-        let cwd = std::env::var("PWD").ok().map(|s|
-            crate::ported::utils::unmeta(&s));                               // c:1319
+        // c:1319 — `cwd = pwd;` (the in-shell logical cwd global).
+        //          Read paramtab; was reading OS env which can lag.
+        let cwd = crate::ported::params::getsparam("PWD").map(|s|
+            crate::ported::utils::unmeta(&s));
         let mypath = getmypath(Some(&exename),                               // c:1320
                                 cwd.as_deref());
         if let Some(mp) = mypath {                                           // c:1323
@@ -743,11 +745,14 @@ pub fn sourcehome(s: &str) {                                                 // 
     crate::ported::signals::queue_signals();                                 // c:1679
     let emul = crate::ported::options::emulation.load(Ordering::SeqCst);
     let is_posix = (emul & 6) != 0;
-    let h = if is_posix {                                                    // c:1684
-        std::env::var("HOME").ok()
+    // c:1684 — `h = is_posix ? getsparam("HOME") : (getsparam("ZDOTDIR")
+    //                                                 ?: getsparam("HOME"))`
+    //          paramtab read; was OS env.
+    let h = if is_posix {
+        crate::ported::params::getsparam("HOME")
     } else {
-        std::env::var("ZDOTDIR").ok()
-            .or_else(|| std::env::var("HOME").ok())
+        crate::ported::params::getsparam("ZDOTDIR")
+            .or_else(|| crate::ported::params::getsparam("HOME"))
     };
     let h = match h {                                                        // c:1685-1689
         Some(h) => h,

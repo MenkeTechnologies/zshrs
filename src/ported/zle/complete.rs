@@ -1059,8 +1059,123 @@ pub fn parse_cmatcher(name: &str, s: &str)                                   // 
 /// "consumed nothing, parse failed") so the caller can detect the
 /// stub state and skip emitting the matcher.
 /// WARNING: param names don't match C — Rust=(_p) vs C=(p, iptr)
-pub fn parse_class<'a>(_p: &mut crate::ported::zle::comp_h::Cpattern,        // c:480
+pub fn parse_class<'a>(p: &mut crate::ported::zle::comp_h::Cpattern,         // c:480
                        iptr: &'a str) -> &'a str {
-    // c:485-573 — the full bytewise parser. Deferred.
-    iptr                                                                     // c:572 return iptr
+    use crate::ported::zle::comp_h::{CPAT_CCLASS, CPAT_EQUIV, CPAT_NCLASS};
+    use crate::ported::zsh_h::PP_UNKWN;
+    use crate::ported::pattern::range_type;
+    let bytes = iptr.as_bytes();
+    if bytes.is_empty() {
+        return iptr;
+    }
+
+    // c:485-498 — `if (*iptr++ == '[')` sets CCLASS/NCLASS; else
+    //              EQUIV (`{...}`).
+    let opener = bytes[0];
+    let endchar: u8;
+    let mut i = 1;
+    if opener == b'[' {
+        endchar = b']';
+        // c:490 — `if ((*iptr=='!' || *iptr=='^') && iptr[1] != ']') NCLASS`.
+        if i < bytes.len() && (bytes[i] == b'!' || bytes[i] == b'^')
+            && i + 1 < bytes.len() && bytes[i + 1] != b']'
+        {
+            p.tp = CPAT_NCLASS;
+            i += 1;
+        } else {
+            p.tp = CPAT_CCLASS;
+        }
+    } else {
+        endchar = b'}';
+        p.tp = CPAT_EQUIV;
+    }
+
+    // c:501-505 — End character can appear literally first. Find
+    //              end position; bail with rest-of-input on no end.
+    let start = i;
+    let mut optr_idx = i;
+    while optr_idx < bytes.len() && (optr_idx == start || bytes[optr_idx] != endchar) {
+        optr_idx += 1;
+    }
+    if optr_idx >= bytes.len() {
+        // c:504 — `if (!*optr) return optr;` — unterminated class.
+        return &iptr[bytes.len()..];
+    }
+
+    // c:507-512 — `p->u.str = zhalloc((optr-iptr) + 1)`. Pre-size
+    //              output buffer; tokens always fit in input length.
+    let mut out: Vec<u8> = Vec::with_capacity(optr_idx - i + 1);
+
+    // c:514-562 — main parse loop. firsttime allows endchar at position 0.
+    let mut firsttime = true;
+    while firsttime || (i < bytes.len() && bytes[i] != endchar) {
+        // c:516-525 — `[:name:]` POSIX-class form.
+        if bytes[i] == b'[' && i + 1 < bytes.len() && bytes[i + 1] == b':' {
+            if let Some(nptr) = bytes[i + 2..].iter().position(|&b| b == b':') {
+                let nptr = i + 2 + nptr;
+                if nptr + 1 < bytes.len() && bytes[nptr + 1] == b']' {
+                    let name = std::str::from_utf8(&bytes[i + 2..nptr]).unwrap_or("");
+                    let ch = range_type(name).unwrap_or(PP_UNKWN as usize);
+                    i = nptr + 2;
+                    if ch != PP_UNKWN as usize {
+                        // c:523 — `*optr++ = Meta + ch;`. Encode as a
+                        //          single byte; the metafication layer
+                        //          isn't wired so we emit a sentinel.
+                        out.push(0x80u8.wrapping_add(ch as u8));
+                    }
+                    firsttime = false;
+                    continue;
+                }
+            }
+            // Malformed `[:name:` — treat `[` literally.
+        }
+
+        // c:528-560 — single-char / range parse.
+        let ptr1 = i;
+        if bytes[i] == 0x83 {                                                // c:530 Meta
+            i += 1;
+        }
+        if i >= bytes.len() { break; }
+        i += 1;
+        // c:534-553 — `*iptr=='-' && iptr[1] && iptr[1]!=endchar` → range.
+        if i < bytes.len() && bytes[i] == b'-'
+            && i + 1 < bytes.len() && bytes[i + 1] != endchar
+        {
+            i += 1; // consume '-'
+            // c:539 — `*optr++ = Meta + PP_RANGE;`.
+            out.push(0x80u8.wrapping_add(crate::ported::zsh_h::PP_RANGE as u8));
+            // c:543-547 — start char (with Meta decode).
+            if bytes[ptr1] == 0x83 && ptr1 + 1 < bytes.len() {
+                out.push(0x83);
+                out.push(bytes[ptr1 + 1] ^ 32);
+            } else {
+                out.push(bytes[ptr1]);
+            }
+            // c:549-554 — end char (with Meta passthrough).
+            if i < bytes.len() && bytes[i] == 0x83 && i + 1 < bytes.len() {
+                out.push(bytes[i]);
+                out.push(bytes[i + 1]);
+                i += 2;
+            } else if i < bytes.len() {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        } else {
+            // c:556-560 — single char.
+            if bytes[ptr1] == 0x83 && ptr1 + 1 < bytes.len() {
+                out.push(0x83);
+                out.push(bytes[ptr1 + 1] ^ 32);
+            } else {
+                out.push(bytes[ptr1]);
+            }
+        }
+        firsttime = false;
+    }
+
+    // c:564 — `*optr = '\0';` — null-terminate. Rust String/Vec handles this.
+    p.str = Some(String::from_utf8_lossy(&out).into_owned());
+
+    // c:565 — `return iptr;` — input ptr now past the close-bracket.
+    let consumed = (i + 1).min(bytes.len());
+    &iptr[consumed..]
 }

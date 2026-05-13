@@ -1451,7 +1451,11 @@ pub fn gethostname() -> String {
             }
         }
     }
-    std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string())
+    // gethostname(2) failure fallback. C consults `$HOST` /
+    // `cached_hostname`. Read paramtab; fall back to "localhost".
+    crate::ported::params::getsparam("HOST")
+        .or_else(|| crate::ported::params::getsparam("HOSTNAME"))
+        .unwrap_or_else(|| "localhost".to_string())
 }
 
 /// Get current working directory
@@ -1998,7 +2002,7 @@ pub fn findpwd(s: &str) -> Option<String> {                                 // c
     // symlinks is disabled). The Rust port reads `$PWD` since
     // shell-set `PWD` mirrors C's `pwd` global; falls back to
     // `getcwd()` when unset.
-    let pwd = std::env::var("PWD").ok()
+    let pwd = crate::ported::params::getsparam("PWD")
         .or_else(|| std::env::current_dir().ok()
             .map(|p| p.to_string_lossy().into_owned()))
         .unwrap_or_default();                                                // c:798
@@ -2731,7 +2735,9 @@ pub fn pathprog(prog: &str) -> Option<PathBuf> {
         let p = PathBuf::from(prog);
         return if p.exists() { Some(p) } else { None };
     }
-    if let Ok(path_var) = std::env::var("PATH") {
+    // Walk shell-side $PATH (paramtab), not OS env. Mirrors C's
+    // `for (pp = path; *pp; pp++)` over the `path[]` array.
+    if let Some(path_var) = crate::ported::params::getsparam("PATH") {
         for dir in path_var.split(':') {
             let full_path = PathBuf::from(dir).join(prog);
             // Inline of the deleted is_executable helper.
@@ -2924,8 +2930,8 @@ pub fn getnameddir(name: &str) -> Option<String> {                           // 
             return Some(nd.dir.clone());
         }
     }
-    // c:1260 — scalar param whose value starts with '/'
-    if let Ok(s) = std::env::var(name) {
+    // c:1260 — `if ((s = getsparam(name)) && *s == '/')`. paramtab read.
+    if let Some(s) = crate::ported::params::getsparam(name) {
         if s.starts_with('/') {
             adduserdir(name, &s, 0, true);                                   // c:1264
             return Some(s);
@@ -5445,10 +5451,8 @@ pub fn preprompt() {
 
     callhookfunc("precmd", None, true);
 
-    let period = std::env::var("PERIOD")
-        .ok()
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(0);
+    // C: `if ((period = getiparam("PERIOD")))`. paramtab read; was OS env.
+    let period = crate::ported::params::getiparam("PERIOD");
     if period > 0 {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
