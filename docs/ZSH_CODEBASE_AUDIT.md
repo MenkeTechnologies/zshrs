@@ -243,9 +243,40 @@ The `-C` flag caches the result in `.zcompdump`, but still validates the cache b
 
 ### Why Shell Script?
 
-The entire completion system is shell functions specifically so users can override any piece by putting a file earlier in `$fpath`. That's the design rationale: monkey-patching over performance. The cost is that every Tab press runs at shell-script speed instead of native speed.
+The architectural mistake is conflating two different things and writing both as shell script.
 
-`_arguments` is a parser. `_path_files` is a filesystem walker. `_describe` is a formatter. These are operations you write in C or Rust — tight loops, string manipulation, data structure lookups. They wrote them in shell script and run them through an interpreter on every Tab press.
+**Legitimate-as-script: end-completion data files.** `_git`, `_apt`, `_docker`, `_kubectl`, `_ssh` describe what completions a specific command takes — option names, value types, sub-command structure. These are user-facing extension data. They legitimately want to be text files that a user can drop into `$fpath` and override. *Data* in scripts is fine.
+
+**Insanity-as-script: the library functions themselves.** These should never have been shell:
+
+| Function | Lines | What it actually is |
+|---|---|---|
+| `_arguments` | 589 | Argument grammar parser with state machine: `-foo`/`--foo=bar`/`+x`/`--`/mutually-exclusive sets/optional values/repeating args |
+| `_path_files` | 895 | Filesystem walker with glob, hidden-file rules, dir-detection, link-following |
+| `_files` | 153 | File-completion wrapper with type filtering |
+| `_describe` | 140 | Two-column matcher-with-description formatter — measures terminal width, wraps, aligns |
+| `_dispatch` | 91 | Function-pointer dispatcher with fallback ordering |
+| `_complete` | 144 | Strategy dispatcher across completion sources |
+| `_normal` | 40 | Top-level completion router |
+| `_alternative` | — | Tagged-fallback runner across multiple completer sets |
+| `_values` | 160 | Tagged-value matcher with description support |
+| `_main_complete` | 418 | Entry-point dispatch — runs on every Tab press |
+
+These are the kind of code where you want a type system, a real call stack, an allocator that isn't custom, and bytecode that doesn't get re-classified on every invocation. They are the *completion runtime itself* — infrastructure, not data. Writing them as shell script is structurally equivalent to writing `printf()`, `malloc()`, `open()`, and `read()` in bash and re-interpreting them on every system call. **It's writing an OS in shell scripts.**
+
+**Why this happened — two bad reasons compounding:**
+
+1. **Monkey-patching extensibility taken too far.** End-completion files need override-via-`$fpath`; library functions do not. But once everything was shell, "you can override _anything_" became a feature, and the library/data boundary disappeared. Users CAN override `_arguments` itself. Almost nobody does. The cost was paid by everyone, on every Tab press.
+2. **The C core was hostile to extension.** The C codebase has 18-goto functions, a custom heap allocator with no tests, 174 leak points, and 1,940 global mutables (see [§ Scale](#scale), [§ Memory Management](#memory-management), [§ Global Mutable State](#global-mutable-state)). Adding `_arguments` as a 589-line C parser would have required touching that codebase — modifying `pattern.c`, growing `Src/Zle/computil.c`, navigating the heap allocator's lifetime rules. Adding it as a 589-line shell function did not. Library code grew in the path of least resistance — `Completion/Base/Utility/_*` files — because the C core was too dangerous to extend. **105,050 lines of shell-script "library" is what you get when the C foundation is so unmaintainable that contributors route around it.** Path dependence then locked it in: once `_arguments` existed in shell, every subsequent library function (`_describe`, `_alternative`, `_values`) was written in shell too because that was the existing API surface.
+
+Same architectural failure mode that produced the `.zwc` half-cache: design *around* the C core's hostility instead of fixing it.
+
+The zshrs answer is the split your gut already drew:
+
+- **Library functions** (`_arguments`, `_path_files`, `_complete`, `_dispatch`, `_describe`, …) → reimplemented in Rust in the `compsys/` crate (27 source files, 23k+ lines of Rust per `compsys/README.md`). Typed function pointers, real call stack, bytecode-via-fusevm where dynamic, Cranelift JIT for hot paths.
+- **End-completion files** (`_git`, `_apt`, `_docker`, …) → stay as data, but get compiled to rkyv-mmap'd bytecode chunks at install time (the "completion cache" per `compsys/README.md` overview). No shell-script interpreter dispatch at Tab time.
+
+One language for infrastructure, one cache format for end data, no 11,656-line shell interpretation per keystroke. Extensibility happens through stryke/AOP intercepts — a typed, JIT-compiled extension surface — not a 105,050-line interpreted library.
 
 ### The zshrs Alternative
 
@@ -301,13 +332,53 @@ With 986 completion functions autoloaded via `compinit`, plus user functions, pl
 
 ### .zwc Files: Fake Compilation
 
-`.zwc` files are zsh's "compiled" format — binary blobs scattered across every fpath directory. They're not real compilation:
+`.zwc` files are zsh's "compiled" format — binary blobs scattered across every fpath directory. They are not bytecode in any modern sense. They cache the *cheap* layer (parse) and leave the *expensive* layer (expansion) uncached, paid in full on every execution.
 
-- They skip the lex/parse step — that's it
-- The shell still **interprets every line** at shell-script speed
-- No optimization, no bytecode, no JIT
-- Undocumented binary format with no versioning
-- Littered across the filesystem with no cleanup mechanism
+**What `.zwc` actually contains** (zsh.h:770 `typedef unsigned int wordcode`):
+
+- A `u32` array of bitfield-packed wordcode entries (tag in low bits via `wc_code()`, payload — count/offset/flags — in high bits via `wc_data()`; see zsh.h:883-886).
+- A parallel string pool holding raw word bytes. Sigils stay intact: `$foo`, `*.txt`, `~/bin`, `` `cmd` `` are stored as literal bytes with zsh's Meta-prefix tokens (`Meta`/`Imeta` markers from zsh.h) marking sigil positions. **No classification, no typed ops, no expansion plan baked in.**
+- A `FuncDef` offset index for autoloaded shell functions.
+- Header + version magic.
+
+**What `.zwc` saves on load**: lex (`lex.c`), parse (`parse.c::par_event` and the `par_list`/`par_sublist`/`par_pipe`/`par_cmd` recursion), string-pool construction. These are microseconds.
+
+**What every exec still pays — two separate walks, neither cached** (citations are upstream zsh C source under `src/zsh/Src/`):
+
+| Walk | Source | Cost |
+|------|--------|------|
+| **1. Wordcode interpreter dispatch** | `exec.c:1349 execlist` walks the wordcode array via `state->pc++` cursor, dispatches on `wc_code(code)` through `WC_LIST`/`WC_SUBLIST`/`WC_PIPE`/`WC_SIMPLE` (zsh.h:889-894), jumps via `WC_LIST_SKIP`/`WC_SUBLIST_SKIP` offsets. Every command, every loop iteration. | O(N) tag-decode per emitted command |
+| **2. Raw-string sigil scan** | `subst.c:100 prefork()` is called from `exec.c:2546, 2687, 2801, 3304, 4142, 4168, 4184`. Pulls each word via `ecgetstr(state, EC_DUPTOK, &htok)`, scans byte-by-byte for `$`, `~`, `*`, `?`, `[`, `` ` ``, `(`. Dispatches to `singsub`/`multsub`/`filesub`/`globlist` (`subst.c:514, 544, 667`). | O(L) per word, per exec — never cached |
+
+The expensive layer is **uncached by design**. `parse.c::bld_eprog` (the wordcode serializer) does not run word classification — that's done by `prefork` at exec time. So no matter how many `.zwc` files litter the filesystem, every word in a hot loop body gets re-classified from raw bytes on every iteration.
+
+**Concretely** — a 1000-iteration loop body containing `echo $foo $bar` runs:
+- `prefork()` 1000 times → 2000 word scans → 2000 dispatches to `paramsubst()`. None of this work is cached anywhere on disk or in memory between iterations of the loop, never mind between invocations.
+
+**Other defects:**
+
+- No optimization passes (no constant folding, no dead-code elim, no inlining).
+- No JIT — the interpreter is the only execution mode.
+- Undocumented binary format with no schema versioning. Cross-architecture compatibility is undefined.
+- Littered across the filesystem with no cleanup mechanism. Distros precompile `Functions/*.zwc` and `Completion/*.zwc` and they stay forever.
+
+### Why `.zwc` + `.zcompdump` Don't Compound
+
+The two caches address two cheap layers; their costs do not overlap with the expensive one.
+
+| Cache | What it skips | What it doesn't skip |
+|---|---|---|
+| `.zwc` (`zcompile`) | parse + tokenize + string-pool build | wordcode dispatch walk; per-word sigil scan; `prefork`/`singsub`/`multsub`/`filesub`; `globlist`; fork/exec |
+| `.zcompdump` | `compinit`'s `_*` file glob + first-line parse | `_main_complete` → `_dispatch` → `_git` shell-function execution on every Tab press (still 11,656 lines interpreted); the `compdef`/`autoload` registration validation that stats every fpath dir |
+| Both combined | parse-side cold reads only | the *entire* expansion + completion-function-dispatch hot path |
+
+Stacking the caches saves milliseconds at startup. The per-keystroke and per-exec costs do not go down because the architecture caches the wrong layer. **This is why zsh + p10k instant prompt + zinit turbo + zcompile + .zcompdump still has visible Tab latency on a 10k-completion setup, and why startup-tuning blog posts proliferate without ever fixing the underlying time complexity.**
+
+### How zshrs Fixes It
+
+`src/extensions/compile_zsh.rs` (the AST→fusevm bytecode compiler) does word classification at *compile* time. `$foo` becomes `Op::ExpandParam(slot_id)`; `*.txt` becomes `Op::Glob(pattern)`; `~/bin` becomes `Op::TildeExpand`; a literal becomes `Op::LoadStr`. The classification is then **serialized into the cached chunk** (`src/extensions/script_cache.rs` rkyv shard wrapping a bincode-encoded `fusevm::Chunk`; outer is mmap zero-copy via `rkyv::check_archived_root`). Subsequent runs and subsequent loop iterations both read pre-classified typed ops. No sigil rescan. No dispatch on raw bytes. The Cranelift JIT in `fusevm/src/jit.rs` then specializes hot paths from those typed ops because the input is already typed.
+
+zsh's `.zwc` cannot do this without rewriting the wordcode format to carry typed ops and rewriting `exec.c::execsimple` to consume them — which is exactly the rewrite zshrs is.
 
 ### The Call Stack
 
