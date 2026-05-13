@@ -1456,7 +1456,7 @@ pub fn getkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, w: i32) -> i32 {  
     // getbyte() needs the input substrate; without it, drain from
     // unget_buf which addkeybuf-style writers can populate.
     let _ = w; // would be `(long)w` to getbyte's timeout arg
-    if let Some(b) = zle.unget_buf.pop_front() {
+    if let Some(b) = crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front() {
         addkeybuf(zle, b as i32);
         b as i32
     } else {

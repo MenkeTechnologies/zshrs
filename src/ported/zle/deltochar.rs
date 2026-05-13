@@ -26,27 +26,27 @@ pub fn deltochar(zle: &mut Zle) -> i32 {                                 // c:38
         Some(ch) => ch,
         None => return 1,
     };
-    let mut dest = zle.zlecs;                                            // c:42
+    let mut dest = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);                                            // c:42
     let mut ok = 0i32;                                                   // c:42
-    let mut n: i32 = if zle.zmod.flags & crate::ported::zle::zle_h::MOD_MULT != 0 {
-        zle.zmod.mult
+    let mut n: i32 = if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_MULT != 0 {
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult
     } else {
         1
     };                                                                   // c:42 zmult
-    let zap = zle.bindk.as_ref().map(|t| t.nam.as_str()) == Some("zap-to-char"); // c:43
+    let zap = crate::ported::zle::zle_main::BINDK.lock().unwrap().as_ref().map(|t| t.nam.as_str()) == Some("zap-to-char"); // c:43
 
     if n > 0 {                                                           // c:45
-        while n > 0 && dest != zle.zlell {                               // c:46 while (n-- && dest != zlell)
+        while n > 0 && dest != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {                               // c:46 while (n-- && dest != zlell)
             n -= 1;
-            while dest != zle.zlell && zle.zleline.get(dest).copied() != Some(c) {
+            while dest != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(dest).copied() != Some(c) {
                 dest += 1;                                               // c:48 INCPOS(dest)
             }
-            if dest != zle.zlell {                                       // c:50
+            if dest != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {                                       // c:50
                 if !zap || n > 0 {                                       // c:51
                     dest += 1;                                           // c:52 INCPOS(dest)
                 }
                 if n == 0 {                                              // c:53
-                    let ct = (dest as i32) - (zle.zlecs as i32);         // c:54 dest - zlecs
+                    let ct = (dest as i32) - (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) as i32);         // c:54 dest - zlecs
                     crate::ported::zle::zle_utils::forekill(zle, ct, 0); // c:54 CUT_RAW
                     ok += 1;                                             // c:55
                 }
@@ -58,13 +58,13 @@ pub fn deltochar(zle: &mut Zle) -> i32 {                                 // c:38
         }
         while n < 0 && dest != 0 {                                       // c:63 while (n++ && dest != 0)
             n += 1;
-            while dest != 0 && zle.zleline.get(dest).copied() != Some(c) {
+            while dest != 0 && crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(dest).copied() != Some(c) {
                 dest -= 1;                                               // c:65 DECPOS(dest)
             }
-            if zle.zleline.get(dest).copied() == Some(c) {               // c:67
+            if crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(dest).copied() == Some(c) {               // c:67
                 if n == 0 {                                              // c:68
                     let zap_adj = if zap { 1 } else { 0 };               // c:70 trailing combining-char adjust
-                    let ct = (zle.zlecs as i32) - (dest as i32) - zap_adj;
+                    let ct = (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) as i32) - (dest as i32) - zap_adj;
                     crate::ported::zle::zle_utils::backkill(zle, ct, 0); // c:70 CUT_RAW|CUT_FRONT
                     ok += 1;                                             // c:71
                 }
