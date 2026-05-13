@@ -4,7 +4,6 @@
 
 use std::io::{self, Write};
 
-use super::zle_main::Zle;
 
 // TextAttr / RefreshElement / VideoBuffer / RefreshState moved to
 // `src/extensions/zle_refresh_state.rs` — they are Rust-only
@@ -563,13 +562,13 @@ mod tests {
 
     #[test]
     fn compute_render_attrs_empty_buffer_yields_empty_overlay() {
-        let zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         assert!(compute_render_attrs().is_empty());
     }
 
     #[test]
     fn compute_render_attrs_visual_mode_paints_mark_to_cursor_in_standout() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(2, std::sync::atomic::Ordering::SeqCst);
@@ -593,7 +592,7 @@ mod tests {
 
     #[test]
     fn compute_render_attrs_visual_mode_handles_reverse_mark_order() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcdef".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(5, std::sync::atomic::Ordering::SeqCst);
@@ -678,7 +677,7 @@ mod tests {
         // When the user sets `zle_highlight=(region:fg=red,bold)` via
         // zle_set_highlight, vi visual-mode should paint the region
         // with that attr instead of the default standout.
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcde".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -697,7 +696,7 @@ mod tests {
 
     #[test]
     fn compute_render_attrs_explicit_regions_override_default() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcde".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         let custom = TextAttr {

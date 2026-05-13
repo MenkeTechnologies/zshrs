@@ -18,7 +18,7 @@
 //! - Display: showmsg, printbind, handlefeep
 //! - Position save/restore: zle_save_positions, zle_restore_positions
 
-use super::zle_main::{Zle, ZleChar, ZleString};
+use super::zle_main::{ZleChar, ZleString};
 
     /// Insert string at cursor position
 
@@ -455,7 +455,7 @@ mod tests_hooks {
 
     #[test]
     fn call_hook_queues_for_host_dispatch() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         call_hook("zle-line-init", None);
         call_hook("zle-keymap-select", Some("vicmd"));
         let drained = drain_hooks();
@@ -471,7 +471,7 @@ mod tests_hooks {
 
     #[test]
     fn redrawhook_queues_pre_redraw_hook() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         redrawhook();
         let drained = drain_hooks();
         assert_eq!(drained, vec![("zle-line-pre-redraw".to_string(), None)]);
@@ -479,7 +479,7 @@ mod tests_hooks {
 
     #[test]
     fn reexpandprompt_re_runs_expansion_against_raw_templates() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         // Set raw templates that don't reference dynamic state, so the
         // expansion is idempotent and easy to assert. %% expands to a
         // single literal '%' per zsh prompt rules.
@@ -1377,14 +1377,12 @@ pub fn zlelineasstring(line: &[char], ll: usize, _flags: i32) -> String {    // 
 #[cfg(test)]
 mod findbol_findeol_tests {
     use super::*;
-    use crate::ported::zle::zle_main::Zle;
 
-    fn zle_with(line: &str, cs: usize) -> Zle {
-        let mut z = Zle::default();
+    fn zle_with(line: &str, cs: usize) {
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = line.chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(cs, std::sync::atomic::Ordering::SeqCst);
-        z
     }
 
     #[test]

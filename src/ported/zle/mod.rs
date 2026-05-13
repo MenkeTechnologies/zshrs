@@ -79,6 +79,5 @@ pub use widgets::{BuiltinWidget, Widget as LegacyWidget, WidgetResult};
 
 // Re-export new API
 pub use zle_keymap::{Keymap, KeymapManager};
-pub use zle_main::Zle;
 pub use zle_thingy::Thingy;
 pub use widget::{Widget, WidgetFlags, WidgetFunc};

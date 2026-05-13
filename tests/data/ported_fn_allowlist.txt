@@ -1149,6 +1149,12 @@ history
 vimarks
 highlight
 
+# zle_reset — ZLE-session zero-state reset. C does this inline at the
+# head of `zleread()` (Src/Zle/zle_main.c:1216) — no separate C fn.
+# The Rust port factors it out as a free fn because tests + the host
+# both need to reach the same reset block without re-entering zleread.
+zle_reset
+
 # Hoisted impl-Zle methods (no C counterpart by design; they were
 # Rust-only helpers on the now-deleted `Zle` struct). Most are widget
 # glue (`accept_line`, `kill_buffer`, `self_insert`) or convenience

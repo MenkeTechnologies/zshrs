@@ -12,7 +12,6 @@
 
 use std::sync::atomic::AtomicI32;
 
-use super::zle_main::Zle;
 use crate::ported::zsh_h::{isset, GLOBCOMPLETE, MENUCOMPLETE, RECEXACT};
 
 // =====================================================================

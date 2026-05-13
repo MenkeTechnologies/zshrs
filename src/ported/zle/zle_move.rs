@@ -5,7 +5,6 @@
 //! Move cursor right, checking for combining characters                    // c:118
 //! Move cursor left, checking for combining characters                     // c:129
 
-use super::zle_main::Zle;
 
     /// Move cursor to the start of the current logical line.
     /// Port of `findbol()` from Src/Zle/zle_utils.c:1158 — same scan,
@@ -988,12 +987,11 @@ pub fn visualmode() -> i32 {      // c:516
 #[cfg(test)]
 mod region_tests {
     use super::*;
-    use crate::ported::zle::zle_main::Zle;
 
     #[test]
     fn deactivateregion_clears_active() {
         // c:566 — `region_active = 0; return 0`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
         let r = deactivateregion();
         assert_eq!(r, 0);
@@ -1003,7 +1001,7 @@ mod region_tests {
     #[test]
     fn setmarkcommand_sets_mark_to_cursor() {
         // c:489-490 — `mark = zlecs; region_active = 1`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::ZLECS.store(7, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 1;
         let r = setmarkcommand();
@@ -1015,7 +1013,7 @@ mod region_tests {
     #[test]
     fn setmarkcommand_negative_mult_deactivates() {
         // c:485-487 — `if (zmult < 0) { region_active = 0; return 0; }`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(7, std::sync::atomic::Ordering::SeqCst);
@@ -1030,7 +1028,7 @@ mod region_tests {
     #[test]
     fn exchangepointandmark_swaps() {
         // c:504-506 — swap zlecs and mark.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);
@@ -1048,7 +1046,7 @@ mod region_tests {
     fn exchangepointandmark_zero_mult_just_activates() {
         // c:500-502 — `if (zmult == 0) { region_active = 1; return 0; }`.
         // No swap occurs.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(8, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 0;
@@ -1063,7 +1061,7 @@ mod region_tests {
     #[test]
     fn exchangepointandmark_clamps_zlecs_to_zlell() {
         // c:507-508 — `if (zlecs > zlell) zlecs = zlell`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hi".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -1080,7 +1078,7 @@ mod region_tests {
     fn inccs_increments_zlecs() {
         // c:121-126 — `zlecs++; alignmultiwordright(...)`. Vec<char>
         // makes alignment a no-op.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1093,7 +1091,7 @@ mod region_tests {
     #[test]
     fn deccs_decrements_zlecs() {
         // c:132-137 — `zlecs--; alignmultiwordleft(...)`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(2, std::sync::atomic::Ordering::SeqCst);
@@ -1118,7 +1116,7 @@ mod region_tests {
     #[test]
     fn forwardchar_moves_zmult_positions() {
         // c:457-458 — `while (zlecs < zlell && n--) INCCS();`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1132,7 +1130,7 @@ mod region_tests {
     fn forwardchar_stops_at_zlell() {
         // c:457 — `while (zlecs < zlell && ...)`. Walking past end
         // is bounded.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "ab".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1144,7 +1142,7 @@ mod region_tests {
     #[test]
     fn backwardchar_moves_zmult_positions() {
         // c:476-477 — `while (zlecs > 0 && n--) DECCS();`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(8, std::sync::atomic::Ordering::SeqCst);
@@ -1157,7 +1155,7 @@ mod region_tests {
     #[test]
     fn backwardchar_stops_at_zero() {
         // c:476 — `while (zlecs > 0 && ...)`. Doesn't underflow.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "ab".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -1169,7 +1167,7 @@ mod region_tests {
     #[test]
     fn forwardchar_negative_count_delegates_to_backward() {
         // c:445-450 — `if (n < 0) { zmult = -n; ret = backwardchar(); ... }`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
@@ -1183,7 +1181,7 @@ mod region_tests {
 
     #[test]
     fn backwardchar_negative_count_delegates_to_forward() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -1199,7 +1197,7 @@ mod region_tests {
     #[test]
     fn vibeginningofline_jumps_to_bol() {
         // c:730 — `zlecs = findbol()`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc\ndef\nghi".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(9, std::sync::atomic::Ordering::SeqCst);  // 'h' in "ghi"
@@ -1211,7 +1209,7 @@ mod region_tests {
     #[test]
     fn vibackwardchar_stops_at_line_start() {
         // c:694-695 — at findbol → return 1 without moving.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc\ndef".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);  // 'd' (right after newline)
@@ -1223,7 +1221,7 @@ mod region_tests {
 
     #[test]
     fn vibackwardchar_moves_within_line() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(8, std::sync::atomic::Ordering::SeqCst);
@@ -1235,7 +1233,7 @@ mod region_tests {
     #[test]
     fn viforwardchar_stops_at_eol() {
         // c:674-675 — at findeol → return 1.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc\ndef".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);  // at '\n'
@@ -1246,7 +1244,7 @@ mod region_tests {
 
     #[test]
     fn viforwardchar_moves_within_line() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1258,7 +1256,7 @@ mod region_tests {
     #[test]
     fn viforwardchar_clamps_at_findeol() {
         // c:676 — `while (n-- && zlecs < lim)`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "ab".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1272,7 +1270,7 @@ mod region_tests {
     #[test]
     fn vifirstnonblank_skips_leading_spaces() {
         // c:864-866 — bol then skip space/tab.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "   hello".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(8, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(5, std::sync::atomic::Ordering::SeqCst); // somewhere mid-word
@@ -1284,7 +1282,7 @@ mod region_tests {
     #[test]
     fn vifirstnonblank_skips_tabs() {
         // c:865 — ZC_iblank includes tab.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "\t\t\tfoo".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1295,7 +1293,7 @@ mod region_tests {
     #[test]
     fn vifirstnonblank_no_blanks() {
         // No leading blanks → cursor lands at bol.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);
@@ -1306,7 +1304,7 @@ mod region_tests {
     #[test]
     fn vifirstnonblank_all_blanks() {
         // c:865 — `while zlecs != zlell` exits cleanly when only blanks.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "   ".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1319,7 +1317,7 @@ mod region_tests {
     fn vifirstnonblank_respects_findbol() {
         // c:864 — `zlecs = findbol()`. With multiline buffer, jump
         // to start of CURRENT line, then skip blanks.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc\n   def".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(10, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(8, std::sync::atomic::Ordering::SeqCst); // 'e' in 'def'
