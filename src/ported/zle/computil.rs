@@ -2687,6 +2687,78 @@ mod tests {
         assert!(comptags.lock().unwrap()[1].is_none());
     }
 
+    /// c:4525 — cfp_matcher_pats returns add unchanged when matcher
+    /// spec is empty (parse_cmatcher returns None).
+    #[test]
+    fn cfp_matcher_pats_empty_matcher_passthrough() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::utils::inittyptab();
+        let r = cfp_matcher_pats("", "abc");
+        assert_eq!(r, "abc");
+    }
+
+    /// c:4307 — cfp_matcher_range with no matchers (all None) emits
+    /// each char verbatim.
+    #[test]
+    fn cfp_matcher_range_no_matchers_verbatim() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let ms: Vec<Option<Box<crate::ported::zle::comp_h::Cmatcher>>> =
+            vec![None, None, None];
+        let r = cfp_matcher_range(&ms, "abc");
+        assert_eq!(r, "abc");
+    }
+
+    /// c:247-394 — cd_prep groups path emits CRT_EXPL + CRT_SPEC runs
+    /// when cd_state.groups > 0. With two singleton kind=0+desc entries
+    /// we expect: 2 CRT_SPEC runs (one per leader) followed by the
+    /// CRT_EXPL header.
+    #[test]
+    fn cd_prep_groups_emits_expl_and_spec_runs() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // Seed cd_state: one set with two kind=0+desc entries.
+        {
+            let mut st = cd_state.lock().unwrap();
+            st.showd = 0;
+            st.groups = 2;
+            st.descs = 2;
+            st.maxg = 1;
+            st.maxglen = 5;
+            st.maxmlen = 100;
+            st.sets = Some(Box::new(cdset {
+                count: 2,
+                desc: 2,
+                strs: Some(Box::new(cdstr {
+                    str: Some("alpha".into()),
+                    r#match: Some("alpha".into()),
+                    desc: Some("first".into()),
+                    width: 5, len: 5,
+                    kind: 0,
+                    next: Some(Box::new(cdstr {
+                        str: Some("beta".into()),
+                        r#match: Some("beta".into()),
+                        desc: Some("second".into()),
+                        width: 4, len: 4,
+                        kind: 0,
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }));
+            st.runs = None;
+        }
+        let r = cd_prep();
+        assert_eq!(r, 0);
+        let st = cd_state.lock().unwrap();
+        let r1 = st.runs.as_deref().expect("first run");
+        assert_eq!(r1.r#type, CRT_SPEC, "first run is CRT_SPEC");
+        let r2 = r1.next.as_deref().expect("second run");
+        assert_eq!(r2.r#type, CRT_SPEC, "second run is CRT_SPEC");
+        let r3 = r2.next.as_deref().expect("third run");
+        assert_eq!(r3.r#type, CRT_EXPL, "third run is CRT_EXPL");
+        assert_eq!(r3.count, 2, "CRT_EXPL covers both prep_lines");
+    }
+
     /// c:4704-4732 — cfp_bld_pats combines names with skipped + pat.
     /// With one name "dir" and pats ["*.c"], produces ["dir*.c"].
     #[test]
