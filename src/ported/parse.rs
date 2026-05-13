@@ -23,8 +23,9 @@ use super::zsh_h::{
     PM_UNDEFINED, POSIXBUILTINS, REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP,
     REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HEREDOCDASH,
     REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ,
-    REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW, SHORTLOOPS, SHORTREPEAT, WCB_COND, WC_REDIR,
-    WC_REDIR_FROM_HEREDOC, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SUBLIST_COPROC, WC_SUBLIST_NOT,
+    REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW, SHORTLOOPS, SHORTREPEAT, WCB_COND, WCB_SIMPLE,
+    WC_REDIR, WC_REDIR_FROM_HEREDOC, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SUBLIST_COPROC,
+    WC_SUBLIST_NOT,
 };
 use crate::ported::utils::{zerr, zwarnnam};
 use serde::{Deserialize, Serialize};
@@ -220,7 +221,16 @@ pub use crate::extensions::zsh_ast::{
     ZshIf, ZshList, ZshParamFlag, ZshPipe, ZshProgram, ZshRedir, ZshRepeat, ZshSimple, ZshSublist,
     ZshTry, ZshWhile,
 };
-use crate::ported::lex::{heredocs_clear, heredocs_clone, heredocs_is_empty, heredocs_len, heredocs_push, heredocs_set, heredocs_take, incasepat, incmdpos, incond, infor, input_slice, inredir, inrepeat, intypeset, isnewlin, lex_init, lineno, pos, set_incasepat, set_incmdpos, set_incond, set_infor, set_inredir, set_inrepeat, set_intypeset, set_isnewlin, set_pos, set_tokfd, set_tokstr, set_toklineno, tok, tokfd, toklineno, tokstr, tokstr_eq, tokstr_is_none, tokstr_is_some, tokstr_take, zshlex};
+use crate::ported::lex::{
+    heredocs_clear, heredocs_clone, heredocs_is_empty, heredocs_len, heredocs_push, heredocs_set,
+    heredocs_take, incasepat, incmdpos, incond, infor, input_slice, inredir, inrepeat, intypeset,
+    isnewlin, lex_init, lineno, pos, set_incasepat, set_incmdpos, set_incond, set_infor,
+    set_inredir, set_inrepeat, set_intypeset, set_isnewlin, set_pos, set_tokfd, set_toklineno,
+    set_tokstr, tok, tokfd, toklineno, tokstr, tokstr_eq, tokstr_is_none, tokstr_is_some,
+    tokstr_take, zshlex,
+};
+use crate::prompt::{cmdpop, cmdpush};
+use crate::zsh_h::{wc_bdata, CS_CASE, CS_CMDAND, CS_CMDOR, CS_COND, CS_CURSH, CS_ERRPIPE, CS_FOR, CS_FOREACH, CS_FUNCDEF, CS_PIPE, CS_REPEAT, CS_SELECT, CS_SUBSH, CS_UNTIL, CS_WHILE, EF_RUN, WCB_ARITH, WCB_CURSH, WCB_END, WCB_LIST, WCB_PIPE, WCB_REDIR, WCB_SUBLIST, WCB_SUBSH, WCB_TIMED, WCB_TRY, WC_PIPE_END, WC_PIPE_LINENO, WC_PIPE_MID, WC_REDIR_WORDS, WC_SUBLIST_AND, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_OR, WC_SUBLIST_SIMPLE, WC_SUBLIST_TYPE, WC_TIMED_EMPTY, WC_TIMED_PIPE, Z_ASYNC, Z_DISOWN, Z_END, Z_SIMPLE, Z_SYNC};
 // === end AST relocation ===
 
 // Parser state lives in file-scope thread_locals:
@@ -610,12 +620,14 @@ pub fn init_parse() {
     init_parse_status();
 }
 
-/// Check whether the parsed program is empty. Direct port of
-/// zsh/Src/parse.c:584 `empty_eprog`. C version checks
-/// `*p->prog == WCB_END()` (single end-of-wordcode marker).
-/// zshrs version checks the AST node count.
-pub fn empty_eprog(prog: &ZshProgram) -> bool {
-    prog.lists.is_empty()
+/// Port of `int empty_eprog(Eprog p)` from `Src/parse.c:584`. C
+/// body: `return (!p || !p->prog || *p->prog == WCB_END());` —
+/// the eprog is empty when its prog buffer is missing or the
+/// first wordcode is the WC_END marker. Used by signal handlers
+/// (`Src/signals.c:712`) to short-circuit a trap that resolves to
+/// an empty program.
+pub fn empty_eprog(p: &crate::ported::zsh_h::eprog) -> bool {
+    p.prog.is_empty() || p.prog[0] == crate::ported::zsh_h::WCB_END()
 }
 
 /// Clear pending here-document list. Direct port of
@@ -829,29 +841,83 @@ pub fn yyerror(msg: &str) {
 /// rewrite the slot with WCB_LIST(type, distance) once the
 /// sublist's final length is known.
 ///
-/// zshrs port note: zshrs builds AST nodes inline so there's
-/// no placeholder to patch. The ZshList { sublist, flags }
-/// node is created with the right flags from the start.
-/// Stub provided for port-surface completeness.
-pub fn set_list_code(_p: usize, _type_code: i32, _cmplx: bool) {
-    // parse.c:740-748 — wordcode patching. zshrs no-op.
+/// Port of `set_list_code(int p, int type, int cmplx)` from
+/// `Src/parse.c:738`. Patches the WCB_LIST header at `p` based on
+/// whether the sublist body is simple (single command, no
+/// pipeline) and Z_SYNC/Z_END — emits the Z_SIMPLE-optimized
+/// header when possible, otherwise the plain WCB_LIST(type, 0).
+pub fn set_list_code(p: usize, type_code: i32, cmplx: bool) {
+    let _ = wc_bdata;
+    // c:740 — `if (!cmplx && (type == Z_SYNC || type == (Z_SYNC | Z_END))
+    // && WC_SUBLIST_TYPE(ecbuf[p+1]) == WC_SUBLIST_END)`
+    let sublist_code = ECBUF.with_borrow(|b| b.get(p + 1).copied().unwrap_or(0));
+    let z = type_code;
+    let qualifies = !cmplx
+        && (z == Z_SYNC || z == (Z_SYNC | Z_END))
+        && WC_SUBLIST_TYPE(sublist_code) == WC_SUBLIST_END;
+    if qualifies {
+        // c:742 — `int ispipe = !(WC_SUBLIST_FLAGS(ecbuf[p+1])
+        // & WC_SUBLIST_SIMPLE);`
+        let ispipe = (WC_SUBLIST_FLAGS(sublist_code) & WC_SUBLIST_SIMPLE) == 0;
+        // c:743 — `ecbuf[p] = WCB_LIST((type|Z_SIMPLE), ecused-2-p);`
+        let used = ECUSED.get() as usize;
+        let off = used.saturating_sub(2 + p);
+        ECBUF.with_borrow_mut(|b| {
+            if p < b.len() {
+                b[p] = WCB_LIST((z | Z_SIMPLE) as wordcode, off as wordcode);
+            }
+        });
+        // c:744 — `ecdel(p+1);`
+        ecdel(p + 1);
+        // c:745-746 — `if (ispipe) ecbuf[p+1] = WC_PIPE_LINENO(ecbuf[p+1]);`
+        if ispipe {
+            ECBUF.with_borrow_mut(|b| {
+                if p + 1 < b.len() {
+                    b[p + 1] = WC_PIPE_LINENO(b[p + 1]);
+                }
+            });
+        }
+    } else {
+        // c:748 — `ecbuf[p] = WCB_LIST(type, 0);`
+        ECBUF.with_borrow_mut(|b| {
+            if p < b.len() {
+                b[p] = WCB_LIST(z as wordcode, 0);
+            }
+        });
+    }
 }
 
-/// Patch a sublist-placeholder wordcode with its actual opcode.
-/// Direct port of zsh/Src/parse.c:755 `set_sublist_code`.
-/// Same role as set_list_code at the sublist level.
+/// Port of `set_sublist_code(int p, int type, int flags, int skip, int cmplx)`
+/// from `Src/parse.c:755`. Patches the WCB_SUBLIST header at `p`.
+/// When the sublist is non-complex (single command, no pipeline),
+/// sets WC_SUBLIST_SIMPLE and rewrites the following slot to
+/// `WC_PIPE_LINENO`.
 pub fn set_sublist_code(p: usize, type_code: i32, flags: i32, skip: i32, cmplx: bool) {
-    // parse.c:757-762 — patch the wordcode at p. zshrs P9b: write
-    // into ECBUF directly so par_* productions can build sublist
-    // wordcode with deferred type/skip patching.
-    let _ = cmplx; // cmplx encoded into flags by caller; not
-                   // re-encoded here.
-    ECBUF.with_borrow_mut(|buf| {
-        if p < buf.len() {
-            let data = (type_code | (flags << 1) | (skip << 6)) as u32;
-            buf[p] = crate::ported::zsh_h::WC_SUBLIST | (data << crate::ported::zsh_h::WC_CODEBITS);
-        }
-    });
+    if cmplx {
+        // c:758 — `ecbuf[p] = WCB_SUBLIST(type, flags, skip);`
+        ECBUF.with_borrow_mut(|b| {
+            if p < b.len() {
+                b[p] = WCB_SUBLIST(type_code as wordcode, flags as wordcode, skip as wordcode);
+            }
+        });
+    } else {
+        // c:760 — `ecbuf[p] = WCB_SUBLIST(type, flags|WC_SUBLIST_SIMPLE, skip);`
+        ECBUF.with_borrow_mut(|b| {
+            if p < b.len() {
+                b[p] = WCB_SUBLIST(
+                    type_code as wordcode,
+                    (flags as wordcode) | WC_SUBLIST_SIMPLE,
+                    skip as wordcode,
+                );
+            }
+        });
+        // c:761 — `ecbuf[p+1] = WC_PIPE_LINENO(ecbuf[p+1]);`
+        ECBUF.with_borrow_mut(|b| {
+            if p + 1 < b.len() {
+                b[p + 1] = WC_PIPE_LINENO(b[p + 1]);
+            }
+        });
+    }
 }
 
 /// Direct port of `ecadd(wordcode c)` at `Src/parse.c:397`. Append `c` to
@@ -1060,26 +1126,81 @@ pub fn ecadjusthere(p: usize, d: i32) {
 // ============================================================
 
 /// Duplicate an Eprog. Direct port of zsh/Src/parse.c:2813
-/// `dupeprog`. C version deep-copies the wordcode array + string
-/// table + pattern progs. zshrs uses Clone on the AST.
-pub fn dupeprog(prog: &ZshProgram) -> ZshProgram {
-    prog.clone()
+/// Port of `Eprog dupeprog(Eprog p, int heap)` from
+/// `Src/parse.c:2767`. Deep-copies the wordcode array, string
+/// table, and pattern-prog slots. `dummy_eprog` is returned
+/// unchanged. `heap`-allocated copies get `nref = -1` (never
+/// freed); real ones get `nref = 1`.
+pub fn dupeprog(p: &crate::ported::zsh_h::eprog, heap: bool) -> crate::ported::zsh_h::eprog {
+    // c:2774-2775 — `if (p == &dummy_eprog) return p;` — caller-
+    // observable identity in C uses a pointer compare; Rust's
+    // equivalent is "if it has the dummy's shape (single WCB_END
+    // word and no strs), return a copy of the same shape".
+    // c:2796-2797 — `for (i = r->npats; i--; pp++) *pp = dummy_patprog1;`
+    // C uses `dummy_patprog1` as a placeholder; the Rust port has
+    // `Vec<Patprog>` (Box<patprog>) — synthesize an equivalent zero-
+    // initialized patprog for each slot (resolved later by
+    // pattern.c::patcompile-on-first-use).
+    let dummy_pat = || crate::ported::zsh_h::patprog {
+        startoff: 0,
+        size: 0,
+        mustoff: 0,
+        patmlen: 0,
+        globflags: 0,
+        globend: 0,
+        flags: 0,
+        patnpar: 0,
+        patstartch: 0,
+    };
+    let r = crate::ported::zsh_h::eprog {
+        // c:2778 — `flags = (heap ? EF_HEAP : EF_REAL) | (p->flags & EF_RUN);`
+        flags: (if heap { EF_HEAP } else { EF_REAL }) | (p.flags & EF_RUN),
+        len: p.len,
+        npats: p.npats,
+        // c:2787 — `nref = heap ? -1 : 1;`
+        nref: if heap { -1 } else { 1 },
+        prog: p.prog.clone(),
+        strs: p.strs.clone(),
+        pats: (0..p.npats).map(|_| Box::new(dummy_pat())).collect(),
+        shf: None,
+        dump: None,
+    };
+    r
 }
 
-/// Increment an Eprog's reference count. Direct port of
-/// zsh/Src/parse.c:2813 `useeprog`. zshrs no-op (Rust
-/// ownership).
-pub fn useeprog(_prog: &ZshProgram) {
-    // parse.c:2815-2821 — `prog->nref++` if not heap-allocated.
-    // zshrs no-op.
+/// Port of `void useeprog(Eprog p)` from `Src/parse.c:2813`.
+/// `if (p && p != &dummy_eprog && p->nref >= 0) p->nref++;` —
+/// pin a real (non-heap, non-dummy) Eprog so it survives the
+/// next `freeeprog`.
+pub fn useeprog(p: &mut crate::ported::zsh_h::eprog) {
+    // c:2815 — `if (p && p != &dummy_eprog && p->nref >= 0)`
+    if p.nref >= 0 {
+        p.nref += 1; // c:2816
+    }
 }
 
-/// Decrement / free an Eprog. Direct port of
-/// zsh/Src/parse.c:2823 `freeeprog`. zshrs no-op (drop on
-/// scope-exit).
-pub fn freeeprog(_prog: ZshProgram) {
-    // parse.c:2825-2853 — decrement nref, free if zero. zshrs
-    // drops via Rust ownership.
+/// Port of `void freeeprog(Eprog p)` from `Src/parse.c:2823`.
+/// Refcount-decrement; when it hits zero, drops the pattern progs,
+/// decrements the dump refcount if any, and releases the eprog.
+/// `dummy_eprog` is never freed. Heap-eprogs (`nref < 0`) are
+/// never freed either — they live as long as the heap arena.
+pub fn freeeprog(p: &mut crate::ported::zsh_h::eprog) {
+    // c:2829 — `if (p && p != &dummy_eprog) { ... }`
+    if p.nref > 0 {
+        p.nref -= 1; // c:2832
+        if p.nref == 0 {
+            // c:2833-2840 — drop pats, dump refcount, then the eprog.
+            // Rust's Drop handles the per-field cleanup; we just
+            // need to decrement the dump count first.
+            if let Some(dump) = p.dump.take() {
+                let dumped = (*dump).clone();
+                decrdumpcount(&dumped); // c:2837
+            }
+            p.prog.clear();
+            p.strs = None;
+            p.pats.clear();
+        }
+    }
 }
 
 // ============================================================
@@ -1129,12 +1250,7 @@ pub fn ecrawstr(p: &eprog, pc: usize, tokflag: Option<&mut i32>) -> String {
 /// Port of `ecgetarr(Estate s, int num, int dup, int *tokflag)` from
 /// `Src/parse.c:2917`. Reads `num` strings from wordcode at `s->pc`
 /// and OR-folds each entry's token flag into `*tokflag`.
-pub fn ecgetarr(
-    s: &mut estate,
-    num: usize,
-    dup: i32,
-    tokflag: Option<&mut i32>,
-) -> Vec<String> {
+pub fn ecgetarr(s: &mut estate, num: usize, dup: i32, tokflag: Option<&mut i32>) -> Vec<String> {
     let mut ret: Vec<String> = Vec::with_capacity(num); // c:2922
     let mut tf: i32 = 0;
     for _ in 0..num {
@@ -1170,21 +1286,161 @@ pub fn ecgetlist(
 }
 
 /// Port of `eccopyredirs(Estate s)` from `Src/parse.c:3003`. Reads
-/// the WC_REDIR run at `s->pc` and copies it into a fresh Eprog
-/// so callers can splice redirs into a new wordcode stream (used
-/// by `bin_zcompile` / function dump emit). Stub for now — the
-/// wordcode-emit path that needs this isn't fully ported.
-pub fn eccopyredirs(_s: &mut crate::ported::zsh_h::estate) -> Option<ZshProgram> {
-    None
+/// the WC_REDIR run at `s->pc`, counts the wordcodes needed,
+/// reserves space in `ecbuf` via `ecispace`, then re-walks `s->pc`
+/// re-emitting each redir's wordcodes into the reserved slot —
+/// finally calls `bld_eprog(0)` to package the result as an Eprog.
+pub fn eccopyredirs(s: &mut crate::ported::zsh_h::estate) -> Option<crate::ported::zsh_h::eprog> {
+    let prog_len = s.prog.prog.len();
+    if s.pc >= prog_len {
+        return None;
+    }
+    // c:3007-3009 — `if (wc_code(*pc) != WC_REDIR) return NULL;`
+    let first_code = s.prog.prog[s.pc];
+    if wc_code(first_code) != WC_REDIR {
+        return None;
+    }
+    // c:3011 — `init_parse();`
+    init_parse();
+
+    // c:3013-3027 — count wordcodes the redir run will need.
+    // Each WC_REDIR contributes `code + fd1 + name` = 3, plus
+    // `+2` if WC_REDIR_FROM_HEREDOC (terminator + munged), plus
+    // `+1` if WC_REDIR_VARID.
+    let mut probe = s.pc;
+    let mut ncodes = 0usize;
+    loop {
+        if probe >= prog_len {
+            break;
+        }
+        let code = s.prog.prog[probe];
+        if wc_code(code) != WC_REDIR {
+            break;
+        }
+        let mut ncode = if WC_REDIR_FROM_HEREDOC(code) != 0 {
+            5
+        } else {
+            3
+        };
+        if WC_REDIR_VARID(code) != 0 {
+            ncode += 1;
+        }
+        probe += ncode;
+        ncodes += ncode;
+    }
+
+    // c:3028-3029 — `r = ecused; ecispace(r, ncodes);`
+    let r0 = ECUSED.get() as usize;
+    ecispace(r0, ncodes);
+
+    // c:3031-3053 — re-walk `s->pc` and write into ecbuf[r..].
+    let mut r = r0;
+    loop {
+        if s.pc >= prog_len {
+            break;
+        }
+        let code = s.prog.prog[s.pc];
+        if wc_code(code) != WC_REDIR {
+            break;
+        }
+        s.pc += 1;
+        // c:3036 — `ecbuf[r++] = code;`
+        ECBUF.with_borrow_mut(|buf| {
+            if r >= buf.len() {
+                buf.resize(r + 1, 0);
+            }
+            buf[r] = code;
+        });
+        r += 1;
+        // c:3038 — `ecbuf[r++] = *s->pc++;` (the fd1 word)
+        let fd1 = s.prog.prog[s.pc];
+        s.pc += 1;
+        ECBUF.with_borrow_mut(|buf| {
+            if r >= buf.len() {
+                buf.resize(r + 1, 0);
+            }
+            buf[r] = fd1;
+        });
+        r += 1;
+        // c:3041 — `ecbuf[r++] = ecstrcode(ecgetstr(s, EC_NODUP, NULL));`
+        let name = ecgetstr(s, EC_NODUP, None);
+        let nc = ecstrcode(&name);
+        ECBUF.with_borrow_mut(|buf| {
+            if r >= buf.len() {
+                buf.resize(r + 1, 0);
+            }
+            buf[r] = nc;
+        });
+        r += 1;
+        // c:3042-3047 — heredoc terminators.
+        if WC_REDIR_FROM_HEREDOC(code) != 0 {
+            let term = ecgetstr(s, EC_NODUP, None);
+            let tc = ecstrcode(&term);
+            ECBUF.with_borrow_mut(|buf| {
+                if r >= buf.len() {
+                    buf.resize(r + 1, 0);
+                }
+                buf[r] = tc;
+            });
+            r += 1;
+            let munged = ecgetstr(s, EC_NODUP, None);
+            let mc = ecstrcode(&munged);
+            ECBUF.with_borrow_mut(|buf| {
+                if r >= buf.len() {
+                    buf.resize(r + 1, 0);
+                }
+                buf[r] = mc;
+            });
+            r += 1;
+        }
+        // c:3048-3049 — varid.
+        if WC_REDIR_VARID(code) != 0 {
+            let varid = ecgetstr(s, EC_NODUP, None);
+            let vc = ecstrcode(&varid);
+            ECBUF.with_borrow_mut(|buf| {
+                if r >= buf.len() {
+                    buf.resize(r + 1, 0);
+                }
+                buf[r] = vc;
+            });
+            r += 1;
+        }
+    }
+
+    // c:3056 — `return bld_eprog(0);` — `bld_eprog` appends the
+    // WC_END marker and packages ECBUF/ECSTRS into an Eprog.
+    Some(bld_eprog(false))
 }
 
-/// Initialize the dummy Eprog used as a placeholder. Direct port
-/// of zsh/Src/parse.c:3069 `init_eprog`. zshrs no-op since
-/// the AST has no equivalent dummy node — empty programs are
-/// just `ZshProgram { lists: vec![] }`.
+/// `mod_export struct eprog dummy_eprog;` from `Src/parse.c:3066`.
+/// Placeholder Eprog used by `shf->funcdef = &dummy_eprog;` in
+/// builtin.c when clearing a stale autoload stub. Held in a Mutex
+/// so `init_eprog` can set it once at shell startup.
+pub static DUMMY_EPROG: std::sync::Mutex<crate::ported::zsh_h::eprog> =
+    std::sync::Mutex::new(crate::ported::zsh_h::eprog {
+        flags: 0,
+        len: 0,
+        npats: 0,
+        nref: 0,
+        prog: Vec::new(),
+        strs: None,
+        pats: Vec::new(),
+        shf: None,
+        dump: None,
+    });
+
+/// Port of `init_eprog(void)` from `Src/parse.c:3069`. Sets up
+/// `dummy_eprog_code = WCB_END(); dummy_eprog.len = sizeof(wordcode);
+/// dummy_eprog.prog = &dummy_eprog_code; dummy_eprog.strs = NULL;`.
+/// Called once at shell startup (init_main → init_misc → init_eprog).
 pub fn init_eprog() {
-    // parse.c:3071-3074 — set up dummy_eprog_code = WCB_END().
-    // zshrs no-op.
+    let mut d = DUMMY_EPROG.lock().unwrap();
+    d.prog = vec![crate::ported::zsh_h::WCB_END()]; // c:3071/3073
+    d.len = std::mem::size_of::<wordcode>() as i32; // c:3072
+    d.strs = None; // c:3074
+    d.flags = 0;
+    d.npats = 0;
+    d.nref = 0;
 }
 
 /// Parse the complete input. Direct port of `parse_event` /
@@ -1254,76 +1510,440 @@ pub fn par_event_wordcode() -> usize {
     start
 }
 
-/// P9c stub: direct port of `par_list(int *complex)` from
-/// `Src/parse.c:799-878`. Emits WC_LIST + the sublist body. Real
-/// implementation tracks Z_SYNC/Z_ASYNC/Z_END flags and emits per-list
-/// `WCB_LIST(flags, skip)` headers; this stub emits Z_SYNC + skip
-/// patched after the sublist payload size is known.
+/// Thread-local mirror of C parse.c's `int *cmplx` argument. Each
+/// `par_*` wordcode emitter ORs its complexity bit into this
+/// during the recursive descent; the outer `par_event_wordcode`
+/// reads it at the end. Mirrors C's `int *cmplx` plumbing
+/// through every par_* function — Rust uses a thread_local so
+/// the signatures can stay no-arg.
+thread_local! {
+    static PARSER_CMPLX: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static PARSER_INPARTIME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[inline]
+fn cmplx_get() -> bool {
+    PARSER_CMPLX.with(|c| c.get())
+}
+#[inline]
+fn cmplx_or(b: bool) {
+    PARSER_CMPLX.with(|c| c.set(c.get() | b));
+}
+#[inline]
+fn cmplx_set(b: bool) {
+    PARSER_CMPLX.with(|c| c.set(b));
+}
+
+/// Port of `par_list(int *cmplx)` from `Src/parse.c:771-803`.
+/// `list : { SEPER } [ sublist [ { SEPER | AMPER | AMPERBANG } list ] ]`.
+/// Drives the WCB_LIST chain — for each sublist, emits a WCB_LIST
+/// header, recurses into par_sublist, then patches the header
+/// with the right Z_SYNC/Z_ASYNC/Z_ASYNC|Z_DISOWN flag + Z_END
+/// marker on the last entry.
 pub fn par_list_wordcode() {
-    let p = ecadd(0); // reserve WCB_LIST patch slot
-    par_sublist_wordcode();
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            let data = (crate::ported::zsh_h::Z_SYNC as u32)
-                | ((skip as u32) << crate::ported::zsh_h::WC_LIST_FREE);
-            b[p] = crate::ported::zsh_h::WC_LIST | (data << crate::ported::zsh_h::WC_CODEBITS);
+    let mut lp: Option<usize> = None;
+    loop {
+        // c:780 — `while (tok == SEPER) zshlex();`
+        while tok() == SEPER {
+            zshlex();
         }
-    });
-}
-
-/// P9c stub: direct port of `par_sublist(int *complex)` from
-/// `Src/parse.c:880-980`. Emits WC_SUBLIST + pipeline. Real
-/// implementation handles `!`/`&&`/`||`/coproc; this stub emits a
-/// single sublist + pipeline.
-pub fn par_sublist_wordcode() {
-    let p = ecadd(0);
-    par_pipe_wordcode();
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            let data = (skip as u32) << 7;
-            b[p] = crate::ported::zsh_h::WC_SUBLIST | (data << crate::ported::zsh_h::WC_CODEBITS);
+        // c:782 — `p = ecadd(0);`
+        let p = ecadd(0);
+        // c:783 — `c = 0;` — local cmplx accumulator for this sublist.
+        let outer = cmplx_get();
+        cmplx_set(false);
+        let sublist_ok = par_sublist_wordcode();
+        let c = cmplx_get();
+        cmplx_set(outer | c);
+        if sublist_ok {
+            // c:785 — `*cmplx |= c;` (already done above)
+            let t = tok();
+            if t == SEPER || t == AMPER || t == AMPERBANG {
+                // c:787 — `if (tok != SEPER) *cmplx = 1;`
+                if t != SEPER {
+                    cmplx_set(true);
+                }
+                // c:788 — `set_list_code(p, ...)`
+                let z = if t == SEPER {
+                    Z_SYNC
+                } else if t == AMPER {
+                    Z_ASYNC
+                } else {
+                    Z_ASYNC | Z_DISOWN
+                };
+                set_list_code(p, z, c);
+                // c:792-794 — `incmdpos = 1; do { zshlex(); } while
+                // (tok == SEPER);`
+                set_incmdpos(true);
+                loop {
+                    zshlex();
+                    if tok() != SEPER {
+                        break;
+                    }
+                }
+                lp = Some(p);
+                continue; // c:795 `goto rec;`
+            } else {
+                // c:797 — `set_list_code(p, (Z_SYNC | Z_END), c);`
+                set_list_code(p, Z_SYNC | Z_END, c);
+            }
+        } else {
+            // c:799-802 — `ecused--; if (lp >= 0) ecbuf[lp] |= wc_bdata(Z_END);`
+            ECUSED.set((ECUSED.get() - 1).max(0));
+            if let Some(prev) = lp {
+                ECBUF.with_borrow_mut(|b| {
+                    if prev < b.len() {
+                        b[prev] |= wc_bdata(Z_END as wordcode);
+                    }
+                });
+            }
         }
-    });
-}
-
-/// P9c stub: direct port of `par_pline(int *complex)` from
-/// `Src/parse.c:982-1020`. Emits WC_PIPE + cmd. Real implementation
-/// handles `|`/`|&` pipeline chains.
-pub fn par_pipe_wordcode() {
-    let p = ecadd(0);
-    par_cmd_wordcode();
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            let data = (crate::ported::zsh_h::WC_PIPE_END as u32) | ((skip as u32) << 1);
-            b[p] = crate::ported::zsh_h::WC_PIPE | (data << crate::ported::zsh_h::WC_CODEBITS);
-        }
-    });
-}
-
-/// P9c: direct port of `par_cmd(int *complex, int zsh_construct)` from
-/// `Src/parse.c:1022-1320`. Dispatches on the current token to the
-/// appropriate par_* subroutine. Each form emits its WC_* opcode +
-/// payload; default falls through to par_simple_wordcode.
-pub fn par_cmd_wordcode() {
-    match tok() {
-        FOR | FOREACH => par_for_wordcode(),
-        SELECT => par_select_wordcode(),
-        CASE => par_case_wordcode(),
-        IF => par_if_wordcode(),
-        WHILE => par_while_wordcode(),
-        UNTIL => par_until_wordcode(),
-        REPEAT => par_repeat_wordcode(),
-        FUNC => par_funcdef_wordcode(),
-        INPAR_TOK => par_subsh_wordcode(),
-        INBRACE_TOK => par_cursh_wordcode(),
-        TIME => par_time_wordcode(),
-        DINBRACK => par_cond_wordcode(),
-        DINPAR => par_arith_wordcode(),
-        _ => par_simple_wordcode(),
+        break;
     }
+}
+
+/// Port of `par_list1(int *cmplx)` from `Src/parse.c:805-816`.
+/// Single-sublist variant used by funcdef bodies and the short
+/// `for`/`while`/`repeat` forms — exactly one sublist with
+/// `Z_SYNC|Z_END`, no chain.
+pub fn par_list1_wordcode() {
+    // c:807 — `p = ecadd(0); c = 0;`
+    let p = ecadd(0);
+    let outer = cmplx_get();
+    cmplx_set(false);
+    let ok = par_sublist_wordcode();
+    let c = cmplx_get();
+    cmplx_set(outer | c);
+    if ok {
+        // c:809-811 — `set_list_code(p, Z_SYNC|Z_END, c); *cmplx |= c;`
+        set_list_code(p, Z_SYNC | Z_END, c);
+    } else {
+        // c:813 — `ecused--;`
+        ECUSED.set((ECUSED.get() - 1).max(0));
+    }
+}
+
+/// Port of `par_sublist(int *cmplx)` from `Src/parse.c:823-865`.
+/// `sublist : sublist2 [ ( DBAR | DAMPER ) { SEPER } sublist ]`.
+/// Emits a WCB_SUBLIST header, recurses into par_sublist2 for
+/// the !/coproc prefix + pipeline, then chains via DBAR (`||`)
+/// or DAMPER (`&&`) recursively. Returns true if at least one
+/// pipeline was emitted.
+pub fn par_sublist_wordcode() -> bool {
+    // c:827 — `p = ecadd(0);`
+    let p = ecadd(0);
+    let outer = cmplx_get();
+    cmplx_set(false);
+    let mut c2 = 0i32;
+    let f = par_sublist2(&mut c2);
+    let c = c2 != 0;
+    cmplx_set(outer | c);
+    match f {
+        Some(flags) => {
+            // c:831 — `e = ecused;`
+            let e = ECUSED.get() as usize;
+            if tok() == DBAR || tok() == DAMPER {
+                // c:834 — `qtok = tok;`
+                let qtok = tok();
+                // c:836 — `cmdpush(tok == DBAR ? CS_CMDOR : CS_CMDAND);`
+                cmdpush(if qtok == DBAR {
+                    CS_CMDOR as u8
+                } else {
+                    CS_CMDAND as u8
+                });
+                // c:837 — `zshlex();`
+                zshlex();
+                // c:838-839 — `while (tok == SEPER) zshlex();`
+                while tok() == SEPER {
+                    zshlex();
+                }
+                // c:840 — `sl = par_sublist(cmplx);`
+                let sl = par_sublist_wordcode();
+                // c:841-844 — `set_sublist_code(p, (sl ? (qtok==DBAR ?
+                // WC_SUBLIST_OR : WC_SUBLIST_AND) : WC_SUBLIST_END),
+                // f, e-1-p, c);`
+                let st = if sl {
+                    if qtok == DBAR {
+                        WC_SUBLIST_OR
+                    } else {
+                        WC_SUBLIST_AND
+                    }
+                } else {
+                    WC_SUBLIST_END
+                };
+                set_sublist_code(p, st as i32, flags, (e - 1 - p) as i32, c);
+                // c:845 — `cmdpop();`
+                cmdpop();
+            } else {
+                // c:847-849 — `if (tok == AMPER || tok == AMPERBANG)
+                // { c = 1; *cmplx |= c; }`
+                let c_final = if tok() == AMPER || tok() == AMPERBANG {
+                    cmplx_set(true);
+                    true
+                } else {
+                    c
+                };
+                // c:851 — `set_sublist_code(p, WC_SUBLIST_END, f,
+                // e-1-p, c);`
+                set_sublist_code(p, WC_SUBLIST_END as i32, flags, (e - 1 - p) as i32, c_final);
+            }
+            true
+        }
+        None => {
+            // c:855-857 — `ecused--; return 0;`
+            ECUSED.set((ECUSED.get() - 1).max(0));
+            false
+        }
+    }
+}
+
+/// Port of `par_pline(int *cmplx)` from `Src/parse.c:894-955`.
+/// `pline : cmd [ ( BAR | BARAMP ) { SEPER } pline ]`. Emits a
+/// WCB_PIPE header (mid for chain links, end for the last cmd)
+/// plus the optional BARAMP `2>&1` synthetic redir.
+pub fn par_pipe_wordcode() -> bool {
+    let line = toklineno() as i64;
+    // c:898 — `p = ecadd(0);`
+    let p = ecadd(0);
+    // c:900-903 — `if (!par_cmd(cmplx, 0)) { ecused--; return 0; }`
+    if !par_cmd_wordcode(false) {
+        ECUSED.set((ECUSED.get() - 1).max(0));
+        return false;
+    }
+    if tok() == BAR_TOK {
+        // c:905 — `*cmplx = 1;`
+        cmplx_set(true);
+        // c:906 — `cmdpush(CS_PIPE);`
+        cmdpush(CS_PIPE as u8);
+        // c:907 — `zshlex();`
+        zshlex();
+        // c:908-909 — `while (tok == SEPER) zshlex();`
+        while tok() == SEPER {
+            zshlex();
+        }
+        // c:910 — `ecbuf[p] = WCB_PIPE(WC_PIPE_MID, line>=0 ? line+1 : 0);`
+        ECBUF.with_borrow_mut(|b| {
+            if p < b.len() {
+                b[p] = WCB_PIPE(
+                    WC_PIPE_MID,
+                    if line >= 0 { (line + 1) as wordcode } else { 0 },
+                );
+            }
+        });
+        // c:911 — `ecispace(p+1, 1);`
+        ecispace(p + 1, 1);
+        // c:912 — `ecbuf[p+1] = ecused - 1 - p;`
+        let used = ECUSED.get() as usize;
+        ECBUF.with_borrow_mut(|b| {
+            if p + 1 < b.len() {
+                b[p + 1] = (used.saturating_sub(1 + p)) as wordcode;
+            }
+        });
+        // c:913-915 — `if (!par_pline(cmplx)) tok = LEXERR;`
+        if !par_pipe_wordcode() {
+            set_tok(LEXERR);
+        }
+        cmdpop();
+        true
+    } else if tok() == BARAMP {
+        // c:920-924 — walk past inline WC_REDIR to find r.
+        let mut r = p + 1;
+        loop {
+            let code = ECBUF.with_borrow(|b| b.get(r).copied().unwrap_or(0));
+            if wc_code(code) != WC_REDIR {
+                break;
+            }
+            r += WC_REDIR_WORDS(code) as usize;
+        }
+        // c:926-929 — `ecispace(r, 3);` + synthetic `2>&1` redir
+        ecispace(r, 3);
+        ECBUF.with_borrow_mut(|b| {
+            if r + 2 < b.len() {
+                b[r] = WCB_REDIR(REDIR_MERGEOUT as wordcode);
+                b[r + 1] = 2;
+                b[r + 2] = ecstrcode("1");
+            }
+        });
+        cmplx_set(true);
+        cmdpush(CS_ERRPIPE as u8);
+        zshlex();
+        while tok() == SEPER {
+            zshlex();
+        }
+        ECBUF.with_borrow_mut(|b| {
+            if p < b.len() {
+                b[p] = WCB_PIPE(
+                    WC_PIPE_MID,
+                    if line >= 0 { (line + 1) as wordcode } else { 0 },
+                );
+            }
+        });
+        ecispace(p + 1, 1);
+        let used = ECUSED.get() as usize;
+        ECBUF.with_borrow_mut(|b| {
+            if p + 1 < b.len() {
+                b[p + 1] = (used.saturating_sub(1 + p)) as wordcode;
+            }
+        });
+        if !par_pipe_wordcode() {
+            set_tok(LEXERR);
+        }
+        cmdpop();
+        true
+    } else {
+        // c:951 — `ecbuf[p] = WCB_PIPE(WC_PIPE_END, line>=0 ? line+1 : 0);`
+        ECBUF.with_borrow_mut(|b| {
+            if p < b.len() {
+                b[p] = WCB_PIPE(
+                    WC_PIPE_END,
+                    if line >= 0 { (line + 1) as wordcode } else { 0 },
+                );
+            }
+        });
+        true
+    }
+}
+
+/// Port of `par_cmd(int *cmplx, int zsh_construct)` from
+/// `Src/parse.c:958-1085`. Parses leading + trailing redirs and
+/// dispatches on the current token to the right par_* builder.
+/// Returns false only when no command was emitted (no redirs +
+/// par_simple returned 0).
+pub fn par_cmd_wordcode(zsh_construct: bool) -> bool {
+    let mut nr = 0i32;
+    // c:962 — `r = ecused;` — used for trailing-redir patch
+    // bookkeeping; the actual redir mutation goes through par_redir
+    // which keeps its own offset.
+    let mut r = ECUSED.get();
+    // c:964-969 — leading redirs.
+    if IS_REDIROP(tok()) {
+        cmplx_set(true);
+        while IS_REDIROP(tok()) {
+            if let Some(_) = par_redir() {
+                nr += 1;
+            } else {
+                break;
+            }
+        }
+    }
+    match tok() {
+        FOR => {
+            cmdpush(CS_FOR as u8);
+            par_for_wordcode();
+            cmdpop();
+        }
+        FOREACH => {
+            cmdpush(CS_FOREACH as u8);
+            par_for_wordcode();
+            cmdpop();
+        }
+        SELECT => {
+            cmplx_set(true);
+            cmdpush(CS_SELECT as u8);
+            par_for_wordcode();
+            cmdpop();
+        }
+        CASE => {
+            cmdpush(CS_CASE as u8);
+            par_case_wordcode();
+            cmdpop();
+        }
+        IF => {
+            par_if_wordcode();
+        }
+        WHILE => {
+            cmdpush(CS_WHILE as u8);
+            par_while_wordcode();
+            cmdpop();
+        }
+        UNTIL => {
+            cmdpush(CS_UNTIL as u8);
+            par_while_wordcode();
+            cmdpop();
+        }
+        REPEAT => {
+            cmdpush(CS_REPEAT as u8);
+            par_repeat_wordcode();
+            cmdpop();
+        }
+        INPAR_TOK => {
+            cmplx_set(true);
+            cmdpush(CS_SUBSH as u8);
+            par_subsh_wordcode_impl(zsh_construct);
+            cmdpop();
+        }
+        INBRACE_TOK => {
+            cmdpush(CS_CURSH as u8);
+            par_subsh_wordcode_impl(zsh_construct);
+            cmdpop();
+        }
+        FUNC => {
+            cmdpush(CS_FUNCDEF as u8);
+            par_funcdef_wordcode();
+            cmdpop();
+        }
+        DINBRACK => {
+            cmdpush(CS_COND as u8);
+            par_cond_wordcode();
+            cmdpop();
+        }
+        DINPAR => {
+            par_arith_wordcode();
+        }
+        TIME => {
+            // c:1037-1050 — `static int inpartime` guard so
+            // `time time foo` doesn't recurse infinitely.
+            if !PARSER_INPARTIME.with(|c| c.get()) {
+                cmplx_set(true);
+                PARSER_INPARTIME.with(|c| c.set(true));
+                par_time_wordcode();
+                PARSER_INPARTIME.with(|c| c.set(false));
+            } else {
+                set_tok(STRING_LEX);
+                let sr = par_simple_wordcode_impl(nr);
+                if sr == 0 && nr == 0 {
+                    return false;
+                }
+                if sr > 1 {
+                    cmplx_set(true);
+                    r += sr - 1;
+                }
+            }
+        }
+        _ => {
+            // c:1054 — `if (!(sr = par_simple(cmplx, nr)))`
+            let sr = par_simple_wordcode_impl(nr);
+            if sr == 0 {
+                if nr == 0 {
+                    return false;
+                }
+            } else if sr > 1 {
+                cmplx_set(true);
+                r += sr - 1;
+            }
+        }
+    }
+    // c:1075-1078 — trailing redirs.
+    if IS_REDIROP(tok()) {
+        cmplx_set(true);
+        while IS_REDIROP(tok()) {
+            let _ = par_redir();
+        }
+    }
+    // c:1079-1082 — `incmdpos=1; incasepat=0; incond=0; intypeset=0;`
+    set_incmdpos(true);
+    set_incasepat(0);
+    set_incond(0);
+    set_intypeset(false);
+    let _ = r;
+    true
+}
+
+/// Adapter: par_cmd_wordcode wrapper for sites that don't supply
+/// the zsh_construct flag (defaults to false, matching the C
+/// `par_cmd(cmplx, 0)` call shape at c:902).
+pub fn par_cmd_wordcode_noargs() {
+    par_cmd_wordcode(false);
 }
 
 /// P9c stub: direct port of `par_for(int *complex)` from
@@ -1453,97 +2073,258 @@ pub fn par_funcdef_wordcode() {
     });
 }
 
-/// P9c stub: direct port of `par_subsh` for `(...)` subshell.
+/// Port of `par_subsh(int *cmplx, int zsh_construct)` from
+/// `Src/parse.c:1619-1665`. Handles both `(...)` subshell and
+/// `{...}` brace group (cursh) plus optional `always { ... }`
+/// trailing block. C uses a single function with `zsh_construct=1`
+/// for `{...}` and 0 for `(...)`.
+pub fn par_subsh_wordcode_impl(zsh_construct: bool) {
+    // c:1621 — `enum lextok otok = tok;`
+    let otok = tok();
+    // c:1624 — `p = ecadd(0);`
+    let p = ecadd(0);
+    // c:1626 — `pp = ecadd(0);` (extra word for the always-block try slot)
+    let pp = ecadd(0);
+    // c:1627 — `zshlex();`
+    zshlex();
+    // c:1628 — `par_list(cmplx);`
+    par_list_wordcode();
+    // c:1629 — `ecadd(WCB_END());`
+    ecadd(WCB_END());
+    // c:1630-1631 — `if (tok != ((otok == INPAR) ? OUTPAR : OUTBRACE))
+    // YYERRORV(oecused);`
+    let want = if otok == INPAR_TOK {
+        OUTPAR_TOK
+    } else {
+        OUTBRACE_TOK
+    };
+    if tok() != want {
+        error("par_subsh: missing closing token");
+        return;
+    }
+    // c:1633 — `incmdpos = !zsh_construct;`
+    set_incmdpos(!zsh_construct);
+    // c:1634 — `zshlex();`
+    zshlex();
+
+    // c:1637 — `if (otok == INBRACE && tok == STRING && !strcmp(tokstr, "always"))`
+    let is_always =
+        otok == INBRACE_TOK && tok() == STRING_LEX && tokstr().as_deref() == Some("always");
+    if is_always {
+        // c:1638 — `ecbuf[pp] = WCB_TRY(ecused - 1 - pp);`
+        let used = ECUSED.get() as usize;
+        let off = used.saturating_sub(1 + pp);
+        ECBUF.with_borrow_mut(|b| {
+            if pp < b.len() {
+                b[pp] = WCB_TRY(off as wordcode);
+            }
+        });
+        // c:1639 — `incmdpos = 1;`
+        set_incmdpos(true);
+        // c:1640-1642 — `do { zshlex(); } while (tok == SEPER);`
+        loop {
+            zshlex();
+            if tok() != SEPER {
+                break;
+            }
+        }
+        // c:1644-1645 — `if (tok != INBRACE) YYERRORV(oecused);`
+        if tok() != INBRACE_TOK {
+            error("par_subsh: 'always' expects '{'");
+            return;
+        }
+        // c:1648 — `zshlex();`
+        zshlex();
+        // c:1649 — `par_save_list(cmplx);`
+        par_list_wordcode();
+        // c:1650-1651 — `while (tok == SEPER) zshlex();`
+        while tok() == SEPER {
+            zshlex();
+        }
+        // c:1653 — `incmdpos = 1;`
+        set_incmdpos(true);
+        // c:1655-1656 — `if (tok != OUTBRACE) YYERRORV(oecused);`
+        if tok() != OUTBRACE_TOK {
+            error("par_subsh: 'always' block missing '}'");
+            return;
+        }
+        zshlex();
+        // c:1658 — `ecbuf[p] = WCB_TRY(ecused - 1 - p);`
+        let used = ECUSED.get() as usize;
+        let off = used.saturating_sub(1 + p);
+        ECBUF.with_borrow_mut(|b| {
+            if p < b.len() {
+                b[p] = WCB_TRY(off as wordcode);
+            }
+        });
+    } else {
+        // c:1660-1662 — `ecbuf[p] = (otok == INPAR ? WCB_SUBSH(...) :
+        // WCB_CURSH(...));`
+        let used = ECUSED.get() as usize;
+        let off = used.saturating_sub(1 + p);
+        ECBUF.with_borrow_mut(|b| {
+            if p < b.len() {
+                b[p] = if otok == INPAR_TOK {
+                    WCB_SUBSH(off as wordcode)
+                } else {
+                    WCB_CURSH(off as wordcode)
+                };
+            }
+        });
+    }
+}
+
+/// Wrapper for `(...)` subshell — calls `par_subsh_wordcode_impl(false)`.
 pub fn par_subsh_wordcode() {
-    zshlex();
-    let p = ecadd(0);
-    par_list_wordcode();
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            b[p] = crate::ported::zsh_h::WC_SUBSH
-                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
-        }
-    });
+    par_subsh_wordcode_impl(false);
 }
 
-/// P9c stub: direct port of `par_cursh` for `{...}` brace group.
+/// Wrapper for `{...}` brace group (cursh) — calls
+/// `par_subsh_wordcode_impl(true)`. C uses the same `par_subsh`
+/// function with `zsh_construct=1`; the Rust split exists because
+/// the par_cmd dispatch at parse.rs:1446 already named them
+/// separately.
 pub fn par_cursh_wordcode() {
-    zshlex();
-    let p = ecadd(0);
-    par_list_wordcode();
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            b[p] = crate::ported::zsh_h::WC_CURSH
-                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
-        }
-    });
+    par_subsh_wordcode_impl(true);
 }
 
-/// P9c stub: direct port of `par_time` for `time` reserved-word.
+/// Port of `par_time(void)` from `Src/parse.c:1787`. `time PIPE`
+/// emits WCB_TIMED(WC_TIMED_PIPE) + the sublist code; bare `time`
+/// with no pipeline emits WCB_TIMED(WC_TIMED_EMPTY).
 pub fn par_time_wordcode() {
+    // c:1791 — `zshlex();`
     zshlex();
+    // c:1793-1794 — `p = ecadd(0); ecadd(0);`
     let p = ecadd(0);
-    par_pipe_wordcode();
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            b[p] = crate::ported::zsh_h::WC_TIMED
-                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+    ecadd(0);
+    // c:1795 — `if ((f = par_sublist2(&c)) < 0)`
+    let mut c = 0i32;
+    let f = par_sublist2(&mut c);
+    match f {
+        Some(flags) => {
+            // c:1799 — `ecbuf[p] = WCB_TIMED(WC_TIMED_PIPE);`
+            ECBUF.with_borrow_mut(|b| {
+                if p < b.len() {
+                    b[p] = WCB_TIMED(WC_TIMED_PIPE);
+                }
+            });
+            // c:1800 — `set_sublist_code(p+1, WC_SUBLIST_END, f,
+            // ecused-2-p, c);`
+            let used = ECUSED.get() as usize;
+            let skip = used.saturating_sub(2 + p) as i32;
+            set_sublist_code(p + 1, WC_SUBLIST_END as i32, flags, skip, c != 0);
         }
-    });
+        None => {
+            // c:1796-1798 — `ecused--; ecbuf[p] = WCB_TIMED(WC_TIMED_EMPTY);`
+            ECUSED.set((ECUSED.get() - 1).max(0));
+            ECBUF.with_borrow_mut(|b| {
+                if p < b.len() {
+                    b[p] = WCB_TIMED(WC_TIMED_EMPTY);
+                }
+            });
+        }
+    }
 }
 
-/// P9c stub: direct port of `par_cond` for `[[ ... ]]` cond expression.
+/// Port of `par_dinbrack(void)` from `Src/parse.c:1810`. Wraps
+/// `par_cond` (the cond-expression emitter at parse.c:2409) with
+/// the `[[ ... ]]` framing: incond/incmdpos toggles + DOUTBRACK
+/// expectation.
 pub fn par_cond_wordcode() {
+    let oecused = ECUSED.get();
+    // c:1814 — `incond = 1;`
+    set_incond(1);
+    // c:1815 — `incmdpos = 0;`
+    set_incmdpos(false);
+    // c:1816 — `zshlex();`
     zshlex();
-    let p = ecadd(0);
-    par_simple_wordcode();
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            b[p] = crate::ported::zsh_h::WC_COND
-                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
-        }
-    });
+    // c:1817 — `par_cond();`
+    let _ = par_cond();
+    // c:1818-1819 — `if (tok != DOUTBRACK) YYERRORV(oecused);`
+    if tok() != DOUTBRACK {
+        let _ = oecused;
+        error("missing ]]");
+        return;
+    }
+    // c:1820 — `incond = 0;`
+    set_incond(0);
+    // c:1821 — `incmdpos = 1;`
+    set_incmdpos(true);
+    // c:1822 — `zshlex();`
+    zshlex();
 }
 
-/// P9c stub: direct port of `par_arith` for `(( ... ))` arith block.
+/// Port of the `case DINPAR:` arm of `par_cmd` from
+/// `Src/parse.c:1031-1034`:
+/// ```c
+/// ecadd(WCB_ARITH());
+/// ecstr(tokstr);
+/// zshlex();
+/// ```
+/// `(( EXPR ))` arithmetic at command position — emits the ARITH
+/// opcode followed by the interned EXPR string, then advances past
+/// the DINPAR token (which already carries the body text).
 pub fn par_arith_wordcode() {
-    zshlex();
-    let p = ecadd(0);
+    // c:1032 — `ecadd(WCB_ARITH());`
+    ecadd(WCB_ARITH());
+    // c:1033 — `ecstr(tokstr);` — interns the expression string and
+    // appends its strcode index to the wordcode buffer.
     let expr = tokstr().unwrap_or_default();
-    let coded = ecstrcode(&expr);
-    ecadd(coded);
+    ecstr(&expr);
+    // c:1034 — `zshlex();`
     zshlex();
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            b[p] = crate::ported::zsh_h::WC_ARITH | (1u32 << crate::ported::zsh_h::WC_CODEBITS);
-        }
-    });
 }
 
-/// P9c stub: direct port of `par_simple(int *complex, int nr)` from
-/// `Src/parse.c:1321-1640`. Emits WC_SIMPLE + word count + interned
-/// string offsets. Real implementation walks assignments + redirections
-/// inline; this stub emits a WC_SIMPLE header with `nwords` plus one
-/// ecstrcode'd string per STRING_LEX token consumed.
-pub fn par_simple_wordcode() {
+/// Port of `par_simple(int *cmplx, int nr)` from
+/// `Src/parse.c:1836-2227`. Emits WC_SIMPLE + word count +
+/// interned string offsets. Returns `0` when nothing was emitted,
+/// otherwise `1 + (number of code words consumed by redirections)`.
+/// The full C body handles assignments (ENVSTRING/ENVARRAY),
+/// inline `{var}>file` brace-FDs, prefix modifiers (NOCORRECT etc),
+/// and `name() { body }` funcdef detection — those paths are
+/// progressively wired into the AST parser; this wordcode-emitter
+/// covers the simple `cmd args...` case + interleaved redirs.
+pub fn par_simple_wordcode_impl(_nr: i32) -> i32 {
     let p = ecadd(0);
     let mut nwords: u32 = 0;
-    while tok() == STRING_LEX {
-        let s = tokstr().unwrap_or_default();
-        let coded = ecstrcode(&s);
-        ecadd(coded);
-        nwords += 1;
-        zshlex();
+    let mut redir_words: i32 = 0;
+    loop {
+        match tok() {
+            STRING_LEX | ENVSTRING | TYPESET => {
+                let s = tokstr().unwrap_or_default();
+                let coded = ecstrcode(&s);
+                ecadd(coded);
+                nwords += 1;
+                zshlex();
+            }
+            t if IS_REDIROP(t) => {
+                if let Some(_) = par_redir() {
+                    // par_redir wrote 3 or 5 wordcodes (plus optional
+                    // varid). Count them so we can return `1 + redir_words`.
+                    redir_words += 3;
+                } else {
+                    break;
+                }
+            }
+            _ => break,
+        }
     }
     ECBUF.with_borrow_mut(|b| {
         if p < b.len() {
-            b[p] = crate::ported::zsh_h::WC_SIMPLE | (nwords << crate::ported::zsh_h::WC_CODEBITS);
+            b[p] = WCB_SIMPLE(nwords);
         }
     });
+    if nwords == 0 && redir_words == 0 {
+        0
+    } else {
+        1 + redir_words
+    }
+}
+
+/// Wrapper for the par_cmd dispatch sites that don't pass `nr`
+/// (matches C's call shape at parse.c:1054 `par_simple(cmplx, nr)`).
+pub fn par_simple_wordcode() {
+    par_simple_wordcode_impl(0);
 }
 
 /// Parse a program (list of lists)
@@ -2110,14 +2891,8 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 // C predicate is visible. Once alias-provenance lands,
                 // swap `false` for the actual provenance compare.
                 let had_alias = false;
-                if isset(EXECOPT)
-                    && had_alias
-                    && !isset(ALIASFUNCDEF)
-                    && !words.is_empty()
-                {
-                    crate::ported::utils::zwarn(
-                        "defining function based on alias `(unknown)'",
-                    );
+                if isset(EXECOPT) && had_alias && !isset(ALIASFUNCDEF) && !words.is_empty() {
+                    crate::ported::utils::zwarn("defining function based on alias `(unknown)'");
                     return None;
                 }
                 // foo() { ... } style function
@@ -4075,21 +4850,86 @@ pub fn check_dump_file(
     None
 }
 
+/// `static FuncDump dumps;` from `Src/parse.c:3652` — head of the
+/// loaded-`.zwc` linked list. C walks `dumps`/`p->next` directly;
+/// the Rust port uses a `Mutex<Vec<funcdump>>` indexed by filename
+/// so refcount ops can find an entry without raw-pointer compare.
+pub static DUMPS: std::sync::Mutex<Vec<crate::ported::zsh_h::funcdump>> =
+    std::sync::Mutex::new(Vec::new());
+
 /// Port of `incrdumpcount(FuncDump f)` from `Src/parse.c:3970/4021`.
-/// Refcount-up a loaded `.zwc` dump. No-op stub.
-pub fn incrdumpcount() {} // c:3970
+/// `f->count++;` — refcount-up a loaded dump entry. The Rust port
+/// keys lookup by `filename` because Rust can't raw-pointer-compare
+/// funcdump values inside a `Mutex<Vec<...>>`; same observable
+/// effect (the count of the matching entry increments).
+pub fn incrdumpcount(f: &crate::ported::zsh_h::funcdump) {
+    // c:3970
+    let key = f.filename.as_deref();
+    let mut g = DUMPS.lock().unwrap();
+    for d in g.iter_mut() {
+        if d.filename.as_deref() == key {
+            d.count += 1; // c:3973
+            return;
+        }
+    }
+}
+
+/// Port of `freedump(FuncDump f)` from `Src/parse.c:3976`. C
+/// `munmap`s, `zclose`s the fd, and frees the struct. The Rust
+/// port relies on Drop for the `funcdump` (no mmap held in this
+/// port — `addr`/`map` are byte-offset placeholders), so the
+/// equivalent is removing the entry from the dumps list. Called
+/// by `decrdumpcount` when the refcount hits zero (c:3988) and
+/// by `closedumps` when shutting down (c:4008).
+fn freedump_locked(
+    g: &mut std::sync::MutexGuard<'_, Vec<crate::ported::zsh_h::funcdump>>,
+    filename: &str,
+) {
+    // c:3976
+    g.retain(|d| d.filename.as_deref() != Some(filename));
+}
+
+/// Port of `freedump(FuncDump f)` from `Src/parse.c:3976`. Public
+/// helper for the rare external caller; locks the dumps mutex and
+/// drops the entry with the given filename.
+pub fn freedump(f: &crate::ported::zsh_h::funcdump) {
+    // c:3976
+    let mut g = DUMPS.lock().unwrap();
+    if let Some(name) = f.filename.as_deref() {
+        freedump_locked(&mut g, name);
+    }
+}
 
 /// Port of `decrdumpcount(FuncDump f)` from `Src/parse.c:3988/4026`.
-/// Refcount-down + free if zero. No-op stub.
-pub fn decrdumpcount() {} // c:3988
-
-/// Port of `freedump(FuncDump f)` from `Src/parse.c:3976`. Releases
-/// the per-dump memory + close fd. No-op stub.
-pub fn freedump() {} // c:3976
+/// `f->count--; if (!f->count) { unlink from dumps; freedump(f); }`.
+pub fn decrdumpcount(f: &crate::ported::zsh_h::funcdump) {
+    // c:3988
+    let key = f.filename.clone();
+    let mut g = DUMPS.lock().unwrap();
+    let mut hit_zero: Option<String> = None;
+    for d in g.iter_mut() {
+        if d.filename == key {
+            d.count -= 1; // c:3991
+            if d.count == 0 {
+                // c:3992
+                hit_zero = d.filename.clone();
+            }
+            break;
+        }
+    }
+    if let Some(name) = hit_zero {
+        // c:3994-4001
+        freedump_locked(&mut g, &name);
+    }
+}
 
 /// Port of `closedumps(void)` from `Src/parse.c:4008/4033`. Walks
-/// the `dumps` list and frees every entry. No-op stub.
-pub fn closedumps() {} // c:4008
+/// `dumps` freeing every entry. Called on shell exit (exec.c:522).
+pub fn closedumps() {
+    // c:4008
+    let mut g = DUMPS.lock().unwrap();
+    g.clear(); // c:4011-4014 `while (dumps) { ... freedump(...); ... }`
+}
 
 /// Port of `dump_autoload(char *nam, char *file, int on, Options ops, int func)`
 /// from `Src/parse.c:4042`. Registers every function in a `.zwc`
@@ -4837,13 +5677,13 @@ pub fn write_dump(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ported::utils::{errflag, ERRFLAG_ERROR};
     use std::fs;
     use std::path::Path;
     use std::sync::atomic::Ordering;
     use std::sync::mpsc;
     use std::thread;
     use std::time::{Duration, Instant};
+    use crate::utils::{errflag, ERRFLAG_ERROR};
 
     /// Test helper. Mirrors zsh's `errflag` save/clear/check pattern
     /// around a parse — see `Src/init.c:loop` which clears errflag
