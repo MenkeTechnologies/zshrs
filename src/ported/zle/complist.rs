@@ -104,13 +104,69 @@ pub fn compprintfmt(format: &str, matches_count: usize, group: &str) -> String {
         .replace("%%", "%")
 }
 
-/// Emit the CSI-K sequence clearing from cursor to end of the
-/// current line — used between match-list rows so leftover
-/// characters from a prior frame don't bleed through.
-/// Port of `cleareol()` from Src/Zle/complist.c (the C source
-/// fronts the same `\\e[K` escape via `tcout(TCCLEAREOL)`).
-pub fn cleareol() -> &'static str {                                          // c:608
-    "\x1b[K"
+/// Port of file-static `char *last_cap` from
+/// `Src/Zle/complist.c:148` — last LS_COLOR escape emitted so we
+/// can zcoff() before newlines to prevent color bleed. Co-located
+/// with the MLBEG/NREFS/CURIS* statics declared further down.
+pub static LAST_CAP: std::sync::LazyLock<std::sync::Mutex<String>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new()));
+
+/// Port of file-static `char **patcols` from
+/// `Src/Zle/complist.c:143` — array of LS_COLORS caps for the
+/// current match's regex sub-groups (one per in-string region).
+pub static PATCOLS: std::sync::LazyLock<std::sync::Mutex<Vec<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
+
+/// File-static index into PATCOLS. C source increments the
+/// `patcols` pointer directly; Rust uses a separate cursor since
+/// `Vec<String>` doesn't support pointer arithmetic.
+pub static PATCOLS_IDX: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Port of `static int begpos[MAX_POS]` from `complist.c:140` —
+/// begin positions of regex backref regions in the current match.
+pub static BEGPOS: std::sync::LazyLock<std::sync::Mutex<Vec<i32>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(vec![0xfffffff_i32; 11]));
+
+/// Port of `static int endpos[MAX_POS]` from `complist.c:141`.
+pub static ENDPOS: std::sync::LazyLock<std::sync::Mutex<Vec<i32>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(vec![0xfffffff_i32; 11]));
+
+/// Port of `static int sendpos[MAX_POS]` from `c:142`.
+pub static SENDPOS: std::sync::LazyLock<std::sync::Mutex<Vec<i32>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(vec![0xfffffff_i32; 11]));
+
+/// Port of `static char *curiscols[MAX_POS]` from `c:143` — the
+/// active-color stack as in-string regions nest.
+pub static CURISCOLS: std::sync::LazyLock<std::sync::Mutex<Vec<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(vec![String::new(); 11]));
+
+/// Direct port of `void cleareol(void)` from
+/// `Src/Zle/complist.c:608`:
+/// ```c
+/// if (mlbeg >= 0 && tccan(TCCLEAREOL)) {
+///     if (*last_cap) zcoff();
+///     tcout(TCCLEAREOL);
+/// }
+/// ```
+/// Emits the clear-to-end-of-line escape iff we're inside list
+/// paint (`mlbeg >= 0`) and the terminal supports the cap. If a
+/// LS_COLOR cap is currently active, emit the SGR-reset first so
+/// the EOL-clear doesn't carry the color into untouched columns.
+pub fn cleareol() {                                                          // c:608
+    use std::sync::atomic::Ordering;
+    if MLBEG.load(Ordering::Relaxed) < 0 {
+        return;
+    }
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out = if fd >= 0 { fd } else { 1 };
+    // c:611-612 — `if (*last_cap) zcoff();` — emit SGR reset.
+    if !LAST_CAP.lock().map(|s| s.is_empty()).unwrap_or(true) {
+        let _ = crate::ported::utils::write_loop(out, b"\x1b[0m");
+        LAST_CAP.lock().ok().map(|mut s| s.clear());
+    }
+    // c:613 — `tcout(TCCLEAREOL);` — CSI K.
+    let _ = crate::ported::utils::write_loop(out, b"\x1b[K");
 }
 
 /// Wrap a string in a CSI SGR sequence using the supplied colour
@@ -374,11 +430,107 @@ pub fn compzputs(s: &str, ml: i32) -> i32 {                                 // c
 }
 
 /// Port of `doiscol(int pos)` from Src/Zle/complist.c:635.
+/// Direct port of `void doiscol(int pos)` from
+/// `Src/Zle/complist.c:635`. Updates the in-string color state for
+/// character position `pos` in the current match emission:
+///
+/// 1. Pops finished regions (where `pos > sendpos[curissend]`) —
+///    each pop emits SGR-reset + restores the prior color from the
+///    `curiscols[]` stack.
+/// 2. Pushes any region whose begin position equals `pos`, or
+///    finishes-empty regions (endpos < begpos or begpos == -1):
+///    inserts `endpos` into the sorted `sendpos[]` array, emits
+///    SGR-reset + the new color, pushes onto curiscols[].
 pub fn doiscol(pos: i32) -> i32 {                                             // c:635
-    // C body c:637-668 — emits an in-list color escape from `last_cap`
-    //                    using shout. Without curses we no-op and
-    //                    return the input pos unchanged.
-    let _ = pos;
+    use std::sync::atomic::Ordering;
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out = if fd >= 0 { fd } else { 1 };
+
+    // c:639-645 — pop finished regions.
+    loop {
+        let curissend = CURISSEND.load(Ordering::Relaxed) as usize;
+        let sp = SENDPOS.lock().ok().and_then(|s| s.get(curissend).copied())
+            .unwrap_or(0xfffffff);
+        if pos <= sp { break; }
+        CURISSEND.fetch_add(1, Ordering::Relaxed);
+        let curiscol = CURISCOL.load(Ordering::Relaxed);
+        if curiscol > 0 {
+            // c:642 — `zcputs(NULL, COL_NO);` — SGR reset.
+            let _ = crate::ported::utils::write_loop(out, b"\x1b[0m");
+            // c:643 — `zlrputs(curiscols[--curiscol]);`
+            let new_idx = curiscol - 1;
+            CURISCOL.store(new_idx, Ordering::Relaxed);
+            let restore_cap = CURISCOLS.lock().ok()
+                .and_then(|c| c.get(new_idx as usize).cloned())
+                .unwrap_or_default();
+            if !restore_cap.is_empty() {
+                let _ = zlrputs(&restore_cap);
+            }
+        }
+    }
+
+    // c:646-665 — push new regions starting at or before `pos`.
+    loop {
+        let curisbeg = CURISBEG.load(Ordering::Relaxed) as usize;
+        if curisbeg >= MAX_POS { break; }
+        let (bp, ep) = {
+            let bp_lock = BEGPOS.lock().ok();
+            let ep_lock = ENDPOS.lock().ok();
+            match (bp_lock, ep_lock) {
+                (Some(b), Some(e)) => {
+                    (b.get(curisbeg).copied().unwrap_or(0xfffffff),
+                     e.get(curisbeg).copied().unwrap_or(0xfffffff))
+                }
+                _ => break,
+            }
+        };
+        // c:646-647 — `fi = (endpos[curisbeg] < begpos[curisbeg] ||
+        //                    begpos[curisbeg] == -1)`. Finished-empty region.
+        let fi = ep < bp || bp == -1;
+        if !(fi || pos == bp) {
+            break;
+        }
+        // c:648 — `*patcols` truthy gate (more colors available).
+        let patcols_idx = PATCOLS_IDX.load(Ordering::Relaxed);
+        let cap_now = PATCOLS.lock().ok()
+            .and_then(|p| p.get(patcols_idx).cloned())
+            .unwrap_or_default();
+        if cap_now.is_empty() { break; }
+
+        if !fi {
+            // c:650-657 — insert `e = endpos[curisbeg]` into sendpos[]
+            //              in sorted order.
+            let e = ep;
+            if let Ok(mut sp) = SENDPOS.lock() {
+                let curissend = CURISSEND.load(Ordering::Relaxed) as usize;
+                let mut i = curissend;
+                while i < MAX_POS && sp[i] <= e {
+                    i += 1;
+                }
+                let mut j = MAX_POS - 1;
+                while j > i {
+                    sp[j] = sp[j - 1];
+                    j -= 1;
+                }
+                if i < MAX_POS {
+                    sp[i] = e;
+                }
+            }
+            // c:659-660 — `zcputs(NULL, COL_NO); zlrputs(*patcols);`
+            let _ = crate::ported::utils::write_loop(out, b"\x1b[0m");
+            let _ = zlrputs(&cap_now);
+            // c:661 — `curiscols[++curiscol] = *patcols;`
+            let new_idx = CURISCOL.fetch_add(1, Ordering::Relaxed) + 1;
+            if let Ok(mut cs) = CURISCOLS.lock() {
+                if (new_idx as usize) < cs.len() {
+                    cs[new_idx as usize] = cap_now;
+                }
+            }
+        }
+        // c:663-664 — `++patcols; ++curisbeg;`.
+        PATCOLS_IDX.fetch_add(1, Ordering::Relaxed);
+        CURISBEG.fetch_add(1, Ordering::Relaxed);
+    }
     0
 }
 
@@ -767,10 +919,53 @@ pub fn getcolval(s: &str, multi: i32) -> &str {                             // c
 }
 
 /// Port of `initiscol()` from Src/Zle/complist.c:618.
+/// Direct port of `void initiscol(void)` from
+/// `Src/Zle/complist.c:618`. Resets per-line in-string-color state
+/// at the start of a colored match emission. Pops the first
+/// `patcols[0]` entry as the initial color and resets all the
+/// position cursors + region-tracking arrays.
 pub fn initiscol() -> i32 {                                                  // c:618
-    // C body c:620-633 — resets per-line in-string-color state at
-    //                    the start of a colored emission.
-    //                    No mcolors substrate: no-op.
+    use std::sync::atomic::Ordering;
+    // c:622 — `zlrputs(patcols[0]);` — emit first color cap.
+    let first_cap = PATCOLS.lock().ok()
+        .and_then(|p| p.first().cloned())
+        .unwrap_or_default();
+    if !first_cap.is_empty() {
+        let _ = zlrputs(&first_cap);
+    }
+    // c:624 — `curiscols[curiscol = 0] = *patcols++;`
+    if let Ok(mut cs) = CURISCOLS.lock() {
+        if !cs.is_empty() {
+            cs[0] = first_cap.clone();
+        }
+    }
+    CURISCOL.store(0, Ordering::Relaxed);
+    PATCOLS_IDX.store(1, Ordering::Relaxed);                                 // c:624 patcols++
+
+    // c:626 — `curisbeg = curissend = 0;`
+    CURISBEG.store(0, Ordering::Relaxed);
+    CURISSEND.store(0, Ordering::Relaxed);
+
+    // c:628-631 — sendpos / begpos / endpos init.
+    let nrefs = NREFS.load(Ordering::Relaxed) as usize;
+    if let Ok(mut sp) = SENDPOS.lock() {
+        for i in 0..MAX_POS {
+            sp[i] = 0xfffffff;
+        }
+        for i in 0..nrefs.min(MAX_POS) {
+            sp[i] = 0xfffffff;                                              // c:629 already 0xfffffff
+        }
+    }
+    if let Ok(mut bp) = BEGPOS.lock() {
+        for i in nrefs..MAX_POS {
+            bp[i] = 0xfffffff;                                              // c:631
+        }
+    }
+    if let Ok(mut ep) = ENDPOS.lock() {
+        for i in nrefs..MAX_POS {
+            ep[i] = 0xfffffff;                                              // c:631
+        }
+    }
     0
 }
 
