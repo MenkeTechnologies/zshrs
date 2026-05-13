@@ -27,11 +27,17 @@ use std::collections::VecDeque;
 // Marker`. Imported with the zsh_h.rs disambiguation (Stringg → Stringg,
 // OutangProc → OutangProc) so the lex.rs body keeps the original C-style
 // short names without colliding with `STRING_LEX` (the lextok=34 constant).
+use crate::ported::prompt::{cmdpop, cmdpush};
 use crate::ported::zsh_h::{
-    Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals, Hat, Inang, Inbrace, Inbrack, Inpar,
-    Inparmath, Marker, META, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath,
-    Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde,
+    isset, unset, Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals, Hat, Inang, Inbrace,
+    Inbrack, Inpar, Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar,
+    Outparmath, Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde, ALIASESOPT,
+    CORRECT, CORRECTALL, CSHJUNKIEQUOTES, CS_BQUOTE, CS_BRACE, CS_BRACEPAR, CS_CMDSUBST, CS_CURSH,
+    CS_DQUOTE, CS_HEREDOC, CS_HEREDOCD, CS_MATH, CS_MATHSUBST, CS_QUOTE, HISTALLOWCLOBBER,
+    IGNOREBRACES, IGNORECLOSEBRACES, INTERACTIVECOMMENTS, KSHGLOB, META, POSIXALIASES, RCQUOTES,
+    SHGLOB, SHINSTDIN, SHORTLOOPS, SHORTREPEAT,
 };
+
 use crate::zsh_h::lex_stack;
 use crate::ztype_h::itok;
 
@@ -164,20 +170,16 @@ pub const LX2_META: u8 = 21;
 /// `static unsigned char lexact1[256]` from `Src/lex.c:406`. Per-byte
 /// action table for the first-tier dispatch in `gettok`. Init'd by
 /// `initlextabs()`.
-pub static LEXACT1: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> =
-    std::sync::OnceLock::new();
+pub static LEXACT1: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> = std::sync::OnceLock::new();
 /// `static unsigned char lexact2[256]` from `Src/lex.c:406`. Per-byte
 /// action table for the second-tier dispatch in `gettokstr`.
-pub static LEXACT2: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> =
-    std::sync::OnceLock::new();
+pub static LEXACT2: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> = std::sync::OnceLock::new();
 /// `static unsigned char lextok2[256]` from `Src/lex.c:406`. Per-byte
 /// token-character map: maps `*` → `Star`, `?` → `Quest`, etc.
-pub static LEXTOK2: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> =
-    std::sync::OnceLock::new();
+pub static LEXTOK2: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> = std::sync::OnceLock::new();
 
 /// Sentinel: true once `initlextabs()` has populated the tables.
-static LEX_TABS_INITED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static LEX_TABS_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[inline]
 fn ensure_tabs_inited() {
@@ -242,8 +244,9 @@ pub fn lextok2_get(c: char) -> u8 {
 /// `lextok2` — char → byte-token. Identity except for the 8 magic
 /// chars that need byte-token replacement (`*`/`?`/`{`/`[`/`$`/`~`/
 /// `#`/`^` → Star/Quest/Inbrace/Inbrack/Stringg/Tilde/Pound/Hat).
-pub fn initlextabs() {                                                       // c:410
-    use crate::ported::zsh_h::{Hat, Inbrace, Inbrack, META, Pound, Quest, Star, Stringg, Tilde};
+pub fn initlextabs() {
+    // c:410
+    use crate::ported::zsh_h::{Hat, Inbrace, Inbrack, Pound, Quest, Star, Stringg, Tilde, META};
     let a1 = LEXACT1.get_or_init(|| std::sync::Mutex::new([0u8; 256]));
     let a2 = LEXACT2.get_or_init(|| std::sync::Mutex::new([0u8; 256]));
     let t2 = LEXTOK2.get_or_init(|| std::sync::Mutex::new([0u8; 256]));
@@ -294,7 +297,7 @@ pub fn initlextabs() {                                                       // 
 mod tokens_tests {
     use crate::ported::hashtable::reswdtab_lock;
     use crate::ported::zsh_h::{
-        Bnull, DINANG, Dnull, IF, IS_REDIROP, OUTANG_TOK, Snull, STRING_LEX, THEN,
+        Bnull, Dnull, Snull, DINANG, IF, IS_REDIROP, OUTANG_TOK, STRING_LEX, THEN,
     };
 
     #[test]
@@ -483,6 +486,17 @@ thread_local! {
     pub static LEX_NOCOMMENTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// `int lexflags` (lex.c:118).
     pub static LEX_LEXFLAGS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// `mod_export int wordbeg` (lex.c:123). The cursor-relative
+    /// start index of the in-flight word, set in gettok when
+    /// LEXFLAGS_ZLE is active. Consumed by `gotword`.
+    pub static LEX_WORDBEG: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// `mod_export int parbegin` (lex.c:126). Marks start of a
+    /// `(...)` substitution under ZLE so completion can recurse in.
+    /// `-1` when no substitution is open.
+    pub static LEX_PARBEGIN: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
+    /// `mod_export int parend` (lex.c:129). Marks end of a `(...)`
+    /// substitution under ZLE. `-1` when no substitution closed.
+    pub static LEX_PAREND: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
     /// `int isfirstln` (lex.c:114).
     pub static LEX_ISFIRSTLN: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// `int isfirstch` (lex.c:116).
@@ -506,6 +520,9 @@ thread_local! {
     pub static LEX_RECURSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// `int lex_add_raw` (lex.c:161).
     pub static LEX_LEX_ADD_RAW: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// `static char *tokstr_raw` (lex.c:165).
+    pub static LEX_TOKSTR_RAW: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
     /// `struct lexbufstate lexbuf_raw` (lex.c:166).
     pub static LEX_LEXBUF_RAW: std::cell::RefCell<lexbufstate> = const { std::cell::RefCell::new(
         lexbufstate { ptr: None, siz: 0, len: 0 }
@@ -518,9 +535,9 @@ thread_local! {
 // above, each one matching a `static` in `Src/lex.c`. There's no
 // holder struct — callers use the free fns directly:
 //
-//   crate::ported::lex::lex_init(input);
-//   crate::ported::lex::zshlex();
-//   let tok = crate::ported::lex::tok();
+//    lex_init(input);
+//    zshlex();
+//   let tok =  tok();
 //
 // Accessor fns named after the former field identifiers (`tok()`,
 // `tokstr()`, `set_tok(v)`, etc.) provide read/write into LEX_*.
@@ -750,8 +767,71 @@ pub fn exalias() -> bool {
     // lex.c:1957 — `hwend()` ends the history-word region. zshrs's
     // history layer doesn't track per-word boundaries here; no-op.
 
-    // lex.c:1958-1962 — spell correction via spckword. zshrs
-    // doesn't implement spell correction yet; documented divergence.
+    // c:1958-1962 — full faithful gate:
+    //   if (interact && isset(SHINSTDIN) && !strin && incasepat <= 0
+    //    && tok == STRING && !nocorrect && !(inbufflags & INP_ALIAS)
+    //    && !hist_is_in_word()
+    //    && (isset(CORRECTALL) || (isset(CORRECT) && incmdpos)))
+    //       spckword(&tokstr, 1, incmdpos, 1);
+    let inbufflags_alias =
+        (crate::ported::input::inbufflags.with(|f| f.get()) & crate::ported::zsh_h::INP_ALIAS) != 0;
+    let strin_set = crate::ported::input::strin.with(|c| c.get()) != 0;
+    if crate::ported::zsh_h::interact()
+        && isset(SHINSTDIN)
+        && !strin_set
+        && LEX_INCASEPAT.get() <= 0
+        && tok() == STRING_LEX
+        && LEX_NOCORRECT.get() == 0
+        && !inbufflags_alias
+        && crate::ported::hist::hist_is_in_word() == 0
+        && (isset(CORRECTALL) || (isset(CORRECT) && LEX_INCMDPOS.get()))
+    {
+        // Build candidate list: command names in $PATH, shell
+        // functions, aliases, builtins. C's spckword scans these
+        // internally; our Rust spckword (utils.rs:1802) takes a
+        // pre-built list, so we assemble here, run, then mutate
+        // tokstr in place when a correction crosses the distance
+        // threshold (matches C's `spckword(&tokstr, 1, incmdpos, 1);`
+        // contract — replacing tokstr with the corrected form).
+        let candidates: Vec<String> = {
+            let mut v: Vec<String> = Vec::new();
+            // Shell functions.
+            if let Ok(t) = crate::ported::hashtable::shfunctab_lock().read() {
+                v.extend(t.iter().map(|(k, _)| k.clone()));
+            }
+            // Aliases.
+            if let Ok(t) = crate::ported::hashtable::aliastab_lock().read() {
+                v.extend(t.iter().map(|(k, _)| k.clone()));
+            }
+            // Command names (from cmdnamtab — hashed $PATH lookups).
+            if let Ok(t) = crate::ported::hashtable::cmdnamtab_lock().read() {
+                v.extend(t.iter().map(|(k, _)| k.clone()));
+            }
+            v
+        };
+        let refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+        // C calls `spckword(&tokstr, ...)` with the raw tokstr; this
+        // runs BEFORE alias / reswd lookup below, BEFORE `lextext`
+        // is computed. Read `tokstr` directly here.
+        if let Some(word) = tokstr() {
+            let word_untok = if has_token(&word) {
+                untokenize(&word)
+            } else {
+                word.clone()
+            };
+            if let Some(corrected) = crate::ported::utils::spckword(&word_untok, &refs, 3) {
+                if corrected != word_untok {
+                    // c:1962 spckword `doerr=1` arg → prompts user.
+                    // Without per-call interactive integration, accept
+                    // the correction silently when CORRECTALL is set,
+                    // skip otherwise (matches the conservative path).
+                    if isset(CORRECTALL) {
+                        set_tokstr(Some(corrected));
+                    }
+                }
+            }
+        }
+    }
 
     // lex.c:1964-1969 — bare-token path (no tokstr).
     if tokstr_is_none() {
@@ -798,16 +878,25 @@ pub fn exalias() -> bool {
 
     // lex.c:1993-2015 — Stringg-token alias / reswd check.
     if tok() == STRING_LEX {
-        // lex.c:1995 — `checkalias()`. POSIX-aliases gate skipped
-        // here (zshrs doesn't have the option flag wired).
-        if checkalias(&lextext) {
+        // c:1995 — `if ((zshlextext != copy || !isset(POSIXALIASES))
+        //   && checkalias())` — under POSIX_ALIASES, only run
+        // alias expansion on tokens that came in literal (`zshlextext
+        // == copy` means no tokenisation/untokenisation happened).
+        // zshrs always passes the untokenised `lextext`; if the
+        // original tokstr had tokens AND POSIXALIASES is on, skip
+        // the alias check (matches C `zshlextext != copy`).
+        let had_tokens = has_token(&tokstr);
+        if (!had_tokens || !isset(POSIXALIASES)) && checkalias(&lextext) {
             return true;
         }
 
-        // lex.c:2002-2009 — reserved-word lookup. Fires when in
-        // command position OR when the text is bare `}` and
-        // IGNOREBRACES is unset (so `}` ends a brace block).
-        if LEX_INCMDPOS.get() || lextext == "}" {
+        // c:2002 — reserved-word lookup. Fires when in command
+        // position OR when the text is bare `}` and IGNOREBRACES
+        // / IGNORECLOSEBRACES are both unset (so `}` ends a brace
+        // block).
+        let is_close_brace_special =
+            lextext == "}" && unset(IGNOREBRACES) && unset(IGNORECLOSEBRACES);
+        if LEX_INCMDPOS.get() || is_close_brace_special {
             // lex.c:2002 — `(rw = (Reswd) reswdtab->getnode(reswdtab, tokstr))`
             let rw_tok: Option<lextok> = {
                 let guard = crate::ported::hashtable::reswdtab_lock()
@@ -858,11 +947,28 @@ fn checkalias(lextext: &str) -> bool {
         return false;
     }
 
-    // lex.c:1909-1911 — guard: alias expansion is disabled, or
-    // POSIX aliases require the token to be a Stringg and not a
-    // reserved word.
-    if LEX_NOALIASES.get() {
+    // c:1909 — `if (!noaliases && isset(ALIASESOPT) &&
+    //   (!isset(POSIXALIASES) ||
+    //    (tok == STRING && !reswdtab->getnode(reswdtab, zshlextext))))`.
+    //
+    // Three gates: (1) lexer hasn't set noaliases; (2) ALIASESOPT
+    // option is on; (3) under POSIX_ALIASES, the token must be a
+    // STRING AND not a reserved word.
+    if LEX_NOALIASES.get() || !isset(ALIASESOPT) {
         return false;
+    }
+    if isset(POSIXALIASES) {
+        if tok() != STRING_LEX {
+            return false;
+        }
+        let is_reswd = crate::ported::hashtable::reswdtab_lock()
+            .read()
+            .expect("reswdtab poisoned")
+            .get(lextext)
+            .is_some();
+        if is_reswd {
+            return false;
+        }
     }
 
     // lex.c:1914-1933 — regular alias lookup. C: `an = (Alias)
@@ -876,19 +982,23 @@ fn checkalias(lextext: &str) -> bool {
     if let Some(alias) = alias_clone {
         let is_global = (alias.node.flags & crate::ported::zsh_h::ALIAS_GLOBAL) != 0;
         if alias.inuse == 0 && (is_global || (LEX_INCMDPOS.get() && tok() == STRING_LEX)) {
-            // lex.c:1918-1927 — if the next char isn't blank,
-            // insert a space so the alias body can't accidentally
-            // join the following word.
+            // c:1918-1927 — if the next char isn't blank, insert a
+            // space so the alias body can't accidentally join the
+            // following word.
             if !LEX_LEXSTOP.get() {
                 if let Some(c) = peek() {
                     if !is_blank(c) {
-                        inject_alias_text(" ");
+                        crate::ported::input::inpush(" ", crate::ported::zsh_h::INP_ALIAS, None);
                     }
                 }
             }
-            // lex.c:1928 — `inpush(an->text, INP_ALIAS, an);`
-            inject_alias_text(&alias.text);
-            // lex.c:1929 — `an->inuse = 1;` (set on the live node).
+            // c:1928 — `inpush(an->text, INP_ALIAS, an);`
+            crate::ported::input::inpush(
+                &alias.text,
+                crate::ported::zsh_h::INP_ALIAS,
+                Some(lextext.to_string()),
+            );
+            // c:1929 — `an->inuse = 1;`.
             let mut guard = crate::ported::hashtable::aliastab_lock()
                 .write()
                 .expect("aliastab poisoned");
@@ -916,14 +1026,24 @@ fn checkalias(lextext: &str) -> bool {
                 };
                 if let Some(alias) = alias_clone {
                     if alias.inuse == 0 {
-                        // lex.c:1938-1940 — push three things in
-                        // reverse: the alias text, a space, then
-                        // the original word.
-                        inject_alias_text(&alias.text);
-                        inject_alias_text(" ");
-                        inject_alias_text(lextext);
-                        // lex.c:1941 — `an->inuse = 1;` on the
-                        // suffix-alias node.
+                        // c:1938-1940 — three inpush calls in order:
+                        // the original word, a space, the alias text.
+                        // inpush stacks LIFO so the original word is
+                        // popped FIRST (re-emitted to extend the
+                        // current token), then space, then the alias
+                        // body. C does it the same way.
+                        crate::ported::input::inpush(
+                            lextext,
+                            crate::ported::zsh_h::INP_ALIAS,
+                            Some(suffix.to_string()),
+                        );
+                        crate::ported::input::inpush(" ", crate::ported::zsh_h::INP_ALIAS, None);
+                        crate::ported::input::inpush(
+                            &alias.text,
+                            crate::ported::zsh_h::INP_ALIAS,
+                            None,
+                        );
+                        // c:1941 — `an->inuse = 1;`.
                         let mut guard = crate::ported::hashtable::sufaliastab_lock()
                             .write()
                             .expect("sufaliastab poisoned");
@@ -940,21 +1060,6 @@ fn checkalias(lextext: &str) -> bool {
     }
 
     false
-}
-
-/// Push alias text back into the input stream so the lexer
-/// re-reads it. Equivalent to zsh's `inpush(text, INP_ALIAS, an)`
-/// at lex.c:1928,1938,1940. zshrs uses the existing `unget_buf`
-/// (a VecDeque<char>) to inject chars in reverse order so the
-/// next hgetc consumes them first.
-fn inject_alias_text(text: &str) {
-    // Insert at front in reverse so the first char of `text`
-    // comes out first.
-    LEX_UNGET_BUF.with_borrow_mut(|buf| {
-        for c in text.chars().rev() {
-            buf.push_front(c);
-        }
-    });
 }
 
 /// Pop the last char from the raw-input capture buffer. Direct
@@ -1019,56 +1124,76 @@ pub fn take_raw_buf() -> String {
 /// is in a clean state suitable for parsing a nested input (command
 /// substitution body, here-doc terminator, eval'd string).
 pub fn lex_context_save(ls: &mut lex_stack) {
-    // lex.c:220-233 — copy live state into the stack. The LEX_*
-    // thread_locals use idiomatic Rust types (bool / u64); canonical
-    // `lex_stack` (zsh_h.rs:1045, port of zsh.h:3082) is i32 / i64 /
-    // lexbufstate — convert at the boundary.
+    // c:218-239 — copy live state into the stack. Mirrors C
+    // field-by-field; `toplevel` param dropped because C does
+    // `(void)toplevel;` (unused).
     ls.dbparens = LEX_DBPARENS.get() as i32;
     ls.isfirstln = LEX_ISFIRSTLN.get() as i32;
-    // isfirstch — field deleted (was unused). Stash 0; canonical
-    // C tracks this for spell-correction which zshrs doesn't run.
-    ls.isfirstch = 0;
+    ls.isfirstch = LEX_ISFIRSTCH.get() as i32;
     ls.lexflags = LEX_LEXFLAGS.get();
     ls.tok = tok();
     ls.tokstr = tokstr_take();
+    // `zshlextext` (c:225) — pointer alias of `tokstr` after
+    // untokenization. zshrs derives it on demand from `tokstr` +
+    // `untokenize` so there's no separate global to stash.
+    ls.zshlextext = None;
     LEX_LEXBUF.with_borrow_mut(|b| {
         ls.lexbuf.ptr = b.ptr.take();
         ls.lexbuf.siz = b.siz;
         ls.lexbuf.len = b.len;
     });
+    ls.lex_add_raw = LEX_LEX_ADD_RAW.get();
+    ls.tokstr_raw = LEX_TOKSTR_RAW.with_borrow_mut(|t| t.take());
+    LEX_LEXBUF_RAW.with_borrow_mut(|b| {
+        ls.lexbuf_raw.ptr = b.ptr.take();
+        ls.lexbuf_raw.siz = b.siz;
+        ls.lexbuf_raw.len = b.len;
+    });
     ls.lexstop = LEX_LEXSTOP.get() as i32;
     ls.toklineno = LEX_TOKLINENO.get() as i64;
-    // zshlextext / lex_add_raw / tokstr_raw / lexbuf_raw — these
-    // are real `struct lex_stack` fields (zsh.h:3089-3093) but the
-    // lex.rs ports don't track those globals yet; they stay at their
-    // `Default` (None / 0) until the raw-token capture path is ported.
 
-    // lex.c:235-238 — reset live state to defaults so a nested
-    // parse starts from a clean slate. tokstr/lexbuf are zeroed,
-    // lexbuf.siz reset to 256 (the C-source initial alloc).
+    // c:235-238 — reset live state to defaults so a nested parse
+    // starts from a clean slate. tokstr/lexbuf zeroed; lexbuf.siz
+    // reset to 256 (the C-source initial alloc); raw buffers
+    // wiped, lex_add_raw cleared.
     set_tokstr(None);
     LEX_LEXBUF.with_borrow_mut(|b| {
         b.ptr = Some(String::with_capacity(256));
         b.siz = 256;
         b.len = 0;
     });
+    LEX_TOKSTR_RAW.with_borrow_mut(|t| *t = None);
+    LEX_LEXBUF_RAW.with_borrow_mut(|b| {
+        b.ptr = None;
+        b.siz = 0;
+        b.len = 0;
+    });
+    LEX_LEX_ADD_RAW.set(0);
 }
 
 /// zsh/Src/lex.c:245 `lex_context_restore`. Inverse of
 /// `lex_context_save`. Called after the nested parse completes.
 pub fn lex_context_restore(ls: &mut lex_stack) {
-    // lex.c:249-261 — copy stack state back into live fields.
+    // c:249-261 — copy stack state back into live fields.
     LEX_DBPARENS.set(ls.dbparens != 0);
     LEX_ISFIRSTLN.set(ls.isfirstln != 0);
-    // isfirstch — field deleted (was unused); discard ls.isfirstch.
-    let _ = ls.isfirstch;
+    LEX_ISFIRSTCH.set(ls.isfirstch != 0);
     LEX_LEXFLAGS.set(ls.lexflags);
     set_tok(ls.tok);
     set_tokstr(ls.tokstr.take());
+    // ls.zshlextext discarded — derived from tokstr (see save).
+    let _ = ls.zshlextext.take();
     LEX_LEXBUF.with_borrow_mut(|b| {
         b.ptr = Some(ls.lexbuf.ptr.take().unwrap_or_default());
         b.siz = ls.lexbuf.siz;
         b.len = ls.lexbuf.len;
+    });
+    LEX_LEX_ADD_RAW.set(ls.lex_add_raw);
+    LEX_TOKSTR_RAW.with_borrow_mut(|t| *t = ls.tokstr_raw.take());
+    LEX_LEXBUF_RAW.with_borrow_mut(|b| {
+        b.ptr = ls.lexbuf_raw.ptr.take();
+        b.siz = ls.lexbuf_raw.siz;
+        b.len = ls.lexbuf_raw.len;
     });
     LEX_LEXSTOP.set(ls.lexstop != 0);
     LEX_TOKLINENO.set(ls.toklineno as u64);
@@ -1244,12 +1369,6 @@ fn is_digit(c: char) -> bool {
     c.is_ascii_digit()
 }
 
-/// Check if character is identifier start
-#[allow(dead_code)]
-fn is_ident_start(c: char) -> bool {
-    c.is_ascii_alphabetic() || c == '_'
-}
-
 /// Check if character is identifier continuation
 fn is_ident(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
@@ -1284,11 +1403,12 @@ pub fn zshlex() {
     if LEX_INREPEAT.get() > 0 {
         LEX_INREPEAT.set(LEX_INREPEAT.get() + 1);
     }
-    // lex.c:273-274 — at the third token after `repeat`,
-    // SHORTLOOPS / SHORTREPEAT options force back into cmd
-    // position so the loop body can start. zshrs unconditionally
-    // does this since the option-lookup lives in exec.rs.
-    if LEX_INREPEAT.get() == 3 {
+    // lex.c:273-274 — `if (inrepeat_ == 3 && (isset(SHORTLOOPS) ||
+    // isset(SHORTREPEAT))) incmdpos = 1;` — at the third token after
+    // `repeat`, SHORTLOOPS/SHORTREPEAT options force back into
+    // command position so the loop body can start without an
+    // explicit `{`.
+    if LEX_INREPEAT.get() == 3 && (isset(SHORTLOOPS) || isset(SHORTREPEAT)) {
         LEX_INCMDPOS.set(true);
     }
 
@@ -1547,6 +1667,14 @@ fn process_heredocs() {
         if skip {
             continue;
         }
+        // c:284 — `cmdpush(hdocs->type == REDIR_HEREDOC ? CS_HEREDOC :
+        // CS_HEREDOCD);` — `<<-` (strip_tabs) is CS_HEREDOCD; bare
+        // `<<` is CS_HEREDOC.
+        cmdpush(if strip_tabs {
+            CS_HEREDOCD as u8
+        } else {
+            CS_HEREDOC as u8
+        });
         let mut content = String::new();
         let mut line_count = 0;
 
@@ -1556,6 +1684,8 @@ fn process_heredocs() {
                 LEX_ERROR
                     .with_borrow_mut(|e| *e = Some("heredoc exceeded 10000 lines".to_string()));
                 set_tok(LEXERR);
+                // c:289 — `cmdpop();` before returning on error.
+                cmdpop();
                 return;
             }
 
@@ -1565,6 +1695,8 @@ fn process_heredocs() {
                     *e = Some("here document too large or unterminated".to_string())
                 });
                 set_tok(LEXERR);
+                // c:289 — `cmdpop();` before returning on EOF error.
+                cmdpop();
                 return;
             }
 
@@ -1588,6 +1720,9 @@ fn process_heredocs() {
                 content.push_str(&line);
             }
         }
+
+        // c:289 — `cmdpop();` matches c:284 push on normal completion.
+        cmdpop();
 
         LEX_HEREDOCS.with_borrow_mut(|v| {
             v[i].content = content;
@@ -1636,17 +1771,18 @@ fn read_line() -> Option<String> {
 /// would Rust-port as `match c { '\\' => ..., '\n' => ..., ... }`
 /// which is what the helpers ultimately do.
 fn gettok() -> lextok {
-    // lex.c:621 — `tokstr = NULL;` reset before each token.
+    // c:617 — `int peekfd = -1;`. Local fd-prefix accumulator.
+    // Written into the global `tokfd` ONLY at redir-arm exit
+    // (c:753, 864, 913) — mirrored in lex_inang / lex_outang.
+    let mut peekfd: i32 = -1;
+    // c:620 — `tokstr = NULL;`. Reset before each token.
     set_tokstr(None);
-    // (zshrs-specific: tokfd reset lives here too — C does it
-    // implicitly via the `peekfd = -1` local at lex.c:617 used
-    // only when a digit-prefix redirection is detected.)
-    LEX_TOKFD.set(-1);
 
-    // lex.c:622 — `while (iblank(c = hgetc()) && !lexstop);` —
-    // skip leading blanks (space/tab, NOT newline).
+    // c:622 — `while (iblank(c = hgetc()) && !lexstop);` — skip
+    // leading blanks (space/tab, NOT newline). Keep `c` from the
+    // loop; don't unget+reread.
     let mut ws_iterations = 0;
-    loop {
+    let c = loop {
         ws_iterations += 1;
         if ws_iterations > 100_000 {
             LEX_ERROR.with_borrow_mut(|e| {
@@ -1654,11 +1790,12 @@ fn gettok() -> lextok {
             });
             return LEXERR;
         }
-        let c = match hgetc() {
-            Some(c) => c,
+        match hgetc() {
+            Some(ch) if is_blank(ch) => continue,
+            Some(ch) => break ch,
             None => {
-                // lex.c:624-625 — lexstop set, return ENDINPUT
-                // (or LEXERR if errflag is set elsewhere).
+                // c:624-625 — `if (lexstop) return (errflag) ?
+                // LEXERR : ENDINPUT;`
                 LEX_LEXSTOP.set(true);
                 return if LEX_ERROR.with_borrow(|e| e.is_some()) {
                     LEXERR
@@ -1666,64 +1803,107 @@ fn gettok() -> lextok {
                     ENDINPUT
                 };
             }
-        };
-
-        if !is_blank(c) {
-            hungetc(c);
-            break;
-        }
-    }
-
-    let c = match hgetc() {
-        Some(c) => c,
-        None => {
-            LEX_LEXSTOP.set(true);
-            return ENDINPUT;
         }
     };
 
-    // lex.c:623 — `toklineno = lineno;`
+    // c:623 — `toklineno = lineno;` runs BEFORE the lexstop check
+    // (matches C ordering: assign first, then check stop).
     LEX_TOKLINENO.set(LEX_LINENO.get());
-    // lex.c:626 — `isfirstln = 0;` once we've consumed any non-
-    // blank.
+    // c:626 — `isfirstln = 0;`
     LEX_ISFIRSTLN.set(false);
 
-    // lex.c:631-648 — dbparens (inside `(( … ))`) special path:
-    // call dquote_parse with `;` or `)` as the end-char and
-    // either return DINPAR (continue for-loop arith) or DOUTPAR
-    // (close the arith block) or LEXERR.
+    // c:627-628 — `if ((lexflags & LEXFLAGS_ZLE) && !(inbufflags
+    // & INP_ALIAS)) wordbeg = inbufct - (qbang && c == bangchar);`
+    // ZLE word-begin tracking; consumed by `gotword` (c:1882).
+    let qbang_at_bang =
+        crate::ported::hist::qbang.load(std::sync::atomic::Ordering::SeqCst) && c == bangchar;
+    let qbang_adj: i32 = if qbang_at_bang { 1 } else { 0 };
+    if (LEX_LEXFLAGS.get() & LEXFLAGS_ZLE) != 0
+        && (crate::ported::input::inbufflags.with(|f| f.get()) & crate::ported::zsh_h::INP_ALIAS)
+            == 0
+    {
+        LEX_WORDBEG.set(crate::ported::input::inbufct.with(|c| c.get()) - qbang_adj);
+    }
+    // c:630 — `hwbegin(-1-(qbang && c == bangchar));` — start a
+    // new history word. C `hwbegin` is a function pointer flipped
+    // by `hbegin()` between `ihwbegin` (real, hist.c:1656) and
+    // `nohwb` (no-op). zshrs doesn't flip the pointer yet but
+    // `ihwbegin` itself is a no-op when history is inactive
+    // (`stophist == 2` or `histactive & HA_INWORD`), so calling it
+    // unconditionally matches the inactive case.
+    crate::ported::hist::ihwbegin(-1 - qbang_adj);
+
+    // c:631-648 — `if (dbparens)` block, inlined verbatim from
+    // gettok body. Lexes the body of `(( ... ))` arithmetic.
     if LEX_DBPARENS.get() {
-        return lex_arith(c);
+        // c:632 — `lexbuf.len = 0; lexbuf.ptr = tokstr = hcalloc(...);`
+        LEX_LEXBUF.with_borrow_mut(|b| b.clear());
+        // c:633 — `hungetc(c);`
+        hungetc(c);
+        // c:634-637 — `cmdpush(CS_MATH); c = dquote_parse(infor ?
+        // ';' : ')', 0); cmdpop();`
+        let end_char = if LEX_INFOR.get() > 0 { ';' } else { ')' };
+        cmdpush(CS_MATH as u8);
+        let parse_ok = dquote_parse(end_char, false).is_ok();
+        cmdpop();
+        if !parse_ok {
+            return LEXERR;
+        }
+        // c:638 — `*lexbuf.ptr = '\0';`
+        set_tokstr(Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string())));
+        // c:639-642 — `if (!c && infor) { infor--; return DINPAR; }`
+        if LEX_INFOR.get() > 0 {
+            LEX_INFOR.set(LEX_INFOR.get() - 1);
+            return DINPAR;
+        }
+        // c:643-646 — `if (c || (c = hgetc()) != ')') { hungetc(c);
+        // return LEXERR; }`
+        match hgetc() {
+            Some(')') => {
+                // c:647 — `dbparens = 0;` / c:648 — `return DOUTPAR;`
+                LEX_DBPARENS.set(false);
+                return DOUTPAR;
+            }
+            c => {
+                if let Some(c) = c {
+                    hungetc(c);
+                }
+                return LEXERR;
+            }
+        }
     }
 
-    // lex.c:649-668 — digit prefix on a redirection: `2> file`
-    // treats `2` as the fd to redirect, not a literal arg. Three
-    // shapes: `N>`/`N<` (single redir), `N&>` (errwrite), or
-    // anything else (push back, treat as literal digit).
+    // treats `2` as the fd to redirect. Three shapes: `N>`/`N<`
+    // (single redir), `N&>` (errwrite), or anything else (push
+    // back, treat as literal digit). The digit is captured into
+    // `peekfd` and `c` is rewritten to the operator char so the
+    // LX1 dispatch sees the redir, not the digit.
+    let mut c = c;
     if is_digit(c) {
         let d = hgetc();
         match d {
             Some('&') => {
                 let e = hgetc();
                 if e == Some('>') {
-                    // lex.c:653-657 — `N&>` shape detected.
-                    LEX_TOKFD.set((c as u8 - b'0') as i32);
+                    // c:653-657 — `N&>` shape detected.
+                    peekfd = (c as u8 - b'0') as i32;
                     hungetc('>');
-                    return lex_initial('&');
+                    c = '&';
+                } else {
+                    // c:658-661 — not `N&>`, push everything back.
+                    if let Some(e) = e {
+                        hungetc(e);
+                    }
+                    hungetc('&');
                 }
-                // lex.c:658-661 — not `N&>`, push everything back.
-                if let Some(e) = e {
-                    hungetc(e);
-                }
-                hungetc('&');
             }
             Some('>') | Some('<') => {
-                // lex.c:662-664 — `N>` or `N<` shape detected.
-                LEX_TOKFD.set((c as u8 - b'0') as i32);
-                return lex_initial(d.unwrap());
+                // c:662-664 — `N>` or `N<` shape detected.
+                peekfd = (c as u8 - b'0') as i32;
+                c = d.unwrap();
             }
             Some(d) => {
-                // lex.c:665-668 — not a redir prefix, push back.
+                // c:665-668 — not a redir prefix, push back.
                 hungetc(d);
             }
             None => {}
@@ -1731,55 +1911,76 @@ fn gettok() -> lextok {
         LEX_LEXSTOP.set(false);
     }
 
-    // lex.c:670-936 — main dispatch on the leading char. zshrs
-    // delegates to lex_initial which holds the equivalent of
-    // lex.c's `switch (lexact1[c])` plus the gettokstr fallback
-    // for LX1_OTHER.
-    lex_initial(c)
+    // c:670-936 — main dispatch on the leading char. `peekfd`
+    // threads into `lex_inang`/`lex_outang` (and the LX1_AMPER →
+    // LX1_OUTANG-handoff path inside lex_initial) so each redir-
+    // token return-site can mirror C's `tokfd = peekfd` write
+    // (c:753, 864, 913).
+    lex_initial(c, peekfd)
 }
 
-/// Lex (( ... )) arithmetic expression
-fn lex_arith(c: char) -> lextok {
-    LEX_LEXBUF.with_borrow_mut(|b| b.clear());
-    hungetc(c);
-
-    let end_char = if LEX_INFOR.get() > 0 { ';' } else { ')' };
-    if dquote_parse(end_char, false).is_err() {
-        return LEXERR;
-    }
-
-    set_tokstr(Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string())));
-
-    if !LEX_LEXSTOP.get() && LEX_INFOR.get() > 0 {
-        LEX_INFOR.set(LEX_INFOR.get() - 1);
-        return DINPAR;
-    }
-
-    // Check for closing ))
-    match hgetc() {
-        Some(')') => {
-            LEX_DBPARENS.set(false);
-            DOUTPAR
-        }
-        c => {
-            if let Some(c) = c {
-                hungetc(c);
-            }
-            LEXERR
-        }
-    }
-}
+const hashchar: char = '#';
+const bangchar: char = '!';
+const hatchar: char = '^';
 
 /// Handle initial character of token. Direct port of the
 /// `switch (lexact1[STOUC(c)])` dispatch at `Src/lex.c:725`. The
 /// table is built once by `initlextabs()`; each LX1_* case below
 /// mirrors one `case` arm in C.
-fn lex_initial(c: char) -> lextok {
+fn lex_initial(c: char, peekfd: i32) -> lextok {
     // c:678 — comment handling runs BEFORE the table dispatch (the
     // hashchar check is special-cased because comments aren't a
     // single-byte action — they consume the rest of the line).
-    if c == '#' && !LEX_NOCOMMENTS.get() {
-        return lex_comment();
+    // c:678 — `if (c == hashchar && !nocomments &&
+    //   (isset(INTERACTIVECOMMENTS) ||
+    //    ((!lexflags || (lexflags & LEXFLAGS_COMMENTS)) && !expanding &&
+    //     (!interact || unset(SHINSTDIN) || strin))))`.
+    //
+    // Comments only fire when `#` is at word-start AND one of:
+    //   1. INTERACTIVECOMMENTS option is set; OR
+    //   2. Non-interactive: lexflags allows comments AND not currently
+    //      expanding AND (not interactive OR not reading stdin OR
+    //      reading from a string).
+    //
+    // `expanding` and `strin` globals aren't ported yet — treated as 0
+    // (the safe default for non-completion non-string-eval paths).
+    let lexflags = LEX_LEXFLAGS.get();
+    let allow_comment_via_flags = (lexflags == 0 || (lexflags & LEXFLAGS_COMMENTS) != 0)
+        && (!crate::ported::zsh_h::interact() || unset(SHINSTDIN));
+    if c == hashchar
+        && !LEX_NOCOMMENTS.get()
+        && (isset(INTERACTIVECOMMENTS) || allow_comment_via_flags)
+    {
+        // c:686-707 — comment body. Under LEXFLAGS_COMMENTS_KEEP,
+        // capture the comment text as a STRING token; under
+        // LEXFLAGS_COMMENTS_STRIP, return ENDINPUT at EOF; default
+        // is to read-and-drop the comment and return NEWLIN.
+        if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_KEEP != 0 {
+            LEX_LEXBUF.with_borrow_mut(|b| b.clear());
+            add('#');
+        }
+        loop {
+            let c = hgetc();
+            match c {
+                Some('\n') | None => break,
+                Some(c) => {
+                    if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_KEEP != 0 {
+                        add(c);
+                    }
+                }
+            }
+        }
+        if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_KEEP != 0 {
+            set_tokstr(Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string())));
+            if !LEX_LEXSTOP.get() {
+                hungetc('\n');
+            }
+            return STRING_LEX;
+        }
+        if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_STRIP != 0 && LEX_LEXSTOP.get() {
+            return ENDINPUT;
+        }
+        return NEWLIN;
     }
 
     // c:725 — `switch (lexact1[STOUC(c)])` table-driven dispatch.
@@ -1822,7 +2023,9 @@ fn lex_initial(c: char) -> lextok {
                 Some('&') => DAMPER,
                 Some('!') | Some('|') => AMPERBANG,
                 Some('>') => {
-                    LEX_TOKFD.set(LEX_TOKFD.get().max(0));
+                    // c:753 — `tokfd = peekfd;` before the `&>` shape
+                    // continues into the LX1_OUTANG-like dispatch.
+                    LEX_TOKFD.set(peekfd);
                     let e = hgetc();
                     match e {
                         Some('!') | Some('|') => OUTANGAMPBANG,
@@ -1881,7 +2084,11 @@ fn lex_initial(c: char) -> lextok {
                         LEX_DBPARENS.set(true);
                         return DINPAR;
                     }
-                    if LEX_INCMDPOS.get() {
+                    // c:788 — `if (incmdpos || (isset(SHGLOB) &&
+                    // !isset(KSHGLOB)))` — under SHGLOB-without-KSHGLOB,
+                    // `((` is also math/subshell-eligible even when
+                    // not at command position.
+                    if LEX_INCMDPOS.get() || (isset(SHGLOB) && unset(KSHGLOB)) {
                         // Could be (( arithmetic )) or ( subshell )
                         LEX_LEXBUF.with_borrow_mut(|b| b.clear());
                         match cmd_or_math() {
@@ -1908,15 +2115,18 @@ fn lex_initial(c: char) -> lextok {
                         hungetc(d);
                     }
                     LEX_LEXSTOP.set(false);
-                    // Per lex.c:822 LX1_INPAR — at word boundary `(`
-                    // tokenizes as Inpar when SHGLOB || incond==1 ||
-                    // incmdpos. Otherwise falls through to gettokstr
-                    // (the `(` becomes start of a Stringg — typical
-                    // for unquoted glob args like `ls (^foo)*`).
-                    // For `for x ( ... )` form, incmdpos is restored
-                    // to 1 via the oldpos-save-after-FOR mechanism,
-                    // so the next-token `(` correctly Inpar-izes.
-                    if LEX_INCOND.get() == 1 || LEX_INCMDPOS.get() || LEX_INCASEPAT.get() >= 1 {
+                    // c:821 — `if (!(isset(SHGLOB) || incond == 1 ||
+                    // incmdpos)) break; return INPAR;` — at word
+                    // boundary `(` tokenizes as Inpar when SHGLOB or
+                    // incond==1 or incmdpos. Otherwise breaks out
+                    // (falls through to gettokstr so `(` starts a
+                    // Stringg — typical for unquoted glob args like
+                    // `ls (^foo)*`).
+                    if isset(SHGLOB)
+                        || LEX_INCOND.get() == 1
+                        || LEX_INCMDPOS.get()
+                        || LEX_INCASEPAT.get() >= 1
+                    {
                         INPAR_TOK
                     } else {
                         gettokstr('(', false)
@@ -1927,279 +2137,164 @@ fn lex_initial(c: char) -> lextok {
 
         LX1_OUTPAR => OUTPAR_TOK,
 
+        // c:826-864 — `case LX1_INANG:` body. In pattern context
+        // (`incondpat`/`incasepat`), `<` is literal and falls
+        // through to gettokstr (zshrs-only guard for `[[ < ]]`).
         LX1_INANG => {
-            // c:826 — `<` in initial position. In pattern context
-            // (`incondpat`/`incasepat`), `<` is literal.
             if LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
-                gettokstr(c, false)
-            } else {
-                lex_inang()
+                return gettokstr(c, false);
             }
+            let d = hgetc();
+            let peek = match d {
+                Some('(') => {
+                    // c:828-832 — `<(...)` process substitution.
+                    // Fall through to gettokstr; tokfd write doesn't
+                    // apply (process-sub, not a redir).
+                    hungetc('(');
+                    LEX_LEXSTOP.set(false);
+                    return gettokstr('<', false);
+                }
+                Some('>') => INOUTANG,
+                Some('<') => {
+                    let e = hgetc();
+                    match e {
+                        Some('(') => {
+                            hungetc('(');
+                            hungetc('<');
+                            INANG_TOK
+                        }
+                        Some('<') => TRINANG,
+                        Some('-') => {
+                            LEX_HEREDOC_PENDING.set(2); // <<- expects terminator next
+                            DINANGDASH
+                        }
+                        _ => {
+                            if let Some(e) = e {
+                                hungetc(e);
+                            }
+                            LEX_LEXSTOP.set(false);
+                            LEX_HEREDOC_PENDING.set(1); // << expects terminator next
+                            DINANG
+                        }
+                    }
+                }
+                Some('&') => INANGAMP,
+                _ => {
+                    if let Some(d) = d {
+                        hungetc(d);
+                    }
+                    LEX_LEXSTOP.set(false);
+                    INANG_TOK
+                }
+            };
+            // c:864 — `tokfd = peekfd; return peek;`.
+            LEX_TOKFD.set(peekfd);
+            peek
         }
 
+        // c:866-914 — `case LX1_OUTANG:` body.
         LX1_OUTANG => {
-            // c:866 — `>` in initial position. In pattern context,
-            // `>` is literal.
             if LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
-                gettokstr(c, false)
-            } else {
-                lex_outang()
+                return gettokstr(c, false);
             }
+            let d = hgetc();
+            let peek = match d {
+                Some('(') => {
+                    // `>(...)` process substitution.
+                    hungetc('(');
+                    LEX_LEXSTOP.set(false);
+                    return gettokstr('>', false);
+                }
+                Some('&') => {
+                    let e = hgetc();
+                    match e {
+                        Some('!') | Some('|') => OUTANGAMPBANG,
+                        _ => {
+                            if let Some(e) = e {
+                                hungetc(e);
+                            }
+                            LEX_LEXSTOP.set(false);
+                            OUTANGAMP
+                        }
+                    }
+                }
+                Some('!') | Some('|') => OUTANGBANG,
+                Some('>') => {
+                    let e = hgetc();
+                    match e {
+                        Some('&') => {
+                            let f = hgetc();
+                            match f {
+                                Some('!') | Some('|') => DOUTANGAMPBANG,
+                                _ => {
+                                    if let Some(f) = f {
+                                        hungetc(f);
+                                    }
+                                    LEX_LEXSTOP.set(false);
+                                    DOUTANGAMP
+                                }
+                            }
+                        }
+                        Some('!') | Some('|') => DOUTANGBANG,
+                        Some('(') => {
+                            hungetc('(');
+                            hungetc('>');
+                            OUTANG_TOK
+                        }
+                        _ => {
+                            if let Some(e) = e {
+                                hungetc(e);
+                            }
+                            LEX_LEXSTOP.set(false);
+                            // c:903 — `if (isset(HISTALLOWCLOBBER))
+                            // hwaddc('|');`
+                            if isset(HISTALLOWCLOBBER) {
+                                hwaddc('|');
+                            }
+                            DOUTANG
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(d) = d {
+                        hungetc(d);
+                    }
+                    LEX_LEXSTOP.set(false);
+                    // c:910 — `if (!incond && isset(HISTALLOWCLOBBER))
+                    // hwaddc('|');`
+                    if LEX_INCOND.get() == 0 && isset(HISTALLOWCLOBBER) {
+                        hwaddc('|');
+                    }
+                    OUTANG_TOK
+                }
+            };
+            // c:913 — `tokfd = peekfd; return peek;`.
+            LEX_TOKFD.set(peekfd);
+            peek
         }
 
-        // LX1_OTHER (15) and unmapped indices (1=q reserved for comment,
-        // 4=!, 9={, 10=}, 11=[, 12=]) — these fall through to the
-        // char-specific handling below. C lex.c handles `{`/`}`/`[`/`]`
-        // inside gettokstr via lexact2[]; zshrs needs them at the
-        // top level for `[[ ]]` / `{}` empty block / `[[ test ]]`
-        // shape recognition, so we keep an inner char-match for the
-        // LX1_OTHER fallthrough.
-        _ => return lex_initial_other(c),
-    }
-}
-
-/// Char-specific dispatch for chars that map to `LX1_OTHER` (or
-/// unmapped indices that fall through). Contains zshrs's
-/// `{`/`}`/`[`/`]` recognition shortcuts that C handles inside
-/// `gettokstr` via the `lexact2[]` table.
-fn lex_initial_other(c: char) -> lextok {
-    match c {
-        '{' => {
-            // { is a command group only if followed by whitespace,
-            // newline, or `}` (the empty-block form `{}`). zsh
-            // treats `{}` as an empty compound — `foo() {}` is a
-            // valid no-op function. Without `}` in this list,
-            // `{}` got consumed as one literal token and ran as a
-            // command, failing "command not found: {}".
-            // The empty `{}` is also recognised AFTER a function
-            // header `name()` even when `incmdpos` got cleared by
-            // the preceding Outpar — peek for `}` regardless and
-            // treat as Inbrace so `foo() {}` parses as a no-op
-            // function body.
-            let next = hgetc();
-            let next_is_close = matches!(next, Some('}'));
-            if LEX_INCMDPOS.get() {
-                let is_brace_group = matches!(next, Some(' ' | '\t' | '\n' | '}') | None);
-                if let Some(ch) = next {
-                    hungetc(ch);
-                }
-                if is_brace_group {
-                    set_tokstr(Some("{".to_string()));
-                    INBRACE_TOK
-                } else {
-                    gettokstr(c, false)
-                }
-            } else if next_is_close {
-                // `{}` empty block in non-cmd position (function
-                // body after `()`). Treat as Inbrace; the parser
-                // will follow with Outbrace.
-                if let Some(ch) = next {
-                    hungetc(ch);
-                }
-                set_tokstr(Some("{".to_string()));
-                INBRACE_TOK
-            } else {
-                if let Some(ch) = next {
-                    hungetc(ch);
-                }
-                gettokstr(c, false)
-            }
-        }
-
-        '}' => {
-            // } at start of token is always Outbrace (ends command group)
-            // Inside a word, } would be handled by gettokstr but we never reach here mid-word
-            set_tokstr(Some("}".to_string()));
-            OUTBRACE_TOK
-        }
-
-        '[' => {
-            // [[ is a conditional expression start
-            // [ can also be a command (test builtin) or array subscript
-            // In case patterns (incasepat > 0), [ is part of glob pattern like [yY]
-            if LEX_INCASEPAT.get() > 0 {
-                gettokstr(c, false)
-            } else if LEX_INCMDPOS.get() {
-                let next = hgetc();
-                if next == Some('[') {
-                    // [[ - double bracket conditional
-                    set_tokstr(Some("[[".to_string()));
-                    LEX_INCOND.set(1);
-                    return DINBRACK;
-                }
-                // Single [ - either test command or start of glob pattern
-                if let Some(ch) = next {
-                    hungetc(ch);
-                }
-                set_tokstr(Some("[".to_string()));
-                STRING_LEX
-            } else {
-                gettokstr(c, false)
-            }
-        }
-
-        ']' => {
-            // ]] ends a conditional expression started by [[
-            if LEX_INCOND.get() > 0 {
-                let next = hgetc();
-                if next == Some(']') {
-                    set_tokstr(Some("]]".to_string()));
-                    LEX_INCOND.set(0);
-                    return DOUTBRACK;
-                }
-                if let Some(ch) = next {
-                    hungetc(ch);
-                }
-            }
-            gettokstr(c, false)
-        }
-
+        // c:918 — `case LX1_OTHER: return gettokstr(c, 0);`. All
+        // non-redir, non-separator chars (including `{`/`}`/`[`/`]`)
+        // fall into gettokstr; the LX2_* arms handle word shape.
+        // Reserved-word promotion (`{` → INBRACE, `[[` → DINBRACK,
+        // etc.) happens in exalias via reswdtab lookup (c:2002-2005).
         _ => gettokstr(c, false),
     }
 }
 
-/// Lex comment
-fn lex_comment() -> lextok {
-    if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_KEEP != 0 {
-        LEX_LEXBUF.with_borrow_mut(|b| b.clear());
-        add('#');
-    }
-
-    loop {
-        let c = hgetc();
-        match c {
-            Some('\n') | None => break,
-            Some(c) => {
-                if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_KEEP != 0 {
-                    add(c);
-                }
-            }
-        }
-    }
-
-    if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_KEEP != 0 {
-        set_tokstr(Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string())));
-        if !LEX_LEXSTOP.get() {
-            hungetc('\n');
-        }
-        return STRING_LEX;
-    }
-
-    if LEX_LEXFLAGS.get() & LEXFLAGS_COMMENTS_STRIP != 0 && LEX_LEXSTOP.get() {
-        return ENDINPUT;
-    }
-
-    NEWLIN
-}
-
-/// Lex < and variants
-fn lex_inang() -> lextok {
-    let d = hgetc();
-    match d {
-        Some('(') => {
-            // Process substitution <(...)
-            hungetc('(');
-            LEX_LEXSTOP.set(false);
-            gettokstr('<', false)
-        }
-        Some('>') => INOUTANG,
-        Some('<') => {
-            let e = hgetc();
-            match e {
-                Some('(') => {
-                    hungetc('(');
-                    hungetc('<');
-                    INANG_TOK
-                }
-                Some('<') => TRINANG,
-                Some('-') => {
-                    LEX_HEREDOC_PENDING.set(2); // <<- expects terminator next
-                    DINANGDASH
-                }
-                _ => {
-                    if let Some(e) = e {
-                        hungetc(e);
-                    }
-                    LEX_LEXSTOP.set(false);
-                    LEX_HEREDOC_PENDING.set(1); // << expects terminator next
-                    DINANG
-                }
-            }
-        }
-        Some('&') => INANGAMP,
-        _ => {
-            if let Some(d) = d {
-                hungetc(d);
-            }
-            LEX_LEXSTOP.set(false);
-            INANG_TOK
-        }
-    }
-}
-
-/// Lex > and variants
-fn lex_outang() -> lextok {
-    let d = hgetc();
-    match d {
-        Some('(') => {
-            // Process substitution >(...)
-            hungetc('(');
-            LEX_LEXSTOP.set(false);
-            gettokstr('>', false)
-        }
-        Some('&') => {
-            let e = hgetc();
-            match e {
-                Some('!') | Some('|') => OUTANGAMPBANG,
-                _ => {
-                    if let Some(e) = e {
-                        hungetc(e);
-                    }
-                    LEX_LEXSTOP.set(false);
-                    OUTANGAMP
-                }
-            }
-        }
-        Some('!') | Some('|') => OUTANGBANG,
-        Some('>') => {
-            let e = hgetc();
-            match e {
-                Some('&') => {
-                    let f = hgetc();
-                    match f {
-                        Some('!') | Some('|') => DOUTANGAMPBANG,
-                        _ => {
-                            if let Some(f) = f {
-                                hungetc(f);
-                            }
-                            LEX_LEXSTOP.set(false);
-                            DOUTANGAMP
-                        }
-                    }
-                }
-                Some('!') | Some('|') => DOUTANGBANG,
-                Some('(') => {
-                    hungetc('(');
-                    hungetc('>');
-                    OUTANG_TOK
-                }
-                _ => {
-                    if let Some(e) = e {
-                        hungetc(e);
-                    }
-                    LEX_LEXSTOP.set(false);
-                    DOUTANG
-                }
-            }
-        }
-        _ => {
-            if let Some(d) = d {
-                hungetc(d);
-            }
-            LEX_LEXSTOP.set(false);
-            OUTANG_TOK
-        }
-    }
+/// Port of `void (*hwaddc)(int)` from `Src/hist.c:43` — function-
+/// pointer that the history layer flips between `ihwaddc` (real
+/// append at hist.c:357, ported at `hist::ihwaddc`) when history
+/// is active, and `nohw` (dummy at hist.c:1062) when it isn't.
+/// Setup happens in `hbegin()` at hist.c:1141/1151. zshrs doesn't
+/// flip the pointer yet, but `ihwaddc` is itself a no-op when
+/// `chline` is empty, so calling it unconditionally matches C
+/// behavior for the history-inactive case. The HISTALLOWCLOBBER
+/// caller sites at `Src/lex.c:903, 910` write `|` so the history
+/// line records the implicit clobber as `>|`/`>>|`.
+#[inline]
+fn hwaddc(c: char) {
+    crate::ported::hist::ihwaddc(c as i32);
 }
 
 /// Get rest of token string
@@ -2209,6 +2304,11 @@ fn gettokstr(c: char, sub: bool) -> lextok {
     let mut pct = 0; // parenthesis count
     let mut brct = 0; // bracket count
     let mut in_brace_param = 0;
+    // c:940 — `int cmdsubst = 0;`. Tracks whether we entered the
+    // brace from `$(...)` command substitution (relevant for the
+    // IGNOREBRACES check at lex.c:1138).
+    let mut cmdsubst: bool = false;
+    let _ = &mut cmdsubst; // suppress unused-warn until LX2_STRING wires it
     let mut peek = STRING_LEX;
     let mut intpos = 1;
     let mut unmatched = '\0';
@@ -2236,9 +2336,20 @@ fn gettokstr(c: char, sub: bool) -> lextok {
             break;
         }
 
-        match c {
-            // Whitespace is handled above for most cases
+        // c:954 — `switch (lexact2[STOUC(c)])` table-driven dispatch.
+        // Each LX2_* arm below mirrors one C `case` from Src/lex.c.
+        // Char-with-context guards (`bct > 0`, `brct > 0`, etc.) stay
+        // inline where C uses them.
+        match lexact2_get(c) {
+            // c:982 — `case LX2_OUTPAR:` — `)`.
+            //
+            // c:989 — `if ((sub || in_brace_param) && isset(SHGLOB)) break;`
+            // Under SHGLOB, a `)` inside `${...}` or substitution context
+            // ends the token rather than being added.
             LX2_OUTPAR => {
+                if (sub || in_brace_param > 0) && isset(SHGLOB) {
+                    break;
+                }
                 if in_brace_param > 0 || sub {
                     add(Outpar);
                 } else if pct > 0 {
@@ -2249,19 +2360,27 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 }
             }
 
-            '|' => {
+            // c:1001 — `case LX2_BAR:`.
+            //
+            // c:1005 — `if (unset(SHGLOB) || (!sub && !in_brace_param))
+            // c = Bar;` — under SHGLOB inside substitution/brace
+            // param, `|` is left as literal `|` not tokenised to `Bar`.
+            LX2_BAR => {
                 if pct == 0 && in_brace_param == 0 {
                     if sub {
                         add(c);
                     } else {
                         break;
                     }
-                } else {
+                } else if unset(SHGLOB) || (!sub && in_brace_param == 0) {
                     add(Bar);
+                } else {
+                    add(c);
                 }
             }
 
-            '$' => {
+            // c:1019 — `case LX2_STRING:` — `$`.
+            LX2_STRING => {
                 let e = hgetc();
                 match e {
                     Some('\\') => {
@@ -2278,10 +2397,15 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         }
                     }
                     Some('[') => {
-                        // $[...] arithmetic
+                        // c:1023 — `$[...]` arithmetic substitution.
+                        // C: `cmdpush(CS_MATHSUBST); ... c =
+                        // dquote_parse(']', sub); cmdpop();`
                         add(Stringg);
                         add(Inbrack);
-                        if dquote_parse(']', sub).is_err() {
+                        cmdpush(CS_MATHSUBST as u8);
+                        let r = dquote_parse(']', sub);
+                        cmdpop();
+                        if r.is_err() {
                             peek = LEXERR;
                             break;
                         }
@@ -2300,9 +2424,13 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         }
                     }
                     Some('{') => {
+                        // c:1053 — `${...}` parameter expansion. C:
+                        // `cmdpush(CS_BRACEPAR); ++bct;
+                        // if (!in_brace_param) in_brace_param = bct;`
                         add(c);
                         add(Inbrace);
                         bct += 1;
+                        cmdpush(CS_BRACEPAR as u8);
                         if in_brace_param == 0 {
                             in_brace_param = bct;
                         }
@@ -2379,48 +2507,65 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 }
             }
 
-            '[' => {
+            // c:1057 — `case LX2_INBRACK:` — `[`.
+            LX2_INBRACK => {
                 if in_brace_param == 0 {
                     brct += 1;
                 }
                 add(Inbrack);
             }
 
-            ']' => {
+            // c:1063 — `case LX2_OUTBRACK:` — `]`.
+            LX2_OUTBRACK => {
                 if in_brace_param == 0 && brct > 0 {
                     brct -= 1;
                 }
                 add(Outbrack);
             }
 
-            '(' => {
-                // lex.c:1078-1135 LX2_INPAR — when `(` appears inside
-                // a Stringg and is immediately followed by `)`, the
-                // string terminates at the `(`. The `()` is then
-                // re-lexed as a separate INOUTPAR token. This handles
-                // function definitions: `name()` lexes as Stringg `name`
-                // + INOUTPAR `()`, not Stringg `name()`.
+            // c:1078 — `case LX2_INPAR:` — `(`.
+            LX2_INPAR => {
+                // c:1079-1086 — under SHGLOB, `(` inside `${...}` or
+                // substitution context breaks; and `(` after a non-
+                // empty lexbuf is a break unless KSHGLOB is also set
+                // (KSH-style `name(...)` pattern matching).
+                if isset(SHGLOB) {
+                    if sub || in_brace_param > 0 {
+                        break;
+                    }
+                    if unset(KSHGLOB) && LEX_LEXBUF.with_borrow(|b| b.len) > 0 {
+                        break;
+                    }
+                }
+                // c:1086-1135 — when `(` appears inside a Stringg and
+                // is immediately followed by `)`, the string
+                // terminates at the `(`. The `()` is then re-lexed as
+                // a separate INOUTPAR token. This handles function
+                // definitions: `name()` lexes as Stringg `name` +
+                // INOUTPAR `()`, not Stringg `name()`.
                 //
-                // Also (lex.c:1109-1112): under SHGLOB, a `(` followed
-                // by whitespace at the start of a command-position word
+                // c:1112-1131 — under SHGLOB, a `(` followed by
+                // whitespace at the start of a command-position word
                 // (no nested brackets/braces) is a ksh function
-                // definition signal — same break-out behavior.
+                // definition signal — same break-out behaviour.
                 if in_brace_param == 0 && !sub {
                     let e = hgetc();
                     if let Some(ch) = e {
                         hungetc(ch);
                     }
                     LEX_LEXSTOP.set(false);
-                    if e == Some(')') {
-                        // `name()` — terminate Stringg at `(` so the
-                        // following `()` re-lexes as INOUTPAR. The
-                        // loop's exit guard at line 2067 will
-                        // `hungetc(c)` to push the `(` back; we only
-                        // need to ensure `)` is also there. The
-                        // hungetc(ch) above already pushed `)`, so
-                        // breaking here yields unget_buf = [`(`, `)`]
-                        // after the guard, which the outer dispatch
-                        // reads as Inoutpar.
+                    let is_inblank = matches!(e, Some(' ' | '\t'));
+                    if e == Some(')')
+                        || (isset(SHGLOB)
+                            && is_inblank
+                            && bct == 0
+                            && brct == 0
+                            && intpos > 0
+                            && LEX_INCMDPOS.get())
+                    {
+                        // `name()` (or KSH-style `name( ... )`)
+                        // — terminate Stringg at `(` so the
+                        // following `()` re-lexes as INOUTPAR.
                         break;
                     }
                 }
@@ -2430,16 +2575,52 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 add(Inpar);
             }
 
-            '{' => {
-                // Track braces for both ${...} param expansion and {...} brace expansion
-                bct += 1;
-                add(c);
+            // c:1137 — `case LX2_INBRACE:` — `{`.
+            //
+            // c:1138 — `if ((isset(IGNOREBRACES) && !cmdsubst) || sub)
+            // c = '{';` — with IGNOREBRACES (or in substitution
+            // context), `{` is added as a literal `{`, not tokenised
+            // as Inbrace, and bct is NOT incremented.
+            //
+            // c:1147 — `if (in_brace_param) cmdpush(CS_BRACE); bct++;`
+            // — when entering a brace inside a `${...}`, push a
+            // CS_BRACE context for prompt/completion tracking.
+            LX2_INBRACE => {
+                if (isset(IGNOREBRACES) && !cmdsubst) || sub {
+                    add('{');
+                } else {
+                    if in_brace_param > 0 {
+                        cmdpush(CS_BRACE as u8);
+                    }
+                    // Track braces for both ${...} param expansion and {...} brace expansion
+                    bct += 1;
+                    add(c);
+                }
             }
 
-            '}' => {
-                if in_brace_param > 0 {
+            // c:1152 — `case LX2_OUTBRACE:` — `}`.
+            //
+            // c:1153 — `if ((isset(IGNOREBRACES) || sub) && !in_brace_param)
+            // break;` — under IGNOREBRACES (or substitution
+            // context), and not inside a `${...}`, the `}` is added
+            // as a literal `}` (via the LX2_OTHER-style fallthrough).
+            //
+            // c:1158-1162 — `if (in_brace_param) cmdpop(); if (bct--
+            // == in_brace_param) { if (cmdsubst) cmdpop();
+            // in_brace_param = cmdsubst = in_pattern = 0; }` — pop
+            // the matching CS_BRACE (and CS_BRACEPAR if closing the
+            // outermost ${...}).
+            LX2_OUTBRACE => {
+                if (isset(IGNOREBRACES) || sub) && in_brace_param == 0 {
+                    add('}');
+                } else if in_brace_param > 0 {
+                    cmdpop(); // matches CS_BRACE or CS_BRACEPAR
                     if bct == in_brace_param {
+                        if cmdsubst {
+                            cmdpop();
+                        }
                         in_brace_param = 0;
+                        cmdsubst = false;
                     }
                     bct -= 1;
                     add(Outbrace);
@@ -2452,7 +2633,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 }
             }
 
-            '>' => {
+            LX2_OUTANG => {
                 // In pattern context (incondpat), > is literal
                 if in_brace_param > 0 || sub || LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
                     add(c);
@@ -2475,7 +2656,15 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 }
             }
 
-            '<' => {
+            // c:1187 — `case LX2_INANG:` — `<`.
+            //
+            // c:1188 — `if (isset(SHGLOB) && sub) break;` — under
+            // SHGLOB inside substitution context, `<` ends the
+            // token (so e.g. `$(< file)` works as input redirection).
+            LX2_INANG => {
+                if isset(SHGLOB) && sub {
+                    break;
+                }
                 // In pattern context (incondpat), < is literal
                 if in_brace_param > 0 || sub || LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
                     add(c);
@@ -2507,7 +2696,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 }
             }
 
-            '=' => {
+            LX2_EQUALS => {
                 if !sub {
                     if intpos > 0 {
                         // At start of token, check for =(...) process substitution
@@ -2568,7 +2757,8 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 }
             }
 
-            '\\' => {
+            // c:1322 — `case LX2_BKSLASH:` — `\`.
+            LX2_BKSLASH => {
                 let next = hgetc();
                 if next == Some('\n') {
                     // Line continuation
@@ -2586,32 +2776,92 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 }
             }
 
-            '\'' => {
+            // c:1257 — `case LX2_QUOTE:` — `'`.
+            //
+            // c:1307 — `else if (!sub && isset(CSHJUNKIEQUOTES) &&
+            // c == '\n')` — under CSHJUNKIEQUOTES, a `\n` inside a
+            // single-quoted string terminates the string (unless
+            // preceded by `\`, in which case both are stripped).
+            //
+            // c:1328 — `e = hgetc(); if (e != '\'' || unset(RCQUOTES)
+            // || strquote) break; add(c);` — under RCQUOTES,
+            // a doubled `''` inside a single-quoted string is an
+            // escaped literal `'`, not the end of the string. We
+            // re-open the loop and add a literal `'`.
+            LX2_QUOTE => {
+                // c:1288 — `cmdpush(CS_QUOTE);`. Pops at c:1322 (inside
+                // RCQUOTES `''` re-entry) and c:1330 (final break).
+                cmdpush(CS_QUOTE as u8);
                 // Single quoted string - everything literal until '
                 add(Snull);
                 loop {
-                    let ch = hgetc();
-                    match ch {
-                        Some('\'') => break,
-                        Some(ch) => add(ch),
-                        None => {
-                            LEX_LEXSTOP.set(true);
-                            unmatched = '\'';
-                            peek = LEXERR;
-                            break;
+                    let inner_loop_done = loop {
+                        let ch = hgetc();
+                        match ch {
+                            Some('\'') => break false,
+                            Some('\n') if !sub && isset(CSHJUNKIEQUOTES) => {
+                                // CSHJUNKIEQUOTES: bare \n terminates.
+                                // If preceded by `\`, the backslash is
+                                // stripped (we approximate by peeking
+                                // back at the buffer).
+                                let last_was_bslash =
+                                    LEX_LEXBUF.with_borrow(|b| b.as_str().ends_with('\\'));
+                                if last_was_bslash {
+                                    LEX_LEXBUF.with_borrow_mut(|b| {
+                                        if let Some(s) = b.ptr.as_mut() {
+                                            s.pop();
+                                            b.len = s.len() as i32;
+                                        }
+                                    });
+                                } else {
+                                    break true; // terminate outer
+                                }
+                            }
+                            Some(ch) => add(ch),
+                            None => {
+                                LEX_LEXSTOP.set(true);
+                                unmatched = '\'';
+                                peek = LEXERR;
+                                break true;
+                            }
                         }
+                    };
+                    if inner_loop_done || unmatched != '\0' {
+                        break;
                     }
+                    // c:1328 — RCQUOTES `''` → literal `'`.
+                    if unset(RCQUOTES) {
+                        break;
+                    }
+                    let e = hgetc();
+                    if e != Some('\'') {
+                        if let Some(e) = e {
+                            hungetc(e);
+                        }
+                        LEX_LEXSTOP.set(false);
+                        break;
+                    }
+                    add('\'');
                 }
+                // c:1330 — `cmdpop();` matches c:1288 push.
+                cmdpop();
                 if unmatched != '\0' {
                     break;
                 }
                 add(Snull);
             }
 
-            '"' => {
+            // c:1334 — `case LX2_DQUOTE:` — `"`.
+            //
+            // c:1338-1340 — `cmdpush(CS_DQUOTE); c = dquote_parse('"',
+            // sub); cmdpop();`
+            LX2_DQUOTE => {
                 // Double quoted string
                 add(Dnull);
-                if dquote_parse('"', sub).is_err() {
+                cmdpush(CS_DQUOTE as u8);
+                let r = dquote_parse('"', sub);
+                cmdpop();
+                if r.is_err() {
                     unmatched = '"';
                     if LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE == 0 {
                         peek = LEXERR;
@@ -2621,9 +2871,21 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 add(Dnull);
             }
 
-            '`' => {
+            // c:1351 — `case LX2_BQUOTE:` — `` ` ``. Push/pop at
+            // c:1352, 1379.
+            //
+            // c:1362 — `else if (!sub && isset(CSHJUNKIEQUOTES))
+            // add(c);` — under CSHJUNKIEQUOTES, a `\<newline>` inside
+            // backticks keeps the literal newline (line continuation
+            // is NOT applied).
+            //
+            // c:1365 — `if (!sub && isset(CSHJUNKIEQUOTES) &&
+            // c == '\n') break;` — under CSHJUNKIEQUOTES, a bare `\n`
+            // inside backticks terminates the substitution.
+            LX2_BQUOTE => {
                 // Backtick command substitution
                 add(Tick);
+                cmdpush(CS_BQUOTE as u8);
                 loop {
                     let ch = hgetc();
                     match ch {
@@ -2631,7 +2893,13 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         Some('\\') => {
                             let next = hgetc();
                             match next {
-                                Some('\n') => continue, // Line continuation
+                                Some('\n') => {
+                                    if !sub && isset(CSHJUNKIEQUOTES) {
+                                        add('\n');
+                                    }
+                                    // Line continuation (default)
+                                    continue;
+                                }
                                 Some(c) if c == '`' || c == '\\' || c == '$' => {
                                     add(Bnull);
                                     add(c);
@@ -2643,6 +2911,10 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                                 None => break,
                             }
                         }
+                        Some('\n') if !sub && isset(CSHJUNKIEQUOTES) => {
+                            // CSHJUNKIEQUOTES: bare \n terminates.
+                            break;
+                        }
                         Some(ch) => add(ch),
                         None => {
                             LEX_LEXSTOP.set(true);
@@ -2652,57 +2924,72 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         }
                     }
                 }
+                // c:1379 — `cmdpop();` matches c:1352 push.
+                cmdpop();
                 if unmatched != '\0' {
                     break;
                 }
                 add(Tick);
             }
 
-            '~' => {
+            // c:1044 — `case LX2_TILDE:` — `~`.
+            LX2_TILDE => {
                 add(Tilde);
             }
 
-            '#' => {
-                add(Pound);
-            }
-
-            '^' => {
-                add(Hat);
-            }
-
-            '*' => {
-                add(Star);
-            }
-
-            '?' => {
-                add(Quest);
-            }
-
-            ',' if bct > in_brace_param => {
+            // c:1162 — `case LX2_COMMA:` — `,`.
+            //
+            // c:1163 — `if (unset(IGNOREBRACES) && !sub && bct > in_brace_param)
+            // c = Comma;` — only emit Comma (brace-expansion sep)
+            // when IGNOREBRACES is off, not in substitution context,
+            // and we are deeper than the current `${...}` brace.
+            // Otherwise emit literal `,` (falls through to LX2_OTHER).
+            LX2_COMMA if unset(IGNOREBRACES) && !sub && bct > in_brace_param => {
                 add(Comma);
             }
+            LX2_COMMA => {
+                add(c);
+            }
 
-            '-' => {
+            // c:1394 — `case LX2_DASH:` — `-`.
+            LX2_DASH => {
                 add(Dash);
             }
 
-            '!' if brct > 0 => {
+            // c:1400 — `case LX2_BANG:` — `!`.
+            LX2_BANG if brct > 0 => {
                 add(Bang);
             }
 
-            // Terminators — but only when we're at the top level of
-            // the current word. Inside a brace parameter expansion
-            // `${...}`, parenthesized flag block `(@s.;.)`, or
-            // bracketed subscript `[...]`, `;` is just a delimiter
-            // character (e.g. the field separator in `(@s.;.)`),
-            // not a statement terminator. Real zsh handles this
-            // via gettokstr's incmdpos / bct / pct accounting; we
-            // gate on the same counters.
-            '\n' | ';' | '&' if in_brace_param == 0 && pct == 0 && brct == 0 => {
+            // c:967 — `case LX2_BREAK:` — `;` and `&`.
+            //
+            // Top-level terminator only when not inside `${...}`,
+            // `(...)`, or `[...]`. Inside those, `;` is a delimiter
+            // (e.g. field separator in `(@s.;.)`), not a statement
+            // terminator. C zsh handles this via the same
+            // bct/pct/brct accounting; we mirror it.
+            LX2_BREAK if in_brace_param == 0 && pct == 0 && brct == 0 => {
                 break;
             }
-            '\n' | ';' | '&' => {
+            LX2_BREAK => {
                 add(c);
+            }
+
+            // c:1411 — `case LX2_OTHER:` — fallthrough.
+            // C translates via `c = lextok2[STOUC(c)]` then adds —
+            // turning `*` → `Star`, `?` → `Quest`, `#` → `Pound`,
+            // `^` → `Hat` (other byte-token chars `{`, `[`, `$`,
+            // `~` already have their own LX2_* arms).
+            //
+            // zshrs preserves the existing `\n` early-termination
+            // behavior at top level — C handles `\n` in `gettok`,
+            // not `gettokstr`, but our gettok hands off mid-word
+            // through `lex_initial_other`, so `\n` can land here.
+            LX2_OTHER => {
+                if c == '\n' && in_brace_param == 0 && pct == 0 && brct == 0 {
+                    break;
+                }
+                add(lextok2_get(c) as char);
             }
 
             _ => {
@@ -2797,30 +3084,28 @@ fn is_valid_assignment_target(s: &str) -> bool {
 
 /// Parse the body of a double-quoted string (or any context that
 /// uses double-quote tokenization — `(( ))`, `${...}`, `$( ( ) )`).
-/// Direct port of zsh/Src/lex.c:1486 `dquote_parse`. Reads
-/// chars until `endchar` is seen at depth 0, handling escapes,
-/// `${...}` parameter substitutions, `$(...)` and backtick command
-/// substitutions, `$((...))` arithmetic, and inner double-quoted
-/// strings. The `sub` flag toggles substitution-context tokens
-/// (lex.c:1487 `int sub` argument).
+/// Direct port of `dquote_parse` from `Src/lex.c:1486`. Reads chars
+/// until `endchar` is seen at depth 0, handling escapes, `${...}`,
+/// `$(...)`, backtick, `$((...))`, and inner `"..."`.
 ///
-/// zshrs port note: the recursion guard at the top is a Rust
-/// safety net; the C source relies on the runtime stack. Inner
-/// logic delegates to `dquote_parse_inner` which holds the actual
-/// per-char state machine matching lex.c:1495-1692.
+/// zshrs port note: a recursion-depth Cell guards against stack
+/// overflow on pathological inputs (deeply nested `${${${...}}}`);
+/// C relies on the C runtime stack, but Rust's debug stack is
+/// smaller. RAII guard ensures the depth decrement fires on every
+/// return path.
 fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
+    struct DepthGuard;
+    impl Drop for DepthGuard {
+        fn drop(&mut self) {
+            LEX_RECURSION_DEPTH.set(LEX_RECURSION_DEPTH.get() - 1);
+        }
+    }
     LEX_RECURSION_DEPTH.set(LEX_RECURSION_DEPTH.get() + 1);
+    let _depth = DepthGuard;
     if check_recursion() {
-        LEX_RECURSION_DEPTH.set(LEX_RECURSION_DEPTH.get() - 1);
         return Err(());
     }
-
-    let result = dquote_parse_inner(endchar, sub);
-    LEX_RECURSION_DEPTH.set(LEX_RECURSION_DEPTH.get() - 1);
-    result
-}
-
-fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
+    {
     let mut pct = 0; // parenthesis count
     let mut brct = 0; // bracket count
     let mut bct = 0; // brace count (for ${...})
@@ -2829,12 +3114,26 @@ fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
     const MAX_ITERATIONS: usize = 100_000;
     let mut iterations = 0;
 
+    // c:1643-1657 — on exit, drain matched-but-unpopped pushes:
+    // every CS_BQUOTE (if `intick`), CS_BRACEPAR + (CS_CURSH when
+    // it was set) (for each remaining bct level). Wrapped via
+    // closure so success + every early Err goes through cleanup.
+    let cleanup = |intick: bool, bct: i32| {
+        if intick {
+            cmdpop();
+        }
+        for _ in 0..bct {
+            cmdpop(); // CS_BRACEPAR for each remaining `{`.
+        }
+    };
+
     loop {
         iterations += 1;
         if iterations > MAX_ITERATIONS {
             LEX_ERROR.with_borrow_mut(|e| {
                 *e = Some("dquote_parse exceeded maximum iterations".to_string())
             });
+            cleanup(intick, bct);
             return Err(());
         }
         let c = hgetc();
@@ -2849,20 +3148,33 @@ fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
                     }
                     continue;
                 }
+                cleanup(intick, bct);
                 return Ok(());
             }
             Some(c) => c,
             None => {
                 LEX_LEXSTOP.set(true);
+                cleanup(intick, bct);
                 return Err(());
             }
         };
 
         match c {
+            // c:1499 — `case '\\':`.
             '\\' => {
                 let next = hgetc();
                 match next {
-                    Some('\n') if !sub => continue, // Line continuation
+                    Some('\n') => {
+                        // c:1515 — `else if (sub || unset(CSHJUNKIEQUOTES)
+                        // || endchar != '"') continue;` — under
+                        // CSHJUNKIEQUOTES inside `"..."`, `\<newline>`
+                        // is NOT line continuation; it falls through
+                        // to add literal `\n`.
+                        if sub || unset(CSHJUNKIEQUOTES) || endchar != '"' {
+                            continue;
+                        }
+                        add('\n');
+                    }
                     Some(c)
                         if c == '$'
                             || c == '\\'
@@ -2892,6 +3204,13 @@ fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
                 }
             }
 
+            // c:1517 — `case '\n': err = !sub && isset(CSHJUNKIEQUOTES)
+            // && endchar == '"';` — under CSHJUNKIEQUOTES, a bare `\n`
+            // inside `"..."` is an error (unterminated string).
+            '\n' if !sub && isset(CSHJUNKIEQUOTES) && endchar == '"' => {
+                return Err(());
+            }
+
             '$' => {
                 if intick {
                     add(c);
@@ -2908,14 +3227,21 @@ fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
                         }
                     }
                     Some('[') => {
+                        // c:1541 — `cmdpush(CS_MATHSUBST); err =
+                        // dquote_parse(']', sub); cmdpop();`
                         add(Stringg);
                         add(Inbrack);
-                        dquote_parse(']', sub)?;
+                        cmdpush(CS_MATHSUBST as u8);
+                        let r = dquote_parse(']', sub);
+                        cmdpop();
+                        r?;
                         add(Outbrack);
                     }
                     Some('{') => {
+                        // c:1548 — `cmdpush(CS_BRACEPAR); bct++;`
                         add(Qstring);
                         add(Inbrace);
+                        cmdpush(CS_BRACEPAR as u8);
                         bct += 1;
                     }
                     Some('$') => {
@@ -2936,13 +3262,25 @@ fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
                 if intick || bct == 0 {
                     add(c);
                 } else {
+                    // c:1575/1577 — `cmdpop()` for inner brace, plus
+                    // matching CS_BRACEPAR pop on the outermost
+                    // closer.
                     add(Outbrace);
+                    cmdpop();
                     bct -= 1;
                 }
             }
 
+            // c:1583 — `case '`':` — backtick toggle.
+            // c:1585 — `cmdpush(CS_BQUOTE)` on entry, c:1588
+            // `cmdpop()` on exit.
             '`' => {
                 add(Qtick);
+                if intick {
+                    cmdpop();
+                } else {
+                    cmdpush(CS_BQUOTE as u8);
+                }
                 intick = !intick;
             }
 
@@ -2984,8 +3322,13 @@ fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
                 if intick || (endchar != '"' && bct == 0) {
                     add(c);
                 } else if bct > 0 {
+                    // c:1620 — `cmdpush(CS_DQUOTE); err =
+                    // dquote_parse('"', sub); cmdpop();`
                     add(Dnull);
-                    dquote_parse('"', sub)?;
+                    cmdpush(CS_DQUOTE as u8);
+                    let r = dquote_parse('"', sub);
+                    cmdpop();
+                    r?;
                     add(Dnull);
                 } else {
                     return Err(());
@@ -3009,6 +3352,14 @@ fn dquote_parse_inner(endchar: char, sub: bool) -> Result<(), ()> {
 fn cmd_or_math() -> i32 {
     let oldlen = LEX_LEXBUF.with_borrow(|b| b.buf_len());
 
+    // c:501 — `cmdpush(cs_type);` — the C source takes a `cs_type`
+    // arg (CS_MATH or CS_MATHSUBST); zshrs's lone caller (gettok
+    // LX1_INPAR `((`) uses CS_MATH. The matching `cmdpop()` fires
+    // both on the math path (after success) and on the rewind path
+    // (before falling through to skipcomm, which has its own
+    // CS_CMDSUBST push/pop).
+    cmdpush(CS_MATH as u8);
+
     // Per lex.c:498-518 — `cmd_or_math` calls `dquote_parse(')')`
     // which fills lexbuf with ONLY the inner expression, then checks
     // for the closing `)`. The surrounding `((` / `))` are NOT added
@@ -3016,6 +3367,8 @@ fn cmd_or_math() -> i32 {
     // ')' after, polluting DINPAR's tokstr with the literal parens.
     // Removed to match C exactly.
     if dquote_parse(')', false).is_err() {
+        // c:506 — `cmdpop();` before rewind to command-parse path.
+        cmdpop();
         // Back up and try as command
         while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
             if let Some(c) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
@@ -3035,9 +3388,13 @@ fn cmd_or_math() -> i32 {
     // means `((..))` was math. Don't add `)` to lexbuf.
     let c = hgetc();
     if c == Some(')') {
+        // c:506 — `cmdpop();` on math success.
+        cmdpop();
         return CMD_OR_MATH_MATH;
     }
 
+    // c:506 — `cmdpop();` before rewind to command-parse path.
+    cmdpop();
     // Not math, back up
     if let Some(c) = c {
         hungetc(c);
@@ -3151,6 +3508,31 @@ fn cmd_or_math_sub() -> i32 {
 /// depth directly without re-entering the parser. Same
 /// invariant: stops at the matching `)`.
 fn skipcomm() -> Result<(), ()> {
+    use crate::ported::zsh_h::{ZCONTEXT_LEX, ZCONTEXT_PARSE};
+    // c:2162 — `cmdpush(CS_CMDSUBST);` / c:2289 — `cmdpop();`.
+    // c:2198 — `zcontext_save_partial(ZCONTEXT_LEX|ZCONTEXT_PARSE);`
+    // c:2262 — `zcontext_restore_partial(ZCONTEXT_LEX|ZCONTEXT_PARSE);`
+    // c:2199 — `hist_in_word(1);` / c:2284 — `hist_in_word(0);`.
+    // RAII guard ensures every return path (Ok, Err, panic) drives
+    // matching pops/restores. zshrs's skipcomm doesn't recursively
+    // re-enter the parser the way C's `parse_event(OUTPAR)` does at
+    // c:2237; the save/restore + hist_in_word bracketing is still
+    // wired so the lex state is preserved across the throw-away
+    // char-walk and any nested gettokstr calls land with a clean
+    // context.
+    struct SkipcommGuard;
+    impl Drop for SkipcommGuard {
+        fn drop(&mut self) {
+            crate::ported::hist::hist_in_word(0);
+            crate::ported::context::zcontext_restore_partial(ZCONTEXT_LEX | ZCONTEXT_PARSE);
+            cmdpop();
+        }
+    }
+    cmdpush(CS_CMDSUBST as u8);
+    crate::ported::context::zcontext_save_partial(ZCONTEXT_LEX | ZCONTEXT_PARSE);
+    crate::ported::hist::hist_in_word(1);
+    let _guard = SkipcommGuard;
+
     let mut pct = 1;
     let mut start = true;
     const MAX_ITERATIONS: usize = 100_000;
@@ -3161,9 +3543,8 @@ fn skipcomm() -> Result<(), ()> {
     loop {
         iterations += 1;
         if iterations > MAX_ITERATIONS {
-            LEX_ERROR.with_borrow_mut(|e| {
-                *e = Some("skipcomm exceeded maximum iterations".to_string())
-            });
+            LEX_ERROR
+                .with_borrow_mut(|e| *e = Some("skipcomm exceeded maximum iterations".to_string()));
             return Err(());
         }
 
@@ -3297,9 +3678,12 @@ pub fn ctxtlex() {
     // lex.c:321 — `zshlex();` to advance to the next token.
     zshlex();
 
-    // lex.c:322-358 — post-token incmdpos switch.
+    // c:322-358 — post-token incmdpos switch. C lists the
+    // arms exactly as enumerated below; `intypeset` is NOT set
+    // here in C (it lives in parse.c:1932/2042/2047, ported in
+    // parse.rs at the typeset-call sites).
     match tok() {
-        // lex.c:323-343 — separators / openers / conjunctions /
+        // c:323-343 — separators / openers / conjunctions /
         // control keywords — back into cmd-pos so the next token
         // can be a fresh command.
         SEPER | NEWLIN | SEMI | DSEMI | SEMIAMP | SEMIBAR | AMPER | AMPERBANG | INPAR_TOK
@@ -3307,29 +3691,11 @@ pub fn ctxtlex() {
         | ELSE | DOUTBRACK => {
             LEX_INCMDPOS.set(true);
         }
-        // lex.c:345-353 — word/value-shaped tokens leave cmd-pos
-        // so subsequent tokens are arguments, not a fresh command.
-        TYPESET => {
-            LEX_INCMDPOS.set(false);
-            // typeset / declare / local / export / readonly /
-            // integer / float / autoload accept assignment-shape
-            // args (NAME=value, NAME=()). Set intypeset so the
-            // lexer's `=`-after-name detector still emits Envstring
-            // / Envarray for those args. Direct port of zsh's
-            // lex.c which sets `intypeset` when one of the
-            // typeset-family commands is seen at cmdpos.
-            LEX_INTYPESET.set(true);
-        }
-        STRING_LEX | ENVARRAY | OUTPAR_TOK | CASE | DINBRACK => {
+        // c:345-353 — word/value-shaped tokens leave cmd-pos.
+        STRING_LEX | TYPESET | ENVARRAY | OUTPAR_TOK | CASE | DINBRACK => {
             LEX_INCMDPOS.set(false);
         }
-        SEPER | NEWLIN | SEMI | DSEMI | SEMIAMP | SEMIBAR | AMPER | DAMPER | DBAR | BARAMP => {
-            // End of typeset-arg list — clear the intypeset bit
-            // so subsequent commands don't see assignment-shape
-            // recognition. Direct port of zsh's lex.c which
-            // clears intypeset on every command separator.
-            LEX_INTYPESET.set(false);
-        }
+        // c:354-357 — `default: break;` — keep compiler happy.
         _ => {}
     }
 
@@ -3356,33 +3722,41 @@ pub fn ctxtlex() {
 }
 
 /// Mark the current word as the one ZLE was looking for. Direct
-/// port of zsh/Src/lex.c:1882 `gotword`. Only meaningful
-/// when the lexer was started with LEXFLAGS_ZLE for completion;
-/// after this call `lexflags` is cleared so subsequent tokens
-/// don't re-trigger word tracking.
-///
-/// zshrs port note: zsh's gotword updates `wb`/`we` (word begin/
-/// end positions) based on `zlemetacs` (cursor pos), `zlemetall`
-/// (line length), `inbufct`, and `addedx` — all live in zsh's
-/// input.c globals which zshrs hasn't wired through the lexer.
-/// Only the `lexflags = 0` side-effect at lex.c:1895 is
-/// reproducible without that integration.
+/// port of `gotword(void)` from `Src/lex.c:1882`. Computes the
+/// new-word-end (`nwe`) and new-word-begin (`nwb`) line positions
+/// based on `zlemetall`, `inbufct`, `addedx`, and `wordbeg`, then
+/// — if the cursor (`zlemetacs`) falls inside that range — writes
+/// `wb`/`we` and clears `lexflags`.
 pub fn gotword() {
-    // lex.c:1895 — `lexflags = 0;`
-    LEX_LEXFLAGS.set(0);
-}
+    use std::sync::atomic::Ordering;
+    let zlemetacs = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
+    let zlemetall = crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst);
+    let addedx = crate::ported::zle::compcore::ADDEDX.load(Ordering::SeqCst);
+    let inbufct = crate::ported::input::inbufct.with(|c| c.get());
+    let wordbeg = LEX_WORDBEG.get();
 
-/// Register a heredoc to be processed at next newline
-pub fn register_heredoc(terminator: String, strip_tabs: bool) {
-    LEX_HEREDOCS.with_borrow_mut(|v| {
-        v.push(HereDoc {
-            terminator,
-            strip_tabs,
-            content: String::new(),
-            quoted: false,
-            processed: false,
-        })
-    });
+    // c:1884 — `int nwe = zlemetall + 1 - inbufct + (addedx == 2 ? 1 : 0);`
+    let nwe = zlemetall + 1 - inbufct + if addedx == 2 { 1 } else { 0 };
+    // c:1885 — `if (zlemetacs <= nwe)`
+    if zlemetacs <= nwe {
+        // c:1886 — `int nwb = zlemetall - wordbeg + addedx;`
+        let nwb = zlemetall - wordbeg + addedx;
+        // c:1887-1893 — `if (zlemetacs >= nwb) { wb = nwb; we = nwe; }
+        // else { wb = zlemetacs + addedx; if (we < wb) we = wb; }`.
+        if zlemetacs >= nwb {
+            crate::ported::zle::compcore::WB.store(nwb, Ordering::SeqCst);
+            crate::ported::zle::compcore::WE.store(nwe, Ordering::SeqCst);
+        } else {
+            let wb_new = zlemetacs + addedx;
+            crate::ported::zle::compcore::WB.store(wb_new, Ordering::SeqCst);
+            let we_cur = crate::ported::zle::compcore::WE.load(Ordering::SeqCst);
+            if we_cur < wb_new {
+                crate::ported::zle::compcore::WE.store(wb_new, Ordering::SeqCst);
+            }
+        }
+        // c:1895 — `lexflags = 0;`
+        LEX_LEXFLAGS.set(0);
+    }
 }
 
 /// Check for reserved word — mirrors lex.c:2002-2015 in `exalias`,
@@ -3436,7 +3810,6 @@ pub fn check_reserved_word() -> bool {
     }
     false
 }
-
 
 // Direct port of the anonymous enum at `Src/lex.c:483-487`:
 //   enum { CMD_OR_MATH_CMD, CMD_OR_MATH_MATH, CMD_OR_MATH_ERR };
@@ -4042,214 +4415,203 @@ mod tests {
 
     #[test]
     fn test_simple_command() {
-        let _ = crate::ported::lex::lex_init("echo hello");
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
-        assert_eq!(crate::ported::lex::tokstr(), Some("echo".to_string()));
+        let _ = lex_init("echo hello");
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
+        assert_eq!(tokstr(), Some("echo".to_string()));
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
-        assert_eq!(crate::ported::lex::tokstr(), Some("hello".to_string()));
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
+        assert_eq!(tokstr(), Some("hello".to_string()));
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), ENDINPUT);
+        zshlex();
+        assert_eq!(tok(), ENDINPUT);
     }
 
     #[test]
     fn test_pipeline() {
-        let _ = crate::ported::lex::lex_init("ls | grep foo");
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        let _ = lex_init("ls | grep foo");
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), BAR_TOK);
+        zshlex();
+        assert_eq!(tok(), BAR_TOK);
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
     }
 
     #[test]
     fn test_redirections() {
-        let _ = crate::ported::lex::lex_init("echo > file");
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        let _ = lex_init("echo > file");
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), OUTANG_TOK);
+        zshlex();
+        assert_eq!(tok(), OUTANG_TOK);
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
     }
 
     #[test]
     fn test_heredoc() {
-        let _ = crate::ported::lex::lex_init("cat << EOF");
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        let _ = lex_init("cat << EOF");
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), DINANG);
+        zshlex();
+        assert_eq!(tok(), DINANG);
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
     }
 
     #[test]
     fn test_single_quotes() {
-        let _ = crate::ported::lex::lex_init("echo 'hello world'");
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        let _ = lex_init("echo 'hello world'");
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
         // Should contain Snull markers around literal content
-        assert!(crate::ported::lex::tokstr().is_some());
+        assert!(tokstr().is_some());
     }
 
     #[test]
     fn test_function_tokens() {
-        let _ = crate::ported::lex::lex_init("function foo { }");
-        crate::ported::lex::zshlex();
-        assert_eq!(
-            crate::ported::lex::tok(),
-            FUNC,
-            "expected Func, got {:?}",
-            crate::ported::lex::tok()
-        );
+        let _ = lex_init("function foo { }");
+        zshlex();
+        assert_eq!(tok(), FUNC, "expected Func, got {:?}", tok());
 
-        crate::ported::lex::zshlex();
+        zshlex();
         assert_eq!(
-            crate::ported::lex::tok(),
+            tok(),
             STRING_LEX,
             "expected String for 'foo', got {:?}",
-            crate::ported::lex::tok()
+            tok()
         );
-        assert_eq!(crate::ported::lex::tokstr(), Some("foo".to_string()));
+        assert_eq!(tokstr(), Some("foo".to_string()));
 
-        crate::ported::lex::zshlex();
+        zshlex();
         assert_eq!(
-            crate::ported::lex::tok(),
+            tok(),
             INBRACE_TOK,
             "expected Inbrace, got {:?} tokstr={:?}",
-            crate::ported::lex::tok(),
-            crate::ported::lex::tokstr()
+            tok(),
+            tokstr()
         );
 
-        crate::ported::lex::zshlex();
+        zshlex();
         assert_eq!(
-            crate::ported::lex::tok(),
+            tok(),
             OUTBRACE_TOK,
             "expected Outbrace, got {:?} tokstr={:?} incmdpos={}",
-            crate::ported::lex::tok(),
-            crate::ported::lex::tokstr(),
-            crate::ported::lex::incmdpos()
+            tok(),
+            tokstr(),
+            incmdpos()
         );
     }
 
     #[test]
     fn test_double_quotes() {
-        let _ = crate::ported::lex::lex_init("echo \"hello $name\"");
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        let _ = lex_init("echo \"hello $name\"");
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
         // Should contain tokenized content
-        assert!(crate::ported::lex::tokstr().is_some());
+        assert!(tokstr().is_some());
     }
 
     #[test]
     fn test_command_substitution() {
-        let _ = crate::ported::lex::lex_init("echo $(pwd)");
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        let _ = lex_init("echo $(pwd)");
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
     }
 
     #[test]
     fn test_env_assignment() {
-        let _ = crate::ported::lex::lex_init("FOO=bar echo");
-        crate::ported::lex::set_incmdpos(true);
-        crate::ported::lex::zshlex();
-        assert_eq!(
-            crate::ported::lex::tok(),
-            ENVSTRING,
-            "tok={:?} tokstr={:?}",
-            crate::ported::lex::tok(),
-            crate::ported::lex::tokstr()
-        );
+        let _ = lex_init("FOO=bar echo");
+        set_incmdpos(true);
+        zshlex();
+        assert_eq!(tok(), ENVSTRING, "tok={:?} tokstr={:?}", tok(), tokstr());
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
     }
 
     #[test]
     fn test_array_assignment() {
-        let _ = crate::ported::lex::lex_init("arr=(a b c)");
-        crate::ported::lex::set_incmdpos(true);
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), ENVARRAY);
+        let _ = lex_init("arr=(a b c)");
+        set_incmdpos(true);
+        zshlex();
+        assert_eq!(tok(), ENVARRAY);
     }
 
     #[test]
     fn test_process_substitution() {
-        let _ = crate::ported::lex::lex_init("diff <(ls) >(cat)");
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        let _ = lex_init("diff <(ls) >(cat)");
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
         // <(ls) is tokenized into the string
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
         // >(cat) is tokenized
     }
 
     #[test]
     fn test_arithmetic() {
-        let _ = crate::ported::lex::lex_init("echo $((1+2))");
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        let _ = lex_init("echo $((1+2))");
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
 
-        crate::ported::lex::zshlex();
-        assert_eq!(crate::ported::lex::tok(), STRING_LEX);
+        zshlex();
+        assert_eq!(tok(), STRING_LEX);
     }
 
     #[test]
     fn test_semicolon_variants() {
-        let _ = crate::ported::lex::lex_init("case x in a) cmd;; b) cmd;& c) cmd;| esac");
+        let _ = lex_init("case x in a) cmd;; b) cmd;& c) cmd;| esac");
 
         // Skip to first ;;
         loop {
-            crate::ported::lex::zshlex();
-            if crate::ported::lex::tok() == DSEMI || crate::ported::lex::tok() == ENDINPUT {
+            zshlex();
+            if tok() == DSEMI || tok() == ENDINPUT {
                 break;
             }
         }
-        assert_eq!(crate::ported::lex::tok(), DSEMI);
+        assert_eq!(tok(), DSEMI);
 
         // Find ;&
         loop {
-            crate::ported::lex::zshlex();
-            if crate::ported::lex::tok() == SEMIAMP || crate::ported::lex::tok() == ENDINPUT {
+            zshlex();
+            if tok() == SEMIAMP || tok() == ENDINPUT {
                 break;
             }
         }
-        assert_eq!(crate::ported::lex::tok(), SEMIAMP);
+        assert_eq!(tok(), SEMIAMP);
 
         // Find ;|
         loop {
-            crate::ported::lex::zshlex();
-            if crate::ported::lex::tok() == SEMIBAR || crate::ported::lex::tok() == ENDINPUT {
+            zshlex();
+            if tok() == SEMIBAR || tok() == ENDINPUT {
                 break;
             }
         }
-        assert_eq!(crate::ported::lex::tok(), SEMIBAR);
+        assert_eq!(tok(), SEMIBAR);
     }
 }
