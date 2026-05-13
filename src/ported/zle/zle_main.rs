@@ -20,7 +20,7 @@ use std::io::{self, Read, Write};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::time::{Duration, Instant};
 
-use super::zle_keymap::{Keymap, KeymapManager};
+use super::zle_keymap::Keymap;
 use super::zle_thingy::Thingy;
 use super::widget::{Widget, WidgetFlags};
 
