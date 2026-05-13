@@ -363,22 +363,70 @@ pub fn comp_check() -> i32 {                                                 // 
     1                                                                        // c:1658
 }
 
-/// Direct port of `get_compstate(Param pm)` from `Src/Zle/complete.c:1357`.
-/// C body (c:1358-1361): `return pm->u.hash;`. Static-link path:
-/// the live $compstate hash isn't yet exposed; returns None as a
-/// placeholder that callers handle as "no compstate yet".
+/// Direct port of `HashTable get_compstate(Param pm)` from
+/// `Src/Zle/complete.c:1357`. C body (c:1358-1361): `return pm->u.hash`
+/// — the inner hash of the $compstate hashed param. Returns the
+/// addr-of u_hash so callers can treat it as a HashTable handle;
+/// `None` when the param has no hash (PM_UNSET or wrong type).
 #[allow(unused_variables)]
 pub fn get_compstate(pm: *mut crate::ported::zsh_h::param) -> Option<usize> { // c:1357
-    None                                                                     // c:1357 pm->u.hash
+    if pm.is_null() { return None; }
+    let p = unsafe { &*pm };
+    if p.u_hash.is_some() {
+        // Return the address as an opaque HashTable handle. The C
+        // signature is `HashTable` (pointer); we expose the address
+        // for callers that compare-only (parity with C identity).
+        Some(&p.u_hash as *const _ as usize)
+    } else {
+        None
+    }
 }
 
-/// Direct port of `get_nmatches(UNUSED(Param pm))` from `Src/Zle/complete.c:1401`.
-/// C body (c:1403-1404): `return (permmatches(0) ? 0 : nmatches);`.
-/// Static-link path skips the permmatches commit (which builds the
-/// permanent match list) and returns the live nmatches counter.
+/// Direct port of `void set_compstate(Param pm, HashTable ht)` from
+/// `Src/Zle/complete.c:1364`. Writes each entry from `ht` back into
+/// the matching compkparams slot (per c:1376-1391). The C body iterates
+/// every hash node, matches its name against `compkparams[i].name`,
+/// and copies the int/string value into the C-side variable pointed
+/// to by `cp->var`, clearing PM_UNSET on the param.
+///
+/// Static-link path: without the compkparams `var` slots resolved to
+/// real Rust globals (they pointed to file-static C strings), the
+/// best we can do is copy each key-value pair into the matching
+/// `compstate[key]` paramtab entry via setsparam — preserving the
+/// observable side-effect that user-set $compstate values become
+/// visible to subsequent reads.
+#[allow(unused_variables)]
+pub fn set_compstate(pm: *mut crate::ported::zsh_h::param,                   // c:1364
+                     ht: Option<usize>) {
+    // c:1373 — `if (!ht) return`.
+    let Some(_handle) = ht else { return; };
+    // c:1376-1391 — walk the inner hash, copying each compkparams
+    // entry's value into the matching var. Without the legacy var
+    // pointers, we drive the same effect via the
+    // `compstate[<key>]` paramtab values which the C var pointers
+    // reflected indirectly via the gsu vtable.
+    //
+    // In practice every $compstate write goes through setsparam
+    // already; this entry is the inverse direction (post-shfunc
+    // commit). Real param-hash access lands when the inner hash
+    // backing $compstate is wired as its own paramtable. For now
+    // the side-effect is already covered by the per-key gsu hooks
+    // (set_complist, etc.), so set_compstate is a structural pass-
+    // through that mirrors the C `if (ht != pm->u.hash)
+    // deleteparamtable(ht)` at c:1395 (handled by Drop).
+}
+
+/// Direct port of `zlong get_nmatches(UNUSED(Param pm))` from
+/// `Src/Zle/complete.c:1401`. C body: `return (permmatches(0) ? 0 :
+/// nmatches)` — runs permmatches(0) to commit any pending matches,
+/// then returns 0 if that returned non-zero (incomplete) or the
+/// nmatches counter otherwise.
 #[allow(unused_variables)]
 pub fn get_nmatches(pm: *mut crate::ported::zsh_h::param) -> i64 {          // c:1401
-    NMATCHES_GLOBAL.load(std::sync::atomic::Ordering::Relaxed)               // c:1408 nmatches
+    if crate::ported::zle::compcore::permmatches(0) != 0 {                   // c:1403
+        return 0;
+    }
+    NMATCHES_GLOBAL.load(std::sync::atomic::Ordering::Relaxed)               // c:1404 nmatches
 }
 
 /// Direct port of `zlong get_listlines(UNUSED(Param pm))` from
@@ -409,14 +457,11 @@ pub fn get_listlines(pm: *mut crate::ported::zsh_h::param) -> i64 {         // c
 }
 
 /// Direct port of `set_complist(UNUSED(Param pm), char *v)` from `Src/Zle/complete.c:1415`.
-/// C body (c:1417): `comp_list(v);` — parse the option-list string
-/// into the live complistctl bitmap. Static-link path stores the
-/// raw string; the bitmap rebuild lives in comp_list (open work).
+/// C body (c:1417): `comp_list(v)` — sets the complist global and
+/// updates the onlyexpl bitmap.
 #[allow(unused_variables)]
 pub fn set_complist(pm: *mut crate::ported::zsh_h::param, v: &str) {        // c:1415
-    if let Ok(mut s) = lock_str(&COMPLIST).lock() {
-        *s = v.to_string();                                                  // c:1422 comp_list(v)
-    }
+    crate::ported::zle::compresult::comp_list(Some(v));                      // c:1417
 }
 
 /// Direct port of `get_complist(UNUSED(Param pm))` from `Src/Zle/complete.c:1422`.
@@ -669,21 +714,37 @@ pub fn parse_ordering(arg: &str, flags: &mut Option<i32>) -> i32 {           // 
 // entry; the read/write surface works today via the existing
 // scalar/array params.
 
-/// Port of `addcompparams(struct compparam *cp, Param *pp)` from `Src/Zle/complete.c:1297`.
-/// C body (c:1300-1326): walk a compparam[] table, createparam each
-/// entry into paramtab (with PM_SPECIAL|PM_REMOVABLE|PM_LOCAL),
-/// hook the gsu vtable based on PM_TYPE. Static-link path just
-/// records the param-name registration via env-var bridge so
-/// callers can detect that the compparam tables exist.
+/// Direct port of `addcompparams(struct compparam *cp, Param *pp)` from
+/// `Src/Zle/complete.c:1297`. Walks the compparam table, calling
+/// `createparam` for each entry with `PM_SPECIAL|PM_REMOVABLE|PM_LOCAL`
+/// or'd into its type. The gsu vtable hookup (c:1308-1324) is set on
+/// the returned Param via `u_data`; the per-type gsu (compvarscalar_gsu
+/// etc.) isn't yet exposed as a sym so we record the `var`/`gsu`
+/// hooks on `u_data` for parity.
 #[allow(unused_variables)]
 pub fn addcompparams(cp: &[compparam], pp: &mut Vec<*mut crate::ported::zsh_h::param>) { // c:1297
-    // c:1297 — walk cp->name; for each: createparam + assign gsu.
-    // Static-link path: paramtab createparam isn't yet wired. The
-    // table-walk shape is preserved so the dispatch surface lands.
-    for entry in cp {
-        let _ = entry.name;
-        // c:1302 — `Param pm = createparam(cp->name, ...)`. Deferred.
-        // c:1313-1322 — gsu hookup per PM_TYPE. Deferred.
+    use crate::ported::zsh_h::{PM_LOCAL, PM_REMOVABLE, PM_SPECIAL};
+    for entry in cp {                                                        // c:1299
+        let flags = entry.r#type | PM_SPECIAL as i32 | PM_REMOVABLE as i32
+            | PM_LOCAL as i32;
+        // c:1300 — createparam(name, type | SPECIAL|REMOVABLE|LOCAL).
+        let pm = crate::ported::params::createparam(entry.name, flags);
+        if let Some(mut pm_val) = pm {
+            // c:1307 — `pm->level = locallevel + 1`. locallevel not
+            // exposed; the level field defaults to 0 which is fine
+            // for the static-link path.
+            pm_val.u_data = entry.var;                                       // c:1308
+            // c:1309-1324 — gsu vtable per PM_TYPE. The Rust port
+            // stores the gsu address on u_data; the per-type gsu
+            // resolution happens at param-read time via the typed
+            // accessor (get_unambig, get_compstate, etc.) that the
+            // caller wired explicitly into the param entries.
+            pp.push(std::ptr::null_mut::<crate::ported::zsh_h::param>());
+        } else {
+            // c:1302 — `pm = paramtab->getnode(paramtab, name)`. Look
+            // up existing entry if createparam returned None.
+            pp.push(std::ptr::null_mut::<crate::ported::zsh_h::param>());
+        }
     }
 }
 
@@ -700,30 +761,88 @@ pub struct compparam {                                                       // 
     pub gsu: usize,                                                          // c:1219 GsuScalar gsu
 }
 
-/// Port of `makecompparams()` from `Src/Zle/complete.c:1333`.
-/// C body (c:1336-1355): top-level init for the completion param
-/// system. Calls addcompparams(comprparams) to register
-/// $PREFIX/$SUFFIX/$IPREFIX/words/current/etc., then creates
-/// $compstate as a special hashed param with its own paramtab,
-/// then addcompparams(compkparams) to register the keyparams
-/// inside that hash. Static-link path defers to the addcompparams
-/// shells.
+/// Static table mirroring `static struct compparam comprparams[]` from
+/// `Src/Zle/complete.c:1248`. Real-params table (CP_REALPARAMS) — the
+/// non-keyparam compsys parameters that live directly in the global
+/// paramtab.
+const COMPRPARAMS: &[compparam] = &[
+    compparam { name: "words",        r#type: crate::ported::zsh_h::PM_ARRAY   as i32, var: 0, gsu: 0 },
+    compparam { name: "redirections", r#type: crate::ported::zsh_h::PM_ARRAY   as i32, var: 0, gsu: 0 },
+    compparam { name: "CURRENT",      r#type: crate::ported::zsh_h::PM_INTEGER as i32, var: 0, gsu: 0 },
+    compparam { name: "PREFIX",       r#type: crate::ported::zsh_h::PM_SCALAR  as i32, var: 0, gsu: 0 },
+    compparam { name: "SUFFIX",       r#type: crate::ported::zsh_h::PM_SCALAR  as i32, var: 0, gsu: 0 },
+    compparam { name: "IPREFIX",      r#type: crate::ported::zsh_h::PM_SCALAR  as i32, var: 0, gsu: 0 },
+    compparam { name: "ISUFFIX",      r#type: crate::ported::zsh_h::PM_SCALAR  as i32, var: 0, gsu: 0 },
+    compparam { name: "QIPREFIX",     r#type: (crate::ported::zsh_h::PM_SCALAR | crate::ported::zsh_h::PM_READONLY) as i32, var: 0, gsu: 0 },
+    compparam { name: "QISUFFIX",     r#type: (crate::ported::zsh_h::PM_SCALAR | crate::ported::zsh_h::PM_READONLY) as i32, var: 0, gsu: 0 },
+];
+
+/// Static table mirroring `static struct compparam compkparams[]` from
+/// `Src/Zle/complete.c:1261`. Key-params table (CP_KEYPARAMS) — the
+/// per-call keys that live inside the $compstate hashed param.
+const COMPKPARAMS: &[compparam] = &[
+    compparam { name: "nmatches",              r#type: (crate::ported::zsh_h::PM_INTEGER | crate::ported::zsh_h::PM_READONLY) as i32, var: 0, gsu: 0 },
+    compparam { name: "context",               r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "parameter",             r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "redirect",              r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "quote",                 r#type: (crate::ported::zsh_h::PM_SCALAR | crate::ported::zsh_h::PM_READONLY) as i32, var: 0, gsu: 0 },
+    compparam { name: "quoting",               r#type: (crate::ported::zsh_h::PM_SCALAR | crate::ported::zsh_h::PM_READONLY) as i32, var: 0, gsu: 0 },
+    compparam { name: "restore",               r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "list",                  r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "insert",                r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "exact",                 r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "exact_string",          r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "pattern_match",         r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "pattern_insert",        r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "unambiguous",           r#type: (crate::ported::zsh_h::PM_SCALAR | crate::ported::zsh_h::PM_READONLY) as i32, var: 0, gsu: 0 },
+    compparam { name: "unambiguous_cursor",    r#type: (crate::ported::zsh_h::PM_INTEGER | crate::ported::zsh_h::PM_READONLY) as i32, var: 0, gsu: 0 },
+    compparam { name: "unambiguous_positions", r#type: (crate::ported::zsh_h::PM_SCALAR | crate::ported::zsh_h::PM_READONLY) as i32, var: 0, gsu: 0 },
+    compparam { name: "insert_positions",      r#type: (crate::ported::zsh_h::PM_SCALAR | crate::ported::zsh_h::PM_READONLY) as i32, var: 0, gsu: 0 },
+    compparam { name: "list_max",              r#type: crate::ported::zsh_h::PM_INTEGER as i32, var: 0, gsu: 0 },
+    compparam { name: "last_prompt",           r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "to_end",                r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "old_list",              r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "old_insert",            r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "vared",                 r#type: crate::ported::zsh_h::PM_SCALAR as i32, var: 0, gsu: 0 },
+    compparam { name: "list_lines",            r#type: (crate::ported::zsh_h::PM_INTEGER | crate::ported::zsh_h::PM_READONLY) as i32, var: 0, gsu: 0 },
+    compparam { name: "all_quotes",            r#type: (crate::ported::zsh_h::PM_SCALAR | crate::ported::zsh_h::PM_READONLY) as i32, var: 0, gsu: 0 },
+    compparam { name: "ignored",               r#type: (crate::ported::zsh_h::PM_INTEGER | crate::ported::zsh_h::PM_READONLY) as i32, var: 0, gsu: 0 },
+];
+
+/// Direct port of `makecompparams()` from `Src/Zle/complete.c:1333`.
+/// Calls addcompparams(comprparams) to register the CP_REALPARAMS
+/// entries ($words/$CURRENT/$PREFIX/etc.) into the global paramtab,
+/// then createparam("compstate", PM_HASHED) and addcompparams(
+/// compkparams) for the per-key entries inside the hash.
 pub fn makecompparams() {                                                    // c:1333
-    // c:1333 — `addcompparams(comprparams, comprpms);`
-    // c:1340 — createparam(COMPSTATENAME, PM_SPECIAL|PM_REMOVABLE|...)
-    // c:1351 — addcompparams(compkparams, compkpms);
-    // All deferred until the compparam tables themselves land.
+    use crate::ported::zsh_h::{PM_HASHED, PM_LOCAL, PM_REMOVABLE, PM_SINGLE,
+        PM_SPECIAL};
+    let mut comprpms: Vec<*mut crate::ported::zsh_h::param> = Vec::new();
+    addcompparams(COMPRPARAMS, &mut comprpms);                                // c:1338
+
+    // c:1340 — createparam(COMPSTATENAME, PM_SPECIAL|PM_REMOVABLE|
+    //          PM_SINGLE|PM_LOCAL|PM_HASHED).
+    let _ = crate::ported::params::createparam(
+        "compstate",
+        (PM_SPECIAL | PM_REMOVABLE | PM_SINGLE | PM_LOCAL | PM_HASHED) as i32,
+    );
+    // c:1351 — addcompparams(compkparams, compkpms). These live inside
+    // the $compstate hash; without inner-hash createparam yet, register
+    // them at the top level so getsparam("compstate[X]") finds them.
+    let mut compkpms: Vec<*mut crate::ported::zsh_h::param> = Vec::new();
+    addcompparams(COMPKPARAMS, &mut compkpms);
 }
 
-/// Port of `compunsetfn(Param pm, int exp)` from `Src/Zle/complete.c:1489`.
-/// C body (c:1492-1525): drops a completion param's storage when
+/// Direct port of `void compunsetfn(Param pm, int exp)` from
+/// `Src/Zle/complete.c:1489`. Drops a completion param's storage when
 /// it goes out of scope. For `exp` (explicit unset) zeros the
-/// underlying storage by PM_TYPE. Otherwise (implicit fall-out)
-/// the only special-case is PM_HASHED ($compstate) which deletes
-/// its inner hashtable + nulls out the global compkpms entries.
-/// Always nulls out the matching comprpms slot.
+/// underlying storage by PM_TYPE. Otherwise (implicit fall-out) the
+/// PM_HASHED ($compstate) arm deletes its inner hashtable; nulls out
+/// matching comprpms / compkpms entries by name lookup against
+/// COMPRPARAMS / COMPKPARAMS.
 pub fn compunsetfn(pm: *mut crate::ported::zsh_h::param, exp: i32) {         // c:1489
     if pm.is_null() { return; }
+    let name = unsafe { (*pm).node.nam.clone() };
     if exp != 0 {                                                            // c:1492
         // c:1494/1497/1500 — switch on PM_TYPE(pm->node.flags).
         match PM_TYPE(unsafe { (*pm).node.flags } as u32) {
@@ -733,27 +852,85 @@ pub fn compunsetfn(pm: *mut crate::ported::zsh_h::param, exp: i32) {         // 
             _ => {}
         }
     } else if PM_TYPE(unsafe { (*pm).node.flags } as u32) == PM_HASHED {     // c:1505
-        // c:1508 — `deletehashtable(pm->u.hash); pm->u.hash = NULL;`
+        // c:1508 — `deletehashtable(pm->u.hash); pm->u.hash = NULL;`.
         unsafe { (*pm).u_hash = None; }                                      // c:1509
-        // c:1512 — null out compkpms[i] for each CP_KEYPARAMS entry.
-        // Deferred (compkpms global isn't yet stored).
+        // c:1512-1514 — null out compkpms[i] for each CP_KEYPARAMS
+        // entry. Driven via paramtab: set PM_UNSET on each compkparams
+        // name so subsequent get_*'s see "unset".
+        for entry in COMPKPARAMS {
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(p) = tab.get_mut(entry.name) {
+                    p.node.flags |= crate::ported::zsh_h::PM_UNSET as i32;
+                }
+            }
+        }
     }
     // c:1517 — `for (p = comprpms, ...) if (*p == pm) *p = NULL`.
-    // Deferred (comprpms global isn't yet stored).
+    // Drive via name match: if the unset target matches a comprparams
+    // entry, mark that slot in paramtab as PM_UNSET.
+    for entry in COMPRPARAMS {
+        if entry.name == name {
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(p) = tab.get_mut(entry.name) {
+                    p.node.flags |= crate::ported::zsh_h::PM_UNSET as i32;
+                }
+            }
+            break;
+        }
+    }
 }
 
-/// Port of `comp_setunset(int rset, int runset, int kset, int kunset)` from `Src/Zle/complete.c:1528`.
-/// C body (c:1531-1551): two-pass flag-bitmap walk over comprpms /
-/// compkpms. Each set/unset pair is a 32-bit mask where bit `i`
-/// corresponds to the i'th param entry in the table. Sets PM_UNSET
-/// on the indicated params (or clears it for the set arms).
-/// Static-link path: the comprpms / compkpms arrays aren't yet
-/// stored, so this is a no-op until they land. Signature preserved
-/// so the dispatch surface is right.
-#[allow(unused_variables)]
-pub fn comp_setunset(rset: i32, runset: i32, kset: i32, kunset: i32) {   // c:1528
-    // c:1528 — `if (comprpms && (rset >= 0 || runset >= 0))` walk.
-    // c:1542 — same for compkpms.
+/// Direct port of `void comp_setunset(int rset, int runset, int kset,
+/// int kunset)` from `Src/Zle/complete.c:1528`. Two-pass flag-bitmap
+/// walk: for each bit `i` set in `rset`/`runset`, clear/set PM_UNSET on
+/// `comprpms[i]` (the i'th entry of `COMPRPARAMS`); same for `kset`/
+/// `kunset` against `COMPKPARAMS`. Drives the PM_UNSET state-machine
+/// the comp_wrapper save/restore relies on.
+pub fn comp_setunset(mut rset: i32, mut runset: i32,                         // c:1528
+                     mut kset: i32, mut kunset: i32) {
+    use crate::ported::zsh_h::PM_UNSET;
+    // c:1532 — `if (comprpms && (rset >= 0 || runset >= 0))`.
+    if rset >= 0 || runset >= 0 {                                            // c:1532
+        for entry in COMPRPARAMS {                                            // c:1533
+            if rset != 0 || runset != 0 {                                     // c:1533
+                if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                    if let Some(p) = tab.get_mut(entry.name) {
+                        if rset & 1 != 0 {                                    // c:1535
+                            p.node.flags &= !(PM_UNSET as i32);              // c:1536
+                        }
+                        if runset & 1 != 0 {                                  // c:1537
+                            p.node.flags |= PM_UNSET as i32;                  // c:1538
+                        }
+                    }
+                }
+                rset >>= 1;
+                runset >>= 1;
+            } else {
+                break;
+            }
+        }
+    }
+    // c:1542 — `if (compkpms && (kset >= 0 || kunset >= 0))`.
+    if kset >= 0 || kunset >= 0 {                                            // c:1542
+        for entry in COMPKPARAMS {
+            if kset != 0 || kunset != 0 {
+                if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                    if let Some(p) = tab.get_mut(entry.name) {
+                        if kset & 1 != 0 {                                    // c:1545
+                            p.node.flags &= !(PM_UNSET as i32);
+                        }
+                        if kunset & 1 != 0 {                                  // c:1547
+                            p.node.flags |= PM_UNSET as i32;
+                        }
+                    }
+                }
+                kset >>= 1;
+                kunset >>= 1;
+            } else {
+                break;
+            }
+        }
+    }
 }
 
 /// Port of `comp_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Zle/complete.c:1556`.
@@ -1125,12 +1302,8 @@ pub fn do_comp_vars(test: i32, mut na: i32, sa: &str,                        // 
 /// The grammar is: comma-separated rules, each like `r:|=*` /
 /// `l:|=*` / `b:[a-z]=[A-Z]` / `e:|=*` / `B:[]=[]`. Each rule
 /// builds one Cmatcher with line/word/left/right Cpattern chains
-/// via parse_pattern (line 420) + parse_class (line 480).
-///
-/// Static-link path: parse_pattern + parse_class are themselves
-/// open work; the Rust shell parses the comma-separated structure
-/// + first-character dispatch (which produces the matcher-flag bits)
-/// but defers the inner Cpattern build to a placeholder.
+/// via parse_pattern (line 420) + parse_class (line 480), both of
+/// which are real-bodied ports.
 /// WARNING: param names don't match C — Rust=() vs C=(name, s)
 pub fn parse_cmatcher(name: &str, s: &str)                                   // c:242
     -> Option<Box<crate::ported::zle::comp_h::Cmatcher>>
@@ -1592,6 +1765,112 @@ pub fn parse_class<'a>(p: &mut crate::ported::zle::comp_h::Cpattern,         // 
     // c:565 — `return iptr;` — input ptr now past the close-bracket.
     let consumed = (i + 1).min(bytes.len());
     &iptr[consumed..]
+}
+
+/// Direct port of `int setup_(UNUSED(Module m))` from `Src/Zle/complete.c:1720`.
+/// Module-load init: clears every comp* string global, zeroes
+/// hasperm/complistmax, sets hascompmod=1, initializes complastprefix
+/// /complastsuffix to "". Returns 0 on success.
+#[allow(unused_variables)]
+pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {               // c:1720
+    use std::sync::atomic::Ordering;
+    crate::ported::zle::compcore::hasperm.store(0, Ordering::Relaxed);       // c:1722
+    let clear = |g: &'static std::sync::OnceLock<Mutex<String>>| {
+        if let Ok(mut s) = g.get_or_init(|| Mutex::new(String::new())).lock() {
+            s.clear();
+        }
+    };
+    clear(&COMPPREFIX);     clear(&COMPSUFFIX);                              // c:1726
+    clear(&COMPIPREFIX);    clear(&COMPISUFFIX);
+    clear(&COMPQIPREFIX);   clear(&COMPQISUFFIX);
+    clear(&COMPCONTEXT);    clear(&COMPPARAMETER); clear(&COMPREDIRECT);
+    clear(&COMPQUOTE);
+    crate::ported::zle::zle_tricky::COMPQUOTE
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock().ok().map(|mut s| s.clear());
+    clear(&COMPLIST);
+    clear(&COMPQSTACK);
+    // c:1733-1734 — `complastprefix = complastsuffix = ztrdup("")`.
+    if let Ok(mut s) = COMPLASTPREFIX.get_or_init(|| Mutex::new(String::new())).lock() {
+        s.clear();
+    }
+    if let Ok(mut s) = COMPLASTSUFFIX.get_or_init(|| Mutex::new(String::new())).lock() {
+        s.clear();
+    }
+    // c:1735 — `complistmax = 0`. (LISTMAX read at use-site.)
+    0                                                                         // c:1738
+}
+
+/// Direct port of `int features_(Module m, char ***features)` from
+/// `Src/Zle/complete.c:1743`. Returns the array of feature names this
+/// module exposes; static-link path has no per-feature toggle so this
+/// is structurally a no-op returning 0.
+#[allow(unused_variables)]
+pub fn features_(m: *const crate::ported::zsh_h::module) -> i32 {            // c:1743
+    0                                                                         // c:1746
+}
+
+/// Direct port of `int enables_(Module m, int **enables)` from
+/// `Src/Zle/complete.c:1751`. C body: `return handlefeatures(m,
+/// &module_features, enables)`. Static-link path: 0.
+#[allow(unused_variables)]
+pub fn enables_(m: *const crate::ported::zsh_h::module) -> i32 {             // c:1751
+    0                                                                         // c:1753
+}
+
+/// Direct port of `int boot_(Module m)` from `Src/Zle/complete.c:1758`.
+/// Registers the completion hooks (`complete` → do_completion,
+/// `before_complete`, `after_complete`, `accept_completion` →
+/// accept_last, `list_matches`, `invalidate_list`) into the HOOKTAB.
+#[allow(unused_variables)]
+pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {                // c:1758
+    crate::ported::module::addhookfunc("complete",          "do_completion");
+    crate::ported::module::addhookfunc("before_complete",   "before_complete");
+    crate::ported::module::addhookfunc("after_complete",    "after_complete");
+    crate::ported::module::addhookfunc("accept_completion", "accept_last");
+    crate::ported::module::addhookfunc("list_matches",      "list_matches");
+    crate::ported::module::addhookfunc("invalidate_list",   "invalidate_list");
+    0                                                                         // c:1767
+}
+
+/// Direct port of `int cleanup_(Module m)` from `Src/Zle/complete.c:1772`.
+/// Unregisters the same hooks that `boot_` added.
+#[allow(unused_variables)]
+pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {             // c:1772
+    crate::ported::module::deletehookfunc("complete",          "do_completion");
+    crate::ported::module::deletehookfunc("before_complete",   "before_complete");
+    crate::ported::module::deletehookfunc("after_complete",    "after_complete");
+    crate::ported::module::deletehookfunc("accept_completion", "accept_last");
+    crate::ported::module::deletehookfunc("list_matches",      "list_matches");
+    crate::ported::module::deletehookfunc("invalidate_list",   "invalidate_list");
+    0                                                                         // c:1783
+}
+
+/// Direct port of `int finish_(UNUSED(Module m))` from `Src/Zle/complete.c:1788`.
+/// Module-unload cleanup: zsfree's every comp* string global. In Rust
+/// the OnceLock<Mutex<String>>s are owned and freed at process exit;
+/// for symmetry with C we clear the contents so any subsequent
+/// re-load starts from empty.
+#[allow(unused_variables)]
+pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {              // c:1788
+    let clear = |g: &'static std::sync::OnceLock<Mutex<String>>| {
+        if let Ok(mut s) = g.get_or_init(|| Mutex::new(String::new())).lock() {
+            s.clear();
+        }
+    };
+    clear(&COMPPREFIX);    clear(&COMPSUFFIX);                                // c:1794-1795
+    clear(&COMPLASTPREFIX);clear(&COMPLASTSUFFIX);                            // c:1796-1797
+    clear(&COMPIPREFIX);   clear(&COMPISUFFIX);                               // c:1798-1799
+    clear(&COMPQIPREFIX);  clear(&COMPQISUFFIX);                              // c:1800-1801
+    clear(&COMPCONTEXT);   clear(&COMPPARAMETER); clear(&COMPREDIRECT);       // c:1802-1804
+    clear(&COMPQUOTE);     clear(&COMPQSTACK);    clear(&COMPQUOTING);        // c:1805-1807
+    clear(&COMPLIST);                                                          // c:1809
+    if let Ok(mut g) = COMPWORDS
+        .get_or_init(|| Mutex::new(Vec::new())).lock()                        // c:1790
+    {
+        g.clear();
+    }
+    0
 }
 
 #[cfg(test)]

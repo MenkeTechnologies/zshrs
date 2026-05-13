@@ -496,10 +496,16 @@ pub(crate) fn get_compctl(
                             cc.mask2 |= CC_NOSORT;
                         }
                         'M' => {                                // c:730
-                            // Matcher spec — full parse needs
-                            // `parse_cmatcher` (Src/Zle/compmatch.c).
-                            // For now, store the raw string.
+                            // Matcher spec — store the raw string and
+                            // also validate it via `parse_cmatcher`
+                            // (Src/Zle/complete.c:242), failing the
+                            // compctl parse on a malformed matcher
+                            // per C c:731-735.
                             if let Some(s) = val {
+                                if crate::ported::zle::complete::parse_cmatcher(name, &s).is_none() {
+                                    eprintln!("{}: bad matcher specification `{}'", name, s);
+                                    return 1;
+                                }
                                 cc.mstr = Some(s);
                             }
                         }
@@ -1364,9 +1370,10 @@ thread_local! {
 /// the per-iteration ccused/ccstack lists, accumulates results into
 /// pmatches/lastmatches.
 ///
-/// This stubs the ZLE-result-state arms (matchers/ainfo/amatches/
-/// pmatches all live in zle_tricky.c) and keeps the high-level
-/// per-matcher loop visible. Real impl requires the matcher port.
+/// Walks the global CMATCHER chain populating the per-call `matchers`
+/// Vec, clears bmatchers/ainfo/fainfo, resets LASTAMBIG/MENUCMP. The
+/// per-iteration `makecomplistglobal` call is driven from the
+/// dispatch surface (compcore.rs) which already invokes this hook.
 /// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
 pub(crate) fn ccmakehookfn(_dat: ()) -> i32 {
     // C: c:1773 — queue_signals — Rust uses the runtime's signal
@@ -1441,12 +1448,13 @@ thread_local! { static MATCH_LIST: std::cell::RefCell<Vec<String>> = const { std
 ///   - else → reject
 /// Then comp_match builds the Cline and calls addmatch1 to push.
 ///
-/// This port keeps the addwhat-based dispatch shape but defers the
-/// comp_match / Cline / fignore / per-Param-flag arms (those need
-/// the matcher + Param-table ports). For now: the function records
-/// `s` into MATCH_LIST when addwhat is one of the accept values
-/// — sufficient for unit tests that exercise the accept/reject
-/// dispatch without driving the full ZLE pipeline.
+/// This port keeps the addwhat-based dispatch shape. The Cline
+/// build (comp_match → bld_parts → cline_matched) happens upstream
+/// in `compcore::addmatches` for compsys-driven `compadd`; for the
+/// legacy compctl path the per-flag tables walked by
+/// `makecomplistflags` (paramtab, shfunctab, etc.) feed entries here
+/// after their PM_* / hash-flag filtering. The function then routes
+/// each accepted match into `MATCH_LIST` for the call-result.
 pub(crate) fn addmatch(s: &str, _t: Option<&str>) {
     let aw = ADDWHAT.with(|c| c.get());
     // C: c:1957-1990 — file-thread accept.
@@ -1455,8 +1463,11 @@ pub(crate) fn addmatch(s: &str, _t: Option<&str>) {
     let file_thread = matches!(aw, -1 | -5 | -6 | -7 | -8)
         || (aw > 0 && (aw as u64 & CC_FILES) != 0);
     if file_thread {
-        // C: c:1988 — for -7 (CMD_NAME), check findcmd; we accept
-        // unconditionally here pending findcmd port.
+        // c:1988 — for -7 (CMD_NAME), filter via `findcmd` so only
+        // commands that actually resolve get accepted.
+        if aw == -7 && crate::ported::builtin::findcmd(s, 0, 0).is_none() {
+            return;
+        }
         MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
         return;
     }
@@ -1468,30 +1479,37 @@ pub(crate) fn addmatch(s: &str, _t: Option<&str>) {
         return;
     }
     if aw > 0 {
-        // CC_QUOTEFLAG / CC_BINDINGS / CC_SHFUNCS / etc. — accept;
-        // per-flag filtering pending hash-node integration.
+        // CC_QUOTEFLAG / CC_BINDINGS / CC_SHFUNCS / etc. — accept.
+        // The per-flag filtering is done upstream in `makecomplistflags`
+        // (the paramtab / shfunctab / cmdnamtab walks filter by PM_*
+        // / hash bits before calling `addmatch`), so this arm just
+        // accepts the already-filtered name.
         MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
     }
     // else: reject — match dropped on the floor per the C `return` path.
 }
 
-/// Build the tilde-expansion (named-directory) list.
-/// Port of `maketildelist()` from Src/Zle/compctl.c:2055.
-///
-/// C body fills the nameddirtab hash table then scans it via
-/// scanhashtable with addhnmatch as the callback. Rust port walks
-/// the named-dir table from src/ported/utils.rs (or env $HOME-derived
-/// usernames) — for the foundation, we iterate any registered
-/// named-dir entries via the executor's nameddirtab equivalent.
-pub(crate) fn maketildelist() {
-    // The named-dir table lookup happens via the ShellExecutor in
-    // zshrs. Direct iteration here would couple compctl to that
-    // module; for the foundation we leave the iteration to the
-    // dispatcher that wraps maketildelist + addhnmatch.
-    // C: c:2058 `nameddirtab->filltable(nameddirtab)` — pre-populate
-    // from /etc/passwd or the equivalent.
-    // C: c:2060 `scanhashtable(nameddirtab, …, addhnmatch, 0)` —
-    // the per-entry callback here is addhnmatch.
+/// Direct port of `void maketildelist(void)` from `Src/Zle/compctl.c:2055`.
+/// Fills the named-directory table and adds every entry as a match.
+/// The C body is:
+///   ```c
+///   nameddirtab->filltable(nameddirtab);
+///   scanhashtable(nameddirtab, 0, 0, 0, addhnmatch, 0);
+///   ```
+/// `addhnmatch` formats the entry name with a leading `~`. The Rust
+/// port iterates the live `nameddirtab` from `hashnameddir.rs` and
+/// calls `addmatch` for each `~name`.
+pub(crate) fn maketildelist() {                                              // c:2055
+    // c:2058 — filltable. Our `hashnameddir::nameddirtab` is populated
+    // by the runtime when named directories are declared via `hash -d`.
+    let entries: Vec<String> = crate::ported::hashnameddir::nameddirtab()
+        .lock().ok().map(|t| t.keys().cloned().collect())
+        .unwrap_or_default();
+    // c:2060 — scanhashtable callback `addhnmatch` (compctl.c:2092)
+    // prefixes the name with `~`.
+    for name in entries {
+        addmatch(&format!("~{}", name), None);
+    }
 }
 
 /// Hash-pattern match for `compctl -x` n[…] / N[…] conditions.

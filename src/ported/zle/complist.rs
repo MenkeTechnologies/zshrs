@@ -60,23 +60,25 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-pub fn calclist(_showall: i32) -> i32 {                                      // c:compresult.c:1495
-    // Computes match-list geometry from the active `cmgroup` chain
-    // against `columns`/`lines`. With no completion session active
-    // returns 0 matching the C source's early-exit path.
-    0
+/// Bridge to the canonical port at `compresult.rs:1080` (which is
+/// `void calclist(int showall)` in `compresult.c:1495`). The name
+/// table at `tests/data/zsh_c_fn_names.txt` lists both
+/// `complist.c:calclist` and `compresult.c:calclist` because the
+/// complist module references it through extern; the real impl lives
+/// in compresult.c.
+pub fn calclist(showall: i32) -> i32 {                                       // c:compresult.c:1495
+    crate::ported::zle::compresult::calclist(showall)
 }
 
 /// Direct port of `static int compprintlist(int showall)` from
 /// `Src/Zle/complist.c:1367`. Renders the match list via the
 /// `cmgroup`/`cmatch` linked structures + `clprintm()` per-cell
-/// driver. With no listdat-populating session active the entry
-/// returns 0 matching C's early-exit; the previous Rust placeholder
-/// shipped a wildly different signature (`matches`, `descriptions`,
-/// `groups`, `&ListLayout`, `&ListColors`, `selected`) and Rust-only
-/// types `ListLayout`/`ListColors`; both had no C counterpart.
-pub fn compprintlist(_showall: i32) -> i32 {                                 // c:1367
-    0
+/// driver. Bridges to `printlist` (`compresult.c:1978`) — the
+/// canonical match-list renderer which complist.c delegates to via
+/// its registered list-matches hook when the complist module isn't
+/// loaded.
+pub fn compprintlist(showall: i32) -> i32 {                                  // c:1367
+    crate::ported::zle::compresult::printlist(0, showall)
 }
 
 /// Format the "scroll for more?" prompt shown when the match list

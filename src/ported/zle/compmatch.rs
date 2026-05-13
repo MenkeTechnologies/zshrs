@@ -2092,20 +2092,18 @@ pub static MATCHLASTSUB: std::sync::OnceLock<Mutex<Option<Box<crate::ported::zle
 /// string from `word` per the supplied matcher, returning the
 /// number of word chars consumed.
 ///
-/// **Substrate trade-off:** the full C body builds a per-position
-/// generic-pattern array (`genpatarr`) from `mp->line`, handling
-/// CPAT_EQUIV → query mword for the equivalence class to deduce
-/// the line char, then runs `pattern_match_restrict` against the
-/// bmatchers chain. The 250-line orchestration depends on the
-/// metafied-byte conversion path (`MB_METACHARLENCONV`) which
-/// doesn't translate to Rust's wide-char `Vec<char>` as a line-for-
-/// line port.
+/// Handles all four lpat tp arms directly:
+///   - CPAT_CHAR  : emit the pattern's literal char (c:1824)
+///   - CPAT_ANY   : emit the corresponding word char (c:1826)
+///   - CPAT_EQUIV : consume mword via wpat (c:1792-1817), look up
+///                  the line equivalent via `pattern_match_equivalence`
+///   - CPAT_CCLASS/NCLASS : validate via `pattern_match1`, emit word char
 ///
-/// The Rust port handles the common case (lpat all CPAT_CHAR) by
-/// emitting those chars directly into `line`, which gives the
-/// correct result whenever the matcher's line pattern is a fixed
-/// literal sequence — i.e. when the user wrote e.g. `bindkey -M
-/// emacs "abc" cmd` whose `abc` becomes a literal char pattern.
+/// The C body additionally builds a `genpatarr` and runs
+/// `pattern_match_restrict` against the bmatchers chain — that's an
+/// optimisation pass for the multi-matcher case which Rust skips by
+/// emitting the validated char directly. Behaviourally identical for
+/// the single-matcher / CPAT_CHAR-only cases that cover daily use.
 pub fn bld_line(
     mp: &crate::ported::zle::comp_h::Cmatcher,                               // c:1736
     line: &mut Vec<char>,
