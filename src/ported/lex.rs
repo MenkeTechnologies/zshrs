@@ -175,6 +175,58 @@ pub static LEXACT2: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> =
 pub static LEXTOK2: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> =
     std::sync::OnceLock::new();
 
+/// Sentinel: true once `initlextabs()` has populated the tables.
+static LEX_TABS_INITED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[inline]
+fn ensure_tabs_inited() {
+    if !LEX_TABS_INITED.load(std::sync::atomic::Ordering::Acquire) {
+        initlextabs();
+        LEX_TABS_INITED.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Table accessor for `lexact1[c]`. Mirrors C's `lexact1[STOUC(c)]`
+/// macro at `Src/lex.c:725`.
+#[inline]
+pub fn lexact1_get(c: char) -> u8 {
+    let idx = c as u32;
+    if idx >= 256 {
+        return LX1_OTHER;
+    }
+    ensure_tabs_inited();
+    let table = LEXACT1.get().unwrap();
+    table.lock().unwrap()[idx as usize]
+}
+
+/// Table accessor for `lexact2[c]`. Mirrors C's `lexact2[STOUC(c)]`
+/// macro at `Src/lex.c:919` (the dispatch inside `gettokstr`).
+#[inline]
+pub fn lexact2_get(c: char) -> u8 {
+    let idx = c as u32;
+    if idx >= 256 {
+        return LX2_OTHER;
+    }
+    ensure_tabs_inited();
+    let table = LEXACT2.get().unwrap();
+    table.lock().unwrap()[idx as usize]
+}
+
+/// Table accessor for `lextok2[c]`. Mirrors C's `lextok2[STOUC(c)]`
+/// at `Src/lex.c:919+` — used to translate a glob metacharacter to
+/// its byte-token form (`*` → `Star`, etc.).
+#[inline]
+pub fn lextok2_get(c: char) -> u8 {
+    let idx = c as u32;
+    if idx >= 256 {
+        return c as u8;
+    }
+    ensure_tabs_inited();
+    let table = LEXTOK2.get().unwrap();
+    table.lock().unwrap()[idx as usize]
+}
+
 /// Port of `void initlextabs(void)` from `Src/lex.c:410`. Builds the
 /// three byte-keyed action tables the lexer dispatches on.
 ///
@@ -1718,15 +1770,22 @@ fn lex_arith(c: char) -> lextok {
     }
 }
 
-/// Handle initial character of token
+/// Handle initial character of token. Direct port of the
+/// `switch (lexact1[STOUC(c)])` dispatch at `Src/lex.c:725`. The
+/// table is built once by `initlextabs()`; each LX1_* case below
+/// mirrors one `case` arm in C.
 fn lex_initial(c: char) -> lextok {
-    // Handle comments
+    // c:678 — comment handling runs BEFORE the table dispatch (the
+    // hashchar check is special-cased because comments aren't a
+    // single-byte action — they consume the rest of the line).
     if c == '#' && !LEX_NOCOMMENTS.get() {
         return lex_comment();
     }
 
-    match c {
-        '\\' => {
+    // c:725 — `switch (lexact1[STOUC(c)])` table-driven dispatch.
+    let act = lexact1_get(c);
+    match act {
+        LX1_BKSLASH => {
             let d = hgetc();
             if d == Some('\n') {
                 // Line continuation - get next token
@@ -1739,9 +1798,9 @@ fn lex_initial(c: char) -> lextok {
             gettokstr(c, false)
         }
 
-        '\n' => NEWLIN,
+        LX1_NEWLIN => NEWLIN,
 
-        ';' => {
+        LX1_SEMI => {
             let d = hgetc();
             match d {
                 Some(';') => DSEMI,
@@ -1757,7 +1816,7 @@ fn lex_initial(c: char) -> lextok {
             }
         }
 
-        '&' => {
+        LX1_AMPER => {
             let d = hgetc();
             match d {
                 Some('&') => DAMPER,
@@ -1799,7 +1858,7 @@ fn lex_initial(c: char) -> lextok {
             }
         }
 
-        '|' => {
+        LX1_BAR => {
             let d = hgetc();
             match d {
                 Some('|') if LEX_INCASEPAT.get() <= 0 => DBAR,
@@ -1814,7 +1873,7 @@ fn lex_initial(c: char) -> lextok {
             }
         }
 
-        '(' => {
+        LX1_INPAR => {
             let d = hgetc();
             match d {
                 Some('(') => {
@@ -1866,8 +1925,45 @@ fn lex_initial(c: char) -> lextok {
             }
         }
 
-        ')' => OUTPAR_TOK,
+        LX1_OUTPAR => OUTPAR_TOK,
 
+        LX1_INANG => {
+            // c:826 — `<` in initial position. In pattern context
+            // (`incondpat`/`incasepat`), `<` is literal.
+            if LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
+                gettokstr(c, false)
+            } else {
+                lex_inang()
+            }
+        }
+
+        LX1_OUTANG => {
+            // c:866 — `>` in initial position. In pattern context,
+            // `>` is literal.
+            if LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
+                gettokstr(c, false)
+            } else {
+                lex_outang()
+            }
+        }
+
+        // LX1_OTHER (15) and unmapped indices (1=q reserved for comment,
+        // 4=!, 9={, 10=}, 11=[, 12=]) — these fall through to the
+        // char-specific handling below. C lex.c handles `{`/`}`/`[`/`]`
+        // inside gettokstr via lexact2[]; zshrs needs them at the
+        // top level for `[[ ]]` / `{}` empty block / `[[ test ]]`
+        // shape recognition, so we keep an inner char-match for the
+        // LX1_OTHER fallthrough.
+        _ => return lex_initial_other(c),
+    }
+}
+
+/// Char-specific dispatch for chars that map to `LX1_OTHER` (or
+/// unmapped indices that fall through). Contains zshrs's
+/// `{`/`}`/`[`/`]` recognition shortcuts that C handles inside
+/// `gettokstr` via the `lexact2[]` table.
+fn lex_initial_other(c: char) -> lextok {
+    match c {
         '{' => {
             // { is a command group only if followed by whitespace,
             // newline, or `}` (the empty-block form `{}`). zsh
@@ -1956,24 +2052,6 @@ fn lex_initial(c: char) -> lextok {
                 }
             }
             gettokstr(c, false)
-        }
-
-        '<' => {
-            // In pattern context, < is literal (e.g., <-> in glob)
-            if LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
-                gettokstr(c, false)
-            } else {
-                lex_inang()
-            }
-        }
-
-        '>' => {
-            // In pattern context, > is literal
-            if LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
-                gettokstr(c, false)
-            } else {
-                lex_outang()
-            }
         }
 
         _ => gettokstr(c, false),
@@ -2160,7 +2238,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
 
         match c {
             // Whitespace is handled above for most cases
-            ')' => {
+            LX2_OUTPAR => {
                 if in_brace_param > 0 || sub {
                     add(Outpar);
                 } else if pct > 0 {

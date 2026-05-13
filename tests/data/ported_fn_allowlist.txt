@@ -864,6 +864,19 @@ mv_link
 untokenize_preserve_quotes
 getkeystring_dollar_quote
 tokens_to_printable
+# lexact1_get / lexact2_get / lextok2_get — accessor wrappers for the
+# `lexact1[256]` / `lexact2[256]` / `lextok2[256]` byte tables built
+# by `initlextabs()` (Src/lex.c:410). C dereferences directly via
+# `lexact1[STOUC(c)]`; Rust needs an OnceLock get-or-init wrapper.
+lexact1_get
+lexact2_get
+lextok2_get
+ensure_tabs_inited
+# lex_initial_other — char-specific fallthrough from the LX1_OTHER
+# arm of `lex_initial`. zshrs needs `{`/`}`/`[`/`]` handling at the
+# top level for `[[ ]]` / `{}` empty-block recognition; C handles
+# these inside `gettokstr` via the lexact2[] table.
+lex_initial_other
 # read_cond_num — AST-walker helper to pull a numeric literal from
 # the current lex position. C parser inlines this via `atoi(tokstr)`
 # everywhere; the Rust helper exists to localize the i64-parse
