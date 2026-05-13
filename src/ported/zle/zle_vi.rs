@@ -19,7 +19,7 @@ use super::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::extensions::widget::*;
+use crate::ported::zle::zle_h::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
@@ -500,7 +500,7 @@ pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // 
                 for _ in 0..n {
                     let saved_cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
                     crate::ported::zle::zle_main::ZLECS.store(p, std::sync::atomic::Ordering::SeqCst);
-                    p = find_word_end(super::widget::WordStyle::Vi);
+                    p = find_word_end(super::zle_word::WordStyle::Vi);
                     crate::ported::zle::zle_main::ZLECS.store(saved_cs, std::sync::atomic::Ordering::SeqCst);
                 }
                 p
@@ -510,7 +510,7 @@ pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // 
                 for _ in 0..n {
                     let saved_cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
                     crate::ported::zle::zle_main::ZLECS.store(p, std::sync::atomic::Ordering::SeqCst);
-                    p = find_word_end(super::widget::WordStyle::BlankDelimited);
+                    p = find_word_end(super::zle_word::WordStyle::BlankDelimited);
                     crate::ported::zle::zle_main::ZLECS.store(saved_cs, std::sync::atomic::Ordering::SeqCst);
                 }
                 p
@@ -520,7 +520,7 @@ pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // 
                 for _ in 0..n {
                     let saved_cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
                     crate::ported::zle::zle_main::ZLECS.store(p, std::sync::atomic::Ordering::SeqCst);
-                    p = find_word_start(super::widget::WordStyle::Vi);
+                    p = find_word_start(super::zle_word::WordStyle::Vi);
                     crate::ported::zle::zle_main::ZLECS.store(saved_cs, std::sync::atomic::Ordering::SeqCst);
                 }
                 p
@@ -530,7 +530,7 @@ pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // 
                 for _ in 0..n {
                     let saved_cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
                     crate::ported::zle::zle_main::ZLECS.store(p, std::sync::atomic::Ordering::SeqCst);
-                    p = find_word_start(super::widget::WordStyle::BlankDelimited);
+                    p = find_word_start(super::zle_word::WordStyle::BlankDelimited);
                     crate::ported::zle::zle_main::ZLECS.store(saved_cs, std::sync::atomic::Ordering::SeqCst);
                 }
                 p
@@ -541,7 +541,7 @@ pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // 
                 // becomes start..=word_end which is start..(word_end+1).
                 let saved_cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
                 crate::ported::zle::zle_main::ZLECS.store(pos, std::sync::atomic::Ordering::SeqCst);
-                let mut p = find_word_end(super::widget::WordStyle::Vi);
+                let mut p = find_word_end(super::zle_word::WordStyle::Vi);
                 crate::ported::zle::zle_main::ZLECS.store(saved_cs, std::sync::atomic::Ordering::SeqCst);
                 if p < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
                     p += 1;
@@ -551,7 +551,7 @@ pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // 
             'E' => {
                 let saved_cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
                 crate::ported::zle::zle_main::ZLECS.store(pos, std::sync::atomic::Ordering::SeqCst);
-                let mut p = find_word_end(super::widget::WordStyle::BlankDelimited);
+                let mut p = find_word_end(super::zle_word::WordStyle::BlankDelimited);
                 crate::ported::zle::zle_main::ZLECS.store(saved_cs, std::sync::atomic::Ordering::SeqCst);
                 if p < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
                     p += 1;

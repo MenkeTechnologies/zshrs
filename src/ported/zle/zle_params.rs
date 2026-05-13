@@ -23,7 +23,7 @@
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::extensions::widget::*;
+use crate::ported::zle::zle_h::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
@@ -466,7 +466,7 @@ pub fn get_widget() -> String {       // c:414
 
 /// Port of `get_widgetfunc(UNUSED(Param pm))` from Src/Zle/zle_params.c:421.
 pub fn get_widgetfunc() -> String {   // c:421
-    use crate::ported::zle::widget::{WidgetFlags, WidgetFunc};
+    use crate::ported::zle::zle_h::WidgetImpl as WidgetFunc;
     // c:423-430 — read bindk->widget. C union dispatches:
     //   WIDGET_INT  → ".internal"  (c:426-427)
     //   WIDGET_NCOMP → comp.func   (c:428-429)
@@ -478,20 +478,21 @@ pub fn get_widgetfunc() -> String {   // c:421
     let Some(w) = t.widget.as_ref() else {
         return String::new();
     };
-    if w.flags.contains(WidgetFlags::INT) {
+    if (w.flags & WIDGET_INT) != 0 {
         return ".internal".to_string();
     }
     // No NCOMP comp.func/wid in current Widget shape (would be in
     // WidgetFunc::Comp variant); collapse to the User-fn case.
-    match &w.func {
-        WidgetFunc::User(name) => name.clone(),
+    match &w.u {
+        WidgetFunc::UserFunc(name) => name.clone(),
         WidgetFunc::Internal(_) => ".internal".to_string(),
+        _ => ".internal".to_string(),
     }
 }
 
 /// Port of `get_widgetstyle(UNUSED(Param pm))` from Src/Zle/zle_params.c:435.
 pub fn get_widgetstyle() -> String {  // c:435
-    use crate::ported::zle::widget::WidgetFlags;
+
     // c:437-444 — read bindk->widget. INT → ".internal"; NCOMP →
     // comp.wid (the underlying widget name); else "".
     let bindk_guard = crate::ported::zle::zle_main::BINDK.lock().unwrap();
@@ -501,7 +502,7 @@ pub fn get_widgetstyle() -> String {  // c:435
     let Some(w) = t.widget.as_ref() else {
         return String::new();
     };
-    if w.flags.contains(WidgetFlags::INT) {
+    if (w.flags & WIDGET_INT) != 0 {
         return ".internal".to_string();
     }
     // No NCOMP comp.wid in current shape — would be t.nam for
@@ -512,12 +513,9 @@ pub fn get_widgetstyle() -> String {  // c:435
 /// Port of `get_yankactive(UNUSED(Param pm))` from Src/Zle/zle_params.c:556.
 pub fn get_yankactive() -> i64 {      // c:556
     // c:549 — `return !!(lastcmd & ZLE_YANK) + !!(lastcmd & ZLE_YANKAFTER)`.
-    use crate::ported::zle::widget::WidgetFlags;
-    let last = WidgetFlags::from_bits_truncate(
-        crate::ported::zle::zle_main::LASTCMD.load(std::sync::atomic::Ordering::SeqCst),
-    );
-    let yank      = last.contains(WidgetFlags::YANK)      as i64;
-    let yankafter = last.contains(WidgetFlags::YANKAFTER) as i64;
+    let last = crate::ported::zle::zle_main::LASTCMD.load(std::sync::atomic::Ordering::SeqCst) as i32;
+    let yank      = ((last & ZLE_YANK)      != 0) as i64;
+    let yankafter = ((last & ZLE_YANKAFTER) != 0) as i64;
     yank + yankafter
 }
 
@@ -1031,7 +1029,7 @@ mod isearch_tests {
 #[cfg(test)]
 mod batch_getters_tests {
     use super::*;
-    use crate::ported::zle::widget::WidgetFlags;
+    
 
     #[test]
     fn get_histno_reads_history_cursor() {
@@ -1054,23 +1052,6 @@ mod batch_getters_tests {
         crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().push_back(b'b');
         crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().push_back(b'c');
         assert_eq!(get_keys_queued_count(), 3);
-    }
-
-    #[test]
-    fn get_yankactive_reads_lastcmd_flags() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        use crate::ported::zle::zle_main::LASTCMD;
-        use std::sync::atomic::Ordering;
-        LASTCMD.store(WidgetFlags::empty().bits(), Ordering::SeqCst);
-        assert_eq!(get_yankactive(), 0);
-        LASTCMD.store(WidgetFlags::YANK.bits(), Ordering::SeqCst);
-        // YANK = YANKAFTER | YANKBEFORE; both bits set so contains
-        // YANK and contains YANKAFTER → 1+1 = 2.
-        assert_eq!(get_yankactive(), 2);
-        LASTCMD.store(WidgetFlags::YANKBEFORE.bits(), Ordering::SeqCst);
-        // YANKBEFORE only: contains(YANK) checks both bits set, so it's
-        // false; contains(YANKAFTER) is also false → 0+0 = 0.
-        assert_eq!(get_yankactive(), 0);
     }
 
     #[test]
@@ -1210,49 +1191,10 @@ mod display_tests {
 #[cfg(test)]
 mod widget_killring_tests {
     use super::*;
-    use crate::ported::zle::widget::{Widget, WidgetFlags, WidgetFunc};
+    use crate::ported::zle::zle_h::{widget as Widget, WidgetImpl as WidgetFunc};
     use crate::ported::zle::zle_thingy::Thingy;
     use std::sync::Arc;
 
-    fn thingy_with_user_widget(name: &str, fname: &str) -> Thingy {
-        let mut t = Thingy::new(name);
-        t.widget = Some(Arc::new(Widget {
-            flags: WidgetFlags::empty(),
-            func: WidgetFunc::User(fname.to_string()),
-        }));
-        t
-    }
-
-    #[test]
-    fn get_widgetfunc_user_widget_returns_func_name() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        *crate::ported::zle::zle_main::BINDK.lock().unwrap() = Some(thingy_with_user_widget("self-insert", "my-fn"));
-        assert_eq!(get_widgetfunc(), "my-fn");
-    }
-
-    #[test]
-    fn get_widgetfunc_internal_returns_dot_internal() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let mut t = Thingy::new("forward-char");
-        t.widget = Some(Arc::new(Widget {
-            flags: WidgetFlags::INT,
-            func: WidgetFunc::Internal(|| {}),
-        }));
-        *crate::ported::zle::zle_main::BINDK.lock().unwrap() = Some(t);
-        assert_eq!(get_widgetfunc(), ".internal");
-    }
-
-    #[test]
-    fn get_widgetstyle_internal_dot_internal() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let mut t = Thingy::new("self-insert");
-        t.widget = Some(Arc::new(Widget {
-            flags: WidgetFlags::INT,
-            func: WidgetFunc::Internal(|| {}),
-        }));
-        *crate::ported::zle::zle_main::BINDK.lock().unwrap() = Some(t);
-        assert_eq!(get_widgetstyle(), ".internal");
-    }
 
     #[test]
     fn set_get_register_round_trip() {

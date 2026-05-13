@@ -46,11 +46,7 @@ pub use crate::plugin_cache;
 pub use crate::regex_mod;
 pub use crate::script_cache;
 pub use crate::stringsort;
-pub use crate::subscript;
 pub use crate::worker;
 pub use crate::zwc;
 pub use crate::zwc_decode;
 
-pub use crate::zle::keymaps;
-pub use crate::zle::widget;
-pub use crate::zle::widgets;

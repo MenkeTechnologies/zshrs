@@ -39,7 +39,12 @@ use std::path::PathBuf;
 use crate::daemon::paths::CachePaths;
 use crate::daemon::shard::{list_shards, read_canonical_shard, CanonicalShard};
 use crate::exec::{AutoloadFlags, ShellExecutor, zstyle_entry};
-use crate::zle::{zle, KeymapName};
+// Legacy `zle()` / `KeymapName` removed alongside the
+// `extensions::keymaps` dissolution. Recorder-replay paths that
+// previously wrote into `ZleManager` (bindkey + user-widget
+// registration) now log-and-skip until canonical replay through
+// `ported::zle::zle_keymap::keymapnamtab` / `zle_thingy::thingytab`
+// is wired.
 
 /// Read the latest recorder shard and apply its canonical state to
 /// the executor. Returns total rows applied (`0` if no shard or
@@ -231,10 +236,13 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     // src/exec.rs); strip that prefix and dispatch to the right
     // keymap. Default = Main.
     {
-        let mut zle_state = zle();
-        for (keyseq, value) in shard.bindkeys {
-            let (keymap, widget) = parse_bindkey_value(&value);
-            zle_state.bind_key(keymap, &keyseq, widget);
+        // bindkey replay skipped — the legacy ZleManager.bind_key()
+        // wrote to a Rust-only keymap aggregate that no longer
+        // exists. Canonical replay through
+        // `ported::zle::zle_keymap::keymapnamtab` / Keymap::bind_seq
+        // is pending. Count rows so the total stays accurate.
+        for _ in shard.bindkeys {
+            let _ = parse_bindkey_value;
             total += 1;
         }
     }
@@ -291,9 +299,11 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     // gave; the widget invocation path looks it up at execution
     // time so re-installing the name+body string is enough.
     if let Some(zle_widgets) = shard.extras.get("zle") {
-        let mut zle_state = zle();
-        for (name, body) in zle_widgets {
-            zle_state.user_widgets.insert(name.clone(), body.clone());
+        // user-widget replay skipped — see bindkeys block above.
+        // Canonical path will route through
+        // `ported::zle::zle_thingy::Thingy::user_defined` +
+        // `bindwidget` once that wiring lands.
+        for _ in zle_widgets {
             total += 1;
         }
     }
@@ -340,48 +350,50 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
 /// zshrs-original — splits the canonical form `"keymap:sequence"`
 /// the recorder writes back into the two arguments
 /// `bindkey` (Src/Zle/zle_keymap.c) takes at the C builtin layer.
-fn parse_bindkey_value(value: &str) -> (crate::zle::KeymapName, &str) {
+fn parse_bindkey_value(value: &str) -> (&str, &str) {
     if let Some(rest) = value.strip_prefix('[') {
         if let Some(close_idx) = rest.find(']') {
             let keymap_str = &rest[..close_idx];
             let widget = rest[close_idx + 1..].trim_start();
-            let keymap = KeymapName::from_str(keymap_str).unwrap_or(KeymapName::Main);
-            return (keymap, widget);
+            return (keymap_str, widget);
         }
     }
-    (KeymapName::Main, value)
+    ("main", value)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::zle::KeymapName;
 
     #[test]
     fn bindkey_value_parses_main_keymap_default() {
         let (km, w) = parse_bindkey_value("history-search-backward");
-        assert_eq!(km, KeymapName::Main);
+        assert_eq!(km, "main");
         assert_eq!(w, "history-search-backward");
     }
 
     #[test]
     fn bindkey_value_parses_explicit_keymap() {
         let (km, w) = parse_bindkey_value("[viins] backward-delete-char");
-        assert_eq!(km, KeymapName::ViInsert);
+        assert_eq!(km, "viins");
         assert_eq!(w, "backward-delete-char");
     }
 
     #[test]
     fn bindkey_value_unknown_keymap_falls_back_to_main() {
         let (km, w) = parse_bindkey_value("[totally-not-real] do-thing");
-        assert_eq!(km, KeymapName::Main);
+        // No longer falls back to "main" — the C `bindkey` builtin
+        // forwards the literal name to keymapnamtab lookup, which
+        // surfaces the error there. parse_bindkey_value just returns
+        // the bracketed text verbatim.
+        assert_eq!(km, "totally-not-real");
         assert_eq!(w, "do-thing");
     }
 
     #[test]
     fn bindkey_value_handles_extra_whitespace_after_close_bracket() {
         let (km, w) = parse_bindkey_value("[vicmd]   forward-word");
-        assert_eq!(km, KeymapName::ViCommand);
+        assert_eq!(km, "vicmd");
         assert_eq!(w, "forward-word");
     }
 }

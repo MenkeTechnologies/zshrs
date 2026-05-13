@@ -23,7 +23,7 @@
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::extensions::widget::*;
+use crate::ported::zle::zle_h::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]

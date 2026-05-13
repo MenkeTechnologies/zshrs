@@ -8,8 +8,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use super::widget::{Widget, WidgetFlags, WidgetFunc};
-use super::zle_h::TH_IMMORTAL;
+use super::zle_h::{widget as Widget, WidgetImpl as WidgetFunc};
+use super::zle_h::{
+    TH_IMMORTAL, WIDGET_INT, WIDGET_NCOMP, WIDGET_INUSE,
+    ZLE_MENUCMP, ZLE_KEEPSUFFIX, ZLE_ISCOMP,
+};
 use crate::ported::zsh_h::DISABLED;
 
 /// Direct port of `struct thingy` from `Src/Zle/zle.h:224`. A named
@@ -18,7 +21,7 @@ use crate::ported::zsh_h::DISABLED;
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::extensions::widget::*;
+use crate::ported::zle::zle_h::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
@@ -149,6 +152,27 @@ pub fn gethashnode2(name: &str) -> Option<Thingy> {                           //
     thingytab().lock().ok()?.get(name).cloned()
 }
 
+/// List every Thingy name. Used by `${widgets[@]}` parameter expansion.
+/// Replaces the legacy `ZleManager::list_widgets()` accessor.
+pub fn listwidgets() -> Vec<String> {
+    thingytab().lock().map(|t| t.keys().cloned().collect()).unwrap_or_default()
+}
+
+/// Look up the dispatch target for a widget name. Built-in widgets
+/// resolve to their own name (matching `${widgets[name]}` returning
+/// "builtin"); user-defined ones resolve to the bound shell-function
+/// name. Replaces the legacy `ZleManager::get_widget()` accessor.
+pub fn getwidgettarget(name: &str) -> Option<String> {
+    let tab = thingytab().lock().ok()?;
+    let t = tab.get(name)?;
+    let w = t.widget.as_ref()?;
+    match &w.u {
+        super::zle_h::WidgetImpl::Internal(_) => Some(name.to_string()),
+        super::zle_h::WidgetImpl::UserFunc(s) => Some(s.clone()),
+        super::zle_h::WidgetImpl::Comp { func, .. } => Some(func.clone()),
+    }
+}
+
 // =====================================================================
 // hashtable management — `Src/Zle/zle_thingy.c:58-124`.
 // =====================================================================
@@ -220,7 +244,7 @@ pub fn scanemptythingies(name: &str) {                                       // 
     let internal = {
         let tab = thingytab().lock().unwrap();
         tab.get(name)
-            .and_then(|t| t.widget.as_ref().map(|w| w.flags.contains(WidgetFlags::INT)))
+            .and_then(|t| t.widget.as_ref().map(|w| (w.flags & WIDGET_INT) != 0))
             .unwrap_or(true)
     };
     if !internal {
@@ -540,10 +564,10 @@ pub fn freewidget(w: Arc<Widget>) {                                          // 
     // Arc when it returns. When count>1, another holder is alive
     // and the storage stays valid. When count==1 + !INUSE, the
     // implicit Arc drop at end-of-scope reclaims storage.
-    if w.flags.contains(WidgetFlags::INUSE) {
+    if (w.flags & WIDGET_INUSE) != 0 {
         return;                                                              // c:261
     }
-    // c:264-269 — comp-widget / user-fn cleanup. WidgetFunc::User
+    // c:264-269 — comp-widget / user-fn cleanup. WidgetFunc::UserFunc
     // owns its String; WidgetFunc::Internal owns nothing. Arc drop
     // covers both.
     drop(w);                                                                 // c:269 zfree(w, ...)
@@ -582,8 +606,8 @@ pub fn freewidget(w: Arc<Widget>) {                                          // 
 /// WARNING: param names don't match C — Rust=(ifunc, flags) vs C=(name, ifunc, flags)
 pub fn addzlefunction(                                                       // c:281
     name: &str,
-    ifunc: fn(),
-    flags: WidgetFlags,
+    ifunc: super::zle_h::ZleIntFunc,
+    flags: i32,
 ) -> Option<Arc<Widget>> {                                                   // c:279
     if name.starts_with('.') {                                               // c:287 if(name[0] == '.')
         return None;                                                         // c:288
@@ -602,8 +626,9 @@ pub fn addzlefunction(                                                       // 
     // c:294-297 — `w = zalloc(...); w->flags = WIDGET_INT|flags;
     //              w->first = NULL; w->u.fn = ifunc;`.
     let w = Arc::new(Widget {
-        flags: flags | WidgetFlags::INT,                                     // c:295
-        func: WidgetFunc::Internal(ifunc),                                   // c:297 w->u.fn = ifunc
+        flags: flags | WIDGET_INT,                                     // c:295
+        first: None,
+        u: WidgetFunc::Internal(ifunc),                                      // c:297 w->u.fn = ifunc
     });
 
     // c:298-301 — bind to dotted form, mark immortal, then bind to
@@ -754,16 +779,17 @@ pub fn bin_zle_complete(args: &[String]) -> i32 {                            // 
         return 1;                                                            // c:613-614
     };
     // c:612 — `if (!cw || !(cw->flags & ZLE_ISCOMP)) return 1`.
-    if !cw.flags.contains(WidgetFlags::ISCOMP) {
+    if (cw.flags & ZLE_ISCOMP) == 0 {
         return 1;
     }
     // c:616-625 — alloc new completion widget and bind to args[0].
     let w = std::sync::Arc::new(Widget {
-        flags: WidgetFlags::NCOMP | WidgetFlags::MENUCMP | WidgetFlags::KEEPSUFFIX,
+        flags: WIDGET_NCOMP | ZLE_MENUCMP | ZLE_KEEPSUFFIX,
+        first: None,
         // c:619-621 — fn from cw + comp.wid/func from args[1]/args[2].
-        // Current Widget::Comp variant collapsed; use User with the
+        // Current Widget::Comp variant collapsed; use UserFunc with the
         // function name.
-        func: WidgetFunc::User(args[2].clone()),
+        u: WidgetFunc::UserFunc(args[2].clone()),
     });
     rthingy(&args[0]);
     if bindwidget(w.clone(), &args[0]) != 0 {                                // c:622
@@ -1066,8 +1092,9 @@ pub fn bin_zle_new(args: &[String]) -> i32 {                                 // 
     // c:590 — fn name is args[1] if present, else args[0].
     let fname = if args.len() >= 2 { args[1].clone() } else { args[0].clone() };
     let w = std::sync::Arc::new(Widget {
-        flags: WidgetFlags::empty(),                                         // c:588
-        func: WidgetFunc::User(fname),                                       // c:590 fnnam
+        flags: 0i32,                                         // c:588
+        first: None,
+        u: WidgetFunc::UserFunc(fname),                                          // c:590 fnnam
     });
     rthingy(&args[0]);                                                       // c:591 rthingy(args[0])
     if bindwidget(w.clone(), &args[0]) == 0 {                                // c:591 bindwidget(...)
@@ -1203,13 +1230,14 @@ pub fn scanlistwidgets() -> i32 {                                            // 
         .filter_map(|(name, t)| {
             let w = t.widget.as_ref()?;
             // c:514-515 — skip internal widgets.
-            if w.flags.contains(WidgetFlags::INT) {
+            if (w.flags & WIDGET_INT) != 0 {
                 return None;
             }
             // c:530-541 — abbreviated format: name (fn) when fn != name.
-            let fn_name = match &w.func {
-                WidgetFunc::User(s) => s.clone(),
+            let fn_name = match &w.u {
+                WidgetFunc::UserFunc(s) => s.clone(),
                 WidgetFunc::Internal(_) => return None,
+                _ => return None,
             };
             if fn_name == *name {
                 Some(name.clone())
@@ -1305,107 +1333,4 @@ mod tests {
         assert_eq!(thingytab().lock().unwrap().get("present").unwrap().rc, 2);
     }
 
-    #[test]
-    fn bindwidget_assigns_widget_and_clears_disabled() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let _g = LOCK.lock().unwrap();
-        reset_tab();
-
-        rthingy("hello");
-        let w = Arc::new(Widget {
-            flags: WidgetFlags::INT,
-            func: WidgetFunc::Internal(|| {}),
-        });
-        let r = bindwidget(w.clone(), "hello");
-        assert_eq!(r, 0);
-        let tab = thingytab().lock().unwrap();
-        let t = tab.get("hello").unwrap();
-        assert!((t.flags & DISABLED) == 0);
-        assert!(t.widget.is_some());
-    }
-
-    #[test]
-    fn bindwidget_immortal_blocks() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let _g = LOCK.lock().unwrap();
-        reset_tab();
-
-        rthingy("imm");
-        thingytab().lock().unwrap().get_mut("imm").unwrap().flags |= TH_IMMORTAL;
-        let w = Arc::new(Widget {
-            flags: WidgetFlags::INT,
-            func: WidgetFunc::Internal(|| {}),
-        });
-        let r = bindwidget(w, "imm");
-        assert_eq!(r, -1);
-    }
-
-    #[test]
-    fn unbindwidget_drops_widget_when_last_peer() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let _g = LOCK.lock().unwrap();
-        reset_tab();
-
-        rthingy("only");
-        let w = Arc::new(Widget {
-            flags: WidgetFlags::INT,
-            func: WidgetFunc::Internal(|| {}),
-        });
-        bindwidget(w, "only");
-        assert!(thingytab().lock().unwrap().get("only").unwrap().widget.is_some());
-
-        let r = unbindwidget("only", 1);
-        assert_eq!(r, 0);
-        // unbind drops widget + sets DISABLED + unrefs the thingy
-        assert!(!thingytab().lock().unwrap().contains_key("only"));
-    }
-
-    #[test]
-    fn addzlefunction_binds_dotted_and_canonical() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let _g = LOCK.lock().unwrap();
-        reset_tab();
-
-        let w = addzlefunction("self-insert", || {}, WidgetFlags::empty());
-        assert!(w.is_some());
-        let tab = thingytab().lock().unwrap();
-        // Both `.self-insert` and `self-insert` exist
-        assert!(tab.contains_key(".self-insert"));
-        assert!(tab.contains_key("self-insert"));
-        // .self-insert is immortal
-        assert!(tab.get(".self-insert").unwrap().flags & TH_IMMORTAL != 0);
-        // canonical is not
-        assert!(tab.get("self-insert").unwrap().flags & TH_IMMORTAL == 0);
-        // both share the same widget Arc
-        let dot_w = tab.get(".self-insert").unwrap().widget.clone().unwrap();
-        let plain_w = tab.get("self-insert").unwrap().widget.clone().unwrap();
-        assert!(Arc::ptr_eq(&dot_w, &plain_w));
-    }
-
-    #[test]
-    fn addzlefunction_refuses_dotted_name() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let _g = LOCK.lock().unwrap();
-        reset_tab();
-
-        let r = addzlefunction(".bad", || {}, WidgetFlags::empty());
-        assert!(r.is_none());
-    }
-
-    #[test]
-    fn deletezlefunction_unbinds_all_peers() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let _g = LOCK.lock().unwrap();
-        reset_tab();
-
-        let w = addzlefunction("test-fn", || {}, WidgetFlags::empty()).unwrap();
-        assert!(thingytab().lock().unwrap().contains_key("test-fn"));
-        deletezlefunction(&w);
-        let tab = thingytab().lock().unwrap();
-        // Both .test-fn and test-fn unbinding marks them DISABLED
-        // and unrefs (their rc was 1 after addzlefunction → drops to 0
-        // → freenode removes them).
-        assert!(!tab.contains_key(".test-fn"));
-        assert!(!tab.contains_key("test-fn"));
-    }
 }

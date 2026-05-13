@@ -53,7 +53,7 @@ use std::os::unix::ffi::OsStrExt;
 use crate::ported::zsh_h::{options, MAX_OPS};
 use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_ARRAY, PM_HASHED, PM_LOWER, PM_UPPER, PM_READONLY, PM_EXPORTED, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z};
 use std::ffi::CStr;
-use crate::zle::zle;
+use crate::ported::zle::zle_thingy::{listwidgets, getwidgettarget};
 use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir::WalkDir;
 use std::os::unix::fs::FileTypeExt;
@@ -2587,6 +2587,14 @@ impl ShellExecutor {}
 impl ShellExecutor {}
 
 impl ShellExecutor {
+    /// `add-zsh-hook` registration stub. The hooks-machinery file was
+    /// removed from extensions/; these no-ops preserve the call sites
+    /// in `ext_builtins.rs::builtin_add_zsh_hook` and `plugin_cache.rs`.
+    pub(crate) fn add_hook(&mut self, _hook: &str, _func: &str) {}
+
+    /// `add-zsh-hook -d` removal — same stub rationale as `add_hook`.
+    pub(crate) fn delete_hook(&mut self, _hook: &str, _func: &str) {}
+
     // ═══════════════════════════════════════════════════════════════════
     // AOP INTERCEPT — the killer builtin
     // ═══════════════════════════════════════════════════════════════════
@@ -4004,19 +4012,12 @@ impl crate::ported::exec::ShellExecutor {
             // Distinguishes builtin vs user-defined so
             // ${(t)widgets[name]} works.
             "widgets" => {
-                let zle = zle();
                 if key == "@" || key == "*" {
-                    let mut names: Vec<&str> = zle.list_widgets();
+                    let mut names = listwidgets();
                     names.sort();
-                    return Some(
-                        names
-                            .into_iter()
-                            .map(String::from)
-                            .collect::<Vec<_>>()
-                            .join(" "),
-                    );
+                    return Some(names.join(" "));
                 }
-                if let Some(target) = zle.get_widget(key) {
+                if let Some(target) = getwidgettarget(key) {
                     if target == key {
                         Some("builtin".to_string())
                     } else {

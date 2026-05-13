@@ -399,7 +399,7 @@ impl lexbufstate {
 // resolving. Both die in Phase 9e (PORT_PLAN.md) when the wordcode
 // port reinstates C's `struct heredocs` shape (zsh.h:1152) +
 // `gethere()` deferred body collection.
-pub use crate::extensions::heredoc_ast::HereDoc;
+pub use crate::heredoc_ast::HereDoc;
 
 // =============================================================================
 // Lexer state — thread-local file-statics matching zsh's lex.c file-statics.
