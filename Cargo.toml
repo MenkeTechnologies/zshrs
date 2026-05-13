@@ -10,6 +10,17 @@ documentation = "https://menketechnologies.github.io/strykelang/zshrs.html"
 readme = "README.md"
 keywords = ["shell", "zsh", "bytecode", "terminal", "unix"]
 categories = ["command-line-utilities"]
+# Strip test scaffolding from the published crate. `cargo package` /
+# `cargo publish` excludes any path matching these globs; the local
+# checkout keeps them so `cargo test` still works. Removes ~1650
+# files (test_data + tests + test_corpus + every *parity* harness)
+# from the published tarball.
+exclude = [
+    "tests/**",
+    "test_data/**",
+    "test_corpus/**",
+    "**/*parity*",
+]
 
 [lib]
 name = "zsh"
@@ -132,7 +143,7 @@ base64 = "0.22"
 members = [".", "compsys", "daemon"]
 
 [workspace.package]
-version = "0.10.10"
+version = "0.11.0"
 edition = "2021"
 license = "MIT"
 authors = ["MenkeTechnologies"]
@@ -142,8 +153,8 @@ authors = ["MenkeTechnologies"]
 # single `bp.sh <new-version>` run touches one file. Members reference
 # these via `compsys.workspace = true` etc.
 [workspace.dependencies]
-compsys = { path = "compsys", version = "0.10.9" }
-zshrs-daemon = { path = "daemon", version = "0.10.9" }
+compsys = { path = "compsys", version = "0.11.0" }
+zshrs-daemon = { path = "daemon", version = "0.11.0" }
 
 [profile.release]
 opt-level = 3
