@@ -7,7 +7,6 @@
 //! module-loader path and don't translate — zshrs wires the two
 //! widgets through `extensions/widget.rs` at build time.
 
-use crate::ported::zle::zle_main::Zle;
 
 /// Port of `deltochar(UNUSED(char **args))` from `Src/Zle/deltochar.c:38`. The shared
 /// body behind both the `delete-to-char` and `zap-to-char` widgets:

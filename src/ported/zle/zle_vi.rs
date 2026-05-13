@@ -4,7 +4,7 @@
 
 use std::sync::atomic::Ordering;
 
-use super::zle_main::Zle; use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
 use super::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
 
 // Note: dead `ViState` / `ViChange` / `ViPendingOp` aggregates
@@ -751,12 +751,11 @@ fn viyank(name: char) -> Option<usize> {
 mod tests {
     use super::*;
 
-    fn zle_with(line: &str, cs: usize) -> Zle {
-        let mut zle = Zle::new();
+    fn zle_with(line: &str, cs: usize) {
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = line.chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(cs, std::sync::atomic::Ordering::SeqCst);
-        zle
     }
 
     #[test]

@@ -3,7 +3,6 @@
 //! Three C functions, zero structs/enums. The Rust port matches:
 //! three free fns over a `&mut Zle`, no Rust-only types.
 
-use super::zle_main::Zle;
 use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
 
 /// Port of `blankwordclass(ZLE_CHAR_T x)` from `Src/Zle/textobjects.c:34`. The

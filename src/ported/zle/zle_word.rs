@@ -16,7 +16,7 @@
 //!
 //! Order in this file mirrors C source order verbatim.
 
-use super::zle_main::Zle; use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
 
 // ---------------------------------------------------------------------------
 // Helpers shared by every widget below — character classification + cursor
@@ -854,14 +854,12 @@ pub fn transposewords(_args: &[String]) -> i32 {          // c:652
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ported::zle::zle_main::Zle;
 
-    fn line(s: &str) -> Zle {
-        let mut z = Zle::new();
+    fn line(s: &str) {
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = s.chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
-        z
     }
 
     /// Verifies `wordclass` per c:74-78 dispatch table.

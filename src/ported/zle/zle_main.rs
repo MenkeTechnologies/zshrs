@@ -191,91 +191,80 @@ pub struct findfunc {                                                        // 
     pub msg: String,                                                         // c:1930
 }
 
-/// `Zle` is a fieldless marker. All former fields are now
-/// file-scope statics matching the C source's file-`static`s
-/// (`ZLELINE`, `ZLECS`, etc. — see the static block lower in this
-/// file). The struct is retained only as a self-typed dispatch tag
-/// so the existing `impl Zle { ... }` methods continue to compile
-/// while callers migrate to the free-fn form. **No C counterpart.**
-pub struct Zle;
+// `pub struct Zle;` deleted along with `impl Default for Zle` and
+// `impl Zle { fn new() }`. The unit marker had no C counterpart and
+// served only as a per-instance dispatch tag for the now-deleted
+// methods. State init lives in `zle_reset()` below, the C-equivalent
+// of `zleread()`'s reset block at `Src/Zle/zle_main.c:1216`.
 
 // `CompletionRequest` enum deleted along with the matching field.
 // C dispatches completion-widget variants via separate function
 // pointers in `Src/Zle/zle_tricky.c` — no enum type.
 
-impl Default for Zle {
-    fn default() -> Self {
-        Zle::new()
-    }
-}
-
-impl Zle {
-    /// Construct a fresh Zle session by resetting every file-scope
-    /// static. The returned value is a unit marker — all session
-    /// state lives in the statics defined above. Equivalent to the
-    /// global state initialisation that `zleread()` performs at the
-    /// start of each line edit in Src/Zle/zle_main.c:1216 —
-    /// `zleline = NULL; zlecs = zlell = 0; done = 0; eofsent = 0; ...`.
-    pub fn new() -> Self {
-        // Seed the global keymap table on first Zle construction.
-        // The C source fires `createkeymapnamtab()` + `default_bindings()`
-        // once at module init (zle.c:init_zle); a Zle session needs
-        // those keymaps in place before key dispatch.
-        crate::ported::zle::zle_keymap::createkeymapnamtab();
-        crate::ported::zle::zle_keymap::default_bindings();
-        use std::sync::atomic::Ordering;
-        ZLELINE.lock().unwrap().clear();
-        ZLECS.store(0, Ordering::SeqCst);
-        ZLELL.store(0, Ordering::SeqCst);
-        MARK.store(0, Ordering::SeqCst);
-        *LBINDK.lock().unwrap() = None;
-        *BINDK.lock().unwrap() = None;
-        *ZMOD.lock().unwrap() = modifier { flags: 0, mult: 1, tmult: 1, vibuf: 0, base: 10 };
-        *STATUSLINE.lock().unwrap() = None;
-        STACKHIST.store(0, Ordering::SeqCst);
-        STACKCS.store(0, Ordering::SeqCst);
-        VISTARTCHANGE.store(0, Ordering::SeqCst);
-        UNDO_STACK.lock().unwrap().clear();
-        CHANGENO.store(0, Ordering::SeqCst);
-        KUNGETBUF.lock().unwrap().clear();
-        BAUD.store(38400, Ordering::SeqCst);
-        WATCH_FDS.lock().unwrap().clear();
-        *COMPWIDGET.lock().unwrap() = None;
-        HASCOMPMOD.store(false, Ordering::SeqCst);
-        TTYFD.store(0, Ordering::SeqCst);
-        LPROMPT.lock().unwrap().clear();
-        RPROMPT.lock().unwrap().clear();
-        PRE_ZLE_STATUS.store(0, Ordering::SeqCst);
-        for slot in vibuf().lock().unwrap().iter_mut() { slot.clear(); }
-        KILLRING.lock().unwrap().clear();
-        KILLRINGMAX.store(8, Ordering::SeqCst);
-        YANKLAST.store(false, Ordering::SeqCst);
-        NEG_ARG.store(false, Ordering::SeqCst);
-        MULT.store(1, Ordering::SeqCst);
-        *history().lock().unwrap() = super::zle_hist::History::new(2000);
-        LASTCOL.store(-1, Ordering::SeqCst);
-        BUFSTACK.lock().unwrap().clear();
-        VICHGBUF.lock().unwrap().clear();
-        *SRCH_STR.lock().unwrap() = None;
-        LASTLINE.lock().unwrap().clear();
-        LASTLL.store(0, Ordering::SeqCst);
-        LASTCS.store(0, Ordering::SeqCst);
-        CURCHANGE.store(0, Ordering::SeqCst);
-        UNDO_CHANGENO.store(0, Ordering::SeqCst);
-        UNDO_LIMITNO.store(0, Ordering::SeqCst);
-        VIINSBEGIN.store(0, Ordering::SeqCst);
-        YANKB.store(0, Ordering::SeqCst);
-        YANKE.store(0, Ordering::SeqCst);
-        YANKCS.store(0, Ordering::SeqCst);
-        *KCT.lock().unwrap() = None;
-        *vimarks().lock().unwrap() = [None; 27];
-        REGION_ACTIVE.store(0, Ordering::SeqCst);
-        PENDING_HOOKS.lock().unwrap().clear();
-        RAW_LP.lock().unwrap().clear();
-        RAW_RP.lock().unwrap().clear();
-        *highlight().lock().unwrap() = super::zle_refresh::HighlightManager::new();
-        Zle
-    }
+/// Reset every ZLE-session file-scope static to its zero-state.
+/// Equivalent to the global state initialisation that `zleread()`
+/// performs at the start of each line edit in Src/Zle/zle_main.c:1216
+/// — `zleline = NULL; zlecs = zlell = 0; done = 0; eofsent = 0; ...`.
+/// Called by tests and by the host before entering a new edit
+/// session. No C counterpart name; the equivalent C reset is the
+/// inline assignment block at the head of `zleread`.
+pub fn zle_reset() {
+    // Seed the global keymap table on first reset call. The C source
+    // fires `createkeymapnamtab()` + `default_bindings()` once at
+    // module init (zle.c:init_zle).
+    crate::ported::zle::zle_keymap::createkeymapnamtab();
+    crate::ported::zle::zle_keymap::default_bindings();
+    use std::sync::atomic::Ordering;
+    ZLELINE.lock().unwrap().clear();
+    ZLECS.store(0, Ordering::SeqCst);
+    ZLELL.store(0, Ordering::SeqCst);
+    MARK.store(0, Ordering::SeqCst);
+    *LBINDK.lock().unwrap() = None;
+    *BINDK.lock().unwrap() = None;
+    *ZMOD.lock().unwrap() = modifier { flags: 0, mult: 1, tmult: 1, vibuf: 0, base: 10 };
+    *STATUSLINE.lock().unwrap() = None;
+    STACKHIST.store(0, Ordering::SeqCst);
+    STACKCS.store(0, Ordering::SeqCst);
+    VISTARTCHANGE.store(0, Ordering::SeqCst);
+    UNDO_STACK.lock().unwrap().clear();
+    CHANGENO.store(0, Ordering::SeqCst);
+    KUNGETBUF.lock().unwrap().clear();
+    BAUD.store(38400, Ordering::SeqCst);
+    WATCH_FDS.lock().unwrap().clear();
+    *COMPWIDGET.lock().unwrap() = None;
+    HASCOMPMOD.store(false, Ordering::SeqCst);
+    TTYFD.store(0, Ordering::SeqCst);
+    LPROMPT.lock().unwrap().clear();
+    RPROMPT.lock().unwrap().clear();
+    PRE_ZLE_STATUS.store(0, Ordering::SeqCst);
+    for slot in vibuf().lock().unwrap().iter_mut() { slot.clear(); }
+    KILLRING.lock().unwrap().clear();
+    KILLRINGMAX.store(8, Ordering::SeqCst);
+    YANKLAST.store(false, Ordering::SeqCst);
+    NEG_ARG.store(false, Ordering::SeqCst);
+    MULT.store(1, Ordering::SeqCst);
+    *history().lock().unwrap() = super::zle_hist::History::new(2000);
+    LASTCOL.store(-1, Ordering::SeqCst);
+    BUFSTACK.lock().unwrap().clear();
+    VICHGBUF.lock().unwrap().clear();
+    *SRCH_STR.lock().unwrap() = None;
+    LASTLINE.lock().unwrap().clear();
+    LASTLL.store(0, Ordering::SeqCst);
+    LASTCS.store(0, Ordering::SeqCst);
+    CURCHANGE.store(0, Ordering::SeqCst);
+    UNDO_CHANGENO.store(0, Ordering::SeqCst);
+    UNDO_LIMITNO.store(0, Ordering::SeqCst);
+    VIINSBEGIN.store(0, Ordering::SeqCst);
+    YANKB.store(0, Ordering::SeqCst);
+    YANKE.store(0, Ordering::SeqCst);
+    YANKCS.store(0, Ordering::SeqCst);
+    *KCT.lock().unwrap() = None;
+    *vimarks().lock().unwrap() = [None; 27];
+    REGION_ACTIVE.store(0, Ordering::SeqCst);
+    PENDING_HOOKS.lock().unwrap().clear();
+    RAW_LP.lock().unwrap().clear();
+    RAW_RP.lock().unwrap().clear();
+    *highlight().lock().unwrap() = super::zle_refresh::HighlightManager::new();
 }
 
     /// Configure the terminal for ZLE input.
@@ -1320,7 +1309,7 @@ mod tests {
 
     #[test]
     fn handleprefixes_promotes_tmult_to_mult_when_prefixflag_set() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_TMULT;
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = 7;
         crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -1333,7 +1322,7 @@ mod tests {
 
     #[test]
     fn handleprefixes_resets_modifier_when_prefixflag_cleared() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_MULT;
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 9;
         crate::ported::zle::zle_main::PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1345,7 +1334,7 @@ mod tests {
 
     #[test]
     fn get_key_cmd_resolves_single_byte_binding() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         ungetbytes(b"\x05"); // Ctrl-E — emacs default = end-of-line
         let t = get_key_cmd().expect("should resolve Ctrl-E");
@@ -1354,7 +1343,7 @@ mod tests {
 
     #[test]
     fn get_key_cmd_resolves_multi_byte_sequence() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         // ESC-d is bind to kill-word in zle_bindings.c emacs table.
         // Push the bytes and resolve — multi-byte traversal kicks in.
@@ -1370,7 +1359,7 @@ mod tests {
 
     #[test]
     fn get_key_cmd_returns_none_on_eof() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         // No bytes fed, no terminal attached — getbyte should return None.
         let result = get_key_cmd();
@@ -1386,7 +1375,7 @@ mod tests {
 
     #[test]
     fn handle_undo_snapshots_line_for_subsequent_diff() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);
@@ -1398,7 +1387,7 @@ mod tests {
 
     #[test]
     fn in_vi_cmd_mode_reflects_active_keymap_name() {
-        let zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_keymap::curkeymapname() = "emacs".to_string();
         assert!(!in_vi_cmd_mode());
         *crate::ported::zle::zle_keymap::curkeymapname() = "vicmd".to_string();
@@ -1410,8 +1399,8 @@ mod tests {
     #[test]
     fn ungetbytes_unmeta_plain_bytes() {
         // c:375 — non-Meta bytes pushed back in reverse.
-        let mut zle = Zle::new();
-        // Pre-clear unget_buf in case Zle::new() leaves anything.
+        crate::ported::zle::zle_main::zle_reset();
+        // Pre-clear unget_buf in case { crate::ported::zle::zle_main::zle_reset() } leaves anything.
         crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(b"abc");
         // After backward walk: ungetbyte('c'), then 'b', then 'a'
@@ -1426,7 +1415,7 @@ mod tests {
         // c:370-373 — `\x83 X` decodes to (X XOR 0x20). Meta = 0x83.
         // Encode 'a' meta-quoted: 0x83 followed by 'a' XOR 0x20 = 0x41.
         // So [0x83, 0x41] → emit 0x41 ^ 0x20 = 0x61 = 'a'.
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(&[0x83, 0x41]);
         assert_eq!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front(), Some(b'a'));
@@ -1437,7 +1426,7 @@ mod tests {
     fn ungetbytes_unmeta_mixed_meta_and_plain() {
         // 'X' + Meta + 'a'XOR0x20 + 'Z' → 3 chars: 'X', 'a', 'Z'.
         // Encoded: [0x58, 0x83, 0x41, 0x5a].
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(&[0x58, 0x83, 0x41, 0x5a]);
         assert_eq!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front(), Some(b'X'));
@@ -1448,7 +1437,7 @@ mod tests {
 
     #[test]
     fn ungetbytes_unmeta_empty_input() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(b"");
         assert!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().is_empty());

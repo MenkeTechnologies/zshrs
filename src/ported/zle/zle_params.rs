@@ -4,7 +4,6 @@
 //!
 //! Special parameters that expose ZLE state to shell scripts
 
-use super::zle_main::Zle;
 
 // `pub mod names` removed — Rust-fabricated namespace wrapping
 // string literals. C source uses bare `"BUFFER"`/`"CURSOR"`/etc.
@@ -808,12 +807,11 @@ pub fn zleunsetfn(pm: &mut crate::ported::zsh_h::param, exp: i32) {          // 
 #[cfg(test)]
 mod region_active_tests {
     use super::*;
-    use crate::ported::zle::zle_main::Zle;
 
     #[test]
     fn get_region_active_reads_field() {
         // c:327 — `return region_active`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::REGION_ACTIVE.store(0, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(get_region_active(), 0);
         crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -825,7 +823,7 @@ mod region_active_tests {
     #[test]
     fn set_region_active_double_bang_idiom() {
         // c:320 — `region_active = (int)!!x`. Any non-zero → 1; zero → 0.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         set_region_active(0);
         assert_eq!(crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst), 0);
         set_region_active(1);
@@ -859,13 +857,13 @@ mod trap_tests {
 #[cfg(test)]
 mod numeric_tests {
     use super::*;
-    use crate::ported::zle::zle_main::Zle; use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
 
     #[test]
     fn set_numeric_sets_mult_and_replaces_flags() {
         // c:479-480 — `zmult=x; zmod.flags = MOD_MULT` (assignment,
         // not OR). Pre-existing flags get wiped.
-        let mut z = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_TMULT | MOD_NEG;
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 99;
         set_numeric(7);
@@ -879,7 +877,7 @@ mod numeric_tests {
     #[test]
     fn unset_numeric_resets_when_exp_nonzero() {
         // c:494-498 — only resets when exp != 0.
-        let mut z = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_MULT;
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 5;
         unset_numeric(1);
@@ -890,7 +888,7 @@ mod numeric_tests {
     #[test]
     fn unset_numeric_noop_when_exp_zero() {
         // c:494 — `if (exp)` skips when exp == 0.
-        let mut z = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_MULT;
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 5;
         unset_numeric(0);
@@ -903,7 +901,6 @@ mod numeric_tests {
 #[cfg(test)]
 mod suffix_tests {
     use super::*;
-    use crate::ported::zle::zle_main::Zle;
     use crate::ported::zle::zle_misc::SUFFIXLEN;
     use std::sync::atomic::Ordering;
 
@@ -919,7 +916,7 @@ mod suffix_tests {
     #[test]
     fn get_suffixend_reads_zlecs() {
         // c:607 — `return zlecs`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::ZLECS.store(11, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(get_suffixend(), 11);
     }
@@ -927,7 +924,7 @@ mod suffix_tests {
     #[test]
     fn get_suffixstart_subtracts_suffixlen() {
         // c:600 — `return zlecs - suffixlen`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::ZLECS.store(20, std::sync::atomic::Ordering::SeqCst);
         SUFFIXLEN.store(5, Ordering::SeqCst);
         assert_eq!(get_suffixstart(), 15);
@@ -939,13 +936,12 @@ mod suffix_tests {
 #[cfg(test)]
 mod widget_tests {
     use super::*;
-    use crate::ported::zle::zle_main::Zle;
     use crate::ported::zle::zle_thingy::Thingy;
 
     #[test]
     fn get_widget_reads_bindk_nam() {
         // c:416 — `return bindk ? bindk->nam : ""`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::BINDK.lock().unwrap() = Some(Thingy::new("self-insert"));
         assert_eq!(get_widget(), "self-insert");
     }
@@ -953,28 +949,28 @@ mod widget_tests {
     #[test]
     fn get_widget_empty_when_no_bindk() {
         // c:416 — `bindk` NULL → empty string.
-        let z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         assert_eq!(get_widget(), "");
     }
 
     #[test]
     fn get_lwidget_reads_lbindk_nam() {
         // c:451 — `return (lbindk ? lbindk->nam : "")`.
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::LBINDK.lock().unwrap() = Some(Thingy::new("forward-char"));
         assert_eq!(get_lwidget(), "forward-char");
     }
 
     #[test]
     fn get_lwidget_empty_when_no_lbindk() {
-        let z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         assert_eq!(get_lwidget(), "");
     }
 
     #[test]
     fn get_recursive_reads_zle_recursive_field() {
         // c:537 — `return zle_recursive`.
-        let z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::ZLE_RECURSIVE.store(0, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(get_recursive(), 0);
         crate::ported::zle::zle_main::ZLE_RECURSIVE.store(5, std::sync::atomic::Ordering::SeqCst);
@@ -1019,25 +1015,24 @@ mod isearch_tests {
 mod batch_getters_tests {
     use super::*;
     use crate::ported::zle::widget::WidgetFlags;
-    use crate::ported::zle::zle_main::Zle;
 
     #[test]
     fn get_histno_reads_history_cursor() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::history().lock().unwrap().cursor = 7;
         assert_eq!(get_histno(), 7);
     }
 
     #[test]
     fn get_keys_returns_keybuf_clone() {
-        let z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_keymap::keybuf.lock().unwrap() = vec![0x1b, b'a'];
         assert_eq!(get_keys(), vec![0x1b, b'a']);
     }
 
     #[test]
     fn get_keys_queued_count_returns_unget_len() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().push_back(b'a');
         crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().push_back(b'b');
         crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().push_back(b'c');
@@ -1046,7 +1041,7 @@ mod batch_getters_tests {
 
     #[test]
     fn get_yankactive_reads_lastcmd_flags() {
-        let z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         use crate::ported::zle::zle_main::LASTCMD;
         use std::sync::atomic::Ordering;
         LASTCMD.store(WidgetFlags::empty().bits(), Ordering::SeqCst);
@@ -1063,7 +1058,7 @@ mod batch_getters_tests {
 
     #[test]
     fn get_yankstart_yankend_read_fields() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::YANKB.store(3, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::YANKE.store(8, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(get_yankstart(), 3);
@@ -1072,7 +1067,7 @@ mod batch_getters_tests {
 
     #[test]
     fn set_yankstart_yankend_write_fields() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         set_yankstart(5);
         set_yankend(11);
         assert_eq!(crate::ported::zle::zle_main::YANKB.load(std::sync::atomic::Ordering::SeqCst), 5);
@@ -1083,11 +1078,10 @@ mod batch_getters_tests {
 #[cfg(test)]
 mod keybuf_tests {
     use crate::ported::zle::zle_keymap::{addkeybuf, freekeynode, KeyBinding};
-    use crate::ported::zle::zle_main::Zle;
 
     #[test]
     fn addkeybuf_plain_byte() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clear();
         addkeybuf(b'a' as i32);
         assert_eq!(*crate::ported::zle::zle_keymap::keybuf.lock().unwrap(), vec![b'a']);
@@ -1095,7 +1089,7 @@ mod keybuf_tests {
 
     #[test]
     fn addkeybuf_meta_quoted() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         // 0xa0 needs Meta-quoting → 0x83 then (0xa0 ^ 0x20) = 0x80
         crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clear();
         addkeybuf(0xa0);
@@ -1117,7 +1111,6 @@ mod keybuf_tests {
 #[cfg(test)]
 mod display_tests {
     use super::*;
-    use crate::ported::zle::zle_main::Zle;
     use crate::ported::zsh_h::{ZLCON_LINE_START, ZLCON_LINE_CONT, ZLCON_SELECT, ZLCON_VARED};
 
     #[test]
@@ -1150,7 +1143,7 @@ mod display_tests {
     fn get_context_branches() {
         use crate::ported::zle::zle_main::ZLECONTEXT;
         use std::sync::atomic::Ordering;
-        let z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         ZLECONTEXT.store(ZLCON_LINE_START, Ordering::SeqCst); assert_eq!(get_context(), "line");
         ZLECONTEXT.store(ZLCON_LINE_CONT,  Ordering::SeqCst); assert_eq!(get_context(), "cont");
         ZLECONTEXT.store(ZLCON_SELECT,     Ordering::SeqCst); assert_eq!(get_context(), "select");
@@ -1193,7 +1186,6 @@ mod display_tests {
 mod widget_killring_tests {
     use super::*;
     use crate::ported::zle::widget::{Widget, WidgetFlags, WidgetFunc};
-    use crate::ported::zle::zle_main::Zle;
     use crate::ported::zle::zle_thingy::Thingy;
     use std::sync::Arc;
 
@@ -1208,14 +1200,14 @@ mod widget_killring_tests {
 
     #[test]
     fn get_widgetfunc_user_widget_returns_func_name() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::BINDK.lock().unwrap() = Some(thingy_with_user_widget("self-insert", "my-fn"));
         assert_eq!(get_widgetfunc(), "my-fn");
     }
 
     #[test]
     fn get_widgetfunc_internal_returns_dot_internal() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         let mut t = Thingy::new("forward-char");
         t.widget = Some(Arc::new(Widget {
             flags: WidgetFlags::INT,
@@ -1227,7 +1219,7 @@ mod widget_killring_tests {
 
     #[test]
     fn get_widgetstyle_internal_dot_internal() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         let mut t = Thingy::new("self-insert");
         t.widget = Some(Arc::new(Widget {
             flags: WidgetFlags::INT,
@@ -1239,7 +1231,7 @@ mod widget_killring_tests {
 
     #[test]
     fn set_get_register_round_trip() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         // Register 'a' (idx 0).
         set_register('a', "hello");
         let s: String = crate::ported::zle::zle_main::vibuf().lock().unwrap()[0].iter().collect();
@@ -1250,7 +1242,7 @@ mod widget_killring_tests {
 
     #[test]
     fn set_register_digit_uses_offset_26() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         // Register '0' → idx 26.
         set_register('0', "zero");
         let s: String = crate::ported::zle::zle_main::vibuf().lock().unwrap()[26].iter().collect();
@@ -1260,13 +1252,13 @@ mod widget_killring_tests {
 
     #[test]
     fn set_register_invalid_returns_one() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         assert_eq!(set_register('!', "x"), 1);
     }
 
     #[test]
     fn unset_register_clears_buffer() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         set_register('a', "hi");
         unset_register('a', 1);
         assert_eq!(get_registers("a"), Some(String::new()));
@@ -1274,7 +1266,7 @@ mod widget_killring_tests {
 
     #[test]
     fn set_get_killring_round_trip() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         let entries = vec!["first".to_string(), "second".to_string()];
         set_killring(Some(&entries));
         let got = get_killring();
@@ -1283,7 +1275,7 @@ mod widget_killring_tests {
 
     #[test]
     fn unset_killring_clears_when_exp_nonzero() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         let entries = vec!["x".to_string()];
         set_killring(Some(&entries));
         unset_killring(1);
@@ -1292,7 +1284,7 @@ mod widget_killring_tests {
 
     #[test]
     fn set_histno_clamps_to_entries_len() {
-        let mut z = Zle::default();
+        crate::ported::zle::zle_main::zle_reset();
         crate::ported::zle::zle_main::history().lock().unwrap().entries.push(crate::ported::zle::zle_hist::HistEntry {
             line: "ls".to_string(), num: 1, time: None,
         });

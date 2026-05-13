@@ -19,7 +19,7 @@
 
 use std::sync::atomic::AtomicI32;
 
-use super::zle_main::{Zle, ZleString};
+use super::zle_main::{ZleString};
 
 // =====================================================================
 // Isearch globals — `Src/Zle/zle_hist.c:1078`.
@@ -478,12 +478,11 @@ pub use crate::zle_history::{HistEntry, History};
 mod tests {
     use super::*;
 
-    fn zle_with_history(entries: &[&str]) -> Zle {
-        let mut zle = Zle::new();
+    fn zle_with_history(entries: &[&str]) {
+        crate::ported::zle::zle_main::zle_reset();
         for line in entries {
             crate::ported::zle::zle_main::history().lock().unwrap().add((*line).to_string());
         }
-        zle
     }
 
     #[test]
@@ -532,7 +531,7 @@ mod tests {
 
     #[test]
     fn upline_in_single_line_buffer_returns_remaining_count() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "echo hi".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
@@ -543,7 +542,7 @@ mod tests {
 
     #[test]
     fn upline_in_two_line_buffer_moves_cursor_to_first_line() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "first\nsecond".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(9, std::sync::atomic::Ordering::SeqCst); // inside "second" at col 3 ("sec[o]nd")
@@ -567,7 +566,7 @@ mod tests {
 
     #[test]
     fn undo_redo_round_trip() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         setlastline();
         // Type "abc"
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
@@ -585,7 +584,7 @@ mod tests {
 
     #[test]
     fn undo_returns_one_when_stack_empty() {
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         setlastline();
         assert_eq!(undo_widget(), 1);
     }
