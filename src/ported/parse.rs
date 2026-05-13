@@ -263,10 +263,10 @@ pub use crate::zsh_ast::{
 use crate::ported::lex::{
     heredocs_clear, heredocs_clone, heredocs_is_empty, heredocs_len, heredocs_push, heredocs_set,
     heredocs_take, incasepat, incmdpos, incond, infor, input_slice, inredir, inrepeat, intypeset,
-    isnewlin, lex_init, lineno, nocorrect, pos, set_incasepat, set_incmdpos, set_incond, set_infor,
-    set_inredir, set_inrepeat, set_intypeset, set_isnewlin, set_nocorrect, set_pos, set_tokfd,
-    set_toklineno, set_tokstr, tok, tokfd, toklineno, tokstr, tokstr_eq, tokstr_is_none,
-    tokstr_is_some, tokstr_take, zshlex,
+    isnewlin, lex_init, lineno, noaliases, nocorrect, pos, set_incasepat, set_incmdpos, set_incond,
+    set_infor, set_inredir, set_inrepeat, set_intypeset, set_isnewlin, set_noaliases,
+    set_nocorrect, set_pos, set_tokfd, set_toklineno, set_tokstr, tok, tokfd, toklineno, tokstr,
+    tokstr_eq, tokstr_is_none, tokstr_is_some, tokstr_take, zshlex,
 };
 use crate::prompt::{cmdpop, cmdpush};
 use crate::zsh_h::{
@@ -3928,19 +3928,41 @@ fn parse_select() -> Option<ZshCommand> {
 /// (pattern_list, body, terminator) tuple where terminator is
 /// `;;` (default), `;&` (fallthrough), or `;|` (continue testing).
 fn par_case() -> Option<ZshCommand> {
+    // C par_case (parse.c:1209-1241). Order of state toggles
+    // matters — the lexer reads the case word in `incmdpos=0`
+    // (so it's not promoted to a reswd), then the `in`/`{` in
+    // `incmdpos=1, noaliases=1, nocorrect=1` (so the `in` literal
+    // isn't alias-expanded or spell-corrected), then sets
+    // `incasepat=1, incmdpos=0` before the first pattern.
+    set_incmdpos(false);
     zshlex(); // skip 'case'
 
     let word = match tok() {
         STRING_LEX => {
             let w = tokstr().unwrap_or_default();
+            // c:1222 — `incmdpos = 1;` before the next zshlex so the
+            // `in` keyword is recognised. c:1223-1225 — save+force
+            // noaliases / nocorrect.
+            set_incmdpos(true);
+            let ona = noaliases();
+            let onc = nocorrect();
+            set_noaliases(true);
+            set_nocorrect(1);
             zshlex();
-            w
+            // Restore noaliases/nocorrect after the `in`-or-`{` token
+            // is in hand; both are unconditionally restored at c:1238-1239.
+            let restore = |ona: bool, onc: i32| {
+                set_noaliases(ona);
+                set_nocorrect(onc);
+            };
+            (w, ona, onc, restore)
         }
         _ => {
             error("expected word after case");
             return None;
         }
     };
+    let (word, ona, onc, restore) = word;
 
     skip_separators();
 
@@ -3949,20 +3971,22 @@ fn par_case() -> Option<ZshCommand> {
     if tok() == STRING_LEX {
         let s = tokstr();
         if s.map(|s| s != "in").unwrap_or(true) {
+            // c:1228-1232 — restore noaliases/nocorrect on error path.
+            restore(ona, onc);
             error("expected 'in' in case");
             return None;
         }
     } else if !use_brace {
+        restore(ona, onc);
         error("expected 'in' or '{' in case");
         return None;
     }
-    // Set incasepat=1 BEFORE consuming "in" so the next token (which
-    // could be a leading `(` of a paren-prefixed pattern like
-    // `case foo in (a|b) …`) is lexed as Inpar, not as a glob-token.
-    // Without this the `(` got swallowed into a gettokstr('(', false)
-    // call and produced a String like "(foo)" — the parser then saw
-    // the `)` inside a string instead of as a separate Outpar.
+    // c:1236-1239 — `incasepat = 1; incmdpos = 0; noaliases = ona;
+    // nocorrect = onc;` — set the case-pattern context AND restore
+    // alias/correct state BEFORE the zshlex that consumes `in`/`{`.
     set_incasepat(1);
+    set_incmdpos(false);
+    restore(ona, onc);
     zshlex();
 
     let mut arms = Vec::new();
