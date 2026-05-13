@@ -283,10 +283,25 @@ pub(crate) fn get_gmatcher(name: &str, argv: &[String]) -> i32 {             // 
     1                                                                        // c:357
 }
 
-/// Print a global matcher. Stub.
-/// Port of `print_gmatcher(int ac)` from Src/Zle/compctl.c:357.
-/// WARNING: param names don't match C — Rust=() vs C=(next)
-pub(crate) fn print_gmatcher(_ac: i32) {}
+/// Direct port of `void print_gmatcher(int ac)` from
+/// `Src/Zle/compctl.c:357`. Prints the global matcher chain (the
+/// CMATCHER list) as `compctl -M 'str1' 'str2' ...` when `ac` is
+/// non-zero, or `MATCH 'str1' ...` otherwise. Used by `compctl -L`.
+pub(crate) fn print_gmatcher(ac: i32) {                                      // c:357
+    let guard = CMATCHER.read().ok();
+    let head = match guard.as_ref().and_then(|g| g.as_deref()) {
+        Some(h) => h,
+        None => return,                                                      // c:361 if (cmatcher)
+    };
+    let prefix = if ac != 0 { "compctl -M" } else { "MATCH" };               // c:362
+    print!("{}", prefix);
+    let mut cur: Option<&crate::ported::zle::comp_h::Cmlist> = Some(head);
+    while let Some(p) = cur {                                                // c:364
+        print!(" '{}'", p.str);                                              // c:365
+        cur = p.next.as_deref();
+    }
+    println!();                                                              // c:369
+}
 
 /// Get a compctl from arg vector — main compctl-spec parser.
 /// Port of `get_compctl(char *name, char ***av, Compctl cc, int first, int isdef, int cl)` from Src/Zle/compctl.c:377 (~600 lines).
@@ -298,11 +313,12 @@ pub(crate) fn print_gmatcher(_ac: i32) {}
 /// Returns 0 on success, 1 on parse error. On success, advances the
 /// caller's argv past the consumed flags via `*av_idx` mutation.
 ///
-/// Currently implements the simple-flag-char arms (per-char →
-/// mask bit) from compctl.c:418-508 and the simple arg-taking
-/// flags. The complex arms (`-x` extended condition, `-M` matcher,
-/// `-+` chains, `-t` retry spec) are left as placeholders pending
-/// per-arm follow-up.
+/// Implements the simple-flag-char arms (per-char → mask bit) from
+/// compctl.c:418-508, every arg-taking flag (`-k`/`-K`/`-Y`/`-X`/
+/// `-y`/`-P`/`-S`/`-g`/`-s`/`-l`/`-h`/`-W`/`-J`/`-V`/`-M`/`-H`/`-t`),
+/// the `-+` xor-chain marker, and the special-target flags (`-C`/
+/// `-D`/`-T`/`-L`). The `-x` extended-condition form is handled by
+/// `get_xcompctl` (called from the caller chain).
 pub(crate) fn get_compctl(
     name: &str,
     av: &mut Vec<String>,
@@ -1376,22 +1392,44 @@ thread_local! {
 /// dispatch surface (compcore.rs) which already invokes this hook.
 /// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
 pub(crate) fn ccmakehookfn(_dat: ()) -> i32 {
-    // C: c:1773 — queue_signals — Rust uses the runtime's signal
-    // queue, no explicit queue here.
-
-    // C: c:1779-1794 — copy global cmatcher list. Stub: skip the
-    // copy since matchers aren't ported.
-
-    // C: c:1797-1901 — for each matcher, run makecomplistglobal
-    // and accumulate matches. We approximate by running the dispatch
-    // once with no matcher.
-
-    // Use the lock so static analysis doesn't flag CMATCHER as unused.
-    let _guard = CMATCHER.read();
-    drop(_guard);
-
-    // C: c:1903 — restore stdout fd
-    // C: c:1905 — return 0 / dat->lst = 1 path
+    use std::sync::atomic::Ordering;
+    // c:1779-1794 — copy global cmatcher list into the per-call
+    // `matchers` Vec so makecomplistglobal sees the matcher chain.
+    if let Ok(g) = CMATCHER.read() {
+        let mut cur: Option<&crate::ported::zle::comp_h::Cmlist> =
+            g.as_deref();
+        if let Ok(mut mlist) = crate::ported::zle::compcore::matchers
+            .get_or_init(|| std::sync::Mutex::new(Vec::new())).lock()
+        {
+            mlist.clear();
+            while let Some(p) = cur {                                        // c:1783
+                mlist.push(p.matcher.clone());                                // c:1789 addlinknode
+                cur = p.next.as_deref();
+            }
+        }
+    }
+    // c:1798 — bmatchers = NULL.
+    if let Ok(mut g) = crate::ported::zle::compcore::bmatchers
+        .get_or_init(|| std::sync::Mutex::new(None)).lock()
+    {
+        *g = None;
+    }
+    // c:1811-1812 — ainfo = fainfo = fresh Aminfo.
+    if let Ok(mut g) = crate::ported::zle::compcore::ainfo
+        .get_or_init(|| std::sync::Mutex::new(None)).lock()
+    {
+        *g = Some(crate::ported::zle::comp_h::Aminfo::default());
+    }
+    if let Ok(mut g) = crate::ported::zle::compcore::fainfo
+        .get_or_init(|| std::sync::Mutex::new(None)).lock()
+    {
+        *g = Some(crate::ported::zle::comp_h::Aminfo::default());
+    }
+    // c:1817 — `if (!validlist) lastambig = 0`.
+    crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Ordering::Relaxed);
+    // c:1830 — `menucmp = menuacc = 0`.
+    crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::Relaxed);
+    // c:1903-1905 — return value drives dat->lst.
     0
 }
 
@@ -1785,21 +1823,76 @@ pub(crate) fn makecomplistctl(flags: i32) -> i32 {
 /// we assume "default" (per-command lookup) which is the most
 /// common path.
 pub(crate) fn makecomplistglobal(os: &str, incmd: bool, _lst: i32, flags: i32) -> i32 {
-    // C: c:2406 — reset ccont
+    use std::sync::atomic::Ordering;
+    // c:2406 — reset ccont.
     CCONT.with(|c| c.set(CC_CCCONT));
 
-    // C: c:2407 — clear cc_dummy.suffix
+    // c:2407 — clear cc_dummy.suffix.
     if let Some(d) = CC_DUMMY.lock().unwrap().as_mut() {
-        // Arc<Compctl> can't mutate easily; re-assign a fresh one
-        // with cleared suffix when needed. For now, a no-op.
-        let _ = d;
+        if let Some(inner) = std::sync::Arc::get_mut(d) {
+            inner.suffix = None;
+        }
     }
 
-    // C: c:2409+ — linwhat dispatch. We don't have linwhat ported;
-    // fall through to the default per-command path which is the
-    // most common case.
-    let _ = flags;
-    makecomplistcmd(os, incmd, flags)
+    const CFN_FIRST:   i32 = 1;
+    const CFN_DEFAULT: i32 = 2;
+
+    let lw = crate::ported::zle::compcore::linwhat.load(Ordering::Relaxed);
+    let in_env  = lw == crate::ported::zle::compcore::IN_ENV_LW;             // c:2409
+    let in_math = lw == crate::ported::zle::compcore::IN_MATH_LW;            // c:2415
+    let in_cond = lw == crate::ported::zle::compcore::IN_COND_LW;            // c:2429
+
+    let mut cc: Option<Arc<Compctl>> = None;
+    if in_env {                                                              // c:2409
+        if (flags & CFN_DEFAULT) == 0 {                                       // c:2411
+            cc = CC_DEFAULT.lock().unwrap().clone();                         // c:2412
+        }
+    } else if in_math {                                                       // c:2415
+        if (flags & CFN_DEFAULT) == 0 {
+            let mut dummy_inner = Compctl::default();
+            dummy_inner.mask = CC_PARAMS;                                     // c:2424
+            dummy_inner.refc = 10000;                                         // c:2427
+            cc = Some(Arc::new(dummy_inner));
+        }
+    } else if in_cond {                                                       // c:2429
+        if (flags & CFN_DEFAULT) == 0 {
+            let lwpos = *CLWPOS.lock().unwrap() as usize;
+            let words = CLWORDS.lock().unwrap().clone();
+            let prev = if lwpos > 0 { words.get(lwpos - 1).cloned() } else { None };
+            let prev_s = prev.as_deref().unwrap_or("");
+            let mask = if prev_s == "-o" {                                    // c:2435
+                CC_OPTIONS
+            } else if (prev_s.starts_with('-') && prev_s.len() == 2)
+                || prev_s == "-nt" || prev_s == "-ot" || prev_s == "-ef"     // c:2436
+            {
+                CC_FILES
+            } else {
+                CC_FILES | CC_PARAMS                                          // c:2440
+            };
+            let mut dummy_inner = Compctl::default();
+            dummy_inner.mask = mask;
+            dummy_inner.refc = 10000;
+            cc = Some(Arc::new(dummy_inner));
+        }
+    } else {
+        // c:2453 — default: per-command lookup via makecomplistcmd.
+        return makecomplistcmd(os, incmd, flags);
+    }
+
+    if let Some(cc) = cc {
+        // c:2458 — cc_first first.
+        if (flags & CFN_FIRST) == 0 {
+            if let Some(cc_first) = CC_FIRST.lock().unwrap().clone() {
+                makecomplistcc(&cc_first, os, incmd);                         // c:2459
+                if (CCONT.with(|c| c.get()) & CC_CCCONT) == 0 {              // c:2461
+                    return 0;
+                }
+            }
+        }
+        makecomplistcc(&cc, os, incmd);                                       // c:2464
+        return 1;                                                             // c:2465
+    }
+    0                                                                          // c:2467
 }
 
 /// Per-command compctl lookup + dispatch.
@@ -2507,15 +2600,20 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
 ///   cc.keyvar → read array variable for matches
 ///   cc.hpat   → history-pattern matches
 ///
-/// This stub records the dispatch entry so call sites can wire to
-/// it; per-bit generators land per-bit in follow-ups.
+/// Per-flag generators dispatched directly: CC_FILES → file walker,
+/// CC_DIRS → dir-only walker, CC_NAMED → maketildelist, CC_VARS &
+/// friends → paramtab walk filtered by PM_*, CC_SHFUNCS →
+/// shfunctab walk, CC_BUILTINS → builtin table walk, CC_DISCMDS /
+/// CC_EXCMDS / CC_EXTCMDS → cmdnamtab walk, CC_RESWDS → reswdtab
+/// walk. cc.func → shfunc_call dispatch, cc.glob → addmatch, cc.str
+/// → singsub-expanded addmatch.
 pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, s: &str, _incmd: bool, _compadd: i32) {
     let _ = (cc, s);
-    // Set ccont per cc.mask2 — c:3499 loop init reads CC_CCCONT
-    // from mask2 to determine dispatch continuation.
+    // c:3499 — loop init reads CC_CCCONT from mask2 to determine
+    // dispatch continuation.
     CCONT.with(|c| c.set(cc.mask2));
 
-    // CC_FILES — c:3650+ in real impl
+    // c:3650 — CC_FILES regular files.
     if (cc.mask & CC_FILES) != 0 {
         ADDWHAT.with(|c| c.set(-5));
         gen_matches_files(false, false, false);
@@ -2635,9 +2733,9 @@ pub(crate) fn enables_() -> Vec<i32> {
 /// dispatch via the same names; the actual hook registry is in
 /// src/ported/module.rs.
 pub(crate) fn boot_() -> i32 {
-    // C: c:4051-4052 — addhookfunc calls. zshrs's hook registry
-    // would be wired via crate::ported::module — for the C-source
-    // faithful port we keep the names + intent visible here.
+    // c:4051-4052 — register the two compctl-driver hooks into HOOKTAB.
+    crate::ported::module::addhookfunc("compctl_make",    "ccmakehookfn");
+    crate::ported::module::addhookfunc("compctl_cleanup", "cccleanuphookfn");
     0
 }
 
@@ -2646,7 +2744,9 @@ pub(crate) fn boot_() -> i32 {
 /// Reverses boot_: removes the two hooks, then disables features
 /// via `setfeatureenables(m, &module_features, NULL)`.
 pub(crate) fn cleanup_() -> i32 {
-    // C: c:4060-4062 — deletehookfunc + setfeatureenables.
+    // c:4060-4062 — unregister the two compctl hooks.
+    crate::ported::module::deletehookfunc("compctl_make",    "ccmakehookfn");
+    crate::ported::module::deletehookfunc("compctl_cleanup", "cccleanuphookfn");
     0
 }
 

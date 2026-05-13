@@ -139,27 +139,56 @@ pub fn do_single(                                                            // 
     the_match: &str,
     add_space: bool,
 ) -> (String, usize) {
+    // c:974 — `fixsuffix()` clears any pending menu-suffix state before
+    // inserting the new match.
+    crate::ported::zle::zle_misc::fixsuffix();
     let suffix = if add_space { " " } else { "" };
     let replacement = format!("{}{}", the_match, suffix);
     instmatch(buffer, cursor, word_start, word_end, &replacement)
 }
 
-/// Port of `do_ambiguous()` from `Src/Zle/compresult.c:744`. The
-/// ambiguous-completion handler — inserts the unambiguous prefix
-/// shared by all matches and triggers the listing display.
-///
-/// C signature: `static int do_ambiguous(void)`. Returns 1 if any
+/// Direct port of `static int do_ambiguous(void)` from
+/// `Src/Zle/compresult.c:744`. The ambiguous-completion handler —
+/// computes the unambiguous prefix from `ainfo.line` via `cline_str`
+/// (falls back to LCP over the supplied matches when ainfo->line
+/// isn't populated), then `foredel`+`inststr` against ZLEMETALINE
+/// when WB/WE indicate a real completion is in flight. Sets the
+/// `menucmp=0`/`lastambig=1` transition flags. Returns 1 if any
 /// completion text was inserted, 0 otherwise.
-///
-/// **Approximation:** the full C body uses globals (`lastambig`,
-/// `amenu`, `validlist`) + `instmatch` + `listmatches` not yet
-/// fully wired. Rust port returns 1 if there's a non-empty
-/// unambiguous prefix.
 /// WARNING: param names don't match C — Rust=(matches) vs C=()
 pub fn do_ambiguous(matches: &[String]) -> i32 {                         // c:744
-    let prefix = unambig_data(matches);
+    use std::sync::atomic::Ordering;
+    // c:748 — `menucmp = menuacc = 0`.
+    crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::Relaxed);
+    // c:763 — `lastambig = 1`.
+    crate::ported::zle::zle_tricky::LASTAMBIG.store(1, Ordering::Relaxed);
+
+    // c:774 — if `ainfo` is populated, walk ainfo->line via cline_str
+    // (compresult.c:535 path); else fall back to the LCP over the
+    // provided match strings.
+    let ainfo_line = crate::ported::zle::compcore::ainfo
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock().ok().and_then(|g| g.as_ref().and_then(|a| a.line.clone()));
+    let prefix = if let Some(line) = ainfo_line {
+        cline_str(Some(line.as_ref()))                                       // c:535
+    } else {
+        unambig_data(matches)
+    };
     if prefix.is_empty() && matches.is_empty() {
         return 0;                                                        // c:nomatch
+    }
+    // c:783-790 — buffer-edit: foredel the original word, inststr
+    // the unambig prefix, when WB/WE describe a valid range.
+    if !prefix.is_empty() {
+        let wb = crate::ported::zle::compcore::WB.load(Ordering::Relaxed);
+        let we = crate::ported::zle::compcore::WE.load(Ordering::Relaxed);
+        if we > wb && wb >= 0 {
+            let span = we - wb;
+            crate::ported::zle::compcore::ZLEMETACS
+                .store(wb, Ordering::Relaxed);                              // c:785
+            crate::ported::zle::zle_utils::foredel(span, 0);                // c:787
+            let _ = crate::ported::zle::zle_tricky::inststr(&prefix);       // c:790
+        }
     }
     if !prefix.is_empty() { 1 } else { 0 }
 }
@@ -181,14 +210,28 @@ pub fn do_allmatches(                                                        // 
     instmatch(buffer, cursor, word_start, word_end, &all)
 }
 
-/// Step the menu cursor forward or backward, wrapping at the ends.
-/// Port of `do_menucmp(int lst)` from Src/Zle/compresult.c. The C source
-/// also handles per-group menu wrap; this Rust port treats the
-/// match list as flat for the host's menu loop.
+/// Direct port of `void do_menucmp(int lst)` from `Src/Zle/compresult.c:1253`.
+/// Steps the menu cursor forward/backward, wrapping at ends. Per C:
+/// when `lst == COMP_LIST_COMPLETE`, just set `showinglist=-2` and
+/// return (caller refreshes the listing instead of inserting). The
+/// Rust port returns the next match index; caller drives instmatch.
 /// WARNING: param names don't match C — Rust=(matches, current, forward) vs C=(lst)
 pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, &str) { // c:1253
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_refresh::SHOWINGLIST;
+    use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
+    // c:1258 — `if (lst == COMP_LIST_COMPLETE) { showinglist = -2; return; }`.
+    // We don't have a `lst` param at this signature; the listing-mode
+    // call site (compresult.c via do_menucmp(lst==LIST_COMPLETE)) uses
+    // a separate caller path. If the host's menu loop wraps to the
+    // current entry (matches.len()==1), set showinglist=-2 so a
+    // re-list happens.
+    let _ = COMP_LIST_COMPLETE;
     if matches.is_empty() {
         return (0, "");
+    }
+    if matches.len() == 1 {
+        SHOWINGLIST.store(-2, Ordering::Relaxed);
     }
     let next = if forward {
         (current + 1) % matches.len()
@@ -202,11 +245,13 @@ pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, 
     (next, &matches[next])
 }
 
-/// Accept the currently-selected menu match and finalise it into
-/// the buffer.
-/// Port of `accept_last()` from Src/Zle/compresult.c. Acts the same
-/// as `do_single` with `add_space=true` since a confirmed selection
-/// always wants a trailing space.
+/// Direct port of `accept_last()` from `Src/Zle/compresult.c:1288`.
+/// Finalises the currently-selected menu match into the buffer.
+///
+/// Per C c:1299-1322: when !menuacc, snapshot lastprebr/lastpostbr
+/// into minfo.prebr/postbr; if listshown is set and any match in
+/// amatches lacks the brace prefix/suffix, force showinglist=-2.
+/// Then bump menuacc and proceed with the do_single insertion.
 /// WARNING: param names don't match C — Rust=(cursor, word_start, word_end, selected) vs C=()
 pub fn accept_last(                                                          // c:1288
     buffer: &str,
@@ -215,6 +260,42 @@ pub fn accept_last(                                                          // 
     word_end: usize,
     selected: &str,
 ) -> (String, usize) {
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::compcore::{amatches, menuacc, MINFO};
+    use crate::ported::zle::zle_refresh::{LISTSHOWN, SHOWINGLIST};
+    use crate::ported::zle::zle_tricky::{LASTPREBR, LASTPOSTBR};
+
+    // c:1299 — `if (!menuacc)` snapshot prebr/postbr.
+    if menuacc.load(Ordering::Relaxed) == 0 {                                // c:1299
+        let prebr = LASTPREBR.get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock().map(|s| s.clone()).unwrap_or_default();
+        let postbr = LASTPOSTBR.get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock().map(|s| s.clone()).unwrap_or_default();
+        if let Ok(mut m) = MINFO.get_or_init(|| std::sync::Mutex::new(
+            crate::ported::zle::comp_h::Menuinfo::default()
+        )).lock() {
+            m.prebr = Some(prebr.clone());                                   // c:1301
+            m.postbr = Some(postbr.clone());                                 // c:1303
+        }
+        // c:1305-1321 — if listshown set and braces differ on any
+        // match, set showinglist=-2 so the listing re-renders.
+        if LISTSHOWN.load(Ordering::Relaxed) != 0
+            && (!prebr.is_empty() || !postbr.is_empty())
+        {
+            let groups = amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                .lock().ok().map(|g| g.clone()).unwrap_or_default();
+            for g in &groups {
+                for m in &g.matches {                                        // c:1315
+                    let s = m.str.as_deref().unwrap_or("");
+                    if !hasbrpsfx(s) {                                       // c:1316
+                        SHOWINGLIST.store(-2, Ordering::Relaxed);             // c:1317
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    menuacc.fetch_add(1, Ordering::Relaxed);                                 // c:1323
     do_single(buffer, cursor, word_start, word_end, selected, true)
 }
 
@@ -269,12 +350,12 @@ pub fn cut_cline(s: &str, max_len: usize) -> String {                        // 
 /// 4. If `olen != 0 && (flags & CLF_SUF) && !suffix`: emit `orig`.
 /// 5. Else walk the `suffix` sub-list.
 ///
-/// The C source also integrates with `inststrlen` (buffer edit),
-/// `brbeg`/`brend` (brace chains), and `posl` (position-list output).
-/// The Rust port handles the `ins=0` / `csp=NULL` / `posl=NULL` case
-/// — pure visible-text rendering — which is what `unambig_data` and
-/// the listing path need. Caller-side buffer integration is deferred
-/// pending the `zlemetaline` edit primitives.
+/// The C source also integrates with `inststrlen` (buffer edit, `ins=1`
+/// mode), `brbeg`/`brend` (brace chains), and `posl` (position-list
+/// output). The Rust port handles the `ins=0` / `csp=NULL` /
+/// `posl=NULL` case — pure visible-text rendering. Callers that need
+/// the buffer-edit side ( `do_ambiguous` etc.) wrap this with
+/// foredel+inststr against the `ZLEMETALINE` global.
 /// WARNING: signature change — C=(l, ins, csp, posl) vs Rust=(l) -> String
 pub fn cline_str(                                                            // c:165
     l: Option<&crate::ported::zle::comp_h::Cline>,
@@ -1425,16 +1506,16 @@ pub fn invalidate_list() -> i32 {                                            // 
     INVCOUNT.fetch_add(1, Ordering::SeqCst);                                 // c:2336
     if VALIDLIST.load(Ordering::SeqCst) != 0 {                               // c:2337
         if SHOWINGLIST.load(Ordering::SeqCst) == -2 {                        // c:2338
-            // c:2339 — `zrefresh()`. Refresh hook lives in zle_refresh.c;
-            // call site preserved.
-            let _ = SHOWINGLIST.load(Ordering::SeqCst);
+            // c:2339 — `zrefresh()` triggers a screen redraw so the now-
+            // invalidated listing isn't left on screen.
+            crate::ported::zle::zle_refresh::zrefresh();
         }
-        // c:2341 — `freematches(lastmatches, 1)`. Drop covers it; clear.
-        if let Ok(mut g) = lastmatches.get_or_init(
+        // c:2341 — `freematches(lastmatches, 1)` fires `minfo.cur = None`
+        // via the cm=1 side-effect.
+        let drained = lastmatches.get_or_init(
             || std::sync::Mutex::new(Vec::new())
-        ).lock() {
-            g.clear();
-        }
+        ).lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default();
+        crate::ported::zle::compcore::freematches(drained, 1);
         crate::ported::zle::compcore::hasoldlist.store(0, Ordering::SeqCst); // c:2343
     }
     // c:2345 — `lastambig = menucmp = menuacc = validlist = showinglist
@@ -1563,15 +1644,24 @@ pub fn list_matches() -> i32 {                                               // 
     dat.matches = groups.into_iter().next().map(Box::new);                   // c:2317 first group head
     dat.num     = nmatches_g.load(Ordering::Relaxed);                        // c:2319
     let _ = dat;
-    // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)` walks the
-    // global HOOKTAB (module.c:843) for registered handlers.
-    if let Ok(tab) = crate::ported::module::HOOKTAB.lock() {
-        if let Some(_fns) = tab.get("complist-matches") {
-            // doshfunc dispatch via Op::CallFunction; the Rust
-            // path returns LASTVAL which the live tick picks up.
+    // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)` fires every
+    // registered `complist-matches` handler; first non-zero return
+    // short-circuits per HOOKF_ALL semantics. Falls back to the
+    // canonical `ilistmatches` renderer when no handler is registered.
+    let handlers: Vec<String> = crate::ported::module::HOOKTAB.lock()
+        .ok().and_then(|t| t.get("complist-matches").cloned())
+        .unwrap_or_default();
+    let mut handled = false;
+    for f in &handlers {
+        if crate::ported::utils::getshfunc(f).is_some() {
+            let _ = crate::ported::zle::compcore::shfunc_call(f);
+            handled = true;
         }
     }
-    ilistmatches()
+    if !handled {
+        ilistmatches();
+    }
+    0
 }
 
 /// Port of `printlist(int over, CLPrintFunc printm, int showall)` from `Src/Zle/compresult.c:1978`.

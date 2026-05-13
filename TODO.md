@@ -172,3 +172,32 @@ project-wide and should land in one commit.
 If a function in `src/ported/` is not 100% line-by-line, it
 must NOT be ticked in `docs/PORT_CHECKLIST.md`. Add the gap
 here, link from the file's checklist entry, and keep moving.
+
+┌─────────────────────────────────────────────────────────────────────┬──────────────────────┬────────────────────────────────────────┐
+  │                                Item                                 │         File         │                 Notes                  │
+  ├─────────────────────────────────────────────────────────────────────┼──────────────────────┼────────────────────────────────────────┤
+  │ get_unambig_pos ainfo-based output is single-position; C's posl is  │ complete.rs c:1447   │ Needs cline_str posl tracking (was     │
+  │ multi-position                                                      │                      │ reverted)                              │
+  ├─────────────────────────────────────────────────────────────────────┼──────────────────────┼────────────────────────────────────────┤
+  │ instmatch Cmatch threading                                          │ compresult.rs c:578  │ Signature divergence from C            │
+  ├─────────────────────────────────────────────────────────────────────┼──────────────────────┼────────────────────────────────────────┤
+  │ do_single ipre/pre/ppre/brace re-insertion                          │ compresult.rs c:963  │ Signature divergence                   │
+  ├─────────────────────────────────────────────────────────────────────┼──────────────────────┼────────────────────────────────────────┤
+  │ hasbrpsfx test-insert + comparison                                  │ compresult.rs c:685  │ Currently just brace-char check        │
+  ├─────────────────────────────────────────────────────────────────────┼──────────────────────┼────────────────────────────────────────┤
+  │ valid_match menu-cursor walker                                      │ compresult.rs c:1210 │ Currently prefix/suffix-only           │
+  ├─────────────────────────────────────────────────────────────────────┼──────────────────────┼────────────────────────────────────────┤
+  │ build_pos_string colon-joined position list                         │ compresult.rs c:489  │ Currently "n/total" menu-status        │
+  ├─────────────────────────────────────────────────────────────────────┼──────────────────────┼────────────────────────────────────────┤
+  │ copyprevshellword shell-tokenizer                                   │ zle_misc.rs c:1108   │ Needs ctxtlex replay                   │
+  ├─────────────────────────────────────────────────────────────────────┼──────────────────────┼────────────────────────────────────────┤
+  │ set_comp_sep lex replay body                                        │ compcore.rs          │ ~400 lines needing ctxtlex             │
+  │                                                                     │ c:1490-1893          │                                        │
+  ├─────────────────────────────────────────────────────────────────────┼──────────────────────┼────────────────────────────────────────┤
+  │ sep_comp_string lex replay body                                     │ compctl.rs           │ Same lex replay                        │
+  │                                                                     │ c:2840-2873          │                                        │
+  ├─────────────────────────────────────────────────────────────────────┼──────────────────────┼────────────────────────────────────────┤
+  │ getcurcmd lex over zlemetaline                                      │ zle_tricky.rs c:2934 │ Same                                   │
+  ├─────────────────────────────────────────────────────────────────────┼──────────────────────┼────────────────────────────────────────┤
+  │ doexpandhist real history-! expansion                               │ zle_tricky.rs c:2854 │ Needs hist_expand exposed as a fn      │
+  └─────────────────────────────────────────────────────────────────────┴──────────────────────┴───────────────────────────────────────
