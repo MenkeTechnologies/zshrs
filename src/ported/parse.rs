@@ -2320,7 +2320,13 @@ pub fn par_case_wordcode() {
         while tok() == SEPER {
             zshlex();
         }
+        // c:1245-1247 — `esac` can arrive either as the ESAC reswd
+        // token (when incmdpos was true at the SEPER between arms,
+        // which is the normal case after the body's `;;`) OR as a
+        // STRING with tokstr "esac" (alias context or noaliases off).
+        // Accept both shapes so the outer arm loop terminates.
         if (saw_brace && tok() == OUTBRACE_TOK)
+            || (!saw_brace && tok() == ESAC)
             || (!saw_brace && tok() == STRING_LEX && tokstr().as_deref() == Some("esac"))
         {
             zshlex();
@@ -2329,16 +2335,25 @@ pub fn par_case_wordcode() {
         if tok() == INPAR_TOK {
             zshlex();
         }
-        let arm = ecadd(0);
-        let np = ecadd(0);
-        let mut pat_n = 0u32;
+        // c:1265-1266 — `pp = ecadd(0); palts = ecadd(0); nalts = 0;`
+        // Two arm-header words: PP holds WCB_CASE(type, body_off),
+        // PALTS holds the pattern alternative count.
+        let pp = ecadd(0);
+        let palts = ecadd(0);
+        let mut nalts: u32 = 0;
         loop {
             if tok() != STRING_LEX {
                 error("par_case: expected pattern");
                 return;
             }
             ecstr(&tokstr().unwrap_or_default());
-            pat_n += 1;
+            // c:1307,1316 — `ecadd(ecnpats++);` after each pattern.
+            // Records a per-pattern index slot that the compiled
+            // Patprog later drops into. Without this, npats=0 and
+            // the strs/wordcode header bytes diverge from C.
+            let np = ECNPATS.with(|c| { let v = c.get(); c.set(v + 1); v }) as u32;
+            ecadd(np);
+            nalts += 1;
             zshlex();
             if tok() != BAR_TOK {
                 break;
@@ -2346,8 +2361,8 @@ pub fn par_case_wordcode() {
             zshlex();
         }
         ECBUF.with_borrow_mut(|b| {
-            if np < b.len() {
-                b[np] = pat_n;
+            if palts < b.len() {
+                b[palts] = nalts;
             }
         });
         if tok() != OUTPAR_TOK {
@@ -2357,6 +2372,9 @@ pub fn par_case_wordcode() {
         set_incmdpos(true);
         zshlex();
         par_list_wordcode();
+        // c:1330-1336 — arm-terminator drives the WC_CASE_OR /
+        // WC_CASE_AND / WC_CASE_TESTAND type tag in the WCB_CASE
+        // header, which is patched at pp.
         let arm_type = match tok() {
             DSEMI => WC_CASE_OR,
             SEMIAMP => WC_CASE_AND,
@@ -2364,10 +2382,10 @@ pub fn par_case_wordcode() {
             _ => WC_CASE_OR,
         };
         let used = ECUSED.get() as usize;
-        let arm_off = used.saturating_sub(1 + arm) as wordcode;
+        let arm_off = used.saturating_sub(1 + pp) as wordcode;
         ECBUF.with_borrow_mut(|b| {
-            if arm < b.len() {
-                b[arm] = (arm_type as wordcode) | (arm_off << 2);
+            if pp < b.len() {
+                b[pp] = WCB_CASE(arm_type, arm_off);
             }
         });
         if tok() == DSEMI || tok() == SEMIAMP || tok() == SEMIBAR {
