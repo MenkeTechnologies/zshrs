@@ -2599,10 +2599,14 @@ pub fn add_match_data(                                                       // 
 
     cm.rems = None; cm.remf = None; cm.disp = None;                          // c:2997
 
-    // c:3003 — ai->line = join_clines(ai->line, line). Currently a
-    // stub returning n unchanged; the join will activate when the
-    // Cline merge driver is fully wired.
-    let _ = line;
+    // c:3003 — ai->line = join_clines(ai->line, line).
+    if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
+        if let Some(a) = g.as_mut() {
+            let old_line = a.line.take();
+            a.line = crate::ported::zle::compmatch::join_clines(
+                old_line, line);
+        }
+    }
 
     // c:3005 — mnum++.
     mnum.fetch_add(1, Ordering::Relaxed);
