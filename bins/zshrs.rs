@@ -47,6 +47,12 @@ Special options:
   --version    show zsh version number, then exit
   --doctor     full diagnostic report of shell health, caches, and performance
 
+Parser-pipeline dumpers (FILE, or `-` for stdin; output goes to stdout):
+  --dump-tokens   FILE   one TOKNAME<tab>TOKSTR line per lexer token
+  --dump-ast      FILE   parser AST as canonical S-expression
+  --dump-wordcode FILE   wordcode emitter output (EPROG / WORDS / WC[i] / STRS)
+  --dump-zwc      ZWCFILE [FN]   inspect compiled .zwc cache (list or one fn)
+
 Parity modes (caches OFF, daemon OFF — match the named reference shell
 byte-for-byte; every `source` re-runs the file fresh, every echo re-fires):
   --zsh        identical-behaviour drop-in for /bin/zsh (compat-test entrypoint)
@@ -648,65 +654,38 @@ pub fn zshrs_main() {
         return;
     }
 
-    // --dump-tokens / --dump-ast / --dump-wordcode: print the lex
-    // token stream, the parser's AST as S-expression, or the
-    // compiled wordcode buffer. Source is either inline `-c CODE`
-    // (when args[2] == "-c") or a file path.
-    if args.len() >= 3 && (args[1] == "--dump-tokens"
-        || args[1] == "--dump-ast"
-        || args[1] == "--dump-wordcode")
-    {
-        let mode = args[1].clone();
-        let src: String = if args[2] == "-c" && args.len() >= 4 {
-            args[3].clone()
-        } else {
-            match std::fs::read_to_string(&args[2]) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("zshrs: {}: {}", args[2], e);
+    // Handle --dump-tokens / --dump-ast / --dump-wordcode for parser-pipeline
+    // debugging. Each takes one positional FILE arg (or `-` to read from
+    // stdin) and prints the corresponding IR to stdout in the same canonical
+    // format as the C-side `zshrs/zshrs_dump` module's `dumptokens` /
+    // `dumpwordcode` builtins (so output can be diff'd byte-for-byte against
+    // C zsh for parity verification).
+    for &(flag, dumper) in &[
+        ("--dump-tokens",   zsh::dumpers::dump_tokens   as fn(&str) -> String),
+        ("--dump-ast",      zsh::dumpers::dump_ast      as fn(&str) -> String),
+        ("--dump-wordcode", zsh::dumpers::dump_wordcode as fn(&str) -> String),
+    ] {
+        if args.len() >= 3 && args[1] == flag {
+            let path = &args[2];
+            let src = if path == "-" {
+                let mut buf = String::new();
+                if let Err(e) = io::stdin().read_to_string(&mut buf) {
+                    eprintln!("zshrs: stdin: {}", e);
                     std::process::exit(1);
                 }
-            }
-        };
-
-        // Initialise lexer + parser context for this source.
-        zsh::ported::parse::parse_init(&src);
-
-        match mode.as_str() {
-            "--dump-tokens" => {
-                // Walk lex tokens one at a time. zshlex() consumes
-                // through ENDINPUT; each iteration leaves the
-                // current token in tok()/tokstr().
-                loop {
-                    zsh::ported::lex::zshlex();
-                    let t = zsh::ported::lex::tok();
-                    let s = zsh::ported::lex::tokstr().unwrap_or_default();
-                    println!("{:?}\t{}", t, s);
-                    if t == zsh::ported::lex::lextok::ENDINPUT {
-                        break;
+                buf
+            } else {
+                match std::fs::read_to_string(path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("zshrs: {}: {}", path, e);
+                        std::process::exit(1);
                     }
                 }
-            }
-            "--dump-ast" => {
-                let prog = zsh::ported::parse::parse();
-                println!("{}", zsh::extensions::ast_sexp::ast_to_sexp(&prog));
-            }
-            "--dump-wordcode" => {
-                let prog = zsh::ported::parse::parse();
-                // The parser's wordcode emission writes into
-                // `parse_stack.ecbuf`. ZshProgram itself holds the
-                // AST; we read the ecbuf via the parse-stack
-                // snapshot or print "(no wordcode)" if emission
-                // isn't wired for this construct yet.
-                let bytes = zsh::extensions::compile_zsh::ast_to_wordcode(&prog);
-                println!("# wordcode: {} u32 words", bytes.len());
-                for (i, w) in bytes.iter().enumerate() {
-                    println!("  [{:04}] 0x{:08x}", i, w);
-                }
-            }
-            _ => unreachable!(),
+            };
+            print!("{}", dumper(&src));
+            return;
         }
-        return;
     }
 
     // Extract flags before filtering: -x (xtrace), -f (no rcs), -v (verbose)
