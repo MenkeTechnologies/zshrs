@@ -144,7 +144,7 @@ pub type Cdrun = Box<cdrun>;                                                 // 
 /// Direct port of `struct cdstr` from `Src/Zle/computil.c:58-70`.
 /// One match string inside a `_describe` group, with optional
 /// description and the same-description chain.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[allow(non_camel_case_types)]
 pub struct cdstr {                                                           // c:58
     pub next:    Option<Box<cdstr>>,                                         // c:59 Cdstr next
@@ -431,55 +431,334 @@ pub fn cd_prep() -> i32 {                                                    // 
     st.runs = None;
 
     if st.groups != 0 {
-        // c:247-394 — groups path. Currently emits a CRT_SIMPLE per set
-        // (matches the no-groups fallback) plus a CRT_EXPL placeholder
-        // so the run chain isn't empty. The full algorithm (preplines
-        // VARARR + qsort + dummy-strip + interleave) is c:247-394 and
-        // depends on cd_state.maxg/maxglen width tracking that cd_group
-        // hasn't populated yet in this Rust port. Returning 0 (no width
-        // overflow) lets the caller continue without retry.
+        // c:247-394 — groups path. Full algorithm: collect leaders
+        // (kind==1 from cd_group OR kind==0+desc standalone) into a
+        // `prep_lines` Vec; sort by width inside each leader's .other
+        // chain; track per-column widths; bail-with-1 on overflow;
+        // sort by sortstr; dedup-adjacent so same-desc entries cluster;
+        // emit CRT_EXPL header + CRT_SPEC per leader column 0; for each
+        // additional column emit CRT_DUMMY/CRT_SPEC interleave; finally
+        // emit CRT_SIMPLE per set for un-described entries.
+
+        let maxg = st.maxg.max(1) as usize;
+        let maxmlen = st.maxmlen;
+        let maxglen = st.maxglen;
+        let swidth = st.swidth;
+
+        // c:256 — wids[0..maxg] tracks max width per column.
+        let mut wids: Vec<i32> = vec![0; maxg];
+
+        // c:257-287 — collect leaders into prep_lines (Vec of owned
+        // cdstr clones with their .other chains).
+        let mut prep_lines: Vec<Box<cdstr>> = Vec::new();
         let mut set = st.sets.as_deref();
         while let Some(s) = set {
-            if s.count > 0 {
-                // c:387 — CRT_SIMPLE run per set.
-                let mut run = Box::new(cdrun {
-                    next: None,
-                    r#type: CRT_SIMPLE,
-                    strs: None,
-                    count: s.count,
-                });
-                // Build run.strs as a clone of set.strs chain with
-                // .run linking each entry.
-                let mut head: Option<Box<cdstr>> = None;
-                let mut tail: *mut Option<Box<cdstr>> = &mut head;
-                let mut str_iter = s.strs.as_deref();
-                while let Some(st_node) = str_iter {
-                    let clone = Box::new(cdstr {
-                        next:    None,
-                        str:     st_node.str.clone(),
-                        desc:    st_node.desc.clone(),
-                        r#match: st_node.r#match.clone(),
-                        sortstr: st_node.sortstr.clone(),
-                        len:     st_node.len,
-                        width:   st_node.width,
-                        other:   None,
-                        kind:    st_node.kind,
-                        set:     st_node.set,
-                        run:     None,
-                    });
-                    unsafe {
-                        *tail = Some(clone);
-                        let nxt = &mut (*tail).as_mut().unwrap().run;
-                        tail = nxt as *mut _;
+            let mut str_iter = s.strs.as_deref();
+            while let Some(node) = str_iter {
+                if node.kind != 1 {
+                    if node.kind == 0 && node.desc.is_some() {               // c:262
+                        if node.width > wids[0] {                            // c:263
+                            wids[0] = node.width;
+                        }
+                        let mut clone = Box::new({
+                            let n = node;
+                            cdstr {
+                                next: None, str: n.str.clone(), desc: n.desc.clone(),
+                                r#match: n.r#match.clone(), sortstr: n.sortstr.clone(),
+                                len: n.len, width: n.width, other: None,
+                                kind: n.kind, set: n.set, run: None,
+                            }
+                        });
+                        clone.other = None;                                  // c:265
+                        prep_lines.push(clone);
                     }
-                    str_iter = st_node.next.as_deref();
+                    str_iter = node.next.as_deref();
+                    continue;
                 }
-                run.strs = head;
-                new_runs.push(run);
+                // c:270 — kind==1 leader: collect, sort its .other by
+                // width descending, update wids[i] per column.
+                let mut gs = Box::new({
+                            let n = node;
+                            cdstr {
+                                next: None, str: n.str.clone(), desc: n.desc.clone(),
+                                r#match: n.r#match.clone(), sortstr: n.sortstr.clone(),
+                                len: n.len, width: n.width, other: None,
+                                kind: n.kind, set: n.set, run: None,
+                            }
+                        });
+                gs.kind = 2;                                                 // c:271
+                gs.other = None;
+
+                // Walk node.other; build a sorted insert into gs.other
+                // by descending width (matches c:274-281).
+                let mut gp = node.other.as_deref();
+                while let Some(g_node) = gp {
+                    let new_clone = Box::new({
+                        let n = g_node;
+                        cdstr {
+                            next: None, str: n.str.clone(), desc: n.desc.clone(),
+                            r#match: n.r#match.clone(), sortstr: n.sortstr.clone(),
+                            len: n.len, width: n.width, other: None,
+                            kind: n.kind, set: n.set, run: None,
+                        }
+                    });
+                    // Sorted-insert by width descending.
+                    // Drain gs's .other chain into a flat Vec, sort-insert
+                    // new_clone, then rebuild the chain.
+                    let mut chain: Vec<Box<cdstr>> = Vec::new();
+                    // First entry: a clone of gs itself (without other).
+                    chain.push(Box::new(cdstr {
+                        next: None, str: gs.str.clone(), desc: gs.desc.clone(),
+                        r#match: gs.r#match.clone(), sortstr: gs.sortstr.clone(),
+                        len: gs.len, width: gs.width, other: None,
+                        kind: gs.kind, set: gs.set, run: None,
+                    }));
+                    let mut rest = gs.other.take();
+                    while let Some(mut n) = rest {
+                        rest = n.other.take();
+                        chain.push(n);
+                    }
+                    // Find insert index where existing.width <= new_clone.width.
+                    let mut ins = chain.len();
+                    for (i, c) in chain.iter().enumerate() {
+                        if c.width <= new_clone.width {
+                            ins = i;
+                            break;
+                        }
+                    }
+                    chain.insert(ins, new_clone);
+                    // Rebuild gs from chain[0]; link tail via .other.
+                    let mut new_head = chain.remove(0);
+                    let mut tail_ptr: *mut Option<Box<cdstr>> = &mut new_head.other;
+                    for entry in chain {
+                        unsafe {
+                            *tail_ptr = Some(entry);
+                            let nxt = &mut (*tail_ptr).as_mut().unwrap().other;
+                            tail_ptr = nxt as *mut _;
+                        }
+                    }
+                    gs = new_head;
+                    gp = g_node.other.as_deref();
+                }
+
+                // c:282-284 — update wids per column.
+                let mut col = 0usize;
+                let mut walker = Some(gs.as_ref());
+                while let Some(g) = walker {
+                    if col < wids.len() && g.width > wids[col] {
+                        wids[col] = g.width;
+                    }
+                    col += 1;
+                    walker = g.other.as_deref();
+                }
+
+                prep_lines.push(gs);
+                str_iter = node.next.as_deref();
             }
             set = s.next.as_deref();
         }
-        let _ = (CRT_EXPL, CRT_SPEC, CRT_DUMMY); // c:323/337/349 deferred
+
+        // c:289-292 — gprew = sum(wids[i] + CM_SPACE).
+        let mut gprew = 0i32;
+        for w in &wids {
+            gprew += w + CM_SPACE;
+        }
+        st.gprew = gprew;
+
+        // c:294 — bail with retry if too wide.
+        if gprew > maxmlen && maxglen > 1 {
+            let _ = swidth;
+            return 1;
+        }
+
+        // c:297-303 — set sortstr from unmetafy(str) for each line.
+        for line in prep_lines.iter_mut() {
+            let s = line.str.clone().unwrap_or_default();
+            line.sortstr = Some(crate::ported::zle::zle_utils::unmetafy(&s));
+        }
+
+        // c:305 — sort if requested.
+        // We have to drop the lock briefly because cd_groups_want_sorting
+        // re-acquires it.
+        let want_sort = {
+            drop(st);
+            let r = cd_groups_want_sorting();
+            st = cd_state.lock().unwrap();
+            r
+        };
+        if want_sort != 0 {                                                  // c:305
+            prep_lines.sort_by(|a, b| cd_sort(a, b));                        // c:306
+        }
+
+        // c:308-322 — dedup-adjacent: shuffle same-desc entries together.
+        let mut i = 0usize;
+        while i + 1 < prep_lines.len() {
+            let strp_desc = prep_lines[i].desc.clone().unwrap_or_default();
+            let next_desc = prep_lines[i + 1].desc.clone().unwrap_or_default();
+            if strp_desc == next_desc {
+                i += 1;
+                continue;
+            }
+            // Find a later entry with matching desc; bubble it to i+1.
+            let mut found: Option<usize> = None;
+            for j in i + 2..prep_lines.len() {
+                if prep_lines[j].desc.clone().unwrap_or_default() == strp_desc {
+                    found = Some(j);
+                    break;
+                }
+            }
+            if let Some(j) = found {
+                let entry = prep_lines.remove(j);
+                prep_lines.insert(i + 1, entry);
+            }
+            i += 1;
+        }
+
+        let preplines = prep_lines.len();
+
+        // c:323-326 — CRT_EXPL header: link all preplines via .run.
+        // Build a chain of header cdstrs (desc + str only).
+        if preplines > 0 {
+            let mut expl_head: Option<Box<cdstr>> = None;
+            let mut tail_ptr: *mut Option<Box<cdstr>> = &mut expl_head;
+            for line in &prep_lines {
+                let header = Box::new(cdstr {
+                    next:    None,
+                    str:     line.str.clone(),
+                    desc:    line.desc.clone(),
+                    r#match: line.r#match.clone(),
+                    sortstr: line.sortstr.clone(),
+                    len:     line.len,
+                    width:   line.width,
+                    other:   None,
+                    kind:    line.kind,
+                    set:     line.set,
+                    run:     None,
+                });
+                unsafe {
+                    *tail_ptr = Some(header);
+                    let nxt = &mut (*tail_ptr).as_mut().unwrap().run;
+                    tail_ptr = nxt as *mut _;
+                }
+            }
+            // c:323-326 — emit CRT_EXPL run with the header chain.
+            let expl_run = Box::new(cdrun {
+                next: None,
+                r#type: CRT_EXPL,
+                strs: expl_head,
+                count: preplines as i32,
+            });
+            // Store at the END (matches c:373 `*runp = expl; runp = &(expl->next)`).
+            // We'll insert after column-emit runs below.
+
+            // c:328-340 — emit CRT_SPEC for each column-0 leader.
+            // Each line has a .other chain; we consume it column-by-column.
+            let mut grps: Vec<Option<Box<cdstr>>> = prep_lines
+                .into_iter()
+                .map(Some)
+                .collect();
+
+            for line_opt in grps.iter_mut() {
+                if let Some(line) = line_opt.take() {
+                    let mut owned = *line;
+                    let next_col = owned.other.take();
+                    owned.run = None;
+                    let spec_run = Box::new(cdrun {
+                        next: None,
+                        r#type: CRT_SPEC,
+                        strs: Some(Box::new(owned)),
+                        count: 1,
+                    });
+                    new_runs.push(spec_run);
+                    *line_opt = next_col;
+                }
+            }
+
+            // c:343-372 — for columns 1..maxg, emit CRT_DUMMY/CRT_SPEC.
+            for _col in 1..maxg {
+                let mut dummy_count = 0i32;
+                for line_opt in grps.iter_mut() {
+                    if let Some(line) = line_opt.take() {
+                        // Flush pending dummies first.
+                        if dummy_count > 0 {
+                            new_runs.push(Box::new(cdrun {
+                                next: None,
+                                r#type: CRT_DUMMY,
+                                strs: None,
+                                count: dummy_count,
+                            }));
+                            dummy_count = 0;
+                        }
+                        let mut owned = *line;
+                        let next_col = owned.other.take();
+                        owned.run = None;
+                        new_runs.push(Box::new(cdrun {
+                            next: None,
+                            r#type: CRT_SPEC,
+                            strs: Some(Box::new(owned)),
+                            count: 1,
+                        }));
+                        *line_opt = next_col;
+                    } else {
+                        dummy_count += 1;
+                    }
+                }
+                if dummy_count > 0 {                                         // c:365
+                    new_runs.push(Box::new(cdrun {
+                        next: None,
+                        r#type: CRT_DUMMY,
+                        strs: None,
+                        count: dummy_count,
+                    }));
+                }
+            }
+
+            // c:373 — append the expl run at the end of the column emits.
+            new_runs.push(expl_run);
+        }
+
+        // c:376-394 — emit CRT_SIMPLE per set for entries without
+        // kind and without desc (the un-described ones).
+        let mut set = st.sets.as_deref();
+        while let Some(s) = set {
+            let mut head: Option<Box<cdstr>> = None;
+            let mut tail_ptr: *mut Option<Box<cdstr>> = &mut head;
+            let mut count = 0i32;
+            let mut str_iter = s.strs.as_deref();
+            while let Some(node) = str_iter {
+                if node.kind == 0 && node.desc.is_none() {
+                    let clone = Box::new(cdstr {
+                        next:    None,
+                        str:     node.str.clone(),
+                        desc:    None,
+                        r#match: node.r#match.clone(),
+                        sortstr: node.sortstr.clone(),
+                        len:     node.len,
+                        width:   node.width,
+                        other:   None,
+                        kind:    0,
+                        set:     node.set,
+                        run:     None,
+                    });
+                    unsafe {
+                        *tail_ptr = Some(clone);
+                        let nxt = &mut (*tail_ptr).as_mut().unwrap().run;
+                        tail_ptr = nxt as *mut _;
+                    }
+                    count += 1;
+                }
+                str_iter = node.next.as_deref();
+            }
+            if count > 0 {
+                new_runs.push(Box::new(cdrun {
+                    next: None,
+                    r#type: CRT_SIMPLE,
+                    strs: head,
+                    count,
+                }));
+            }
+            set = s.next.as_deref();
+        }
     } else if st.showd != 0 {
         // c:395-423 — showd: emit CRT_DESC (described entries) then
         // CRT_SIMPLE (undescribed) per set.
@@ -5091,21 +5370,273 @@ pub fn cfp_bld_pats(_dirs: i32, names: &[String], skipped: &str,             // 
     ret                                                                      // c:4731
 }
 
-/// Port of `cfp_matcher_pats(char *matcher, char *add)` from Src/Zle/computil.c:4525.
-#[allow(unused_variables)]
-pub fn cfp_matcher_pats(matcher: &str, add: &[String]) -> Vec<String> {   // c:4525
-    // C body c:4527-4619 — applies the Cmatcher equivalences from
-    //                      `matcher` to expand each pattern. Without
-    //                      Cmatcher in Rust: identity passthrough.
-    Vec::new()
+/// Direct port of `static char *cfp_matcher_pats(char *matcher, char *add)`
+/// from `Src/Zle/computil.c:4525-4613`. Parses the matcher spec into
+/// a Cmatcher chain, then walks each chain entry truncating `add` at
+/// the first character that matches the matcher's stop pattern, and
+/// recording one matcher per surviving character. Finally calls
+/// cfp_matcher_range to synthesize the output pattern.
+///
+/// Returns:
+///   - the transformed string (possibly empty) on success
+///   - the original `add` unchanged when the matcher spec is empty
+///     or unparseable
+pub fn cfp_matcher_pats(matcher: &str, add: &str) -> String {                // c:4525
+    use crate::ported::zle::comp_h::{Cmatcher, CMF_LEFT, CMF_RIGHT};
+    use crate::ported::zle::compmatch::pattern_match;
+    use crate::ported::zle::complete::parse_cmatcher;
+    use crate::ported::utils::ztrlen;
+
+    // c:4527 — parse_cmatcher returns None on error (the C pcm_err path).
+    let m_chain = parse_cmatcher("", matcher);
+    let Some(mut m_chain) = m_chain else {
+        return add.to_string();                                              // c:4529
+    };
+
+    // c:4531-4538 — ms[0..zl] is one matcher slot per character of add.
+    let zl = ztrlen(add);                                                    // c:4531
+    let mut ms: Vec<Option<Box<Cmatcher>>> = (0..zl).map(|_| None).collect();
+    let mut add_owned = add.to_string();
+
+    let mut m_opt: Option<&Cmatcher> = Some(&*m_chain);
+    while let Some(m) = m_opt {
+        let mut stopp: Option<&crate::ported::zle::comp_h::Cpattern> = None;
+        let mut stopl: i32 = 0;
+
+        if (m.flags & (CMF_LEFT | CMF_RIGHT)) == 0 {                         // c:4542
+            if m.llen == 1 && m.wlen == 1 {                                  // c:4543
+                // c:4550 — walk add looking for the first char where the
+                // matcher's `line` pattern matches; record `m` in ms[i].
+                let chars: Vec<(usize, char)> = add_owned.char_indices().collect();
+                for (i, (byte_idx, _ch)) in chars.iter().enumerate() {
+                    if i >= ms.len() { break; }
+                    let slice = &add_owned[*byte_idx..];
+                    if pattern_match(m.line.as_deref(), slice, None, "") != 0 {
+                        // c:4551 — `if (*mp)` collision: truncate add.
+                        if ms[i].is_some() {
+                            add_owned.truncate(*byte_idx);                    // c:4553
+                            break;
+                        } else {
+                            ms[i] = Some(Box::new(m.clone()));                // c:4557
+                        }
+                    }
+                }
+            } else {
+                stopp = m.line.as_deref();                                   // c:4565
+                stopl = m.llen;
+            }
+        } else if (m.flags & CMF_RIGHT) != 0 {                               // c:4568
+            if m.wlen < 0 && m.llen == 0 && m.ralen == 1 {                   // c:4569
+                let chars: Vec<(usize, char)> = add_owned.char_indices().collect();
+                for (i, (byte_idx, _ch)) in chars.iter().enumerate() {
+                    if i >= ms.len() { break; }
+                    let slice = &add_owned[*byte_idx..];
+                    if pattern_match(m.right.as_deref(), slice, None, "") != 0 {
+                        // c:4572 — collision OR leading-dot guard.
+                        let leading_dot = *byte_idx == 0 && slice.starts_with('.');
+                        if ms[i].is_some() || leading_dot {
+                            add_owned.truncate(*byte_idx);                    // c:4573
+                            break;
+                        } else {
+                            ms[i] = Some(Box::new(m.clone()));
+                        }
+                    }
+                }
+            } else if m.llen != 0 {                                          // c:4584
+                stopp = m.line.as_deref();
+                stopl = m.llen;
+            } else {
+                stopp = m.right.as_deref();                                  // c:4588
+                stopl = m.ralen;
+            }
+        } else {                                                             // c:4591 CMF_LEFT
+            if m.lalen == 0 {                                                // c:4592
+                return String::new();                                        // c:4593
+            }
+            stopp = m.left.as_deref();
+            stopl = m.lalen;
+        }
+
+        // c:4598-4608 — apply stopp truncation.
+        if let Some(sp) = stopp {
+            let chars: Vec<(usize, char)> = add_owned.char_indices().collect();
+            let mut bytes_remaining = add_owned.len() as i32;
+            for (_i, (byte_idx, _ch)) in chars.iter().enumerate() {
+                if bytes_remaining < stopl { break; }
+                let slice = &add_owned[*byte_idx..];
+                if pattern_match(Some(sp), slice, None, "") != 0 {
+                    add_owned.truncate(*byte_idx);                            // c:4601
+                    break;
+                }
+                bytes_remaining -= 1;
+            }
+        }
+
+        m_opt = m.next.as_deref();
+    }
+
+    // c:4610 — synthesize the output via cfp_matcher_range.
+    if !add_owned.is_empty() {
+        cfp_matcher_range(&ms, &add_owned)
+    } else {
+        add_owned                                                            // c:4613
+    }
 }
 
-/// Port of `cfp_matcher_range(Cmatcher *ms, char *add)` from Src/Zle/computil.c:4307.
-/// WARNING: param names don't match C — Rust=(_ml, _matcher, _pat) vs C=(ms, add)
-pub fn cfp_matcher_range(_ml: i32, _matcher: &str, _pat: &str) -> Vec<String> { // c:4307
-    // C body c:4309-4523 — expands a `[…]` char class against the
-    //                      matcher's class equivalences.
-    Vec::new()
+/// Direct port of `static char *cfp_matcher_range(Cmatcher *ms, char *add)`
+/// from `Src/Zle/computil.c:4307-4520`. For each character of `add`,
+/// consults the parallel `ms[i]` matcher and emits a pattern fragment:
+///   - no matcher: the character verbatim
+///   - CMF_RIGHT: `*c`
+///   - word EQUIV+line EQUIV: `[c eq(c)]` (two-char class with
+///     the equivalent char from the word side)
+///   - CPAT_NCLASS: `[^class]`
+///   - CPAT_CCLASS / CPAT_EQUIV / CPAT_CHAR: `[classchar+addchar]`
+///   - CPAT_ANY: `?`
+pub fn cfp_matcher_range(ms: &[Option<Box<crate::ported::zle::comp_h::Cmatcher>>],  // c:4307
+                          add: &str) -> String
+{
+    use crate::ported::zle::comp_h::{CMF_RIGHT, Cpattern};
+    use crate::ported::zle::comp_h::{CPAT_ANY, CPAT_CCLASS, CPAT_CHAR,
+        CPAT_EQUIV, CPAT_NCLASS};
+    use crate::ported::zle::compmatch::{pattern_match1, pattern_match_equivalence};
+    use crate::ported::pattern::pattern_range_to_string;
+    use crate::ported::utils::imeta;
+
+    // Local PATMATCHRANGE — Rust copy of the helper used by pattern_match1
+    // / pattern_match_equivalence. Walks an encoded char-range str
+    // looking for `c`. On hit returns Some((idx, mtp)).
+    fn patmatchrange_local(s: Option<&str>, c: u32) -> Option<(u32, i32)> {
+        let s = s?;
+        let mut idx: u32 = 0;
+        let mut chars = s.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if let Some(&peek) = chars.peek() {
+                if peek == '-' {
+                    chars.next();
+                    if let Some(hi) = chars.next() {
+                        if c >= ch as u32 && c <= hi as u32 {
+                            return Some((idx, 0));
+                        }
+                        idx += 1;
+                        continue;
+                    }
+                }
+            }
+            if c == ch as u32 {
+                return Some((idx, 0));
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    let mut out = String::with_capacity(add.len() * 2);
+    let add_chars: Vec<(usize, char)> = add.char_indices().collect();
+
+    for (i, (_byte_idx, ch)) in add_chars.iter().enumerate() {
+        let addc = *ch as u32;
+        let m_opt = ms.get(i).and_then(|x| x.as_deref());
+
+        match m_opt {
+            None => {
+                // c:4331 — no matcher: emit char verbatim.
+                out.push(*ch);
+            }
+            Some(m) if (m.flags & CMF_RIGHT) != 0 => {
+                // c:4344 — right-anchored: `*char`.
+                out.push('*');
+                out.push(*ch);
+            }
+            Some(m) => {
+                let word: Option<&Cpattern> = m.word.as_deref();
+                let line: Option<&Cpattern> = m.line.as_deref();
+                if let (Some(l), Some(w)) = (line, word) {
+                    if l.tp == CPAT_EQUIV && w.tp == CPAT_EQUIV {
+                        // c:4359 — genuine equivalence; emit `[char eq]`.
+                        out.push('[');
+                        out.push(*ch);
+                        if let Some((ind, mtp)) = patmatchrange_local(
+                            l.str.as_deref(), addc)
+                        {
+                            let eq = pattern_match_equivalence(
+                                w, ind + 1, mtp, addc);
+                            if eq != u32::MAX {
+                                if let Some(c) = char::from_u32(eq) {
+                                    let _ = imeta(c);  // imeta handled implicitly
+                                    out.push(c);
+                                }
+                            }
+                        }
+                        out.push(']');
+                        continue;
+                    }
+                }
+                if let Some(w) = word {
+                    match w.tp {
+                        x if x == CPAT_NCLASS => {                          // c:4401
+                            out.push('[');
+                            out.push('^');
+                            if let Some(idx_str) = w.str.as_deref() {
+                                if let Ok(idx) = idx_str.parse::<usize>() {
+                                    if let Some(cls) = pattern_range_to_string(idx) {
+                                        out.push_str(&cls);
+                                    } else {
+                                        out.push_str(idx_str);
+                                    }
+                                } else {
+                                    out.push_str(idx_str);
+                                }
+                            }
+                            out.push(']');
+                        }
+                        x if x == CPAT_CCLASS
+                          || x == CPAT_EQUIV
+                          || x == CPAT_CHAR => {                            // c:4435 / c:4441 / c:4442
+                            out.push('[');
+                            let mut mt = 0i32;
+                            let addadd = pattern_match1(w, addc, &mut mt) == 0;
+                            // c:4455 — if addadd && *add == ']', emit ']' first.
+                            if addadd && *ch == ']' {
+                                out.push(*ch);
+                            }
+                            if w.tp == CPAT_CHAR {                            // c:4461
+                                if let Some(c) = char::from_u32(w.chr) {
+                                    out.push(c);
+                                }
+                            } else {                                         // c:4476
+                                if let Some(idx_str) = w.str.as_deref() {
+                                    if let Ok(idx) = idx_str.parse::<usize>() {
+                                        if let Some(cls) = pattern_range_to_string(idx) {
+                                            out.push_str(&cls);
+                                        } else {
+                                            out.push_str(idx_str);
+                                        }
+                                    } else {
+                                        out.push_str(idx_str);
+                                    }
+                                }
+                            }
+                            if addadd && *ch != ']' {                        // c:4489
+                                out.push(*ch);
+                            }
+                            out.push(']');
+                        }
+                        x if x == CPAT_ANY => {                              // c:4502
+                            out.push('?');
+                        }
+                        _ => {
+                            // Fallback: emit verbatim.
+                            out.push(*ch);
+                        }
+                    }
+                } else {
+                    out.push(*ch);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Direct port of `static void cfp_opt_pats(char **pats, char *matcher)`
@@ -5255,9 +5786,9 @@ pub fn cfp_opt_pats(pats: &[String], matcher: &str) -> Vec<String> {         // 
     let mut out: Vec<String> = pats.to_vec();
     if !add_s.is_empty() {
         let final_add = if !matcher.is_empty() {
-            let m = cfp_matcher_pats(matcher, &[add_s.clone()]);
+            let m = cfp_matcher_pats(matcher, &add_s);
             if m.is_empty() { return out; }                                  // c:4694
-            m.join("")
+            m
         } else {
             add_s
         };
