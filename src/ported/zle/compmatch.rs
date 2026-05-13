@@ -495,48 +495,63 @@ pub fn pattern_match_equivalence(
     lp: &crate::ported::zle::comp_h::Cpattern,                               // c:1316
     wind: u32, wmtp: i32, wchr: u32,
 ) -> u32 {
-    use crate::ported::zsh_h::{PP_LOWER, PP_UPPER};
+    use crate::ported::zsh_h::{PP_LOWER, PP_RANGE, PP_UPPER};
     use crate::ported::zle::zle_h::{ZC_tolower, ZC_toupper};
 
     // c:1324 — PATMATCHINDEX(lp->u.str, wind-1, &lchr, &lmtp).
-    // Walk lp.str's encoded char-range descriptor finding the
-    // entry at index (wind-1); return CHR_INVALID on miss.
-    let Some(ref s) = lp.str else { return u32::MAX; };
+    // Walk lp.str's encoded byte sequence finding the entry at index
+    // (wind-1). Encoding (from parse_class):
+    //   0x80 + PP_RANGE (=0x95): next two bytes are lo,hi range
+    //   0x80 + PP_* (POSIX class id): single-byte class marker
+    //   plain byte: literal character
+    let Some(ref bytes) = lp.str else { return u32::MAX; };
     let Some(target_idx) = (wind as i64).checked_sub(1) else { return u32::MAX; };
     if target_idx < 0 { return u32::MAX; }
     let mut lchr: Option<u32> = None;
     let mut lmtp: i32 = 0;
     let mut idx: i64 = 0;
-    let mut chars = s.chars().peekable();
-    while let Some(ch) = chars.next() {
-        // Pair `lo-hi` if next is `-`.
-        if let Some(&peek) = chars.peek() {
-            if peek == '-' {
-                chars.next();
-                if let Some(hi) = chars.next() {
-                    let span = (hi as i64) - (ch as i64);
-                    if span >= 0 && idx + span >= target_idx {
-                        lchr = Some(((ch as i64) + (target_idx - idx)) as u32);
-                        break;
-                    }
-                    idx += span + 1;
-                    continue;
-                }
+    let mut i = 0usize;
+    let pp_range_marker = (0x80u8).wrapping_add(PP_RANGE as u8);
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == pp_range_marker {                                            // c:4049 PP_RANGE
+            // Next two bytes are range start / end.
+            if i + 2 >= bytes.len() { break; }
+            let r1 = bytes[i + 1];
+            let r2 = bytes[i + 2];
+            let span = (r2 as i64) - (r1 as i64);
+            if span >= 0 && idx + span >= target_idx {                       // c:4057
+                lchr = Some(((r1 as i64) + (target_idx - idx)) as u32);
+                break;
             }
+            idx += span + 1;                                                 // c:4062
+            i += 3;
+        } else if b >= 0x80 {
+            // c:4024-4047 — POSIX class marker (PP_ALPHA/LOWER/UPPER/etc.).
+            let swtype = (b as i32) - 0x80;
+            if idx == target_idx {                                           // c:4043
+                lmtp = swtype;
+                break;
+            }
+            idx += 1;
+            i += 1;
+        } else {
+            // c:4071-4076 — literal char.
+            if idx == target_idx {
+                lchr = Some(b as u32);
+                break;
+            }
+            idx += 1;
+            i += 1;
         }
-        if idx == target_idx {
-            lchr = Some(ch as u32);
-            break;
-        }
-        idx += 1;
     }
-    let lchr = match lchr { Some(c) => c, None => return u32::MAX };
 
     // c:1335 — `if (lchr != CHR_INVALID) return lchr` — exact-char hit.
-    if lchr != u32::MAX { return lchr; }
+    if let Some(ch) = lchr {
+        if ch != u32::MAX { return ch; }
+    }
 
-    // c:1342 — case-class crossings.
-    let _ = lmtp;
+    // c:1342 — case-class crossings using the now-tracked lmtp.
     let wch = char::from_u32(wchr).unwrap_or('\0');
     if wmtp == PP_UPPER && lmtp == PP_LOWER {
         return ZC_tolower(wch) as u32;
@@ -544,7 +559,7 @@ pub fn pattern_match_equivalence(
     if wmtp == PP_LOWER && lmtp == PP_UPPER {
         return ZC_toupper(wch) as u32;
     }
-    if wmtp == lmtp { return wchr; }
+    if wmtp != 0 && wmtp == lmtp { return wchr; }
     u32::MAX                                                                 // c:1378
 }
 
@@ -564,7 +579,7 @@ mod tests {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1342 — wmtp=PP_UPPER, lmtp=PP_LOWER → tolower(wchr).
         use crate::ported::zle::comp_h::{Cpattern, CPAT_EQUIV};
-        let lp = Cpattern { tp: CPAT_EQUIV, str: Some("ab".into()), chr: 0, next: None };
+        let lp = Cpattern { tp: CPAT_EQUIV, str: Some(b"ab".to_vec()), chr: 0, next: None };
         // wind=1 selects 'a' from the equivalence class, exact-char hit.
         let r = pattern_match_equivalence(&lp, 1, 0, b'A' as u32);
         assert_eq!(r, b'a' as u32);
@@ -587,7 +602,7 @@ mod tests {
     fn cpat_class(s: &str) -> Cpattern {
         Cpattern {
             tp: CPAT_CCLASS,
-            str: Some(s.to_string()),
+            str: Some(s.as_bytes().to_vec()),
             ..Default::default()
         }
     }
@@ -616,7 +631,7 @@ mod tests {
         let a = cpat_char('a' as u32);
         let b = Cpattern {
             tp: CPAT_NCLASS,
-            str: Some("a".into()),
+            str: Some(b"a".to_vec()),
             ..Default::default()
         };
         // c:49-50 — different tp → not equal.
@@ -889,6 +904,29 @@ mod tests {
         abort_match();
         assert!(MATCHPARTS.get().unwrap().lock().unwrap().is_none());
         assert!(MATCHSUBS.get().unwrap().lock().unwrap().is_none());
+    }
+
+    /// c:1342-1378 — pattern_match_equivalence case-class crossing:
+    /// when the word side matched as PP_UPPER and the line pattern
+    /// has a PP_LOWER class marker, return tolower(wchr).
+    /// Build a Cpattern whose `str` contains the PP_LOWER marker byte
+    /// (0x80 + PP_LOWER) so the byte walk hits the marker at idx 0.
+    #[test]
+    fn pattern_match_equivalence_upper_to_lower() {
+        use crate::ported::zsh_h::{PP_LOWER, PP_UPPER};
+        use crate::ported::zle::comp_h::CPAT_EQUIV;
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // lp.str = [0x80 + PP_LOWER] — one PP_LOWER class marker.
+        let lp = Cpattern {
+            tp: CPAT_EQUIV,
+            str: Some(vec![(0x80u8).wrapping_add(PP_LOWER as u8)]),
+            chr: 0,
+            next: None,
+        };
+        // wind=1 → target_idx=0 → hits the marker.
+        // wmtp = PP_UPPER, wchr = 'A' → expect tolower('A') = 'a'.
+        let r = pattern_match_equivalence(&lp, 1, PP_UPPER, b'A' as u32);
+        assert_eq!(r, b'a' as u32);
     }
 
     /// c:1736-1991 — bld_line with a CPAT_CHAR pattern emits the
@@ -2355,35 +2393,70 @@ pub fn pattern_match1(p: &crate::ported::zle::comp_h::Cpattern,              // 
     }
 }
 
-/// Minimal port of `PATMATCHRANGE(str, c, indp, mtp)` macro from
+/// Port of `PATMATCHRANGE(str, c, indp, mtp)` macro from
 /// `Src/pattern.c`. Walks an encoded character-range descriptor in
-/// `str` and tests whether `c` falls inside. The full C version
-/// handles equivalence classes via `mtp`; this Rust port covers
-/// the literal-char + ASCII-range cases.
-fn patmatchrange(s: Option<&str>, c: u32, indp: Option<&mut u32>, _mtp: Option<&mut i32>) -> bool {
-    let Some(s) = s else { return false; };
+/// `str` (Cpattern.str byte sequence) and tests whether `c` falls
+/// inside. Encoding:
+///   0x80 + PP_RANGE (=0x95): next 2 bytes are lo,hi range
+///   0x80 + PP_* (POSIX class id): single-byte class marker; matched
+///     via the local case-class check for PP_LOWER / PP_UPPER (the
+///     two classes that drive case-folding); other classes still
+///     respond positively when the marker is consulted via mtp.
+///   plain byte: literal char (0x00-0x7F).
+fn patmatchrange(s: Option<&[u8]>, c: u32, mut indp: Option<&mut u32>,
+                 mtp: Option<&mut i32>) -> bool
+{
+    use crate::ported::zsh_h::{PP_LOWER, PP_RANGE, PP_UPPER};
+
+    let Some(bytes) = s else { return false; };
+    let pp_range_marker = (0x80u8).wrapping_add(PP_RANGE as u8);
+    let pp_lower_marker = (0x80u8).wrapping_add(PP_LOWER as u8);
+    let pp_upper_marker = (0x80u8).wrapping_add(PP_UPPER as u8);
+
     let mut idx: u32 = 0;
-    let mut chars = s.chars().peekable();
-    while let Some(ch) = chars.next() {
-        // Pair `lo-hi` if next is `-`.
-        if let Some(&peek) = chars.peek() {
-            if peek == '-' {
-                chars.next();
-                if let Some(hi) = chars.next() {
-                    if c >= ch as u32 && c <= hi as u32 {
-                        if let Some(out) = indp { *out = idx; }
-                        return true;
-                    }
-                    idx += 1;
-                    continue;
-                }
+    let mut i = 0usize;
+    let mut mtp_dest: Option<&mut i32> = mtp;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == pp_range_marker {                                            // c:4049 PP_RANGE
+            if i + 2 >= bytes.len() { break; }
+            let r1 = bytes[i + 1] as u32;
+            let r2 = bytes[i + 2] as u32;
+            if c >= r1 && c <= r2 {
+                if let Some(out) = indp.as_deref_mut() { *out = idx; }
+                return true;
             }
+            idx += 1;
+            i += 3;
+        } else if b >= 0x80 {
+            // c:4024-4047 — POSIX class marker.
+            let is_lower = b == pp_lower_marker;
+            let is_upper = b == pp_upper_marker;
+            let matched = if is_lower {
+                c < 256 && (c as u8).is_ascii_lowercase()
+            } else if is_upper {
+                c < 256 && (c as u8).is_ascii_uppercase()
+            } else {
+                false
+            };
+            if matched {
+                if let Some(out) = indp.as_deref_mut() { *out = idx; }
+                if let Some(out) = mtp_dest.as_deref_mut() {
+                    *out = (b as i32) - 0x80;
+                }
+                return true;
+            }
+            idx += 1;
+            i += 1;
+        } else {
+            // Literal char.
+            if c == b as u32 {
+                if let Some(out) = indp.as_deref_mut() { *out = idx; }
+                return true;
+            }
+            idx += 1;
+            i += 1;
         }
-        if c == ch as u32 {
-            if let Some(out) = indp { *out = idx; }
-            return true;
-        }
-        idx += 1;
     }
     false
 }

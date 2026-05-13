@@ -473,9 +473,13 @@ pub struct Cpattern {                                                    // c:19
     /// Type of object — one of CPAT_*.
     pub tp: i32,                                                         // c:199
     /// If a character class (CPAT_CCLASS/CPAT_NCLASS/CPAT_EQUIV),
-    /// the objects in it as a metafied string with tokens. Note the
-    /// C allocated length may exceed the null-terminated string.
-    pub str: Option<String>,                                            // c:201 union.u.str
+    /// the objects in it as a metafied byte sequence — the encoded
+    /// format matches `Src/pattern.c`'s `patmatchindex` reader:
+    /// `0x80 + PP_*` for POSIX classes, `0x80 + PP_RANGE` + two
+    /// bytes for ranges, plain bytes for literals. Storing as
+    /// `Vec<u8>` (not `String`) preserves the 0x80-0xBF marker
+    /// bytes that would otherwise mangle under UTF-8 validation.
+    pub str: Option<Vec<u8>>,                                            // c:201 union.u.str
     /// If a single character (CPAT_CHAR), it.
     pub chr: u32,                                                        // c:208 union.u.chr (convchar_t)
 }

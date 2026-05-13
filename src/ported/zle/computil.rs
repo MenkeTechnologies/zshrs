@@ -5660,29 +5660,54 @@ pub fn cfp_matcher_range(ms: &[Option<Box<crate::ported::zle::comp_h::Cmatcher>>
     use crate::ported::utils::imeta;
 
     // Local PATMATCHRANGE — Rust copy of the helper used by pattern_match1
-    // / pattern_match_equivalence. Walks an encoded char-range str
-    // looking for `c`. On hit returns Some((idx, mtp)).
-    fn patmatchrange_local(s: Option<&str>, c: u32) -> Option<(u32, i32)> {
-        let s = s?;
+    // / pattern_match_equivalence. Walks an encoded char-range byte
+    // sequence looking for `c`. Encoding:
+    //   0x80 + PP_RANGE: next 2 bytes are lo,hi range
+    //   0x80 + PP_*: POSIX class marker; matched for LOWER/UPPER
+    //   plain bytes: literal char
+    // Returns Some((idx, mtp)) on hit.
+    fn patmatchrange_local(s: Option<&[u8]>, c: u32) -> Option<(u32, i32)> {
+        use crate::ported::zsh_h::{PP_LOWER, PP_RANGE, PP_UPPER};
+        let bytes = s?;
+        let pp_range_marker = (0x80u8).wrapping_add(PP_RANGE as u8);
+        let pp_lower_marker = (0x80u8).wrapping_add(PP_LOWER as u8);
+        let pp_upper_marker = (0x80u8).wrapping_add(PP_UPPER as u8);
+
         let mut idx: u32 = 0;
-        let mut chars = s.chars().peekable();
-        while let Some(ch) = chars.next() {
-            if let Some(&peek) = chars.peek() {
-                if peek == '-' {
-                    chars.next();
-                    if let Some(hi) = chars.next() {
-                        if c >= ch as u32 && c <= hi as u32 {
-                            return Some((idx, 0));
-                        }
-                        idx += 1;
-                        continue;
-                    }
+        let mut i = 0usize;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == pp_range_marker {
+                if i + 2 >= bytes.len() { break; }
+                let r1 = bytes[i + 1] as u32;
+                let r2 = bytes[i + 2] as u32;
+                if c >= r1 && c <= r2 {
+                    return Some((idx, 0));
                 }
+                idx += 1;
+                i += 3;
+            } else if b >= 0x80 {
+                let is_lower = b == pp_lower_marker;
+                let is_upper = b == pp_upper_marker;
+                let matched = if is_lower {
+                    c < 256 && (c as u8).is_ascii_lowercase()
+                } else if is_upper {
+                    c < 256 && (c as u8).is_ascii_uppercase()
+                } else {
+                    false
+                };
+                if matched {
+                    return Some((idx, (b as i32) - 0x80));
+                }
+                idx += 1;
+                i += 1;
+            } else {
+                if c == b as u32 {
+                    return Some((idx, 0));
+                }
+                idx += 1;
+                i += 1;
             }
-            if c == ch as u32 {
-                return Some((idx, 0));
-            }
-            idx += 1;
         }
         None
     }
@@ -5728,21 +5753,43 @@ pub fn cfp_matcher_range(ms: &[Option<Box<crate::ported::zle::comp_h::Cmatcher>>
                         continue;
                     }
                 }
+                // Local helper: decode an encoded Cpattern.str byte
+                // sequence into a `[…]`-suitable readable form. POSIX
+                // class markers become `[:name:]`; ranges become
+                // `lo-hi`; literals pass through.
+                fn decode_range_bytes(bytes: &[u8]) -> String {
+                    let pp_range_marker = (0x80u8).wrapping_add(
+                        crate::ported::zsh_h::PP_RANGE as u8);
+                    let mut out = String::new();
+                    let mut i = 0usize;
+                    while i < bytes.len() {
+                        let b = bytes[i];
+                        if b == pp_range_marker && i + 2 < bytes.len() {
+                            out.push(bytes[i + 1] as char);
+                            out.push('-');
+                            out.push(bytes[i + 2] as char);
+                            i += 3;
+                        } else if b >= 0x80 {
+                            let cls = (b as usize) - 0x80;
+                            if let Some(s) = pattern_range_to_string(cls) {
+                                out.push_str(&s);
+                            }
+                            i += 1;
+                        } else {
+                            out.push(b as char);
+                            i += 1;
+                        }
+                    }
+                    out
+                }
+
                 if let Some(w) = word {
                     match w.tp {
                         x if x == CPAT_NCLASS => {                          // c:4401
                             out.push('[');
                             out.push('^');
-                            if let Some(idx_str) = w.str.as_deref() {
-                                if let Ok(idx) = idx_str.parse::<usize>() {
-                                    if let Some(cls) = pattern_range_to_string(idx) {
-                                        out.push_str(&cls);
-                                    } else {
-                                        out.push_str(idx_str);
-                                    }
-                                } else {
-                                    out.push_str(idx_str);
-                                }
+                            if let Some(bytes) = w.str.as_deref() {
+                                out.push_str(&decode_range_bytes(bytes));
                             }
                             out.push(']');
                         }
@@ -5761,16 +5808,8 @@ pub fn cfp_matcher_range(ms: &[Option<Box<crate::ported::zle::comp_h::Cmatcher>>
                                     out.push(c);
                                 }
                             } else {                                         // c:4476
-                                if let Some(idx_str) = w.str.as_deref() {
-                                    if let Ok(idx) = idx_str.parse::<usize>() {
-                                        if let Some(cls) = pattern_range_to_string(idx) {
-                                            out.push_str(&cls);
-                                        } else {
-                                            out.push_str(idx_str);
-                                        }
-                                    } else {
-                                        out.push_str(idx_str);
-                                    }
+                                if let Some(bytes) = w.str.as_deref() {
+                                    out.push_str(&decode_range_bytes(bytes));
                                 }
                             }
                             if addadd && *ch != ']' {                        // c:4489
