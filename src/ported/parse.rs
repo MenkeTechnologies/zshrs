@@ -270,11 +270,12 @@ use crate::ported::lex::{
 };
 use crate::prompt::{cmdpop, cmdpush};
 use crate::zsh_h::{
-    wc_bdata, CS_CASE, CS_CMDAND, CS_CMDOR, CS_COND, CS_CURSH, CS_ELIF, CS_ELSE, CS_ERRPIPE,
-    CS_FOR, CS_FOREACH, CS_FUNCDEF, CS_IF, CS_IFTHEN, CS_PIPE, CS_REPEAT, CS_SELECT, CS_SUBSH,
-    CS_UNTIL, CS_WHILE, EF_RUN, WCB_ARITH, WCB_CASE, WCB_CURSH, WCB_END, WCB_FOR, WCB_FUNCDEF,
-    WCB_IF, WCB_LIST, WCB_PIPE, WCB_REDIR, WCB_REPEAT, WCB_SELECT, WCB_SUBLIST, WCB_SUBSH,
-    WCB_TIMED, WCB_TRY, WCB_WHILE, WC_CASE_AND, WC_CASE_HEAD, WC_CASE_OR, WC_CASE_TESTAND,
+    wc_bdata, CS_ARRAY, CS_CASE, CS_CMDAND, CS_CMDOR, CS_COND, CS_CURSH, CS_ELIF, CS_ELSE,
+    CS_ERRPIPE, CS_FOR, CS_FOREACH, CS_FUNCDEF, CS_IF, CS_IFTHEN, CS_PIPE, CS_REPEAT, CS_SELECT,
+    CS_SUBSH, CS_UNTIL, CS_WHILE, EF_RUN, WCB_ARITH, WCB_ASSIGN, WCB_CASE, WCB_CURSH, WCB_END,
+    WCB_FOR, WCB_FUNCDEF, WCB_IF, WCB_LIST, WCB_PIPE, WCB_REDIR, WCB_REPEAT, WCB_SELECT,
+    WCB_SUBLIST, WCB_SUBSH, WCB_TIMED, WCB_TRY, WCB_WHILE, WC_ASSIGN_ARRAY, WC_ASSIGN_INC,
+    WC_ASSIGN_NEW, WC_ASSIGN_SCALAR, WC_CASE_AND, WC_CASE_HEAD, WC_CASE_OR, WC_CASE_TESTAND,
     WC_FOR_COND, WC_FOR_LIST, WC_FOR_PPARAM, WC_IF_HEAD, WC_IF_IF, WC_PIPE_END, WC_PIPE_LINENO,
     WC_PIPE_MID, WC_REDIR_WORDS, WC_SELECT_LIST, WC_SELECT_PPARAM, WC_SUBLIST_AND, WC_SUBLIST_END,
     WC_SUBLIST_FLAGS, WC_SUBLIST_OR, WC_SUBLIST_SIMPLE, WC_SUBLIST_TYPE, WC_TIMED_EMPTY,
@@ -2779,63 +2780,221 @@ pub fn par_arith_wordcode() {
 /// and `name() { body }` funcdef detection — those paths are
 /// progressively wired into the AST parser; this wordcode-emitter
 /// covers the simple `cmd args...` case + interleaved redirs.
-pub fn par_simple_wordcode_impl(_nr: i32) -> i32 {
-    let p = ecadd(0);
-    let mut nwords: u32 = 0;
-    let mut redir_words: i32 = 0;
+pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
+    // c:1836-1842 — `int oecused = ecused, isnull = 1, r, argc = 0,
+    // p, isfunc = 0, sr = 0; int c = *cmplx, nrediradd, assignments
+    // = 0, ppost = 0, is_typeset = 0; ...`
+    let _oecused = ECUSED.get() as usize;
+    let mut isnull = true;
+    let mut argc: u32 = 0;
+    let mut sr: i32 = 0;
+    let mut assignments = false;
+
+    // c:1843 — `r = ecused;`
+    let _r = ECUSED.get();
+
+    // c:1844-1919 — pre-cmd loop: NOCORRECT, ENVSTRING (scalar
+    // assigns), ENVARRAY (array assigns), IS_REDIROP. Loops until
+    // a non-assignment token is seen.
     loop {
         match tok() {
-            STRING_LEX | ENVSTRING | TYPESET => {
-                // c:1924 — `*cmplx = 1;` unconditionally on every
-                // STRING/TYPESET inside par_simple's main loop. This
-                // marks ANY simple-command-with-args as complex,
-                // which suppresses the Z_SIMPLE LIST optimization
-                // at set_list_code (parse.c:736-737). Without this,
-                // `echo hi` lexed to an optimized 5-word eprog while
-                // C emits the canonical 7-word form, breaking
-                // byte-level wordcode parity on every corpus entry.
+            NOCORRECT => {
+                // c:1846-1849
                 cmplx_set(true);
-                // c:1929 — `incmdpos = 0;` so the next zshlex() does
-                // not re-promote tokens like `{` to INBRACE_TOK or
-                // bare reserved words to keywords. Without this,
-                // `echo {a,b,c}` re-lexes the brace expansion as
-                // INBRACE_TOK and the simple-command loop bails out.
+                set_nocorrect(1);
+            }
+            ENVSTRING => {
+                // c:1848-1898 — scalar assignment `name=value` or
+                // `name+=value`. Emits WCB_ASSIGN(SCALAR, NEW|INC, 0)
+                // followed by ecstr(name), ecstr(value).
+                let raw = tokstr().unwrap_or_default();
+                // Find first of Inbrack / '=' / '+' (the C scan at
+                // c:1851-1853). Inside Inbrack we skipparens — i.e.
+                // skip `name[...]` index, then continue.
+                let bytes: Vec<char> = raw.chars().collect();
+                let mut idx = 0usize;
+                while idx < bytes.len() {
+                    let ch = bytes[idx];
+                    if ch == '\u{91}' /* Inbrack */ {
+                        // Skip matched Inbrack…Outbrack pair.
+                        let mut depth = 1;
+                        idx += 1;
+                        while idx < bytes.len() && depth > 0 {
+                            match bytes[idx] {
+                                '\u{91}' => depth += 1,
+                                '\u{92}' => depth -= 1,
+                                _ => {}
+                            }
+                            idx += 1;
+                        }
+                        continue;
+                    }
+                    // c:1851-1853 — `*ptr != '=' && *ptr != '+'` —
+                    // C scan stops on either literal `=` / `+` OR the
+                    // Equals marker (`\u{8d}`) the lexer emits for
+                    // unquoted `=`. Without the marker check, the
+                    // ENVSTRING split scans past the `=` (since it's
+                    // already tokenised) and the whole `name=value`
+                    // ends up in one ecstr.
+                    if ch == '=' || ch == '+' || ch == '\u{8d}' /* Equals */ {
+                        break;
+                    }
+                    idx += 1;
+                }
+                let is_inc = idx < bytes.len() && bytes[idx] == '+';
+                // c:1855-1860 — emit WCB_ASSIGN with WC_ASSIGN_INC
+                // (+=) or WC_ASSIGN_NEW (=). The third arg (count)
+                // is 0 for scalar.
+                let flag = if is_inc { WC_ASSIGN_INC } else { WC_ASSIGN_NEW };
+                ecadd(WCB_ASSIGN(WC_ASSIGN_SCALAR, flag, 0));
+                // Split into name and str at the `=` (after the
+                // optional `+`).
+                if is_inc {
+                    idx += 1;
+                }
+                let name: String = bytes[..idx].iter().collect();
+                // Skip past the `=` separator (literal or Equals
+                // marker `\u{8d}`) so the value starts at the byte
+                // after it. Mirrors C `*ptr = '\0'; str = ptr + 1;`
+                // (parse.c:1864).
+                let str_off = if idx < bytes.len()
+                    && (bytes[idx] == '=' || bytes[idx] == '\u{8d}')
+                {
+                    idx + 1
+                } else {
+                    idx
+                };
+                let value: String = bytes[str_off..].iter().collect();
+                // c:1866-1877 — scan value for `=(`/`<(`/`>(` (proc
+                // subst); if found, bump cmplx (suppresses Z_SIMPLE).
+                let vbytes: Vec<char> = value.chars().collect();
+                for (i, ch) in vbytes.iter().enumerate() {
+                    if i + 1 < vbytes.len() && vbytes[i + 1] == '\u{88}' /* Inpar */ {
+                        if *ch == '\u{8d}' /* Equals */
+                            || *ch == '\u{94}' /* Inang */
+                            || *ch == '\u{96}' /* OutangProc */
+                        {
+                            cmplx_set(true);
+                            break;
+                        }
+                    }
+                }
+                ecstr(&name);
+                ecstr(&value);
+                isnull = false;
+                assignments = true;
+            }
+            ENVARRAY => {
+                // c:1898-1922 — array assignment `name=( ... )`.
+                // Implementation note: emits placeholder, parses
+                // wordlist, patches WCB_ASSIGN(ARRAY, NEW|INC, n)
+                // header with the actual element count. zshrs's
+                // par_nl_wordlist isn't wired into the wordcode
+                // emitter yet; fall back to a minimal placeholder
+                // so the WCB_ASSIGN slot exists at the expected
+                // position. TODO: full port of c:1898-1922.
+                cmplx_set(true);
+                let p = ecadd(0);
                 set_incmdpos(false);
+                let raw = tokstr().unwrap_or_default();
+                let is_inc = raw.ends_with('+');
+                let name = if is_inc { &raw[..raw.len() - 1] } else { raw.as_str() };
+                let flag = if is_inc { WC_ASSIGN_INC } else { WC_ASSIGN_NEW };
+                ecstr(name);
+                cmdpush(CS_ARRAY as u8);
+                zshlex();
+                // Count words until OUTPAR_TOK.
+                let mut n = 0u32;
+                while tok() == STRING_LEX {
+                    let w = tokstr().unwrap_or_default();
+                    ecstr(&w);
+                    n += 1;
+                    zshlex();
+                    while tok() == NEWLIN {
+                        zshlex();
+                    }
+                }
+                ECBUF.with_borrow_mut(|b| {
+                    if p < b.len() {
+                        b[p] = WCB_ASSIGN(WC_ASSIGN_ARRAY, flag, n);
+                    }
+                });
+                cmdpop();
+                if tok() != OUTPAR_TOK {
+                    error("expected `)' after array assignment");
+                    return 0;
+                }
+                set_incmdpos(true);
+                isnull = false;
+                assignments = true;
+            }
+            t if IS_REDIROP(t) => {
+                // c:1900-1904
+                cmplx_set(true);
+                if par_redir().is_some() {
+                    nr += 3;
+                } else {
+                    break;
+                }
+                continue; // c:1904 `continue;` — skip the zshlex below
+            }
+            _ => break,
+        }
+        zshlex(); // c:1907 `zshlex();`
+    }
+
+    // c:1920-1921 — `if (tok == AMPER || tok == AMPERBANG) YYERROR;`
+    if tok() == AMPER || tok() == AMPERBANG {
+        error("par_simple: unexpected &");
+        return 0;
+    }
+
+    // c:1923 — `p = ecadd(WCB_SIMPLE(0));`
+    let p = ecadd(WCB_SIMPLE(0));
+
+    // c:1924-2105 — main words loop.
+    loop {
+        match tok() {
+            STRING_LEX | TYPESET => {
+                // c:1928-1929 — `*cmplx = 1; incmdpos = 0;`
+                cmplx_set(true);
+                set_incmdpos(false);
+                // c:1931-1932 — TYPESET → intypeset = is_typeset = 1.
+                if tok() == TYPESET {
+                    set_intypeset(true);
+                }
                 let s = tokstr().unwrap_or_default();
-                let coded = ecstrcode(&s);
-                ecadd(coded);
-                nwords += 1;
+                ecstr(&s);
+                argc += 1;
+                isnull = false;
                 zshlex();
             }
             t if IS_REDIROP(t) => {
-                if let Some(_) = par_redir() {
-                    // par_redir wrote 3 or 5 wordcodes (plus optional
-                    // varid). Count them so we can return `1 + redir_words`.
-                    redir_words += 3;
-                } else {
-                    break;
+                // c:1999-2010
+                cmplx_set(true);
+                if par_redir().is_some() {
+                    sr += 3;
                 }
             }
             _ => break,
         }
     }
-    if nwords == 0 && redir_words == 0 {
-        // c:2173-2176 — `if (isnull && !(sr + nr)) { ecused = p;
-        // return 0; }` — empty command branch undoes ALL ecadds
-        // since the placeholder. Without resetting ECUSED here, the
-        // unused WCB_SIMPLE placeholder leaks into the wordcode
-        // buffer and bld_eprog flushes it as a stray END word,
-        // breaking byte parity with C on every empty-command frame
-        // (par_event_wordcode iter-2 etc.).
+
+    // c:2173-2176 — `if (isnull && !(sr + nr)) { ecused = oecused;
+    // return 0; }` — undo everything including pre-cmd assignments
+    // if no actual command word emerged.
+    if isnull && sr + nr == 0 && !assignments {
         ECUSED.set(p as i32);
         return 0;
     }
+    // c:2177-2178 — `ecbuf[p] = WCB_SIMPLE(argc);` — patch the
+    // placeholder with the actual arg count.
     ECBUF.with_borrow_mut(|b| {
         if p < b.len() {
-            b[p] = WCB_SIMPLE(nwords);
+            b[p] = WCB_SIMPLE(argc);
         }
     });
-    1 + redir_words
+    1 + sr
 }
 
 /// Wrapper for the par_cmd dispatch sites that don't pass `nr`
