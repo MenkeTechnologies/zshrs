@@ -1915,9 +1915,9 @@ pub fn selectlocalmap(m: Option<Arc<Keymap>>) {                              // 
     };
     // c:541-542 — `if (oldm && !m) reselectkeymap()`.
     if oldm.is_some() && m.is_none() {
-        // reselectkeymap takes a Zle handle; without one here we fall
-        // back to selectkeymap on the main keymap by name, which is
-        // what reselectkeymap does internally.
+        // reselectkeymap operates against file-scope ZLE statics; the
+        // safe fallback here is selectkeymap on the main keymap by
+        // name, which is what reselectkeymap does internally.
         let _ = selectkeymap("main", 1);
     }
 }

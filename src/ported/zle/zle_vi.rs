@@ -734,7 +734,8 @@ pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // 
     }
 
 
-/// Map a vi mark name to its slot index in `Zle::vi_marks`.
+/// Map a vi mark name to its slot index in the file-scope
+/// `VIMARKS` static.
 /// `a..z` → 0..25; `'` / `` ` `` → 26 (the implicit last-position mark).
 fn viyank(name: char) -> Option<usize> {
     if name.is_ascii_lowercase() {
@@ -1059,8 +1060,8 @@ pub fn dovilinerange() -> (usize, usize) {  // c:302
 /// dispatch). In compcore-call-context fns we don't have a live
 /// key reader — the Rust port returns the current `crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)`
 /// which is the C "no-motion fallback" (motion never consumed
-/// anything, range is empty). Live ZLE widget dispatch reads
-/// keys through the active Zle struct directly.
+/// anything, range is empty). Live ZLE widget dispatch reads keys
+/// against the ZLE file-scope statics directly.
 pub fn getvirange(_wf: i32) -> i32 {  // c:172
     crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) as i32                                                         // c:299
 }
@@ -1151,8 +1152,9 @@ pub fn vicapslockpanic() -> i32 {                                            // 
     // c:1005 — zbeep().
     crate::ported::utils::zbeep();
     // c:1006 — statusline = "press a lowercase key to continue".
-    // The statusline lives on the active Zle struct; without a handle
-    // we mirror to the paramtab so the prompt drawer picks it up.
+    // The canonical home for the message is the file-scope `STATUSLINE`
+    // static (zle_main.rs); we also mirror to the paramtab so the
+    // prompt drawer picks it up via `$STATUSLINE`.
     let _ = crate::ported::params::setsparam(
         "STATUSLINE", "press a lowercase key to continue",
     );
@@ -1161,7 +1163,7 @@ pub fn vicapslockpanic() -> i32 {                                            // 
     // the trigger the draw path watches.
     // c:1008-1009 — `while (!ZC_ilower(getfullchar(0))) ;`.
     // Without a live key-read loop we cannot block here; the live
-    // ZLE input path (Zle::getfullchar) does the wait. The flag
+    // ZLE input path (getfullchar) does the wait. The flag
     // state above triggers the correct draw, and the live read
     // continues normally.
     // c:1010 — clear statusline.

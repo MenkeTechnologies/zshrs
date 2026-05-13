@@ -75,8 +75,8 @@ pub const ZLEEOF: ZleInt = -1;
 // `ZleContext` deleted — Rust-named enum duplicating the legit C
 // enum at Src/zsh.h:3211-3216 (`ZLCON_LINE_START` / `ZLCON_LINE_CONT`
 // / `ZLCON_SELECT` / `ZLCON_VARED`), already ported in zsh_h.rs:3162-3165.
-// `Zle.zlecontext` is now `i32` matching C's `int zlecontext`
-// (zle_main.c:163).
+// `ZLECONTEXT` is now an `AtomicI32` static matching C's `int
+// zlecontext` (zle_main.c:163).
 
 /// modifier state for commands.
 /// Layout mirrors `struct modifier` in Src/Zle/zle.h. The Default impl
@@ -811,7 +811,8 @@ pub fn zle_reset() {
     ) -> io::Result<String> {
         // Stash the unexpanded templates so reexpandprompt() can re-run
         // expansion later. C zsh saves these in the global raw_lp/raw_rp
-        // slots; we keep them on the Zle struct to avoid a global.
+        // slots — the Rust port keeps the same shape as file-scope
+        // `RAW_LP`/`RAW_RP` statics (zle_main.rs).
         *crate::ported::zle::zle_main::RAW_LP.lock().unwrap() = lprompt.to_string();
         *crate::ported::zle::zle_main::RAW_RP.lock().unwrap() = rprompt.to_string();
         *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = crate::prompt::expand_prompt(lprompt);
@@ -1212,8 +1213,8 @@ pub fn bin_vared(name: &str, args: &[String],                                // 
     crate::ported::mem::unqueue_signals();
     // c:1841-1860 — zleread(ZLCON_VARED) drives the actual edit. Static-
     // link path: the live ZLE editor isn't reachable from this lib-side
-    // entrypoint. Delegate to vared_zle_run when a Zle handle is wired
-    // into the executor; until then, fall back to a stdin read so the
+    // entrypoint. Delegate to vared_zle_run when the ZLE entrypoint is
+    // wired into the executor; until then, fall back to a stdin read so the
     // builtin is functional in non-interactive scripts that pipe input.
     let prompt = if !p1.is_empty() { p1.to_string() } else { String::new() };
     let rprompt = if !p2.is_empty() { p2.to_string() } else { String::new() };
@@ -1825,25 +1826,25 @@ pub fn ungetbytes_unmeta(s: &[u8]) {                          // c:366
 /// ```
 /// Triggers a prompt re-expansion + redraw. C's globals are
 /// `lpromptbuf`/`rpromptbuf` + the live terminal. Rust port sets
-/// the `ZLE_RESET_NEEDED` flag so the next `Zle::zlecore` tick
-/// reads it and triggers `Zle::reexpandprompt + redisplay`.
+/// the `ZLE_RESET_NEEDED` flag so the next `zlecore` tick
+/// reads it and triggers `reexpandprompt + redisplay`.
 pub fn zle_resetprompt() {                                                   // c:2058
     use std::sync::atomic::Ordering;
     // c:2060 — `reexpandprompt()`. Flag drives the deferred re-expand
-    // in Zle::zlecore (reads ZLE_RESET_NEEDED + clears it).
+    // in zlecore (reads ZLE_RESET_NEEDED + clears it).
     ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
         // c:2062 — `redisplay(NULL)`. The next zlecore tick observes
-        // ZLE_RESET_NEEDED and invokes Zle::redisplay on the active
-        // editor frame.
+        // ZLE_RESET_NEEDED and invokes redisplay against the
+        // file-scope ZLE statics.
         crate::ported::zle::zle_refresh::SHOWINGLIST.store(-2, Ordering::SeqCst);
     }
 }
 
 /// Cross-call flag for `zle_resetprompt`. Read + cleared by the
-/// next `Zle::zlecore` iteration to drive a real prompt re-expand
-/// and redraw. C uses an implicit `redisplay(NULL)` direct call;
-/// without a live Zle handle here we route through this flag.
+/// next `zlecore` iteration to drive a real prompt re-expand and
+/// redraw. C uses an implicit `redisplay(NULL)` direct call; the
+/// Rust port routes through this flag.
 pub static ZLE_RESET_NEEDED: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);
 

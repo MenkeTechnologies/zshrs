@@ -756,8 +756,8 @@ pub fn unset_killring(exp: i32) {  // c:741
 /// }
 /// ```
 ///
-/// The Rust call signature here takes `&mut Zle` instead of `Param`
-/// because the canonical Rust home for `zmod` is `Zle.zmod`. The
+/// The Rust call takes no `Param` because the canonical Rust home
+/// for `zmod` is the file-scope `ZMOD` static (zle_main.rs). The
 /// `stdunsetfn` half of the C body fires from the Param.gsu.unsetfn
 /// vtable hook upstream — this fn just performs the zmod side.
 /// Port of `unset_numeric(Param pm, int exp)` from `Src/Zle/zle_params.c:492`.

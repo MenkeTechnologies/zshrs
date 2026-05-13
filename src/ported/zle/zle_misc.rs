@@ -1708,7 +1708,7 @@ pub fn scancompcmd(name: &str) -> i32 {                                      // 
 ///
 /// **Multibyte tradeoff:** C's `getrestchar` reassembles a wide
 /// char from `lastchar` + buffered continuation bytes when the
-/// `wide_valid` flag is clear. Rust's `Zle::getfullchar` (zle_main
+/// `wide_valid` flag is clear. Rust's `getfullchar` (zle_main
 /// .rs:730) already produces a full char per read, so by the time
 /// `selfinsert` fires, `lastchar` IS the full codepoint — the
 /// `wide_valid=false` branch is unreachable in the Rust input path
