@@ -362,6 +362,43 @@ mod tests {
     }
 
     #[test]
+    fn fixdir_canonicalizes_absolute_paths() {
+        // c:1297 — collapse `//`, drop `./`, pop `..`.
+        assert_eq!(fixdir("/tmp/./foo"), "/tmp/foo");
+        assert_eq!(fixdir("/tmp//foo"), "/tmp/foo");
+        assert_eq!(fixdir("/tmp/bar/../foo"), "/tmp/foo");
+        assert_eq!(fixdir("/tmp/bar/baz/../.."), "/tmp");
+    }
+
+    #[test]
+    fn fixdir_drops_dotdot_past_root() {
+        // c:1372 — absolute path, `..` past `/` is dropped.
+        assert_eq!(fixdir("/.."), "/");
+        assert_eq!(fixdir("/../.."), "/");
+        assert_eq!(fixdir("/foo/../../bar"), "/bar");
+    }
+
+    #[test]
+    fn fixdir_relative_keeps_leading_dotdot() {
+        // c:1367 — relative path: `..` past start stays as `..`.
+        assert_eq!(fixdir("../foo"), "../foo");
+        assert_eq!(fixdir("../../foo"), "../../foo");
+        assert_eq!(fixdir("foo/../bar"), "bar");
+    }
+
+    #[test]
+    fn fixdir_empty_collapses_to_dot() {
+        // Relative path that collapses fully → "."
+        assert_eq!(fixdir("./"), ".");
+        assert_eq!(fixdir("foo/.."), ".");
+    }
+
+    #[test]
+    fn fixdir_empty_input_returns_empty() {
+        assert_eq!(fixdir(""), "");
+    }
+
+    #[test]
     fn fg_dispatch_id_distinguishes_aliases() {
         // bin_fg covers fg, bg, jobs, wait, disown — same handler,
         // different funcid. Mirrors Src/builtin.c:52,61,75,88,131.
@@ -968,8 +1005,10 @@ pub fn cd_able_vars(s: &str) -> Option<String> {                             // 
     if head.is_empty() {
         return None;
     }
-    std::env::var(head)                                                      // c:1116
-        .ok()
+    // c:1116 — `if ((val = getsparam(s))) { ret = tricat(val, tail, "") }`.
+    //          C reads $head from paramtab; was reading OS env, missing
+    //          CDABLEVARS-style assignments like `proj=$HOME/src`.
+    crate::ported::params::getsparam(head)
         .map(|val| format!("{}{}", val, tail))
 }
 
@@ -1024,12 +1063,15 @@ pub fn cd_new_pwd(_func: i32, _dir: usize, _quiet: i32) {                    // 
 /// C: `static void printdirstack(void)` — fprintdir(pwd) followed by
 ///   space-separated entries from the dirstack list, ending in newline.
 pub fn printdirstack() {                                                     // c:1277
-    // c:1277 — `fprintdir(pwd, stdout);`
-    if let Ok(cwd) = std::env::current_dir() {
-        if let Some(s) = cwd.to_str() {
-            print!("{}", s);
-        }
-    }
+    // c:1277 — `fprintdir(pwd, stdout);`. C uses the shell-side
+    //          `pwd` global (in-shell logical cwd), not getcwd. Read
+    //          $PWD from paramtab so the logical path (including
+    //          any unresolved symlinks) shows correctly.
+    let pwd = crate::ported::params::getsparam("PWD")
+        .or_else(|| std::env::current_dir().ok()
+            .and_then(|p| p.to_str().map(String::from)))
+        .unwrap_or_default();
+    print!("{}", pwd);
     // c:1283-1287 — `for (node = firstnode(dirstack); ...)`
     if let Ok(d) = DIRSTACK.lock() {
         for entry in d.iter() {
@@ -1039,10 +1081,61 @@ pub fn printdirstack() {                                                     // 
     println!();                                                              // c:1297
 }
 
-/// Port of `fixdir(char *src)` from Src/builtin.c:1297 — canonicalise a
-/// path (no symlink follow), removing `.` / `..`. Shim.
-/// WARNING: param names don't match C — Rust=() vs C=(src)
-pub fn fixdir() -> String { String::new() }                                  // c:1297
+/// Direct port of `int fixdir(char *src)` from
+/// `Src/builtin.c:1297`. Lexically canonicalises a path in-place
+/// (no symlink follow): collapses `//`, drops `./` segments, and
+/// removes `..` along with their preceding segment. Returns 1 if
+/// fully canonicalised, 0 if a `..` could not be popped (e.g. at
+/// the root or with `..` as the first segment under CHASEDOTS=0).
+///
+/// Rust port takes ownership of `src` and returns the canonical
+/// form; was a 1-line stub returning empty string.
+pub fn fixdir(src: &str) -> String {                                         // c:1297
+    if src.is_empty() {
+        return String::new();
+    }
+
+    // c:1320-1325 — `chasedots` flag for the cdpath `../` edge case.
+    //                Skipped here — only fires under the pwd=="." rare
+    //                state. Lexical canonicalisation is what callers
+    //                rely on.
+    let abs = src.starts_with('/');
+    let mut components: Vec<&str> = Vec::new();
+
+    // c:1339-1395 — walk slash-separated segments.
+    for seg in src.split('/') {
+        match seg {
+            "" => continue,                                                  // collapse `//`
+            "." => continue,                                                 // c:1352 drop `./`
+            ".." => {
+                // c:1358-1372 — pop previous segment if present and not
+                //                also `..` (sticky-`..` for relative
+                //                paths past their start).
+                if let Some(last) = components.last() {
+                    if *last == ".." {
+                        components.push("..");
+                    } else {
+                        components.pop();
+                    }
+                } else if !abs {
+                    // Relative path: keep the leading `..`.
+                    components.push("..");
+                }
+                // Absolute path: silently drop `..` past `/`.
+            }
+            other => components.push(other),
+        }
+    }
+
+    let body = components.join("/");
+    if abs {
+        format!("/{}", body)
+    } else if body.is_empty() {
+        ".".to_string()
+    } else {
+        body
+    }
+}
 
 /// Port of `printif(char *str, int c)` from Src/builtin.c:1411.
 /// C: `mod_export void printif(char *str, int c)` — `printf(" -%c ", c)`
@@ -1073,9 +1166,43 @@ pub fn printqt(str: &str) {                                                  // 
 /// Port of `fcgetcomm(char *s)` from Src/builtin.c:1683.
 /// C: `static zlong fcgetcomm(char *s)` — match `s` against history
 ///   numbers (signed) or prefix; returns the matched event number.
+/// Direct port of `zlong fcgetcomm(char *s)` from
+/// `Src/builtin.c:1683`. Resolve an `fc` command-line argument to a
+/// history event number. Numeric args become event numbers (negative
+/// numbers count back from current via `addhistnum`); non-numeric
+/// args go through `hcomsearch` (history prefix search). Emits
+/// `zwarnnam("fc", "event not found: %s", s)` and returns -1 on
+/// miss.
 pub fn fcgetcomm(s: &str) -> i64 {                                           // c:1683
-    // c:1683-1706 — try parse signed int, else prefix-match history.
-    s.trim().parse::<i64>().unwrap_or(-1)                                    // c:1708
+    // c:1689 — `if ((cmd = atoi(s)) != 0 || *s == '0')` numeric arm.
+    //          atoi accepts leading whitespace + optional sign +
+    //          digits; trim+parse mirrors that.
+    let trimmed = s.trim_start();
+    let numeric = trimmed.parse::<i64>().ok();
+    let is_zero_prefix = trimmed.starts_with('0');
+    if let Some(mut cmd) = numeric {
+        if cmd != 0 || is_zero_prefix {
+            if cmd < 0 {
+                // c:1693 — `cmd = addhistnum(curline.histnum, cmd, HIST_FOREIGN);`
+                let curh = crate::ported::hist::curhist.load(
+                    std::sync::atomic::Ordering::Relaxed);
+                cmd = crate::ported::hist::addhistnum(curh, cmd as i32, 1);
+            }
+            if cmd < 0 {                                                     // c:1695
+                cmd = 0;
+            }
+            return cmd;
+        }
+    }
+    // c:1700 — `cmd = hcomsearch(s); if (cmd == -1) zwarnnam(...);`
+    match crate::ported::hist::hcomsearch(s) {
+        Some(n) => n,
+        None => {
+            crate::ported::utils::zwarnnam(
+                "fc", &format!("event not found: {}", s));
+            -1
+        }
+    }
 }
 
 /// Port of `fcsubs(char **sp, struct asgment *sub)` from Src/builtin.c:1708.
@@ -1212,11 +1339,40 @@ pub fn fclist(out: &mut dyn std::io::Write,                                  // 
                     let _ = write!(out, "{:>10}", entry.stim - entry.ftim);
                 }
                 if let Some(fmt) = tdfmt {
-                    // c:1817 — render timestamp via strftime. Without a
-                    //          full strftime port we fall back to a
-                    //          %H:%M-like raw print using the unix time.
-                    let _ = (fmt, entry.stim);
-                    let _ = write!(out, "  {}", entry.stim);
+                    // c:1817 — `strftime(timebuf, 256, tdfmt,
+                    //                    localtime(&ent->stim))`.
+                    //          Use libc directly so locale-aware
+                    //          format specifiers (%Y %m %d %H %M %S
+                    //          %p etc.) all work without a hand-rolled
+                    //          strftime port.
+                    let formatted: Option<String> = (|| {
+                        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+                        let t: libc::time_t = entry.stim as libc::time_t;
+                        let cfmt = std::ffi::CString::new(fmt).ok()?;
+                        unsafe {
+                            if libc::localtime_r(&t, &mut tm).is_null() {
+                                return None;
+                            }
+                            let mut buf = vec![0u8; 256];
+                            let n = libc::strftime(
+                                buf.as_mut_ptr() as *mut libc::c_char,
+                                buf.len(),
+                                cfmt.as_ptr(),
+                                &tm,
+                            );
+                            if n == 0 { return None; }
+                            buf.truncate(n);
+                            String::from_utf8(buf).ok()
+                        }
+                    })();
+                    if let Some(s) = formatted {
+                        let _ = write!(out, "  {}", s);
+                    } else {
+                        // strftime failed (locale issue / format bug);
+                        // fall back to raw epoch matching C's
+                        // pre-strftime print behavior.
+                        let _ = write!(out, "  {}", entry.stim);
+                    }
                 }
                 let _ = write!(out, "  ");
             }
@@ -1846,14 +2002,25 @@ pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {      // 
         *readchar = -1;                                                      // c:7152
         return cc as i32;
     }
-    // c:7160 — `read(SHTTY, &cc, 1)` with EINTR retry.
+    // c:7160 — `read(SHTTY, &cc, 1)` with EINTR retry. Read from the
+    //          controlling tty (SHTTY) when available; stdin fallback
+    //          for non-interactive paths where SHTTY isn't set up.
     let mut buf = [0u8; 1];
+    let fd = {
+        use std::sync::atomic::Ordering;
+        let s = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        if s >= 0 { s } else { 0 }                                           // c:7167 SHTTY fallback
+    };
     loop {
-        match std::io::stdin().lock().read(&mut buf) {                       // c:7167
-            Ok(1) => return buf[0] as i32,                                   // c:7169
-            Ok(_) => return -1,                                              // EOF
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => return -1,
+        let n = unsafe {
+            libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, 1)
+        };
+        match n {
+            1 => return buf[0] as i32,                                       // c:7169
+            0 => return -1,                                                  // EOF
+            -1 if std::io::Error::last_os_error().kind()
+                == std::io::ErrorKind::Interrupted => continue,
+            _ => return -1,
         }
     }
 }

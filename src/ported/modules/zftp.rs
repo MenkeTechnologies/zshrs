@@ -464,7 +464,14 @@ impl zftp_session {
             .recv_timeout(dns_timeout)
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DNS resolution timed out"))?
             .map_err(|e| {
-                tracing::warn!(host, error = %e, "zftp: DNS failed");
+                // C: `zwarnnam("zftp", "host not found: %s", host);` at
+                //    `Src/Modules/zftp.c:1715`. Route through canonical
+                //    zwarnnam so the user sees a real shell warning
+                //    instead of a tracing log line.
+                crate::ported::utils::zwarnnam(
+                    "zftp",
+                    &format!("host not found: {}: {}", host, e),
+                );
                 e
             })?;
 
