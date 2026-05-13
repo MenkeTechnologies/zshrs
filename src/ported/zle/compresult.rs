@@ -491,11 +491,10 @@ pub fn asklist() -> i32 {                                                       
     LASTLISTLEN.store(0, Ordering::Relaxed);                                     // c:1934
 
     // c:1930 — `clearflag = (isset(USEZLE) && !termflags && dolastprompt)`.
-    //          `dolastprompt` substrate not yet wired; assume the common
-    //          true case so the clear-after-no branch resembles C.
     let usezle = isset(USEZLE);
     let termflags = crate::ported::params::TERMFLAGS.load(Ordering::Relaxed);
-    let dolastprompt = true;
+    let dolastprompt = crate::ported::zle::compcore::dolastprompt
+        .load(Ordering::Relaxed) != 0;
     let clearflag = usezle && termflags == 0 && dolastprompt;
     CLEARFLAG.store(if clearflag { 1 } else { 0 }, Ordering::Relaxed);
 
