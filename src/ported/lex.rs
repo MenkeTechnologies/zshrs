@@ -2238,7 +2238,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
 
         match c {
             // Whitespace is handled above for most cases
-            LX2_OUTPAR => {
+            ')' if lexact2_get(c) == LX2_OUTPAR => {
                 if in_brace_param > 0 || sub {
                     add(Outpar);
                 } else if pct > 0 {
