@@ -215,6 +215,15 @@
             Stock zsh does not ship this trio as a user-facing pipeline.</p>
           </div>
           <div class="cat-card">
+            <h4>Fusevm bytecode on argv (<code>--disasm</code>)</h4>
+            <p>The <code>zshrs</code> binary prints the fusevm op listing
+            (name pool, subroutine entries, each opcode, nested
+            <code>sub_chunks</code>) to stdout before every VM run &mdash;
+            the IR the shell actually executes, next to the lexer/AST/wordcode
+            dump trio. Stock zsh does not expose its internal wordcode VM stream
+            on <code>argv</code> this way.</p>
+          </div>
+          <div class="cat-card">
             <h4>Persistent worker thread pool</h4>
             <p>18 (configurable [2-18]) tokio threads owned by the shell.
             <code>$(cmd)</code>, <code>&lt;(cmd)</code>, <code>&amp;</code>,

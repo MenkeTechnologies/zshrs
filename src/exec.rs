@@ -1295,6 +1295,10 @@ impl ShellExecutor {
                         ops = chunk.ops.len(),
                         "execute_script_file: bytecode cache hit"
                     );
+                    crate::fusevm_disasm::maybe_print_stdout(
+                        &format!("execute_script_file:cache:{abs_path}"),
+                        &chunk,
+                    );
                     let mut vm = fusevm::VM::new(chunk);
                     register_builtins(&mut vm);
                     let _ctx = ExecutorContext::enter(self);
@@ -1350,6 +1354,10 @@ impl ShellExecutor {
 
         // Execute
         if !chunk.ops.is_empty() {
+            crate::fusevm_disasm::maybe_print_stdout(
+                &format!("execute_script_file:compile:{abs_path}"),
+                &chunk,
+            );
             let mut vm = fusevm::VM::new(chunk);
             register_builtins(&mut vm);
             let _ctx = ExecutorContext::enter(self);
@@ -1848,6 +1856,7 @@ impl ShellExecutor {
             return Ok(self.last_status());
         }
 
+        crate::fusevm_disasm::maybe_print_stdout("execute_script_zsh_pipeline", &chunk);
         let mut vm = fusevm::VM::new(chunk);
         register_builtins(&mut vm);
         {
@@ -1988,6 +1997,7 @@ impl ShellExecutor {
         self.prompt_funcstack
             .push((name.to_string(), line_base, def_file));
 
+        crate::fusevm_disasm::maybe_print_stdout(&format!("function:{name}"), &chunk);
         let mut vm = fusevm::VM::new(chunk);
         register_builtins(&mut vm);
         let _ctx = ExecutorContext::enter(self);
@@ -2395,6 +2405,7 @@ impl ShellExecutor {
             compiler.lineno_addend = outer_lineno.saturating_sub(1);
             let chunk = compiler.compile(&prog);
             if !chunk.ops.is_empty() {
+                crate::fusevm_disasm::maybe_print_stdout("run_command_substitution", &chunk);
                 let mut vm = fusevm::VM::new(chunk);
                 register_builtins(&mut vm);
                 vm.set_shell_host(Box::new(ZshrsHost));

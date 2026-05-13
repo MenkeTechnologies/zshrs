@@ -990,6 +990,7 @@ impl ShellExecutor {
             // Capture stdout
             let output = Vec::new();
             let status = {
+                crate::fusevm_disasm::maybe_print_stdout("builtin_pmap", &chunk);
                 let mut vm = fusevm::VM::new(chunk);
                 register_builtins(&mut vm);
                 let _ctx = ExecutorContext::enter(self);
@@ -1049,6 +1050,7 @@ impl ShellExecutor {
             let compiler = crate::compile_zsh::ZshCompiler::new();
             let chunk = compiler.compile(&prog);
 
+            crate::fusevm_disasm::maybe_print_stdout("builtin_pgrep", &chunk);
             let mut vm = fusevm::VM::new(chunk);
             register_builtins(&mut vm);
             let _ctx = ExecutorContext::enter(self);
@@ -1100,6 +1102,7 @@ impl ShellExecutor {
             let compiler = crate::compile_zsh::ZshCompiler::new();
             let chunk = compiler.compile(&prog);
 
+            crate::fusevm_disasm::maybe_print_stdout("builtin_peach", &chunk);
             let mut vm = fusevm::VM::new(chunk);
             register_builtins(&mut vm);
             let _ctx = ExecutorContext::enter(self);

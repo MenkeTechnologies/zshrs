@@ -1047,7 +1047,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
         // Single stage — no pipe, just run inline
         if n == 1 {
-            let mut stage_vm = fusevm::VM::new(stages.into_iter().next().unwrap());
+            let stage = stages.into_iter().next().unwrap();
+            crate::fusevm_disasm::maybe_print_stdout("pipeline:single", &stage);
+            let mut stage_vm = fusevm::VM::new(stage);
             register_builtins(&mut stage_vm);
             let _ = stage_vm.run();
             return Value::Status(stage_vm.last_status);
@@ -1125,6 +1127,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
 
                     // Run this stage's bytecode on a fresh VM
+                    crate::fusevm_disasm::maybe_print_stdout(
+                        &format!("pipeline:child:stage:{i}"),
+                        chunk,
+                    );
                     let mut stage_vm = fusevm::VM::new(chunk.clone());
                     register_builtins(&mut stage_vm);
                     let _ = stage_vm.run();
@@ -1165,6 +1171,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // (`read x`) update the parent's variables directly.
         let last_stage_status = {
             let last_chunk = stages_vec.into_iter().last().unwrap();
+            crate::fusevm_disasm::maybe_print_stdout("pipeline:last", &last_chunk);
             let mut stage_vm = fusevm::VM::new(last_chunk);
             register_builtins(&mut stage_vm);
             stage_vm.set_shell_host(Box::new(ZshrsHost));
@@ -1266,6 +1273,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             0 => {
                 // Child: detach and run.
                 unsafe { libc::setsid() };
+                crate::fusevm_disasm::maybe_print_stdout("background_job", &chunk);
                 let mut bg_vm = fusevm::VM::new(chunk);
                 register_builtins(&mut bg_vm);
                 let _ = bg_vm.run();
@@ -1668,6 +1676,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // value from a sibling construct doesn't leak in.
             with_executor(|exec| exec.loop_signal = None);
 
+            crate::fusevm_disasm::maybe_print_stdout("select:body", &chunk);
             let mut body_vm = fusevm::VM::new(chunk.clone());
             register_builtins(&mut body_vm);
             let _ = body_vm.run();
@@ -5165,6 +5174,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     libc::close(c2p[1]);
                     libc::setsid();
                 }
+                crate::fusevm_disasm::maybe_print_stdout("coproc:child", &chunk);
                 let mut co_vm = fusevm::VM::new(chunk);
                 register_builtins(&mut co_vm);
                 let _ = co_vm.run();
@@ -5676,6 +5686,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(0);
         };
         let start = Instant::now();
+        crate::fusevm_disasm::maybe_print_stdout("time_sublist", &chunk);
         let mut sub_vm = fusevm::VM::new(chunk);
         register_builtins(&mut sub_vm);
         let _ = sub_vm.run();
@@ -8872,6 +8883,7 @@ impl fusevm::ShellHost for ZshrsHost {
         unsafe {
             libc::dup2(f.as_raw_fd(), libc::STDOUT_FILENO);
         }
+        crate::fusevm_disasm::maybe_print_stdout("process_subst_in", sub);
         let mut vm = fusevm::VM::new(sub.clone());
         register_builtins(&mut vm);
         vm.set_shell_host(Box::new(ZshrsHost));
@@ -8922,6 +8934,7 @@ impl fusevm::ShellHost for ZshrsHost {
                         libc::dup2(fd, libc::STDIN_FILENO);
                     }
                 }
+                crate::fusevm_disasm::maybe_print_stdout("process_subst_out:child", &sub);
                 let mut vm = fusevm::VM::new(sub);
                 register_builtins(&mut vm);
                 vm.set_shell_host(Box::new(ZshrsHost));
@@ -9128,6 +9141,7 @@ impl fusevm::ShellHost for ZshrsHost {
         }
         drop(write_end);
 
+        crate::fusevm_disasm::maybe_print_stdout("host.cmd_subst", sub);
         let mut vm = fusevm::VM::new(sub.clone());
         register_builtins(&mut vm);
         vm.set_shell_host(Box::new(ZshrsHost));
@@ -9380,6 +9394,10 @@ impl fusevm::ShellHost for ZshrsHost {
             )
         });
 
+        crate::fusevm_disasm::maybe_print_stdout(
+            &format!("host.call_function:{fn_name}"),
+            &chunk,
+        );
         let mut vm = fusevm::VM::new(chunk);
         register_builtins(&mut vm);
         // Seed the function-body VM with the parent's `$?` so a
