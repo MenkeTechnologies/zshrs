@@ -1,0 +1,668 @@
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	@setup
+STRING	{
+SEPER	
+STRING	load
+STRING	"test_lib.zsh"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	@test
+STRING	'autoload common zpwrPrintMap passes zsh -n'
+STRING	{
+SEPER	
+STRING	run
+STRING	zsh
+STRING	-n
+STRING	"$ZPWR/autoload/common/zpwrPrintMap"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'autoload common zpwrResolve passes zsh -n'
+STRING	{
+SEPER	
+STRING	run
+STRING	zsh
+STRING	-n
+STRING	"$ZPWR/autoload/common/zpwrResolve"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'autoload common zpwrRelPath passes zsh -n'
+STRING	{
+SEPER	
+STRING	run
+STRING	zsh
+STRING	-n
+STRING	"$ZPWR/autoload/common/zpwrRelPath"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'autoload common zpwrPygmentcolors passes zsh -n'
+STRING	{
+SEPER	
+STRING	run
+STRING	zsh
+STRING	-n
+STRING	"$ZPWR/autoload/common/zpwrPygmentcolors"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'autoload common zpwrPorts passes zsh -n'
+STRING	{
+SEPER	
+STRING	run
+STRING	zsh
+STRING	-n
+STRING	"$ZPWR/autoload/common/zpwrPorts"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'autoload common zpwrTimeline passes zsh -n'
+STRING	{
+SEPER	
+STRING	run
+STRING	zsh
+STRING	-n
+STRING	"$ZPWR/autoload/common/zpwrTimeline"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'autoload common zpwrTailLog passes zsh -n'
+STRING	{
+SEPER	
+STRING	run
+STRING	zsh
+STRING	-n
+STRING	"$ZPWR/autoload/common/zpwrTailLog"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'autoload common zpwrRestoreHistfile passes zsh -n'
+STRING	{
+SEPER	
+STRING	run
+STRING	zsh
+STRING	-n
+STRING	"$ZPWR/autoload/common/zpwrRestoreHistfile"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	@test
+STRING	'zpwrExists zpwrPrintMap returns 0'
+STRING	{
+SEPER	
+STRING	run
+STRING	zpwrExists
+STRING	zpwrPrintMap
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'zpwrExists zpwrResolve returns 0'
+STRING	{
+SEPER	
+STRING	run
+STRING	zpwrExists
+STRING	zpwrResolve
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'zpwrExists zpwrRelPath returns 0'
+STRING	{
+SEPER	
+STRING	run
+STRING	zpwrExists
+STRING	zpwrRelPath
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb printmap registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[printmap]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb which registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[which]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb whatis registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[whatis]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb rerun registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[rerun]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb restorehistory registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[restorehistory]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb relpath registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[relpath]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb rmconfiglinks registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[rmconfiglinks]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb netstat registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[netstat]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb pygmentcolors registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[pygmentcolors]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb ps registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[ps]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb post registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[post]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb pre registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[pre]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb logs registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[logs]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb testsall registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[testsall]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb load registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[load]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb today registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[today]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb activity registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[activity]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb instrument registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[instrument]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb dashboard registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[dashboard]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb live registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[live]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb toggle registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[toggle]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb travis registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[travis]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb travisbuild registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[travisbuild]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb travisbranch registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[travisbranch]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb travispr registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[travispr]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb trc registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[trc]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	@test
+STRING	'verb tty registered'
+STRING	{
+SEPER	
+STRING	run
+STRING	test
+STRING	-n
+STRING	"${ZPWR_VERBS[tty]+x}"
+SEPER	
+STRING	assert
+STRING	$state
+STRING	equals
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+ENDINPUT

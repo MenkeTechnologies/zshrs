@@ -151,8 +151,179 @@ bin_dumptokens(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))
     return 0;
 }
 
+/* Wordcode opcode names indexed by WC_KIND value (zsh.h:893-921). */
+static const char *wcnames[] = {
+    "WC_END",     "WC_LIST",    "WC_SUBLIST", "WC_PIPE",    "WC_REDIR",
+    "WC_ASSIGN",  "WC_SIMPLE",  "WC_TYPESET", "WC_SUBSH",   "WC_CURSH",
+    "WC_TIMED",   "WC_FUNCDEF", "WC_FOR",     "WC_SELECT",  "WC_WHILE",
+    "WC_REPEAT",  "WC_CASE",    "WC_IF",      "WC_COND",    "WC_ARITH",
+    "WC_AUTOFN",  "WC_TRY",
+};
+#define NUM_WCNAMES (sizeof(wcnames) / sizeof(wcnames[0]))
+
+static const char *
+wc_name(unsigned int kind)
+{
+    if (kind < NUM_WCNAMES)
+        return wcnames[kind];
+    return "WC_?";
+}
+
+/* Print a string with simple escapes so a single line per entry is
+ * stable for byte-for-byte diff. \n \t \\ \" handled; other bytes
+ * pass through (the strs table contains zsh metafied bytes which we
+ * unmetafy first via the existing helper). */
+static void
+print_escaped(const char *s, int n)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        unsigned char c = (unsigned char) s[i];
+        switch (c) {
+        case '\n': fputs("\\n", stdout); break;
+        case '\t': fputs("\\t", stdout); break;
+        case '\\': fputs("\\\\", stdout); break;
+        case '"':  fputs("\\\"", stdout); break;
+        case '\0': fputs("\\0", stdout); break;
+        default:
+            if (c < 0x20 || c >= 0x7f)
+                printf("\\x%02x", c);
+            else
+                putchar(c);
+        }
+    }
+}
+
+/**/
+static int
+bin_dumpwordcode(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))
+{
+    char *path = args[0];
+    int fd;
+    struct stat st;
+    char *buf;
+    ssize_t n;
+    Eprog prog;
+    int i;
+    int n_strs;
+    char *p;
+
+    if (!path) {
+        zwarnnam(nam, "missing FILE argument");
+        return 1;
+    }
+
+    fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        zwarnnam(nam, "%s: %s", path, strerror(errno));
+        return 1;
+    }
+    if (fstat(fd, &st) < 0) {
+        zwarnnam(nam, "%s: stat: %s", path, strerror(errno));
+        close(fd);
+        return 1;
+    }
+    buf = (char *) zalloc(st.st_size + 1);
+    n = read(fd, buf, st.st_size);
+    close(fd);
+    if (n < 0) {
+        zwarnnam(nam, "%s: read: %s", path, strerror(errno));
+        zfree(buf, st.st_size + 1);
+        return 1;
+    }
+    buf[n] = '\0';
+
+    /* Mirror parse_string from exec.c:282-302 — metafy + parse_list. */
+    char *meta_buf = metafy(buf, n, META_DUP);
+    prog = parse_string(meta_buf, 0);
+
+    if (!prog) {
+        printf("PARSE_ERR\n");
+        fflush(stdout);
+        zfree(buf, st.st_size + 1);
+        return 0;
+    }
+
+    /* Header: counts + flags. nref/dump/shf are pointer-shaped so we
+     * just signal presence. */
+    printf("EPROG flags=0x%x len=%d npats=%d\n",
+           prog->flags, prog->len, prog->npats);
+
+    /* Wordcode dump. C's `prog` is allocated with len bytes total
+     * laid out as: pats[npats] (4*npats bytes) + wordcode (4*ecused
+     * bytes) + strs (ecsoffs bytes). Wordcode count = (len - 4*npats
+     * - ecsoffs) / 4. We skip pats, dump wordcode, then dump strs. */
+    /* Wordcode word count = number of u32 slots between prog->prog
+     * and prog->strs. prog->strs sits right after the wordcode region
+     * in the contiguous memory block (zsh.h:810-820 layout: pats →
+     * prog → strs). Using offset arithmetic is robust against
+     * embedded WC_END(==0) words appearing as ecstrcode indices etc.,
+     * which the "iterate until WC_END" heuristic mis-reads. */
+    int wc_count;
+    Wordcode pc = prog->prog;
+    if (prog->strs) {
+        wc_count = (int)((prog->strs - (char *) pc) / (int) sizeof(wordcode));
+    } else {
+        /* No strs region — derive from len. */
+        wc_count = (prog->len - prog->npats * (int)sizeof(Patprog)) /
+                   (int)sizeof(wordcode);
+    }
+    printf("WORDS %d\n", wc_count);
+    for (i = 0; i < wc_count; i++) {
+        wordcode w = pc[i];
+        printf("WC[%d]=0x%08x KIND=%s DATA=0x%x\n",
+               i, (unsigned int) w, wc_name(wc_code(w)),
+               (unsigned int) wc_data(w));
+    }
+
+    /* Strs table — contiguous \0-separated entries. Bound walks
+     * strictly by `end` so a missing terminator can't run into
+     * adjacent heap memory. */
+    p = prog->strs;
+    n_strs = 0;
+    int strs_bytes = prog->len - prog->npats * (int)sizeof(Patprog) -
+                     wc_count * (int)sizeof(wordcode);
+    if (p && strs_bytes > 0) {
+        char *s = p;
+        char *end = p + strs_bytes;
+        while (s < end) {
+            int max = (int)(end - s);
+            int slen = (int) strnlen(s, max);
+            if (slen >= max)
+                break;  /* unterminated trailing slot — skip */
+            n_strs++;
+            s += slen + 1;
+        }
+    }
+    printf("STRS %d\n", n_strs);
+    if (p && strs_bytes > 0) {
+        char *s = p;
+        char *end = p + strs_bytes;
+        for (i = 0; i < n_strs && s < end; i++) {
+            int max = (int)(end - s);
+            int slen = (int) strnlen(s, max);
+            if (slen >= max)
+                break;
+            printf("STR[%d]=\"", i);
+            /* Unmetafy a copy before escaping so binary bytes that were
+             * Meta-encoded come back in their original form. */
+            char *copy = ztrdup(s);
+            unmetafy(copy, NULL);
+            print_escaped(copy, (int) strlen(copy));
+            zsfree(copy);
+            printf("\"\n");
+            s += slen + 1;
+        }
+    }
+    fflush(stdout);
+
+    zfree(buf, st.st_size + 1);
+    return 0;
+}
+
 static struct builtin bintab[] = {
     BUILTIN("dumptokens", 0, bin_dumptokens, 1, 1, 0, NULL, NULL),
+    BUILTIN("dumpwordcode", 0, bin_dumpwordcode, 1, 1, 0, NULL, NULL),
 };
 
 static struct features module_features = {

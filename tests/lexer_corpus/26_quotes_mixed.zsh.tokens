@@ -1,0 +1,17 @@
+ENVSTRING	x="single 'inside' double"
+SEPER	
+ENVSTRING	y='double "inside" single'
+SEPER	
+ENVSTRING	z="\$VAR \\backslash \"quote\""
+SEPER	
+ENVSTRING	w='single quotes are literal $VAR'
+SEPER	
+ENVSTRING	mixed="prefix $VAR ${other} `cmd` $(other)"
+SEPER	
+ENVSTRING	escape="line\nbreak\ttab"
+SEPER	
+ENVSTRING	multiline="line1
+line2
+line3"
+SEPER	
+ENDINPUT

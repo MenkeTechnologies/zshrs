@@ -1,0 +1,53 @@
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	echo
+STRING	deleting
+STRING	git
+STRING	modified
+STRING	_comps
+STRING	dups
+SEPER	
+SEPER	
+WHILE	while
+STRING	read
+STRING	f
+SEPER	
+DOLOOP	do
+SEPER	
+ENVSTRING	cmd="$(echo "$f" | cut -c2-)"
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	$_comps[$cmd]
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"remove $f"
+SEPER	
+STRING	command
+STRING	rm
+STRING	"$f"
+SEPER	
+ELSE	else
+SEPER	
+STRING	echo
+STRING	"keeping $f"
+SEPER	
+FI	fi
+SEPER	
+DONE	done
+INANG	
+STRING	<(git status -u | command grep _ | stryke -pe 's@\s@@')
+SEPER	
+ENDINPUT

@@ -1,0 +1,53 @@
+TYPESET	typeset
+STRING	-g
+STRING	VAR=value
+SEPER	
+TYPESET	typeset
+STRING	-gA
+STRING	hash
+SEPER	
+TYPESET	typeset
+STRING	-ga
+STRING	arr
+SEPER	
+TYPESET	typeset
+STRING	-i
+STRING	num=42
+SEPER	
+TYPESET	typeset
+STRING	-F
+STRING	float=3.14
+SEPER	
+TYPESET	typeset
+STRING	-r
+STRING	readonly_var=fixed
+SEPER	
+TYPESET	typeset
+STRING	-x
+STRING	exported=yes
+SEPER	
+TYPESET	typeset
+STRING	-U
+STRING	unique_arr
+SEPER	
+TYPESET	declare
+STRING	-A
+STRING	H
+SEPER	
+TYPESET	local
+STRING	-i
+STRING	counter
+SEPER	
+TYPESET	export
+STRING	PATH=$PATH:/new/path
+SEPER	
+TYPESET	readonly
+STRING	LIMIT=100
+SEPER	
+TYPESET	integer
+STRING	count
+SEPER	
+TYPESET	float
+STRING	pi
+SEPER	
+ENDINPUT

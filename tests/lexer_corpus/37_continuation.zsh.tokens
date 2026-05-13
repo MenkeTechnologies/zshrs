@@ -1,0 +1,36 @@
+STRING	echo
+STRING	a
+STRING	b
+STRING	c
+STRING	d
+SEPER	
+ENVSTRING	x=$( echo "long" \
+       "string" \
+       "split" )
+SEPER	
+DINBRACK	[[
+STRING	-f
+STRING	/tmp/x
+DAMPER	
+STRING	-r
+STRING	/tmp/x
+DOUTBRACK	]]
+SEPER	
+FOR	for
+STRING	i
+STRING	in
+STRING	1
+STRING	2
+STRING	3
+STRING	4
+STRING	5
+STRING	6
+SEPER	
+DOLOOP	do
+SEPER	
+STRING	echo
+STRING	$i
+SEPER	
+DONE	done
+SEPER	
+ENDINPUT

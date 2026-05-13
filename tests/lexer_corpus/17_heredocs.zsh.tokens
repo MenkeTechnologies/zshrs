@@ -1,0 +1,13 @@
+STRING	cat
+TRINANG	
+STRING	"herestring"
+SEPER	
+STRING	cat
+TRINANG	
+STRING	$var
+SEPER	
+STRING	cat
+TRINANG	
+STRING	"$composed $var"
+SEPER	
+ENDINPUT

@@ -1,0 +1,11 @@
+STRING	echo
+STRING	$(echo $(echo $(date)))
+SEPER	
+STRING	echo
+STRING	`echo \`echo nested\``
+SEPER	
+ENVSTRING	x=$(uname -s)
+SEPER	
+ENVSTRING	y=$(($(date +%s) + 10))
+SEPER	
+ENDINPUT

@@ -1,0 +1,25 @@
+STRING	ls
+STRING	**/*.zsh
+SEPER	
+STRING	ls
+STRING	**/*(.)
+SEPER	
+STRING	ls
+STRING	^*.bak
+SEPER	
+STRING	ls
+STRING	*.(zsh|sh|py)
+SEPER	
+STRING	ls
+STRING	(^foo)*
+SEPER	
+STRING	ls
+STRING	(#i)*.PNG
+SEPER	
+STRING	ls
+STRING	(#a3)file
+SEPER	
+STRING	ls
+STRING	/tmp/<1-100>.txt
+SEPER	
+ENDINPUT

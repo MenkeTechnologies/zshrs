@@ -1,0 +1,73 @@
+IF	if
+DINBRACK	[[
+STRING	"$TERM"
+STRING	!=
+STRING	dumb
+DOUTBRACK	]]
+DAMPER	
+DINPAR	 $+commands[grc] 
+SEPER	
+THEN	then
+SEPER	
+SEPER	
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	cmd
+STRING	cmds
+SEPER	
+ENVARRAY	cmds
+SEPER	
+STRING	cc
+STRING	configure
+STRING	cvs
+STRING	df
+STRING	diff
+STRING	dig
+STRING	gcc
+STRING	gmake
+STRING	ifconfig
+STRING	last
+STRING	ldap
+STRING	ls
+STRING	make
+STRING	mount
+STRING	mtr
+STRING	netstat
+STRING	ping
+STRING	ping6
+STRING	ps
+STRING	traceroute
+STRING	traceroute6
+STRING	wdiff
+STRING	whois
+OUTPAR	
+SEPER	
+SEPER	
+SEPER	
+FOR	for
+STRING	cmd
+STRING	in
+STRING	$cmds
+SEPER	
+DOLOOP	do
+SEPER	
+IF	if
+DINPAR	 $+commands[$cmd] 
+SEPER	
+THEN	then
+SEPER	
+STRING	alias
+STRING	$cmd="grc --colour=on $cmd"
+SEPER	
+FI	fi
+SEPER	
+DONE	done
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FI	fi
+SEPER	
+ENDINPUT

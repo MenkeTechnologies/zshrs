@@ -19,7 +19,7 @@ use std::os::unix::io::RawFd;
 use std::time::UNIX_EPOCH;
 use libc::{S_IRGRP, S_IROTH, S_IRUSR, S_ISGID, S_ISUID, S_ISVTX, S_IWGRP, S_IWOTH, S_IWUSR, S_IXGRP, S_IXOTH, S_IXUSR};
 use std::io::Read;
-use crate::ported::ztype_h::{TYPTAB, TYPTAB_FLAGS, ZTF_INIT, ICNTRL, IDIGIT, IALNUM, IWORD, IIDENT, IUSER, IALPHA, IBLANK, INBLANK};
+use crate::ported::ztype_h::{TYPTAB, TYPTAB_FLAGS, ZTF_INIT, ICNTRL, IDIGIT, IALNUM, IWORD, IIDENT, IUSER, IALPHA, IBLANK, INBLANK, ITOK, IMETA, INULL};
 use std::os::unix::fs::PermissionsExt;
 use crate::ported::zsh_h::{hashnode, nameddir, ND_NOABBREV, ND_USERNAME};
 use crate::ported::ztype_h::{ISPECIAL, ZTF_SP_COMMA};
@@ -2226,6 +2226,40 @@ pub fn inittyptab() {                                                    // util
     t[b' ' as usize]  |= (IBLANK | INBLANK) as u32;
     t[b'\t' as usize] |= (IBLANK | INBLANK) as u32;
     t[b'\n' as usize] |= INBLANK as u32;
+
+    // c:4131-4132 — Meta + Marker marked IMETA.
+    {
+        use crate::ported::zsh_h::{Marker, META};
+        t[META as usize] |= IMETA as u32;
+        t[Marker as usize] |= IMETA as u32;
+    }
+
+    // c:4133-4134 — `for (t0 = Pound; t0 <= LAST_NORMAL_TOK; t0++)
+    //                    typtab[t0] |= ITOK | IMETA;`
+    // Marks all char-rewrite token markers (Pound, Stringg, Hat,
+    // Star, ...). Without this, `itok(Stringg)` returns false and
+    // `is_valid_assignment_target("$NAME")` wrongly accepts the
+    // leading `$` as part of an identifier prefix → `$=cmd` lexes
+    // as ENVSTRING instead of STRING.
+    {
+        use crate::ported::zsh_h::{LAST_NORMAL_TOK, Pound};
+        let lo = Pound as usize;
+        let hi = LAST_NORMAL_TOK as usize;
+        for t0 in lo..=hi {
+            t[t0] |= (ITOK | IMETA) as u32;
+        }
+    }
+
+    // c:4135-4136 — `for (t0 = Snull; t0 <= Nularg; t0++)
+    //                    typtab[t0] |= ITOK | IMETA | INULL;`
+    {
+        use crate::ported::zsh_h::{Nularg, Snull};
+        let lo = Snull as usize;
+        let hi = Nularg as usize;
+        for t0 in lo..=hi {
+            t[t0] |= (ITOK | IMETA | INULL) as u32;
+        }
+    }
 }
 
 /// Find a separator in string (from utils.c findsep)

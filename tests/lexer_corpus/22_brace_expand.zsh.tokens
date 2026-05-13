@@ -1,0 +1,22 @@
+STRING	echo
+STRING	{a,b,c}
+SEPER	
+STRING	echo
+STRING	{1..10}
+SEPER	
+STRING	echo
+STRING	{01..10}
+SEPER	
+STRING	echo
+STRING	{a..z}
+SEPER	
+STRING	echo
+STRING	prefix-{1,2,3}-suffix
+SEPER	
+STRING	echo
+STRING	{a,{b,c},d}
+SEPER	
+STRING	echo
+STRING	{1..5..2}
+SEPER	
+ENDINPUT

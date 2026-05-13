@@ -1,0 +1,77 @@
+STRING	hash
+STRING	-d
+STRING	ZPWR=/Users/wizard/.zpwr
+SEPER	
+STRING	hash
+STRING	-d
+STRING	ZPWR_LOCAL=/Users/wizard/.zpwr/local
+SEPER	
+STRING	hash
+STRING	-d
+STRING	ZPWR_TEMP=/Users/wizard/.zpwr/local/.temp
+SEPER	
+STRING	hash
+STRING	-d
+STRING	ZPWR_COMPSYS_CACHE=/Users/wizard/.zpwr/local/zcompcache
+SEPER	
+STRING	hash
+STRING	-d
+STRING	ZPWR_TMUX=/Users/wizard/.zpwr/tmux
+SEPER	
+STRING	hash
+STRING	-d
+STRING	TMUXH=/Users/wizard/.tmux
+SEPER	
+STRING	hash
+STRING	-d
+STRING	YARN_HOME=/Users/wizard/.config/yarn
+SEPER	
+STRING	hash
+STRING	-d
+STRING	ZPWR_SCRIPTS=/Users/wizard/.zpwr/scripts
+SEPER	
+STRING	hash
+STRING	-d
+STRING	ZPWR_DOC=/Users/wizard/Documents
+SEPER	
+STRING	hash
+STRING	-d
+STRING	ZPWR_DL=/Users/wizard/Downloads
+SEPER	
+STRING	hash
+STRING	-d
+STRING	NODE_HOME=/opt/homebrew/lib/node_modules
+SEPER	
+STRING	hash
+STRING	-d
+STRING	plugins=/Users/wizard/.zinit/plugins
+SEPER	
+STRING	hash
+STRING	-d
+STRING	zinit=/Users/wizard/.zinit
+SEPER	
+STRING	hash
+STRING	-d
+STRING	ZSH=/Users/wizard/.zinit
+SEPER	
+STRING	hash
+STRING	-d
+STRING	HOMEBREW_HOME_FORMULAE=/opt/homebrew/Library/taps/homebrew/homebrew-core/formula
+SEPER	
+STRING	hash
+STRING	-d
+STRING	ZPWR_FORKED_DIR=/Users/wizard/forkedRepos
+SEPER	
+STRING	hash
+STRING	-d
+STRING	zpfx=/Users/wizard/.zinit/polaris
+SEPER	
+STRING	hash
+STRING	-d
+STRING	ZPWR_D=/Users/wizard/Desktop
+SEPER	
+STRING	hash
+STRING	-d
+STRING	ZPWR_PYSCRIPTS=/Users/wizard/PycharmProjects/fromShell
+SEPER	
+ENDINPUT

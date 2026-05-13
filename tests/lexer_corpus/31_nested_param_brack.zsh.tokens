@@ -1,0 +1,25 @@
+STRING	echo
+STRING	${arr[1]}
+SEPER	
+STRING	echo
+STRING	${arr[$idx]}
+SEPER	
+STRING	echo
+STRING	${arr[$((i+1))]}
+SEPER	
+STRING	echo
+STRING	${arr[(r)pattern]}
+SEPER	
+STRING	echo
+STRING	${arr[(R)pattern]}
+SEPER	
+STRING	echo
+STRING	${arr[(I)pattern]}
+SEPER	
+STRING	echo
+STRING	${arr[(i)pattern]}
+SEPER	
+STRING	echo
+STRING	${(s.,.)str[1,3]}
+SEPER	
+ENDINPUT

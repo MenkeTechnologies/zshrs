@@ -1,0 +1,38 @@
+SEPER	
+STRING	echo
+STRING	$""
+SEPER	
+STRING	echo
+STRING	$"localized"
+SEPER	
+STRING	echo
+STRING	$'\0'
+SEPER	
+STRING	echo
+STRING	$'\u1234'
+SEPER	
+STRING	echo
+STRING	${x:offset:length}
+SEPER	
+STRING	echo
+STRING	${(q)$(echo hi)}
+SEPER	
+STRING	echo
+STRING	$(( [2+2]=5 ))
+SEPER	
+STRING	echo
+STRING	$(( 0x123 ))
+SEPER	
+STRING	echo
+STRING	$(( 0o123 ))
+SEPER	
+STRING	echo
+STRING	$(( 0b101 ))
+SEPER	
+STRING	echo
+STRING	$(( [#16] 255 ))
+SEPER	
+STRING	echo
+STRING	$(( [##16] 255 ))
+SEPER	
+ENDINPUT
