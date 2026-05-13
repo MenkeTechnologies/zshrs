@@ -94,7 +94,7 @@ pub fn matchgetfn(pm: *mut param) -> Vec<String> {                     // c:60
         unsafe { (*pm).u_arr = None; }                                  // c:71-72 freearray
     }
     if !zsh_match.is_empty() {                                          // c:73
-        if isset(KSHARRAYS) {                                           // c:74
+        if crate::ported::zsh_h::isset(KSHARRAYS) {                                           // c:74
             // c:75-80 — char **ap = zalloc(...); pm->u.arr = ap;
             //           *ap++ = ztrdup(getsparam("MATCH"));
             //           while (*zsh_match) *ap = ztrdup(*zsh_match++);
@@ -122,7 +122,7 @@ pub fn matchgetfn(pm: *mut param) -> Vec<String> {                     // c:60
             }
             dup                                                          // c:88 arrgetfn(pm)
         }
-    } else if isset(KSHARRAYS) {                                        // c:83
+    } else if crate::ported::zsh_h::isset(KSHARRAYS) {                                        // c:83
         // c:84 — pm->u.arr = mkarray(ztrdup(getsparam("MATCH")));
         let match_str: String = crate::ported::params::paramtab().read().ok()
             .and_then(|t| t.get("MATCH").and_then(|p| p.u_str.clone()))
@@ -300,7 +300,7 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
         // are file-level statics below.)
         /* bindkey -v forces VIMODE so this test is as good as any */   // c:191
         let curkmap = curkeymapname.lock().unwrap().clone();
-        if !curkmap.is_empty() && isset(VIMODE) && curkmap == "main" {  // c:192-193
+        if !curkmap.is_empty() && crate::ported::zsh_h::isset(VIMODE) && curkmap == "main" {  // c:192-193
             // c:194 — strcpy(sh_edmode, "\033");
             let mut em = sh_edmode.lock().unwrap();
             em[0] = 0o33;
@@ -470,10 +470,12 @@ pub fn cleanup_(m: *const module) -> i32 {
     while p < partab.len() {                                             // c:272
         let entry = &partab[p];
         if (entry.flags as u32 & PM_NAMEREF) != 0 {                      // c:273
-            // c:274 — `HashNode hn = gethashnode2(paramtab, p->name);`
-            let hn: *mut param = gethashnode2(&paramtab, &entry.name);
-            if !hn.is_null() {                                           // c:275
-                unsafe { (*hn).node.flags &= !(PM_NAMEREF as i32); }    // c:276
+            // c:274-276 — `HashNode hn = gethashnode2(paramtab, p->name);`
+            // `if (hn) hn->flags &= ~PM_NAMEREF;`
+            if let Ok(mut t) = crate::ported::params::paramtab().write() {
+                if let Some(pm) = t.get_mut(&entry.name) {
+                    pm.node.flags &= !(PM_NAMEREF as i32);              // c:276
+                }
             }
         }
         p += 1;
@@ -553,20 +555,6 @@ const PM_SCALAR: u32 = crate::ported::zsh_h::PM_SCALAR;
 const PM_ARRAY: u32 = crate::ported::zsh_h::PM_ARRAY;
 const PM_SPECIAL: u32 = crate::ported::zsh_h::PM_SPECIAL;
 
-// `paramtab` — `HashTable` global from `Src/params.c:46`. Stub: empty
-// usize-sized opaque holder; gethashnode2 against it always returns NULL.
-static paramtab: AtomicI32 = AtomicI32::new(0);
-
-// `gethashnode2` lives in `Src/hashtable.c:255`. C signature:
-//   HashNode gethashnode2(HashTable ht, const char *nam);
-// Stub uses the param-shaped overload — returns NULL since paramtab
-// is empty in static-link path.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/ksh93.c`.
-fn gethashnode2(_ht: &AtomicI32, _name: &str) -> *mut param {
-    std::ptr::null_mut()
-}
-
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/ksh93.c:284`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:284
@@ -607,14 +595,11 @@ pub static varedarg: Mutex<String> = Mutex::new(String::new());
 // real walk.
 static funcstack: Mutex<usize> = Mutex::new(0);
 
-// `KSHARRAYS` / `VIMODE` — option indices from `Src/zsh.h`. `isset(X)`
-// macro reads `opts[X]` (zsh.h:1455). Stub: false until options.c
-// global table is wired through.
+// `KSHARRAYS` / `VIMODE` — option indices from `Src/zsh.h`. The
+// `isset(X)` macro (zsh.h:1455) routes through `OPTS_LIVE` via
+// `crate::ported::zsh_h::isset`.
 const KSHARRAYS: i32 = crate::ported::zsh_h::KSHARRAYS;
 const VIMODE:    i32 = crate::ported::zsh_h::VIMODE;
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/ksh93.c`.
-fn isset(_opt: i32) -> bool { false }
 
 // `param.u.arr` field — the C `union u` has `char **arr` at c:1835.
 // The Rust `param` struct exposes it as `pub u_arr: Option<Vec<String>>`

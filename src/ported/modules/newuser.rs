@@ -116,7 +116,7 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:4
     // c:96-102 — try to source `<spath>/newuser` from each system path.
     for sp in &spaths {                                                   // c:96
         let buf = format!("{}/newuser", sp);                              // c:98
-        if source(&buf) != SOURCE_NOT_FOUND {                             // c:100
+        if crate::ported::init::source(&buf) != SOURCE_NOT_FOUND {        // c:100
             break;                                                        // c:101
         }
     }
@@ -124,21 +124,10 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:4
     0                                                                    // c:104
 }
 
-// `source()` lives in `Src/init.c:1551`. Stub: returns SOURCE_NOT_FOUND
-// since the static-link harness handles startup-script sourcing
-// separately. The full source.c port wires the real loader.
+// `SOURCE_NOT_FOUND` is the C `source.c` return code for a missing
+// startup script (`init.c:1551` family). zshrs's canonical
+// `crate::ported::init::source` returns the same numeric code.
 const SOURCE_NOT_FOUND: i32 = 1;
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/newuser.c`.
-fn source(_buf: &str) -> i32 {
-    // Try to actually source the file (best-effort): if it doesn't
-    // exist or can't be read, return SOURCE_NOT_FOUND so the caller
-    // moves to the next path.
-    match std::fs::metadata(_buf) {
-        Ok(_) => 0,                                                      // SOURCE_OK
-        Err(_) => SOURCE_NOT_FOUND,
-    }
-}
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/newuser.c:109`. C body is
 /// `return 0;` (UNUSED `Module m`).
