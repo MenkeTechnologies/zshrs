@@ -15,8 +15,8 @@ use std::time::Duration;
 use std::sync::atomic::Ordering;
 use std::os::unix::io::AsRawFd;
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/zftp.c`.
+/// WARNING: NOT IN ZFTP.C — platform-gated `errno` pointer; C reads errno directly after syscalls
+/// (equivalent C logic at Src/Modules/zftp.c:25).
 /// Platform-gated `errno` pointer. zsh's C source writes `errno` directly
 /// after `select(2)`/`read(2)` races; macOS exposes `__error()`, Linux/Android
 /// expose `__errno_location()`, BSDs use `__errno`. Returning a raw pointer
@@ -281,8 +281,6 @@ pub const ZFPF_DUMB: i32 = 0x04;                                           // c:
 pub static zfprefs: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);                                 // c:218
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/zftp.c`.
 /// `ZFST_TYPE(x)` macro — extract type-flag bits.
 /// Port of `#define ZFST_TYPE(x) (x & ZFST_TMSK)` from
 /// `Src/Modules/zftp.c`.
@@ -290,8 +288,6 @@ pub static zfprefs: std::sync::atomic::AtomicI32 =
 #[inline]
 pub fn ZFST_TYPE(x: i32) -> i32 { x & ZFST_TMSK }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/zftp.c`.
 /// `ZFST_MODE(x)` macro — extract mode-flag bits.
 /// Port of `#define ZFST_MODE(x) (x & ZFST_MMSK)` from
 /// `Src/Modules/zftp.c`.
@@ -516,8 +512,8 @@ impl zftp_session {
         Ok(resp)
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// Set transfer type
     pub fn set_type(&mut self, transfer_type: i32) -> io::Result<FtpResponse> {
         // C inline pattern: `(typ & ZFST_IMAG) ? "I" : "A"`
@@ -530,24 +526,24 @@ impl zftp_session {
         Ok(resp)
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// Change directory
     pub fn cd(&mut self, path: &str) -> io::Result<FtpResponse> {
         self.send_command(&format!("CWD {}", path))?;
         self.read_response()
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// Change to parent directory
     pub fn cdup(&mut self) -> io::Result<FtpResponse> {
         self.send_command("CDUP")?;
         self.read_response()
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// Get current directory
     pub fn pwd(&mut self) -> io::Result<(FtpResponse, Option<String>)> {
         self.send_command("PWD")?;
@@ -570,8 +566,8 @@ impl zftp_session {
         Ok((resp, pwd))
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// List directory
     pub fn list(&mut self, path: Option<&str>) -> io::Result<(FtpResponse, Vec<String>)> {
         let data_stream = self.enter_passive_mode()?;
@@ -600,8 +596,8 @@ impl zftp_session {
         Ok((final_resp, lines))
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// List filenames only
     pub fn nlst(&mut self, path: Option<&str>) -> io::Result<(FtpResponse, Vec<String>)> {
         let data_stream = self.enter_passive_mode()?;
@@ -701,32 +697,32 @@ impl zftp_session {
         self.read_response()
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// Delete a file
     pub fn delete(&mut self, path: &str) -> io::Result<FtpResponse> {
         self.send_command(&format!("DELE {}", path))?;
         self.read_response()
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// Make directory
     pub fn mkdir(&mut self, path: &str) -> io::Result<FtpResponse> {
         self.send_command(&format!("MKD {}", path))?;
         self.read_response()
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// Remove directory
     pub fn rmdir(&mut self, path: &str) -> io::Result<FtpResponse> {
         self.send_command(&format!("RMD {}", path))?;
         self.read_response()
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// Rename file
     pub fn rename(&mut self, from: &str, to: &str) -> io::Result<FtpResponse> {
         self.send_command(&format!("RNFR {}", from))?;
@@ -740,8 +736,8 @@ impl zftp_session {
         self.read_response()
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// Get file size
     pub fn size(&mut self, path: &str) -> io::Result<(FtpResponse, Option<u64>)> {
         self.send_command(&format!("SIZE {}", path))?;
@@ -759,8 +755,8 @@ impl zftp_session {
         Ok((resp, size))
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// Send raw command
     pub fn bslashquote(&mut self, cmd: &str) -> io::Result<FtpResponse> {
         self.send_command(cmd)?;
@@ -964,14 +960,14 @@ pub struct zftp_globals {
 }
 
 impl zftp_globals {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn get_session(&self, name: Option<&str>) -> Option<&zftp_session> {
         let key = name
             .map(|s| s.to_string())
@@ -979,8 +975,8 @@ impl zftp_globals {
         self.sessions.get(&key)
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn get_session_mut(&mut self, name: Option<&str>) -> Option<&mut zftp_session> {
         let key = name
             .map(|s| s.to_string())
@@ -988,8 +984,8 @@ impl zftp_globals {
         self.sessions.get_mut(&key)
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn create_session(&mut self, name: &str) -> &mut zftp_session {
         self.sessions
             .entry(name.to_string())
@@ -1010,8 +1006,8 @@ impl zftp_globals {
         sess
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn set_current(&mut self, name: &str) -> bool {
         if self.sessions.contains_key(name) {
             self.current = Some(name.to_string());
@@ -1021,14 +1017,14 @@ impl zftp_globals {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn current_name(&self) -> Option<&str> {
         self.current.as_deref()
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn session_names(&self) -> Vec<&str> {
         // Sorted so `zftp session` listing is deterministic across
         // runs. Matches zsh's table-walk order for the underlying
@@ -1474,8 +1470,6 @@ pub fn bin_zftp(_nam: &str, args: &[String],                                 // 
 mod tests {
     use super::*;
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_transfer_type() {
         // Inline-test pattern matching C: `(typ & ZFST_IMAG) ? "I" : "A"`
@@ -1485,8 +1479,6 @@ mod tests {
         assert_eq!(image_letter, "I");
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_transfer_mode() {
         // Inline-test pattern matching C: `(mode & ZFST_BLOC) ? "B" : "S"`
@@ -1496,23 +1488,13 @@ mod tests {
         assert_eq!(block_letter, "B");
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     /// FTP reply-code class predicates per RFC 959. C tests these
     /// inline at every reply-check call site (e.g. `if (lastcode < 400)`).
     fn is_positive(c: i32) -> bool { c >= 100 && c < 400 }
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     fn is_positive_completion(c: i32) -> bool { c >= 200 && c < 300 }
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     fn is_positive_intermediate(c: i32) -> bool { c >= 300 && c < 400 }
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     fn is_negative(c: i32) -> bool { c >= 400 }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_ftp_response_positive() {
         let resp: FtpResponse = (200, "OK".to_string());
@@ -1521,8 +1503,6 @@ mod tests {
         assert!(!is_negative(resp.0));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_ftp_response_intermediate() {
         let resp: FtpResponse = (331, "Password required".to_string());
@@ -1531,8 +1511,6 @@ mod tests {
         assert!(!is_positive_completion(resp.0));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_ftp_response_negative() {
         let resp: FtpResponse = (550, "File not found".to_string());
@@ -1540,8 +1518,6 @@ mod tests {
         assert!(!is_positive(resp.0));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_ftp_session_new() {
         let sess = zftp_session::new("test");
@@ -1550,8 +1526,6 @@ mod tests {
         assert!(!sess.logged_in);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_parse_pasv_response() {
         let msg = "227 Entering Passive Mode (192,168,1,1,4,1)";
@@ -1560,24 +1534,18 @@ mod tests {
         assert_eq!(port, 1025);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_parse_pasv_response_invalid() {
         let msg = "invalid";
         assert!(parse_pasv_response(msg).is_err());
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_zftp_new() {
         let zftp = zftp_globals::new();
         assert!(zftp.session_names().is_empty());
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_zftp_create_session() {
         let mut zftp = zftp_globals::new();
@@ -1585,8 +1553,6 @@ mod tests {
         assert!(zftp.sessions.contains_key("test"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_zftp_remove_session() {
         let mut zftp = zftp_globals::new();
@@ -1595,8 +1561,6 @@ mod tests {
         assert!(zftp.remove_session("test").is_none());
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_zftp_set_current() {
         let mut zftp = zftp_globals::new();
@@ -1605,8 +1569,6 @@ mod tests {
         assert!(!zftp.set_current("nonexistent"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_builtin_zftp_no_args() {
         let mut zftp = zftp_globals::new();
@@ -1625,8 +1587,6 @@ mod tests {
         zftp_cleanup();
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zftp.c`.
     #[test]
     fn test_builtin_zftp_test_not_connected() {
         let mut zftp = zftp_globals::new();
@@ -4202,8 +4162,10 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/zftp.c`.
+// WARNING: NOT IN ZFTP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -4223,14 +4185,18 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/zftp.c`.
+// WARNING: NOT IN ZFTP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:zftp".to_string()]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/zftp.c`.
+// WARNING: NOT IN ZFTP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -4242,8 +4208,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/zftp.c`.
+// WARNING: NOT IN ZFTP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

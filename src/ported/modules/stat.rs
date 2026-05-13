@@ -598,15 +598,11 @@ mod tests {
     use std::fs::File;
     use std::io::Write;
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/stat.c`.
     #[test]
     fn statelts_count_matches_st_count() {
         assert_eq!(STATELTS.len() as i32, ST_COUNT);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/stat.c`.
     #[test]
     fn statmodeprint_octal_only() {
         let s = statmodeprint(0o100644, STF_RAW | STF_OCTAL);
@@ -614,8 +610,6 @@ mod tests {
         assert!(s.contains("644"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/stat.c`.
     #[test]
     fn statmodeprint_string_only() {
         let s = statmodeprint(0o100644, STF_STRING);
@@ -623,23 +617,17 @@ mod tests {
         assert_eq!(&s[..1], "-");
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/stat.c`.
     #[test]
     fn statmodeprint_directory() {
         let s = statmodeprint(0o040755, STF_STRING);
         assert_eq!(&s[..1], "d");
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/stat.c`.
     #[test]
     fn statulprint_decimal() {
         assert_eq!(statulprint(12345), "12345");
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/stat.c`.
     #[test]
     fn statprint_size_via_index() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -656,8 +644,10 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/stat.c`.
+// WARNING: NOT IN STAT.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -677,14 +667,18 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/stat.c`.
+// WARNING: NOT IN STAT.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:stat".to_string(), "b:zstat".to_string()]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/stat.c`.
+// WARNING: NOT IN STAT.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -696,8 +690,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/stat.c`.
+// WARNING: NOT IN STAT.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

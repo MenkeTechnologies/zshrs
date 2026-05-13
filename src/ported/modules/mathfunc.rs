@@ -412,8 +412,10 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mathfunc.c`.
+// WARNING: NOT IN MATHFUNC.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -438,8 +440,10 @@ fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["f:abs".to_string(), "f:acos".to_string(), "f:acosh".to_string(), "f:asin".to_string(), "f:asinh".to_string(), "f:atan".to_string(), "f:atanh".to_string(), "f:cbrt".to_string(), "f:ceil".to_string(), "f:copysign".to_string(), "f:cos".to_string(), "f:cosh".to_string(), "f:erf".to_string(), "f:erfc".to_string(), "f:exp".to_string(), "f:expm1".to_string(), "f:fabs".to_string(), "f:float".to_string(), "f:floor".to_string(), "f:fmod".to_string(), "f:gamma".to_string(), "f:hypot".to_string(), "f:ilogb".to_string(), "f:int".to_string(), "f:isinf".to_string(), "f:isnan".to_string(), "f:j0".to_string(), "f:j1".to_string(), "f:jn".to_string(), "f:ldexp".to_string(), "f:lgamma".to_string(), "f:log".to_string(), "f:log10".to_string(), "f:log1p".to_string(), "f:log2".to_string(), "f:logb".to_string(), "f:nextafter".to_string(), "f:rint".to_string(), "f:scalb".to_string(), "f:signgam".to_string(), "f:sin".to_string(), "f:sinh".to_string(), "f:sqrt".to_string(), "f:tan".to_string(), "f:tanh".to_string(), "f:y0".to_string(), "f:y1".to_string(), "f:yn".to_string()]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mathfunc.c`.
+// WARNING: NOT IN MATHFUNC.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -451,8 +455,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/mathfunc.c`.
+// WARNING: NOT IN MATHFUNC.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

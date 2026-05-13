@@ -61,8 +61,8 @@ impl From<&[u8]> for Datum {
 }
 
 impl Datum {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `Datum` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// FFI accessor — extract the underlying bytes into an owned Vec.
     /// `dptr == NULL` (gdbm convention for "absent") → None. C uses
     /// the inline pattern `if (d.dptr) { ... memcpy or ztrdup(d.dptr,
@@ -84,8 +84,8 @@ impl Datum {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `Datum` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// Free the malloc'd `dptr` and reset the struct. Mirrors C's
     /// `if (d.dptr) { free(d.dptr); d.dptr = NULL; }` cleanup pattern.
     fn free(&mut self) {
@@ -173,8 +173,8 @@ impl gdbm_database {
         })
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `gdbm_database` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     #[cfg(not(feature = "gdbm"))]
     pub fn open(_path: &Path, _readonly: bool) -> Result<Self, String> {
         Err("GDBM support not compiled in".to_string())
@@ -221,8 +221,8 @@ impl gdbm_database {
         result
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `gdbm_database` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     #[cfg(not(feature = "gdbm"))]
     pub fn get(&self, _key: &str) -> Option<String> {
         None
@@ -265,8 +265,8 @@ impl gdbm_database {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `gdbm_database` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     #[cfg(not(feature = "gdbm"))]
     pub fn set(&self, _key: &str, _value: &str) -> Result<(), String> {
         Err("GDBM support not compiled in".to_string())
@@ -300,8 +300,8 @@ impl gdbm_database {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `gdbm_database` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     #[cfg(not(feature = "gdbm"))]
     pub fn delete(&self, _key: &str) -> Result<(), String> {
         Err("GDBM support not compiled in".to_string())
@@ -335,8 +335,8 @@ impl gdbm_database {
         keys
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `gdbm_database` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     #[cfg(not(feature = "gdbm"))]
     pub fn keys(&self) -> Vec<String> {
         Vec::new()
@@ -358,28 +358,28 @@ impl gdbm_database {
         Ok(())
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `gdbm_database` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     #[cfg(not(feature = "gdbm"))]
     pub fn clear(&self) -> Result<(), String> {
         Err("GDBM support not compiled in".to_string())
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `gdbm_database` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `gdbm_database` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     #[cfg(feature = "gdbm")]
     pub fn fd(&self) -> i32 {
         unsafe { gdbm_fdesc(self.dbf) }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `gdbm_database` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     #[cfg(not(feature = "gdbm"))]
     pub fn fd(&self) -> i32 {
         -1
@@ -388,8 +388,8 @@ impl gdbm_database {
 
 #[cfg(feature = "gdbm")]
 impl Drop for gdbm_database {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `gdbm_database` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     fn drop(&mut self) {
         if !self.dbf.is_null() {
             unsafe { gdbm_close(self.dbf) };
@@ -400,8 +400,8 @@ impl Drop for gdbm_database {
 
 #[cfg(not(feature = "gdbm"))]
 impl Drop for gdbm_database {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `gdbm_database` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     fn drop(&mut self) {}
 }
 
@@ -424,8 +424,8 @@ pub struct tied_gdbm_param {
 }
 
 impl tied_gdbm_param {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `tied_gdbm_param` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn new(name: String, db: Arc<gdbm_database>) -> Self {
         tied_gdbm_param {
             name,
@@ -434,8 +434,8 @@ impl tied_gdbm_param {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `tied_gdbm_param` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn get(&self, key: &str) -> Option<String> {
         if let Ok(cache) = self.cache.read() {
             if let Some(val) = cache.get(key) {
@@ -453,8 +453,8 @@ impl tied_gdbm_param {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `tied_gdbm_param` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn set(&self, key: &str, value: &str) -> Result<(), String> {
         self.db.set(key, value)?;
         if let Ok(mut cache) = self.cache.write() {
@@ -463,8 +463,8 @@ impl tied_gdbm_param {
         Ok(())
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `tied_gdbm_param` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn delete(&self, key: &str) -> Result<(), String> {
         self.db.delete(key)?;
         if let Ok(mut cache) = self.cache.write() {
@@ -473,14 +473,14 @@ impl tied_gdbm_param {
         Ok(())
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `tied_gdbm_param` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn keys(&self) -> Vec<String> {
         self.db.keys()
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `tied_gdbm_param` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn to_hash(&self) -> HashMap<String, String> {
         let mut result = HashMap::new();
         for key in self.keys() {
@@ -491,8 +491,8 @@ impl tied_gdbm_param {
         result
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/db_gdbm.c`.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `tied_gdbm_param` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn from_hash(&self, hash: &HashMap<String, String>) -> Result<(), String> {
         self.db.clear()?;
         for (key, val) in hash {
@@ -1143,8 +1143,10 @@ use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/db_gdbm.c`.
+// WARNING: NOT IN DB_GDBM.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -1164,14 +1166,18 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/db_gdbm.c`.
+// WARNING: NOT IN DB_GDBM.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:ztie".to_string(), "b:zuntie".to_string(), "b:zgdbmpath".to_string(), "p:zgdbm_tied".to_string()]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/db_gdbm.c`.
+// WARNING: NOT IN DB_GDBM.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -1183,8 +1189,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/db_gdbm.c`.
+// WARNING: NOT IN DB_GDBM.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

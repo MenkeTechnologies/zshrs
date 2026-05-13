@@ -81,8 +81,8 @@ pub fn get_srandom() -> u32 {                                                // 
 // blocks. Names are Rust-original; renaming to match a C name
 // would mislead.
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/random.c`.
+/// WARNING: NOT IN RANDOM.C — one-shot u32 helper; C inlines the 4-byte getrandom_buffer read
+/// (equivalent C logic at Src/Modules/random.c:79).
 /// One-shot u32 read. C inlines the equivalent at random.c:79
 /// (4-byte getrandom_buffer + decode).
 pub fn random_u32() -> u32 {
@@ -91,8 +91,8 @@ pub fn random_u32() -> u32 {
     u32::from_ne_bytes(buf)
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/random.c`.
+/// WARNING: NOT IN RANDOM.C — two-word helper for random_real(); C inlines the 8-byte read
+/// (equivalent C logic at Src/Modules/random_real.c:158).
 /// Two-word read used by `random_real()` at random_real.c:158-175
 /// for uniform-real sampling. C reads 8 bytes inline.
 pub fn random_u64() -> u64 {
@@ -259,8 +259,6 @@ pub use crate::ported::modules::random_real::random_real;
 mod tests {
     use super::*;
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/random.c`.
     #[test]
     fn test_random_state() {
         
@@ -270,8 +268,6 @@ mod tests {
         assert!(r1 != r2 || r2 != r3);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/random.c`.
     #[test]
     fn test_get_random_u32() {
         let r1 = random_u32();
@@ -280,8 +276,6 @@ mod tests {
         assert!(r1 != r2 || r2 != r3);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/random.c`.
     #[test]
     fn test_get_random_u64() {
         let r1 = random_u64();
@@ -289,8 +283,6 @@ mod tests {
         assert_ne!(r1, r2);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/random.c`.
     #[test]
     fn test_bounded_random() {
         for _ in 0..100 {
@@ -299,8 +291,6 @@ mod tests {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/random.c`.
     #[test]
     fn test_bounded_random_one() {
         for _ in 0..10 {
@@ -309,8 +299,6 @@ mod tests {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/random.c`.
     #[test]
     fn test_zrand_int() {
         let r = math_zrand_int(Some(100), Some(50), false).unwrap();
@@ -320,24 +308,18 @@ mod tests {
         assert!((50..=100).contains(&r));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/random.c`.
     #[test]
     fn test_zrand_int_no_args() {
         let r = math_zrand_int(None, None, false).unwrap();
         assert!(r >= 0);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/random.c`.
     #[test]
     fn test_zrand_int_errors() {
         assert!(math_zrand_int(Some(50), Some(100), false).is_err());
         assert!(math_zrand_int(Some(-1), None, false).is_err());
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/random.c`.
     #[test]
     fn test_zrand_float() {
         for _ in 0..100 {
@@ -346,8 +328,6 @@ mod tests {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/random.c`.
     #[test]
     fn test_random_real() {
         for _ in 0..100 {
@@ -356,8 +336,6 @@ mod tests {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/random.c`.
     #[test]
     fn test_shuffle() {
         // Fisher–Yates shuffle, inlined here since the helper is gone.
@@ -372,8 +350,6 @@ mod tests {
         assert_eq!(arr, original.to_vec());
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/random.c`.
     #[test]
     fn test_fill_random_bytes() {
         let mut buf = [0u8; 32];
@@ -474,8 +450,10 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/random.c`.
+// WARNING: NOT IN RANDOM.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -495,14 +473,18 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/random.c`.
+// WARNING: NOT IN RANDOM.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["f:zrand_float".to_string(), "f:zrand_int".to_string(), "p:SRANDOM".to_string()]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/random.c`.
+// WARNING: NOT IN RANDOM.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -514,8 +496,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/random.c`.
+// WARNING: NOT IN RANDOM.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

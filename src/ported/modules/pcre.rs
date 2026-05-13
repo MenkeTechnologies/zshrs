@@ -250,20 +250,14 @@ mod tests {
     use super::*;
     use crate::ported::zsh_h::MAX_OPS;
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
     fn empty_ops() -> options {
         options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
     }
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
     fn ops_with(flags: &[u8]) -> options {
         let mut o = empty_ops();
         for &c in flags { o.ind[c as usize] = 1; }
         o
     }
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
     fn s(x: &str) -> String { x.to_string() }
 
     /// Verifies bin_pcre_compile sets the thread_local pcre_pattern
@@ -276,8 +270,6 @@ mod tests {
         assert!(PCRE_PATTERN.with(|r| r.borrow().is_some()));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
     /// Verifies invalid pattern → status 1 (Src/Modules/pcre.c:99-105).
     #[test]
     fn test_pcre_compile_invalid() {
@@ -286,8 +278,6 @@ mod tests {
         assert_eq!(bin_pcre_compile("pcre_compile", &[s("[invalid")], &ops, 0), 1);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
     /// Verifies `-i` flag triggers caseless match (Src/Modules/pcre.c:79).
     #[test]
     fn test_pcre_compile_caseless() {
@@ -299,8 +289,6 @@ mod tests {
         assert_eq!(full.as_deref(), Some("HELLO"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
     /// Verifies bin_pcre_study returns 1 when no pattern compiled
     /// (Src/Modules/pcre.c:115-117).
     #[test]
@@ -309,8 +297,6 @@ mod tests {
         assert_eq!(bin_pcre_study("pcre_study", &[], &empty_ops(), 0), 1);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
     /// Verifies bin_pcre_study returns 0 after a pattern is compiled
     /// (Src/Modules/pcre.c:112+ no-pat guard taken vs not taken).
     #[test]
@@ -321,8 +307,6 @@ mod tests {
         assert_eq!(bin_pcre_study("pcre_study", &[], &ops, 0), 0);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
     /// Verifies bin_pcre_match returns the matched substring
     /// (Src/Modules/pcre.c:392-401).
     #[test]
@@ -334,8 +318,6 @@ mod tests {
         assert_eq!(full.as_deref(), Some("hello"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
     /// Verifies no-match returns status 1 (Src/Modules/pcre.c:399 NOMATCH).
     #[test]
     fn test_pcre_match_no_match() {
@@ -345,8 +327,6 @@ mod tests {
         assert_eq!(status, 1);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
     /// Verifies capture groups are extracted into the tuple result
     /// (Src/Modules/pcre.c:401 zpcre_get_substrings ovector loop).
     #[test]
@@ -360,8 +340,6 @@ mod tests {
         assert_eq!(caps[1].as_deref(), Some("world"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
     /// Verifies cond_pcre_match returns C's int convention
     /// (Src/Modules/pcre.c:422 + caseless via inline `(?i)` flag).
     #[test]
@@ -385,8 +363,6 @@ mod tests {
         assert_eq!(bin_pcre_compile("pcre_compile", &[s("[")], &empty_ops(), 0), 1);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/pcre.c`.
     /// Verifies bin_pcre_match with no compiled pattern returns 1
     /// (Src/Modules/pcre.c:343-345).
     #[test]
@@ -553,8 +529,10 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/pcre.c`.
+// WARNING: NOT IN PCRE.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -574,14 +552,18 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/pcre.c`.
+// WARNING: NOT IN PCRE.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:pcre_compile".to_string(), "b:pcre_match".to_string(), "b:pcre_study".to_string(), "c:pcre-match".to_string()]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/pcre.c`.
+// WARNING: NOT IN PCRE.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -593,8 +575,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/pcre.c`.
+// WARNING: NOT IN PCRE.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

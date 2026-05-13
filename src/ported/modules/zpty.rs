@@ -421,8 +421,6 @@ pub fn bin_zpty(_nam: &str, args: &[String],                                 // 
 mod tests {
     use super::*;
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
     #[test]
     fn test_pty_cmds_manager() {
         let mut cmds = HashMap::<String, ptycmd>::new();
@@ -442,8 +440,6 @@ mod tests {
         assert!(cmds.is_empty());
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
     #[test]
     fn test_pty_cmd_fields() {
         let cmd = ptycmd::new(
@@ -464,8 +460,6 @@ mod tests {
         assert!(!cmd.finished);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
     fn ops_with_flag(c: u8) -> crate::ported::zsh_h::options {
         use crate::ported::zsh_h::{options, MAX_OPS};
         let mut o = options { ind: [0u8; MAX_OPS], args: Vec::new(),
@@ -474,8 +468,6 @@ mod tests {
         o
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
     /// Verifies `-L` (list) on an empty pty table returns 0.
     /// Mirrors Src/Modules/zpty.c:773 -L arm.
     #[test]
@@ -486,8 +478,6 @@ mod tests {
         assert_eq!(status, 0);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
     /// Verifies `-d` with no positional args clears all sessions.
     /// Mirrors Src/Modules/zpty.c:773 -d arm.
     #[test]
@@ -497,8 +487,6 @@ mod tests {
         assert_eq!(status, 0);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
     /// Verifies `-w` with no positional args returns 1 (needs name + data).
     #[test]
     fn test_builtin_zpty_write_no_args() {
@@ -507,8 +495,6 @@ mod tests {
         assert_eq!(status, 1);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/zpty.c`.
     /// Verifies `-t` with no positional args returns 1 (needs name).
     #[test]
     fn test_builtin_zpty_test_no_args() {
@@ -580,8 +566,8 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 /// whole module. Rust uses OnceLock<Mutex<>> for thread-safe access.
 pub static PTYCMDS: std::sync::OnceLock<Mutex<HashMap<String, ptycmd>>> = std::sync::OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/zpty.c`.
+/// WARNING: NOT IN ZPTY.C — OnceLock<Mutex> accessor for ptycmd registry; C uses static linked list `ptycmds`
+/// (equivalent C logic at Src/Modules/zpty.c:48).
 fn ptycmds() -> &'static Mutex<HashMap<String, ptycmd>> {
     PTYCMDS.get_or_init(|| Mutex::new(HashMap::<String, ptycmd>::new()))
 }
@@ -808,8 +794,10 @@ use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/zpty.c`.
+// WARNING: NOT IN ZPTY.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -829,14 +817,18 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/zpty.c`.
+// WARNING: NOT IN ZPTY.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:zpty".to_string()]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/zpty.c`.
+// WARNING: NOT IN ZPTY.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -848,8 +840,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/zpty.c`.
+// WARNING: NOT IN ZPTY.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

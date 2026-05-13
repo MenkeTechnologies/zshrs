@@ -26,16 +26,16 @@ use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
 use crate::ported::utils::{zwarnnam, zerrnam};
 
 impl Default for tcp_sockaddr {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/tcp.c`.
+    /// WARNING: NOT IN TCP.C — method on Rust-only `tcp_sockaddr` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     fn default() -> Self {
         Self { a: unsafe { std::mem::zeroed() } }
     }
 }
 
 impl Default for tcp_session {
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/tcp.c`.
+    /// WARNING: NOT IN TCP.C — method on Rust-only `tcp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     fn default() -> Self {
         Self {
             fd: -1,
@@ -726,8 +726,6 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 mod tests {
     use super::*;
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/tcp.c`.
     #[test]
     fn zts_alloc_creates_session_with_default_fd() {
         let _ = zts_alloc(ZTCP_LISTEN);
@@ -740,16 +738,12 @@ mod tests {
         });
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/tcp.c`.
     #[test]
     fn inet_ntop_v4_works() {
         let bytes = [127u8, 0, 0, 1];
         assert_eq!(zsh_inet_ntop(libc::AF_INET, &bytes).as_deref(), Some("127.0.0.1"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/tcp.c`.
     #[test]
     fn inet_pton_v4_works() {
         let mut buf = [0u8; 4];
@@ -757,8 +751,6 @@ mod tests {
         assert_eq!(buf, [127, 0, 0, 1]);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/tcp.c`.
     #[test]
     fn inet_pton_invalid_returns_zero() {
         let mut buf = [0u8; 4];
@@ -777,8 +769,10 @@ use crate::modules::tcp_h::Tcp_session;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/tcp.c`.
+// WARNING: NOT IN TCP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -798,14 +792,18 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/tcp.c`.
+// WARNING: NOT IN TCP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:ztcp".to_string()]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/tcp.c`.
+// WARNING: NOT IN TCP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -817,8 +815,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/tcp.c`.
+// WARNING: NOT IN TCP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

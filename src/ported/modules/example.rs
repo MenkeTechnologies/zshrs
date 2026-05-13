@@ -393,13 +393,9 @@ mod tests {
     use super::*;
     use crate::ported::zsh_h::MAX_OPS;
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/example.c`.
     fn empty_ops() -> options {
         options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
     }
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/example.c`.
     fn s(x: &str) -> String { x.to_string() }
 
     /// Serialises tests that mutate `intparam` / `strparam` / `arrparam`
@@ -429,8 +425,6 @@ mod tests {
         assert_eq!(arr[1], "array");
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/example.c`.
     /// Verifies `cond_p_len`'s two arities — c:84/89.
     #[test]
     fn cond_p_len_arities() {
@@ -440,8 +434,6 @@ mod tests {
         assert_eq!(cond_p_len(&[s("x")], 0), 0);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/example.c`.
     /// Verifies `cond_i_ex` matches only the exact concat "example" — c:99.
     #[test]
     fn cond_i_ex_concat_matches_example() {
@@ -451,8 +443,6 @@ mod tests {
         assert_eq!(cond_i_ex(&[s("foo"), s("bar")], 0), 0);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/example.c`.
     /// Verifies `math_sum` returns integer sum for all-int inputs and
     /// promotes to float once a float arg appears — c:111/116/126.
     #[test]
@@ -468,8 +458,6 @@ mod tests {
         assert!((r.d - 6.5).abs() < 1e-9);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/example.c`.
     /// Verifies `math_length` returns string length as integer — c:138.
     #[test]
     fn math_length_returns_strlen() {
@@ -478,8 +466,6 @@ mod tests {
         assert_eq!(r.l, 5);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/example.c`.
     /// Verifies `ex_wrapper` returns 1 (skip) for non-matching names
     /// and 0 (matched) for `example`-prefixed names — c:147/156.
     #[test]
@@ -512,8 +498,10 @@ use crate::ported::zsh_h::features as features_t;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/example.c`.
+// WARNING: NOT IN EXAMPLE.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -533,14 +521,18 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/example.c`.
+// WARNING: NOT IN EXAMPLE.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:example".to_string(), "c:ex".to_string(), "c:len".to_string(), "f:length".to_string(), "f:sum".to_string(), "p:exarr".to_string(), "p:exint".to_string(), "p:exstr".to_string()]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/example.c`.
+// WARNING: NOT IN EXAMPLE.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -552,8 +544,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/example.c`.
+// WARNING: NOT IN EXAMPLE.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

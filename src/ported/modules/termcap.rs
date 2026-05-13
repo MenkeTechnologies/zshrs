@@ -75,8 +75,8 @@ unsafe extern "C" {
     fn tgetstr(id: *const libc::c_char, area: *mut *mut libc::c_char) -> *mut libc::c_char;
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/termcap.c`.
+/// WARNING: NOT IN TERMCAP.C — AtomicI32-protected lazy termcap init; C uses libtermcap `tgetent` once at boot
+/// (equivalent C logic at Src/Modules/termcap.c:82).
 /// Initialize libtermcap's database for `$TERM`. Returns true on success.
 /// C call site: `tgetent(NULL, term)` (zsh.h-compatible portable form).
 fn ensure_termcap_loaded() -> bool {
@@ -369,22 +369,16 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 mod tests {
     use super::*;
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/termcap.c`.
     #[test]
     fn ztgetflag_known_on_returns_one() {
         assert_eq!(ztgetflag("am"), 1);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/termcap.c`.
     #[test]
     fn ztgetflag_unknown_returns_minus_one() {
         assert_eq!(ztgetflag("zz"), -1);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/termcap.c`.
     #[test]
     fn gettermcap_co_returns_columns() {
         let v = gettermcap("co");
@@ -393,15 +387,11 @@ mod tests {
         assert!(n > 0);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/termcap.c`.
     #[test]
     fn gettermcap_unknown_returns_none() {
         assert!(gettermcap("zz_nonexistent").is_none());
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/termcap.c`.
     #[test]
     fn scantermcap_emits_bool_caps() {
         let v = scantermcap();
@@ -420,8 +410,10 @@ use std::sync::OnceLock;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/termcap.c`.
+// WARNING: NOT IN TERMCAP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -441,14 +433,18 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/termcap.c`.
+// WARNING: NOT IN TERMCAP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:echotc".to_string(), "p:termcap".to_string()]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/termcap.c`.
+// WARNING: NOT IN TERMCAP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -460,8 +456,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/termcap.c`.
+// WARNING: NOT IN TERMCAP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,
