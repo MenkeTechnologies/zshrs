@@ -532,6 +532,22 @@ pub fn bin_bindkey(name: &str, args: &[String],                              // 
                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
 
+    // c:zle_keymap.c boot_ - the zsh/zle module's boot handler
+    // calls `default_bindings()` once on module load (zle_main.c
+    // setup_), which is what gives the "main" / "emacs" / "viins" /
+    // "vicmd" / "menuselect" / "listscroll" / ".safe" keymaps a
+    // chance to exist before user `bindkey` invocations.
+    //
+    // zshrs in script (non-interactive) mode doesn't autoload zsh/zle,
+    // so the keymaps are never populated. /etc/zshrc bindkey calls
+    // then fail with `no such keymap 'main'`. Auto-init on first
+    // bindkey call — idempotent because default_bindings is a no-op
+    // after the keymaps already exist.
+    static KEYMAPS_INIT: std::sync::Once = std::sync::Once::new();
+    KEYMAPS_INIT.call_once(|| {
+        default_bindings();
+    });
+
     // c:751-759 — opns[] dispatch table. Each entry: (flag-char,
     // selp, min, max, sub-handler kind). selp=1 means -e/-v/-a/-M
     // keymap-selection is allowed for this op.
