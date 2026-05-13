@@ -497,98 +497,329 @@ pub fn abort_match() {                                                       // 
 /// (recursive match_str, `add_match_sub`, fuller Brinfo handling)
 /// land in a follow-up round.
 pub fn match_str(                                                            // c:500
-    l: &str, w: &str,
+    l_in: &str, w_in: &str,
     _bpp: Option<&mut Option<Box<crate::ported::zle::zle_h::brinfo>>>,
     bc: i32,
     rwlp: Option<&mut i32>,
     sfx: i32, test: i32, part: i32,
 ) -> i32 {
-    use crate::ported::zle::compcore::useqbr;
-    use std::sync::atomic::Ordering;
+    use crate::ported::zle::comp_h::{CMF_INTER, CMF_LEFT, CMF_LINE, CMF_RIGHT};
 
-    let l_bytes = l.as_bytes();
-    let w_bytes = w.as_bytes();
+    let l_bytes = l_in.as_bytes();
+    let w_bytes = w_in.as_bytes();
     let mut ll = l_bytes.len() as i32;
     let mut lw = w_bytes.len() as i32;
     let mut il: i32 = 0;
     let mut iw: i32 = 0;
     let mut exact: i32 = 0;
     let mut wexact: i32 = 0;
+    let mut bc = bc;
     let _obc = bc;
-    let _add: i32 = if sfx != 0 { -1 } else { 1 };
-    let _ind: i32 = if sfx != 0 { -1 } else { 0 };
+    let add: i32 = if sfx != 0 { -1 } else { 1 };
+    let ind: i32 = if sfx != 0 { -1 } else { 0 };
 
     if test == 0 {                                                           // c:523
         start_match();
     }
 
-    // c:540 — if brace is at the beginning, advance bpp's curpos.
-    // Brinfo wiring is conservative — we skip the advance when bpp is
-    // None and trust the caller's bc anchor.
-
-    // c:546 — `while (ll)` main loop.
+    // Track positions as byte indices. In sfx mode we walk from the
+    // end backwards; ind=-1 means "previous byte". We use signed
+    // cursors so the arithmetic mirrors C's pointer arithmetic.
     let mut l_pos: i32 = if sfx != 0 { ll } else { 0 };
     let mut w_pos: i32 = if sfx != 0 { lw } else { 0 };
+    let mut ow_pos: i32 = w_pos;
+    let mut lm: Option<Box<crate::ported::zle::comp_h::Cmatcher>> = None;
+    let mut he = 0i32;
 
-    while ll > 0 {                                                           // c:546
-        // c:569-590 — exact-char skip fast path. Strict prefix mode
-        // (`sfx=0, lw>0, !part`) checks if the next char of l matches
-        // w directly (or via `\X` escape on the word side).
+    // Snapshot the mstack chain into a Vec for stable iteration.
+    let mstack_snapshot: Vec<Box<crate::ported::zle::comp_h::Cmatcher>> = {
+        let g = crate::ported::zle::compcore::mstack
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock().ok();
+        let mut out = Vec::new();
+        if let Some(g) = g {
+            let mut cur = g.as_deref();
+            while let Some(ms) = cur {
+                let mut mp_cur: Option<&crate::ported::zle::comp_h::Cmatcher> =
+                    Some(&*ms.matcher);
+                while let Some(mp) = mp_cur {
+                    out.push(Box::new(mp.clone()));
+                    mp_cur = mp.next.as_deref();
+                }
+                cur = ms.next.as_deref();
+            }
+        }
+        out
+    };
+
+    'outer: while ll > 0 {                                                   // c:546
+        // c:569-590 — exact-char skip fast path.
         if sfx == 0 && lw > 0 && (part == 0 || test != 0) {
-            let l_idx = l_pos as usize;
-            let w_idx = w_pos as usize;
+            let l_idx = (l_pos + ind) as usize;
+            let w_idx = (w_pos + ind) as usize;
             if l_idx < l_bytes.len() && w_idx < w_bytes.len() {
                 let l_ch = l_bytes[l_idx];
                 let w_ch = w_bytes[w_idx];
                 let bslash = lw > 1 && w_ch == b'\\'
                     && w_idx + 1 < w_bytes.len()
-                    && w_bytes[w_idx + 1] == l_ch;
+                    && w_bytes[w_idx + 1] == l_bytes[(l_pos + ind) as usize];
                 if l_ch == w_ch || bslash {
                     let advance_w = if bslash { 2 } else { 1 };
-                    l_pos += 1; w_pos += advance_w;
+                    l_pos += add; w_pos += if bslash { add + add } else { add };
                     il += 1; iw += advance_w;
                     ll -= 1; lw -= advance_w;
+                    bc += 1;
                     exact += 1;
                     wexact += advance_w;
-                    let _ = useqbr.load(Ordering::Relaxed);
-                    continue;                                                // c:589
+                    lm = None;
+                    he = 0;
+                    continue 'outer;                                         // c:589
                 }
             }
         }
 
-        // c:591 retry: full matcher loop. Walks the mstack chain looking
-        // for a matcher whose line pattern matches the next portion of
-        // `l` and whose word pattern matches `w`. The full recursion
-        // (anchors + `*` patterns + sub-list builds) is the 400-line
-        // body c:592-998. We make a single conservative attempt: if
-        // `mstack` is empty, the only option was the exact-char skip
-        // above; report no match.
-        let mstack_empty = crate::ported::zle::compcore::mstack
-            .get_or_init(|| std::sync::Mutex::new(None))
-            .lock().map(|g| g.is_none()).unwrap_or(true);
-        if mstack_empty {
-            // No matcher to fall back to — `l` and `w` diverged at this
-            // position; report the count of `w` consumed so far if
-            // partial-mode (`part=1`), else outright failure.
-            if part != 0 {
-                if let Some(out) = rwlp { *out = wexact; }
-                let _ = (exact, _add, _ind);
-                return iw;
+        // c:591 retry: walk the snapshotted matcher chain looking for
+        // a non-* matcher we can apply at the current cursor.
+        let mut matched: Option<Box<crate::ported::zle::comp_h::Cmatcher>> = None;
+        for mp in mstack_snapshot.iter() {
+            if let Some(ref lm_box) = lm {
+                if std::ptr::addr_eq(lm_box.as_ref() as *const _,
+                                      mp.as_ref() as *const _) {
+                    continue;                                                // c:595
+                }
             }
-            return -1;                                                       // c:1080
+            if mp.wlen < 0 {
+                // c:603-867 — `*`-pattern matcher. The full recursive
+                // walk requires recursive match_str calls + add_match_
+                // {str,sub,part} coordination + brace-info threading.
+                // Conservative skip preserves the contract: literal
+                // matchers and CMF_LEFT/RIGHT anchors below still get
+                // a chance; `*` patterns require the deep path which
+                // is the last remaining substrate gap.
+                continue;
+            }
+            if ll < mp.llen || lw < mp.wlen { continue; }                    // c:868
+
+            // c:880-884 — skip if line and word substrings are identical
+            // (the exact-char skip above already handled trivial overlap).
+            if (mp.flags & (CMF_LEFT | CMF_RIGHT)) == 0
+                && mp.llen == mp.wlen
+            {
+                let (l_start, w_start) = if sfx != 0 {
+                    ((l_pos - mp.llen) as usize, (w_pos - mp.wlen) as usize)
+                } else {
+                    (l_pos as usize, w_pos as usize)
+                };
+                let l_chunk = &l_bytes[l_start..l_start + mp.llen as usize];
+                let w_chunk = &w_bytes[w_start..w_start + mp.wlen as usize];
+                if l_chunk == w_chunk { continue; }
+            }
+
+            // c:889-897 — local cursors tl/tw/tll/tlw/til/tiw.
+            let (tl_pos, tw_pos, til, tiw, tll, tlw) = if sfx != 0 {
+                (l_pos - mp.llen, w_pos - mp.wlen,
+                 ll - mp.llen, lw - mp.wlen,
+                 il + mp.llen, iw + mp.wlen)
+            } else {
+                (l_pos, w_pos, il, iw, ll, lw)
+            };
+
+            let mut t: i32 = 1;
+            // c:898-915 — CMF_LEFT anchor test.
+            if (mp.flags & CMF_LEFT) != 0 {
+                if til < mp.lalen || tiw < mp.lalen + mp.ralen {
+                    continue;
+                }
+                if let Some(ref left_pat) = mp.left {
+                    let l_anchor_start = (tl_pos - mp.lalen) as usize;
+                    let w_anchor_start = (tw_pos - mp.lalen) as usize;
+                    let l_slice = std::str::from_utf8(
+                        &l_bytes[l_anchor_start..]).unwrap_or("");
+                    let w_slice = std::str::from_utf8(
+                        &w_bytes[w_anchor_start..]).unwrap_or("");
+                    let lm_ok = pattern_match(Some(left_pat), l_slice, None, "") != 0;
+                    let wm_ok = pattern_match(Some(left_pat), w_slice, None, "") != 0;
+                    let r_ok = mp.ralen == 0 || {
+                        let r_anchor_start = (tw_pos - mp.lalen - mp.ralen) as usize;
+                        let r_slice = std::str::from_utf8(
+                            &w_bytes[r_anchor_start..]).unwrap_or("");
+                        let right_pat = mp.right.as_deref();
+                        pattern_match(right_pat, r_slice, None, "") != 0
+                    };
+                    t = if lm_ok && wm_ok && r_ok { 1 } else { 0 };
+                } else {
+                    let cmf_check = if (mp.flags & CMF_INTER) != 0 {
+                        if (mp.flags & CMF_LINE) != 0 { iw } else { il }
+                    } else { il | iw };
+                    t = if sfx == 0 && cmf_check == 0 { 1 } else { 0 };
+                }
+            }
+            // c:916-938 — CMF_RIGHT anchor test.
+            if (mp.flags & CMF_RIGHT) != 0 {
+                if tll < mp.llen + mp.ralen
+                    || tlw < mp.wlen + mp.ralen + mp.lalen
+                {
+                    continue;
+                }
+                if let Some(ref right_pat) = mp.right {
+                    let l_anchor_start = (tl_pos + mp.llen) as usize;
+                    let w_anchor_start = (tw_pos + mp.wlen) as usize;
+                    let l_slice = std::str::from_utf8(
+                        &l_bytes[l_anchor_start..]).unwrap_or("");
+                    let w_slice = std::str::from_utf8(
+                        &w_bytes[w_anchor_start..]).unwrap_or("");
+                    let lm_ok = pattern_match(Some(right_pat), l_slice, None, "") != 0;
+                    let wm_ok = pattern_match(Some(right_pat), w_slice, None, "") != 0;
+                    let l_ok = mp.lalen == 0 || {
+                        let l_anchor_2 = (tw_pos + mp.wlen - mp.ralen - mp.lalen) as usize;
+                        let l_slice_2 = std::str::from_utf8(
+                            &w_bytes[l_anchor_2..]).unwrap_or("");
+                        let left_pat = mp.left.as_deref();
+                        pattern_match(left_pat, l_slice_2, None, "") != 0
+                    };
+                    t = if lm_ok && wm_ok && l_ok { 1 } else { 0 };
+                } else {
+                    let cmf_check = if (mp.flags & CMF_INTER) != 0 {
+                        if (mp.flags & CMF_LINE) != 0 { iw } else { il }
+                    } else { il | iw };
+                    t = if sfx != 0 && cmf_check == 0 { 1 } else { 0 };
+                }
+            }
+
+            // c:940 — main pattern_match call.
+            if t == 0 { continue; }
+            let line_pat = mp.line.as_deref();
+            let word_pat = mp.word.as_deref();
+            let tl_slice = std::str::from_utf8(
+                &l_bytes[tl_pos as usize..]).unwrap_or("");
+            let tw_slice = std::str::from_utf8(
+                &w_bytes[tw_pos as usize..]).unwrap_or("");
+            if pattern_match(line_pat, tl_slice, word_pat, tw_slice) == 0 {
+                continue;
+            }
+
+            // c:944-967 — emit Cline parts via add_match_str/sub.
+            if test == 0 {
+                let carry_l = if sfx != 0 {
+                    if ow_pos >= w_pos { w_pos as usize } else { ow_pos as usize }
+                } else {
+                    if w_pos >= ow_pos { ow_pos as usize } else { w_pos as usize }
+                };
+                let carry_len = if sfx != 0 {
+                    (ow_pos - w_pos).max(0)
+                } else {
+                    (w_pos - ow_pos).max(0)
+                };
+                if carry_len > 0 {
+                    let carry_slice = std::str::from_utf8(
+                        &w_bytes[carry_l..carry_l + carry_len as usize])
+                        .unwrap_or("");
+                    add_match_str(None, "", carry_slice, carry_len, sfx);
+                    add_match_sub(None, None, 0, Some(carry_slice), carry_len);
+                }
+                // c:955 — main matcher str.
+                let tw_str = std::str::from_utf8(
+                    &w_bytes[tw_pos as usize..
+                             (tw_pos + mp.wlen) as usize]).unwrap_or("");
+                add_match_str(Some(mp), tl_slice, tw_str, mp.wlen, sfx);
+                add_match_sub(Some(mp), Some(tl_slice), mp.llen, Some(tw_str), mp.wlen);
+            }
+
+            // c:968-988 — advance pointers.
+            if sfx != 0 {
+                l_pos = tl_pos; w_pos = tw_pos;
+            } else {
+                l_pos += mp.llen; w_pos += mp.wlen;
+            }
+            il += mp.llen; iw += mp.wlen;
+            ll -= mp.llen; lw -= mp.wlen;
+            bc += mp.llen;
+            exact = 0;
+            ow_pos = w_pos;
+            lm = None;
+            he = 0;
+            matched = Some(mp.clone());
+            break;
         }
 
-        // Matcher chain is non-empty but the deep recursion required
-        // to apply each matcher is the substrate-blocked path. Bail
-        // conservatively — caller treats this as "matcher couldn't
-        // help; use plain string compare".
+        if matched.is_some() {                                               // c:993
+            continue 'outer;
+        }
+
+        // c:998-1042 — no matcher matched at this position. Try the
+        // "same character" skip again (in case the retry path failed).
+        if (test == 0 || sfx != 0) && lw > 0 {
+            let l_idx = (l_pos + ind) as usize;
+            let w_idx = (w_pos + ind) as usize;
+            if l_idx < l_bytes.len() && w_idx < w_bytes.len() {
+                let l_ch = l_bytes[l_idx];
+                let w_ch = w_bytes[w_idx];
+                let bslash = lw > 1 && w_ch == b'\\'
+                    && (w_idx + 1) < w_bytes.len()
+                    && w_bytes[w_idx + 1] == l_bytes[l_idx];
+                if l_ch == w_ch || bslash {
+                    let advance_w = if bslash { 2 } else { 1 };
+                    l_pos += add; w_pos += if bslash { add + add } else { add };
+                    il += 1; iw += advance_w;
+                    ll -= 1; lw -= advance_w;
+                    bc += 1;
+                    lm = None;
+                    he = 0;
+                    continue 'outer;
+                }
+            }
+        }
+
+        // c:1017 — break on lw=0 (suffix exhausted in non-test mode).
+        if lw == 0 { break; }
+
+        // c:1020-1034 — retry path: rewind exact-skip if we have any
+        // and retry the matcher loop preferring matchers.
+        if exact > 0 && part == 0 {
+            il -= exact; iw -= wexact;
+            ll += exact; lw += wexact;
+            bc -= exact;
+            l_pos -= add * exact;
+            w_pos -= add * wexact;
+            exact = 0;
+            wexact = 0;
+            // The retry would re-enter the matcher loop. Our outer 'while
+            // ll > 0' will continue and re-attempt the matcher loop with
+            // the rewound state. The C uses `goto retry` to skip the
+            // exact-skip block; we get the same effect by simply
+            // continuing — the exact-skip block won't fire again because
+            // the next iteration is at the same divergence point.
+            continue 'outer;
+        }
+
+        // c:1036-1041 — divergence with no matcher and no exact-rewind.
+        if test != 0 { return 0; }
+        abort_match();
         return -1;
     }
 
-    // c:1078 — full success.
-    if let Some(out) = rwlp { *out = wexact; }
-    let _ = (l_pos, w_pos, il);
-    iw
+    // c:1044-1046 — test-mode return.
+    if test != 0 {
+        return if part != 0 || ll == 0 { 1 } else { 0 };
+    }
+
+    // c:1050-1054 — top-level: any remaining ll means abort.
+    if part == 0 && ll != 0 {
+        abort_match();
+        return -1;
+    }
+
+    // c:1055-1056 — rwlp writeback.
+    if let Some(out) = rwlp {
+        *out = iw - if sfx != 0 { ow_pos - w_pos } else { w_pos - ow_pos };
+    }
+
+    // c:1083 — `*bpp = bp` (Brinfo writeback) — caller's bp is already
+    // unmodified since the deep brace-pos tracking is conservative.
+
+    let _ = (lm, he);
+    // c:1084 — return iw on full match, il in part mode.
+    if part != 0 { il } else { iw }
 }
 
 /// Direct port of `static int match_parts(char *l, char *w, int n,
@@ -1220,8 +1451,8 @@ mod tests {
     }
 
     /// c:1092-1108 — match_parts truncates both strings to n bytes,
-    /// then defers to match_str with test=1. With identical first 3
-    /// bytes "abc" of "abcXYZ" vs "abcdef", returns iw=3.
+    /// then defers to match_str with test=1. Test mode returns 1 on
+    /// full match (c:1046 `return (part || !ll)`).
     #[test]
     fn match_parts_truncates_and_matches() {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
@@ -1232,7 +1463,7 @@ mod tests {
             *g = None;
         }
         let r = match_parts("abcXYZ", "abcdef", 3, 0);
-        assert_eq!(r, 3, "first 3 chars match exactly");
+        assert_eq!(r, 1, "first 3 chars match exactly (test=1 → 1)");
     }
 
     /// c:1251 — comp_match with pfx=w (exact equal) sets *exact=1.
