@@ -322,7 +322,7 @@ pub type Caarg = Box<caarg>;                                                 // 
 
 /// Direct port of `struct caarg` from `Src/Zle/computil.c:949-962`.
 /// Description for one `_arguments` argument spec.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[allow(non_camel_case_types)]
 pub struct caarg {                                                           // c:949
     pub next:   Option<Box<caarg>>,                                          // c:950 Caarg next
@@ -341,7 +341,7 @@ pub struct caarg {                                                           // 
 
 /// Direct port of `struct caopt` from `Src/Zle/computil.c:928-939`.
 /// Description for one `_arguments` option spec.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[allow(non_camel_case_types)]
 pub struct caopt {                                                           // c:928
     pub next:   Option<Box<caopt>>,                                          // c:929 Caopt next
@@ -358,7 +358,7 @@ pub struct caopt {                                                           // 
 
 /// Direct port of `struct cadef` from `Src/Zle/computil.c:905-922`.
 /// Cache entry for a set of `_arguments` definitions.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[allow(non_camel_case_types)]
 pub struct cadef {                                                           // c:905
     pub next:       Option<Box<cadef>>,                                      // c:906 Cadef next
@@ -441,7 +441,7 @@ pub type Castate = Box<castate>;                                             // 
 /// Direct port of `struct castate` from `Src/Zle/computil.c:1928-1953`.
 /// Encapsulates the parsed-command-line state for one `_arguments`
 /// set — used as a linked list (`snext`) with one state per set.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[allow(non_camel_case_types)]
 pub struct castate {                                                         // c:1928
     pub snext:   Option<Box<castate>>,                                       // c:1929 Castate snext
@@ -514,7 +514,7 @@ pub type Cvval = Box<cvval>;                                                 // 
 
 /// Direct port of `struct cvdef` from `Src/Zle/computil.c:2924-2935`.
 /// One parsed `_values` definition entry, cached for reuse.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[allow(non_camel_case_types)]
 pub struct cvdef {                                                           // c:2924
     pub descr:  Option<String>,                                              // c:2925 char *descr
@@ -531,7 +531,7 @@ pub struct cvdef {                                                           // 
 
 /// Direct port of `struct cvval` from `Src/Zle/computil.c:2939-2947`.
 /// One value definition inside a cvdef.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[allow(non_camel_case_types)]
 pub struct cvval {                                                           // c:2939
     pub next:   Option<Box<cvval>>,                                          // c:2940 Cvval next
@@ -1421,6 +1421,183 @@ mod tests {
         assert_eq!(v2.descr.as_deref(), Some("b"));
         assert_eq!(v2.r#type, CVV_NOARG);
     }
+
+    /// c:1786-1801 — ca_foreign_opt walks snext skipping curset.
+    /// When `curset == all` (head pointer matches), only the OTHER
+    /// sets in the snext chain are scanned.
+    #[test]
+    fn ca_foreign_opt_finds_in_other_set() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::utils::inittyptab();
+        let other = cadef {
+            opts: Some(Box::new(caopt {
+                name: Some("-bar".into()), active: 1,
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        let all = cadef {
+            opts: Some(Box::new(caopt {
+                name: Some("-foo".into()), active: 1,
+                ..Default::default()
+            })),
+            snext: Some(Box::new(other)),
+            ..Default::default()
+        };
+        // curset = &all (head). `-bar` lives in snext set — found.
+        assert_eq!(ca_foreign_opt(&all, &all, "-bar"), 1);
+        // `-foo` lives ONLY in the head (which gets skipped) — not found.
+        assert_eq!(ca_foreign_opt(&all, &all, "-foo"), 0);
+        // `-missing` not anywhere — not found.
+        assert_eq!(ca_foreign_opt(&all, &all, "-missing"), 0);
+    }
+
+    /// c:1834 — guard: with neither xor nor opts AND no compcurrent
+    /// position, the function returns without mutating any active flag.
+    #[test]
+    fn ca_inactive_guard_noop_keeps_active() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::utils::inittyptab();
+        let mut d = cadef {
+            opts: Some(Box::new(caopt {
+                name: Some("-foo".into()), active: 1, ..Default::default()
+            })),
+            argsactive: 1,
+            ..Default::default()
+        };
+        ca_inactive(&mut d, &[], 0, 0);
+        assert_eq!(d.opts.as_deref().unwrap().active, 1);
+        assert_eq!(d.argsactive, 1);
+    }
+
+    /// c:1881 — with `opts=1`, every option's `active` clears.
+    #[test]
+    fn ca_inactive_opts_flag_deactivates_options() {
+        use std::sync::atomic::Ordering;
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::utils::inittyptab();
+        let saved_compcur = crate::ported::zle::complete::COMPCURRENT.load(Ordering::Relaxed);
+        let mut d = cadef {
+            opts: Some(Box::new(caopt {
+                name: Some("-foo".into()), active: 1, num: 0,
+                next: Some(Box::new(caopt {
+                    name: Some("-bar".into()), active: 1, num: 1,
+                    ..Default::default()
+                })),
+                ..Default::default()
+            })),
+            argsactive: 1,
+            ..Default::default()
+        };
+        // Force COMPCURRENT >= cur so the guard at c:1834 is satisfied.
+        crate::ported::zle::complete::COMPCURRENT.store(2, Ordering::Relaxed);
+        ca_inactive(&mut d, &[], 1, 1);
+        // Restore COMPCURRENT immediately so parallel non-ZLE tests
+        // see the original value.
+        crate::ported::zle::complete::COMPCURRENT.store(saved_compcur, Ordering::Relaxed);
+        let mut p = d.opts.as_deref();
+        while let Some(o) = p {
+            assert_eq!(o.active, 0,
+                "{:?} should be deactivated", o.name);
+            p = o.next.as_deref();
+        }
+    }
+
+    /// c:3798-3801 — `comptags -i 0 a b` populates comptags[0].
+    /// Then `-T` reports empty sets (`1`), `-C` reads context.
+    #[test]
+    fn bin_comptags_init_and_context() {
+        use std::sync::atomic::Ordering;
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::utils::inittyptab();
+        let saved_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
+        let saved_locallevel = crate::ported::builtin::LOCALLEVEL.load(Ordering::Relaxed);
+        // Reset slot 0 + locallevel.
+        if let Ok(mut tab) = comptags.lock() {
+            tab[0] = None;
+        }
+        crate::ported::builtin::LOCALLEVEL.store(0, Ordering::Relaxed);
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        // -i my-ctx tag-a tag-b
+        let r = bin_comptags("comptags", &[
+            "-i".into(), "my-ctx".into(),
+            "tag-a".into(), "tag-b".into(),
+        ], &ops, 0);
+        assert_eq!(r, 0);
+        // -T returns 1 (no sets yet).
+        let r = bin_comptags("comptags", &[
+            "-T".into(),
+        ], &ops, 0);
+        assert_eq!(r, 1);
+        // comptags[0].context should be "my-ctx".
+        let ctx = comptags.lock().unwrap()[0].as_ref()
+            .and_then(|t| t.context.clone());
+        // Restore the globals before assertion-fail can leave them mutated.
+        INCOMPFUNC.store(saved_incompfunc, Ordering::Relaxed);
+        crate::ported::builtin::LOCALLEVEL.store(saved_locallevel, Ordering::Relaxed);
+        assert_eq!(ctx.as_deref(), Some("my-ctx"));
+    }
+
+    /// c:3178-3186 — cv_get_val finds a value by name; missing returns None.
+    #[test]
+    fn cv_get_val_hits_and_misses() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let d = cvdef {
+            vals: Some(Box::new(cvval {
+                name: Some("foo".into()),
+                r#type: CVV_NOARG,
+                next: Some(Box::new(cvval {
+                    name: Some("bar".into()),
+                    r#type: CVV_ARG,
+                    ..Default::default()
+                })),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        let hit = cv_get_val(&d, "bar").expect("hit");
+        assert_eq!(hit.name.as_deref(), Some("bar"));
+        assert_eq!(hit.r#type, CVV_ARG);
+        assert!(cv_get_val(&d, "missing").is_none());
+    }
+
+    /// c:3211-3217 — cv_inactive clears active for each name in xor.
+    #[test]
+    fn cv_inactive_clears_named_vals() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut d = cvdef {
+            vals: Some(Box::new(cvval {
+                name: Some("a".into()), active: 1,
+                next: Some(Box::new(cvval {
+                    name: Some("b".into()), active: 1,
+                    next: Some(Box::new(cvval {
+                        name: Some("c".into()), active: 1,
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        cv_inactive(&mut d, &["a".into(), "c".into()]);
+        let mut p = d.vals.as_deref();
+        let mut by_name = std::collections::HashMap::new();
+        while let Some(v) = p {
+            by_name.insert(v.name.clone().unwrap_or_default(), v.active);
+            p = v.next.as_deref();
+        }
+        assert_eq!(by_name["a"], 0);
+        assert_eq!(by_name["b"], 1, "untouched val stays active");
+        assert_eq!(by_name["c"], 0);
+    }
 }
 
 // ===========================================================
@@ -1508,23 +1685,366 @@ pub fn arrcontains(a: &[String], s: &str, colon: bool) -> i32 {              // 
     0                                                                        // c:3827
 }
 
-/// Port of `bin_comparguments(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from Src/Zle/computil.c:2585.
-/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args)
+/// Direct port of `static int bin_comparguments(char *nam, char **args,
+///                                                 UNUSED(Options ops),
+///                                                 UNUSED(int func))`
+/// from `Src/Zle/computil.c:2585-2914`. Full subcommand dispatch for
+/// `comparguments -i/-D/-O/-L/-s/-M/-a/-W/-n`. Each branch consumes
+/// the parsed `ca_laststate` from `ca_parse_line`.
 pub fn bin_comparguments(nam: &str, args: &[String],                         // c:2585
                          _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:2616
+    use crate::ported::params::{setsparam, setaparam, sethparam, setiparam};
+    use crate::ported::zle::complete::{COMPCURRENT, COMPWORDS};
+    use std::sync::atomic::Ordering;
+
+    if INCOMPFUNC.load(Ordering::Relaxed) != 1 {                             // c:2590
         zwarnnam(nam, "can only be called from completion function");
         return 1;
     }
-    if args.is_empty() {                                                     // c:2620
-        zwarnnam(nam, "missing argument");
+    if args.is_empty() { return 1; }
+    let a0 = args[0].as_bytes();
+    // c:2594 — must be `-X` exactly (2 chars).
+    if a0.len() != 2 || a0[0] != b'-' {
+        zwarnnam(nam, &format!("invalid argument: {}", args[0]));
         return 1;
     }
-    // c:2624-2820 — dispatch on first arg: -i (init), -D (descs), -M
-    //               (matcher), -C (current), -O (opts), -L (lookahead),
-    //               -W (words), -V (values), -N (next), -R (rest).
-    //               Each touches ca_laststate. Substrate not ready; 0.
-    0
+    let sub = a0[1];
+
+    // c:2598 — non-init subcommands require ca_parsed.
+    if sub != b'i' && sub != b'I' && ca_parsed.load(Ordering::Relaxed) == 0 {
+        zwarnnam(nam, "no parsed state");
+        return 1;
+    }
+
+    // c:2602 — per-subcommand arg-count bounds.
+    let (min, max): (i32, i32) = match sub {
+        b'i' => (2, -1),
+        b'D' => (3, 3),
+        b'O' => (4, 4),
+        b'L' => (3, 4),
+        b's' => (1, 1),
+        b'M' => (1, 1),
+        b'a' => (0, 0),
+        b'W' => (3, 3),
+        b'n' => (1, 1),
+        _ => {
+            zwarnnam(nam, &format!("invalid option: {}", args[0]));
+            return 1;
+        }
+    };
+    let n = (args.len() as i32) - 1;
+    if n < min { zwarnnam(nam, "not enough arguments"); return 1; }
+    if max >= 0 && n > max { zwarnnam(nam, "too many arguments"); return 1; }
+
+    match sub {
+        b'i' => {                                                            // c:2625
+            // c:2629 — compcurrent > 1 && compwords[0].
+            let compcur = COMPCURRENT.load(Ordering::Relaxed);
+            let compwords_nonempty = COMPWORDS.get()
+                .and_then(|m| m.lock().ok().map(|w| !w.is_empty() && !w[0].is_empty()))
+                .unwrap_or(false);
+            if compcur <= 1 || !compwords_nonempty {
+                return 1;                                                    // c:2670
+            }
+            // c:2636 — get_cadef(nam, args[1..]).
+            // get_cadef returns 1 on cache hit. Look up the cached cadef
+            // from the cadef_cache by argv match and run parse_line.
+            let spec = &args[1..];
+            let _ = get_cadef(nam, spec);                                    // c:2636
+            // Now find the cadef in the cache.
+            let cached: Option<Box<cadef>> = {
+                let cache = cadef_cache.lock().ok();
+                cache.and_then(|c| {
+                    c.iter().find_map(|slot| {
+                        slot.as_ref().filter(|e| {
+                            e.ndefs == spec.len() as i32
+                                && e.defs.as_deref().map_or(false, |d| {
+                                    d.len() == spec.len()
+                                        && d.iter().zip(spec.iter()).all(|(a, b)| a == b)
+                                })
+                        }).cloned()
+                    })
+                })
+            };
+            let Some(mut def_head) = cached else { return 1; };
+            ca_parsed.store(0, Ordering::Relaxed);                           // c:2634
+            ca_doff.store(0, Ordering::Relaxed);
+            let all_clone = Box::new(clone_cadef_shallow(&def_head));
+
+            // c:2643 — for each set, ca_parse_line.
+            let mut first = 1;
+            let mut def_opt: Option<Box<cadef>> = Some(def_head);
+            while let Some(mut current) = def_opt {
+                let next = current.snext.take();
+                let multi = if next.is_some() || first == 0 { 1 } else { 0 };
+                let _ = ca_parse_line(&mut current, &all_clone, multi, first);
+                first = 0;
+                def_opt = next;
+            }
+            ca_parsed.store(1, Ordering::Relaxed);                           // c:2665
+            0
+        }
+
+        b'D' => {                                                            // c:2672
+            let mut descr: Vec<String> = Vec::new();
+            let mut act: Vec<String> = Vec::new();
+            let mut subc: Vec<String> = Vec::new();
+            let mut ret = 1i32;
+            crate::ported::zle::complete::ignore_prefix(
+                ca_doff.load(Ordering::Relaxed));
+
+            // Walk lstate (ca_laststate + its snext chain).
+            let mut state_clone = ca_laststate.lock().map(|s| clone_castate_full(&s))
+                .ok();
+            while let Some(s) = state_clone {
+                let arg = s.def.clone();
+                if let Some(a) = arg {
+                    ret = 0;
+                    let opt_str = a.opt.clone();
+                    let optdef = s.curopt.clone();
+                    ca_set_data(&mut descr, &mut act, &mut subc,
+                                opt_str.as_deref(),
+                                Some(a),
+                                optdef.as_deref(),
+                                if ca_doff.load(Ordering::Relaxed) > 0 { 1 } else { 0 });
+                }
+                state_clone = s.snext.map(|b| *b);
+            }
+            if ret == 0 {                                                    // c:2698
+                setaparam(&args[1], descr);
+                setaparam(&args[2], act);
+                setaparam(&args[3], subc);
+            }
+            ret
+        }
+
+        b'M' => {                                                            // c:2827
+            let m = ca_laststate.lock().ok()
+                .and_then(|s| s.d.as_ref().and_then(|d| d.r#match.clone()))
+                .unwrap_or_default();
+            setsparam(&args[1], &m);
+            0
+        }
+
+        b'a' => {                                                            // c:2833
+            let mut state_clone = ca_laststate.lock().map(|s| clone_castate_full(&s))
+                .ok();
+            while let Some(s) = state_clone {
+                if s.d.as_ref().map_or(false, |d| d.args.is_some() || d.rest.is_some()) {
+                    return 0;
+                }
+                state_clone = s.snext.map(|b| *b);
+            }
+            1                                                                // c:2840
+        }
+
+        b'n' => {                                                            // c:2899
+            let optbeg = ca_laststate.lock().map(|s| s.optbeg).unwrap_or(0);
+            let kshoffset = if crate::ported::zsh_h::isset(
+                crate::ported::zsh_h::KSHARRAYS) { 0 } else { 1 };
+            setiparam(&args[1], (optbeg + kshoffset) as i64);
+            0
+        }
+
+        b'O' => {                                                            // c:2705
+            // Build the four lists; for each non-`not` active opt assign it
+            // to one of {next, direct, odirect, equal}.
+            let mut next_l: Vec<String> = Vec::new();
+            let mut direct_l: Vec<String> = Vec::new();
+            let mut odirect_l: Vec<String> = Vec::new();
+            let mut equal_l: Vec<String> = Vec::new();
+            let mut ret = 1i32;
+
+            let mut state_clone = ca_laststate.lock().map(|s| clone_castate_full(&s))
+                .ok();
+            while let Some(s) = state_clone {
+                // c:2721 — gate on actopts + position.
+                let actopts_ok = s.actopts != 0 &&
+                    (s.opt != 0
+                     || (ca_doff.load(Ordering::Relaxed) != 0 && s.def.is_some())
+                     || (s.def.is_some()
+                         && s.def.as_deref().map_or(false, |d|
+                            d.opt.is_some()
+                            && (d.r#type == CAA_OPT
+                                || (d.r#type >= CAA_RARGS && d.num < 0)))));
+                let pos_ok = s.def.is_none()
+                    || s.def.as_deref().map_or(true, |d| d.r#type < CAA_RARGS)
+                    || (s.def.as_deref().map_or(false, |d| d.r#type == CAA_RARGS)
+                        && s.curpos == s.argbeg + 1)
+                    || COMPCURRENT.load(Ordering::Relaxed) == 1;
+                if actopts_ok && pos_ok {
+                    ret = 0;
+                    if let Some(d) = s.d.as_ref() {
+                        let mut p = d.opts.as_deref();
+                        while let Some(opt) = p {
+                            if opt.active != 0 && opt.not == 0 {
+                                let bucket: &mut Vec<String> = match opt.r#type {
+                                    t if t == CAO_NEXT => &mut next_l,
+                                    t if t == CAO_DIRECT => &mut direct_l,
+                                    t if t == CAO_ODIRECT => &mut odirect_l,
+                                    _ => &mut equal_l,
+                                };
+                                let name_esc = bslashcolon(
+                                    opt.name.as_deref().unwrap_or(""));
+                                let str_val = if let Some(desc) = opt.descr.as_deref() {
+                                    format!("{}:{}", name_esc, desc)
+                                } else {
+                                    name_esc
+                                };
+                                if !bucket.iter().any(|s| s == &str_val) {
+                                    bucket.push(str_val);
+                                }
+                            }
+                            p = opt.next.as_deref();
+                        }
+                    }
+                }
+                state_clone = s.snext.map(|b| *b);
+            }
+
+            if ret == 0 {
+                setaparam(&args[1], next_l);
+                setaparam(&args[2], direct_l);
+                setaparam(&args[3], odirect_l);
+                setaparam(&args[4], equal_l);
+                0
+            } else {
+                let singles = ca_laststate.lock().map(|s| s.singles).unwrap_or(0);
+                if singles != 0 { 2 } else { 1 }                             // c:2769
+            }
+        }
+
+        b'L' => {                                                            // c:2771
+            // c:2787 — for each state, ca_get_opt(d, args[1], 1, NULL).
+            let mut descr: Vec<String> = Vec::new();
+            let mut act: Vec<String> = Vec::new();
+            let mut subc: Vec<String> = Vec::new();
+            let mut ret = 1i32;
+            let mut state_clone = ca_laststate.lock().map(|s| clone_castate_full(&s))
+                .ok();
+            while let Some(s) = state_clone {
+                if let Some(d) = s.d.as_ref() {
+                    let mut end = 0usize;
+                    if let Some(opt) = ca_get_opt(d, &args[1], 1, &mut end) {
+                        if opt.args.is_some() {
+                            ret = 0;
+                            let opt_name = opt.name.clone();
+                            let opt_args = opt.args.clone();
+                            ca_set_data(&mut descr, &mut act, &mut subc,
+                                        opt_name.as_deref(),
+                                        opt_args,
+                                        Some(&opt),
+                                        1);
+                        }
+                    }
+                }
+                state_clone = s.snext.map(|b| *b);
+            }
+            if ret == 0 {
+                setaparam(&args[2], descr);
+                setaparam(&args[3], act);
+                setaparam(&args[4], subc);
+            }
+            ret
+        }
+
+        b's' => {                                                            // c:2803
+            let mut state_clone = ca_laststate.lock().map(|s| clone_castate_full(&s))
+                .ok();
+            while let Some(s) = state_clone {
+                let single_active = s.d.as_ref().map_or(false, |d| d.single.is_some())
+                    && s.singles != 0
+                    && s.actopts != 0;
+                if single_active {
+                    let kind = if let (Some(_), Some(dopt)) = (&s.ddef, &s.dopt) {
+                        match dopt.r#type {
+                            t if t == CAO_DIRECT => "direct",
+                            t if t == CAO_OEQUAL || t == CAO_EQUAL => "equal",
+                            _ => "next",
+                        }
+                    } else { "" };
+                    setsparam(&args[1], kind);
+                    return 0;
+                }
+                state_clone = s.snext.map(|b| *b);
+            }
+            1
+        }
+
+        b'W' => {                                                            // c:2841
+            // Build state.args concat and oargs concat for $opt_args.
+            let mut all_args: Vec<String> = Vec::new();
+            let opt_args_use_nul = !args[3].starts_with('0');
+            let mut state_clone = ca_laststate.lock().map(|s| clone_castate_full(&s))
+                .ok();
+            // Pass 1: state.args.
+            let mut snapshot = state_clone.clone();
+            while let Some(s) = snapshot {
+                if let Some(a) = s.args.as_ref() {
+                    all_args.extend(a.iter().cloned());
+                }
+                snapshot = s.snext.map(|b| *b);
+            }
+            setaparam(&args[1], all_args);
+
+            // Pass 2: oargs into a hash.
+            let mut hash_vec: Vec<String> = Vec::new();
+            while let Some(s) = state_clone {
+                if let Some(d) = s.d.as_ref() {
+                    let mut o = d.opts.as_deref();
+                    let mut a_idx = 0usize;
+                    let oargs_ref = s.oargs.as_deref();
+                    while let Some(op) = o {
+                        if let Some(oa) = oargs_ref.and_then(|v| v.get(a_idx)).and_then(|x| x.as_ref()) {
+                            let key = match (op.gsname.as_deref(), op.name.as_deref()) {
+                                (Some(gs), Some(n)) =>
+                                    format!("{}{}", gs, n),
+                                (None, Some(n)) => n.to_string(),
+                                _ => String::new(),
+                            };
+                            hash_vec.push(key);
+                            let joined = if opt_args_use_nul {
+                                String::from_utf8_lossy(&ca_nullist(oa)).into_owned()
+                            } else {
+                                ca_colonlist(oa)
+                            };
+                            hash_vec.push(joined);
+                        }
+                        a_idx += 1;
+                        o = op.next.as_deref();
+                    }
+                }
+                state_clone = s.snext.map(|b| *b);
+            }
+            sethparam(&args[2], hash_vec);
+            0
+        }
+
+        _ => 0,
+    }
+}
+
+/// Mirror of `memcpy` from a locked `ca_laststate` so we can walk the
+/// snext chain without holding the mutex. Rust-only artifact.
+#[allow(dead_code)]
+fn clone_castate_full(s: &castate) -> castate {
+    castate {
+        snext:   s.snext.clone(),
+        d:       s.d.clone(),
+        nopts:   s.nopts,
+        def:     s.def.clone(),
+        ddef:    s.ddef.clone(),
+        curopt:  s.curopt.clone(),
+        dopt:    s.dopt.clone(),
+        opt:     s.opt, arg: s.arg,
+        argbeg:  s.argbeg, optbeg: s.optbeg,
+        nargbeg: s.nargbeg, restbeg: s.restbeg,
+        curpos:  s.curpos, argend: s.argend,
+        inopt:   s.inopt, inarg: s.inarg,
+        nth:     s.nth, singles: s.singles, oopt: s.oopt, actopts: s.actopts,
+        args:    s.args.clone(),
+        oargs:   s.oargs.clone(),
+    }
 }
 
 /// Port of `bin_compdescribe(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from Src/Zle/computil.c:846.
@@ -1613,14 +2133,29 @@ pub fn ca_colonlist(l: &[String]) -> String {                            // c:24
     out
 }
 
-/// Port of `ca_foreign_opt(Cadef curset, Cadef all, char *option)` from Src/Zle/computil.c:1787.
-#[allow(unused_variables)]
-pub fn ca_foreign_opt(curset: i32, all: i32, option: &str) -> i32 {       // c:1787
-    // C body c:1789-1801 — walk Cadef snext list, skipping curset,
-    //                      check each set's opts for a name match.
-    //                      Cadef Rust struct not yet hydrated; 0 (no
-    //                      foreign match).
-    0
+/// Direct port of `static int ca_foreign_opt(Cadef curset, Cadef all,
+///                                            char *option)` from
+/// `Src/Zle/computil.c:1786-1802`. Walks the `snext` chain of `all`
+/// skipping `curset` and reports whether any other set defines an
+/// option with the requested name. Returns 1 on match, 0 otherwise.
+pub fn ca_foreign_opt(curset: &cadef, all: &cadef, option: &str) -> i32 {    // c:1787
+    let curset_ptr = curset as *const cadef;
+    let mut d_opt = Some(all);
+    while let Some(d) = d_opt {                                              // c:1792
+        if std::ptr::addr_eq(d as *const cadef, curset_ptr) {                // c:1793
+            d_opt = d.snext.as_deref();
+            continue;
+        }
+        let mut p = d.opts.as_deref();
+        while let Some(opt) = p {                                            // c:1796
+            if opt.name.as_deref() == Some(option) {                         // c:1797
+                return 1;                                                    // c:1798
+            }
+            p = opt.next.as_deref();
+        }
+        d_opt = d.snext.as_deref();
+    }
+    0                                                                        // c:1801
 }
 
 /// Direct port of `static Caarg ca_get_arg(Cadef d, int n)` from
@@ -1882,12 +2417,208 @@ pub fn ca_get_sopt(d: &cadef, line: &str,                                    // 
     }))
 }
 
-/// Port of `ca_inactive(Cadef d, char **xor, int cur, int opts)` from Src/Zle/computil.c:1832.
-/// WARNING: param names don't match C — Rust=(_d, _xor) vs C=(d, xor, cur, opts)
-pub fn ca_inactive(_d: i32, _xor: &[String]) {                               // c:1832
-    // C body c:1834-1842 — for each xor entry, find matching opt or
-    //                      arg in d and clear active flag. Cadef not
-    //                      yet hydrated; no-op.
+/// Direct port of `static void ca_inactive(Cadef d, char **xor, int cur,
+///                                          int opts)` from
+/// `Src/Zle/computil.c:1832-1918`. Marks options/args inactive based
+/// on a xor-list (or, when `opts=1`, deactivates all options except
+/// rest-of-line args). Each xor entry can be:
+///   - bare name → exact-match opt or numeric positional or `:`/`-`/`*`/group
+///   - `group-name-:` / `group-name--` → group-scoped exclusion
+///   - excludeall path (just a set/group name) → kills the whole set
+pub fn ca_inactive(d: &mut cadef, xor: &[String], cur: i32, opts: i32) {     // c:1832
+    use crate::ported::ztype_h::idigit;
+    use crate::ported::zle::complete::COMPCURRENT;
+
+    if (xor.is_empty() && opts == 0)                                         // c:1834
+        || cur > COMPCURRENT.load(std::sync::atomic::Ordering::Relaxed)
+    {
+        return;
+    }
+
+    // c:1839 — single-letter exclusions only when at compcurrent (option
+    // clumping safety: a prefix-of-longer-opt at cursor mustn't kill the
+    // multi-letter form prematurely).
+    let single = opts == 0
+        && cur == COMPCURRENT.load(std::sync::atomic::Ordering::Relaxed);
+
+    // c:1841 — iterate xor entries. When opts=1 we synthesize a "-" pass.
+    let iter_xor: Vec<String> = if opts != 0 {
+        vec!["-".to_string()]
+    } else {
+        xor.to_vec()
+    };
+
+    for x_orig in iter_xor.iter() {
+        let mut x = x_orig.as_str();
+        let mut excludeall = 0;                                              // c:1842
+        let mut grp: Option<&str> = None;
+        let mut grplen: usize = 0;
+
+        // c:1845-1858 — split off optional `group-name-` prefix.
+        let xb = x.as_bytes();
+        let mut sep_byte = if xb.is_empty() { 0u8 } else { xb[0] };
+        let mut sep_pos = 0usize;
+        loop {
+            if sep_pos >= xb.len() { break; }
+            sep_byte = xb[sep_pos];
+            if sep_byte == b'+' || sep_byte == b'-' || sep_byte == b':'
+                || sep_byte == b'*' || idigit(sep_byte)
+            {
+                break;
+            }
+            // Find next '-'.
+            let after = &xb[sep_pos..];
+            let dash_off = after.iter().position(|&b| b == b'-');
+            match dash_off {
+                None => {
+                    excludeall = 1;                                          // c:1850
+                    sep_pos = xb.len();
+                    break;
+                }
+                Some(d) => {
+                    let next = sep_pos + d + 1;
+                    if next >= xb.len() {                                    // c:1848
+                        excludeall = 1;
+                        sep_pos = xb.len();
+                        break;
+                    }
+                    sep_pos = next;
+                }
+            }
+        }
+        if sep_pos > 0 && sep_pos < xb.len() {                               // c:1859
+            grp = Some(&x[..sep_pos]);
+            grplen = sep_pos;
+            x = &x[sep_pos..];
+        } else if sep_pos > 0 && excludeall != 0 && sep_pos == xb.len() {
+            // c:1850 path — the whole string was a group name.
+            grp = Some(x);
+            grplen = sep_pos;
+            x = "";
+        }
+        let xb = x.as_bytes();
+
+        // c:1865 — excludeall or `:` alone.
+        if excludeall != 0 || (xb.len() == 1 && xb[0] == b':') {
+            if let Some(g) = grp {                                           // c:1866
+                let mut cur_arg = d.args.as_deref_mut();
+                while let Some(a) = cur_arg {
+                    let matches = a.gsname.as_deref().map_or(false, |gn| {
+                        let gnb = gn.as_bytes();
+                        gnb.len() == grplen + (excludeall as usize)
+                            && gn.starts_with(g)
+                    });
+                    if matches {
+                        a.active = 0;                                        // c:1872
+                    }
+                    cur_arg = a.next.as_deref_mut();
+                }
+                if let Some(r) = d.rest.as_deref_mut() {
+                    let matches = r.gsname.as_deref().map_or(false, |gn| {
+                        let gnb = gn.as_bytes();
+                        gnb.len() == grplen + (excludeall as usize)
+                            && gn.starts_with(g)
+                    });
+                    if matches {
+                        r.active = 0;                                        // c:1876
+                    }
+                }
+            } else {
+                d.argsactive = 0;                                            // c:1878
+            }
+        }
+
+        // c:1881 — excludeall or `-` alone: kill options.
+        if excludeall != 0 || (xb.len() == 1 && xb[0] == b'-') {
+            let mut cur_opt = d.opts.as_deref_mut();
+            while let Some(p) = cur_opt {
+                let grp_ok = grp.map_or(true, |g| {
+                    p.gsname.as_deref().map_or(false, |gn| {
+                        gn.len() == grplen + (excludeall as usize)
+                            && gn.starts_with(g)
+                    })
+                });
+                let single_skip = single && p.name.as_deref().map_or(false, |n| {
+                    let nb = n.as_bytes();
+                    nb.len() >= 3 && nb[0] != 0
+                });
+                if grp_ok && !single_skip {
+                    p.active = 0;                                            // c:1888
+                }
+                cur_opt = p.next.as_deref_mut();
+            }
+        }
+
+        // c:1891 — excludeall or `*` alone: kill rest.
+        if excludeall != 0 || (xb.len() == 1 && xb[0] == b'*') {
+            if let Some(r) = d.rest.as_deref_mut() {
+                let grp_ok = grp.map_or(true, |g| {
+                    r.gsname.as_deref().map_or(false, |gn| {
+                        gn.len() == grplen + (excludeall as usize)
+                            && gn.starts_with(g)
+                    })
+                });
+                if grp_ok {
+                    r.active = 0;                                            // c:1895
+                }
+            }
+        }
+
+        if excludeall == 0 {                                                 // c:1898
+            if !xb.is_empty() && idigit(xb[0]) {                             // c:1899
+                let n: i32 = x.bytes().take_while(|b| idigit(*b))
+                    .fold(0i32, |acc, b| acc * 10 + (b - b'0') as i32);
+                let mut cur_arg = d.args.as_deref_mut();
+                let mut hit: Option<&mut caarg> = None;
+                while let Some(a) = cur_arg {
+                    if a.num >= n {
+                        hit = Some(a);
+                        break;
+                    }
+                    cur_arg = a.next.as_deref_mut();
+                }
+                if let Some(a) = hit {
+                    if a.num == n {
+                        let grp_ok = grp.map_or(true, |g| {
+                            a.gsname.as_deref().map_or(false, |gn| gn.starts_with(g))
+                        });
+                        if grp_ok {
+                            a.active = 0;                                    // c:1908
+                        }
+                    }
+                }
+            } else {
+                // c:1909 — ca_get_opt for full match.
+                let mut end_unused = 0usize;
+                if let Some(matched) = ca_get_opt(d, x, 1, &mut end_unused) {
+                    let grp_ok = grp.map_or(true, |g| {
+                        matched.gsname.as_deref().map_or(false, |gn| gn.starts_with(g))
+                    });
+                    let single_skip = single
+                        && matched.name.as_deref().map_or(false, |n| {
+                            let nb = n.as_bytes();
+                            nb.len() >= 3 && nb[0] != 0
+                        });
+                    if grp_ok && !single_skip {
+                        // Walk d.opts to find the actual node and clear its active.
+                        let target_name = matched.name.clone();
+                        let mut cur_opt = d.opts.as_deref_mut();
+                        while let Some(p) = cur_opt {
+                            if p.name == target_name {
+                                p.active = 0;                                // c:1912
+                                break;
+                            }
+                            cur_opt = p.next.as_deref_mut();
+                        }
+                    }
+                }
+            }
+            if opts != 0 {
+                break;                                                       // c:1914
+            }
+        }
+        let _ = sep_byte;
+    }
 }
 
 /// Port of `ca_nullist(LinkList l)` from Src/Zle/computil.c:2411.
@@ -1958,34 +2689,852 @@ pub fn ca_opt_arg(opt_name: &str, line: &str, equal_kind: bool) -> String {  // 
     s
 }
 
-/// Port of `ca_parse_line(Cadef d, Cadef all, int multi, int first)` from Src/Zle/computil.c:2004.
-/// WARNING: param names don't match C — Rust=(_d, _multi, _first) vs C=(d, all, multi, first)
-pub fn ca_parse_line(_d: i32, _multi: i32, _first: i32) -> i32 {             // c:2004
-    // C body c:2006-2407 — the workhorse: walks compwords applying
-    //                      ca_get_opt/ca_get_sopt/ca_inactive to build
-    //                      ca_laststate. Cadef not yet hydrated; 0.
+/// Direct port of `static int ca_parse_line(Cadef d, Cadef all, int multi,
+///                                            int first)` from
+/// `Src/Zle/computil.c:2004-2403`. Walks `compwords[1..]` matching
+/// each word against the cadef's option/arg specs, updating active
+/// flags via `ca_inactive` and populating `ca_laststate` with the
+/// completion-point info downstream subcommands need. Returns 1 when
+/// the set should be skipped (foreign option spotted in multi-set
+/// mode), 0 otherwise.
+///
+/// Substrate notes:
+/// - `endpat` (CAA_RREST/RARGS end-pattern matching) is compiled via
+///   `patcompile`; the resulting `Patprog` is held in the local
+///   `endpat` slot exactly like the C code.
+/// - `napat` (the `-A` "non-arg" pattern) is also compiled via
+///   `patcompile`.
+/// - The `sopts` (clumped single-letter remainders) LinkList is
+///   represented as a `Vec<Box<caopt>>` queue.
+pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 { // c:2004
+    use crate::ported::zle::complete::{COMPCURRENT, COMPWORDS};
+    use crate::ported::pattern::{patcompile, pattry};
+    use crate::ported::glob::remnulargs;
+    use crate::ported::lex::untokenize;
+    use std::sync::atomic::Ordering;
+
+    let compcur = COMPCURRENT.load(Ordering::Relaxed);
+
+    // c:2019 — free old state if this is the first set.
+    if first != 0 && ca_alloced.load(Ordering::Relaxed) != 0 {
+        if let Ok(mut ls) = ca_laststate.lock() {
+            freecastate(&mut ls);
+            ls.snext = None;
+        }
+    }
+
+    // c:2030-2036 — mark everything active.
+    let mut p = d.opts.as_deref_mut();
+    while let Some(o) = p {
+        o.active = 1;
+        p = o.next.as_deref_mut();
+    }
+    d.argsactive = 1;
+    if let Some(r) = d.rest.as_deref_mut() { r.active = 1; }
+    let mut a = d.args.as_deref_mut();
+    while let Some(ar) = a {
+        ar.active = 1;
+        a = ar.next.as_deref_mut();
+    }
+
+    // c:2040-2056 — build the initial castate.
+    let compwords: Vec<String> = COMPWORDS
+        .get()
+        .and_then(|m| m.lock().ok().map(|w| w.clone()))
+        .unwrap_or_default();
+    let argend_init = (compwords.len() as i32) - 1;
+
+    // Set up the working state. Note d is stored as None in the
+    // working `state`; we re-populate ca_laststate.d from a clone at
+    // the end (we can't move d into state since the caller still owns
+    // it).
+    let mut state = castate {
+        snext:   None,
+        d:       None,
+        nopts:   d.nopts,
+        def:     None,
+        ddef:    None,
+        curopt:  None,
+        dopt:    None,
+        opt:     1, arg: 1, argbeg: 1, optbeg: 1, nargbeg: 1, restbeg: 1,
+        actopts: 1,
+        nth:     1, inarg: 1, inopt: 0,
+        singles: 0, oopt: 0,
+        argend:  argend_init,
+        curpos:  compcur,
+        args:    Some(Vec::new()),
+        oargs:   Some((0..d.nopts as usize).map(|_| None).collect()),
+    };
+    ca_alloced.store(1, Ordering::Relaxed);
+
+    // Snapshot state → ca_laststate (the "early return on empty"
+    // path uses this).
+    if let Ok(mut ls) = ca_laststate.lock() {
+        *ls = clone_castate(&state, d);
+    }
+
+    if compwords.len() < 2 {                                                 // c:2058
+        if let Ok(mut ls) = ca_laststate.lock() {
+            ls.opt = 0; ls.arg = 0;
+        }
+        // c:2061 goto end — fall through to actopts count.
+    } else {
+        // c:2063-2064 — compile -A nonarg pattern.
+        let napat = d.nonarg.as_deref().and_then(|s| {
+            patcompile(s, 0, None::<&mut String>)
+        });
+        let mut endpat: Option<crate::ported::pattern::Patprog> = None;
+
+        // c:2068 — walk words.
+        let mut cur = 2i32;
+        let mut argxor: Option<Vec<String>> = None;
+        let mut sopts: Vec<Box<caopt>> = Vec::new();
+        let mut wasopt_idx: Option<usize> = None;
+        let mut doff: i32 = 0;
+        let mut adef: Option<Box<caarg>> = None;
+        let mut ddef: Option<Box<caarg>> = None;
+        let mut dopt: Option<Box<caopt>> = None;
+        state.curopt = None; state.def = None;
+
+        loop {
+            let line_idx = (cur - 1) as usize;
+            if line_idx >= compwords.len() { break; }
+            let oline = compwords[line_idx].clone();
+            let mut line = oline.clone();
+            ddef = None;
+            adef = None;
+            dopt = None;
+            state.singles = 0;
+            let mut arglast = 0;
+
+            remnulargs(&mut line);
+            line = untokenize(&line);
+
+            // c:2095 — apply pending arg-xor.
+            if let Some(xor) = argxor.take() {
+                ca_inactive(d, &xor, cur - 1, 0);
+            }
+
+            // c:2099 — CDF_SEP `--` separator turns off option parsing.
+            if (d.flags & CDF_SEP) != 0 && cur != compcur && state.actopts != 0
+                && line == "--"
+            {
+                ca_inactive(d, &[], cur, 1);
+                state.actopts = 0;
+                cur += 1;
+                continue;
+            }
+
+            // c:2108 — already have a def from previous opt, collect args.
+            if state.def.is_some() {
+                state.arg = 0;
+                if let Some(co) = state.curopt.as_deref() {
+                    let cn = co.num as usize;
+                    if let Some(oargs) = state.oargs.as_mut() {
+                        if cn < oargs.len() {
+                            oargs[cn].get_or_insert_with(Vec::new).push(oline.clone());
+                        }
+                    }
+                }
+                let def_type = state.def.as_deref().map_or(0, |d| d.r#type);
+                let def_is_opt = def_type == CAA_OPT;
+                state.opt = if def_is_opt { 1 } else { 0 };
+                if def_is_opt {
+                    if state.def.as_deref().map_or(false, |d| d.opt.is_some()) {
+                        state.oopt += 1;
+                    }
+                }
+
+                if def_type == CAA_REST || def_type == CAA_RARGS
+                    || def_type == CAA_RREST
+                {
+                    // c:2118 — end-pattern check.
+                    let matched_end = state.def.as_deref()
+                        .and_then(|d| d.end.as_deref())
+                        .map_or(false, |_| endpat.as_ref()
+                            .map_or(false, |ep| pattry(ep, &line)));
+                    if matched_end {
+                        state.def = None;
+                        state.curopt = None;
+                        state.opt = 1; state.arg = 1;
+                        state.argend = cur - 1;
+                        if let Ok(mut ls) = ca_laststate.lock() {
+                            ls.argend = cur - 1;
+                        }
+                        // c:2124 goto cont.
+                    }
+                } else {
+                    // c:2125 — advance to next arg slot.
+                    let next = state.def.as_deref().and_then(|d| d.next.clone());
+                    if next.is_some() {
+                        state.def = next;
+                        state.argbeg = cur;
+                        state.argend = argend_init;
+                    } else if let Some(s) = sopts.first().cloned() {
+                        // c:2128 — pop a queued single-letter opt arg.
+                        sopts.remove(0);
+                        state.curopt = Some(s);
+                        state.def = state.curopt.as_deref().and_then(|c| c.args.clone());
+                        state.opt = 0;
+                        state.argbeg = cur; state.optbeg = cur; state.inopt = cur;
+                        state.argend = argend_init;
+                        doff = 0;
+                        state.singles = 1;
+                        if let Some(co) = state.curopt.as_deref() {
+                            let cn = co.num as usize;
+                            if let Some(oargs) = state.oargs.as_mut() {
+                                if cn < oargs.len() && oargs[cn].is_none() {
+                                    oargs[cn] = Some(Vec::new());
+                                }
+                            }
+                        }
+                        // c:2138 goto cont.
+                    } else {
+                        state.curopt = None;
+                        state.opt = 1;
+                    }
+                }
+            } else {
+                state.opt = 1; state.arg = 1;
+                state.curopt = None;
+            }
+            if state.opt != 0 {
+                let lb = line.as_bytes();
+                state.opt = if lb.is_empty() { 0 }
+                            else if lb.len() == 1 { 1 } else { 2 };
+            }
+
+            let mut pe_off: i32 = 0;
+            wasopt_idx = None;
+
+            // c:2156 — option lookup.
+            let opt_match = if state.opt == 2 {
+                let lb = line.as_bytes();
+                if !lb.is_empty() && (lb[0] == b'-' || lb[0] == b'+') {
+                    let mut end = 0usize;
+                    if let Some(found) = ca_get_opt(d, &line, 0, &mut end) {
+                        pe_off = end as i32;
+                        // c:2158 — for OEQUAL/EQUAL check `=` boundary.
+                        let pe_ok = match found.r#type {
+                            t if t == CAO_OEQUAL =>
+                                (line_idx + 1 < compwords.len())
+                                    || (pe_off > 0
+                                        && lb.get(pe_off as usize - 1) == Some(&b'=')),
+                            t if t == CAO_EQUAL =>
+                                pe_off > 0
+                                    && (lb.get(pe_off as usize - 1) == Some(&b'=')
+                                        || pe_off as usize >= lb.len()),
+                            _ => true,
+                        };
+                        if pe_ok { Some(found) } else { None }
+                    } else { None }
+                } else { None }
+            } else { None };
+
+            if let Some(co) = opt_match {
+                // Bind found opt details for later.
+                let co_name = co.name.clone().unwrap_or_default();
+                let co_type = co.r#type;
+                let co_num = co.num;
+                let co_xor = co.xor.clone().unwrap_or_default();
+                let co_args = co.args.clone();
+                state.curopt = Some(co);
+                let pe_at_eq = pe_off > 0
+                    && line.as_bytes().get(pe_off as usize - 1) == Some(&b'=');
+                let pe_tail_present = (pe_off as usize) < line.as_bytes().len();
+
+                let take_args = co_type != CAO_EQUAL || pe_at_eq;
+                state.def = if take_args { co_args.clone() } else { None };
+                if state.def.is_some() { ddef = state.def.clone(); dopt = state.curopt.clone(); }
+
+                doff = pe_off;
+                state.optbeg = cur; state.argbeg = cur; state.inopt = cur;
+                state.argend = argend_init;
+                let single_ok = d.single.is_some()
+                    && !pe_tail_present
+                    && co_name.as_bytes().len() >= 2
+                    && co_name.as_bytes()[1] != b'-'
+                    && co_name.as_bytes().get(2).is_none();
+                state.singles = if single_ok { 1 } else { 0 };
+
+                let cn = co_num as usize;
+                if let Some(oargs) = state.oargs.as_mut() {
+                    if cn < oargs.len() && oargs[cn].is_none() {
+                        oargs[cn] = Some(Vec::new());
+                    }
+                }
+                ca_inactive(d, &co_xor, cur, 0);                             // c:2179
+
+                let collect_arg = state.def.is_some() && (
+                    co_type == CAO_DIRECT
+                    || co_type == CAO_EQUAL
+                    || (co_type == CAO_ODIRECT && pe_tail_present)
+                    || (co_type == CAO_OEQUAL && (pe_tail_present || pe_at_eq))
+                );
+                if collect_arg {
+                    let dtype = state.def.as_deref().map_or(0, |d| d.r#type);
+                    if dtype != CAA_REST && dtype != CAA_RARGS && dtype != CAA_RREST {
+                        let next = state.def.as_deref().and_then(|d| d.next.clone());
+                        state.def = next;
+                    }
+                    let arg_str = ca_opt_arg(&co_name, &oline, false);
+                    if let Some(oargs) = state.oargs.as_mut() {
+                        if cn < oargs.len() {
+                            oargs[cn].get_or_insert_with(Vec::new).push(arg_str);
+                        }
+                    }
+                }
+                if state.def.is_some() {
+                    state.opt = 0;
+                } else {
+                    if d.single.is_none()
+                        || (co_name.as_bytes().len() >= 3
+                            && co_name.as_bytes()[1] != 0)
+                    {
+                        wasopt_idx = Some(co_num as usize);                  // c:2201
+                    }
+                    state.curopt = None;
+                }
+            } else if state.opt == 2 && d.single.is_some()
+                && line.as_bytes().first().copied().map_or(false,
+                    |b| b == b'-' || b == b'+')
+            {
+                // c:2204 — single-letter clump.
+                let mut end = 0usize;
+                let mut tmp_sopts: Option<Vec<Box<caopt>>> = None;
+                let s_match = ca_get_sopt(d, &line, &mut end, &mut tmp_sopts);
+                if let Some(queued) = tmp_sopts {
+                    sopts.extend(queued);
+                }
+                let active_sopt = s_match.or_else(|| {
+                    if cur != compcur && !sopts.is_empty() {
+                        Some(sopts.remove(0))
+                    } else { None }
+                });
+                if let Some(co) = active_sopt {
+                    let co_name = co.name.clone().unwrap_or_default();
+                    let co_type = co.r#type;
+                    let co_num = co.num;
+                    let co_xor = co.xor.clone().unwrap_or_default();
+                    let co_args = co.args.clone();
+                    state.curopt = Some(co);
+
+                    let cn = co_num as usize;
+                    if let Some(oargs) = state.oargs.as_mut() {
+                        if cn < oargs.len() && oargs[cn].is_none() {
+                            oargs[cn] = Some(Vec::new());
+                        }
+                    }
+                    state.def = co_args.clone();
+                    if co_type == CAO_NEXT && cur == compcur {
+                        ddef = None;
+                    } else {
+                        ddef = state.def.clone();
+                    }
+                    dopt = state.curopt.clone();
+                    doff = end as i32;
+                    state.optbeg = cur; state.argbeg = cur; state.inopt = cur;
+                    state.argend = argend_init;
+                    state.singles = if end >= line.as_bytes().len() { 1 } else { 0 };
+
+                    let lb = line.as_bytes();
+                    let pre = lb.first().copied().unwrap_or(0);
+                    let mut p_idx = 1usize;
+                    while p_idx < end.min(lb.len()) {
+                        let sidx = single_index(pre, lb[p_idx]);
+                        if sidx >= 0 && (sidx as usize)
+                            < d.single.as_ref().map_or(0, |s| s.len())
+                        {
+                            let tmp_xor = d.single.as_ref()
+                                .and_then(|s| s.get(sidx as usize))
+                                .and_then(|so| so.as_ref())
+                                .and_then(|so| so.xor.clone());
+                            let tmp_num = d.single.as_ref()
+                                .and_then(|s| s.get(sidx as usize))
+                                .and_then(|so| so.as_ref())
+                                .map_or(-1, |so| so.num);
+                            let tn = tmp_num as usize;
+                            if tmp_num >= 0 {
+                                if let Some(oargs) = state.oargs.as_mut() {
+                                    if tn < oargs.len() && oargs[tn].is_none() {
+                                        oargs[tn] = Some(Vec::new());
+                                    }
+                                }
+                            }
+                            if let Some(xor) = tmp_xor {
+                                ca_inactive(d, &xor, cur, 0);
+                            }
+                        }
+                        p_idx += 1;
+                    }
+
+                    let pe_tail_present = end < line.as_bytes().len();
+                    let pe_at_eq = end > 0
+                        && line.as_bytes().get(end - 1) == Some(&b'=');
+                    let collect_arg = state.def.is_some() && (
+                        co_type == CAO_DIRECT
+                        || co_type == CAO_EQUAL
+                        || (co_type == CAO_ODIRECT && pe_tail_present)
+                        || (co_type == CAO_OEQUAL && (pe_tail_present || pe_at_eq))
+                    );
+                    if collect_arg {
+                        let dtype = state.def.as_deref().map_or(0, |d| d.r#type);
+                        if dtype != CAA_REST && dtype != CAA_RARGS && dtype != CAA_RREST {
+                            let next = state.def.as_deref().and_then(|d| d.next.clone());
+                            state.def = next;
+                        }
+                        let arg_str = ca_opt_arg(&co_name, &line, false);
+                        if let Some(oargs) = state.oargs.as_mut() {
+                            if cn < oargs.len() {
+                                oargs[cn].get_or_insert_with(Vec::new).push(arg_str);
+                            }
+                        }
+                    }
+                    if state.def.is_some() {
+                        state.opt = 0;
+                    } else {
+                        state.curopt = None;
+                    }
+                }
+            } else if multi != 0
+                && line.as_bytes().first().copied().map_or(false,
+                    |b| b == b'-' || b == b'+')
+                && cur != compcur
+                && ca_foreign_opt(d, all, &line) != 0
+            {
+                return 1;                                                    // c:2258
+            } else if state.arg != 0 && cur <= compcur {                     // c:2259
+                // c:2264 — napat -A pattern.
+                if let Some(np) = napat.as_ref() {
+                    if cur < compcur && state.actopts != 0 {
+                        if pattry(np, &line) {
+                            cur += 1;
+                            continue;
+                        }
+                        ca_inactive(d, &[], cur + 1, 1);
+                        state.actopts = 0;
+                    }
+                }
+
+                arglast = 1;
+                if state.inopt != 0 {                                        // c:2274
+                    state.inopt = 0;
+                    state.nargbeg = cur - 1;
+                    state.argend = argend_init;
+                }
+                // c:2279 — no args/rest + non-empty non-flag line → skip set.
+                let lb = line.as_bytes();
+                let non_flag = !lb.is_empty() && lb[0] != b'-' && lb[0] != b'+';
+                if d.args.is_none() && d.rest.is_none() && non_flag {
+                    if multi == 0 && cur > compcur { break; }
+                    return 1;
+                }
+
+                adef = ca_get_arg(d, state.nth);
+                state.def = adef.clone();
+                let dtype = state.def.as_deref().map_or(0, |d| d.r#type);
+                if state.def.is_some() && (dtype == CAA_RREST || dtype == CAA_RARGS) {
+                    if ca_laststate.lock().map(|ls| ls.def.is_some()).unwrap_or(false) {
+                        break;
+                    }
+                    state.opt = if cur == state.nargbeg + 1
+                        && (multi == 0
+                            || line.is_empty()
+                            || lb[0] == b'-'
+                            || lb[0] == b'+')
+                    { 1 } else { 0 };
+                    state.optbeg = state.nargbeg;
+                    state.argbeg = cur - 1;
+                    state.argend = argend_init;
+                    // c:2311 — gather remaining words into state.args.
+                    while line_idx < compwords.len() {
+                        state.args.get_or_insert_with(Vec::new)
+                            .push(compwords[line_idx].clone());
+                        cur += 1;
+                        if (cur - 1) as usize >= compwords.len() { break; }
+                    }
+                    if let Ok(mut ls) = ca_laststate.lock() {
+                        *ls = clone_castate(&state, d);
+                        ls.ddef = None;
+                        ls.dopt = None;
+                    }
+                    break;
+                }
+                state.args.get_or_insert_with(Vec::new).push(line.clone());
+                if let Some(a) = adef.as_deref() {
+                    state.oopt = a.num - state.nth;
+                }
+
+                if state.def.is_some() && cur != compcur {                   // c:2323
+                    argxor = state.def.as_deref().and_then(|d| d.xor.clone());
+                }
+                let dtype2 = state.def.as_deref().map_or(0, |d| d.r#type);
+                if state.def.is_some() && dtype2 != CAA_NORMAL && dtype2 != CAA_OPT
+                    && state.inarg != 0
+                {
+                    state.restbeg = cur;
+                    state.inarg = 0;
+                } else if state.def.is_none() || dtype2 == CAA_NORMAL || dtype2 == CAA_OPT {
+                    state.inarg = 1;
+                }
+                state.nth += 1;
+                state.def = None;
+            }
+
+            // c:2338 — end-pattern compile for rest-args.
+            if state.def.is_some() && state.curopt.is_some() {
+                let dt = state.def.as_deref().map_or(0, |d| d.r#type);
+                if dt == CAA_RREST || dt == CAA_RARGS {
+                    let end_pat_str = state.def.as_deref()
+                        .and_then(|d| d.end.clone());
+                    if let Some(eps) = end_pat_str {
+                        endpat = patcompile(&eps, 0, None::<&mut String>);
+                    } else {
+                        // c:2342-2353 — no end-pattern: gather rest into oargs.
+                        if cur < compcur {
+                            if let Ok(mut ls) = ca_laststate.lock() {
+                                *ls = clone_castate(&state, d);
+                            }
+                        }
+                        let cn = state.curopt.as_deref().map(|c| c.num as usize);
+                        if let Some(cn) = cn {
+                            if let Some(oargs) = state.oargs.as_mut() {
+                                if cn < oargs.len() {
+                                    let bucket = oargs[cn].get_or_insert_with(Vec::new);
+                                    let mut k = line_idx;
+                                    while k < compwords.len() {
+                                        bucket.push(compwords[k].clone());
+                                        k += 1;
+                                    }
+                                }
+                            }
+                        }
+                        if let Ok(mut ls) = ca_laststate.lock() {
+                            ls.ddef = None;
+                            ls.dopt = None;
+                        }
+                        break;
+                    }
+                }
+            } else if state.def.is_some() {
+                let eps = state.def.as_deref().and_then(|d| d.end.clone());
+                if let Some(eps) = eps {
+                    endpat = patcompile(&eps, 0, None::<&mut String>);
+                }
+            }
+
+            // c:2360 cont: — checkpoint to ca_laststate.
+            if cur + 1 == compcur {
+                if let Ok(mut ls) = ca_laststate.lock() {
+                    *ls = clone_castate(&state, d);
+                    ls.ddef = None;
+                    ls.dopt = None;
+                }
+            } else if cur == compcur {
+                let mut ls = ca_laststate.lock().unwrap();
+                if ls.def.is_none() {
+                    if let Some(ddef_v) = ddef.clone() {
+                        ls.def = Some(ddef_v);
+                        ls.singles = state.singles;
+                        if state.curopt.as_deref().map_or(false, |c| c.r#type == CAO_NEXT) {
+                            ls.ddef = ddef.clone();
+                            ls.dopt = dopt.clone();
+                            ls.def = None;
+                            ls.opt = 1;
+                            // Mark curopt active again in d.
+                            if let Some(co) = state.curopt.as_deref() {
+                                let target_name = co.name.clone();
+                                let mut p = d.opts.as_deref_mut();
+                                while let Some(op) = p {
+                                    if op.name == target_name {
+                                        op.active = 1;
+                                        break;
+                                    }
+                                    p = op.next.as_deref_mut();
+                                }
+                            }
+                        } else {
+                            ca_doff.store(doff, Ordering::Relaxed);
+                            ls.opt = 0;
+                        }
+                    } else {
+                        ls.def = adef.clone();
+                        ls.opt = if arglast == 0
+                            || multi == 0
+                            || line.is_empty()
+                            || line.as_bytes()[0] == b'-'
+                            || line.as_bytes()[0] == b'+'
+                        { 1 } else { 0 };
+                        ls.ddef = None;
+                        ls.dopt = None;
+                        ls.optbeg = state.nargbeg;
+                        ls.argbeg = state.restbeg;
+                        ls.argend = state.argend;
+                        ls.singles = state.singles;
+                        ls.oopt = state.oopt;
+                        if let Some(wi) = wasopt_idx {
+                            let mut p = d.opts.as_deref_mut();
+                            while let Some(op) = p {
+                                if op.num as usize == wi {
+                                    op.active = 1;
+                                    break;
+                                }
+                                p = op.next.as_deref_mut();
+                            }
+                        }
+                    }
+                }
+            }
+            cur += 1;
+        }
+        let _ = (endpat, ddef, dopt, adef);
+    }
+
+    // c:2397-2400 — count active opts.
+    let mut actopts = 0i32;
+    let mut p = d.opts.as_deref();
+    while let Some(o) = p {
+        if o.active != 0 { actopts += 1; }
+        p = o.next.as_deref();
+    }
+    if let Ok(mut ls) = ca_laststate.lock() {
+        ls.actopts = actopts;
+        // Make sure ls.d reflects the (now-mutated) d.
+        ls.d = Some(Box::new(clone_cadef_shallow(d)));
+    }
     0
 }
 
-/// Direct port of `static void ca_set_data(LinkList descr, Caarg arg,
-///                                          int single)` from
-/// `Src/Zle/computil.c:2472`. Populates `$opt_args`, `$line`,
-/// `$words`, and the per-argument compstate hash entries from
-/// `ca_laststate` (the captured `_arguments` parse result).
-///
-/// **Substrate trade-off:** the C body operates on `ca_laststate`
-/// (parsed from previous `_arguments` invocations) which is itself
-/// a 2000+ line state machine in computil.c. Without that capture
-/// path ported, ca_set_data has no inputs to translate. When the
-/// `_arguments` parser lands, this fn writes through the same
-/// canonical paramtab APIs (setsparam/setaparam) already used by
-/// callcompfunc — see compcore.rs:set_compstate_str.
-pub fn ca_set_data() {                                                       // c:2472
-    // ca_laststate is the snapshot captured by the _arguments parser
-    // at computil.c:1800-2470; without that parse engine producing
-    // inputs, the per-arg writeback has no data to push. When the
-    // parse engine lands, this fn forwards to setsparam/setaparam
-    // via the same paramtab path callcompfunc uses.
+/// Mirror of the C `memcpy(&ca_laststate, &state, sizeof(state))` pattern
+/// — we can't move `state` (the caller continues using it), and Rust's
+/// own `Clone` would over-clone owned chains.  Instead snapshot the
+/// salient fields plus a fresh shallow clone of `d`. Local to
+/// `ca_parse_line`; matches no C function.
+#[allow(dead_code)]
+fn clone_castate(s: &castate, d: &cadef) -> castate {
+    castate {
+        snext:   None,
+        d:       Some(Box::new(clone_cadef_shallow(d))),
+        nopts:   s.nopts,
+        def:     s.def.clone(),
+        ddef:    s.ddef.clone(),
+        curopt:  s.curopt.clone(),
+        dopt:    s.dopt.clone(),
+        opt:     s.opt, arg: s.arg,
+        argbeg:  s.argbeg, optbeg: s.optbeg,
+        nargbeg: s.nargbeg, restbeg: s.restbeg,
+        curpos:  s.curpos, argend: s.argend,
+        inopt:   s.inopt, inarg: s.inarg,
+        nth:     s.nth,
+        singles: s.singles, oopt: s.oopt, actopts: s.actopts,
+        args:    s.args.clone(),
+        oargs:   s.oargs.clone(),
+    }
+}
+
+#[allow(dead_code)]
+fn clone_cadef_shallow(d: &cadef) -> cadef {
+    cadef {
+        next:       None,
+        snext:      None,
+        opts:       d.opts.clone(),
+        nopts:      d.nopts,
+        ndopts:     d.ndopts,
+        nodopts:    d.nodopts,
+        args:       d.args.clone(),
+        rest:       d.rest.clone(),
+        defs:       d.defs.clone(),
+        ndefs:      d.ndefs,
+        lastt:      d.lastt,
+        single:     d.single.clone(),
+        r#match:    d.r#match.clone(),
+        argsactive: d.argsactive,
+        set:        d.set.clone(),
+        flags:      d.flags,
+        nonarg:     d.nonarg.clone(),
+    }
+}
+
+/// Direct port of `static void ca_set_data(LinkList descr, LinkList act,
+///                                           LinkList subc, char *opt,
+///                                           Caarg arg, Caopt optdef,
+///                                           int single)` from
+/// `Src/Zle/computil.c:2472-2582`. Appends to descr/act/subc the
+/// description/action/subcontext for each `arg` whose `[min,num]`
+/// range covers `ca_laststate.nth`. When `opt` is non-None, all
+/// args are treated as option args; otherwise positional. Recurses
+/// via the goto-rec C path to retry after the first loop when more
+/// state remains.
+pub fn ca_set_data(descr: &mut Vec<String>,                                  // c:2472
+                   act: &mut Vec<String>,
+                   subc: &mut Vec<String>,
+                   opt: Option<&str>,
+                   start_arg: Option<Box<caarg>>,
+                   optdef: Option<&caopt>,
+                   single: i32)
+{
+    use crate::ported::zle::complete::restrict_range;
+
+    let mut arg: Option<Box<caarg>> = start_arg;
+    let mut opt = opt.map(|s| s.to_string());
+    let mut restr = 0;
+    let mut miss = 0;
+    let mut oopt = 1i32;
+    let mut lopt;
+
+    'rec: loop {
+        // c:2481 — addopt = (opt ? 0 : ca_laststate.oopt).
+        let addopt = if opt.is_some() {
+            0
+        } else {
+            ca_laststate.lock().map(|s| s.oopt).unwrap_or(0)
+        };
+
+        // c:2483 — main arg walk.
+        while let Some(a) = arg.as_ref() {
+            let cont = {
+                let nth = ca_laststate.lock().map(|s| s.nth).unwrap_or(0);
+                opt.is_some()
+                    || a.num < 0
+                    || (a.min <= nth + addopt && a.num >= nth)
+            };
+            if !cont { break; }
+
+            lopt = a.r#type == CAA_OPT;                                      // c:2486
+            if opt.is_none() && !lopt && oopt > 0 {                          // c:2487
+                oopt = 0;
+            }
+
+            // c:2490 — dedup: skip if (descr, act) pair already present.
+            let mut dup = false;
+            let descr_str = a.descr.clone().unwrap_or_default();
+            let act_str = a.action.clone().unwrap_or_default();
+            for (d, ac) in descr.iter().zip(act.iter()) {
+                if d == &descr_str && ac == &act_str {
+                    dup = true;
+                    break;
+                }
+            }
+
+            // c:2497 — with ignored prefix, no normal args.
+            if single != 0 && a.opt.is_none() {
+                return;
+            }
+
+            if !dup {                                                        // c:2500
+                descr.push(descr_str.clone());                               // c:2501
+                act.push(act_str.clone());
+
+                if restr == 0 {                                              // c:2504
+                    let nrestr = if a.r#type == CAA_RARGS {                  // c:2506
+                        let (optbeg, argend) = ca_laststate.lock()
+                            .map(|s| (s.optbeg, s.argend)).unwrap_or((0, 0));
+                        restrict_range(optbeg, argend);
+                        1
+                    } else if a.r#type == CAA_RREST {                        // c:2508
+                        let (argbeg, argend) = ca_laststate.lock()
+                            .map(|s| (s.argbeg, s.argend)).unwrap_or((0, 0));
+                        restrict_range(argbeg, argend);
+                        1
+                    } else { 0 };
+                    restr = nrestr;
+                }
+
+                // c:2511 — build subcontext string.
+                let buf = if let Some(o) = a.opt.as_deref() {                // c:2511
+                    let gs = a.gsname.as_deref().unwrap_or("");
+                    if a.num > 0 && a.r#type < CAA_REST {                    // c:2514
+                        format!("{}option{}-{}", gs, o, a.num)
+                    } else {                                                  // c:2518
+                        format!("{}option{}-rest", gs, o)
+                    }
+                } else if a.num > 0 {                                        // c:2520
+                    if let Some(gs) = a.gsname.as_deref() {
+                        format!("{}argument-{}", gs, a.num)
+                    } else {
+                        format!("argument-{}", a.num)
+                    }
+                } else {                                                     // c:2523
+                    if let Some(gs) = a.gsname.as_deref() {
+                        format!("{}argument-rest", gs)
+                    } else {
+                        "argument-rest".to_string()
+                    }
+                };
+                subc.push(buf);                                              // c:2527
+            }
+
+            // c:2539 — guard: NORMAL inside an opt where opt requires its
+            // argument as a separate word — return so we don't keep trying
+            // to match positionals.
+            if a.r#type == CAA_NORMAL && opt.is_some() {
+                if let Some(od) = optdef {
+                    if od.r#type == CAO_NEXT
+                        || od.r#type == CAO_ODIRECT
+                        || od.r#type == CAO_OEQUAL
+                    {
+                        return;
+                    }
+                }
+            }
+
+            if single != 0 { break; }                                        // c:2545
+
+            // c:2548-2568 — advance to the next arg.
+            if opt.is_none() {                                               // c:2548
+                let next_is_none_and_miss = a.num >= 0 && a.next.is_none() && miss != 0;
+                if next_is_none_and_miss {                                   // c:2549
+                    let rest = ca_laststate.lock().ok().and_then(|s| {
+                        s.d.as_ref().and_then(|d| d.rest.clone())
+                    });
+                    arg = rest.filter(|r| r.active != 0);                    // c:2550
+                } else {
+                    let onum = a.num;                                        // c:2553
+                    let nth = ca_laststate.lock().map(|s| s.nth).unwrap_or(0);
+                    let rest_flag = onum != a.min && onum == nth;            // c:2554
+                    let next = a.next.clone();
+                    if let Some(n) = next {                                  // c:2555
+                        if n.num != onum + 1 { miss = 1; }                   // c:2556
+                        arg = Some(n);
+                    } else if rest_flag || (oopt > 0 && opt.is_none()) {     // c:2558
+                        let rest = ca_laststate.lock().ok().and_then(|s| {
+                            s.d.as_ref().and_then(|d| d.rest.clone())
+                        });
+                        arg = rest.filter(|r| r.active != 0);
+                        oopt = -1;
+                    } else {
+                        arg = None;
+                    }
+                }
+            } else {                                                         // c:2564
+                if !lopt { break; }                                          // c:2565
+                arg = a.next.clone();                                        // c:2567
+            }
+        }
+
+        // c:2570 — retry as positional after the option args path.
+        let laststate_oopt = ca_laststate.lock().map(|s| s.oopt).unwrap_or(0);
+        let cur_lopt = arg.as_ref().map_or(false, |a| a.r#type == CAA_OPT);
+        if single == 0 && opt.is_some() && (cur_lopt || laststate_oopt != 0) {
+            opt = None;
+            let nth = ca_laststate.lock().map(|s| s.nth).unwrap_or(0);
+            // c:2572 — arg = ca_get_arg(ca_laststate.d, ca_laststate.nth).
+            arg = ca_laststate.lock().ok().and_then(|s| {
+                s.d.as_ref().and_then(|d| ca_get_arg(d, nth))
+            });
+            continue 'rec;
+        }
+        // c:2575 — retry as rest after positional path.
+        if opt.is_none() && oopt > 0 {
+            oopt = -1;
+            let rest = ca_laststate.lock().ok().and_then(|s| {
+                s.d.as_ref().and_then(|d| d.rest.clone())
+            });
+            arg = rest.filter(|r| r.active != 0);
+            continue 'rec;
+        }
+        break 'rec;
+    }
 }
 
 /// Port of `cf_ignore(char **names, LinkList ign, char *style, char *path)` from Src/Zle/computil.c:4860.
@@ -2156,48 +3705,370 @@ pub fn comp_quote(str: &str, prefix: i32) -> String {                          /
     ret
 }
 
-/// Port of `cv_get_val(Cvdef d, char *name)` from Src/Zle/computil.c:3178.
-#[allow(unused_variables)]
-pub fn cv_get_val(d: i32, name: &str) -> i32 {                             // c:3178
-    // C body c:3180-3186 — `for (p = d->vals; p; p = p->next)
-    //                       if (!strcmp(name, p->name)) return p; return NULL`.
-    //                       Cvdef Rust struct not yet hydrated; null result.
-    0
+/// Direct port of `static Cvval cv_get_val(Cvdef d, char *name)` from
+/// `Src/Zle/computil.c:3178-3187`. Linear scan over `d->vals` for a
+/// name match. Returns a shallow clone of the matched cvval.
+pub fn cv_get_val(d: &cvdef, name: &str) -> Option<Box<cvval>> {             // c:3178
+    let mut p = d.vals.as_deref();
+    while let Some(v) = p {                                                  // c:3182
+        if v.name.as_deref() == Some(name) {                                 // c:3183
+            return Some(Box::new(cvval {
+                next:   None,
+                name:   v.name.clone(),
+                descr:  v.descr.clone(),
+                xor:    v.xor.clone(),
+                r#type: v.r#type,
+                arg:    v.arg.clone(),
+                active: v.active,
+            }));
+        }
+        p = v.next.as_deref();
+    }
+    None                                                                     // c:3186
 }
 
-/// Port of `cv_inactive(Cvdef d, char **xor)` from Src/Zle/computil.c:3209.
-#[allow(unused_variables)]
-pub fn cv_inactive(d: i32, xor: &[String]) {                               // c:3209
-    // C body c:3211-3217 — for each xor entry, find via cv_get_val
-    //                      and clear active flag. No Cvdef yet; no-op.
+/// Direct port of `static void cv_inactive(Cvdef d, char **xor)` from
+/// `Src/Zle/computil.c:3209-3218`. Clears `active` on each cvval named
+/// in the xor list.
+pub fn cv_inactive(d: &mut cvdef, xor: &[String]) {                          // c:3209
+    for name in xor {                                                        // c:3214
+        let mut p = d.vals.as_deref_mut();
+        while let Some(v) = p {
+            if v.name.as_deref() == Some(name.as_str()) {
+                v.active = 0;                                                // c:3216
+            }
+            p = v.next.as_deref_mut();
+        }
+    }
 }
 
-/// Port of `cv_next(Cvdef d, char **sp, char **ap)` from Src/Zle/computil.c:3240.
-#[allow(unused_variables)]
-pub fn cv_next(d: i32, sp: &mut String, ap: &mut String) -> i32 {         // c:3240
-    // C body c:3242-3334 — splits the next value out of *sp using
-    //                      d->sep / d->argsep, returns its Cvval.
-    //                      No Cvdef yet; null result.
-    0
+/// Direct port of `static Cvval cv_next(Cvdef d, char **sp, char **ap)`
+/// from `Src/Zle/computil.c:3240-3331`. Splits the next value out of
+/// `*sp` using `d->sep` / `d->argsep`, returns its matched Cvval.
+/// On success, `*sp` advances past the consumed prefix; `*ap` is set
+/// to the value's argument (if any) or `None`.
+pub fn cv_next(d: &cvdef, sp: &mut Option<String>,                           // c:3240
+               ap: &mut Option<String>) -> Option<Box<cvval>>
+{
+    let s_in = sp.take().unwrap_or_default();
+    if s_in.is_empty() {                                                     // c:3245
+        *sp = None;
+        *ap = None;
+        return None;
+    }
+    let bytes = s_in.as_bytes();
+
+    // Branch 1: hassep && !sep, or !argsep — greedy match (longest prefix).
+    if (d.hassep != 0 && d.sep == 0) || d.argsep == 0 {                      // c:3250
+        let ec_byte: u8 = if d.hassep != 0 && d.sep != 0 {
+            d.sep as u8
+        } else {
+            d.argsep as u8
+        };
+        let mut s_idx: usize = 0;
+        let mut r: Option<Box<cvval>> = None;
+        // c:3255 — extend until cv_quote_get_val matches or hit ec.
+        loop {
+            s_idx += 1;
+            if s_idx > bytes.len() { break; }
+            let candidate = std::str::from_utf8(&bytes[..s_idx])
+                .unwrap_or("");
+            r = cv_quote_get_val(d, candidate);
+            if r.is_some() { break; }
+            if s_idx >= bytes.len() || bytes[s_idx] == ec_byte { break; }
+        }
+        let os = s_idx;
+        // c:3268 — advance *sp.
+        if d.hassep != 0 && d.sep != 0 {
+            let sep_byte = d.sep as u8;
+            if let Some(off) = bytes[s_idx.min(bytes.len())..]
+                .iter().position(|&b| b == sep_byte)
+            {
+                let after = s_idx + off + 1;
+                *sp = Some(String::from_utf8_lossy(&bytes[after..]).into_owned());
+            } else {
+                *sp = None;
+            }
+        } else {
+            *sp = if s_idx < bytes.len() {
+                Some(String::from_utf8_lossy(&bytes[s_idx..]).into_owned())
+            } else { None };
+        }
+        // c:3275 — set *ap.
+        let argsep_b = d.argsep as u8;
+        if d.argsep != 0 && os < bytes.len() && bytes[os] == argsep_b {
+            *ap = Some(String::from_utf8_lossy(&bytes[os + 1..]).into_owned());
+            *sp = None;
+        } else if r.as_deref().map_or(false, |v| v.r#type != CVV_NOARG) {
+            *ap = if os < bytes.len() {
+                Some(String::from_utf8_lossy(&bytes[os..]).into_owned())
+            } else { None };
+        } else {
+            *ap = None;
+        }
+        return r;
+    }
+
+    // Branch 2: hassep set (with both sep and argsep).
+    if d.hassep != 0 {                                                       // c:3285
+        let sep_b = d.sep as u8;
+        let argsep_b = d.argsep as u8;
+        let ns = bytes.iter().position(|&b| b == sep_b);
+        let mut as_off: Option<usize> = None;
+        let mut skip = false;
+        if d.argsep != 0 {
+            if let Some(a_pos) = bytes.iter().position(|&b| b == argsep_b) {
+                if ns.map_or(true, |n| a_pos <= n) {                          // c:3289
+                    as_off = Some(a_pos);
+                    *ap = Some(String::from_utf8_lossy(&bytes[a_pos + 1..])
+                        .into_owned());
+                    skip = true;
+                }
+            }
+        }
+        let sap = as_off.or(ns);
+        let head = match sap {
+            Some(p) => std::str::from_utf8(&bytes[..p]).unwrap_or(""),
+            None => std::str::from_utf8(&bytes).unwrap_or(""),
+        };
+        let r = cv_quote_get_val(d, head);
+        // c:3302 — if NOARG/no match and skip, fall back to as.
+        let ns_eff = if (r.as_deref().map_or(true, |v| v.r#type == CVV_NOARG)) && skip {
+            as_off
+        } else if skip {
+            // skip is set ⇒ as_off was the chosen sep; ns might be after.
+            ns.filter(|&n| as_off.map_or(true, |a| n > a))
+        } else {
+            ns
+        };
+        let next_off = match ns_eff {
+            None => None,
+            Some(n) if Some(n) == as_off
+                && r.as_deref().map_or(false, |v| v.r#type != CVV_NOARG) => None,
+            Some(n) => Some(n + 1),
+        };
+        *sp = next_off.map(|o|
+            String::from_utf8_lossy(&bytes[o..]).into_owned());
+        if !skip { *ap = None; }
+        return r;
+    }
+
+    // Branch 3: no hassep, argsep set.
+    *sp = None;                                                              // c:3314
+    let argsep_b = d.argsep as u8;
+    let as_pos = bytes.iter().position(|&b| b == argsep_b);
+    let head = match as_pos {
+        Some(p) => {
+            *ap = Some(String::from_utf8_lossy(&bytes[p + 1..]).into_owned());
+            std::str::from_utf8(&bytes[..p]).unwrap_or("")
+        }
+        None => {
+            *ap = None;
+            &s_in
+        }
+    };
+    cv_quote_get_val(d, head)                                                // c:3324
 }
 
-/// Port of `cv_parse_word(Cvdef d)` from Src/Zle/computil.c:3336.
-#[allow(unused_variables)]
-pub fn cv_parse_word(d: i32) {                                              // c:3336
-    // C body c:3338-3433 — full word parser: walks compwords/compprefix,
-    //                      builds Cvstate, calls cv_next + cv_inactive.
-    //                      Substrate not ready; no-op.
+/// Direct port of `static void cv_parse_word(Cvdef d)` from
+/// `Src/Zle/computil.c:3336-3472`. Walks `compwords[1..]` (when
+/// `d->words` set) and `compprefix` calling `cv_next` repeatedly,
+/// accumulating recognized values into `cv_laststate.vals`.
+pub fn cv_parse_word(d: &mut cvdef) {                                        // c:3336
+    use crate::ported::zle::complete::{COMPCURRENT, COMPWORDS,
+        COMPPREFIX, COMPSUFFIX, ignore_prefix, ignore_suffix};
+    use std::sync::atomic::Ordering;
+
+    // c:3343 — free old vals.
+    if cv_alloced.load(Ordering::Relaxed) != 0 {
+        if let Ok(mut ls) = cv_laststate.lock() {
+            ls.vals = None;
+        }
+    }
+    // c:3346 — mark all vals active.
+    let mut v = d.vals.as_deref_mut();
+    while let Some(vv) = v {
+        vv.active = 1;
+        v = vv.next.as_deref_mut();
+    }
+
+    let mut state_vals: Vec<String> = Vec::new();
+    let mut state_def: Option<Box<caarg>> = None;
+    let mut state_val: Option<Box<cvval>> = None;
+    cv_alloced.store(1, Ordering::Relaxed);
+
+    let compcur = COMPCURRENT.load(Ordering::Relaxed);
+    let compwords: Vec<String> = COMPWORDS
+        .get()
+        .and_then(|m| m.lock().ok().map(|w| w.clone()))
+        .unwrap_or_default();
+    let compprefix: String = COMPPREFIX.get()
+        .and_then(|m| m.lock().ok().map(|s| s.clone()))
+        .unwrap_or_default();
+    let compsuffix: String = COMPSUFFIX.get()
+        .and_then(|m| m.lock().ok().map(|s| s.clone()))
+        .unwrap_or_default();
+    let mut pign = compprefix.clone();                                       // c:3340
+    let mut nosfx = false;
+
+    // c:3356 — scan compwords[1..] if d.words is set.
+    if d.words != 0 && !compwords.is_empty() && !compwords[0].is_empty() {
+        for i in 1..compwords.len() {
+            if (i as i32) == compcur - 1 { continue; }
+            let mut str_opt: Option<String> = Some(compwords[i].clone());
+            while str_opt.as_deref().map_or(false, |s| !s.is_empty()) {
+                let mut ap: Option<String> = None;
+                let val = cv_next(d, &mut str_opt, &mut ap);
+                if let Some(v) = val {
+                    state_vals.push(v.name.clone().unwrap_or_default());
+                    state_vals.push(ap.unwrap_or_default());
+                    if (i as i32) + 1 < compcur {
+                        let xor = v.xor.clone().unwrap_or_default();
+                        cv_inactive(d, &xor);
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    // c:3385 — scan compprefix.
+    let mut str_opt: Option<String> = Some(compprefix.clone());
+    let mut last_arg: Option<String> = None;
+    while str_opt.as_deref().map_or(false, |s| !s.is_empty()) {
+        let mut ap: Option<String> = None;
+        let val = cv_next(d, &mut str_opt, &mut ap);
+        if let Some(v) = val {
+            state_vals.push(v.name.clone().unwrap_or_default());
+            match ap.as_deref() {
+                Some(arg_v) => {
+                    if str_opt.is_some() {
+                        state_vals.push(arg_v.to_string());
+                    } else {
+                        let joined = format!("{}{}", arg_v, compsuffix);
+                        state_vals.push(joined);
+                        nosfx = true;
+                    }
+                    last_arg = ap.clone();
+                }
+                None => state_vals.push(String::new()),
+            }
+            let xor = v.xor.clone().unwrap_or_default();
+            cv_inactive(d, &xor);
+            if let Some(s) = str_opt.as_deref() {
+                pign = s.to_string();
+            } else {
+                // c:3407 — re-activate v in the cvdef.
+                let target_name = v.name.clone();
+                let mut p = d.vals.as_deref_mut();
+                while let Some(vv) = p {
+                    if vv.name == target_name { vv.active = 1; break; }
+                    p = vv.next.as_deref_mut();
+                }
+            }
+            state_val = Some(v);
+        } else {
+            break;
+        }
+    }
+    if state_val.is_some() && last_arg.is_some() && str_opt.is_none() {       // c:3411
+        state_def = state_val.as_ref().and_then(|v| v.arg.clone());
+    }
+
+    // c:3414 — separator handling for compsuffix.
+    if !nosfx && d.hassep != 0 {
+        let pign_len = pign.len();
+        let cp_len = compprefix.len();
+        ignore_prefix(cp_len as i32 - pign_len as i32);                       // c:3418
+
+        let mut ign = 0usize;
+        let mut more: Option<String> = None;
+        if d.sep == 0 && (state_val.is_none()
+            || state_val.as_deref().map_or(true, |v| v.r#type == CVV_NOARG))
+        {
+            ign = compsuffix.len();
+            more = Some(compsuffix.clone());
+        } else if d.sep != 0 {
+            let sep_b = d.sep as u8;
+            let ns_pos = compsuffix.as_bytes().iter().position(|&b| b == sep_b);
+            let as_pos = if d.argsep != 0 {
+                compsuffix.as_bytes().iter().position(|&b| b == d.argsep as u8)
+            } else { None };
+            if let Some(a) = as_pos {
+                if ns_pos.map_or(true, |n| a <= n) {
+                    ign = compsuffix.len() - a;
+                } else {
+                    ign = ns_pos.map_or(0, |n| compsuffix.len() - n);
+                }
+            } else {
+                ign = ns_pos.map_or(0, |n| compsuffix.len() - n);
+            }
+            more = ns_pos.map(|n| compsuffix[n + 1..].to_string());
+        } else if d.argsep != 0 {
+            let as_pos = compsuffix.as_bytes().iter()
+                .position(|&b| b == d.argsep as u8);
+            if let Some(a) = as_pos {
+                ign = compsuffix.len() - a;
+            }
+        }
+
+        if ign > 0 {
+            ignore_suffix(ign as i32);                                        // c:3444
+        }
+
+        let mut more_opt = more;
+        while more_opt.as_deref().map_or(false, |s| !s.is_empty()) {          // c:3446
+            let mut ap: Option<String> = None;
+            let val = cv_next(d, &mut more_opt, &mut ap);
+            if let Some(v) = val {
+                state_vals.push(v.name.clone().unwrap_or_default());
+                match ap.as_deref() {
+                    Some(arg_v) => {
+                        if more_opt.is_some() {
+                            state_vals.push(arg_v.to_string());
+                        } else {
+                            state_vals.push(format!("{}{}", arg_v, compsuffix));
+                        }
+                    }
+                    None => state_vals.push(String::new()),
+                }
+                let xor = v.xor.clone().unwrap_or_default();
+                cv_inactive(d, &xor);
+            } else { break; }
+        }
+    } else if last_arg.is_some() {
+        let cp_len = compprefix.len();
+        let arg_off = compprefix.find(last_arg.as_deref().unwrap_or(""))
+            .map(|i| i as i32).unwrap_or(cp_len as i32);
+        ignore_prefix(arg_off);                                              // c:3467
+    } else {
+        let cp_len = compprefix.len();
+        ignore_prefix(cp_len as i32 - pign.len() as i32);                    // c:3469
+    }
+
+    // c:3471 — commit state.
+    if let Ok(mut ls) = cv_laststate.lock() {
+        *ls = cvstate {
+            d:    Some(Box::new(d.clone())),
+            def:  state_def,
+            val:  state_val,
+            vals: if state_vals.is_empty() { None } else { Some(state_vals) },
+        };
+    }
 }
 
-/// Port of `cv_quote_get_val(Cvdef d, char *name)` from Src/Zle/computil.c:3190.
-pub fn cv_quote_get_val(d: i32, name: &str) -> i32 {                         // c:3190
-    // C body c:3192-3203 — `name = dupstring(name); noerrs=2;
-    //                       parse_subst_string(name); noerrs = ne;
-    //                       remnulargs(name); untokenize(name);
-    //                       return cv_get_val(d, name)`.
-    //                       Without parse_subst_string we use the raw
-    //                       name and delegate.
-    cv_get_val(d, name)
+/// Direct port of `static Cvval cv_quote_get_val(Cvdef d, char *name)`
+/// from `Src/Zle/computil.c:3190-3204`. Unquotes `name` via
+/// `remnulargs` + `untokenize`, then delegates to `cv_get_val`.
+/// `parse_subst_string` is not on this Rust port path; the unquote
+/// chain is approximated by `remnulargs` + `untokenize` which covers
+/// the common cases (compsystem feeds already-tokenized strings).
+pub fn cv_quote_get_val(d: &cvdef, name: &str) -> Option<Box<cvval>> {       // c:3190
+    let mut s = name.to_string();
+    crate::ported::glob::remnulargs(&mut s);                                 // c:3200
+    let s = crate::ported::lex::untokenize(&s);                              // c:3201
+    cv_get_val(d, &s)                                                        // c:3203
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from Src/Zle/computil.c:5146.
@@ -3450,28 +5321,184 @@ pub fn bin_compquote(nam: &str, args: &[String],                             // 
     0                                                                        // c:3725
 }
 
-/// Direct port of `bin_comptags(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Zle/computil.c:3831`.
-/// Dispatcher for `comptags -i/-C/-T/-N/-A/-L`. Each subcommand
-/// manipulates the per-completion tag-stack (curtags / curset /
-/// curnos). Static-link path: tag-stack globals aren't yet exposed
-/// in compcore.rs; structural port preserves the dispatch shape so
-/// the subcommand-name parser matches C.
-/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
+/// Direct port of `static int bin_comptags(char *nam, char **args,
+///                                          UNUSED(Options ops),
+///                                          UNUSED(int func))` from
+/// `Src/Zle/computil.c:3831-3958`. Full subcommand dispatch for
+/// `comptags -i/-C/-T/-N/-R/-S/-A`. Reads `LOCALLEVEL` to index
+/// `comptags[]`; `--` suffix decrements the level by one.
 pub fn bin_comptags(nam: &str, args: &[String],                              // c:3831
                     _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3838
-        zwarnnam(nam, "can only be called from completion function");        // c:3839
-        return 1;                                                            // c:3840
-    }
-    if args.is_empty() {                                                     // c:3842
-        zwarnnam(nam, "missing arguments");
+    use crate::ported::builtin::LOCALLEVEL;
+    use crate::ported::params::{setsparam, setaparam};
+    use crate::ported::utils::strpfx;
+    use std::sync::atomic::Ordering;
+
+    if INCOMPFUNC.load(Ordering::Relaxed) != 1 {                             // c:3835
+        zwarnnam(nam, "can only be called from completion function");
         return 1;
     }
-    // c:3845-3955 — dispatch on first arg: -i (init), -C (current),
-    // -T (test), -N (next), -A (args), -L (list). Each path mutates
-    // curtags via cv_* helpers (defined elsewhere in computil.c).
-    // Deferred until the tag-stack globals land.
-    0                                                                        // c:3961
+    if args.is_empty() { return 1; }
+    let a0 = args[0].as_bytes();
+    // c:3839 — validate `-X` or `-X--` shape.
+    if a0.len() < 2 || a0[0] != b'-'
+        || (a0.len() > 2 && (a0[2] != b'-' || a0.len() > 3))
+    {
+        zwarnnam(nam, &format!("invalid argument: {}", args[0]));
+        return 1;
+    }
+
+    let level: i32 = LOCALLEVEL.load(Ordering::Relaxed)                      // c:3844
+        - if a0.len() > 2 { 1 } else { 0 };
+    if level < 0 || (level as usize) >= MAX_TAGS {                           // c:3845
+        zwarnnam(nam, "nesting level too deep");
+        return 1;
+    }
+    let lvl_idx = level as usize;
+
+    let sub = a0[1];
+
+    // c:3849 — non-init subcommands require a registered comptags[level].
+    if sub != b'i' && sub != b'I' {
+        let registered = {
+            let tab = comptags.lock().unwrap();
+            tab[lvl_idx].is_some()
+        };
+        if !registered {
+            zwarnnam(nam, "no tags registered");
+            return 1;
+        }
+    }
+
+    // c:3854-3864 — per-subcommand arg-count bounds.
+    let (min, max): (i32, i32) = match sub {
+        b'i' => (2, -1),
+        b'C' => (1, 1),
+        b'T' => (0, 0),
+        b'N' => (0, 0),
+        b'R' => (1, 1),
+        b'S' => (1, 1),
+        b'A' => (2, 3),
+        _ => {
+            zwarnnam(nam, &format!("invalid option: {}", args[0]));
+            return 1;
+        }
+    };
+    let n = (args.len() as i32) - 1;
+    if n < min { zwarnnam(nam, "not enough arguments"); return 1; }
+    if max >= 0 && n > max { zwarnnam(nam, "too many arguments"); return 1; }
+
+    match sub {
+        b'i' => {                                                            // c:3874
+            settags(level, &args[1..]);
+            lasttaglevel.store(level, Ordering::Relaxed);                    // c:3876
+            0
+        }
+        b'C' => {                                                            // c:3878
+            let ctx = {
+                let tab = comptags.lock().unwrap();
+                tab[lvl_idx].as_ref()
+                    .and_then(|t| t.context.clone())
+                    .unwrap_or_default()
+            };
+            setsparam(&args[1], &ctx);                                        // c:3879
+            0
+        }
+        b'T' => {                                                            // c:3881
+            let empty = {
+                let tab = comptags.lock().unwrap();
+                tab[lvl_idx].as_ref().map_or(true, |t| t.sets.is_none())
+            };
+            if empty { 1 } else { 0 }                                         // c:3882
+        }
+        b'N' => {                                                            // c:3883
+            let mut tab = comptags.lock().unwrap();
+            if let Some(t) = tab[lvl_idx].as_mut() {
+                if t.init != 0 {                                              // c:3887
+                    t.init = 0;
+                } else if let Some(mut s) = t.sets.take() {                   // c:3889
+                    t.sets = s.next.take();                                   // c:3890
+                    freectset(Some(s));                                       // c:3892
+                }
+                if t.sets.is_some() { 0 } else { 1 }                          // c:3894
+            } else {
+                1
+            }
+        }
+        b'R' => {                                                            // c:3896
+            let tab = comptags.lock().unwrap();
+            let hit = tab[lvl_idx].as_ref()
+                .and_then(|t| t.sets.as_ref())
+                .map(|s| {
+                    s.tags.as_deref()
+                        .map_or(false, |tgs| arrcontains(tgs, &args[1], true) != 0)
+                })
+                .unwrap_or(false);
+            if hit { 0 } else { 1 }                                           // c:3900
+        }
+        b'A' => {                                                            // c:3903
+            let mut tab = comptags.lock().unwrap();
+            let Some(t) = tab[lvl_idx].as_mut() else { return 1; };
+            let Some(s) = t.sets.as_mut() else { return 1; };
+            // c:3911 — refresh ptr if tag changed.
+            if s.tag.as_deref() != Some(args[1].as_str()) {
+                s.tag = Some(args[1].clone());                                // c:3913
+                s.ptr = 0;                                                    // c:3914
+            }
+            let tags_vec = s.tags.clone().unwrap_or_default();
+            // c:3916-3925 — walk tags from ptr looking for a name match.
+            let mut found: Option<(usize, String, String)> = None;
+            for (i, q) in tags_vec.iter().enumerate().skip(s.ptr as usize) {
+                if strpfx(&args[1], q) {                                      // c:3917
+                    let l = args[1].len();
+                    let qb = q.as_bytes();
+                    if qb.len() == l {                                        // c:3918
+                        found = Some((i, q.clone(), q.clone()));
+                        break;
+                    } else if qb.len() > l && qb[l] == b':' {                 // c:3921
+                        let v = String::from_utf8_lossy(&qb[l + 1..]).into_owned();
+                        found = Some((i, q.clone(), v));
+                        break;
+                    }
+                }
+            }
+            let (q_idx, q_full, v) = match found {
+                None => {                                                     // c:3927
+                    s.tag = None;
+                    return 1;
+                }
+                Some(t) => t,
+            };
+            s.ptr = (q_idx + 1) as i32;                                       // c:3932
+            // c:3933 — `setsparam(args[2], v == '-' ? dyncat(args[1], v) : v)`.
+            let value = if v.starts_with('-') {
+                crate::ported::string::dyncat(&args[1], &v)
+            } else {
+                v.clone()
+            };
+            setsparam(&args[2], &value);
+            // c:3934 — optional 3rd arg gets the "name-up-to-`:`" of q.
+            if args.len() > 3 {
+                let pre_colon: String = q_full
+                    .splitn(2, ':').next().unwrap_or("").to_string();
+                setsparam(&args[3], &pre_colon);
+            }
+            0                                                                 // c:3942
+        }
+        b'S' => {                                                            // c:3946
+            let tab = comptags.lock().unwrap();
+            if let Some(tags) = tab[lvl_idx].as_ref()
+                .and_then(|t| t.sets.as_ref())
+                .and_then(|s| s.tags.clone())
+            {
+                setaparam(&args[1], tags);                                    // c:3951
+                0
+            } else {
+                1                                                             // c:3952
+            }
+        }
+        _ => 0,
+    }
 }
 
 /// Direct port of `bin_comptry(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Zle/computil.c:3961`.
@@ -3491,19 +5518,189 @@ pub fn bin_comptry(nam: &str, args: &[String],                               // 
     0                                                                        // c:4137
 }
 
-/// Direct port of `bin_compvalues(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from `Src/Zle/computil.c:3475`.
-/// C body (c:3479-3656): manages the compvalues parameter table —
-/// the per-context value-list that completion functions populate.
-/// Subcommands -i/-D/-C/-V/-T/-v/-d/-l etc. Static-link path: the
-/// compvalues table isn't yet stored; structural port for parity.
-/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
+/// Direct port of `static int bin_compvalues(char *nam, char **args,
+///                                              UNUSED(Options ops),
+///                                              UNUSED(int func))` from
+/// `Src/Zle/computil.c:3475-3658`. Full subcommand dispatch for
+/// `compvalues -i/-D/-C/-V/-s/-S/-d/-L/-v`. Each branch consumes
+/// `cv_laststate` populated by `cv_parse_word`.
 pub fn bin_compvalues(nam: &str, args: &[String],                            // c:3475
                       _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3482
-        zwarnnam(nam, "can only be called from completion function");        // c:3483
-        return 1;                                                            // c:3484
+    use crate::ported::params::{setsparam, setaparam, sethparam};
+    use std::sync::atomic::Ordering;
+
+    if INCOMPFUNC.load(Ordering::Relaxed) != 1 {                             // c:3479
+        zwarnnam(nam, "can only be called from completion function");
+        return 1;
     }
-    if args.is_empty() { return 0; }
-    // c:3489-3650 — full subcommand dispatch. Deferred.
-    0                                                                        // c:3653
+    if args.is_empty() { return 1; }
+    let a0 = args[0].as_bytes();
+    if a0.len() != 2 || a0[0] != b'-' {                                      // c:3483
+        zwarnnam(nam, &format!("invalid argument: {}", args[0]));
+        return 1;
+    }
+    let sub = a0[1];
+
+    if sub != b'i' && cv_parsed.load(Ordering::Relaxed) == 0 {                // c:3487
+        zwarnnam(nam, "no parsed state");
+        return 1;
+    }
+
+    let (min, max): (i32, i32) = match sub {                                 // c:3491
+        b'i' => (2, -1),
+        b'D' => (2, 2),
+        b'C' => (1, 1),
+        b'V' => (3, 3),
+        b's' => (1, 1),
+        b'S' => (1, 1),
+        b'd' => (1, 1),
+        b'L' => (3, 4),
+        b'v' => (1, 1),
+        _ => {
+            zwarnnam(nam, &format!("invalid option: {}", args[0]));
+            return 1;
+        }
+    };
+    let n = (args.len() as i32) - 1;
+    if n < min { zwarnnam(nam, "not enough arguments"); return 1; }
+    if max >= 0 && n > max { zwarnnam(nam, "too many arguments"); return 1; }
+
+    match sub {
+        b'i' => {                                                            // c:3514
+            let spec = &args[1..];
+            let _ = get_cvdef(nam, spec);
+            let mut cached: Option<Box<cvdef>> = {
+                let cache = cvdef_cache.lock().ok();
+                cache.and_then(|c| {
+                    c.iter().find_map(|slot| {
+                        slot.as_ref().filter(|e| {
+                            e.ndefs == spec.len() as i32
+                                && e.defs.as_deref().map_or(false, |d| {
+                                    d.len() == spec.len()
+                                        && d.iter().zip(spec.iter()).all(|(a, b)| a == b)
+                                })
+                        }).cloned()
+                    })
+                })
+            };
+            let Some(ref mut def) = cached else { return 1; };
+            cv_parsed.store(0, Ordering::Relaxed);                           // c:3521
+            cv_parse_word(def);                                              // c:3527
+            cv_parsed.store(1, Ordering::Relaxed);                           // c:3528
+            0
+        }
+
+        b'D' => {                                                            // c:3533
+            let arg = cv_laststate.lock().ok().and_then(|s| s.def.clone());
+            if let Some(a) = arg {
+                setsparam(&args[1], a.descr.as_deref().unwrap_or(""));       // c:3541
+                setsparam(&args[2], a.action.as_deref().unwrap_or(""));      // c:3542
+                0
+            } else {
+                1                                                            // c:3546
+            }
+        }
+
+        b'C' => {                                                            // c:3548
+            let arg = cv_laststate.lock().ok().and_then(|s| s.def.clone());
+            if let Some(a) = arg {
+                setsparam(&args[1], a.opt.as_deref().unwrap_or(""));         // c:3555
+                0
+            } else {
+                1                                                            // c:3559
+            }
+        }
+
+        b'V' => {                                                            // c:3561
+            let mut noarg: Vec<String> = Vec::new();
+            let mut arg_l: Vec<String> = Vec::new();
+            let mut opt_l: Vec<String> = Vec::new();
+            if let Ok(ls) = cv_laststate.lock() {
+                if let Some(d) = ls.d.as_ref() {
+                    let mut p = d.vals.as_deref();
+                    while let Some(v) = p {
+                        if v.active != 0 {                                   // c:3574
+                            let bucket: &mut Vec<String> = match v.r#type {
+                                t if t == CVV_NOARG => &mut noarg,
+                                t if t == CVV_ARG => &mut arg_l,
+                                _ => &mut opt_l,
+                            };
+                            let name = v.name.as_deref().unwrap_or("");
+                            let str_val = if let Some(d) = v.descr.as_deref() {
+                                format!("{}:{}", name, d)
+                            } else {
+                                name.to_string()
+                            };
+                            bucket.push(str_val);                            // c:3589
+                        }
+                        p = v.next.as_deref();
+                    }
+                }
+            }
+            setaparam(&args[1], noarg);
+            setaparam(&args[2], arg_l);
+            setaparam(&args[3], opt_l);
+            0                                                                // c:3596
+        }
+
+        b's' => {                                                            // c:3598
+            let (hassep, sep) = cv_laststate.lock().ok()
+                .and_then(|ls| ls.d.as_ref().map(|d| (d.hassep, d.sep)))
+                .unwrap_or((0, 0));
+            if hassep != 0 {
+                let tmp = (sep as u8 as char).to_string();
+                setsparam(&args[1], &tmp);
+                0                                                            // c:3608
+            } else {
+                1                                                            // c:3610
+            }
+        }
+
+        b'S' => {                                                            // c:3611
+            let argsep = cv_laststate.lock().ok()
+                .and_then(|ls| ls.d.as_ref().map(|d| d.argsep))
+                .unwrap_or(0);
+            let tmp = (argsep as u8 as char).to_string();
+            setsparam(&args[1], &tmp);
+            0                                                                // c:3620
+        }
+
+        b'd' => {                                                            // c:3621
+            let descr = cv_laststate.lock().ok()
+                .and_then(|ls| ls.d.as_ref().and_then(|d| d.descr.clone()))
+                .unwrap_or_default();
+            setsparam(&args[1], &descr);
+            0
+        }
+
+        b'L' => {                                                            // c:3626
+            let val = cv_laststate.lock().ok().and_then(|ls| {
+                ls.d.as_ref().and_then(|d| cv_get_val(d, &args[1]))
+            });
+            if let Some(v) = val {
+                if let Some(a) = v.arg.as_deref() {                          // c:3634
+                    setsparam(&args[2], a.descr.as_deref().unwrap_or(""));
+                    setsparam(&args[3], a.action.as_deref().unwrap_or(""));
+                    if args.len() > 4 {                                      // c:3638
+                        setsparam(&args[4], v.name.as_deref().unwrap_or(""));
+                    }
+                    return 0;
+                }
+            }
+            1                                                                // c:3643
+        }
+
+        b'v' => {                                                            // c:3645
+            let vals = cv_laststate.lock().ok()
+                .and_then(|ls| ls.vals.clone());
+            if let Some(v) = vals {
+                sethparam(&args[1], v);
+                0
+            } else {
+                1                                                            // c:3656
+            }
+        }
+
+        _ => 1,                                                              // c:3658
+    }
 }
