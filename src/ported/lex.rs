@@ -2499,19 +2499,30 @@ fn gettokstr(c: char, sub: bool) -> lextok {
             // context), `{` is added as a literal `{`, not tokenised
             // as Inbrace, and bct is NOT incremented.
             //
-            // c:1147 — `if (in_brace_param) cmdpush(CS_BRACE); bct++;`
+            // c:1141 — `if (!lexbuf.len && incmdpos) { add('{'); ...
+            // return STRING; }` — at command position with an empty
+            // buffer, return immediately as STRING("{") so the post-
+            // lex `reswdtab` lookup can promote it to INBRACE_TOK
+            // (the `{` keyword entry in `reswdtab`).
+            //
+            // c:1146 — `if (in_brace_param) cmdpush(CS_BRACE); bct++;`
             // — when entering a brace inside a `${...}`, push a
-            // CS_BRACE context for prompt/completion tracking.
+            // CS_BRACE context for prompt/completion tracking. C
+            // does NOT add(c) here; the `{` is silently swallowed.
             LX2_INBRACE => {
                 if (isset(IGNOREBRACES) && !cmdsubst) || sub {
                     add('{');
                 } else {
+                    if LEX_LEXBUF.with_borrow(|b| b.len) == 0 && LEX_INCMDPOS.get() {
+                        add('{');
+                        set_tok(STRING_LEX);
+                        break;
+                    }
                     if in_brace_param > 0 {
                         cmdpush(CS_BRACE as u8);
                     }
                     // Track braces for both ${...} param expansion and {...} brace expansion
                     bct += 1;
-                    add(c);
                 }
             }
 
