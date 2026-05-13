@@ -814,7 +814,8 @@ pub fn invalidate_list() -> i32 {                                            // 
     }
     // c:2349-2353 — `minfo.cur = NULL; minfo.asked = 0; …`. minfo not
     // ported as a static struct yet.
-    // c:2354 — `compwidget = NULL`. compwidget lives on Zle, not here.
+    // c:2354 — `compwidget = NULL`. The canonical `COMPWIDGET` static
+    // lives in zle_main.rs.
     nmatches_g.store(0, Ordering::SeqCst);                                   // c:2355
     if let Ok(mut g) = amatches.get_or_init(
         || std::sync::Mutex::new(Vec::new())

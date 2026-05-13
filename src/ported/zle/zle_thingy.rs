@@ -900,13 +900,12 @@ pub fn bin_zle_flags(args: &[String]) -> i32 {                               // 
 /// return 1;
 /// ```
 ///
-/// **Substrate tradeoff:** `trashzle` is a Zle method
-/// (zle_main.rs:1111) that needs the live Zle handle; the
+/// **Substrate tradeoff:** `trashzle` is a free fn at
+/// zle_main.rs:1111 that reads the file-scope ZLE statics; the
 /// `wastrashed`/`shttyinfo`/`fetchttyinfo` path is part of the
 /// active editor's tty state machine. From compcore-call-context
 /// we flag `ZLE_RESET_NEEDED` so the next zlecore tick observes
-/// the invalidation and re-enters `trashzle` directly on the live
-/// Zle struct.
+/// the invalidation and re-enters `trashzle`.
 /// Port of `bin_zle_invalidate(UNUSED(char *name), UNUSED(char **args), UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:830`.
 /// WARNING: param names don't match C — Rust=() vs C=(name, args, ops, func)
 pub fn bin_zle_invalidate() -> i32 {                                         // c:830
@@ -1089,11 +1088,12 @@ pub fn bin_zle_new(args: &[String]) -> i32 {                                 // 
 /// return 0;
 /// ```
 ///
-/// **Substrate tradeoff:** `zrefresh()` lives as `Zle::zrefresh`
-/// (zle_refresh.rs:255) on the active Zle struct. Without a Zle
-/// handle reachable here (this fn has no params), we set the
-/// `ZLE_RESET_NEEDED` flag so the next zlecore tick triggers the
-/// redraw — same observable effect as the C direct call.
+/// **Substrate tradeoff:** `zrefresh()` is a free fn in
+/// zle_refresh.rs reading the file-scope ZLE statics. To keep this
+/// bin_zle_refresh path lightweight (and to drop work to the next
+/// zlecore tick when it's available), we set the `ZLE_RESET_NEEDED`
+/// flag instead of calling `zrefresh()` directly — same observable
+/// effect as the C direct call.
 /// Port of `bin_zle_refresh(UNUSED(char *name), char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:418`.
 /// WARNING: param names don't match C — Rust=() vs C=(name, args, ops, func)
 pub fn bin_zle_refresh() -> i32 {                                            // c:418

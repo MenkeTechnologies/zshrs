@@ -74,9 +74,9 @@ pub use crate::zle_history::{HistEntry, History};
     /// Set up history limits at ZLE startup.
     /// Stub mirroring the role of `inithist()` from Src/hist.c:1717,
     /// which sizes the global hist_ring at $HISTSIZE. zshrs's history
-    /// lives on `Zle::history` (constructed in `Zle::new`); this method
-    /// is kept for API compatibility — callers can adjust max_size
-    /// post-construction if needed.
+    /// lives in the file-scope `HISTORY` static (zle_main.rs); this
+    /// helper is kept for API compatibility — callers can adjust
+    /// max_size at init if needed.
     pub fn init_history(max_size: usize) {
         let _ = max_size;
     }
@@ -224,7 +224,7 @@ pub use crate::zle_history::{HistEntry, History};
 
     /// Walk one entry older through the externally-supplied History.
     /// External-history overload of the widget-callable
-    /// `Zle::zle_goto_hist(-1, false)` — kept for callers that drive a
+    /// `zle_goto_hist(-1, false)` — kept for callers that drive a
     /// separate History instance. Port of `uphistory()` at
     /// Src/Zle/zle_hist.c:233 (the live-buffer save matches the C
     /// source's first-navigate-saves-original behaviour).
@@ -245,7 +245,7 @@ pub use crate::zle_history::{HistEntry, History};
 
     /// Walk one entry newer; if past the last entry, restore the saved
     /// pre-navigation line.
-    /// External-history overload of `Zle::zle_goto_hist(1, false)`.
+    /// External-history overload of `zle_goto_hist(1, false)`.
     /// Port of `downhistory(UNUSED(char **args))` at Src/Zle/zle_hist.c:434 with the
     /// saved-line restore from zle_goto_hist's sentinel branch.
     pub fn history_down(hist: &mut History) {

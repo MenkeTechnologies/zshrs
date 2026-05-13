@@ -138,8 +138,9 @@ pub static AMENU: AtomicI32 = AtomicI32::new(0);                             // 
 // `CompletionState` struct deleted — Rust-invented state container
 // with no C counterpart. C uses file-static globals (`compcontext`,
 // `compfunc`, `usemenu`, `useglob`, brbeg/brend, etc.) for the same
-// data, not a passed struct. The Rust port's `impl Zle` methods
-// that took `&mut CompletionState` (complete_word/menu_complete/
+// data, not a passed struct. The Rust port's old `impl Zle` methods
+// (since dissolved into free fns) that took `&mut CompletionState`
+// (complete_word/menu_complete/
 // reverse_menu_complete/expand_or_complete/expand_or_complete_prefix/
 // list_choices/delete_char_or_list/accept_and_menu_complete + their
 // do_complete/apply_completion/get_word_bounds/try_expand/do_expansion/
