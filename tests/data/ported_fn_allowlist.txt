@@ -1279,3 +1279,6 @@ yank_pop
 setup_emacs_keymap   # WARNING: NOT IN ZLE_KEYMAP.C — Rust-only factoring of zsh's inlined default_bindings() body (Src/Zle/zle_keymap.c:124)
 setup_viins_keymap   # WARNING: NOT IN ZLE_KEYMAP.C — Rust-only factoring of zsh's inlined default_bindings() body (Src/Zle/zle_keymap.c:124)
 setup_vicmd_keymap   # WARNING: NOT IN ZLE_KEYMAP.C — Rust-only factoring of zsh's inlined default_bindings() body (Src/Zle/zle_keymap.c:124)
+errno_get            # WARNING: NOT IN OPENSSH_BSD_SETRES_ID.C — Rust-only errno read; C reads errno directly
+errno_set            # WARNING: NOT IN OPENSSH_BSD_SETRES_ID.C — Rust-only errno write; dispatches __errno_location/__error per target_os
+errno_str            # WARNING: NOT IN OPENSSH_BSD_SETRES_ID.C — Rust-only error-string formatter; C uses strerror
