@@ -148,6 +148,26 @@ schedcmds_lock
 schedcmdtimed_lock
 checksched_thunk
 
+# zle_thingy.rs — `listwidgets()` / `getwidgettarget()` are
+# THINGYTAB readers replacing the deleted `ZleManager.list_widgets()`
+# / `ZleManager.get_widget()` Rust-only accessors. They power
+# `${widgets[name]}` / `${widgets[@]}` parameter expansion in
+# exec.rs / fusevm_bridge.rs. C zsh implements the same lookup
+# inline in `zleparameter.c::widget_module_get_*` magic-assoc
+# handlers — no single C fn to rename to.
+listwidgets
+getwidgettarget
+
+# widget.rs — `find_word_start` / `find_word_end` are vi word-motion
+# helpers extracted from the bodies of vi-* widgets in
+# `Src/Zle/zle_vi.c`. C inlines the same logic at each widget body;
+# the Rust port factors them out so zle_vi.rs's six vi-style cursor
+# motion entries (viforwardword, vibackwardword, etc.) share one
+# implementation. Same factoring pattern as pattern.rs / glob.rs
+# helpers above.
+find_word_start
+find_word_end
+
 # curses.rs — Rust-only helpers in the faithful port of
 # Src/Modules/curses.c. C dereferences libncurses globals directly
 # (`stdscr`, `LINES`, `COLS`, internal window list); Rust port

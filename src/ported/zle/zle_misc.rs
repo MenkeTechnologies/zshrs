@@ -30,7 +30,7 @@ use crate::zsh_h::isset;
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::extensions::widget::*;
+use crate::ported::zle::zle_h::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
@@ -1968,13 +1968,10 @@ pub fn whatcursorposition() -> i32 {                            // c:851
 
 /// Port of `yankpop(UNUSED(char **args))` from Src/Zle/zle_misc.c:728.
 pub fn yankpop() -> i32 {                                       // c:728
-    use crate::ported::zle::widget::WidgetFlags;
     // c:730-735 — `if (!(lastcmd & ZLE_YANK) || !kring || !kctbuf)
     //               return 1`.
-    let last = WidgetFlags::from_bits_truncate(
-        crate::ported::zle::zle_main::LASTCMD.load(std::sync::atomic::Ordering::SeqCst),
-    );
-    if !last.contains(WidgetFlags::YANK) || crate::ported::zle::zle_main::KILLRING.lock().unwrap().is_empty() {
+    let last = crate::ported::zle::zle_main::LASTCMD.load(std::sync::atomic::Ordering::SeqCst) as i32;
+    if (last & ZLE_YANK) == 0 || crate::ported::zle::zle_main::KILLRING.lock().unwrap().is_empty() {
         return 1;
     }
     // C body cycles the kill ring index `kct` and re-inserts the

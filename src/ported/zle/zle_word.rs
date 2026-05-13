@@ -59,7 +59,6 @@ use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL,
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::extensions::widget::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
@@ -847,6 +846,120 @@ pub fn transposewords(_args: &[String]) -> i32 {          // c:652
     if neg { crate::ported::zle::zle_main::ZLECS.store(ocs, std::sync::atomic::Ordering::SeqCst); }                                          // c:731-732
     else { crate::ported::zle::zle_main::ZLECS.store(p4, std::sync::atomic::Ordering::SeqCst); }                                             // c:734
     0
+}
+
+// ---------------------------------------------------------------------------
+// Rust-only word-motion helpers — vi-style word boundary lookups.
+// C has separate widget bodies per (style × direction) in zle_word.c /
+// zle_vi.c; the Rust port factors them into one helper parameterised by
+// WordStyle so zle_vi.rs's six vi-style motion entries share the impl.
+// Allowlisted alongside the pattern.rs / glob.rs extracted-helper
+// precedent in tests/data/ported_fn_allowlist.txt.
+// ---------------------------------------------------------------------------
+
+/// Word style for `find_word_start` / `find_word_end`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WordStyle {
+    Emacs,
+    Vi,
+    Shell,
+    BlankDelimited,
+}
+
+/// Find the start of the current (or preceding) word at the cursor for
+/// the requested word style.
+pub fn find_word_start(style: WordStyle) -> usize {
+    let mut pos = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    match style {
+        WordStyle::Emacs => {
+            while pos > 0 && { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos - 1]; !(__c.is_alphanumeric()
+                               || __c == '_') } {
+                pos -= 1;
+            }
+            while pos > 0 && { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos - 1]; (__c.is_alphanumeric()
+                              || __c == '_') } {
+                pos -= 1;
+            }
+        }
+        WordStyle::Vi => {
+            while pos > 0 && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos - 1].is_whitespace() {
+                pos -= 1;
+            }
+            if pos > 0 {
+                let is_word = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos - 1].is_alphanumeric()
+                              || crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos - 1] == '_';
+                while pos > 0 {
+                    let c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos - 1];
+                    if c.is_whitespace()
+                       || ((c.is_alphanumeric() || c == '_') != is_word) {
+                        break;
+                    }
+                    pos -= 1;
+                }
+            }
+        }
+        WordStyle::Shell => {
+            // No live callers; zle_vi.rs only invokes WordStyle::Vi /
+            // BlankDelimited. Left as a no-op until a real shell-style
+            // consumer surfaces.
+        }
+        WordStyle::BlankDelimited => {
+            while pos > 0 && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos - 1].is_whitespace() {
+                pos -= 1;
+            }
+            while pos > 0 && !crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos - 1].is_whitespace() {
+                pos -= 1;
+            }
+        }
+    }
+    pos
+}
+
+/// Find the end (exclusive) of the current (or following) word.
+pub fn find_word_end(style: WordStyle) -> usize {
+    let mut pos = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    match style {
+        WordStyle::Emacs => {
+            while pos < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos]; !(__c.is_alphanumeric()
+                                        || __c == '_') } {
+                pos += 1;
+            }
+            while pos < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos]; (__c.is_alphanumeric()
+                                       || __c == '_') } {
+                pos += 1;
+            }
+        }
+        WordStyle::Vi => {
+            if pos < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+                let is_word = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos].is_alphanumeric()
+                              || crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos] == '_';
+                while pos < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+                    let c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos];
+                    if c.is_whitespace()
+                       || ((c.is_alphanumeric() || c == '_') != is_word) {
+                        break;
+                    }
+                    pos += 1;
+                }
+                while pos < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos].is_whitespace() {
+                    pos += 1;
+                }
+            }
+        }
+        WordStyle::Shell => {
+            // See WordStyle::Shell note in find_word_start — no live
+            // callers; leave pos unchanged.
+        }
+        WordStyle::BlankDelimited => {
+            while pos < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && !crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos].is_whitespace() {
+                pos += 1;
+            }
+            while pos < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[pos].is_whitespace() {
+                pos += 1;
+            }
+        }
+    }
+    pos
 }
 
 #[cfg(test)]

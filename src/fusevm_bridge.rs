@@ -42,7 +42,7 @@ use fusevm::shell_builtins::*;
 use fusevm::Value;
 use crate::ported::zsh_h::{options, MAX_OPS};
 use std::io::BufRead;
-use crate::zle::zle;
+use crate::ported::zle::zle_thingy::getwidgettarget;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::cmp::Ordering;
 use std::fs;
@@ -2049,8 +2049,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // zleparameter.c widgets_*. Mirrors the
                     // magic_assoc_lookup path so both lookup sites
                     // agree.
-                    let zle = zle();
-                    if let Some(target) = zle.get_widget(idx) {
+                    if let Some(target) = getwidgettarget(idx) {
                         if target == idx {
                             Some(Value::str("builtin"))
                         } else {
