@@ -143,8 +143,11 @@ thread_local! {
 // wiring has a single update site (and tests can drive them
 // directly without going through the param table).
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/watch.c`.
+// WARNING: NOT IN WATCH.C — Rust-only test/setup helper that writes
+// the `WATCH` thread_local directly. C source assigns to the `watch`
+// global via `setaparam("watch", ...)` (Src/Modules/watch.c:614),
+// which routes through paramtab; this helper bypasses paramtab for
+// in-process state setup where the param path would be circular.
 /// Replace the `$watch` array contents.
 pub fn set_watch_list(list: Vec<String>) {
     WATCH.with(|w| *w.borrow_mut() = list);
