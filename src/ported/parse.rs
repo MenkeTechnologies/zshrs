@@ -275,7 +275,7 @@ use crate::zsh_h::{
     CS_ERRPIPE, CS_FOR, CS_FOREACH, CS_FUNCDEF, CS_IF, CS_IFTHEN, CS_PIPE, CS_REPEAT, CS_SELECT,
     CS_SUBSH, CS_UNTIL, CS_WHILE, EF_RUN, WCB_ARITH, WCB_ASSIGN, WCB_CASE, WCB_CURSH, WCB_END,
     WCB_FOR, WCB_FUNCDEF, WCB_IF, WCB_LIST, WCB_PIPE, WCB_REDIR, WCB_REPEAT, WCB_SELECT,
-    WCB_SUBLIST, WCB_SUBSH, WCB_TIMED, WCB_TRY, WCB_WHILE, WC_ASSIGN_ARRAY, WC_ASSIGN_INC,
+    WCB_SUBLIST, WCB_SUBSH, WCB_TIMED, WCB_TRY, WCB_TYPESET, WCB_WHILE, WC_ASSIGN_ARRAY, WC_ASSIGN_INC,
     WC_ASSIGN_NEW, WC_ASSIGN_SCALAR, WC_CASE_AND, WC_CASE_HEAD, WC_CASE_OR, WC_CASE_TESTAND,
     WC_FOR_COND, WC_FOR_LIST, WC_FOR_PPARAM, WC_IF_HEAD, WC_IF_IF, WC_PIPE_END, WC_PIPE_LINENO,
     WC_PIPE_MID, WC_REDIR_WORDS, WC_SELECT_LIST, WC_SELECT_PPARAM, WC_SUBLIST_AND, WC_SUBLIST_END,
@@ -2962,7 +2962,12 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
     // c:1923 — `p = ecadd(WCB_SIMPLE(0));`
     let mut p = ecadd(WCB_SIMPLE(0));
 
-    // c:1924-2105 — main words loop.
+    // c:1924-2105 — main words loop. is_typeset tracks whether the
+    // outer command was `typeset`/`export`/etc. so the final
+    // placeholder gets WCB_TYPESET instead of WCB_SIMPLE.
+    let mut is_typeset = false;
+    let mut postassigns: u32 = 0;
+    let mut ppost: usize = 0;
     loop {
         match tok() {
             STRING_LEX | TYPESET => {
@@ -2972,6 +2977,7 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 // c:1931-1932 — TYPESET → intypeset = is_typeset = 1.
                 if tok() == TYPESET {
                     set_intypeset(true);
+                    is_typeset = true;
                 }
                 let s = tokstr().unwrap_or_default();
                 ecstr(&s);
@@ -2979,18 +2985,65 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 isnull = false;
                 zshlex();
             }
+            ENVSTRING => {
+                // c:2005-2026 — mid-cmd ENVSTRING (under intypeset
+                // context). Emits WCB_ASSIGN(SCALAR, NEW, 0) then
+                // ecstr(name) + ecstr(value), tracking the first
+                // postassign offset in `ppost` (which the trailing
+                // WCB_TYPESET header points to).
+                if postassigns == 0 {
+                    ppost = ecadd(0);
+                }
+                postassigns += 1;
+                let raw = tokstr().unwrap_or_default();
+                let bytes: Vec<char> = raw.chars().collect();
+                let mut idx = 0usize;
+                while idx < bytes.len() {
+                    let ch = bytes[idx];
+                    if ch == '\u{91}' /* Inbrack */ {
+                        let mut depth = 1;
+                        idx += 1;
+                        while idx < bytes.len() && depth > 0 {
+                            match bytes[idx] {
+                                '\u{91}' => depth += 1,
+                                '\u{92}' => depth -= 1,
+                                _ => {}
+                            }
+                            idx += 1;
+                        }
+                        continue;
+                    }
+                    if ch == '=' || ch == '+' || ch == '\u{8d}' /* Equals */ {
+                        break;
+                    }
+                    idx += 1;
+                }
+                let name: String = bytes[..idx].iter().collect();
+                let str_off = if idx < bytes.len() && (bytes[idx] == '=' || bytes[idx] == '\u{8d}') {
+                    idx + 1
+                } else {
+                    idx
+                };
+                let value: String = bytes[str_off..].iter().collect();
+                ecadd(WCB_ASSIGN(WC_ASSIGN_SCALAR, WC_ASSIGN_NEW, 0));
+                ecstr(&name);
+                ecstr(&value);
+                isnull = false;
+                zshlex();
+            }
             t if IS_REDIROP(t) => {
                 // c:1999-2010 — `nrediradd = par_redir(&r, NULL);
                 // p += nrediradd; if (ppost) ppost += nrediradd;
-                // sr += nrediradd;` — every redir insert at `r`
-                // shifts the WCB_SIMPLE placeholder DOWN by ncodes,
-                // so `p` must bump in lockstep.
+                // sr += nrediradd;`
                 cmplx_set(true);
                 let added = par_redir_wordcode(&mut r);
                 if added == 0 {
                     break;
                 }
                 p += added as usize;
+                if ppost != 0 {
+                    ppost += added as usize;
+                }
                 sr += added;
             }
             _ => break,
@@ -3004,11 +3057,33 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
         ECUSED.set(p as i32);
         return 0;
     }
-    // c:2177-2178 — `ecbuf[p] = WCB_SIMPLE(argc);` — patch the
-    // placeholder with the actual arg count.
+    // c:2186-2187 — `incmdpos = 1; intypeset = 0;` — reset before
+    // the placeholder patch so the next-token lex doesn't carry
+    // typeset/incond state.
+    set_incmdpos(true);
+    set_intypeset(false);
+    // c:2189-2199 — `if (!isfunc) { if (is_typeset) ecbuf[p] =
+    // WCB_TYPESET(argc); else ecbuf[p] = WCB_SIMPLE(argc); }`.
+    // The WCB_TYPESET header is followed by either a postassigns
+    // count at `ppost` (when assignments were emitted) or a
+    // trailing 0 word.
+    let header = if is_typeset {
+        if postassigns > 0 {
+            ECBUF.with_borrow_mut(|b| {
+                if ppost < b.len() {
+                    b[ppost] = postassigns;
+                }
+            });
+        } else {
+            ecadd(0);
+        }
+        WCB_TYPESET(argc)
+    } else {
+        WCB_SIMPLE(argc)
+    };
     ECBUF.with_borrow_mut(|b| {
         if p < b.len() {
-            b[p] = WCB_SIMPLE(argc);
+            b[p] = header;
         }
     });
     1 + sr
