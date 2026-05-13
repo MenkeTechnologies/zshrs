@@ -579,7 +579,7 @@ pub fn bin_private(nam: &str, args: &[String],                               // 
     // c:225-230 — `if (!OPT_ISSET(ops, 'P'))` straight-through to bin_typeset.
     if !OPT_ISSET(ops, b'P') {                                                // c:225
         FAKELEVEL.store(0, Ordering::Relaxed);                                // c:226
-        from_typeset = bin_typeset(nam, args, assigns, ops, func);       // c:227
+        from_typeset = crate::ported::builtin::bin_typeset(nam, args, ops, func);       // c:227
         FAKELEVEL.store(ofake, Ordering::Relaxed);                            // c:228
         return from_typeset;                                                  // c:229
     }
@@ -596,7 +596,7 @@ pub fn bin_private(nam: &str, args: &[String],                               // 
         if warn {                                                             // c:236
             zwarnnam(nam, "invalid local scope, using globals");              // c:237
         }
-        return bin_typeset("private", args, assigns, ops, func);         // c:238
+        return crate::ported::builtin::bin_typeset("private", args, ops, func);         // c:238
     }
 
     // c:241-242 — `if (!(OPT_ISSET(ops,'m') || OPT_ISSET(ops,'+'))) ops->ind['g'] = 2;`
@@ -607,7 +607,7 @@ pub fn bin_private(nam: &str, args: &[String],                               // 
     if OPT_ISSET(ops, b'p') || OPT_ISSET(ops, b'm')                           // c:243
         || (!hasargs && OPT_ISSET(ops, b'+'))
     {
-        return bin_typeset("private", args, assigns, ops, func);         // c:245
+        return crate::ported::builtin::bin_typeset("private", args, ops, func);         // c:245
     }
 
     // c:248-256 — queue_signals + startparamscope + bin_typeset + scan + endparamscope.
@@ -626,7 +626,7 @@ pub fn bin_private(nam: &str, args: &[String],                               // 
             printnode: None, scantab: None,
         }));
     crate::ported::params::startparamscope(&mut paramscope_buf);              // c:250
-    from_typeset = bin_typeset("private", args, assigns, ops, func);     // c:251
+    from_typeset = crate::ported::builtin::bin_typeset("private", args, ops, func);     // c:251
     // c:252 — `scanhashtable(paramtab, 0, 0, 0, makeprivate, 0);` —
     // walks paramtab calling makeprivate on each entry to promote
     // assignments made during bin_typeset. The typed paramtab walk
@@ -638,19 +638,6 @@ pub fn bin_private(nam: &str, args: &[String],                               // 
 
     let mpe = MAKEPRIVATE_ERROR.load(Ordering::Relaxed);
     mpe | from_typeset                                                        // c:257
-}
-
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/param_private.c`.
-/// Local C-faithful re-declaration of `bin_typeset()` from
-/// `Src/builtin.c:2655` so the intra-module call from `bin_private`
-/// has a concrete callee. The full body lives in
-/// `src/ported/builtin.rs` (typeset_single + the surrounding shape
-/// dispatch); this thin shim returns 0 until the typed wireup lands.
-fn bin_typeset(_nam: &str, _args: &[String],                                 // c:2655 (Src/builtin.c)
-               _assigns: &mut Vec<(String, String)>,
-               _ops: &mut crate::ported::zsh_h::options, _func: i32) -> i32 {
-    0
 }
 
 /// `PM_WAS_UNSET` / `PM_WAS_RONLY` — file-scope `#define` aliases

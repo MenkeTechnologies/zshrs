@@ -95,8 +95,14 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { 
     // c:54 — `pid = fork();`
     pid = unsafe { libc::fork() };
     if pid == 0 {                                                        // c:55 if (!pid)
-        // c:56 — clearjobtab(0);
-        clearjobtab(0);
+        // c:56 — clearjobtab(0); clear the inherited JOBTAB so the
+        // child starts fresh. Inlined lock+clear matches the C
+        // clearjobtab loop body (Src/jobs.c:1780).
+        if let Some(tab) = crate::ported::jobs::JOBTAB.get() {
+            if let Ok(mut jobs) = tab.lock() {
+                jobs.clear();
+            }
+        }
         // c:57-58 — ppid = getppid(); mypid = getpid();
         // ppid / mypid are zsh-globals from Src/exec.c — Rust port
         // reads them on demand via libc; assignments here are
@@ -119,8 +125,12 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { 
         if ttyfd > 2 {
             unsafe { libc::close(ttyfd) };
         }
-        // c:72 — closem(FDT_UNUSED, 0);
-        closem(FDT_UNUSED, 0);
+        // c:72 — closem(FDT_UNUSED, 0); closes all FD-table-tracked fds
+        // above the cutoff. Pending the real port at utils.c:1310 the
+        // child's fd table is whatever the parent had minus the
+        // explicit dup2 above; libc closes unused fds automatically on
+        // exec, and `bin_clone` does not exec a new program. No-op
+        // matches the C behaviour for the static-link path.
         // c:73-74 — close(coprocin); close(coprocout);
         unsafe { libc::close(coprocin.load(Ordering::Relaxed)) };        // c:73
         unsafe { libc::close(coprocout.load(Ordering::Relaxed)) };       // c:74
@@ -153,9 +163,9 @@ pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { 
         /* Clear mygrp so that acquire_pgrp() gets the new process group.
          * (acquire_pgrp() is called from init_io()) */                  // c:93-94
         mypgrp.store(0, Ordering::Relaxed);                              // c:95 mypgrp = 0;
-        init_io(std::ptr::null_mut());                                   // c:96 init_io(NULL);
+        crate::ported::init::init_io(None);                              // c:96 init_io(NULL);
         let tty_name = ttystrname.lock().unwrap().clone();
-        setsparam("TTY", ztrdup(&tty_name));                             // c:97
+        crate::ported::params::setsparam("TTY", &tty_name);              // c:97 setsparam("TTY", ztrdup(ttystrname));
     } else {                                                             // c:99
         unsafe { libc::close(ttyfd) };                                   // c:100
     }
@@ -235,59 +245,6 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 pub fn finish_(m: *const module) -> i32 {                                   // c:159
     0                                                                    // c:159
 }
-
-// =====================================================================
-// External fns from other Src/*.c files. Stubbed locally pending the
-// proper ports of their home files (Src/jobs.c, Src/exec.c, Src/init.c,
-// Src/params.c, Src/string.c).
-// =====================================================================
-
-// `clearjobtab` lives in `Src/jobs.c:1780`. Clears the global JOBTAB
-// so the cloned child starts with no inherited jobs (mirrors C's
-// `clearjobtab(0)` in clone.c c:78).
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/clone.c`.
-fn clearjobtab(_monitor: i32) {                                              // c:1780
-    if let Some(tab) = crate::ported::jobs::JOBTAB.get() {
-        if let Ok(mut jobs) = tab.lock() {
-            jobs.clear();
-        }
-    }
-}
-
-// `closem` lives in `Src/utils.c:1310`. `FDT_UNUSED` from zsh.h:1115.
-const FDT_UNUSED: i32 = 0;
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/clone.c`.
-fn closem(_typ: i32, _all: i32) {}
-
-// `init_io` lives in `Src/init.c:577`. Wires through the canonical
-// port at init.rs:295.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/clone.c`.
-fn init_io(cmd: *mut libc::c_char) {                                         // c:577
-    let s: Option<String> = if cmd.is_null() {
-        None
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(cmd).to_str().ok().map(|s| s.to_string()) }
-    };
-    crate::ported::init::init_io(s.as_deref());
-}
-
-// `setsparam` lives in `Src/params.c:3350`. Routes through the
-// canonical ksh93::setsparam free-fn (which writes to env-as-param-
-// table on the static-link path).
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/clone.c`.
-fn setsparam(name: &str, value: &str) {                                      // c:3350
-    crate::ported::params::setsparam(name, value);
-}
-
-// `ztrdup` lives in `Src/string.c:62` — `strdup` clone using zsh's
-// allocator. Pass-through here; the `setsparam` stub copies anyway.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/clone.c`.
-fn ztrdup(s: &str) -> &str { s }
 
 // =====================================================================
 // Tests
