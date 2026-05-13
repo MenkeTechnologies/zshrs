@@ -38,7 +38,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// Port of C `struct eccstr` (zsh.h:836) — the long-string dedup BST
 /// node. The dedup-walk and cmp logic in `ecstrcode` is faithful to
 /// parse.c:447-453 including the conditional cmp chain
-/// (nfunc → hashval → strcmp), so corpus inputs where C's tree-walk
+/// (nfunc → hashval → strcmp), so corpus inputs where C's eccstr BST walk
 /// finds-or-misses match get the same outcome on the Rust side.
 struct EccstrNode {
     left: Option<Box<EccstrNode>>,
@@ -309,15 +309,14 @@ const MAX_RECURSION_DEPTH: usize = 500;
 /// Wordcode / Eccstr / `struct heredocs` types — that port is unused
 /// today and will become authoritative when Phase 9b (PORT_PLAN.md)
 /// wires wordcode emission. This local version uses the working-set
-/// shapes (Vec<HereDoc>, stubbed wordcode fields) suited to zshrs's
+/// shapes (`Vec<HereDoc>`, stubbed wordcode fields) suited to zshrs's
 /// pre-wordcode AST architecture; the consolidation happens in P9b.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Default, Clone)]
 pub struct parse_stack {
     // ── Direct port of struct parse_stack at zsh.h:3099-3109 ──
-    /// Pending heredocs awaiting body collection. C: `struct heredocs
-    /// *hdocs` (zsh.h:3100). zshrs uses Vec<HereDoc> until Phase 9b
-    /// (PORT_PLAN.md) reinstates C's linked-list shape.
+    /// Pending heredocs awaiting body collection. C: `struct heredocs *hdocs` (zsh.h:3100).
+    /// zshrs uses `Vec<HereDoc>` until Phase 9b (PORT_PLAN.md) reinstates C's linked-list shape.
     pub hdocs: Vec<HereDoc>,
     /// C: `int incmdpos` (zsh.h:3102).
     pub incmdpos: bool,

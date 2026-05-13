@@ -1,8 +1,8 @@
 //! Shell executor state for zshrs.
 //!
-//! **Not a port of Src/exec.c.** zshrs replaces zsh's tree-walking
-//! interpreter (`execlist` / `execpline` / `execcmd`) with a fusevm
-//! bytecode VM; the actual VM bridge lives in `src/fusevm_bridge.rs`.
+//! **Not a port of Src/exec.c.** C zsh runs compiled programs on the native
+//! **wordcode VM** in `Src/exec.c` (`execlist` / `execpline` / `execcmd`).
+//! zshrs uses fusevm bytecode instead; the bridge lives in `src/fusevm_bridge.rs`.
 //! This file holds:
 //! - `ShellExecutor` — the runtime state struct that the VM and
 //!   every ported builtin/utility threads through
@@ -3003,9 +3003,8 @@ impl ShellExecutor {
         }
         0
     }
-    // Stubs deleted — these were leftover from the old `Src/exec.c`
-    // tree-walking interpreter port that the fusevm bytecode VM
-    // replaced. Each was a `{ 0 }` / `{ None }` / `{ false }` no-op
+    // Stubs deleted — these were leftover from an old zshrs port aligned to
+    // `Src/exec.c` before fusevm replaced that path. Each was a `{ 0 }` / `{ None }` / `{ false }` no-op
     // pretending to implement a builtin while silently succeeding.
     // Removed: builtin_pushd, builtin_popd, builtin_history,
     // builtin_unalias, builtin_unfunction, builtin_autoload,

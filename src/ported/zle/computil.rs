@@ -1069,10 +1069,10 @@ pub fn cd_init(nam: &str, hide: &str, mlen: &str, sep: &str,                 // 
 /// `Src/Zle/computil.c:614-841`. Pops the next `cdrun` off
 /// `cd_state.runs` and emits its match/display arrays + per-run
 /// compadd options into the four named params:
-///   params[0] = csl ("" or "packed")
-///   params[1] = opts (compadd flags)
-///   params[2] = mats (match strings)
-///   params[3] = dpys (display strings)
+///   `params[0]` = csl ("" or "packed")
+///   `params[1]` = opts (compadd flags)
+///   `params[2]` = mats (match strings)
+///   `params[3]` = dpys (display strings)
 /// Returns 1 when no runs remain, 0 otherwise.
 pub fn cd_get(params: &[String]) -> i32 {                                    // c:614
     use crate::ported::params::{setsparam, setaparam};

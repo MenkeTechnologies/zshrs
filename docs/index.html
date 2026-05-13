@@ -117,7 +117,7 @@
             <span class="sep">/</span>
             <a href="https://docs.rs/zshrs" target="_blank" rel="noopener noreferrer">docs.rs</a>
           </nav>
-          <p class="docs-build-line">zshrs v0.10.9 · Anti-fork architecture · 23 coreutils builtins · VM-executed parallel · Bytecode caching · JIT · <a href="reference.html" style="color: var(--cyan);">Full reference</a> · <a href="daemon-report.html" style="color: var(--cyan);">Daemon impl map</a></p>
+          <p class="docs-build-line">zshrs v0.11.4 · Anti-fork architecture · 23 coreutils builtins · VM-executed parallel · Bytecode caching · JIT · <a href="reference.html" style="color: var(--cyan);">Full reference</a> · <a href="daemon-report.html" style="color: var(--cyan);">Daemon impl map</a></p>
         </div>
         <div class="tutorial-toolbar">
           <button type="button" class="btn btn-secondary" id="btnTheme" title="Toggle light/dark">Theme</button>
@@ -203,6 +203,16 @@
             Cranelift JIT for hot blocks. Shared substrate with stryke
             so a shell and a scripting language ride the same value
             representation.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Zsh grammar introspection to stdout</h4>
+            <p>First shell to emit, in canonical diffable formats, zsh&rsquo;s
+            lexer token stream, wordcode (<code>Eprog</code>) layout, and a
+            structured parser AST (S-expression) &mdash; the <code>zshrs</code>
+            binary (<code>--dump-tokens</code>, <code>--dump-wordcode</code>,
+            <code>--dump-ast</code>) and the matching <code>zshrs_dump</code>
+            loadable module (<code>dumptokens</code>, <code>dumpwordcode</code>).
+            Stock zsh does not ship this trio as a user-facing pipeline.</p>
           </div>
           <div class="cat-card">
             <h4>Persistent worker thread pool</h4>
@@ -475,7 +485,7 @@
           <li><strong><code>src/recorder/</code> &mdash; 1 file, feature-gated.</strong> Every symbol <code>#[cfg(feature = "recorder")]</code>; deleted by rustc when the feature is off. Compiled into the separate <code>zshrs-recorder</code> binary, never the default <code>zshrs</code> build.</li>
           <li><strong><code>src/zsh/</code> &mdash; vendored upstream.</strong> Read-only reference. The C spec; never modified.</li>
         </ul>
-        <p>Lexer + parser ports live in <code>src/ported/lex.rs</code> and <code>src/ported/parse.rs</code> (no separate <code>parse/</code> crate). Workspace siblings: <code>daemon/</code> (41 files, <code>zshrs-daemon</code>), <code>compsys/</code> (27 files, completion-system rkyv mmap + zstyle), <code>fish/</code> (157 files, fish-style reader/highlighter/abbreviations), <code>bins/</code> (3 entry points: <code>zshrs</code>, <code>zshrs-recorder</code> with <code>required-features = ["recorder"]</code>, <code>zd</code> with <code>required-features = ["zd"]</code>). 413 <code>.rs</code> files total &middot; 371,790 Rust LOC (<code>git ls-files '*.rs' | xargs wc -l</code>, 2026-05-12).</p>
+        <p>Lexer + parser ports live in <code>src/ported/lex.rs</code> and <code>src/ported/parse.rs</code> (no separate <code>parse/</code> crate). Workspace siblings: <code>daemon/</code> (41 files, <code>zshrs-daemon</code>), <code>compsys/</code> (27 files, completion-system rkyv mmap + zstyle), <code>fish/</code> (157 files, fish-style reader/highlighter/abbreviations), <code>bins/</code> (3 entry points: <code>zshrs</code>, <code>zshrs-recorder</code> with <code>required-features = ["recorder"]</code>, <code>zd</code> with <code>required-features = ["zd"]</code>). 411 <code>.rs</code> files total &middot; 380,523 Rust LOC (<code>git ls-files '*.rs' | xargs wc -l</code>, 2026-05-13).</p>
       </section>
 
       <!-- ════════════════════════════════════════════════════════════ -->

@@ -12,7 +12,7 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
 
 ---
 
-## Progress Summary (updated 2026-05-12)
+## Progress Summary (updated 2026-05-13)
 
 | Phase | Total Items | Done | Remaining |
 |-------|-------------|------|-----------|
@@ -638,7 +638,7 @@ These three move to Phase 3 (bucket-2 holders) — promote to
 **End of Phase 1:**
 
 - [x] `python3 scripts/gen_port_report.py` — refreshed
-      `docs/port_report.html` (2026-05-12: 4,665 rows, 2,363 ported)
+      `docs/port_report.html` (2026-05-13: 4,757 rows, 2,392 ported)
 - [x] `python3 scripts/match_or_warn_modules.py` — zero new
       WARNINGs from Phase 1 edits (pre-existing uncommitted WARNINGs
       in unrelated files are not Phase 1 work)
@@ -801,7 +801,7 @@ identity).
 **End of Phase 2:**
 
 - [x] `python3 scripts/gen_port_report.py` — refreshed
-      `docs/port_report.html` (2026-05-12)
+      `docs/port_report.html` (2026-05-13)
 - [x] `python3 scripts/match_or_warn_modules.py` — zero new
       WARNINGs from Phase 2 verification (no code changes in
       Phase 2 — the work was already done; only the plan checkboxes
@@ -864,7 +864,7 @@ parity-preserving choice when threading forces shared mutation.
 **End of Phase 3:**
 
 - [x] `python3 scripts/gen_port_report.py` — refreshed
-      `docs/port_report.html` (2026-05-12: 4,665 rows, 2,363 ported)
+      `docs/port_report.html` (2026-05-13: 4,757 rows, 2,392 ported)
 - [x] `python3 scripts/match_or_warn_modules.py` — zero new
       WARNINGs from Phase 3 storage-primitive promotions
 - [x] `cargo build --lib` green

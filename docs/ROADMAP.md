@@ -220,7 +220,7 @@ Per `AOT_DESIGN.md` §0x13 "Daemon as session-persistent supervisor".
 ## Phase I — Storage durability (endgame schema)
 
 ### I1 — Bytecode chunk format versioning
-- Prepend version byte (currently `0x10` for v0.10.0 fusevm format) to every serialized chunk in SQLite.
+- Prepend a monotonic **chunk format version byte** to every serialized bytecode blob in SQLite (value defined alongside the emitter in the pinned `fusevm` release — see workspace `Cargo.toml`).
 - On read: if version mismatches current, silently invalidate cache row, recompile from source on next access.
 - **Test:** write a v0.9.x-format chunk to compsys.db manually, verify zshrs gracefully rebuilds.
 - **Effort:** 1 day.
@@ -402,8 +402,8 @@ These features absorb the best of other shells. None ship before Phase G is done
 ## Today actions
 
 1. **G0 audit + lint** — sweep stops the friendly-output regression class permanently. 2 hours.
-2. **Open Phase G1 (arrays)** — the highest-leverage next move. Branch off, draft fusevm 0.10.1 with the argv-splice change, write the array test corpus first (TDD), then implement until tests pass.
-3. **Decide priority of Phase H1 dogfood** — can be started in parallel even with current array breakage by using a stripped-down `.zshrc` that avoids arrays. Surfaces more bugs sooner.
+2. **Phase G1 (arrays) — landed:** argv splice ships in the pinned fusevm series; zshrs tracks **0.12.1** (`fusevm` in root `Cargo.toml`). Next moves are assoc-edge cases + deleting `BUILTIN_EXPAND_WORD_RUNTIME` once parser coverage is complete (see `docs/TODO.md`).
+3. **Decide priority of Phase H1 dogfood** — can be started in parallel with remaining assoc / `BUILTIN_EXPAND_WORD_RUNTIME` tail work by using a stripped-down `.zshrc` that avoids the long tail of zpwr-only constructs. Surfaces more bugs sooner.
 
 ---
 
@@ -417,6 +417,6 @@ These claims appear in README/RFC but are not yet backed by reproducible benchma
 - "100-400x script startup vs bash/zsh"
 - "180+ builtins" (count needs verification)
 - "23 coreutils builtins" (verified — listed in README)
-- "129 fusevm opcodes" (count needs verification post-0.10.0)
+- "129 fusevm opcodes" (count needs verification against the pinned `fusevm` crate — see `rg '^\s*[A-Za-z_][A-Za-z0-9_]*\s*,'` / upstream docs)
 
 Phase M produces measured replacements. Until then, the README's "performance" section reads as architecture description, not benchmark report.

@@ -5,7 +5,7 @@
 //! Three public entry points:
 //!
 //! * [`zstrcmp`]: pairwise comparator (front-end to [`eltpcmp`]).
-//! * [`eltpcmp`]: the qsort callback over [`SortElt`] pairs.
+//! * [`eltpcmp`]: the qsort callback over [`sortelt`] pairs.
 //! * [`strmetasort`]: array sorter, takes optional `unmetalenp`
 //!   slice for embedded-NUL-bearing strings (matches C's 3-arg
 //!   signature exactly).

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate docs/port_report.html.
+"""Regenerate docs/port_report.html and refresh the auto-generated slice of docs/report.html.
 
 Walks zsh C sources + Rust port and produces a styled HTML report
 with the hud-static / tutorial-app look used by docs/report.html.
@@ -19,6 +19,7 @@ The output is also designed to be bot/LLM/scraper friendly:
 from __future__ import annotations
 import json
 import os, re, html, sys
+from datetime import date
 from pathlib import Path
 from collections import defaultdict
 
@@ -160,9 +161,9 @@ def expected_for(c_path: str) -> list[str]:
         return [f"src/ported/builtins/{stem}.rs"]
     if "/Zle/" in c_path:
         return [f"src/ported/zle/{stem}.rs"]
-    # The lexer and parser live in the standalone `parse` crate.
+    # Lexer + parser live in the main runtime crate under src/ported/.
     if stem in ("lex", "parse"):
-        return [f"parse/src/{stem}.rs"]
+        return [f"src/ported/{stem}.rs"]
     return [f"src/ported/{stem}.rs"]
 
 # ── Build report ─────────────────────────────────────────────────────────────
@@ -783,7 +784,167 @@ function ff(){{
 """
     OUT.write_text(html_doc)
     print(f"wrote {OUT} ({len(html_doc):,} bytes)", file=sys.stderr)
+    cov_path = ROOT / "docs" / "report.html"
+    if cov_path.exists():
+        patch_coverage_report_html(
+            cov_path,
+            by_cfile,
+            rows,
+            summary={
+                "total_rows": total,
+                "n_unported": n_unported,
+                "n_misplaced": n_misplaced,
+                "n_ported": n_ported,
+            },
+        )
     return 0
+
+
+# Core `Src/*.c` files surfaced on docs/report.html (dashboard only).
+CORE_COVERAGE_FILES: list[tuple[str, str, str]] = [
+    ("lex.c", "ported/lex.rs", "src/ported/lex.rs"),
+    ("parse.c", "ported/parse.rs", "src/ported/parse.rs"),
+    ("subst.c", "src/ported/subst.rs", "src/ported/subst.rs"),
+    ("math.c", "src/ported/math.rs", "src/ported/math.rs"),
+    (
+        "exec.c",
+        'src/exec.rs <span style="opacity:.6;">(re-exported as <code>crate::ported::exec</code>)</span>',
+        "src/exec.rs",
+    ),
+    ("params.c", "src/ported/params.rs", "src/ported/params.rs"),
+    ("pattern.c", "src/ported/pattern.rs", "src/ported/pattern.rs"),
+    ("glob.c", "src/ported/glob.rs", "src/ported/glob.rs"),
+    ("jobs.c", "src/ported/jobs.rs", "src/ported/jobs.rs"),
+    ("hist.c", "src/ported/hist.rs", "src/ported/hist.rs"),
+    ("utils.c", "src/ported/utils.rs", "src/ported/utils.rs"),
+    ("prompt.c", "src/ported/prompt.rs", "src/ported/prompt.rs"),
+    ("init.c", "src/ported/init.rs", "src/ported/init.rs"),
+    ("signals.c", "src/ported/signals.rs", "src/ported/signals.rs"),
+]
+
+
+def _line_count(path: Path) -> int:
+    try:
+        return sum(1 for _ in path.open("rb"))
+    except Exception:
+        return 0
+
+
+def patch_coverage_report_html(
+    report_path: Path,
+    by_cfile: dict,
+    rows: list[dict],
+    summary: dict[str, int] | None = None,
+) -> None:
+    """Rewrite the auto-generated slice of docs/report.html (core file table).
+
+    Keeps styling/marketing prose outside the PORT_REPORT markers untouched,
+    but replaces hard-coded per-file stats with numbers derived from the same
+    C/Rust index as port_report.html (regex C fn defs + Rust fn defs + port
+    doc mining — heuristic, not proof of behavioral parity).
+    """
+    body_parts: list[str] = []
+    sum_c = sum_r = sum_total = sum_sn = sum_rn = sum_ported = 0
+    for cf, rust_disp, rust_rel in CORE_COVERAGE_FILES:
+        rec = by_cfile.get(cf, {})
+        c_lines = int(rec.get("c_lines") or 0)
+        rust_lines = _line_count(ROOT / rust_rel)
+        file_rows = [r for r in rows if r["cfile"] == cf]
+        total = len(file_rows)
+        same_name = sum(1 for r in file_rows if r.get("rust_locs"))
+        ported = sum(1 for r in file_rows if r["status"] == "ported")
+        renamed = max(0, total - same_name)
+        ratio = (100.0 * rust_lines / c_lines) if c_lines else 0.0
+        cov_pct = (100.0 * ported / total) if total else 0.0
+        sum_c += c_lines
+        sum_r += rust_lines
+        sum_total += total
+        sum_sn += same_name
+        sum_rn += renamed
+        sum_ported += ported
+        if cov_pct >= 95:
+            bar_cls = "green"
+        elif cov_pct >= 50:
+            bar_cls = "yellow"
+        elif cov_pct > 0:
+            bar_cls = "magenta"
+        else:
+            bar_cls = "magenta"
+        st = "&#x2705;" if ported == total and total else "&#x26A0;&#xFE0F;"
+        body_parts.append(
+            '        <tr><td>'
+            f'{html.escape(cf)}</td><td>{rust_disp}</td>'
+            f'<td class="num">{c_lines:,}</td>'
+            f'<td class="num">{rust_lines:,}</td>'
+            f'<td class="num">{ratio:.1f}%</td>'
+            f'<td class="num">{total}</td>'
+            f'<td class="num">{same_name}</td>'
+            f'<td class="num">{renamed}</td>'
+            f'<td><div class="bar-wrap"><div class="bar-fill {bar_cls}" style="width:{min(100.0, cov_pct):.1f}%"></div>'
+            f'<span class="bar-pct">{cov_pct:.1f}%</span></div></td>'
+            f'<td class="status">{st}</td></tr>'
+        )
+    total_ratio = (100.0 * sum_r / sum_c) if sum_c else 0.0
+    total_cov = (100.0 * sum_ported / sum_total) if sum_total else 0.0
+    tfoot = (
+        '<tfoot><tr class="total-row">'
+        '<td colspan="2" style="font-family:\'Orbitron\',sans-serif;font-size:10px;letter-spacing:1px;">'
+        "TOTAL (core)</td>"
+        f'<td class="num">{sum_c:,}</td>'
+        f'<td class="num">{sum_r:,}</td>'
+        f'<td class="num">{total_ratio:.1f}%</td>'
+        f'<td class="num">{sum_total}</td>'
+        f'<td class="num">{sum_sn}</td>'
+        f'<td class="num">{sum_rn}</td>'
+        f'<td><div class="bar-wrap"><div class="bar-fill cyan" style="width:{min(100.0, total_cov):.1f}%"></div>'
+        f'<span class="bar-pct">{total_cov:.1f}%</span></div></td>'
+        '<td class="status" style="font-size:18px;">&#x2139;&#xFE0F;</td>'
+        "</tr></tfoot>"
+    )
+    block = (
+        "<!-- PORT_REPORT:BEGIN:CORETABLE -->\n        <tbody>\n"
+        + "\n".join(body_parts)
+        + "\n        </tbody>\n        "
+        + tfoot
+        + "\n        <!-- PORT_REPORT:END:CORETABLE -->"
+    )
+    text = report_path.read_text(encoding="utf-8", errors="replace")
+    begin = "<!-- PORT_REPORT:BEGIN:CORETABLE -->"
+    end = "<!-- PORT_REPORT:END:CORETABLE -->"
+    if begin not in text or end not in text:
+        print(f"warning: {report_path} missing PORT_REPORT markers; skipping dashboard patch", file=sys.stderr)
+        return
+    pre, rest = text.split(begin, 1)
+    _, post = rest.split(end, 1)
+    text = pre + block + post
+    if summary:
+        desc = (
+            "zshrs port/coverage dashboard. "
+            f"Indexer: {summary['total_rows']:,} unique C symbols; "
+            f"{summary['n_unported']:,} C-only, {summary['n_misplaced']:,} misplaced, "
+            f"{summary['n_ported']:,} with a Rust counterpart. "
+            f"{sum_total} symbols in the 14-file core slice (table below). "
+            "Regenerate: python3 scripts/gen_port_report.py. "
+            f"Updated {date.today().isoformat()}."
+        )
+        text, n_meta = re.subn(
+            r'(<meta\s+name="description"\s+content=")[^"]*("\s*>)',
+            lambda m: m.group(1) + html.escape(desc) + m.group(2),
+            text,
+            count=1,
+        )
+        if n_meta != 1:
+            print(f"warning: description meta replace matched {n_meta} times", file=sys.stderr)
+        text, n_card = re.subn(
+            r'(<div class="stat-card"><div class="stat-val yellow">)[^<]*(</div>\s*<div class="stat-label">C-only symbols \(index\)</div></div>)',
+            lambda m: m.group(1) + f"{summary['n_unported']:,}" + m.group(2),
+            text,
+            count=1,
+        )
+        if n_card != 1:
+            print(f"warning: C-only stat-card replace matched {n_card} times", file=sys.stderr)
+    report_path.write_text(text, encoding="utf-8")
+    print(f"patched {report_path} core table ({sum_total} C symbols indexed in core files)", file=sys.stderr)
 
 if __name__ == "__main__":
     raise SystemExit(main())

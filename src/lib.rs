@@ -165,8 +165,8 @@ pub mod recorder;
 pub use builtins::rlimits;
 
 // Top-level shell executor state + fusevm bridge glue. Not a port of
-// any single Src/*.c file — `Src/exec.c` is replaced by the fusevm
-// bytecode VM (see src/fusevm_bridge.rs).
+// any single Src/*.c file — zsh's native wordcode VM lives in `Src/exec.c`;
+// zshrs runs fusevm instead (see src/fusevm_bridge.rs).
 pub mod exec;
 
 pub use exec::ShellExecutor;
