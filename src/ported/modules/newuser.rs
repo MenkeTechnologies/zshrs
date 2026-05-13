@@ -79,8 +79,9 @@ pub fn check_dotfile(dotdir: &str, fname: &str) -> i32 {                 // c:58
 /// ```
 #[allow(unused_variables)]
 pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:4
-    // c:70 — `const char *dotdir = getsparam_u("ZDOTDIR");`
-    let mut dotdir: String = std::env::var("ZDOTDIR").unwrap_or_default();
+    // c:70 — `const char *dotdir = getsparam_u("ZDOTDIR");`. paramtab read.
+    let mut dotdir: String = crate::ported::params::getsparam("ZDOTDIR")
+        .unwrap_or_default();
 
     // c:71-78 — `const char *spaths[] = { SITESCRIPT_DIR, SCRIPT_DIR, 0 };`
     // The C source resolves these from configure-time defines; the Rust

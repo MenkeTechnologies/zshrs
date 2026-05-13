@@ -4331,8 +4331,7 @@ pub fn paramsubst(
         // mods bit 1 → modify()'s tilde-contraction iterating aval.
         if flag_d_dir {
             // c:2229
-            let home_opt = vars_get("HOME")
-                .or_else(|| std::env::var("HOME").ok());
+            let home_opt = crate::ported::params::getsparam("HOME");
             // Pull named-dirs (~name) hash into a [(name, path)]
             // sorted by path-length-descending so the LONGEST match
             // wins (zsh canonical: most-specific tilde-contraction).
@@ -4691,7 +4690,7 @@ pub fn paramsubst(
                 // Replace $HOME with `~`; replace each named-dir
                 // path with `~name`. Direct port of substnamedir.
                 let mut out = s.to_string();
-                if let Ok(home) = std::env::var("HOME") {
+                if let Some(home) = crate::ported::params::getsparam("HOME") {
                     if !home.is_empty() && out.starts_with(&home) {
                         out = format!("~{}", &out[home.len()..]);
                     }
@@ -5449,9 +5448,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
         // c:741
         if chars.len() == 1 {
             // c:748 — bare ~
-            let home = vars_get("HOME")
-                .or_else(|| std::env::var("HOME").ok())
-                .unwrap_or_default();
+            let home = crate::ported::params::getsparam("HOME").unwrap_or_default();
             return Some(home);
         }
         let nx = chars[1]; // c:741
@@ -5469,28 +5466,24 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
         // `~/...` and `~` (isend(str[1])) — bare HOME
         if isend(nx) {
             // c:748
-            let home = vars_get("HOME")
-                .or_else(|| std::env::var("HOME").ok())
-                .unwrap_or_default();
+            let home = crate::ported::params::getsparam("HOME").unwrap_or_default();
             let suffix: String = chars[1..].iter().collect();
             return Some(format!("{}{}", home, suffix));
         }
         // `~+...` — current PWD (only if isend(str[2]))
         if nx == '+' && chars.len() >= 3 && isend(chars[2]) {
             // c:752
-            let pwd = vars_get("PWD")
-                .or_else(|| std::env::var("PWD").ok())
-                .unwrap_or_default();
+            let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
             let suffix: String = chars[2..].iter().collect();
             return Some(format!("{}{}", pwd, suffix));
         }
         // `~-...` — OLDPWD (only if isend(str[2]))
         if nx == '-' && chars.len() >= 3 && isend(chars[2]) {
-            // c:755
-            let oldpwd = vars_get("OLDPWD")
-                .or_else(|| std::env::var("OLDPWD").ok())
-                .or_else(|| vars_get("PWD"))
-                .or_else(|| std::env::var("PWD").ok())
+            // c:755 — `~-` → $OLDPWD with $PWD fallback. Read both
+            //          via paramtab; OS env fallback removed (was a
+            //          fake: shell-internal $OLDPWD lives in paramtab).
+            let oldpwd = crate::ported::params::getsparam("OLDPWD")
+                .or_else(|| crate::ported::params::getsparam("PWD"))
                 .unwrap_or_default();
             let suffix: String = chars[2..].iter().collect();
             return Some(format!("{}{}", oldpwd, suffix));
@@ -5516,8 +5509,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
                     .parse()
                     .unwrap_or(0);
                 let val = if neg { -val } else { val };
-                let pwd = vars_get("PWD")
-                    .or_else(|| std::env::var("PWD").ok())
+                let pwd = crate::ported::params::getsparam("PWD")
                     .unwrap_or_default();
                 // Direct port of subst.c filesub'namptr tilde-+/- arm:
                 // dstackent(ch, val) → pwd or stack entry.
@@ -5601,9 +5593,8 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
         } else {
             cmd_part.clone()
         };
-        let path = vars_get("PATH")
-            .or_else(|| std::env::var("PATH").ok())
-            .unwrap_or_default();
+        // C: `pathprog(cmd, &fullname)` walks `path[]`. paramtab read.
+        let path = crate::ported::params::getsparam("PATH").unwrap_or_default();
         for dir in path.split(':') {
             let full = format!("{}/{}", dir, cmd);
             if std::path::Path::new(&full).exists() {
@@ -6503,7 +6494,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {  // c:4531
                     // hist.c case 'c' which calls findcmd.
                     if w.starts_with('/') || w.starts_with("./") || w.starts_with("../") {
                         Some(w.to_string()) // c:4585
-                    } else if let Ok(path) = std::env::var("PATH") {
+                    } else if let Some(path) = crate::ported::params::getsparam("PATH") {
                         let mut found = None;
                         for dir in path.split(':') {
                             let p = std::path::PathBuf::from(dir).join(w);

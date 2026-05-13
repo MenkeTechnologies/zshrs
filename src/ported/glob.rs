@@ -2170,9 +2170,10 @@ fn modifier_command(s: &str) -> String {
     if s.is_empty() || s.contains('/') {
         return s.to_string();
     }
-    let path = match std::env::var("PATH") {
-        Ok(p) => p,
-        Err(_) => return s.to_string(),
+    // C: `pathprog(s, NULL)` → walks `path[]` array (paramtab $PATH).
+    let path = match crate::ported::params::getsparam("PATH") {
+        Some(p) => p,
+        None => return s.to_string(),
     };
     for dir in path.split(':') {
         if dir.is_empty() {

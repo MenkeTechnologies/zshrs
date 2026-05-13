@@ -661,7 +661,9 @@ pub fn getpmcommand(ht: *mut HashTable, name: &str) -> Option<Param> {      // c
         } else {
             let dir = cmd.name.as_ref()
                 .and_then(|v| v.first().cloned())                            // c:232 *(cmd->u.name)
-                .unwrap_or_else(|| std::env::var("PATH").ok()
+                // C: `*(cmd->u.name)` reads first entry of $path array.
+                //     paramtab read; was OS env split.
+                .unwrap_or_else(|| crate::ported::params::getsparam("PATH")
                     .and_then(|p| p.split(':').next().map(|s| s.to_string()))
                     .unwrap_or_default());
             format!("{}/{}", dir, name)                                      // c:233-235 strcat
@@ -936,14 +938,22 @@ pub fn getpmoption(ht: *mut HashTable, name: &str) -> Option<Param> {       // c
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn getpmparameter(ht: *mut HashTable, name: &str) -> Option<Param> {    // c:99
-    // Static-link path: paramtab isn't a globally-accessible table
-    // in Rust; the executor owns var/array/assoc maps. Probe the
-    // env-var bridge as the closest stand-in: present → "scalar"
-    // (matches the most common case for env-stored params).
-    let value = if std::env::var(name).is_ok() {
-        "scalar".to_string()                                                 // c:140 type-letter table
-    } else {
-        String::new()
+    // c:99-140 — `if ((pm = (Param)paramtab->getnode2(paramtab, name)))`
+    //              then dispatch on `PM_TYPE(pm->node.flags)` for the
+    //              type-letter. paramtab is bucket-2-consolidated now.
+    use crate::ported::zsh_h::{PM_ARRAY, PM_HASHED, PM_INTEGER, PM_EFLOAT,
+        PM_FFLOAT, PM_TYPE};
+    let value = {
+        let tab = crate::ported::params::paramtab().read().unwrap();
+        tab.get(name).map(|pm| {
+            let t = PM_TYPE(pm.node.flags as u32);
+            // c:140 — type-letter table.
+            if t == PM_ARRAY    { "array".to_string() }
+            else if t == PM_HASHED  { "association".to_string() }
+            else if t == PM_INTEGER { "integer".to_string() }
+            else if t == PM_EFLOAT || t == PM_FFLOAT { "float".to_string() }
+            else { "scalar".to_string() }
+        }).unwrap_or_default()
     };
     let found = !value.is_empty();
     let pm = Box::new(crate::ported::zsh_h::param {                          // c:103 hcalloc
@@ -1297,7 +1307,9 @@ pub fn scanpmcommands(_ht: *mut HashTable, func: Option<ScanFunc>,           // 
             } else {
                 let dir = cmd.name.as_ref()
                     .and_then(|v| v.first().cloned())                        // c:269 *(cmd->u.name)
-                    .unwrap_or_else(|| std::env::var("PATH").ok()
+                    // C: `*(cmd->u.name)` — first entry of $path array.
+                    //     Read shell-side $PATH from paramtab (was OS env).
+                    .unwrap_or_else(|| crate::ported::params::getsparam("PATH")
                         .and_then(|p| p.split(':').next().map(|s| s.to_string()))
                         .unwrap_or_default());
                 format!("{}/{}", dir, name)                                  // c:271-273 strcat

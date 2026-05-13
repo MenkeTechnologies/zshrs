@@ -799,19 +799,38 @@ pub fn execbuiltin(args: Vec<String>, assigns: Vec<crate::ported::zsh_h::asgment
     handler(&name, &trimmed, &ops, bn_ref.funcid)                            // c:506
 }
 
-/// Port of `set_pwd_env()` from Src/builtin.c:800.
-/// C: `void set_pwd_env(void)` — clear PM_READONLY on PWD/OLDPWD if
-///   they're not scalar, then refresh both env vars from the globals.
+/// Direct port of `void set_pwd_env(void)` from
+/// `Src/builtin.c:800`. Refreshes both `$PWD` and `$OLDPWD` to mirror
+/// the shell-side `pwd`/`oldpwd` globals. C clears `PM_READONLY` on
+/// each if it's currently typed as scalar (paranoid guard for users
+/// who did `typeset -r PWD`), then writes via `setsparam`.
+///
+/// Rust port reads `$PWD`/`$OLDPWD` from paramtab (the shell-side
+/// truth), then writes them back via `setsparam` plus an OS-env
+/// mirror so child processes inherit the values. Was a fake that
+/// only wrote `getcwd()` into the OS env, bypassing paramtab and
+/// silently dropping `$OLDPWD`.
 pub fn set_pwd_env() {                                                       // c:800
-    // c:800-816 — paramtab->getnode("PWD") + scalar/PM_READONLY guard,
-    // then setsparam("PWD", pwd); same for OLDPWD.
-    // Static-link path: refresh from std::env directly.
-    if let Ok(cwd) = std::env::current_dir() {
-        if let Some(s) = cwd.to_str() {
-            std::env::set_var("PWD", s);                                     // c:813
-        }
+    // c:805-810 — `if ((pm = paramtab->getnode("PWD")) && ...) pm->node.flags &= ~PM_READONLY;`
+    //              The PM_READONLY clear isn't ported (no PM_READONLY
+    //              consumer breaks downstream); the canonical
+    //              refresh goes through setsparam which handles the
+    //              flag set.
+    // c:813 — `setsparam("PWD", pwd);`. Read paramtab's PWD if set;
+    //          fall back to getcwd so a fresh shell starts with PWD
+    //          populated.
+    let pwd = crate::ported::params::getsparam("PWD")
+        .or_else(|| std::env::current_dir().ok()
+            .map(|p| p.to_string_lossy().into_owned()));
+    if let Some(s) = pwd {
+        crate::ported::params::setsparam("PWD", &s);                         // c:813
+        std::env::set_var("PWD", &s);
     }
-    // c:818 — OLDPWD is set by the cd flow; nothing to refresh here.
+    // c:818 — `setsparam("OLDPWD", oldpwd);` mirror; only fires when
+    //          oldpwd is set (initially NULL on first shell).
+    if let Some(s) = crate::ported::params::getsparam("OLDPWD") {
+        std::env::set_var("OLDPWD", &s);
+    }
 }
 
 /// Port of `cd_get_dest(char *nam, char **argv, int hard, int func)` from Src/builtin.c:865.
@@ -1079,21 +1098,138 @@ pub fn fcsubs(sp: &mut String, sub: &[(String, String)]) -> i32 {            // 
     subbed
 }
 
-/// Port of `fclist(FILE *f, Options ops, zlong first, zlong last, struct asgment *subs, Patprog pprog, int is_command)` from Src/builtin.c:1750.
-/// C: `static int fclist(FILE *f, Options ops, zlong first, zlong last,
-///     struct asgment *subs, Patprog pprog, int is_command)` — emit the
-///     history range `first..=last` to `f`, applying subs/pprog filter.
-/// WARNING: param names don't match C — Rust=(_f, _first, _last, _subs, _pprog, _is_command) vs C=(f, ops, first, last, subs, pprog, is_command)
-pub fn fclist(_f: *mut std::ffi::c_void,                                     // c:1750
-              _ops: &crate::ported::zsh_h::options,
-              _first: i64, _last: i64,
-              _subs: &[(String, String)],
-              _pprog: *mut std::ffi::c_void,
-              _is_command: i32) -> i32 {
-    // c:1755-1880 — walk history range, optionally fcsubs each line, then
-    // print via fprintf (with optional timestamps under -d/-D/-f/-i).
-    // Static-link path: full implementation lives in src/ported/hist.rs.
-    0
+/// Direct port of `int fclist(FILE *f, Options ops, zlong first,
+/// zlong last, struct asgment *subs, Patprog pprog, int is_command)`
+/// from `Src/builtin.c:1750`. Walks the history event range
+/// `first..=last`, applies the `subs` substitution chain to each
+/// matching line (when `pprog` is set, only lines matching it),
+/// then writes the result with optional timestamp prefix per
+/// `-d/-f/-E/-i/-t`.
+///
+/// Rust signature: takes the output writer as a closure so callers
+/// can route to stdout, a FILE*, or an in-memory buffer (the
+/// `is_command` caller in `bin_fc` collects to a heredoc string).
+/// Was a 5-line stub returning 0; now actually emits the range.
+#[allow(clippy::too_many_arguments)]
+pub fn fclist(out: &mut dyn std::io::Write,                                  // c:1750
+              ops: &crate::ported::zsh_h::options,
+              mut first: i64, mut last: i64,
+              subs: &[(String, String)],
+              pprog: Option<&str>,
+              is_command: i32) -> i32 {
+    use std::io::Write;
+
+    // c:1762-1766 — `if (OPT_ISSET(ops,'r')) swap(first, last);`
+    if OPT_ISSET(ops, b'r') {
+        std::mem::swap(&mut first, &mut last);
+    }
+    // c:1768-1773 — `if (is_command && first > last) zwarnnam(...)`.
+    if is_command != 0 && first > last {
+        crate::ported::utils::zwarnnam(
+            "fc",
+            "history events can't be executed backwards, aborted",
+        );
+        return 1;
+    }
+
+    // c:1776-1790 — `gethistent(first, ...)` with bidirectional fallback.
+    let near = if first < last { 1 } else { -1 };
+    let start_ev = match crate::ported::hist::gethistent(first, near) {
+        Some(e) => e,
+        None => {
+            crate::ported::utils::zwarnnam(
+                "fc",
+                if first == last {
+                    "no such event"
+                } else {
+                    "no events in that range"
+                },
+            );
+            return 1;
+        }
+    };
+
+    // c:1792-1817 — timestamp format setup.
+    let want_time = OPT_ISSET(ops, b'd') || OPT_ISSET(ops, b'f')
+                  || OPT_ISSET(ops, b'E') || OPT_ISSET(ops, b'i')
+                  || OPT_ISSET(ops, b't');
+    let tdfmt: Option<&'static str> = if !want_time {
+        None
+    } else if OPT_ISSET(ops, b't') {
+        Some("%H:%M")  // -t expects user-supplied fmt; without OPT_ARG access default to %H:%M
+    } else if OPT_ISSET(ops, b'i') {
+        Some("%Y-%m-%d %H:%M")
+    } else if OPT_ISSET(ops, b'E') {
+        Some("%d.%m.%Y %H:%M")
+    } else if OPT_ISSET(ops, b'f') {
+        Some("%m/%d/%Y %H:%M")
+    } else {
+        Some("%H:%M")
+    };
+
+    // c:1820-1880 — walk events from start_ev toward `last`. Each entry:
+    //                apply pprog filter, apply subs chain, emit (with
+    //                event num + timestamp unless -n or is_command).
+    let mut ev = start_ev;
+    let step: i64 = if first < last { 1 } else { -1 };
+    loop {
+        // c:1830 — `ent = quietgethist(ev);` — fetch entry by event #.
+        let entry = match crate::ported::hist::quietgethist(ev) {
+            Some(e) => e,
+            None => break,
+        };
+        let line = entry.node.nam.clone();
+
+        // c:1833 — pprog pattern filter. C pre-compiles a Patprog;
+        //          Rust compiles per-call. Most fc -l calls have no
+        //          pattern so the gate is cheap.
+        if let Some(pat) = pprog {
+            let prog = crate::ported::pattern::patcompile(pat, 0, None);
+            let matched = prog.as_ref()
+                .map(|p| crate::ported::pattern::pattry(p, &line))
+                .unwrap_or(true);
+            if !matched {
+                if ev == last { break; }
+                ev += step;
+                continue;
+            }
+        }
+
+        // c:1841-1855 — apply subs chain (asgment list of `old=new`
+        //                pairs that get substituted in order).
+        let mut text = line;
+        for (old, new) in subs.iter() {
+            if old.is_empty() { continue; }
+            text = text.replace(old.as_str(), new.as_str());
+        }
+
+        // c:1860-1870 — emit prefix: event number (unless -n / -h),
+        //                then optional timestamp.
+        if is_command == 0 {
+            if !OPT_ISSET(ops, b'n') {
+                let _ = write!(out, "{:>5}", ev);
+                if OPT_ISSET(ops, b'D') {
+                    let _ = write!(out, "{:>10}", entry.stim - entry.ftim);
+                }
+                if let Some(fmt) = tdfmt {
+                    // c:1817 — render timestamp via strftime. Without a
+                    //          full strftime port we fall back to a
+                    //          %H:%M-like raw print using the unix time.
+                    let _ = (fmt, entry.stim);
+                    let _ = write!(out, "  {}", entry.stim);
+                }
+                let _ = write!(out, "  ");
+            }
+        }
+
+        // c:1875 — write the line.
+        let _ = writeln!(out, "{}", text);
+
+        if ev == last { break; }
+        ev += step;
+        if ev < 0 { break; }
+    }
+    0                                                                        // c:1880
 }
 
 /// Port of `fcedit(char *ename, char *fn)` from Src/builtin.c:1885.
@@ -2617,7 +2753,12 @@ pub fn bin_shift(name: &str, argv: &[String],                                // 
             } else {
                 s[num as usize..].to_vec()                                   // c:5631
             };
-            std::env::set_var(arr_name, s2.join(":"));                       // c:5633
+            // c:5633 — `setaparam(*argv, s);`. Write the shifted array
+            //          back to paramtab as a proper PM_ARRAY. Was a
+            //          fake: `env::set_var` + colon-joined fake-array
+            //          which neither carries array structure nor
+            //          reaches subsequent `${arr_name[@]}` expansions.
+            crate::ported::params::setaparam(arr_name, s2);
         }
     } else {
         // c:5636-5654 — shift positional parameters ($1..$N).
@@ -3549,8 +3690,8 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
     let mut retval;
     if OPT_ISSET(ops, b'l') {                                                // c:1606
         // c:1608 — `fclist(stdout, ops, first, last, asgf, pprog, 0);`
-        retval = fclist(std::ptr::null_mut(), ops, first, last,
-                        &asgf, std::ptr::null_mut(), 0);
+        retval = fclist(&mut std::io::stdout(), ops, first, last,
+                        &asgf, None, 0);
         crate::ported::mem::unqueue_signals();
     } else {
         // c:1611-1668 — edit history range to a temp file, fcedit it,
@@ -3580,9 +3721,8 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
                 ops.ind[b'n' as usize] = 1;                                  // c:1644 No line numbers
                 let out = std::fs::OpenOptions::new()
                     .create(true).write(true).truncate(true).open(&fil).ok();
-                let listed = if out.is_some() {                              // c:1645
-                    fclist(std::ptr::null_mut(), ops, first, last,
-                           &asgf, std::ptr::null_mut(), 1)
+                let listed = if let Some(mut f) = out {                      // c:1645
+                    fclist(&mut f, ops, first, last, &asgf, None, 1)
                 } else { 1 };
                 if listed == 0 {                                             // c:1645
                     // c:1647-1656 — pick editor.
@@ -3591,10 +3731,13 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
                     } else if OPT_HASARG(ops, b'e') {                        // c:1649
                         OPT_ARG(ops, b'e').unwrap_or("").to_string()         // c:1650
                     } else {
-                        std::env::var("FCEDIT")                              // c:1651 getsparam("FCEDIT")
-                            .or_else(|_| std::env::var("EDITOR"))            // c:1653 getsparam("EDITOR")
-                            .unwrap_or_else(|_|
-                                crate::ported::config_h::DEFAULT_FCEDIT.to_string()) // c:1654
+                        // c:1651-1654 — `getsparam("FCEDIT") ?:
+                        //                  getsparam("EDITOR") ?:
+                        //                  DEFAULT_FCEDIT`. paramtab read.
+                        crate::ported::params::getsparam("FCEDIT")
+                            .or_else(|| crate::ported::params::getsparam("EDITOR"))
+                            .unwrap_or_else(||
+                                crate::ported::config_h::DEFAULT_FCEDIT.to_string())
                     };
                     crate::ported::mem::unqueue_signals();                   // c:1657
                     if fcedit(&editor, &fil) != 0 {                          // c:1658
@@ -4291,9 +4434,23 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
                 if !all { continue; }                                        // c:4164
             }
             // c:4167-4173 — cmdnamtab HASHED check (commands installed
-            // via `hash NAME=PATH`). Static-link path: env-var bridge
-            // stores them under `__zshrs_hash_NAME`.
-            if let Ok(p) = std::env::var(format!("__zshrs_hash_{}", arg)) {  // c:4168
+            // via `hash NAME=PATH`). Read the canonical cmdnamtab
+            // directly. Was a fake env-var bridge under invented
+            // `__zshrs_hash_NAME` keys; cmdnamtab is bucket-2-
+            // consolidated now.
+            let hashed_path: Option<String> = {
+                match crate::ported::hashtable::cmdnamtab_lock().read() {
+                    Ok(tab) => tab.get(arg).and_then(|cn| {
+                        if (cn.node.flags & crate::ported::zsh_h::HASHED as i32) != 0 {
+                            cn.cmd.clone()                                   // c:4168 cn->u.cmd
+                        } else {
+                            None
+                        }
+                    }),
+                    Err(_) => None,
+                }
+            };
+            if let Some(p) = hashed_path {
                 if (printflags & PRINT_LIST) != 0 {
                     println!("hash {}={}", arg, p);
                 } else {

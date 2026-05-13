@@ -1724,11 +1724,10 @@ pub fn savesession() {                                                        //
         // c:2836-2845 — for each zfparams[i], copy the current shell param.
         sess.params.clear();
         for ps in ZFPARAMS {                                                  // c:2836
-            // c:2840 — val = getsparam(*ps);
-            // Static-link path: read from process env, the closest analog
-            // until paramtab is bucket-2-consolidated. Matches the
-            // `getsparam` body in src/ported/modules/ksh93.rs:537.
-            let val = std::env::var(ps).unwrap_or_default();
+            // c:2840 — `val = getsparam(*ps);`. paramtab is bucket-2-
+            //          consolidated now; read directly. Was a fake env
+            //          read which never picked up shell-internal params.
+            let val = crate::ported::params::getsparam(ps).unwrap_or_default();
             // c:2856 / c:2843 — *pd = ztrdup(val) or NULL.
             sess.params.push(val);
         }
@@ -2236,10 +2235,8 @@ pub fn zfgetmsg() -> i32 {                                                    //
     }
 
     // c:712 — tmout = getiparam("ZFTP_TMOUT");
-    tmout = std::env::var("ZFTP_TMOUT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    // c:712 — `tmout = getiparam("ZFTP_TMOUT");`. Read paramtab, not OS env.
+    tmout = crate::ported::params::getiparam("ZFTP_TMOUT") as i32;
 
     // c:714 — zfgetline(line, 256, tmout);
     zfgetline(&mut line, 256, tmout);
@@ -2286,7 +2283,7 @@ pub fn zfgetmsg() -> i32 {                                                    //
     let mut stopit = stopit_initial;
 
     // c:733-744 — verbose check + initial-line printing.
-    let verbose = std::env::var("ZFTP_VERBOSE").unwrap_or_default();          // c:734
+    let verbose = crate::ported::params::getsparam("ZFTP_VERBOSE").unwrap_or_default();  // c:734
     if verbose.contains(line[0] as char) {                                    // c:736
         printing = 1;                                                         // c:738
         eprint!("{}", line_str);                                              // c:739
@@ -2563,10 +2560,8 @@ pub fn zfsendcmd(cmd: &str) -> i32 {                                          //
     }
 
     // c:836 — tmout = getiparam("ZFTP_TMOUT");
-    tmout = std::env::var("ZFTP_TMOUT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    // c:712 — `tmout = getiparam("ZFTP_TMOUT");`. Read paramtab, not OS env.
+    tmout = crate::ported::params::getiparam("ZFTP_TMOUT") as i32;
 
     // c:837-841 — setjmp / timeout handler. The Rust port uses
     // ZFDRRRRING as the polled flag instead of longjmp; zfalarm
@@ -2642,8 +2637,8 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
         if recv != 0 {                                                        // c:1482
             fdin = sess.dfd;                                                  // c:1483
             fdout = 1;                                                        // c:1484
-            rtmout = std::env::var("ZFTP_TMOUT").ok()                         // c:1485
-                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            // c:1485 — `rtmout = getiparam("ZFTP_TMOUT");`. paramtab read.
+            rtmout = crate::ported::params::getiparam("ZFTP_TMOUT") as i32;
             if sess.transfer_type == ZFST_ASCI as i32 {                       // c:1486
                 fromasc = 1;                                                  // c:1487
             }
@@ -2653,8 +2648,8 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
         } else {                                                              // c:1490
             fdin = 0;                                                         // c:1491
             fdout = sess.dfd;                                                 // c:1492
-            wtmout = std::env::var("ZFTP_TMOUT").ok()                         // c:1493
-                .and_then(|s| s.parse().ok()).unwrap_or(0);
+            // c:1493 — `wtmout = getiparam("ZFTP_TMOUT");`. paramtab read.
+            wtmout = crate::ported::params::getiparam("ZFTP_TMOUT") as i32;
             if sess.transfer_type == ZFST_ASCI as i32 {                       // c:1494
                 toasc = 1;                                                    // c:1495
             }
@@ -2862,7 +2857,10 @@ pub fn zfsetparam(name: &str, val: &str, flags: i32) {                        //
     if (flags & ZFPM_IFUNSET) != 0 {                                          // c:507
         // Only set if not currently set. Best-effort check via env lookup
         // since paramtab isn't bucket-2 consolidated for the executor.
-        if std::env::var(name).is_ok() {
+        // c:508 — `if (pm = (Param)paramtab->getnode(paramtab, name))`.
+        //          C exits if the param already exists. Check paramtab,
+        //          not OS env.
+        if crate::ported::params::paramtab().read().map_or(false, |t| t.contains_key(name)) {
             return;                                                           // c:508-509 pm = NULL → skip
         }
     }
@@ -3103,10 +3101,12 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {                
 
     ZCFINISH.store(2, Ordering::Relaxed);                                       // c:1772 zcfinish = 2
 
-    // c:1775 — getiparam("ZFTP_TMOUT")
-    tmout = std::env::var("ZFTP_TMOUT").ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(60);
+    // c:1775 — `tmout = getiparam("ZFTP_TMOUT");`. Read paramtab; if
+    //          unset, fall back to 60-second connect timeout.
+    tmout = {
+        let v = crate::ported::params::getiparam("ZFTP_TMOUT") as i32;
+        if v > 0 { v } else { 60 }
+    };
 
     // c:1789 — zfalarm(tmout): installed for the connect() phase.
     zfalarm(tmout);
