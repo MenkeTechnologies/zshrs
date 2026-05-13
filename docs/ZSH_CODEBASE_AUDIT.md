@@ -12,7 +12,7 @@ Because the C code is indefensible. Not "legacy code that was good for its era" 
 
 147,233 lines of C. Zero unit tests. A custom heap allocator. 186 gotos. 1,940 global mutable statics. A 1,502-line function that handles all command execution. 11,656 lines of shell script interpreted every time you press Tab. Disk I/O blocking the user on every autoloaded function call. This is the default shell on every Mac in the world, and nobody audited it before shipping it to hundreds of millions of users.
 
-Rust eliminates entire categories of these bugs by existing. Ownership replaces the hand-rolled heap. The type system replaces 1,032 C casts. The borrow checker replaces 524 manual signal-queue mutex calls. SQLite replaces the fpath directory scan. Compiled code replaces 105,050 lines of interpreted shell-script "library." `cargo test` replaces nothing — because there was nothing to replace.
+Rust eliminates entire categories of these bugs by existing. Ownership replaces the hand-rolled heap. The type system replaces 1,032 C casts. The borrow checker replaces 524 manual signal-queue mutex calls. Rkyv replaces the fpath directory scan. Compiled code replaces 105,050 lines of interpreted shell-script "library." `cargo test` replaces nothing — because there was nothing to replace.
 
 ## Scale
 
@@ -315,7 +315,7 @@ One language for infrastructure, one cache format for end data, no 11,656-line s
 
 ### The zshrs Alternative
 
-zshrs uses SQLite-backed completion indexing. One database lookup instead of 11,656 lines of interpreted shell script. Completions are indexed once at install time, not scanned from disk on every shell startup.
+zshrs uses Rkyv backed completion indexing. One hashed index mmap instead of 11,656 lines of interpreted shell script. Completions are indexed once at install time, not scanned from disk on every shell startup.
 
 ### The Biggest Completion Functions
 
@@ -511,7 +511,7 @@ All blocking. All synchronous. All on the hot path between the user pressing Ent
 
 ### The zshrs Alternative
 
-zshrs indexes functions at install time in SQLite. Function lookup is one indexed database query — no fpath scanning, no disk I/O on the hot path, no `.zwc` litter.
+zshrs indexes functions at install time in Rkyv. Function lookup is one indexed database query — no fpath scanning, no disk I/O on the hot path, no `.zwc` litter.
 
 ## Development Process: No CI, No GitHub, No Issue Tracker, Dying Velocity
 
@@ -892,8 +892,8 @@ zshrs is a ground-up Rust port that fixes every single issue documented above. N
 
 | ZSH Problem | zshrs Solution |
 |-------------|---------------|
-| 105,050 lines of shell script "library" interpreted on every Tab press | SQLite-indexed completions. Native compiled Rust code. |
-| 11,656 lines interpreted for a single `git <TAB>` | One SQLite query. Microseconds, not milliseconds. |
+| 105,050 lines of shell script "library" interpreted on every Tab press | Rkyv-indexed completions. Native compiled Rust code. |
+| 11,656 lines interpreted for a single `git <TAB>` | One Rkyv query. Microseconds, not milliseconds. |
 | 986 files scanned from disk on every shell startup (`compinit`) | One-time indexing at install. Database lookup on startup. |
 | `_git` completion: 9,026 lines of interpreted shell script | Completion specs compiled into native code. |
 | `_arguments`: 589-line parser written in shell script | Argument parsing in compiled Rust. |
@@ -903,7 +903,7 @@ zshrs is a ground-up Rust port that fixes every single issue documented above. N
 
 | ZSH Problem | zshrs Solution |
 |-------------|---------------|
-| Disk I/O blocking user on every first function invocation | Functions pre-indexed in SQLite. One database lookup, no disk scanning. |
+| Disk I/O blocking user on every first function invocation | Functions pre-indexed in Rkyv. One database lookup, no disk scanning. |
 | Scanning 43 fpath directories synchronously on the hot path | No fpath scanning on the hot path. Index built at install time. |
 | `.zwc` files littered across filesystem (fake compilation) | No `.zwc` files. Functions are compiled Rust or pre-indexed. No filesystem litter. |
 | `autoload -Xz` stubs that trigger disk I/O when called | Functions loaded eagerly or resolved via database. No stubs, no deferred I/O. |
@@ -932,7 +932,7 @@ zshrs is a ground-up Rust port that fixes every single issue documented above. N
 | ZSH Problem | zshrs Solution |
 |-------------|---------------|
 | Single-threaded everything | Multi-threaded builtins: `pmaps`, `pgreps`, `pflat_maps` — parallel iterators via background worker threads. |
-| `compinit` scans 986 files on startup (0.49 seconds) | SQLite index built once. Startup reads one database file. |
+| `compinit` scans 986 files on startup (0.49 seconds) | Rkyv index built once. Startup reads one database file. |
 | Shell script interpreter for library code | Compiled native code. No interpreter overhead. |
 | Blocking disk I/O on hot path | Async-capable architecture. Database lookups instead of filesystem scans. |
 
@@ -1085,7 +1085,7 @@ In zshrs, plugins don't need to monkey patch:
 
 | ZSH (monkey patch) | zshrs (native) |
 |--------------------|---------------|
-| `compdef` overrides (410 across plugins) | SQLite completion registry — plugins register once |
+| `compdef` overrides (410 across plugins) | Rkyv completion registry — plugins register once |
 | `fpath` manipulation | Database-indexed function lookup — no path scanning |
 | `eval` for dynamic code gen (170 calls) | Native plugin API — no eval needed |
 | C daemons for performance (gitstatus) | Multi-threaded builtins — git status is a native operation |
