@@ -2127,10 +2127,15 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         }
                     }
                     Some('{') => {
-                        // c:1053 — `${...}` parameter expansion. C:
-                        // `cmdpush(CS_BRACEPAR); ++bct;
-                        // if (!in_brace_param) in_brace_param = bct;`
-                        add(c);
+                        // c:1049-1057 — `${...}` parameter expansion.
+                        // C does `add(c)` where `c` was already
+                        // mapped by `lextok2[c]` at switch entry from
+                        // `$` (0x24) to Stringg (`\u{85}`). Rust's
+                        // switch dispatches on the LX2_* class but
+                        // doesn't pre-map `c`, so `add(c)` here would
+                        // store the raw `$` byte. Use the marker
+                        // directly to match C's emitted strs section.
+                        add(Stringg);
                         add(Inbrace);
                         bct += 1;
                         cmdpush(CS_BRACEPAR as u8);
@@ -2149,7 +2154,17 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         // following char so getkeystring's
                         // standard `\n`/`\x`/`\u`/... decoding
                         // can fire.
-                        add(Qstring);
+                        //
+                        // c:1285 — the C source detects $'...' via
+                        // `strquote = (lexbuf.len && lexbuf.ptr[-1]
+                        // == String)`, i.e. by looking back for the
+                        // Stringg marker the top-level `$` handler
+                        // emitted. So the marker here MUST be
+                        // Stringg (`\u{85}`), not Qstring (`\u{8c}`,
+                        // which is `$` inside double quotes). Using
+                        // Qstring made getkeystring's $'...' detect
+                        // fail and the strs section diverge from C.
+                        add(Stringg);
                         add(Snull);
                         loop {
                             let ch = hgetc();
@@ -2190,9 +2205,15 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     }
                     Some('"') => {
                         // $"..." localized string. Same shape as a
-                        // plain "..." but flagged via Qstring+Dnull
-                        // so post-lex translation can substitute.
-                        add(Qstring);
+                        // plain "..." but flagged via Stringg+Dnull
+                        // (NOT Qstring) so the dollar prefix marker
+                        // sits in the strs section as `\u{85}\u{9e}…`.
+                        // Qstring (`\u{8c}`) is reserved for $X
+                        // sequences encountered INSIDE double quotes
+                        // (c:1524, 1546, 1551 inside dquote_parse);
+                        // top-level `$"…"` uses Stringg per
+                        // C lex.c's $-dispatch.
+                        add(Stringg);
                         add(Dnull);
                         if dquote_parse('"', sub).is_err() {
                             peek = LEXERR;
@@ -2428,15 +2449,23 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     });
                     isnumglob(&lookahead, 0)
                 } {
-                    // c:1203-1206 — read `[0-9]*-[0-9]*>` swallow into
-                    // the word, emit `<…>` as a range glob.
-                    add(c);
+                    // c:1202-1206 — `add(Inang); while ((c = hgetc())
+                    // != '>') add(c); c = Outang;` then break (falls
+                    // through to the post-switch `add(c)`). i.e. the
+                    // opening `<` and closing `>` get tokenized as
+                    // Inang (`\u{94}`) / Outang (`\u{95}`) markers,
+                    // not raw bytes. Without this, the strs section
+                    // emitted `/tmp/<1-100>.txt` literally instead of
+                    // `/tmp/\u{94}1-100\u{95}.txt` and wordcode parity
+                    // broke on every numeric range glob.
+                    add(Inang);
                     while let Some(ch) = hgetc() {
-                        add(ch);
                         if ch == '>' {
                             break;
                         }
+                        add(ch);
                     }
+                    add(Outang);
                 } else {
                     let e = hgetc();
                     if e != Some('(') {
