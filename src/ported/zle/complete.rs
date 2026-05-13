@@ -1983,7 +1983,7 @@ pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {             // 
 
 /// Direct port of `int finish_(UNUSED(Module m))` from `Src/Zle/complete.c:1788`.
 /// Module-unload cleanup: zsfree's every comp* string global. In Rust
-/// the OnceLock<Mutex<String>>s are owned and freed at process exit;
+/// the `OnceLock<Mutex<String>>`s are owned and freed at process exit;
 /// for symmetry with C we clear the contents so any subsequent
 /// re-load starts from empty.
 #[allow(unused_variables)]
