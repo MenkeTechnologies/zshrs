@@ -32,8 +32,130 @@ use crate::ported::exec::{
 use crate::ported::zsh_h::{
     isset,
     BAREGLOBQUAL, BRACECCL, CASEGLOB, EXTENDEDGLOB, GLOBDOTS,
-    GLOBSTARSHORT, MARKDIRS, NULLGLOB, NUMERICGLOBSORT,
+    GLOBSTARSHORT, LISTTYPES, MARKDIRS, NULLGLOB, NUMERICGLOBSORT,
 };
+
+// =====================================================================
+// Thread-local glob option snapshot — race fix.
+//
+// `Src/glob.c` reads `isset(NULLGLOB)` / `isset(BAREGLOBQUAL)` / etc.
+// inline at each callsite during a glob. In zsh those reads hit the
+// thread-local C `opts[]` array (zsh is single-threaded). In zshrs
+// they hit `OPTS_LIVE` — a process-wide `RwLock<HashMap>`.
+//
+// Embedders that snapshot/restore options around individual glob
+// invocations on multiple threads (e.g. stryke's `StrykeGlobOptsGuard`
+// + `glob_par` rayon parallelism) race: thread A sets bareglobqual=1,
+// calls glob; while A is mid-parse, thread B's matching guard restores
+// bareglobqual=0; A's qualifier-parse step sees bareglobqual=0 and
+// drops the trailing `(N)` as a literal substring, producing false
+// matches.
+//
+// Fix: snapshot every glob-relevant option ONCE at glob() entry into
+// a thread-local cache, then read all isset() inside glob from the
+// snapshot. The snapshot is dropped on glob exit via an RAII guard.
+// Each thread's in-flight glob() sees a coherent set of options
+// regardless of concurrent setopt/unsetopt on other threads.
+// =====================================================================
+
+/// Snapshot of glob-relevant zsh options taken at glob entry. Holds
+/// the live `isset(...)` value for each option that the glob engine
+/// or its helpers (`parse_qualifiers`, `scanner`, `scan_pattern`,
+/// `sort_matches`, `glob_emit_path`) consult.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GlobOptSnapshot {
+    pub bareglobqual:    bool,
+    pub braceccl:        bool,
+    pub caseglob:        bool,
+    pub extendedglob:    bool,
+    pub globdots:        bool,
+    pub globstarshort:   bool,
+    pub listtypes:       bool,
+    pub markdirs:        bool,
+    pub nullglob:        bool,
+    pub numericglobsort: bool,
+}
+
+impl GlobOptSnapshot {
+    /// Read every glob-relevant option from the canonical live store
+    /// (`opt_state_get`) once. Returns a self-contained snapshot.
+    pub fn capture() -> Self {
+        Self {
+            bareglobqual:    isset(BAREGLOBQUAL),
+            braceccl:        isset(BRACECCL),
+            caseglob:        isset(CASEGLOB),
+            extendedglob:    isset(EXTENDEDGLOB),
+            globdots:        isset(GLOBDOTS),
+            globstarshort:   isset(GLOBSTARSHORT),
+            listtypes:       isset(LISTTYPES),
+            markdirs:        isset(MARKDIRS),
+            nullglob:        isset(NULLGLOB),
+            numericglobsort: isset(NUMERICGLOBSORT),
+        }
+    }
+}
+
+thread_local! {
+    /// Thread-local glob option cache. `Some(snap)` while a glob()
+    /// call is in flight on this thread; `None` otherwise (reads
+    /// fall back to the live `isset()`).
+    static GLOB_OPTS_TLS: std::cell::RefCell<Option<GlobOptSnapshot>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// RAII guard that drops the thread-local snapshot on scope exit.
+/// Constructed by `enter_glob_scope()`. Nested glob calls on the
+/// same thread reuse the outer snapshot (the guard's `populated`
+/// field tracks whether we installed or just observed).
+pub struct GlobOptsGuard {
+    populated: bool,
+}
+
+impl Drop for GlobOptsGuard {
+    fn drop(&mut self) {
+        if self.populated {
+            GLOB_OPTS_TLS.with_borrow_mut(|g| *g = None);
+        }
+    }
+}
+
+/// Enter a glob scope: snapshot options into TLS if no outer scope
+/// is active, returning a guard that clears the snapshot on Drop.
+/// Re-entrant calls (nested globdata_glob via brace expansion etc.)
+/// return a no-op guard that observes the existing snapshot.
+pub fn enter_glob_scope() -> GlobOptsGuard {
+    let already = GLOB_OPTS_TLS.with_borrow(|g| g.is_some());
+    if already {
+        return GlobOptsGuard { populated: false };
+    }
+    let snap = GlobOptSnapshot::capture();
+    GLOB_OPTS_TLS.with_borrow_mut(|g| *g = Some(snap));
+    GlobOptsGuard { populated: true }
+}
+
+/// Read a glob-relevant option through the TLS snapshot when one is
+/// active; fall back to the live `isset()` otherwise. Use this in
+/// any glob-engine helper that previously read `isset(OPT)` for one
+/// of the snapshotted options.
+#[inline]
+pub fn glob_isset(opt: i32) -> bool {
+    GLOB_OPTS_TLS.with_borrow(|g| match g {
+        Some(snap) => match opt {
+            x if x == BAREGLOBQUAL    => snap.bareglobqual,
+            x if x == BRACECCL        => snap.braceccl,
+            x if x == CASEGLOB        => snap.caseglob,
+            x if x == EXTENDEDGLOB    => snap.extendedglob,
+            x if x == GLOBDOTS        => snap.globdots,
+            x if x == GLOBSTARSHORT   => snap.globstarshort,
+            x if x == LISTTYPES       => snap.listtypes,
+            x if x == MARKDIRS        => snap.markdirs,
+            x if x == NULLGLOB        => snap.nullglob,
+            x if x == NUMERICGLOBSORT => snap.numericglobsort,
+            _ => isset(opt),
+        },
+        None => isset(opt),
+    })
+}
 
 // =====================================================================
 // GS_* — sort-specifier flag bits — `Src/glob.c:77-94`. The `glob -O`
@@ -461,7 +583,7 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {   // 
         // per glob.c:2424 BRACECCL block; without, only `{a,b}` lists and
         // `{1..5}`/`{a..e}` ranges expand. Recurse on each variant and
         // concatenate matches.
-        let brace_ccl = crate::ported::zsh_h::isset(crate::ported::zsh_h::BRACECCL);
+        let brace_ccl = glob_isset(crate::ported::zsh_h::BRACECCL);
         if hasbraces(pattern, brace_ccl) {
             let mut all = Vec::new();
             for variant in xpandbraces(pattern, brace_ccl) {
@@ -513,9 +635,9 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {   // 
         // — output marker emission consults the per-glob `gf_markdirs`
         // / `gf_listtypes` flags which the qualifier parser at
         // glob.c:1557-1566 sets.
-        let mark_dirs = isset(crate::ported::zsh_h::MARKDIRS)
+        let mark_dirs = glob_isset(crate::ported::zsh_h::MARKDIRS)
             || state.qualifiers.as_ref().map(|q| q.mark_dirs).unwrap_or(false);
-        let list_types = isset(crate::ported::zsh_h::LISTTYPES)
+        let list_types = glob_isset(crate::ported::zsh_h::LISTTYPES)
             || state.qualifiers.as_ref().map(|q| q.list_types).unwrap_or(false);
         let colon_mods = state.qualifiers.as_ref().and_then(|q| q.colon_mods.clone());
         let mut results: Vec<String> = state
@@ -544,7 +666,7 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {   // 
 
         // Handle no matches
         if results.is_empty()
-            && !isset(crate::ported::zsh_h::NULLGLOB)
+            && !glob_isset(crate::ported::zsh_h::NULLGLOB)
         {
             results.push(pattern.to_string());
         }
@@ -589,7 +711,7 @@ fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {       //
         let qual_str = &pattern[start + 1..pattern.len() - 1];
         let (is_explicit, qual_content) = if let Some(after) = qual_str.strip_prefix("#q") {
             (true, after)
-        } else if isset(crate::ported::zsh_h::BAREGLOBQUAL) {
+        } else if glob_isset(crate::ported::zsh_h::BAREGLOBQUAL) {
             (false, qual_str)
         } else {
             return (pattern.to_string(), None);
@@ -924,7 +1046,7 @@ fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {           // 
                     // strict gate off so bare `**` recurses without `/`.
                     let has_slash = chars.peek() == Some(&'/');
                     let recursive = has_slash || follow
-                        || isset(crate::ported::zsh_h::GLOBSTARSHORT);
+                        || glob_isset(crate::ported::zsh_h::GLOBSTARSHORT);
                     if has_slash {
                         chars.next();
                     }
@@ -1050,12 +1172,12 @@ fn scan_pattern(state: &mut globdata, base: &str, pattern: &str, rest: &[Pattern
         // Skip hidden files unless pattern starts with `.`. The bash
         // alias `dotglob` resolves to `globdots` in zsh (per
         // OPT_ALIAS entry at options.c:270); we read only the canonical name.
-        let no_glob_dots = !isset(GLOBDOTS);
+        let no_glob_dots = !glob_isset(GLOBDOTS);
         if no_glob_dots && name.starts_with('.') && !pattern.starts_with('.') {
             continue;
         }
-        let extended_glob = isset(EXTENDEDGLOB);
-        let case_glob = isset(CASEGLOB);
+        let extended_glob = glob_isset(EXTENDEDGLOB);
+        let case_glob = glob_isset(CASEGLOB);
         if matchpat(pattern, &name, extended_glob, case_glob) {
             let path = entry.path();
 
@@ -1175,7 +1297,7 @@ fn scan_recursive(                                                           // 
 
             // Skip hidden files (bash `dotglob` aliases to zsh
             // `globdots` per OPT_ALIAS entry at options.c:270).
-            if !isset(GLOBDOTS) && name.starts_with('.') {
+            if !glob_isset(GLOBDOTS) && name.starts_with('.') {
                 continue;
             }
 
@@ -1412,7 +1534,7 @@ fn sort_matches(state: &mut globdata) {                                      // 
             return;
         }
 
-        let numeric = isset(crate::ported::zsh_h::NUMERICGLOBSORT);
+        let numeric = glob_isset(crate::ported::zsh_h::NUMERICGLOBSORT);
         state.matches.sort_by(|a, b| gmatchcmp(a, b, &specs, numeric));
 }
 
@@ -2467,6 +2589,11 @@ fn glob_emit_path(path: &std::path::Path) -> String {
 /// `crate::ported::options::opt_state_get` — same path C uses via
 /// `isset(NULL_GLOB)` etc. on the global `opts[]` array.
 pub fn glob(pattern: &str) -> Vec<String> {                                  // c:1214
+    // Race fix: snapshot every glob-relevant option into TLS for the
+    // duration of this call so concurrent setopt/unsetopt on other
+    // threads can't corrupt our qualifier parse / nullglob fallback /
+    // dotglob filter etc. mid-walk. See `enter_glob_scope` doc.
+    let _glob_scope = enter_glob_scope();
     let mut state = globdata::new();
     globdata_glob(&mut state, pattern)
 }
@@ -3441,6 +3568,88 @@ mod tests {
         assert_eq!(zstrcmp("file10", "file2", n), Ordering::Greater);
         assert_eq!(zstrcmp("file10", "file10", n), Ordering::Equal);
     }
+
+    /// Race-fix verification: snapshot pins bareglobqual for the
+    /// duration of a glob scope even when the live store flips
+    /// underneath. Mimics the stryke pattern in
+    /// MenkeTechnologies/strykelang#3 — one thread is mid-glob with
+    /// bareglobqual=1 snapshot when another flips it off.
+    #[test]
+    fn glob_opts_snapshot_isolates_concurrent_setopt() {
+        use crate::ported::options::{opt_state_get, opt_state_set, opt_state_unset};
+        use crate::ported::zsh_h::BAREGLOBQUAL;
+
+        // Preserve the existing live state so the test is hermetic.
+        let saved = opt_state_get("bareglobqual");
+
+        // Live store says bareglobqual=true; enter scope captures that.
+        opt_state_set("bareglobqual", true);
+        let _scope = enter_glob_scope();
+        assert!(glob_isset(BAREGLOBQUAL),
+            "TLS snapshot reads bareglobqual=true at scope entry");
+
+        // Simulate a concurrent thread flipping the live store.
+        opt_state_set("bareglobqual", false);
+        assert!(glob_isset(BAREGLOBQUAL),
+            "TLS snapshot must still report bareglobqual=true \
+             even though live store now reads false");
+
+        // Restore.
+        match saved {
+            Some(v) => opt_state_set("bareglobqual", v),
+            None => opt_state_unset("bareglobqual"),
+        }
+    }
+
+    /// After the scope guard drops, reads fall back to the live store.
+    #[test]
+    fn glob_opts_snapshot_clears_on_drop() {
+        use crate::ported::options::{opt_state_get, opt_state_set, opt_state_unset};
+        use crate::ported::zsh_h::NULLGLOB;
+
+        let saved = opt_state_get("nullglob");
+        opt_state_set("nullglob", true);
+        {
+            let _scope = enter_glob_scope();
+            assert!(glob_isset(NULLGLOB), "snapshot live=true → true inside");
+        }
+        // Outside scope: flip live store, read should follow live.
+        opt_state_set("nullglob", false);
+        assert!(!glob_isset(NULLGLOB),
+            "post-scope: glob_isset falls back to live store");
+
+        match saved {
+            Some(v) => opt_state_set("nullglob", v),
+            None => opt_state_unset("nullglob"),
+        }
+    }
+
+    /// Nested glob scopes share the outer snapshot — inner doesn't
+    /// re-capture or clear on its own Drop.
+    #[test]
+    fn glob_opts_snapshot_nested_is_noop() {
+        use crate::ported::options::{opt_state_get, opt_state_set, opt_state_unset};
+        use crate::ported::zsh_h::EXTENDEDGLOB;
+
+        let saved = opt_state_get("extendedglob");
+        opt_state_set("extendedglob", true);
+        let _outer = enter_glob_scope();
+        assert!(glob_isset(EXTENDEDGLOB));
+        {
+            let _inner = enter_glob_scope();
+            // Live store flip while nested.
+            opt_state_set("extendedglob", false);
+            assert!(glob_isset(EXTENDEDGLOB),
+                "inner observes outer snapshot");
+        } // inner drops — outer snapshot still active.
+        assert!(glob_isset(EXTENDEDGLOB),
+            "outer snapshot survives inner drop");
+
+        match saved {
+            Some(v) => opt_state_set("extendedglob", v),
+            None => opt_state_unset("extendedglob"),
+        }
+    }
 }
 
 // ===========================================================
@@ -3753,6 +3962,9 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {             // c
 /// `globdots` from the canonical option store (`opt_state_get`) so
 /// behavior tracks `setopt …` toggles without needing an executor.
 pub fn glob_path(pattern: &str) -> Vec<String> {                             // c:1214
+    // Race fix: same TLS-snapshot guard glob() uses, so glob_path
+    // callers see a coherent option set for the duration of this call.
+    let _glob_scope = enter_glob_scope();
     let opt = |n: &str, default: bool| opt_state_get(n).unwrap_or(default);
     // Read option state directly — matches C's per-callsite
     // `isset(NULLGLOB)` / `isset(EXTENDEDGLOB)` reads (Src/glob.c).
