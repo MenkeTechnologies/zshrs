@@ -2408,6 +2408,83 @@ mod tests {
         assert!(comptags.lock().unwrap()[1].is_none());
     }
 
+    /// c:4704-4732 — cfp_bld_pats combines names with skipped + pat.
+    /// With one name "dir" and pats ["*.c"], produces ["dir*.c"].
+    #[test]
+    fn cfp_bld_pats_concatenates_skipped_and_pat() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let out = cfp_bld_pats(0,
+            &["dir".to_string()],
+            "",
+            &["*.c".to_string()]);
+        assert_eq!(out, vec!["dir*.c".to_string()]);
+    }
+
+    /// c:4711 — when GLOBDOTS is unset AND compprefix starts with `.`,
+    /// add a dot-prefixed variant of each non-`.`-leading pattern.
+    #[test]
+    fn cfp_bld_pats_globdots_variant() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // Seed COMPPREFIX with a leading dot.
+        let m = crate::ported::zle::complete::COMPPREFIX
+            .get_or_init(|| std::sync::Mutex::new(String::new()));
+        *m.lock().unwrap() = ".foo".to_string();
+        // Force GLOBDOTS unset — that's the default in zle_test_setup.
+        let out = cfp_bld_pats(0,
+            &["d".to_string()],
+            "",
+            &["*.x".to_string()]);
+        // Reset compprefix to avoid bleed.
+        *m.lock().unwrap() = String::new();
+        assert!(out.contains(&"d*.x".to_string()));
+        assert!(out.contains(&"d.*.x".to_string()),
+            "dot-variant must be emitted: {:?}", out);
+    }
+
+    /// c:4625 — cfp_opt_pats with empty compprefix passes pats through.
+    #[test]
+    fn cfp_opt_pats_passthrough_empty_compprefix() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let m = crate::ported::zle::complete::COMPPREFIX
+            .get_or_init(|| std::sync::Mutex::new(String::new()));
+        *m.lock().unwrap() = String::new();
+        let pats = vec!["*".to_string(), "*.c".to_string()];
+        let out = cfp_opt_pats(&pats, "");
+        assert_eq!(out, pats);
+    }
+
+    /// c:4175 — cfp_test_exact returns None when both compprefix and
+    /// compsuffix are empty (no anchoring context).
+    #[test]
+    fn cfp_test_exact_no_anchor_returns_none() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let pm = crate::ported::zle::complete::COMPPREFIX
+            .get_or_init(|| std::sync::Mutex::new(String::new()));
+        *pm.lock().unwrap() = String::new();
+        let sm = crate::ported::zle::complete::COMPSUFFIX
+            .get_or_init(|| std::sync::Mutex::new(String::new()));
+        *sm.lock().unwrap() = String::new();
+        let r = cfp_test_exact(&["/tmp".to_string()],
+                                &["true".to_string()], "");
+        assert!(r.is_none());
+    }
+
+    /// c:5083 — bin_compgroups registers 6 group variants per name.
+    /// Sanity test: returns 0 on the empty-args path (no-op).
+    #[test]
+    fn bin_compgroups_empty_args_succeeds() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let saved = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
+        INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        let r = bin_compgroups("compgroups", &[], &ops, 0);
+        INCOMPFUNC.store(saved, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(r, 0);
+    }
+
     /// c:215-230 — cd_groups_want_sorting: returns 0 when ANY set's
     /// opts contains `-V`, 1 when `-J` (or default).
     #[test]
@@ -3304,21 +3381,40 @@ pub fn bin_compfiles(nam: &str, args: &[String],                             // 
     }
 }
 
-/// Port of `bin_compgroups(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from Src/Zle/computil.c:5073.
-/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
+/// Direct port of `static int bin_compgroups(char *nam, char **args,
+///                                              UNUSED(Options ops),
+///                                              UNUSED(int func))` from
+/// `Src/Zle/computil.c:5073-5100`. For each group name in args, opens
+/// six successive completion groups with the same name but different
+/// sort/uniq flags (NOSORT+UNIQCON, UNIQALL, NOSORT+UNIQCON, UNIQALL,
+/// NOSORT, 0). Each begcmgroup is bracketed by endcmgroup. This is
+/// how _path_files etc. register their match groups before adding
+/// candidates via compadd.
 pub fn bin_compgroups(nam: &str, args: &[String],                            // c:5073
                       _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zle::comp_h::{CGF_NOSORT, CGF_UNIQALL, CGF_UNIQCON};
+    use crate::ported::zle::compcore::{begcmgroup, endcmgroup};
+
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:5078
         zwarnnam(nam, "can only be called from completion function");
         return 1;
     }
-    if args.is_empty() {                                                     // c:5082
-        zwarnnam(nam, "missing argument");
-        return 1;
+    // c:5083 — for each group name, register 6 group variants.
+    for n in args {                                                          // c:5083
+        endcmgroup(None);                                                    // c:5084
+        begcmgroup(Some(n), CGF_NOSORT | CGF_UNIQCON);                       // c:5085
+        endcmgroup(None);
+        begcmgroup(Some(n), CGF_UNIQALL);                                    // c:5087
+        endcmgroup(None);
+        begcmgroup(Some(n), CGF_NOSORT | CGF_UNIQCON);                       // c:5089
+        endcmgroup(None);
+        begcmgroup(Some(n), CGF_UNIQALL);                                    // c:5091
+        endcmgroup(None);
+        begcmgroup(Some(n), CGF_NOSORT);                                     // c:5093
+        endcmgroup(None);
+        begcmgroup(Some(n), 0);                                              // c:5095
     }
-    // c:5086-5121 — for each group spec, calls begcmgroup/endcmgroup.
-    //               Without mgroup pipeline we accept the call.
-    0
+    0                                                                        // c:5099
 }
 
 /// Port of `boot_(UNUSED(Module m))` from Src/Zle/computil.c:5153.
@@ -4833,18 +4929,41 @@ pub fn cf_ignore(names: &[String], ign: &mut Vec<String>, style: &str, path: &st
 ///
 /// **Substrate tradeoff:** the helper chain
 /// `cfp_test_exact`/`cfp_opt_pats`/`cfp_bld_pats`/`cfp_add_sdirs`
-/// in `computil.c:4500-4828` walks the Cmatch dat from the
-/// active `_arguments` parse. We return the concatenation of
-/// `names`+`accept`+`pats` which is the visible effect when
-/// no `_arguments`-parsed Cmatch context is active (the typical
-/// path for direct `compadd` calls).
-pub fn cf_pats(_dirs: i32, _noopt: i32, names: &[String],                    // c:4829
-               accept: &[String], _skipped: &str, _matcher: &str,
-               _sdirs: &str, _fake: &[String], pats: &[String]) -> Vec<String> {
-    let mut out = Vec::with_capacity(names.len() + accept.len() + pats.len());
-    out.extend_from_slice(names);
-    out.extend_from_slice(accept);
-    out.extend_from_slice(pats);
+/// Direct port of `static LinkList cf_pats(int dirs, int noopt,
+///                                          LinkList names, char **accept,
+///                                          char *skipped, char *matcher,
+///                                          char *sdirs, char **fake,
+///                                          char **pats)` from
+/// `Src/Zle/computil.c:4829-4848`. The cf_pats driver:
+/// 1. Try cfp_test_exact first; if it returns a non-empty list, fold
+///    in `sdirs`/`fake` via cfp_add_sdirs and return.
+/// 2. Otherwise: if dirs, replace `pats` with `*(-/)`. If !noopt run
+///    cfp_opt_pats. Then build the patterns via cfp_bld_pats and fold
+///    in sdirs/fake.
+pub fn cf_pats(dirs: i32, noopt: i32, names: &[String],                      // c:4829
+               accept: &[String], skipped: &str, matcher: &str,
+               sdirs: &str, fake: &[String], pats: &[String]) -> Vec<String> {
+    // c:4835 — try exact-match pass first.
+    if let Some(exact) = cfp_test_exact(names, accept, skipped) {
+        let mut out = exact;
+        cfp_add_sdirs(&mut out, names, skipped, sdirs, fake);                // c:4836
+        return out;
+    }
+
+    // c:4838 — when dirs is set, force the `*(-/)` directory glob.
+    let dir_pats = vec!["*(-/)".to_string()];
+    let active_pats: Vec<String> = if dirs != 0 {
+        dir_pats
+    } else if noopt == 0 {
+        // c:4843 — optimization pass.
+        cfp_opt_pats(pats, matcher)
+    } else {
+        pats.to_vec()
+    };
+
+    // c:4846 — build the glob array.
+    let mut out = cfp_bld_pats(dirs, names, skipped, &active_pats);
+    cfp_add_sdirs(&mut out, names, skipped, sdirs, fake);
     out
 }
 
@@ -4939,14 +5058,37 @@ pub fn cfp_add_sdirs(final_list: &mut Vec<String>, orig: &[String],          // 
     }
 }
 
-/// Port of `cfp_bld_pats(UNUSED(int dirs), LinkList names, char *skipped, char **pats)` from Src/Zle/computil.c:4704.
-/// WARNING: param names don't match C — Rust=(_dirs, _names, _matcher) vs C=(dirs, names, skipped, pats)
-pub fn cfp_bld_pats(_dirs: i32, _names: &[String], _matcher: &str,           // c:4704
-                    _pats: &[String]) -> Vec<String> {
-    // C body c:4706-4732 — combines `pats` with each name to build
-    //                      the glob patterns for completion. Without
-    //                      Patprog substrate we return empty.
-    Vec::new()
+/// Direct port of `static LinkList cfp_bld_pats(UNUSED(int dirs),
+///                                                LinkList names,
+///                                                char *skipped,
+///                                                char **pats)` from
+/// `Src/Zle/computil.c:4704-4732`. For each (name, pattern) pair,
+/// builds `name + skipped + pattern`. When GLOBDOTS is unset and the
+/// compprefix starts with `.`, also adds a dot-prefixed variant.
+pub fn cfp_bld_pats(_dirs: i32, names: &[String], skipped: &str,             // c:4704
+                    pats: &[String]) -> Vec<String> {
+    use crate::ported::zsh_h::{unset, GLOBDOTS};
+    use crate::ported::zle::complete::COMPPREFIX;
+
+    let compprefix = COMPPREFIX.get()
+        .and_then(|m| m.lock().ok().map(|s| s.clone()))
+        .unwrap_or_default();
+    // c:4711 — `dot = unset(GLOBDOTS) && compprefix && *compprefix == '.'`.
+    let dot = unset(GLOBDOTS) && compprefix.starts_with('.');
+
+    let mut ret: Vec<String> = Vec::new();
+    for o in names {                                                         // c:4712
+        for p in pats {                                                      // c:4714
+            // c:4716 — `str = o + skipped + p`.
+            ret.push(format!("{}{}{}", o, skipped, p));
+            // c:4721 — dot variant when GLOBDOTS unset and pattern
+            // doesn't already start with '.'.
+            if dot && !p.starts_with('.') {
+                ret.push(format!("{}{}.{}", o, skipped, p));
+            }
+        }
+    }
+    ret                                                                      // c:4731
 }
 
 /// Port of `cfp_matcher_pats(char *matcher, char *add)` from Src/Zle/computil.c:4525.
@@ -4966,23 +5108,250 @@ pub fn cfp_matcher_range(_ml: i32, _matcher: &str, _pat: &str) -> Vec<String> { 
     Vec::new()
 }
 
-/// Port of `cfp_opt_pats(char **pats, char *matcher)` from Src/Zle/computil.c:4621.
-#[allow(unused_variables)]
-pub fn cfp_opt_pats(pats: &[String], matcher: &str) -> Vec<String> {       // c:4621
-    // C body c:4623-4702 — optimization pass over `pats`: prunes
-    //                      redundant `*` segments etc.
-    Vec::new()
+/// Direct port of `static void cfp_opt_pats(char **pats, char *matcher)`
+/// from `Src/Zle/computil.c:4621-4701`. "Optimization" pass that
+/// prefixes each `*…`-leading pattern with the literal portion of
+/// `compprefix` that no pattern would consume. The walk computes a
+/// shrinking `add` string — each pattern crosses off the chars in
+/// `add` it would match — and any remaining chars become the prefix.
+///
+/// Modifies `pats` in place; returns the (possibly modified) list.
+pub fn cfp_opt_pats(pats: &[String], matcher: &str) -> Vec<String> {         // c:4621
+    use crate::ported::glob::{remnulargs, tokenize};
+    use crate::ported::pattern::haswilds;
+    use crate::ported::zle::compcore::comppatmatch;
+    use crate::ported::zle::compcore::rembslash;
+    use crate::ported::zle::complete::{COMPPREFIX, COMPSUFFIX};
+    use crate::ported::ztype_h::idigit;
+
+    let compprefix = COMPPREFIX.get()
+        .and_then(|m| m.lock().ok().map(|s| s.clone()))
+        .unwrap_or_default();
+    if compprefix.is_empty() {                                               // c:4625
+        return pats.to_vec();
+    }
+    let compsuffix = COMPSUFFIX.get()
+        .and_then(|m| m.lock().ok().map(|s| s.clone()))
+        .unwrap_or_default();
+
+    // c:4628-4633 — if comppatmatch && haswilds(rembslash(prefix+suffix)): bail.
+    let cpm_set = comppatmatch.get()
+        .and_then(|m| m.lock().ok().map(|g| g.is_some()))
+        .unwrap_or(false);
+    if cpm_set {
+        let merged = format!("{}{}", compprefix, compsuffix);
+        let mut t = rembslash(&merged);
+        tokenize(&mut t);
+        remnulargs(&mut t);
+        if haswilds(&t) {
+            return pats.to_vec();                                            // c:4632
+        }
+    }
+
+    // c:4634-4649 — build `add` by walking compprefix, unescaping `\X`
+    // for non-special X, and pre-escaping unescaped specials.
+    const SPECIALS: &[u8] = b"*?<>()[]|#^~=";
+    let cp_bytes = compprefix.as_bytes();
+    let mut add: Vec<u8> = Vec::with_capacity(cp_bytes.len() * 2);
+    let mut i = 0usize;
+    while i < cp_bytes.len() {
+        let c = cp_bytes[i];
+        let keep = if c == b'\\' && i + 1 < cp_bytes.len() {
+            // c:4636 — keep `\X` literal when X is non-special.
+            let next = cp_bytes[i + 1];
+            !SPECIALS.contains(&next)
+        } else {
+            true
+        };
+        if keep {
+            let unescaped_at_start = i == 0 || cp_bytes[i - 1] != b'\\';
+            if unescaped_at_start && SPECIALS.contains(&c) {                 // c:4640
+                add.push(b'\\');
+            }
+            add.push(c);
+        }
+        i += 1;
+    }
+    let mut add_s: String = String::from_utf8_lossy(&add).into_owned();
+
+    // c:4650-4691 — walk each pattern, cross off chars from `add`.
+    for p_orig in pats {
+        if add_s.is_empty() { break; }
+        let mut q_bytes: Vec<u8> = p_orig.as_bytes().to_vec();
+        if q_bytes.is_empty() { continue; }
+        // c:4654 — strip trailing alternation `(…|…)` group.
+        if let Some(b')') = q_bytes.last().copied() {
+            let mut t = q_bytes.len() - 1;
+            let mut found = None;
+            while t > 0 {
+                t -= 1;
+                let c = q_bytes[t];
+                if c == b')' || c == b'|' || c == b'~' || c == b'(' {
+                    found = Some((t, c));
+                    break;
+                }
+            }
+            if let Some((idx, c)) = found {
+                if c == b'(' {
+                    q_bytes.truncate(idx);
+                }
+            }
+        }
+
+        let mut qi = 0usize;
+        while qi < q_bytes.len() && !add_s.is_empty() {
+            let c = q_bytes[qi];
+            if c == b'\\' && qi + 1 < q_bytes.len() {                        // c:4662
+                qi += 1;
+                let target = q_bytes[qi];
+                // c:4663 — cross off `target` from add.
+                if let Some(pos) = add_s.find(target as char) {
+                    add_s.truncate(pos);
+                }
+            } else if c == b'<' {                                            // c:4665
+                // c:4666 — cross off any digit.
+                let cut_at = add_s.bytes().position(|b| idigit(b));
+                if let Some(pos) = cut_at {
+                    add_s.truncate(pos);
+                }
+            } else if c == b'[' {                                            // c:4668
+                // c:4669-4684 — character class.
+                let mut xi = qi + 1;
+                let not = xi < q_bytes.len()
+                    && (q_bytes[xi] == b'!' || q_bytes[xi] == b'^');
+                if not { xi += 1; }
+                let _ = not;
+                while xi < q_bytes.len() && q_bytes[xi] != b']' {
+                    if xi + 2 < q_bytes.len() && q_bytes[xi + 1] == b'-' {
+                        let c1 = q_bytes[xi];
+                        let c2 = q_bytes[xi + 2];
+                        let cut_at = add_s.bytes().position(|b| b >= c1 && b <= c2);
+                        if let Some(pos) = cut_at {
+                            add_s.truncate(pos);
+                        }
+                        xi += 3;
+                    } else {
+                        let cut_at = add_s.find(q_bytes[xi] as char);
+                        if let Some(pos) = cut_at {
+                            add_s.truncate(pos);
+                        }
+                        xi += 1;
+                    }
+                }
+                qi = xi;
+            } else if c != b'?' && c != b'*' && c != b'(' && c != b')'
+                && c != b'|' && c != b'~' && c != b'#'                       // c:4685
+            {
+                let cut_at = add_s.find(c as char);
+                if let Some(pos) = cut_at {
+                    add_s.truncate(pos);
+                }
+            }
+            qi += 1;
+        }
+    }
+
+    // c:4693-4700 — prepend `add` to each `*`-leading pattern.
+    let mut out: Vec<String> = pats.to_vec();
+    if !add_s.is_empty() {
+        let final_add = if !matcher.is_empty() {
+            let m = cfp_matcher_pats(matcher, &[add_s.clone()]);
+            if m.is_empty() { return out; }                                  // c:4694
+            m.join("")
+        } else {
+            add_s
+        };
+        for p in out.iter_mut() {
+            if p.starts_with('*') {
+                *p = format!("{}{}", final_add, p);
+            }
+        }
+    }
+    out
 }
 
-/// Port of `cfp_test_exact(LinkList names, char **accept, char *skipped)` from Src/Zle/computil.c:4160.
-/// WARNING: param names don't match C — Rust=(_names, _accept) vs C=(names, accept, skipped)
-pub fn cfp_test_exact(_names: &[String], _accept: &[String],                 // c:4160
-                      _skipped: &str) -> Vec<String> {
-    // C body c:4162-4305 — tests each name against `accept`-suffix
-    //                      list with stat/lstat for type checks. Returns
-    //                      a list of names that exactly match.
-    //                      Without stat dispatch: empty list.
-    Vec::new()
+/// Direct port of `static LinkList cfp_test_exact(LinkList names,
+///                                                  char **accept,
+///                                                  char *skipped)` from
+/// `Src/Zle/computil.c:4160-4290`. Returns the subset of `names` whose
+/// `name + skipped + compprefix + compsuffix` resolves to an existing
+/// file. When `accept` is non-boolean, the resolved path must also
+/// match at least one of the compiled accept-patterns. Returns None
+/// when nothing matched.
+pub fn cfp_test_exact(names: &[String], accept: &[String],                   // c:4160
+                      skipped: &str) -> Option<Vec<String>>
+{
+    use crate::ported::glob::tokenize;
+    use crate::ported::pattern::{patcompile, pattry, Patprog};
+    use crate::ported::zle::compcore::rembslash;
+    use crate::ported::zle::complete::{COMPPREFIX, COMPSUFFIX};
+    use crate::ported::zle::compresult::ztat;
+
+    let compprefix = COMPPREFIX.get()
+        .and_then(|m| m.lock().ok().map(|s| s.clone()))
+        .unwrap_or_default();
+    let compsuffix = COMPSUFFIX.get()
+        .and_then(|m| m.lock().ok().map(|s| s.clone()))
+        .unwrap_or_default();
+
+    // c:4175 — bail when both prefix and suffix are empty.
+    if compprefix.is_empty() && compsuffix.is_empty() {
+        return None;
+    }
+
+    // c:4181 — accept-exact off?
+    let accept_off = accept.is_empty()
+        || (accept.len() == 1 && matches!(accept[0].as_str(),
+            "false" | "no" | "off" | "0"));
+    if accept_off {                                                          // c:4188
+        return None;
+    }
+
+    // c:4199-4214 — build compiled Patprog list from non-boolean accept.
+    let mut alist: Option<Vec<Patprog>> = None;
+    let is_boolean_true = accept.len() == 1
+        && matches!(accept[0].as_str(), "true" | "yes" | "on" | "1");
+    if !is_boolean_true {
+        let mut list: Vec<Patprog> = Vec::new();
+        let mut all_star = false;
+        for p in accept {
+            if p == "*" {                                                    // c:4207 wildcard short-circuit
+                all_star = true;
+                break;
+            }
+            let mut p_copy = p.clone();
+            tokenize(&mut p_copy);
+            if let Some(prog) = patcompile(&p_copy, 0, None::<&mut String>) {
+                list.push(prog);
+            }
+        }
+        if !all_star { alist = Some(list); }
+    }
+
+    // c:4220-4227 — assemble `suf = skipped + rembslash(prefix + suffix)`.
+    let sl = skipped.len() + compprefix.len() + compsuffix.len();
+    if sl > PATH_MAX2 {                                                      // c:4223
+        return None;
+    }
+    let suf = format!("{}{}",
+        skipped,
+        rembslash(&format!("{}{}", compprefix, compsuffix)));
+
+    let mut ret: Vec<String> = Vec::new();
+    for p in names {                                                         // c:4229
+        let l = p.len();
+        if l + sl >= PATH_MAX2 { continue; }                                 // c:4231
+        let buf = format!("{}{}", p, suf);
+        if ztat(&buf, false).is_none() { continue; }                          // c:4269 stat exists?
+        // c:4274 — accept-pattern check.
+        if let Some(ref ps) = alist {
+            let any_match = ps.iter().any(|prog| pattry(prog, &buf));
+            if !any_match { continue; }
+        }
+        ret.push(buf);                                                       // c:4285
+    }
+
+    if ret.is_empty() { None } else { Some(ret) }                            // c:4289
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from Src/Zle/computil.c:5160.
