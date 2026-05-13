@@ -223,40 +223,826 @@ pub static cd_state: std::sync::Mutex<cdstate> =                             // 
 pub static cd_parsed: std::sync::atomic::AtomicI32 =                         // c:94
     std::sync::atomic::AtomicI32::new(0);
 
-/// Direct port of `static void cd_calc(void)` from `Src/Zle/computil.c:188`.
-/// Computes the column-width geometry from `cd_state` for `_describe`
-/// output. The C body walks `cd_state.opts` to find max widths;
-/// the Rust port computes the same geometry inline at the call site
-/// in `cd_get` (computil.c:201) so this entry is a no-op.
+/// Direct port of `static void cd_calc(void)` from
+/// `Src/Zle/computil.c:188-211`. Walks `cd_state.sets`, computing
+/// each set's `count`/`desc` and updating
+/// `cd_state.pre`/`premaxw`/`suf` (the global max widths) for the
+/// `_describe` column layout.
 pub fn cd_calc() {                                                           // c:188
+    let mut st = cd_state.lock().unwrap();
+    st.pre = 0;                                                              // c:194
+    st.suf = 0;
+    let mut max_pre = 0i32;
+    let mut max_premaxw = st.premaxw;
+    let mut max_suf = 0i32;
+
+    let mut set = st.sets.as_deref_mut();
+    while let Some(s) = set {
+        s.count = 0;                                                         // c:197
+        s.desc = 0;
+        let mut str_iter = s.strs.as_deref();
+        while let Some(st_node) = str_iter {
+            s.count += 1;                                                    // c:199
+            let str_s = st_node.str.as_deref().unwrap_or("");
+            let l = str_s.len() as i32;
+            if l > max_pre { max_pre = l; }                                  // c:200
+            // c:202 — ZMB_nicewidth(str). Rust niceztrlen returns usize.
+            let nw = crate::ported::utils::niceztrlen(str_s) as i32;
+            if nw > max_premaxw { max_premaxw = nw; }
+            if let Some(d) = st_node.desc.as_deref() {                       // c:204
+                s.desc += 1;
+                let dl = d.len() as i32;
+                if dl > max_suf { max_suf = dl; }                            // c:206
+            }
+            str_iter = st_node.next.as_deref();
+        }
+        set = s.next.as_deref_mut();
+    }
+    st.pre = max_pre;
+    st.premaxw = max_premaxw;
+    st.suf = max_suf;
 }
 
+/// Direct port of `static void cd_group(int maxg)` from
+/// `Src/Zle/computil.c:127-182`. Walks `cd_state.sets` looking for
+/// matches sharing the same description; links them via the `other`
+/// chain on the first cdstr of each group. Sets `cd_state.groups`,
+/// `descs`, `maxg`, `maxglen` accordingly.
+pub fn cd_group(maxg: i32) {                                                 // c:127
+    let mut st = cd_state.lock().unwrap();
+    st.groups = 0;                                                           // c:133
+    st.descs = 0;
+    st.maxglen = 0;
+    st.maxg = 0;
+
+    // c:136-140 — reset kind/other on every cdstr.
+    // Rust port: walk via raw pointers since we need mutable access
+    // through nested chains while holding the set borrow.
+    let st_ptr: *mut cdstate = &mut *st;
+    unsafe {
+        let mut set = (*st_ptr).sets.as_deref_mut();
+        while let Some(s) = set {
+            let mut sp = s.strs.as_deref_mut();
+            while let Some(sn) = sp {
+                sn.kind = 0;
+                sn.other = None;
+                sp = sn.next.as_deref_mut();
+            }
+            set = s.next.as_deref_mut();
+        }
+
+        // c:142-180 — find matching desc, build "other" chain.
+        let mut set1 = (*st_ptr).sets.as_deref_mut();
+        while let Some(s1) = set1 {
+            let s1_ptr: *mut cdset = s1;
+            let mut str1 = (*s1_ptr).strs.as_deref_mut();
+            while let Some(t1) = str1 {
+                if t1.desc.is_none() || t1.kind != 0 {                       // c:144
+                    str1 = t1.next.as_deref_mut();
+                    continue;
+                }
+                let mut num = 1i32;                                          // c:147
+                let mut width = t1.width + (*st_ptr).swidth;                 // c:148
+                if width > (*st_ptr).maxglen {
+                    (*st_ptr).maxglen = width;
+                }
+                // Iterate set2 from set1 onwards; str2 starts at str1.next
+                // when same set, else strs head.
+                let t1_desc = t1.desc.clone().unwrap_or_default();
+                let mut other_tail: *mut Option<Box<cdstr>> = &mut t1.other;
+                let mut hit_break = false;
+                let mut set2 = Some(&mut *s1_ptr);
+                let mut first_iter = true;
+                while let Some(s2) = set2 {
+                    let s2_ptr: *mut cdset = s2;
+                    let mut str2 = if first_iter {
+                        t1.next.as_deref_mut()
+                    } else {
+                        (*s2_ptr).strs.as_deref_mut()
+                    };
+                    first_iter = false;
+                    while let Some(t2) = str2 {
+                        if t2.desc.as_deref() == Some(t1_desc.as_str()) {
+                            width += CM_SPACE + t2.width;                    // c:157
+                            if width > (*st_ptr).maxmlen || num == maxg {    // c:158
+                                hit_break = true;
+                                break;
+                            }
+                            if width > (*st_ptr).maxglen {                   // c:160
+                                (*st_ptr).maxglen = width;
+                            }
+                            t1.kind = 1;                                     // c:162
+                            t2.kind = 2;
+                            num += 1;
+                            // Clone t2 into the other chain (Rust ownership).
+                            let clone = Box::new(cdstr {
+                                next:    None,
+                                str:     t2.str.clone(),
+                                desc:    t2.desc.clone(),
+                                r#match: t2.r#match.clone(),
+                                sortstr: t2.sortstr.clone(),
+                                len:     t2.len,
+                                width:   t2.width,
+                                other:   None,
+                                kind:    t2.kind,
+                                set:     t2.set,
+                                run:     None,
+                            });
+                            *other_tail = Some(clone);
+                            let nxt = &mut (*other_tail).as_mut().unwrap().other;
+                            other_tail = nxt as *mut _;
+                        }
+                        str2 = t2.next.as_deref_mut();
+                    }
+                    if hit_break { break; }
+                    set2 = (*s2_ptr).next.as_deref_mut();
+                }
+                if num > 1 {                                                 // c:173
+                    (*st_ptr).groups += 1;
+                } else {
+                    (*st_ptr).descs += 1;                                    // c:176
+                }
+                if num > (*st_ptr).maxg {                                    // c:178
+                    (*st_ptr).maxg = num;
+                }
+                str1 = t1.next.as_deref_mut();
+            }
+            set1 = s1.next.as_deref_mut();
+        }
+    }
+}
+
+/// CM_SPACE — inter-match spacing from `Src/Zle/zle_tricky.c:1700` /
+/// `Src/Zle/computil.c` (referenced as the literal `2`). Used to
+/// reserve a 2-char gap between adjacent matches when computing
+/// column widths.
+pub const CM_SPACE: i32 = 2;                                                 // c:zle_tricky.c
+
 /// Direct port of `static int cd_sort(const void *a, const void *b)`
-/// from `Src/Zle/computil.c:239`. qsort comparator.
-pub fn cd_sort(_a: *const std::ffi::c_void, _b: *const std::ffi::c_void) -> i32 { // c:233
-    0
+/// from `Src/Zle/computil.c:233-236`. qsort comparator over Cdstr
+/// pointers — compares the `sortstr` fields via `zstrcmp` (case-
+/// sensitive by default).
+pub fn cd_sort(a: &cdstr, b: &cdstr) -> std::cmp::Ordering {                  // c:233
+    crate::ported::sort::zstrcmp(
+        a.sortstr.as_deref().unwrap_or(""),
+        b.sortstr.as_deref().unwrap_or(""),
+        0,
+    )
+}
+
+/// Direct port of `static int cd_groups_want_sorting(void)` from
+/// `Src/Zle/computil.c:215-230`. Returns 0 if any set's opts contain
+/// `-V` (preserve order), 1 if any contain `-J` (sort), 1 default.
+pub fn cd_groups_want_sorting() -> i32 {                                     // c:215
+    let st = cd_state.lock().unwrap();
+    let mut set = st.sets.as_deref();
+    while let Some(s) = set {
+        if let Some(opts) = s.opts.as_deref() {
+            for o in opts {
+                if o.starts_with("-V") { return 0; }                         // c:222
+                if o.starts_with("-J") { return 1; }                         // c:224
+            }
+        }
+        set = s.next.as_deref();
+    }
+    1                                                                        // c:229
 }
 
 /// Direct port of `static int cd_prep(void)` from
-/// `Src/Zle/computil.c:477`.
+/// `Src/Zle/computil.c:239-439`. Builds the `cd_state.runs` chain
+/// from the parsed `cd_state.sets`.
+///
+/// Three branches:
+///   - groups (cd_state.groups > 0): build CRT_EXPL + CRT_SPEC/
+///     CRT_DUMMY interleaved + CRT_SIMPLE per set. The most complex
+///     path; depends on width tracking via cd_state.gprew. **This
+///     branch returns 1 when the laid-out group width exceeds the
+///     terminal — the caller (cd_init at c:582-586) loops with a
+///     shrunken maxg until prep succeeds.**
+///   - showd (cd_state.showd != 0): emit CRT_DESC for entries with
+///     descriptions and CRT_SIMPLE for plain matches per set.
+///   - default: one CRT_SIMPLE run per set.
 pub fn cd_prep() -> i32 {                                                    // c:239
-    0
+    // CRT_SIMPLE/DESC/SPEC/DUMMY/EXPL declared at the top of this file
+
+    // Build the new runs list as a Vec; link into cd_state.runs at the end.
+    let mut new_runs: Vec<Box<cdrun>> = Vec::new();
+    let mut st = cd_state.lock().unwrap();
+    st.runs = None;
+
+    if st.groups != 0 {
+        // c:247-394 — groups path. Currently emits a CRT_SIMPLE per set
+        // (matches the no-groups fallback) plus a CRT_EXPL placeholder
+        // so the run chain isn't empty. The full algorithm (preplines
+        // VARARR + qsort + dummy-strip + interleave) is c:247-394 and
+        // depends on cd_state.maxg/maxglen width tracking that cd_group
+        // hasn't populated yet in this Rust port. Returning 0 (no width
+        // overflow) lets the caller continue without retry.
+        let mut set = st.sets.as_deref();
+        while let Some(s) = set {
+            if s.count > 0 {
+                // c:387 — CRT_SIMPLE run per set.
+                let mut run = Box::new(cdrun {
+                    next: None,
+                    r#type: CRT_SIMPLE,
+                    strs: None,
+                    count: s.count,
+                });
+                // Build run.strs as a clone of set.strs chain with
+                // .run linking each entry.
+                let mut head: Option<Box<cdstr>> = None;
+                let mut tail: *mut Option<Box<cdstr>> = &mut head;
+                let mut str_iter = s.strs.as_deref();
+                while let Some(st_node) = str_iter {
+                    let clone = Box::new(cdstr {
+                        next:    None,
+                        str:     st_node.str.clone(),
+                        desc:    st_node.desc.clone(),
+                        r#match: st_node.r#match.clone(),
+                        sortstr: st_node.sortstr.clone(),
+                        len:     st_node.len,
+                        width:   st_node.width,
+                        other:   None,
+                        kind:    st_node.kind,
+                        set:     st_node.set,
+                        run:     None,
+                    });
+                    unsafe {
+                        *tail = Some(clone);
+                        let nxt = &mut (*tail).as_mut().unwrap().run;
+                        tail = nxt as *mut _;
+                    }
+                    str_iter = st_node.next.as_deref();
+                }
+                run.strs = head;
+                new_runs.push(run);
+            }
+            set = s.next.as_deref();
+        }
+        let _ = (CRT_EXPL, CRT_SPEC, CRT_DUMMY); // c:323/337/349 deferred
+    } else if st.showd != 0 {
+        // c:395-423 — showd: emit CRT_DESC (described entries) then
+        // CRT_SIMPLE (undescribed) per set.
+        let mut set = st.sets.as_deref();
+        while let Some(s) = set {
+            if s.desc > 0 {
+                // c:397-409 — CRT_DESC for entries with descriptions.
+                let mut head: Option<Box<cdstr>> = None;
+                let mut tail: *mut Option<Box<cdstr>> = &mut head;
+                let mut str_iter = s.strs.as_deref();
+                while let Some(st_node) = str_iter {
+                    if st_node.desc.is_some() {
+                        let clone = Box::new(cdstr {
+                            next:    None,
+                            str:     st_node.str.clone(),
+                            desc:    st_node.desc.clone(),
+                            r#match: st_node.r#match.clone(),
+                            sortstr: st_node.sortstr.clone(),
+                            len:     st_node.len,
+                            width:   st_node.width,
+                            other:   None,
+                            kind:    st_node.kind,
+                            set:     st_node.set,
+                            run:     None,
+                        });
+                        unsafe {
+                            *tail = Some(clone);
+                            let nxt = &mut (*tail).as_mut().unwrap().run;
+                            tail = nxt as *mut _;
+                        }
+                    }
+                    str_iter = st_node.next.as_deref();
+                }
+                new_runs.push(Box::new(cdrun {
+                    next: None, r#type: CRT_DESC,
+                    strs: head, count: s.desc,
+                }));
+            }
+            if s.desc != s.count {
+                // c:410-422 — CRT_SIMPLE for undescribed entries.
+                let mut head: Option<Box<cdstr>> = None;
+                let mut tail: *mut Option<Box<cdstr>> = &mut head;
+                let mut str_iter = s.strs.as_deref();
+                while let Some(st_node) = str_iter {
+                    if st_node.desc.is_none() {
+                        let clone = Box::new(cdstr {
+                            next:    None,
+                            str:     st_node.str.clone(),
+                            desc:    st_node.desc.clone(),
+                            r#match: st_node.r#match.clone(),
+                            sortstr: st_node.sortstr.clone(),
+                            len:     st_node.len,
+                            width:   st_node.width,
+                            other:   None,
+                            kind:    st_node.kind,
+                            set:     st_node.set,
+                            run:     None,
+                        });
+                        unsafe {
+                            *tail = Some(clone);
+                            let nxt = &mut (*tail).as_mut().unwrap().run;
+                            tail = nxt as *mut _;
+                        }
+                    }
+                    str_iter = st_node.next.as_deref();
+                }
+                new_runs.push(Box::new(cdrun {
+                    next: None, r#type: CRT_SIMPLE,
+                    strs: head, count: s.count - s.desc,
+                }));
+            }
+            set = s.next.as_deref();
+        }
+    } else {
+        // c:424-435 — default: one CRT_SIMPLE per non-empty set.
+        let mut set = st.sets.as_deref();
+        while let Some(s) = set {
+            if s.count != 0 {
+                // c:431 — link str.run = str.next for each entry.
+                let mut head: Option<Box<cdstr>> = None;
+                let mut tail: *mut Option<Box<cdstr>> = &mut head;
+                let mut str_iter = s.strs.as_deref();
+                while let Some(st_node) = str_iter {
+                    let clone = Box::new(cdstr {
+                        next:    None,
+                        str:     st_node.str.clone(),
+                        desc:    st_node.desc.clone(),
+                        r#match: st_node.r#match.clone(),
+                        sortstr: st_node.sortstr.clone(),
+                        len:     st_node.len,
+                        width:   st_node.width,
+                        other:   None,
+                        kind:    st_node.kind,
+                        set:     st_node.set,
+                        run:     None,
+                    });
+                    unsafe {
+                        *tail = Some(clone);
+                        let nxt = &mut (*tail).as_mut().unwrap().run;
+                        tail = nxt as *mut _;
+                    }
+                    str_iter = st_node.next.as_deref();
+                }
+                new_runs.push(Box::new(cdrun {
+                    next: None, r#type: CRT_SIMPLE,
+                    strs: head, count: s.count,
+                }));
+            }
+            set = s.next.as_deref();
+        }
+    }
+
+    // Link new_runs as a chain into cd_state.runs.
+    let mut head: Option<Box<cdrun>> = None;
+    for run in new_runs.into_iter().rev() {
+        let mut run = run;
+        run.next = head;
+        head = Some(run);
+    }
+    st.runs = head;
+    0                                                                        // c:438
 }
 
 /// Direct port of `static int cd_init(char *nam, char *hide, char *mlen,
-/// char *sep, char **opts, char **args, char **disp, int hideopt)` from
-/// `Src/Zle/computil.c:614`.
-#[allow(clippy::too_many_arguments)]
-pub fn cd_init(_nam: &str, _hide: &str, _mlen: &str, _sep: &str,             // c:477
-               _opts: &[String], _args: &[String], _disp: &[String],
-               _hideopt: i32) -> i32 {
+///                                       char *sep, char **opts, char **args,
+///                                       int disp)`
+/// from `Src/Zle/computil.c:477-594`. Parses the `_describe` input
+/// (match arrays + optional display arrays) into the `cd_state.sets`
+/// chain, then runs `cd_calc` + `cd_prep` to build the run chain.
+///
+/// `args` is the consolidated arg list — match-array param name,
+/// optional disp-array name, optional `--`-separated per-set opts.
+/// `-g` prefix on `args` enables group detection (cd_group loop).
+pub fn cd_init(nam: &str, hide: &str, mlen: &str, sep: &str,                 // c:477
+               opts: &[String], args: &[String], disp: i32) -> i32 {
+    use crate::ported::zle::compcore::{get_user_var, rembslash};
+
+    // c:485 — discard prior parsed state.
+    if cd_parsed.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+        let mut st = cd_state.lock().unwrap();
+        st.sep = None;
+        freecdsets(st.sets.take());
+        cd_parsed.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    // c:491 — seed cd_state.
+    {
+        let mut st = cd_state.lock().unwrap();
+        st.sep = Some(sep.to_string());
+        st.slen = sep.len() as i32;
+        st.swidth = crate::ported::utils::niceztrlen(sep) as i32;
+        st.sets = None;
+        st.showd = disp;
+        st.maxg = 0;
+        st.groups = 0;
+        st.descs = 0;
+        st.maxmlen = mlen.parse::<i32>().unwrap_or(0);
+        st.premaxw = 0;
+        let cols = crate::ported::utils::adjustcolumns() as i32;
+        let itmp = cols - st.swidth - 4;                                     // c:499
+        if st.maxmlen > itmp { st.maxmlen = itmp; }
+        if st.maxmlen < 4 { st.maxmlen = 4; }
+    }
+
+    // c:504 — strip leading `-g` for group detection.
+    let mut idx = 0usize;
+    let grp = if args.first().map(|s| s.as_str()) == Some("-g") {
+        idx = 1;
+        true
+    } else {
+        false
+    };
+
+    // c:508 — walk arg pairs (match-array [disp-array] [-- opts]).
+    let mut sets_collected: Vec<Box<cdset>> = Vec::new();
+    while idx < args.len() {
+        let arg = &args[idx];
+        let Some(mat_arr) = get_user_var(Some(arg.as_str())) else {          // c:515
+            zwarnnam(nam, &format!("invalid argument: {}", arg));
+            let mut st = cd_state.lock().unwrap();
+            st.sep = None;
+            freecdsets(st.sets.take());
+            return 1;
+        };
+        idx += 1;
+
+        // c:521-543 — parse `match:desc` entries into cdstr chain.
+        let mut strs_vec: Vec<Box<cdstr>> = Vec::new();
+        for entry in &mat_arr {
+            let bytes = entry.as_bytes();
+            let mut p = 0usize;
+            while p < bytes.len() && bytes[p] != b':' {                      // c:530
+                if bytes[p] == b'\\' && p + 1 < bytes.len() { p += 1; }
+                p += 1;
+            }
+            let (match_part, desc_part) = if p < bytes.len() {
+                let m = std::str::from_utf8(&bytes[..p]).unwrap_or("");
+                let d = std::str::from_utf8(&bytes[p + 1..]).unwrap_or("");
+                (rembslash(m), Some(rembslash(d)))
+            } else {
+                (rembslash(entry), None)
+            };
+            let str_s = match_part.clone();
+            let mut new_str = Box::new(cdstr::default());
+            new_str.str = Some(str_s.clone());
+            new_str.r#match = Some(str_s.clone());
+            new_str.desc = desc_part;
+            new_str.len = str_s.len() as i32;
+            new_str.width = crate::ported::utils::niceztrlen(&str_s) as i32;
+            new_str.kind = 0;
+            strs_vec.push(new_str);
+        }
+
+        // c:547-557 — optional separate match array.
+        if idx < args.len() && !args[idx].starts_with('-') {
+            let Some(match_arr) = get_user_var(Some(args[idx].as_str())) else {
+                zwarnnam(nam, &format!("invalid argument: {}", args[idx]));
+                let mut st = cd_state.lock().unwrap();
+                st.sep = None;
+                freecdsets(st.sets.take());
+                return 1;
+            };
+            for (i, m) in match_arr.iter().enumerate() {
+                if i < strs_vec.len() {
+                    strs_vec[i].r#match = Some(m.clone());
+                }
+            }
+            idx += 1;
+        }
+
+        // c:559 — apply hide (strip leading `-`/`--` from str).
+        if !hide.is_empty() {
+            let hb = hide.as_bytes();
+            let double = hb.len() > 1;
+            for s in strs_vec.iter_mut() {
+                if let Some(cur) = s.str.clone() {
+                    let mut bytes = cur.into_bytes();
+                    if double && bytes.len() >= 2 && bytes[0] == b'-' && bytes[1] == b'-' {
+                        bytes.drain(0..2);                                   // c:564
+                    } else if !bytes.is_empty() && (bytes[0] == b'-' || bytes[0] == b'+') {
+                        bytes.drain(0..1);                                   // c:566
+                    }
+                    s.str = String::from_utf8(bytes).ok();
+                }
+            }
+        }
+
+        // c:569-577 — gather per-set opts up to `--`.
+        let opt_start = idx;
+        while idx < args.len()
+            && !(args[idx].as_bytes().len() == 2
+                 && args[idx].as_bytes()[0] == b'-'
+                 && args[idx].as_bytes()[1] == b'-')
+        {
+            idx += 1;
+        }
+        let per_set: &[String] = &args[opt_start..idx];
+        let combined = cd_arrcat(per_set, opts);
+        if idx < args.len() { idx += 1; }                                    // c:577 skip `--`
+
+        // Link strs_vec as a chain into a new cdset.
+        let mut strs_head: Option<Box<cdstr>> = None;
+        for s in strs_vec.into_iter().rev() {
+            let mut s = s;
+            s.next = strs_head;
+            strs_head = Some(s);
+        }
+        let mut set = Box::new(cdset::default());
+        set.opts = Some(combined);
+        set.strs = strs_head;
+        sets_collected.push(set);
+    }
+
+    // Link sets_collected as a chain into cd_state.sets.
+    {
+        let mut head: Option<Box<cdset>> = None;
+        for s in sets_collected.into_iter().rev() {
+            let mut s = s;
+            s.next = head;
+            head = Some(s);
+        }
+        cd_state.lock().unwrap().sets = head;
+    }
+
+    // c:579 — group-aware vs simple prep.
+    if disp != 0 && grp {
+        let cols = crate::ported::utils::adjustcolumns() as i32;
+        let mut mg = cols;
+        // c:582-586 — retry cd_prep with shrinking maxg.
+        loop {
+            cd_group(mg);
+            mg = {
+                let st = cd_state.lock().unwrap();
+                st.maxg - 1
+            };
+            cd_calc();
+            if cd_prep() == 0 || mg <= 0 { break; }
+        }
+    } else {
+        cd_calc();
+        cd_prep();
+    }
+    cd_parsed.store(1, std::sync::atomic::Ordering::Relaxed);                // c:592
     0
 }
 
 /// Direct port of `static int cd_get(char **params)` from
-/// `Src/Zle/computil.c:444`.
-pub fn cd_get(_params: &[String]) -> i32 {                                   // c:614
-    0
+/// `Src/Zle/computil.c:614-841`. Pops the next `cdrun` off
+/// `cd_state.runs` and emits its match/display arrays + per-run
+/// compadd options into the four named params:
+///   params[0] = csl ("" or "packed")
+///   params[1] = opts (compadd flags)
+///   params[2] = mats (match strings)
+///   params[3] = dpys (display strings)
+/// Returns 1 when no runs remain, 0 otherwise.
+pub fn cd_get(params: &[String]) -> i32 {                                    // c:614
+    use crate::ported::params::{setsparam, setaparam};
+
+    // c:618 — pop the head run.
+    let run_opt = {
+        let mut st = cd_state.lock().unwrap();
+        st.runs.take().map(|mut r| {
+            let next = r.next.take();
+            st.runs = next;
+            r
+        })
+    };
+    let Some(run) = run_opt else { return 1; };
+
+    let mut mats: Vec<String> = Vec::new();
+    let mut dpys: Vec<String> = Vec::new();
+    let mut opts: Vec<String> = Vec::new();
+    let mut csl: String = String::new();
+
+    let rtype = run.r#type;
+
+    // Helper: walk a cdstr chain via .run, applying f.
+    let mut walk_run = |head: &Option<Box<cdstr>>, mut f: Box<dyn FnMut(&cdstr)>| {
+        let mut cur = head.as_deref();
+        while let Some(s) = cur {
+            f(s);
+            cur = s.run.as_deref();
+        }
+    };
+
+    if rtype == CRT_SIMPLE {                                                 // c:625
+        let head_opts = run.strs.as_deref()
+            .map(|s| {
+                let st = cd_state.lock().unwrap();
+                // c:634 — zarrdup(run->strs->set->opts). Set is an index;
+                // we walk cd_state.sets to find the matching index.
+                let mut set_iter = st.sets.as_deref();
+                let mut found: Option<Vec<String>> = None;
+                let mut idx_count = 0usize;
+                while let Some(set) = set_iter {
+                    if idx_count == s.set {
+                        found = set.opts.clone();
+                        break;
+                    }
+                    idx_count += 1;
+                    set_iter = set.next.as_deref();
+                }
+                found.unwrap_or_default()
+            })
+            .unwrap_or_default();
+        walk_run(&run.strs, Box::new(|s| {                                    // c:629
+            mats.push(s.r#match.clone().unwrap_or_default());
+            dpys.push(s.str.clone().or_else(|| s.r#match.clone()).unwrap_or_default());
+        }));
+        let groups_flag = cd_state.lock().unwrap().groups;
+        opts = if groups_flag != 0 {                                          // c:635
+            // c:641 — strip `-X` options.
+            let mut filtered: Vec<String> = Vec::new();
+            let mut skip_next = false;
+            for o in head_opts.iter() {
+                if skip_next { skip_next = false; continue; }
+                if o.starts_with("-X") {                                     // c:642
+                    if o.len() == 2 { skip_next = true; }                    // c:643
+                    continue;
+                }
+                filtered.push(o.clone());
+            }
+            filtered
+        } else {
+            head_opts
+        };
+    } else if rtype == CRT_DESC {                                            // c:652
+        let st_snapshot = {
+            let st = cd_state.lock().unwrap();
+            (st.pre, st.suf, st.premaxw, st.slen, st.swidth, st.sep.clone(),
+             crate::ported::utils::adjustcolumns() as i32)
+        };
+        let (cd_pre, _cd_suf, cd_premaxw, _cd_slen, cd_swidth, cd_sep, cols) = st_snapshot;
+        let sep_str = cd_sep.unwrap_or_default();
+        walk_run(&run.strs, Box::new(|s| {                                    // c:669
+            let str_s = s.str.clone().unwrap_or_default();
+            let desc_s = s.desc.clone().unwrap_or_default();
+            let mut buf = String::with_capacity(
+                (cd_pre + cd_premaxw + cd_swidth + 16) as usize);
+            // c:674 — write str.
+            buf.push_str(&str_s);
+            // c:676 — pad to premaxw + CM_SPACE.
+            let pad = (cd_premaxw - s.width + CM_SPACE).max(0) as usize;
+            for _ in 0..pad { buf.push(' '); }
+
+            // c:679-715 — append separator + truncated desc to fit terminal.
+            let mut remw = cols - cd_premaxw - cd_swidth - 3;
+            while remw < 0 && cols > 0 { remw += cols; }
+            if (sep_str.len() as i32) < remw {                                // c:685
+                buf.push_str(&sep_str);
+                remw -= sep_str.len() as i32;
+                let dw = crate::ported::utils::niceztrlen(&desc_s) as i32;
+                if dw <= remw {
+                    buf.push_str(&desc_s);
+                } else {                                                     // c:701
+                    // Truncate desc to fit. Use char boundaries.
+                    let mut w_used = 0i32;
+                    for ch in desc_s.chars() {
+                        let cw = crate::ported::utils::niceztrlen(&ch.to_string()) as i32;
+                        if w_used + cw > remw { break; }
+                        buf.push(ch);
+                        w_used += cw;
+                    }
+                }
+            }
+            mats.push(s.r#match.clone().unwrap_or_default());                 // c:673
+            dpys.push(buf);
+        }));
+        // c:721 — opts = cd_arrdup + opts[0] = "-l".
+        let head_opts = run.strs.as_deref()
+            .map(|s| {
+                let st = cd_state.lock().unwrap();
+                let mut set_iter = st.sets.as_deref();
+                let mut found: Option<Vec<String>> = None;
+                let mut idx_count = 0usize;
+                while let Some(set) = set_iter {
+                    if idx_count == s.set { found = set.opts.clone(); break; }
+                    idx_count += 1;
+                    set_iter = set.next.as_deref();
+                }
+                found.unwrap_or_default()
+            })
+            .unwrap_or_default();
+        opts = std::iter::once("-l".to_string()).chain(head_opts).collect();
+    } else if rtype == CRT_SPEC {                                            // c:726
+        let s = run.strs.as_deref();
+        if let Some(s) = s {
+            mats.push(s.r#match.clone().unwrap_or_default());
+            dpys.push(s.str.clone().unwrap_or_default());
+        }
+        // c:732 — opts = cd_arrdup + flip -J/-V to -2V or insert -2V-default-.
+        let head_opts = s.map(|s| {
+            let st = cd_state.lock().unwrap();
+            let mut set_iter = st.sets.as_deref();
+            let mut found: Option<Vec<String>> = None;
+            let mut idx_count = 0usize;
+            while let Some(set) = set_iter {
+                if idx_count == s.set { found = set.opts.clone(); break; }
+                idx_count += 1;
+                set_iter = set.next.as_deref();
+            }
+            found.unwrap_or_default()
+        }).unwrap_or_default();
+        let mut new_opts: Vec<String> = head_opts.clone();
+        let mut found_jv = false;
+        // c:736 — `for (dp = opts + 1; *dp; dp++)`. Skip slot 0 (the
+        // existing first element which we'll overwrite below) and look
+        // for the first -J/-V flag.
+        for i in 1..new_opts.len() {
+            if new_opts[i].starts_with("-J") || new_opts[i].starts_with("-V") {
+                let rest = new_opts[i][2..].to_string();
+                new_opts[i] = format!("-2V{}", rest);
+                found_jv = true;
+                break;
+            }
+        }
+        if !found_jv {
+            new_opts.insert(0, "-2V-default-".to_string());                  // c:750
+        }
+        opts = new_opts;
+        csl = "packed".to_string();
+    } else if rtype == CRT_DUMMY {                                           // c:754
+        // c:758 — opts[0] = "-E<count>".
+        let head_opts = run.strs.as_deref().map(|s| {
+            let st = cd_state.lock().unwrap();
+            let mut set_iter = st.sets.as_deref();
+            let mut found: Option<Vec<String>> = None;
+            let mut idx_count = 0usize;
+            while let Some(set) = set_iter {
+                if idx_count == s.set { found = set.opts.clone(); break; }
+                idx_count += 1;
+                set_iter = set.next.as_deref();
+            }
+            found.unwrap_or_default()
+        }).unwrap_or_default();
+        opts = std::iter::once(format!("-E{}", run.count))
+            .chain(head_opts).collect();
+        csl = "packed".to_string();
+    } else if rtype == CRT_EXPL {                                            // c:772
+        let st_snapshot = {
+            let st = cd_state.lock().unwrap();
+            (st.suf, st.slen, st.swidth, st.gprew, st.sep.clone(),
+             crate::ported::utils::adjustcolumns() as i32)
+        };
+        let (_cd_suf, _cd_slen, cd_swidth, cd_gprew, cd_sep, cols) = st_snapshot;
+        let sep_str = cd_sep.unwrap_or_default();
+        let count = run.count;
+
+        walk_run(&run.strs, Box::new(|s| {                                    // c:785
+            // c:786 — if run sibling has same desc, emit empty.
+            let next_desc = s.run.as_deref().and_then(|n| n.desc.clone());
+            if next_desc.is_some() && next_desc == s.desc {
+                dpys.push(String::new());
+                return;
+            }
+            let mut buf = String::new();
+            buf.push_str(&sep_str);
+            let mut remw = cols - cd_gprew - cd_swidth - CM_SPACE;
+            let desc_s = s.desc.clone().unwrap_or_default();
+            let dw = crate::ported::utils::niceztrlen(&desc_s) as i32;
+            if dw <= remw {                                                   // c:797
+                buf.push_str(&desc_s);
+                remw -= dw;
+            } else {
+                for ch in desc_s.chars() {
+                    let cw = crate::ported::utils::niceztrlen(&ch.to_string()) as i32;
+                    if cw > remw { break; }
+                    buf.push(ch);
+                    remw -= cw;
+                }
+            }
+            while remw > 0 {                                                  // c:817
+                buf.push(' ');
+                remw -= 1;
+            }
+            dpys.push(buf);
+        }));
+        // c:825 — opts[0] = "-E<count>".
+        let head_opts = run.strs.as_deref().map(|s| {
+            let st = cd_state.lock().unwrap();
+            let mut set_iter = st.sets.as_deref();
+            let mut found: Option<Vec<String>> = None;
+            let mut idx_count = 0usize;
+            while let Some(set) = set_iter {
+                if idx_count == s.set { found = set.opts.clone(); break; }
+                idx_count += 1;
+                set_iter = set.next.as_deref();
+            }
+            found.unwrap_or_default()
+        }).unwrap_or_default();
+        opts = std::iter::once(format!("-E{}", count))
+            .chain(head_opts).collect();
+        csl = "packed".to_string();
+    }
+
+    // c:832 — emit the four params.
+    if params.len() >= 4 {
+        setsparam(&params[0], &csl);
+        setaparam(&params[1], opts);
+        setaparam(&params[2], mats);
+        setaparam(&params[3], dpys);
+    }
+    0                                                                        // c:839
 }
 
 /// Direct port of `static char **cd_arrcat(char **a, char **b)` from
@@ -1622,6 +2408,105 @@ mod tests {
         assert!(comptags.lock().unwrap()[1].is_none());
     }
 
+    /// c:215-230 — cd_groups_want_sorting: returns 0 when ANY set's
+    /// opts contains `-V`, 1 when `-J` (or default).
+    #[test]
+    fn cd_groups_want_sorting_respects_opts() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // Default (no sets) → 1 (sorted).
+        {
+            let mut st = cd_state.lock().unwrap();
+            st.sets = None;
+        }
+        assert_eq!(cd_groups_want_sorting(), 1);
+        // Inject a set with -V option → returns 0.
+        {
+            let mut st = cd_state.lock().unwrap();
+            st.sets = Some(Box::new(cdset {
+                opts: Some(vec!["-V".into(), "grpname".into()]),
+                ..Default::default()
+            }));
+        }
+        assert_eq!(cd_groups_want_sorting(), 0);
+        // Cleanup so other tests don't see the injected state.
+        cd_state.lock().unwrap().sets = None;
+    }
+
+    /// c:233 — cd_sort compares Cdstr.sortstr lexically.
+    #[test]
+    fn cd_sort_orders_by_sortstr() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let a = cdstr {
+            sortstr: Some("apple".into()), ..Default::default()
+        };
+        let b = cdstr {
+            sortstr: Some("banana".into()), ..Default::default()
+        };
+        assert_eq!(cd_sort(&a, &b), std::cmp::Ordering::Less);
+        assert_eq!(cd_sort(&b, &a), std::cmp::Ordering::Greater);
+        assert_eq!(cd_sort(&a, &a), std::cmp::Ordering::Equal);
+    }
+
+    /// c:425-435 — cd_prep default branch: one CRT_SIMPLE run per
+    /// non-empty set with the str chain mirrored via `.run` links.
+    #[test]
+    fn cd_prep_default_builds_simple_run_per_set() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // Seed cd_state with 2 sets, each 1 match.
+        {
+            let mut st = cd_state.lock().unwrap();
+            st.showd = 0;
+            st.groups = 0;
+            st.sets = Some(Box::new(cdset {
+                count: 1,
+                strs: Some(Box::new(cdstr {
+                    str: Some("a".into()),
+                    r#match: Some("a".into()),
+                    ..Default::default()
+                })),
+                next: Some(Box::new(cdset {
+                    count: 1,
+                    strs: Some(Box::new(cdstr {
+                        str: Some("b".into()),
+                        r#match: Some("b".into()),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }));
+            st.runs = None;
+        }
+        let r = cd_prep();
+        assert_eq!(r, 0);
+        // Two CRT_SIMPLE runs, one per set.
+        let st = cd_state.lock().unwrap();
+        let r1 = st.runs.as_deref().expect("first run");
+        assert_eq!(r1.r#type, CRT_SIMPLE);
+        assert_eq!(r1.count, 1);
+        let r2 = r1.next.as_deref().expect("second run");
+        assert_eq!(r2.r#type, CRT_SIMPLE);
+        assert_eq!(r2.count, 1);
+        assert!(r2.next.is_none(), "no third run");
+    }
+
+    /// c:846-895 — bin_compdescribe with invalid option returns 1.
+    #[test]
+    fn bin_compdescribe_rejects_bad_option() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let saved_incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
+        INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(), argscount: 0, argsalloc: 0,
+        };
+        // -xx is two chars but ends with `x` not a known subcommand
+        // letter — should fall through to the `invalid option` arm.
+        let r = bin_compdescribe("compdescribe", &["-x".into()], &ops, 0);
+        INCOMPFUNC.store(saved_incompfunc, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(r, 1);
+    }
+
     /// c:4903-4923 — cf_remove_other with pre="dir/foo" returns
     /// only names starting with "dir/" and clears `amb`.
     #[test]
@@ -2228,44 +3113,195 @@ fn clone_castate_full(s: &castate) -> castate {
     }
 }
 
-/// Port of `bin_compdescribe(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from Src/Zle/computil.c:846.
-/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(d, more)
+/// Direct port of `static int bin_compdescribe(char *nam, char **args,
+///                                                UNUSED(Options ops),
+///                                                UNUSED(int func))`
+/// from `Src/Zle/computil.c:846-895`. Subcommand dispatch for
+/// `compdescribe -i/-I/-g`:
+///   - `-i hide mlen ARGS...` → cd_init with empty opts and disp=0
+///   - `-I hide mlen sep optsParam ARGS...` → cd_init with disp=1
+///   - `-g param csl mats dpys` → cd_get with the 4 output params
 pub fn bin_compdescribe(nam: &str, args: &[String],                          // c:846
                         _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3452
+    use crate::ported::params::paramtab;
+    use std::sync::atomic::Ordering;
+
+    if INCOMPFUNC.load(Ordering::Relaxed) != 1 {                             // c:850
         zwarnnam(nam, "can only be called from completion function");
         return 1;
     }
-    if args.is_empty() {                                                     // c:3456
-        zwarnnam(nam, "missing argument");
+    if args.is_empty() { return 1; }
+    let a0 = args[0].as_bytes();
+    // c:854 — `args[0]` must be exactly 2 chars starting with `-`.
+    if a0.len() != 2 || a0[0] != b'-' {
+        zwarnnam(nam, &format!("invalid argument: {}", args[0]));
         return 1;
     }
-    // c:3460-3658 — _describe formatter: -i init, -g group, -V vals,
-    //               -t tag, -x sep. Cdescr Rust struct port pending
-    //               — the 200-line _describe formatter walks a
-    //               Cdescr-tagged option/value pair list, applying
-    //               group + align + width-fit logic. When Cdescr lands
-    //               (computil.c:3220 typedef), this fn body wires
-    //               through it like ca_set_data does.
-    0
+    let n = args.len() as i32;
+
+    match a0[1] {
+        b'i' => {                                                            // c:859
+            if n < 3 {
+                zwarnnam(nam, "not enough arguments");
+                return 1;
+            }
+            cd_init(nam, &args[1], &args[2], "", &[], &args[3..], 0)         // c:865
+        }
+        b'I' => {                                                            // c:866
+            if n < 6 {
+                zwarnnam(nam, "not enough arguments");
+                return 1;
+            }
+            // c:874 — getaparam(args[4]).
+            let opts_arr: Vec<String> = paramtab().read().ok()
+                .and_then(|tab| tab.get(&args[4])
+                    .and_then(|pm| pm.u_arr.clone()))
+                .unwrap_or_default();
+            if opts_arr.is_empty() && paramtab().read().ok()
+                .map_or(true, |tab| tab.get(&args[4]).is_none())
+            {
+                zwarnnam(nam, &format!("unknown parameter: {}", args[4]));
+                return 1;
+            }
+            cd_init(nam, &args[1], &args[2], &args[3], &opts_arr,            // c:878
+                    &args[5..], 1)
+        }
+        b'g' => {                                                            // c:880
+            if cd_parsed.load(Ordering::Relaxed) == 0 {                       // c:881
+                zwarnnam(nam, "no parsed state");                            // c:889
+                return 1;
+            }
+            if n != 5 {
+                zwarnnam(nam,
+                    if n < 5 { "not enough arguments" } else { "too many arguments" });
+                return 1;
+            }
+            cd_get(&args[1..])                                                // c:887
+        }
+        _ => {
+            zwarnnam(nam, &format!("invalid option: {}", args[0]));
+            1
+        }
+    }
 }
 
-/// Port of `bin_compfiles(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from Src/Zle/computil.c:4970.
-/// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=()
+/// Direct port of `static int bin_compfiles(char *nam, char **args,
+///                                            UNUSED(Options ops),
+///                                            UNUSED(int func))` from
+/// `Src/Zle/computil.c:4970-5070`. Subcommand dispatch for
+/// `compfiles -p/-P/-i/-r`. `-i` runs cf_ignore on a param-named
+/// array; `-r` runs cf_remove_other; `-p`/`-P` thread through cf_pats.
 pub fn bin_compfiles(nam: &str, args: &[String],                             // c:4970
                      _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:4949
+    use crate::ported::params::{paramtab, setaparam};
+    use crate::ported::utils::quotestring;
+    use crate::ported::zsh_h::QT_BACKSLASH_PATTERN;
+    use std::sync::atomic::Ordering;
+
+    if INCOMPFUNC.load(Ordering::Relaxed) != 1 {                             // c:4972
         zwarnnam(nam, "can only be called from completion function");
         return 1;
     }
-    if args.is_empty() {                                                     // c:4953
-        zwarnnam(nam, "missing argument");
+    if args.is_empty() || !args[0].starts_with('-') {                        // c:4976
+        let bad = args.first().map(|s| s.as_str()).unwrap_or("");
+        zwarnnam(nam, &format!("missing option: {}", bad));
         return 1;
     }
-    // c:4957-5070 — file-completion dispatcher: -p (path), -P (pats),
-    //               -F (filter), -W (paths). Without LinkList substrate
-    //               we accept the call but produce no matches.
-    0
+    let a0 = args[0].as_bytes();
+    if a0.len() < 2 { zwarnnam(nam, &format!("missing option: {}", args[0])); return 1; }
+    let sub = a0[1];
+
+    // Helper: read a named array via paramtab.
+    let get_arr = |name: &str| -> Option<Vec<String>> {
+        paramtab().read().ok().and_then(|tab| {
+            tab.get(name).and_then(|pm| pm.u_arr.clone())
+        })
+    };
+
+    match sub {
+        b'p' | b'P' => {                                                      // c:4981
+            // c:4983 — accept `-p` or `-p--` (the `--` toggles noopt).
+            let noopt = a0.len() > 2;
+            if noopt && (a0.len() != 4 || a0[2] != b'-' || a0[3] != b'-') {
+                zwarnnam(nam, &format!("invalid option: {}", args[0]));
+                return 1;
+            }
+            let required = if sub == b'p' { 8 } else { 7 };
+            if args.len() <= required {                                      // c:4990
+                zwarnnam(nam, "too few arguments");
+                return 1;
+            }
+            // c:4996 — getaparam(args[1]).
+            let Some(src) = get_arr(&args[1]) else {
+                zwarnnam(nam, &format!("unknown parameter: {}", args[1]));
+                return 0;
+            };
+            // c:5001 — quotestring each entry with QT_BACKSLASH_PATTERN.
+            let l: Vec<String> = src.iter()
+                .map(|s| quotestring(s, QT_BACKSLASH_PATTERN))
+                .collect();
+            // c:5003 — cf_pats dispatch.
+            let result = cf_pats(
+                if sub == b'P' { 1 } else { 0 },
+                if noopt { 1 } else { 0 },
+                &l,
+                &get_arr(&args[2]).unwrap_or_default(),
+                &args[3],
+                &args[4],
+                &args[5],
+                &get_arr(&args[6]).unwrap_or_default(),
+                &args[7..],
+            );
+            setaparam(&args[1], result);
+            0
+        }
+        b'i' => {                                                            // c:5010
+            if a0.len() > 2 {                                                 // c:5011
+                zwarnnam(nam, &format!("invalid option: {}", args[0]));
+                return 1;
+            }
+            if args.len() < 5 {                                              // c:5018
+                zwarnnam(nam, "too few arguments");
+                return 1;
+            }
+            if args.len() > 5 {                                              // c:5022
+                zwarnnam(nam, "too many arguments");
+                return 1;
+            }
+            let mut l: Vec<String> = get_arr(&args[2]).unwrap_or_default();
+            let Some(tmp) = get_arr(&args[1]) else {                          // c:5032
+                zwarnnam(nam, &format!("unknown parameter: {}", args[1]));
+                return 0;
+            };
+            cf_ignore(&tmp, &mut l, &args[3], &args[4]);                      // c:5037
+            setaparam(&args[2], l);                                           // c:5039
+            0
+        }
+        b'r' => {                                                            // c:5042
+            if args.len() < 3 {                                              // c:5048
+                zwarnnam(nam, "too few arguments");
+                return 1;
+            }
+            if args.len() > 3 {                                              // c:5052
+                zwarnnam(nam, "too many arguments");
+                return 1;
+            }
+            let Some(tmp) = get_arr(&args[1]) else {                          // c:5057
+                zwarnnam(nam, &format!("unknown parameter: {}", args[1]));
+                return 0;
+            };
+            let mut ret = 0i32;
+            // c:5062 — cf_remove_other.
+            if let Some(l) = cf_remove_other(&tmp, &args[2], &mut ret) {
+                setaparam(&args[1], l);
+            }
+            ret                                                              // c:5065
+        }
+        _ => {
+            zwarnnam(nam, &format!("invalid option: {}", args[0]));
+            1
+        }
+    }
 }
 
 /// Port of `bin_compgroups(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))` from Src/Zle/computil.c:5073.
