@@ -562,6 +562,7 @@ mod tests {
 
     #[test]
     fn test_pattern_match_equivalence_case_cross() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1342 — wmtp=PP_UPPER, lmtp=PP_LOWER → tolower(wchr).
         use crate::ported::zle::comp_h::{Cpattern, CPAT_EQUIV};
         let lp = Cpattern { tp: CPAT_EQUIV, str: Some("ab".into()), chr: 0, next: None };
@@ -594,6 +595,7 @@ mod tests {
 
     #[test]
     fn cpatterns_same_chr_match() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = cpat_char('a' as u32);
         let b = cpat_char('a' as u32);
         // c:64-66 — both CPAT_CHAR + same chr → equal.
@@ -602,6 +604,7 @@ mod tests {
 
     #[test]
     fn cpatterns_same_chr_mismatch() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = cpat_char('a' as u32);
         let b = cpat_char('b' as u32);
         // c:65 — different chr → not equal.
@@ -610,6 +613,7 @@ mod tests {
 
     #[test]
     fn cpatterns_same_tp_mismatch() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = cpat_char('a' as u32);
         let b = Cpattern {
             tp: CPAT_NCLASS,
@@ -622,6 +626,7 @@ mod tests {
 
     #[test]
     fn cpatterns_same_class_match() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = cpat_class("a-z");
         let b = cpat_class("a-z");
         // c:60 — same str → equal.
@@ -630,6 +635,7 @@ mod tests {
 
     #[test]
     fn cpatterns_same_length_mismatch() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = cpat_char('a' as u32);
         // a chained to a second pattern; b has only one.
         let mut a_chain = a.clone();
@@ -641,12 +647,14 @@ mod tests {
 
     #[test]
     fn cpatterns_same_both_empty() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:46 — both NULL → loop never enters, return !b == true.
         assert!(cpatterns_same(None, None));
     }
 
     #[test]
     fn cmatchers_same_pointer_eq() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let m = Cmatcher::default();
         // c:86 — `a == b` short-circuit.
         assert!(cmatchers_same(&m, &m));
@@ -654,6 +662,7 @@ mod tests {
 
     #[test]
     fn cmatchers_same_flags_diff() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = Cmatcher { flags: 0, ..Default::default() };
         let b = Cmatcher { flags: 1, ..Default::default() };
         // c:87 — different flags → not equal.
@@ -662,6 +671,7 @@ mod tests {
 
     #[test]
     fn cmatchers_same_anchor_lengths() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // CMF_LEFT path: anchor length difference matters.
         let a = Cmatcher {
             flags: CMF_LEFT,
@@ -692,6 +702,7 @@ mod tests {
 
     #[test]
     fn cline_sublen_simple() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let l = Cline {
             flags: CLF_LINE,
             llen: 5,
@@ -704,6 +715,7 @@ mod tests {
 
     #[test]
     fn cline_sublen_with_olen() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let l = Cline {
             flags: 0,
             llen: 0,
@@ -717,6 +729,7 @@ mod tests {
 
     #[test]
     fn cline_sublen_with_prefix() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let pre = Cline {
             flags: CLF_LINE,
             llen: 4,
@@ -735,6 +748,7 @@ mod tests {
 
     #[test]
     fn cline_sublen_clf_suf() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let suf = Cline {
             flags: CLF_LINE,
             llen: 3,
@@ -755,6 +769,7 @@ mod tests {
 
     #[test]
     fn cline_setlens_propagates() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut head: Option<Box<Cline>> = Some(Box::new(Cline {
             flags: CLF_LINE,
             llen: 5,
@@ -777,6 +792,7 @@ mod tests {
 
     #[test]
     fn cline_matched_sets_flag_recursively() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut head: Option<Box<Cline>> = Some(Box::new(Cline {
             prefix: Some(Box::new(Cline::default())),
             suffix: Some(Box::new(Cline::default())),
@@ -797,6 +813,7 @@ mod tests {
 
     #[test]
     fn revert_cline_reverses_chain() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let head = Some(Box::new(Cline {
             llen: 1,
             next: Some(Box::new(Cline {
@@ -822,6 +839,7 @@ mod tests {
 
     #[test]
     fn cp_cline_shallow() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let src = Cline {
             llen: 7,
             wlen: 9,
@@ -841,6 +859,7 @@ mod tests {
 
     #[test]
     fn start_match_clears_globals() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Pre-populate to ensure start_match resets.
         MATCHBUF
             .get_or_init(|| Mutex::new(String::new()))
@@ -859,6 +878,7 @@ mod tests {
 
     #[test]
     fn abort_match_drops_lists() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         *MATCHPARTS
             .get_or_init(|| Mutex::new(None))
             .lock()

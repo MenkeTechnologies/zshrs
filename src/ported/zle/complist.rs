@@ -131,6 +131,7 @@ mod tests {
 
     #[test]
     fn test_compprintfmt() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1072 — compprintfmt builds the LIST_GROUPS_HEADER expansion.
         assert_eq!(
             compprintfmt("Showing %d matches in %g", 42, "files"),
@@ -142,6 +143,7 @@ mod tests {
 
     #[test]
     fn col_indices_match_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:167-191 — exact integer indices used by mcolors.files[i].
         assert_eq!(COL_NO, 0);
         assert_eq!(COL_DI, 2);
@@ -153,6 +155,7 @@ mod tests {
 
     #[test]
     fn num_cols_matches_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:193 — must match the colnames[] / defcols[] array length.
         assert_eq!(NUM_COLS, 25);
         assert_eq!(COLNAMES.len(), 25);
@@ -161,6 +164,7 @@ mod tests {
 
     #[test]
     fn colnames_match_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:197-201 — two-letter LS_COLORS keys.
         assert_eq!(COLNAMES[COL_NO], "no");
         assert_eq!(COLNAMES[COL_DI], "di");
@@ -171,6 +175,7 @@ mod tests {
 
     #[test]
     fn defcols_match_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:205-209 — default ANSI codes.
         assert_eq!(DEFCOLS[COL_NO], Some("0"));
         assert_eq!(DEFCOLS[COL_DI], Some("1;31"));
@@ -183,6 +188,7 @@ mod tests {
 
     #[test]
     fn filecol_allocates_with_defaults() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:487-498 — fresh filecol: prog=NULL, col=arg, next=NULL.
         let fc = filecol("0;32");
         assert_eq!(fc.col, "0;32");
@@ -192,6 +198,7 @@ mod tests {
 
     #[test]
     fn filecol_empty_string() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // The "no LS_COLORS set" path at c:515-516 calls filecol("")
         // for every slot.
         let fc = filecol("");

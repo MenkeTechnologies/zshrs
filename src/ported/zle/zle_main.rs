@@ -201,6 +201,32 @@ pub struct findfunc {                                                        // 
 // C dispatches completion-widget variants via separate function
 // pointers in `Src/Zle/zle_tricky.c` — no enum type.
 
+/// Process-wide lock that serialises ZLE-touching tests. The ZLE
+/// session state lives in file-scope statics (ZLELINE/ZLECS/etc.);
+/// `cargo test` runs tests in parallel by default which races on
+/// those shared statics. Tests acquire this lock at the top
+/// (typically via `zle_test_setup()` below) so the parallel runner
+/// effectively serialises just the ZLE-touching subset. No C
+/// counterpart — C is single-threaded so the question doesn't arise.
+#[doc(hidden)]
+pub static ZLE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Test-only setup helper: acquires `ZLE_TEST_LOCK` and resets state.
+/// Returns the lock guard which holds for the test body's lifetime.
+/// Pattern: `let _g = crate::ported::zle::zle_main::zle_test_setup();`
+/// at the top of every `#[test]` that mutates ZLE statics.
+#[doc(hidden)]
+pub fn zle_test_setup() -> std::sync::MutexGuard<'static, ()> {
+    // Poison-tolerant: if a prior test panicked while holding the
+    // lock, recover the guard rather than poisoning every subsequent
+    // test. Tests reset state via zle_reset() anyway.
+    let guard = ZLE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    zle_reset();
+    guard
+}
+
 /// Reset every ZLE-session file-scope static to its zero-state.
 /// Equivalent to the global state initialisation that `zleread()`
 /// performs at the start of each line edit in Src/Zle/zle_main.c:1216
@@ -1271,6 +1297,7 @@ mod ztmout_findfunc_tests {
 
     #[test]
     fn ztmouttp_discriminant_values() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:401-428 — sequential 0..=3.
         assert_eq!(ztmouttp::ZTM_NONE as i32, 0);
         assert_eq!(ztmouttp::ZTM_KEY  as i32, 1);
@@ -1280,12 +1307,14 @@ mod ztmout_findfunc_tests {
 
     #[test]
     fn ztmout_default_carries_none_type() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let t = ztmout { tp: ztmouttp::ZTM_NONE, exp100ths: 0 };
         assert_eq!(t.tp, ztmouttp::ZTM_NONE);
     }
 
     #[test]
     fn findfunc_default_is_empty() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1927 — fresh state: no func, zero hits, no msg.
         let f = findfunc::default();
         assert_eq!(f.func, None);
@@ -1295,6 +1324,7 @@ mod ztmout_findfunc_tests {
 
     #[test]
     fn findfunc_can_accumulate_message() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut f = findfunc { func: Some(42), found: 0, msg: String::new() };
         f.found += 1;
         f.msg.push_str(" is on KEY1");
@@ -1309,7 +1339,7 @@ mod tests {
 
     #[test]
     fn handleprefixes_promotes_tmult_to_mult_when_prefixflag_set() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_TMULT;
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = 7;
         crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
@@ -1322,7 +1352,7 @@ mod tests {
 
     #[test]
     fn handleprefixes_resets_modifier_when_prefixflag_cleared() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_MULT;
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 9;
         crate::ported::zle::zle_main::PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -1334,7 +1364,7 @@ mod tests {
 
     #[test]
     fn get_key_cmd_resolves_single_byte_binding() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         ungetbytes(b"\x05"); // Ctrl-E — emacs default = end-of-line
         let t = get_key_cmd().expect("should resolve Ctrl-E");
@@ -1343,7 +1373,7 @@ mod tests {
 
     #[test]
     fn get_key_cmd_resolves_multi_byte_sequence() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         // ESC-d is bind to kill-word in zle_bindings.c emacs table.
         // Push the bytes and resolve — multi-byte traversal kicks in.
@@ -1359,7 +1389,7 @@ mod tests {
 
     #[test]
     fn get_key_cmd_returns_none_on_eof() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
         // No bytes fed, no terminal attached — getbyte should return None.
         let result = get_key_cmd();
@@ -1375,7 +1405,7 @@ mod tests {
 
     #[test]
     fn handle_undo_snapshots_line_for_subsequent_diff() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);
@@ -1387,7 +1417,7 @@ mod tests {
 
     #[test]
     fn in_vi_cmd_mode_reflects_active_keymap_name() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_keymap::curkeymapname() = "emacs".to_string();
         assert!(!in_vi_cmd_mode());
         *crate::ported::zle::zle_keymap::curkeymapname() = "vicmd".to_string();
@@ -1398,6 +1428,7 @@ mod tests {
 
     #[test]
     fn ungetbytes_unmeta_plain_bytes() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:375 — non-Meta bytes pushed back in reverse.
         crate::ported::zle::zle_main::zle_reset();
         // Pre-clear unget_buf in case { crate::ported::zle::zle_main::zle_reset() } leaves anything.
@@ -1412,6 +1443,7 @@ mod tests {
 
     #[test]
     fn ungetbytes_unmeta_decodes_meta_pair() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:370-373 — `\x83 X` decodes to (X XOR 0x20). Meta = 0x83.
         // Encode 'a' meta-quoted: 0x83 followed by 'a' XOR 0x20 = 0x41.
         // So [0x83, 0x41] → emit 0x41 ^ 0x20 = 0x61 = 'a'.
@@ -1424,6 +1456,7 @@ mod tests {
 
     #[test]
     fn ungetbytes_unmeta_mixed_meta_and_plain() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // 'X' + Meta + 'a'XOR0x20 + 'Z' → 3 chars: 'X', 'a', 'Z'.
         // Encoded: [0x58, 0x83, 0x41, 0x5a].
         crate::ported::zle::zle_main::zle_reset();
@@ -1437,7 +1470,7 @@ mod tests {
 
     #[test]
     fn ungetbytes_unmeta_empty_input() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(b"");
         assert!(crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().is_empty());

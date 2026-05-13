@@ -1256,6 +1256,7 @@ mod tests {
 
     #[test]
     fn rthingy_creates_then_refs() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1268,6 +1269,7 @@ mod tests {
 
     #[test]
     fn refthingy_unrefthingy_roundtrip() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1284,6 +1286,7 @@ mod tests {
 
     #[test]
     fn rthingy_nocreate_returns_false_for_missing() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1293,6 +1296,7 @@ mod tests {
 
     #[test]
     fn rthingy_nocreate_refs_existing() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1303,6 +1307,7 @@ mod tests {
 
     #[test]
     fn bindwidget_assigns_widget_and_clears_disabled() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1321,6 +1326,7 @@ mod tests {
 
     #[test]
     fn bindwidget_immortal_blocks() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1336,6 +1342,7 @@ mod tests {
 
     #[test]
     fn unbindwidget_drops_widget_when_last_peer() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1355,6 +1362,7 @@ mod tests {
 
     #[test]
     fn addzlefunction_binds_dotted_and_canonical() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1376,6 +1384,7 @@ mod tests {
 
     #[test]
     fn addzlefunction_refuses_dotted_name() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1385,6 +1394,7 @@ mod tests {
 
     #[test]
     fn deletezlefunction_unbinds_all_peers() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 

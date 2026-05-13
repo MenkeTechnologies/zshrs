@@ -812,6 +812,7 @@ mod tests {
 
     #[test]
     fn zs_strlen_stops_at_nul() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(ZS_strlen(&['a', 'b', 'c']), 3);
         assert_eq!(ZS_strlen(&['a', '\0', 'c']), 1);
         assert_eq!(ZS_strlen(&[]), 0);
@@ -819,6 +820,7 @@ mod tests {
 
     #[test]
     fn zs_memcpy_first_n_chars() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut dst = ['x'; 5];
         let src = ['a', 'b', 'c', 'd', 'e'];
         ZS_memcpy(&mut dst, &src, 3);
@@ -827,6 +829,7 @@ mod tests {
 
     #[test]
     fn zs_memmove_handles_self_copy() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut buf = ['a', 'b', 'c', 'd', 'e'];
         let src: Vec<char> = buf[1..4].to_vec();
         ZS_memmove(&mut buf, &src, 3);
@@ -835,6 +838,7 @@ mod tests {
 
     #[test]
     fn zs_memset_fills_n() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut dst = ['x'; 5];
         ZS_memset(&mut dst, 'z', 3);
         assert_eq!(dst, ['z', 'z', 'z', 'x', 'x']);
@@ -842,12 +846,14 @@ mod tests {
 
     #[test]
     fn zs_memcmp_ordering() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(ZS_memcmp(&['a', 'b'], &['a', 'b'], 2), std::cmp::Ordering::Equal);
         assert_eq!(ZS_memcmp(&['a', 'b'], &['a', 'c'], 2), std::cmp::Ordering::Less);
     }
 
     #[test]
     fn zs_strncmp_terminates_at_nul() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(ZS_strncmp(&['a', 'b'], &['a', 'b'], 2), std::cmp::Ordering::Equal);
         assert_eq!(ZS_strncmp(&['a', 'b'], &['a', 'c'], 2), std::cmp::Ordering::Less);
         assert_eq!(ZS_strncmp(&['a', '\0'], &['a'], 5), std::cmp::Ordering::Equal);
@@ -855,12 +861,14 @@ mod tests {
 
     #[test]
     fn zs_strchr_returns_first_index() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(ZS_strchr(&['a', 'b', 'c'], 'b'), Some(1));
         assert_eq!(ZS_strchr(&['a', 'b', 'c'], 'z'), None);
     }
 
     #[test]
     fn zc_iblank_excludes_newline() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(ZC_iblank(' '));
         assert!(ZC_iblank('\t'));
         assert!(!ZC_iblank('\n'));
@@ -868,6 +876,7 @@ mod tests {
 
     #[test]
     fn zc_inblank_includes_newline() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(ZC_inblank('\n'));
         assert!(ZC_inblank(' '));
         assert!(!ZC_inblank('a'));
@@ -875,6 +884,7 @@ mod tests {
 
     #[test]
     fn zc_iword_includes_underscore() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(ZC_iword('a'));
         assert!(ZC_iword('1'));
         assert!(ZC_iword('_'));
@@ -883,6 +893,7 @@ mod tests {
 
     #[test]
     fn zc_iident_matches_iword() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         for c in ['a', 'A', '0', '_'] {
             assert_eq!(ZC_iident(c), ZC_iword(c));
         }
@@ -890,6 +901,7 @@ mod tests {
 
     #[test]
     fn zc_tolower_toupper_round_trip() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(ZC_tolower('A'), 'a');
         assert_eq!(ZC_toupper('a'), 'A');
         assert_eq!(ZC_tolower('1'), '1');
@@ -897,6 +909,7 @@ mod tests {
 
     #[test]
     fn invicmdmode_only_true_for_vicmd() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(invicmdmode("vicmd"));
         assert!(!invicmdmode("main"));
         assert!(!invicmdmode("emacs"));
@@ -905,6 +918,7 @@ mod tests {
 
     #[test]
     fn th_out_of_range_returns_none() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:316 — Th(X) is `&thingies[X]`. Out-of-bounds index has no
         // C analog (would be UB); the Rust port returns None.
         assert!(Th(99).is_none());
@@ -913,6 +927,7 @@ mod tests {
 
     #[test]
     fn th_in_range_looks_up_thingytab() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:316 — Th(X) returns &thingies[X]. With an empty thingytab
         // the lookup misses, with a registered widget it hits.
         assert_eq!(T_THINGY_NAMES[10], "complete-word");

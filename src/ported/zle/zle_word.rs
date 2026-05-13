@@ -689,9 +689,7 @@ pub fn capitalizeword(_args: &[String]) -> i32 {          // c:577
             crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         // c:588 — skip word-but-non-alpha chars (digits etc.) at start.
-        while { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)]; crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)
-              && zc_iword(__c)
-              && !zc_ialpha(__c) } {
+        while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)]; zc_iword(__c) && !zc_ialpha(__c) } {
             crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && zc_iword(crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)]) {   // c:590
@@ -780,7 +778,7 @@ pub fn transposewords(_args: &[String]) -> i32 {          // c:652
     let mut x = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
 
     // c:662-663 — advance x to next word start (skip non-iword unless newline).
-    while { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[x]; x != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && __c != '\n' && !zc_iword(__c) } {
+    while x != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[x]; __c != '\n' && !zc_iword(__c) } {
         x += 1;                                                          // INCPOS
     }
     // c:665-682 — if at end-or-newline, search backward for word-start.
@@ -865,6 +863,7 @@ mod tests {
     /// Verifies `wordclass` per c:74-78 dispatch table.
     #[test]
     fn wordclass_dispatch() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(wordclass(' '), 0);
         assert_eq!(wordclass('a'), 1);
         assert_eq!(wordclass('_'), 1);
@@ -875,6 +874,7 @@ mod tests {
     /// Verifies `forwardword` skips iword then non-iword (c:56-63).
     #[test]
     fn forwardword_basic() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("foo bar baz");
         forwardword(&[]);
         // From cs=0 (on 'f'), skip 'foo' iword then ' ' non-iword,
@@ -886,6 +886,7 @@ mod tests {
     /// (c:251-265).
     #[test]
     fn backwardword_lands_at_word_start() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("foo bar baz");
         crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
         backwardword(&[]);
@@ -897,6 +898,7 @@ mod tests {
     /// Verifies `upcaseword` mutates the next word in place (c:540-547).
     #[test]
     fn upcaseword_uppercases_next_word() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("foo bar");
         upcaseword(&[]);
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
@@ -907,6 +909,7 @@ mod tests {
     /// Verifies `downcaseword` mutates next word in place (c:562-569).
     #[test]
     fn downcaseword_lowercases_next_word() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("FOO Bar");
         downcaseword(&[]);
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
@@ -917,6 +920,7 @@ mod tests {
     /// rest (c:584-595).
     #[test]
     fn capitalizeword_first_only() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("foo bar");
         capitalizeword(&[]);
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
@@ -930,6 +934,7 @@ mod tests {
     /// and `foredel(3-0)` drops "foo" — leaving the leading space.
     #[test]
     fn deleteword_drops_next_word() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("foo bar baz");
         deleteword(&[]);
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
@@ -941,6 +946,7 @@ mod tests {
     /// preceding word (c:684-734).
     #[test]
     fn transposewords_swaps_pair() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut z = line("foo bar");
         crate::ported::zle::zle_main::ZLECS.store(5, std::sync::atomic::Ordering::SeqCst);  // mid-'bar'
         transposewords(&[]);

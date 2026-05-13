@@ -334,6 +334,7 @@ mod tests {
 
     #[test]
     fn test_url_encode() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(url_encode("/home/user"), "/home/user");
         assert_eq!(url_encode("/path with spaces"), "/path%20with%20spaces");
         assert_eq!(url_encode("hello&world"), "hello%26world");
@@ -341,6 +342,7 @@ mod tests {
 
     #[test]
     fn curf_constants_match_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:488-491 — CURF_DEFAULT/UNDERLINE/Bar/BLOCK occupy the
         // low 2 bits per Src/Zle/zle.h.
         use crate::ported::zle::zle_h::{CURF_DEFAULT, CURF_UNDERLINE, CURF_BAR, CURF_BLOCK, CURF_SHAPE_MASK};
@@ -353,6 +355,7 @@ mod tests {
 
     #[test]
     fn test_base64_encode() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
         assert_eq!(base64_encode(b""), "");
         assert_eq!(base64_encode(b"a"), "YQ==");
@@ -362,6 +365,7 @@ mod tests {
 
     #[test]
     fn base64_decode_round_trip_with_encode() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Encode then decode round-trip to verify C-faithful semantics.
         // c:579 — stops at '=' (the standard base64 terminator).
         let encoded = base64_encode(b"hello");
@@ -371,6 +375,7 @@ mod tests {
 
     #[test]
     fn base64_decode_well_known() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:580-584 — verify character-class table.
         // 'TWFu' → 'Man' (RFC 4648 example).
         assert_eq!(base64_decode("TWFu"), b"Man");
@@ -378,6 +383,7 @@ mod tests {
 
     #[test]
     fn base64_decode_with_padding() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // 'YQ==' → 'a'
         assert_eq!(base64_decode("YQ=="), b"a");
         // 'YWI=' → 'ab'
@@ -388,6 +394,7 @@ mod tests {
 
     #[test]
     fn base64_decode_handles_plus_slash() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:583-584 — '+' = 62, '/' = 63.
         // 4 base64 chars → 24 bits → 3 bytes.
         //   '+' = 62 = 111110
@@ -400,6 +407,7 @@ mod tests {
 
     #[test]
     fn base64_decode_empty_input() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:579 — `len && ...` guards against zero-length input.
         assert_eq!(base64_decode(""), Vec::<u8>::new());
     }
@@ -640,12 +648,14 @@ mod term_pat_tag_tests {
 
     #[test]
     fn tag_high_bit_set() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(TAG, 0x80);
         assert_eq!(SEQ, 0xc0);
     }
 
     #[test]
     fn t_constants_have_high_bit_set() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         for tag in [T_BEGIN, T_END, T_OR, T_REPEAT, T_NUM, T_HEX, T_HEXCH,
                     T_WILDCARD, T_RECORD, T_CAPTURE, T_DROP, T_CONTINUE, T_NEXT] {
             assert!(tag & TAG != 0, "tag 0x{:02x} should have high bit set", tag);
@@ -654,11 +664,13 @@ mod term_pat_tag_tests {
 
     #[test]
     fn timeout_sentinel_negative() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(TIMEOUT, -51);
     }
 
     #[test]
     fn t_repeat_in_seq_range() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:42-48 — T_BEGIN..=T_HEXCH all in 0x80..=0x86, all have TAG bit.
         assert!((T_BEGIN..=T_HEXCH).contains(&T_REPEAT));
     }

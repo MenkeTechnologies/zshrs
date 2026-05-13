@@ -897,6 +897,7 @@ mod tests {
 
     #[test]
     fn emacs_default_has_quoted_insert_undo_yank_pop() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _ = KeymapManager;
         createkeymapnamtab();
         default_bindings();
@@ -918,6 +919,7 @@ mod tests {
 
     #[test]
     fn emacs_default_has_history_search_and_insert_last_word() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _ = KeymapManager;
         createkeymapnamtab();
         default_bindings();
@@ -943,6 +945,7 @@ mod tests {
 
     #[test]
     fn vicmd_default_has_visual_marks_indent() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _ = KeymapManager;
         createkeymapnamtab();
         default_bindings();
@@ -976,6 +979,7 @@ mod tests {
 
     #[test]
     fn viins_default_has_history_search_and_quoted_insert() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _ = KeymapManager;
         createkeymapnamtab();
         default_bindings();
@@ -1002,6 +1006,7 @@ mod tests {
 
     #[test]
     fn refkeymap_increments_rc() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:470 — `km->rc++`. Default Keymap starts with rc=0.
         let mut km = Keymap::default();
         assert_eq!(km.rc, 0);
@@ -1013,6 +1018,7 @@ mod tests {
 
     #[test]
     fn unrefkeymap_decrements_returns_new_count() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:482 — `--km->rc`. With rc=3 → returns 2.
         let mut km = Keymap::default();
         km.rc = 3;
@@ -1025,6 +1031,7 @@ mod tests {
 
     #[test]
     fn unrefkeymap_returns_zero_at_last_ref() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:482-484 — `if (!--km->rc) { deletekeymap(km); return 0; }`.
         // rc=1 → -- → 0 → returns 0 (deletion signal).
         let mut km = Keymap::default();
@@ -1041,6 +1048,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_empty_seq() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:687-688 — empty input → always prefix → 1.
         let km = Keymap::default();
         assert_eq!(keyisprefix(&km, b""), 1);
@@ -1048,6 +1056,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_single_byte_bound_returns_zero() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:689-692 — single byte that has a first[] binding is NOT
         // a prefix; it IS the binding.
         let mut km = Keymap::default();
@@ -1057,6 +1066,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_single_byte_unbound() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:694-695 — fall through to multi lookup; no match → 0.
         let km = Keymap::default();
         assert_eq!(keyisprefix(&km, b"x"), 0);
@@ -1064,6 +1074,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_seq_is_real_prefix() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:694-695 — multi has prefixct > 0 → 1.
         // bind_seq("ab", X) marks "a" as a prefix (prefixct=1).
         let mut km = Keymap::default();
@@ -1074,6 +1085,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_seq_is_complete_binding() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:694-695 — when seq itself IS a binding (not a prefix),
         // multi[seq] has prefixct=0 → 0.
         let mut km = Keymap::default();
@@ -1084,6 +1096,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_meta_pair_decoded() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:690 — `seq[0]==Meta` (0x83) → use seq[1]^32 as single byte.
         // Bind 'A' (0x41) in first[]. Seq [0x83, 0x61] decodes to
         // 0x61^0x20 = 0x41 = 'A'. So this is single-byte 'A'.

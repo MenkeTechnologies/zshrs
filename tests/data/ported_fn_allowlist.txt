@@ -1155,6 +1155,13 @@ highlight
 # both need to reach the same reset block without re-entering zleread.
 zle_reset
 
+# zle_test_setup — process-wide ZLE-test serialiser. Acquires the
+# global ZLE_TEST_LOCK and calls zle_reset(). Tests hold the returned
+# guard for their body's lifetime so the cargo parallel runner
+# effectively serialises ZLE-touching tests. No C counterpart —
+# C is single-threaded so the question doesn't arise.
+zle_test_setup
+
 # Hoisted impl-Zle methods (no C counterpart by design; they were
 # Rust-only helpers on the now-deleted `Zle` struct). Most are widget
 # glue (`accept_line`, `kill_buffer`, `self_insert`) or convenience

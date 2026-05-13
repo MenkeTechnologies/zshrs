@@ -745,6 +745,7 @@ mod cao_caa_tests {
 
     #[test]
     fn cao_values_match_c_source() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:941-945 — sequential 1..=5.
         assert_eq!(CAO_NEXT, 1);
         assert_eq!(CAO_DIRECT, 2);
@@ -755,6 +756,7 @@ mod cao_caa_tests {
 
     #[test]
     fn caa_values_match_c_source() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:964-968 — sequential 1..=5.
         assert_eq!(CAA_NORMAL, 1);
         assert_eq!(CAA_OPT,    2);
@@ -765,6 +767,7 @@ mod cao_caa_tests {
 
     #[test]
     fn crt_values_match_c_source() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:79-83 — sequential 0..=4.
         assert_eq!(CRT_SIMPLE, 0);
         assert_eq!(CRT_DESC,   1);
@@ -775,6 +778,7 @@ mod cao_caa_tests {
 
     #[test]
     fn cvv_values_match_c_source() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:2949-2951 — sequential 0..=2.
         assert_eq!(CVV_NOARG, 0);
         assert_eq!(CVV_ARG,   1);
@@ -783,6 +787,7 @@ mod cao_caa_tests {
 
     #[test]
     fn cache_sizes_are_8() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:972 + c:2955 — both LRU caches are 8 entries.
         assert_eq!(MAX_CACACHE, 8);
         assert_eq!(MAX_CVCACHE, 8);
@@ -790,11 +795,13 @@ mod cao_caa_tests {
 
     #[test]
     fn max_tags_is_256() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(MAX_TAGS, 256);
     }
 
     #[test]
     fn path_max2_is_8192() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(PATH_MAX2, 8192);
     }
 }
@@ -816,42 +823,49 @@ mod tests {
 
     #[test]
     fn test_rembslashcolon() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1054 — `\:` two-byte sequence drops the backslash.
         assert_eq!(rembslashcolon("a\\:b\\:c"), "a:b:c");
     }
 
     #[test]
     fn test_rembslashcolon_lone_backslash_kept() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1054 — `\X` (X != ':') keeps the backslash.
         assert_eq!(rembslashcolon("a\\nb"), "a\\nb");
     }
 
     #[test]
     fn test_rembslashcolon_trailing_backslash() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1054 — trailing `\` with no follow-up keeps the `\`.
         assert_eq!(rembslashcolon("a\\"), "a\\");
     }
 
     #[test]
     fn test_rembslashcolon_unescaped_colon_passes_through() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1054 — bare `:` (no preceding `\`) is kept.
         assert_eq!(rembslashcolon("a:b"), "a:b");
     }
 
     #[test]
     fn test_bslashcolon() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1073 — every `:` gets `\` prepended.
         assert_eq!(bslashcolon("a:b:c"), "a\\:b\\:c");
     }
 
     #[test]
     fn test_bslashcolon_no_colons() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1072 — non-colon bytes pass through unchanged.
         assert_eq!(bslashcolon("hello"), "hello");
     }
 
     #[test]
     fn test_bslashcolon_already_escaped_doubled() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1073-1074 — C doesn't track previous backslash, so an
         // already-escaped `\:` becomes `\\:` (the `\` passes
         // through, then the `:` gets a fresh `\` prepended).
@@ -860,6 +874,7 @@ mod tests {
 
     #[test]
     fn test_single_index_dash_prefix() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1094 — `pre == '-'` → offset = -0x21.
         // For opt='a' (0x61): 0x61 + -0x21 = 0x40 = 64.
         assert_eq!(single_index(b'-', b'a'), 64);
@@ -873,6 +888,7 @@ mod tests {
 
     #[test]
     fn test_single_index_plus_prefix() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1094 — `pre == '+'` → offset = 94 - 0x21 = 61.
         // For opt='a' (0x61): 0x61 + 61 = 158.
         assert_eq!(single_index(b'+', b'a'), 158);
@@ -884,6 +900,7 @@ mod tests {
 
     #[test]
     fn test_single_index_out_of_range() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1091-1092 — opt <= 0x20 OR opt > 0x7e returns -1.
         assert_eq!(single_index(b'-', 0x20), -1);     // space (0x20) excluded
         assert_eq!(single_index(b'-', 0x00), -1);     // NUL
@@ -897,6 +914,7 @@ mod tests {
 
     #[test]
     fn caarg_default_zero_initialized() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:949-962 — fresh caarg: every field zero / None.
         let a = caarg::default();
         assert!(a.next.is_none());
@@ -909,6 +927,7 @@ mod tests {
 
     #[test]
     fn caopt_default_zero_initialized() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:928-939 — fresh caopt: zero / None across all fields.
         let o = caopt::default();
         assert!(o.next.is_none());
@@ -921,6 +940,7 @@ mod tests {
 
     #[test]
     fn cadef_default_zero_initialized() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:905-922 — fresh cadef: zero / None across all fields.
         let d = cadef::default();
         assert!(d.next.is_none());
@@ -932,6 +952,7 @@ mod tests {
 
     #[test]
     fn freecaargs_walks_chain() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:996-1010 — freecaargs walks `next` chain freeing each
         // entry. After call, the chain owner observes no remaining
         // refs (Drop handles deallocation).
@@ -947,6 +968,7 @@ mod tests {
 
     #[test]
     fn cao_caa_constants_match_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:941-945 and c:964-968 — sequential 1..=5.
         assert_eq!(CAO_NEXT,    1);
         assert_eq!(CAO_DIRECT,  2);
@@ -962,6 +984,7 @@ mod tests {
 
     #[test]
     fn cdf_max_cacache_constants_match_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:924 — CDF_SEP = 1; c:972 — MAX_CACACHE = 8.
         assert_eq!(CDF_SEP, 1);
         assert_eq!(MAX_CACACHE, 8);
@@ -969,6 +992,7 @@ mod tests {
 
     #[test]
     fn crt_constants_match_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:79-83 — sequential 0..=4.
         assert_eq!(CRT_SIMPLE, 0);
         assert_eq!(CRT_DESC,   1);
@@ -979,6 +1003,7 @@ mod tests {
 
     #[test]
     fn cdstr_default_zero_initialized() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:58-70 — fresh cdstr: zero/None across all fields.
         let s = cdstr::default();
         assert!(s.next.is_none());
@@ -992,6 +1017,7 @@ mod tests {
 
     #[test]
     fn cdrun_default_zero_initialized() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:72-77 — fresh cdrun: zero/None.
         let r = cdrun::default();
         assert!(r.next.is_none());
@@ -1002,6 +1028,7 @@ mod tests {
 
     #[test]
     fn cdset_default_zero_initialized() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:85-91 — fresh cdset: zero/None.
         let s = cdset::default();
         assert!(s.next.is_none());
@@ -1013,6 +1040,7 @@ mod tests {
 
     #[test]
     fn cdstate_default_zero_initialized() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:40-56 — fresh cdstate: zero/None.
         let st = cdstate::default();
         assert_eq!(st.showd, 0);
@@ -1023,6 +1051,7 @@ mod tests {
 
     #[test]
     fn freecdsets_walks_chain() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:96-122 — freecdsets walks `next` chain freeing each set
         // and its strs sub-chain.
         let head_str = cdstr {
@@ -1047,6 +1076,7 @@ mod tests {
 
     #[test]
     fn castate_default_zero_initialized() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1928-1953 — fresh castate: zero/None.
         let s = castate::default();
         assert!(s.snext.is_none());
@@ -1059,6 +1089,7 @@ mod tests {
 
     #[test]
     fn cvdef_default_zero_initialized() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:2924-2935 — fresh cvdef: zero/None.
         let d = cvdef::default();
         assert!(d.descr.is_none());
@@ -1070,6 +1101,7 @@ mod tests {
 
     #[test]
     fn cvval_default_zero_initialized() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:2939-2947 — fresh cvval: zero/None.
         let v = cvval::default();
         assert!(v.next.is_none());
@@ -1081,6 +1113,7 @@ mod tests {
 
     #[test]
     fn cvstate_default_zero_initialized() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3222-3227 — fresh cvstate: None across all 4 fields.
         let s = cvstate::default();
         assert!(s.d.is_none());
@@ -1091,6 +1124,7 @@ mod tests {
 
     #[test]
     fn ctags_default_zero_initialized() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3737-3742 — fresh ctags: zero/None.
         let t = ctags::default();
         assert!(t.all.is_none());
@@ -1101,6 +1135,7 @@ mod tests {
 
     #[test]
     fn ctset_default_zero_initialized() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3746-3751 — fresh ctset: zero/None.
         let s = ctset::default();
         assert!(s.next.is_none());
@@ -1111,6 +1146,7 @@ mod tests {
 
     #[test]
     fn cvv_constants_match_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:2949-2951 — sequential 0..=2.
         assert_eq!(CVV_NOARG, 0);
         assert_eq!(CVV_ARG,   1);
@@ -1119,6 +1155,7 @@ mod tests {
 
     #[test]
     fn max_tags_cvcache_match_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3755 — MAX_TAGS = 256; c:2955 — MAX_CVCACHE = 8.
         assert_eq!(MAX_TAGS, 256);
         assert_eq!(MAX_CVCACHE, 8);
@@ -1126,6 +1163,7 @@ mod tests {
 
     #[test]
     fn freectset_walks_chain() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3762-3777 — freectset walks `next` chain freeing each
         // ctset's tags/tag fields.
         let mut head = ctset { tag: Some("foo".into()), ..Default::default() };
@@ -1136,6 +1174,7 @@ mod tests {
 
     #[test]
     fn freectags_drops_one_node() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3779-3789 — freectags releases all/context/sets on one ctags.
         let t = ctags {
             all: Some(vec!["a".into(), "b".into()]),
@@ -1147,6 +1186,7 @@ mod tests {
 
     #[test]
     fn freecvdef_walks_vals_chain() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:2960-2981 — freecvdef walks vals freeing each cvval.
         let v_tail = cvval { name: Some("opt2".into()), ..Default::default() };
         let mut v_head = cvval { name: Some("opt1".into()), ..Default::default() };
