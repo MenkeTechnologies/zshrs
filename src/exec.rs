@@ -3166,7 +3166,12 @@ impl crate::ported::exec::ShellExecutor {
             "histbeep",
             "histsavebycopy",
             "hup",
-            "interactive",
+            // INTERACTIVE is NOT default-on in zsh — C init sets it
+            // from isatty(0). Marking it default-on here makes the
+            // lexer's `!interact() || unset(SHINSTDIN)` comment gate
+            // (lex.c:678) false for non-tty script runs, so every
+            // `#`-line was re-lexed as a command. Drop from defaults;
+            // tty-driven init can flip it back on for real terminals.
             "listambiguous",
             "listbeep",
             "listtypes",
@@ -3180,7 +3185,8 @@ impl crate::ported::exec::ShellExecutor {
             "promptpercent",
             "promptsp",
             "rcs",
-            "shinstdin",
+            // SHINSTDIN — same story. Default off; init sets when
+            // stdin is the real interactive source.
             "shortloops",
             "unset",
             "zle",
@@ -3226,7 +3232,10 @@ impl crate::ported::exec::ShellExecutor {
             "histbeep",
             "histsavebycopy",
             "hup",
-            "interactive",
+            // INTERACTIVE / SHINSTDIN intentionally absent — see the
+            // matching note in `default_options()` above. C init
+            // computes these from isatty(0), not from the static
+            // emulation-default table.
             "listambiguous",
             "listbeep",
             "listtypes",
@@ -3240,7 +3249,6 @@ impl crate::ported::exec::ShellExecutor {
             "promptpercent",
             "promptsp",
             "rcs",
-            "shinstdin",
             "shortloops",
             "unset",
             "zle",

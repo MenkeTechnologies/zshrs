@@ -570,6 +570,15 @@ pub fn incmdpos() -> bool {
 pub fn set_incmdpos(v: bool) {
     LEX_INCMDPOS.set(v);
 }
+/// Port of `int nocorrect` from `Src/lex.c:144`. Getter/setter for
+/// the spelling-correction suppression flag. `par_redir` saves and
+/// restores this around the zshlex that consumes the redir target.
+pub fn nocorrect() -> i32 {
+    LEX_NOCORRECT.get()
+}
+pub fn set_nocorrect(v: i32) {
+    LEX_NOCORRECT.set(v);
+}
 pub fn incond() -> i32 {
     LEX_INCOND.get()
 }
@@ -863,22 +872,36 @@ pub fn exalias() -> bool {
         // block).
         let is_close_brace_special =
             lextext == "}" && unset(IGNOREBRACES) && unset(IGNORECLOSEBRACES);
-        if LEX_INCMDPOS.get() || is_close_brace_special {
-            // lex.c:2002 — `(rw = (Reswd) reswdtab->getnode(reswdtab, tokstr))`
-            let rw_tok: Option<lextok> = {
-                let guard = crate::ported::hashtable::reswdtab_lock()
-                    .read()
-                    .expect("reswdtab poisoned");
-                guard.get(&lextext).map(|r| r.token)
-            };
-            if let Some(rwtok) = rw_tok {
-                set_tok(rwtok);
-                if rwtok == REPEAT {
-                    LEX_INREPEAT.set(1);
-                }
-                if rwtok == DINBRACK {
-                    LEX_INCOND.set(1);
-                }
+        // lex.c:2002-2014 — the C structure is
+        //     if ((incmdpos || ...) && (rw = reswd_lookup)) { ... }
+        //     else if (incond && lextext == "]]") { ... }
+        //     else if (incond == 1 && lextext == "!") { ... }
+        // i.e. the cond `]]`/`!` branches are reached when the reswd
+        // lookup FAILS — even if `incmdpos` is true. The previous
+        // Rust port gated on `incmdpos` alone, so any `]]` reached
+        // inside `[[ ... ]]` with incmdpos still true (the lexer
+        // doesn't auto-reset incmdpos after `[[` in all paths) was
+        // left as a STRING `]]` and par_cond_2 errored with
+        // `condition expected:`. Restructure to mirror C: look up the
+        // reswd ONLY when the gating allows, and treat a failed
+        // lookup the same as a non-gated path so the cond branches
+        // get their turn.
+        let reswd_path_eligible = LEX_INCMDPOS.get() || is_close_brace_special;
+        let rw_tok: Option<lextok> = if reswd_path_eligible {
+            let guard = crate::ported::hashtable::reswdtab_lock()
+                .read()
+                .expect("reswdtab poisoned");
+            guard.get(&lextext).map(|r| r.token)
+        } else {
+            None
+        };
+        if let Some(rwtok) = rw_tok {
+            set_tok(rwtok);
+            if rwtok == REPEAT {
+                LEX_INREPEAT.set(1);
+            }
+            if rwtok == DINBRACK {
+                LEX_INCOND.set(1);
             }
         } else if LEX_INCOND.get() > 0 && lextext == "]]" {
             // lex.c:2010-2012 — `]]` closes the cond expression.
@@ -2285,9 +2308,16 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     bct -= 1;
                     add(Outbrace);
                 } else if bct > 0 {
-                    // Closing a brace expansion like {a,b}
+                    // Closing a brace expansion like {a,b}. c:1165 —
+                    // `c = Outbrace;` then falls through to the
+                    // switch-exit `add(c)`. C maps `}` to Outbrace
+                    // when bct>0 so the wordcode `strs` section sees
+                    // the marker byte, not the raw `}`. Without this
+                    // the strs section emits `{a,b,c}` literally
+                    // instead of `{a,b,c\x90` and wordcode parity
+                    // breaks on every brace expansion in the corpus.
                     bct -= 1;
-                    add(c);
+                    add(Outbrace);
                 } else {
                     // c:1156 — `if (!bct) break;` breaks out of the
                     // SWITCH (not the loop), then falls through to
