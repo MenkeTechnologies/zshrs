@@ -365,6 +365,67 @@ That's not a function. It's a stub. The real function body doesn't exist in memo
 
 With 986 completion functions autoloaded via `compinit`, plus user functions, plus framework functions (oh-my-zsh, prezto, zinit all use autoload heavily), a typical shell session has hundreds of these stubs waiting to trigger disk I/O the moment you call them.
 
+### Wordcode Is Not Bytecode: zsh Has No VM
+
+A common misconception (one this audit initially shared) is that zsh's wordcode amounts to a "quasi-VM" — bytecode for some execution machine, with `.zwc` as the AOT-compiled artifact. That framing is wrong. zsh's wordcode is a *serialized parse tree*, and `execlist` is a *tree walker over the flattened tree*. There is no VM. Three pieces of evidence:
+
+**1. The `Estate` "VM state" struct is a cursor, nothing more** (`src/zsh/Src/zsh.h:824`):
+
+```c
+struct estate {
+    Eprog prog;     /* the eprog executed */
+    Wordcode pc;    /* program counter, current pos */
+    char *strs;     /* strings from prog */
+};
+```
+
+Three fields. No value stack. No register file. No locals array. No frame stack. No exception-state slot. No constant pool reference. Compare what a real VM frame holds:
+
+| VM | Per-frame / per-state machinery |
+|---|---|
+| CPython `PyFrameObject` | f_localsplus[] value stack, f_locals/f_globals/f_builtins dicts, f_back, f_code, f_lasti, f_trace, exception state |
+| Lua `lua_State` + `CallInfo` | stack[], base/top pointers, CallInfo[] frame array, registers (5.0+, register-based), error handler, status code |
+| JVM stack frame | locals[], operand_stack[], pc, constant_pool_ref, return_address, exception_table |
+| Cranelift/fusevm `VM` | regs[], stack[], call frames, instruction pointer, constants pool, host bridge |
+| **zsh `Estate`** | **`pc` cursor + 2 read-only pointers (`prog`, `strs`). That's the entire "VM."** |
+
+**2. Executors recurse via C function calls, not via VM opcodes** (`src/zsh/Src/exec.c`):
+
+```c
+execcursh(Estate state, int do_exec)
+execsimple(Estate state)
+execlist(Estate state, int dont_change_job, int exiting)
+execpline(Estate state, wordcode slcode, int how, int last1)
+execcmd_exec(Estate state, ...)
+execcond(Estate state, ...)
+execarith(Estate state, ...)
+exectime(Estate state, ...)
+execfuncdef(Estate state, Eprog redir_prog)
+execautofn(Estate state, ...)
+```
+
+Every executor takes `Estate` and is invoked by direct C call from a `switch (wc_code(code))` dispatch in `execlist`. **There is no CALL/RET opcode in wordcode. There is no return address on any VM stack. The C call stack IS the call mechanism.** Recursion drives execution; the wordcode just tells the recursion which branch to take. This is the textbook definition of a tree walker — only difference from a classical AST walker is that the cursor walks a flat `u32` array instead of pointer-chasing tree nodes.
+
+**3. Values live in `LinkList` on the heap, not in VM slots.** `prefork(LinkList list, int flags, int *ret_flags)` at `subst.c:100` operates on glibc-malloc'd singly-linked lists of `char*` words. Word lists are passed between executors as C function arguments. The "stack" is the C call stack; the "operand stack" is whatever LinkList happens to be passed down by the caller. No typed values, no boxed/tagged unions, no register allocation — just C pointers chained through host-allocated nodes.
+
+**Property comparison:**
+
+| Property | True VM (CPython, Lua, JVM, fusevm) | zsh |
+|---|---|---|
+| Uniform opcode set with VM-level semantics | ✓ | wordcode tags exist, but they drive a switch in C; no VM execution model owns them |
+| Value stack or register file | ✓ | LinkList on heap, not a VM stack |
+| Explicit call frames | ✓ | C call stack |
+| VM-level CALL/RET | ✓ | direct C function recursion |
+| JIT-compilable | ✓ (VM semantics are formally definable) | only by lifting to a real IR first |
+| Bytecode is a self-contained program | ✓ | wordcode is a serialized tree the C code walks |
+| Could in principle run on a different engine | ✓ | no — the C executors ARE the engine |
+
+**Implication.** zsh is structurally a tree-walking interpreter — same execution-model class as bash, dash, ksh, the original Bourne shell, the Bash 1.0 AST walker. Its single innovation over those shells is to *flatten* the parse tree into a contiguous `u32` array (the wordcode) for mmap-friendly serialization. That's a representation change, not an execution-model change. **The "switch (wc_code(code))" in `execlist` is structurally identical to `switch (node->type)` in a classical tree walker.**
+
+This is why the "but zsh IS compiled, see `.zwc`" defense doesn't work, and why `.zwc` is structurally a half-cache no matter how it's tuned. Compilation in the VM sense means lowering source to a self-contained program for a state machine that no longer needs the source AST. zsh's wordcode IS the AST. The execution engine is still the recursive descent over its structure, in C.
+
+The next sub-section walks through what `.zwc` actually contains under this lens — given that wordcode isn't real bytecode, what is the cache caching?
+
 ### .zwc Files: Fake Compilation
 
 `.zwc` files are zsh's "compiled" format — binary blobs scattered across every fpath directory. They are not bytecode in any modern sense. They cache the *cheap* layer (parse) and leave the *expensive* layer (expansion) uncached, paid in full on every execution.
@@ -411,9 +472,19 @@ Stacking the caches saves milliseconds at startup. The per-keystroke and per-exe
 
 ### How zshrs Fixes It
 
+zshrs replaces both the tree-walking execution model AND the half-cache. **fusevm is a real VM** — value stack, register file, explicit call frames, a uniform opcode set, Cranelift JIT to native x86-64/aarch64. Bytecode is a self-contained program; the source AST is dropped after compile. Compare to zsh's `Estate { Eprog prog; Wordcode pc; char *strs; }` "VM state":
+
+| Property | zsh (`Estate`, tree-walker over flattened tree) | zshrs (`fusevm::VM`, real VM) |
+|---|---|---|
+| Value storage | LinkList on heap, passed via C args | typed value stack, register file |
+| Call mechanism | C function recursion (`execlist`→`execsublist`→`execpipe`…) | VM-level CALL/RET opcodes, explicit frames |
+| Word classification | runtime sigil scan in `prefork` every exec | compile-time, baked into typed Ops |
+| Native code generation | none — interpreter is the only execution mode | Cranelift JIT for hot paths |
+| Bytecode is self-contained | no — engine IS the C executors | yes — chunk can run on any fusevm |
+
 `src/extensions/compile_zsh.rs` (the AST→fusevm bytecode compiler) does word classification at *compile* time. `$foo` becomes `Op::ExpandParam(slot_id)`; `*.txt` becomes `Op::Glob(pattern)`; `~/bin` becomes `Op::TildeExpand`; a literal becomes `Op::LoadStr`. The classification is then **serialized into the cached chunk** (`src/extensions/script_cache.rs` rkyv shard wrapping a bincode-encoded `fusevm::Chunk`; outer is mmap zero-copy via `rkyv::check_archived_root`). Subsequent runs and subsequent loop iterations both read pre-classified typed ops. No sigil rescan. No dispatch on raw bytes. The Cranelift JIT in `fusevm/src/jit.rs` then specializes hot paths from those typed ops because the input is already typed.
 
-zsh's `.zwc` cannot do this without rewriting the wordcode format to carry typed ops and rewriting `exec.c::execsimple` to consume them — which is exactly the rewrite zshrs is.
+zsh's `.zwc` cannot match this without (a) defining a real VM with value stack + frames, (b) rewriting the wordcode format to carry typed ops, and (c) rewriting `exec.c::execsimple` and its 9 sibling executors to consume them instead of doing recursive C dispatch. That's not a tuning change — it's replacing the execution engine. zshrs IS that replacement.
 
 ### The Call Stack
 
