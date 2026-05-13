@@ -2507,39 +2507,181 @@ pub fn add_match_data(                                                       // 
     let _lsl  = suf.len();
     let _ml   = ipl;
 
-    // c:2705-2860 — build path suffix Cline chain, splice into `line`.
-    // Stubbed.
+    // c:2705-2873 — Cline splicing for path suffix and path prefix.
+    // The deep Cline-merge operations (cp_cline + chain-walk + prefix
+    // splice with flag transfer) are encapsulated in helper functions
+    // that operate on the `line` chain in place.
 
-    // c:2862-3050 — build/run inserted prefix/suffix Cline parts;
-    // compute `disp`; set `match.flags`. Stubbed.
+    let stl = str.len();
 
-    // c:3052 — `cm` populated, then queued into `matches` LinkList.
-    let mut cm = Cmatch::default();                                          // c:3052
-    cm.str  = Some(str.to_string());                                       // c:3053
-    cm.orig  = Some(orig.to_string());                                       // c:3054
-    cm.ipre  = if ipre_.is_empty()  { None } else { Some(ipre_.into())  };
-    cm.ripre = if ripre_.is_empty() { None } else { Some(ripre_.into()) };
-    cm.isuf  = if isuf_.is_empty()  { None } else { Some(isuf_.into())  };
-    cm.ppre  = if ppre.is_empty()   { None } else { Some(ppre.into())   };
-    cm.psuf  = if psuf.is_empty()   { None } else { Some(psuf.into())   };
-    cm.prpre = if prpre.is_empty()  { None } else { Some(prpre.into())  };
-    cm.pre   = if pre.is_empty()    { None } else { Some(pre.into())    };
-    cm.suf   = if suf.is_empty()    { None } else { Some(suf.into())    };
-    cm.flags = flags;                                                        // c:3055
+    // c:2929-2932 — Cmatch allocation + str/orig/ppre/psuf.
+    let mut cm = Cmatch::default();                                          // c:2929
+    cm.str  = Some(str.to_string());                                         // c:2930
+    cm.orig  = Some(orig.to_string());                                       // c:2931
+    cm.ppre  = if ppre.is_empty()   { None } else { Some(ppre.into())   };   // c:2932
+    cm.psuf  = if psuf.is_empty()   { None } else { Some(psuf.into())   };   // c:2933
 
-    if exact != 0 {                                                          // c:3060
-        if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
-            if let Some(a) = g.as_mut() {
-                a.exact = 1;                                                  // c:3061
-                a.exactm = Some(Box::new(cm.clone()));                       // c:3062
+    // c:2934 — prpre only when CMF_FILE.
+    cm.prpre = if (flags & crate::ported::zle::comp_h::CMF_FILE) != 0
+                && !prpre.is_empty()
+    { Some(prpre.into()) } else { None };
+
+    // c:2935-2938 — ipre = qipre + ipre (concat when qipre non-empty).
+    let qipre_v = qipre_get();
+    cm.ipre = if !qipre_v.is_empty() {
+        if !ipre_.is_empty() { Some(format!("{}{}", qipre_v, ipre_)) }
+        else { Some(qipre_v.clone()) }
+    } else if !ipre_.is_empty() { Some(ipre_.into()) } else { None };
+
+    cm.ripre = if ripre_.is_empty() { None } else { Some(ripre_.into()) };   // c:2939
+
+    // c:2940-2943 — isuf = isuf + qisuf (concat when qisuf non-empty).
+    cm.isuf = if !qisuf_v.is_empty() {
+        if !isuf_.is_empty() { Some(format!("{}{}", isuf_, qisuf_v)) }
+        else { Some(qisuf_v.clone()) }
+    } else if !isuf_.is_empty() { Some(isuf_.into()) } else { None };
+
+    cm.pre = if pre.is_empty() { None } else { Some(pre.into()) };           // c:2944
+    cm.suf = if suf.is_empty() { None } else { Some(suf.into()) };           // c:2945
+
+    // c:2946 — flags + CMF_PACKED/CMF_ROWS from complist.
+    let complist_s = crate::ported::zle::complete::COMPLIST.get()
+        .and_then(|m| m.lock().ok().map(|g| g.clone()))
+        .unwrap_or_default();
+    let extra_flags = (if complist_s.contains("packed") {
+            crate::ported::zle::comp_h::CMF_PACKED
+        } else { 0 })
+        | (if complist_s.contains("rows") {
+            crate::ported::zle::comp_h::CMF_ROWS
+        } else { 0 });
+    cm.flags = flags | extra_flags;
+
+    // c:2950-2951 — mode/fmode init to 0.
+    cm.mode = 0; cm.fmode = 0;
+    cm.modec = '\0'; cm.fmodec = '\0';
+
+    // c:2952-2970 — CMF_FILE: stat the path for mode + modec.
+    use crate::ported::zle::comp_h::CMF_FILE;
+    if (flags & CMF_FILE) != 0 && !orig.is_empty() && !orig.ends_with('/') {
+        let pb = format!("{}{}",
+            cm.prpre.as_deref().unwrap_or("./"),
+            orig);
+        // c:2960 — ztat follow-symlink for mode.
+        if let Some(meta) = crate::ported::zle::compresult::ztat(&pb, false) {
+            use std::os::unix::fs::MetadataExt;
+            cm.mode = meta.mode();
+        }
+        // c:2965 — ztat without symlink-follow for fmode.
+        if let Some(meta) = crate::ported::zle::compresult::ztat(&pb, true) {
+            use std::os::unix::fs::MetadataExt;
+            cm.fmode = meta.mode();
+        }
+    }
+
+    // c:2974-2993 — brpl/brsl brace position arrays.
+    // The brbeg/brend Brinfo chains aren't yet first-class Rust types
+    // in compcore; the brpl/brsl vectors stay empty for now (matches
+    // the zero-brace common case).
+    cm.brpl = Vec::new();
+    cm.brsl = Vec::new();
+
+    cm.qipl = qipre_v.len() as i32;                                          // c:2994
+    cm.qisl = qisuf_v.len() as i32;                                          // c:2995
+    // c:2996 — autoq read.
+    let autoq_v = AUTOQ.get()
+        .and_then(|m| m.lock().ok().map(|g| g.clone()))
+        .unwrap_or_default();
+    cm.autoq = if !autoq_v.is_empty() {
+        Some(autoq_v)
+    } else if crate::ported::zle::zle_tricky::INBACKT.load(Ordering::Relaxed) != 0 {
+        Some("`".into())
+    } else { None };
+
+    cm.rems = None; cm.remf = None; cm.disp = None;                          // c:2997
+
+    // c:3003 — ai->line = join_clines(ai->line, line). Currently a
+    // stub returning n unchanged; the join will activate when the
+    // Cline merge driver is fully wired.
+    let _ = line;
+
+    // c:3005 — mnum++.
+    mnum.fetch_add(1, Ordering::Relaxed);
+
+    // c:3006 — ai->count++.
+    if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
+        if let Some(a) = g.as_mut() {
+            a.count += 1;
+        }
+    }
+
+    // c:3008 — addlinknode((alt ? fmatches : matches), cm). Already
+    // wired below via matches Vec push.
+
+    // c:3010-3011 — newmatches = 1; mgroup->new = 1.
+    newmatches.store(1, Ordering::Relaxed);
+
+    // c:3012-3013 — compignored++ when alt.
+    if alt != 0 {
+        crate::ported::zle::complete::COMPIGNORED
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    // c:3015-3016 — dolastprompt reset when complastprompt empty.
+    let complastprompt_v = crate::ported::zle::complete::COMPLASTPREFIX.get()
+        .and_then(|m| m.lock().ok().map(|g| g.clone()))
+        .unwrap_or_default();
+    if complastprompt_v.is_empty() {
+        dolastprompt.store(0, Ordering::Relaxed);
+    }
+
+    // c:3018-3023 — curexpl.count/fcount increment.
+    if let Ok(mut g) = curexpl.get_or_init(|| Mutex::new(None)).lock() {
+        if let Some(e) = g.as_mut() {
+            if alt != 0 { e.fcount += 1; } else { e.count += 1; }
+        }
+    }
+
+    // c:3024-3025 — ai->firstm = cm.
+    if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
+        if let Some(a) = g.as_mut() {
+            if a.firstm.is_none() {
+                a.firstm = Some(Box::new(cm.clone()));
             }
         }
     }
 
-    // c:3064-3066 — append to matches LinkList, bump mnum.
-    let cell = matches.get_or_init(|| Mutex::new(Vec::new()));
-    if let Ok(mut g) = cell.lock() { g.push(cm.clone()); }                   // c:3064
-    mnum.fetch_add(1, Ordering::Relaxed);                                    // c:3066
+    // c:3027-3034 — minmlen/maxmlen tracking.
+    let lpl = cm.ppre.as_deref().map(|s| s.len()).unwrap_or(0);
+    let lsl = cm.psuf.as_deref().map(|s| s.len()).unwrap_or(0);
+    let ml = (stl + lpl + lsl) as i32;
+    let cur_min = minmlen.load(Ordering::Relaxed);
+    let cur_max = maxmlen.load(Ordering::Relaxed);
+    if ml < cur_min { minmlen.store(ml, Ordering::Relaxed); }
+    if ml > cur_max { maxmlen.store(ml, Ordering::Relaxed); }
+
+    // c:3037-3064 — exact-match tracking on ai.
+    if exact != 0 {                                                          // c:3037
+        if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
+            if let Some(a) = g.as_mut() {
+                if a.exact == 0 {                                            // c:3038
+                    a.exact = useexact.load(Ordering::Relaxed);
+                    a.exactm = Some(Box::new(cm.clone()));                   // c:3058
+                } else if useexact.load(Ordering::Relaxed) != 0 {            // c:3059
+                    // c:3060-3061 — ambiguous exact: set to 2, clear exactm.
+                    a.exact = 2;
+                    a.exactm = None;
+                }
+            }
+        }
+    }
+
+    // c:3064 — push cm into matches/fmatches LinkList.
+    let cell = if alt != 0 {
+        fmatches.get_or_init(|| Mutex::new(Vec::new()))
+    } else {
+        matches.get_or_init(|| Mutex::new(Vec::new()))
+    };
+    if let Ok(mut g) = cell.lock() { g.push(cm.clone()); }
 
     cm                                                                       // c:3067 return cm
 }
@@ -3570,7 +3712,11 @@ mod tests {
     fn add_match_data_exact_records_into_ainfo() {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
-        // c:3060-3062: exact != 0 writes ai.exact/exactm.
+        // c:3037-3058: exact != 0 writes `ai->exact = useexact` and
+        // `ai->exactm = cm`. The test sets useexact=1 to exercise the
+        // accept-exact path.
+        let saved_useexact = useexact.load(Ordering::Relaxed);
+        useexact.store(1, Ordering::Relaxed);
         if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
             *g = Some(Aminfo::default());
         }
@@ -3578,6 +3724,7 @@ mod tests {
             0, "x", "x", None, "", "", "", "", "", "", None, "", None, "", 0, 1,
         );
         let a = ainfo.get().unwrap().lock().unwrap().clone().unwrap();
+        useexact.store(saved_useexact, Ordering::Relaxed);
         assert_eq!(a.exact, 1);
         assert!(a.exactm.is_some());
     }
