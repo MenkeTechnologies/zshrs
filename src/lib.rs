@@ -150,6 +150,7 @@ pub use modules::zutil;
 #[path = "extensions/recorder.rs"] pub mod recorder_ext;
 #[path = "extensions/intercepts.rs"] pub mod intercepts;
 #[path = "extensions/compinit_bg.rs"] pub mod compinit_bg;
+pub mod fusevm_disasm;
 pub mod fusevm_bridge;
 // Plugin-Framework-Agnostic State-Modification Recorder. Entire module
 // is `#![cfg(feature = "recorder")]` so it disappears from the default

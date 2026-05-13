@@ -53,6 +53,9 @@ Parser-pipeline dumpers (FILE, or `-` for stdin; output goes to stdout):
   --dump-wordcode FILE   wordcode emitter output (EPROG / WORDS / WC[i] / STRS)
   --dump-zwc      ZWCFILE [FN]   inspect compiled .zwc cache (list or one fn)
 
+VM debugging (stdout; does not suppress execution):
+  --disasm       print fusevm opcodes for each compiled unit before VM run
+
 Parity modes (caches OFF, daemon OFF — match the named reference shell
 byte-for-byte; every `source` re-runs the file fresh, every echo re-fires):
   --zsh        identical-behaviour drop-in for /bin/zsh (compat-test entrypoint)
@@ -543,6 +546,8 @@ pub fn zshrs_main() {
         out
     };
 
+    zsh::fusevm_disasm::set_enabled(args.iter().any(|a| a == "--disasm"));
+
     // AOT trailer probe: if this binary was produced by `zbuild`, the last
     // 32 bytes contain a magic + length pair pointing at a zstd-compressed
     // payload of one-or-more shell scripts appended to the executable.
@@ -754,6 +759,7 @@ pub fn zshrs_main() {
                 || a == "--no-rcs"
                 || a == "-x"
                 || a == "-v"
+                || a == "--disasm"
             {
                 i += 1;
                 continue;

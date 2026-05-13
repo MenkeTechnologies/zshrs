@@ -15,6 +15,7 @@ _arguments -S -s : \
   '(-)--help[show help message and exit]' \
   '(-)--version[show version number and exit]' \
   '(-)--doctor[full diagnostic report of shell health, caches, and performance]' \
+  '--disasm[print fusevm bytecode to stdout before each VM run]' \
   '--zsh-compat[enable zsh compatibility mode (use .zcompdump, fpath scanning)]' \
   '--zsh[alias for --zsh-compat]' \
   '--posix[POSIX strict mode (no SQLite, no worker pool, no zsh extensions)]' \
