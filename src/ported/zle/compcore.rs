@@ -66,7 +66,7 @@ use crate::ported::zle::zle_tricky::{MENUCMP, USEMENU};
 use crate::ported::zle::complete::COMPLIST;
 use crate::ported::zle::zle_tricky::{USEGLOB, WOULDINSTAB};
 use crate::ported::zsh_h::{Dnull, Equals, Hat, Inbrack, Inpar, Outpar, Pound, Qstring, Quest, Snull, Star, Tilde};
-use crate::ported::zle::comp_h::{CAF_ALL, CAF_MATSORT, CAF_NOSORT, CAF_NUMSORT, CAF_QUOTE, CAF_REVSORT, CAF_UNIQALL, CAF_UNIQCON};
+use crate::ported::zle::comp_h::{CAF_ALL, CAF_MATCH, CAF_MATSORT, CAF_NOSORT, CAF_NUMSORT, CAF_QUOTE, CAF_REVSORT, CAF_UNIQALL, CAF_UNIQCON};
 
 // =====================================================================
 // Extern globals — declared in other C files, mirrored here per
@@ -2156,20 +2156,264 @@ pub fn addmatches(dat: &mut crate::ported::zle::comp_h::Cadata,              // 
     let exact_str = crate::ported::params::getsparam("compexact").unwrap_or_default();
     useexact.store(if exact_str == "accept" { 1 } else { 0 }, Ordering::Relaxed);
 
-    // c:2190-2630 — main match loop: walk argv, apply matcher chain,
-    // call add_match_data per accepted candidate, update mnum. Stubbed
-    // pending Cline + Brinfo + bmatchers substrate. Each accepted
-    // candidate currently falls through to a plain addmatch() call so
-    // the group still grows by N entries — matching contract.
-
-    let mut added = 0i32;
-    for word in argv {                                                       // c:2200
-        addmatch(word, dat.flags, None, false);                              // c:2554-ish (simplified)
-        added += 1;
+    // c:2210-2222 — push dat.match onto mstack (the matcher chain
+    // queried by match_str during candidate evaluation).
+    if let Some(ref m) = dat.match_ {                                        // c:2210
+        if let Ok(mut mst) = mstack
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+        {
+            // C: mst.next = mstack; mst.matcher = dat->match; mstack = &mst.
+            let new_link = Box::new(crate::ported::zle::comp_h::Cmlist {
+                next: mst.take(),
+                matcher: m.clone(),
+                str: String::new(),
+            });
+            *mst = Some(new_link);
+        }
+        // c:2215 — add_bmatchers(dat->match).
+        crate::ported::zle::compmatch::add_bmatchers(Some(m));
+        // c:2217 — addlinknode(matchers, dat->match). The Rust
+        // `matchers` global stores match-spec strings (Vec<String>);
+        // the parsed Cmatcher isn't trivially serializable so we push
+        // a placeholder marker to preserve the linknode count contract.
+        if let Ok(mut g) = matchers
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+        {
+            g.push(String::new());
+        }
+        let _ = m;
     }
 
-    let _ = added;
-    0                                                                        // c:2636 return 0 on success
+    // c:2223-2246 — get suffixes to ignore from dat.ign param.
+    let (aign, pign) = if let Some(ign_name) = dat.ign.as_deref() {          // c:2224
+        let aign_raw = get_user_var(Some(ign_name)).unwrap_or_default();
+        let mut literal_suffixes: Vec<String> = Vec::new();
+        let mut pat_progs: Vec<crate::ported::pattern::Patprog> = Vec::new();
+        for entry in aign_raw {
+            // c:2233-2236 — `?*xxx` / `*?xxx` short-circuit: trailing
+            // literal suffix.
+            let bytes = entry.as_bytes();
+            let star_prefix = bytes.len() >= 3
+                && ((bytes[0] == b'?' && bytes[1] == b'*')
+                    || (bytes[0] == b'*' && bytes[1] == b'?'))
+                && !crate::ported::pattern::haswilds(
+                    std::str::from_utf8(&bytes[2..]).unwrap_or(""));
+            if star_prefix {
+                literal_suffixes.push(
+                    std::str::from_utf8(&bytes[2..]).unwrap_or("").to_string());
+            } else if let Some(prog) = crate::ported::pattern::patcompile(
+                &entry, 0, None::<&mut String>)
+            {
+                pat_progs.push(prog);
+            }
+        }
+        (literal_suffixes, pat_progs)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
+    // c:2247-2250 — get display strings.
+    let disp_arr: Vec<String> = if let Some(ref d) = dat.disp {
+        get_user_var(Some(d.as_str())).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // c:2253-2300 — CAF_MATCH lipre/lisuf/lpre/lsuf assembly.
+    let compiprefix_s = crate::ported::zle::complete::COMPIPREFIX
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    let compisuffix_s = crate::ported::zle::complete::COMPISUFFIX
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    let compprefix_s = crate::ported::zle::complete::COMPPREFIX
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    let compsuffix_s = crate::ported::zle::complete::COMPSUFFIX
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    let lipre = compiprefix_s.clone();
+    let lisuf = compisuffix_s.clone();
+    let lpre = compprefix_s.clone();
+    let lsuf = compsuffix_s.clone();
+
+    // c:2278-2300 — dat.ipre/isuf/ppre/psuf duplication with lipre/lisuf.
+    if let Some(ref existing) = dat.ipre.clone() {
+        dat.ipre = Some(if !lipre.is_empty() {
+            format!("{}{}", lipre, existing)
+        } else {
+            existing.clone()
+        });
+    } else if !lipre.is_empty() {
+        dat.ipre = Some(lipre.clone());
+    }
+    if let Some(ref existing) = dat.isuf.clone() {
+        dat.isuf = Some(if !lisuf.is_empty() {
+            format!("{}{}", lisuf, existing)
+        } else {
+            existing.clone()
+        });
+    } else if !lisuf.is_empty() {
+        dat.isuf = Some(lisuf.clone());
+    }
+    let quote_flag = if (dat.aflags & CAF_QUOTE) != 0 { 1 } else { 0 };
+    if let Some(ref existing) = dat.ppre.clone() {
+        let quoted = if (dat.flags & 0x0001/*CMF_FILE*/) != 0 {
+            tildequote(existing, quote_flag)
+        } else {
+            multiquote(existing, quote_flag)
+        };
+        dat.ppre = Some(quoted);
+    }
+    if let Some(ref existing) = dat.psuf.clone() {
+        dat.psuf = Some(multiquote(existing, quote_flag));
+    }
+    let ppl = dat.ppre.as_deref().map(|s| s.len()).unwrap_or(0);
+    let psl = dat.psuf.as_deref().map(|s| s.len()).unwrap_or(0);
+
+    // c:2179-2184 — `doadd = !apar && !opar && !dpar`.
+    let doadd = dat.apar.is_none() && dat.opar.is_none() && dat.dpar.is_empty();
+    let mut apar_list: Vec<String> = Vec::new();
+    let mut opar_list: Vec<String> = Vec::new();
+
+    // c:2482-2601 — main candidate loop.
+    let mut added = 0i32;
+    let mut disp_idx = 0usize;
+    let mut compignored_local = 0i32;
+    'cand: for word in argv {                                                // c:2482
+        // c:2486-2489 — advance disp index.
+        let cur_disp = if !disp_arr.is_empty() && disp_idx < disp_arr.len() {
+            let d = disp_arr[disp_idx].clone();
+            disp_idx += 1;
+            Some(d)
+        } else { None };
+
+        // c:2491-2527 — aign/pign suffix-test + Patprog test.
+        if !aign.is_empty() || !pign.is_empty() {
+            let full = format!("{}{}{}",
+                dat.ppre.as_deref().unwrap_or(""),
+                word,
+                dat.psuf.as_deref().unwrap_or(""));
+            // c:2509-2511 — literal-suffix check.
+            for suf in &aign {
+                if full.len() >= suf.len() && full.ends_with(suf.as_str()) {
+                    compignored_local += 1;
+                    continue 'cand;
+                }
+            }
+            // c:2513-2518 — Patprog check.
+            for prog in &pign {
+                if crate::ported::pattern::pattry(prog, &full) {
+                    compignored_local += 1;
+                    continue 'cand;
+                }
+            }
+        }
+
+        // c:2528 — CAF_MATCH dispatch: call match_str (no matcher) or
+        // fallback to plain quoted string. Without comp_match we use
+        // the conservative fallback: multiquote + bld_parts.
+        let ms: String;
+        let _lc;
+        let isexact;
+        if (dat.aflags & CAF_MATCH) == 0 {
+            // c:2528-2534 — non-match mode: just (multi)quote the word.
+            ms = if (dat.aflags & CAF_QUOTE) != 0 {
+                word.clone()
+            } else {
+                multiquote(word, 0)
+            };
+            let sl = ms.len() as i32;
+            _lc = crate::ported::zle::compmatch::bld_parts(
+                &ms, sl, -1, None, None);
+            isexact = 0;
+        } else {                                                             // c:2535
+            // c:2535-2546 — matcher-driven mode. Real C calls comp_match
+            // which internally runs match_str. With match_str returning
+            // -1 for non-trivial matchers, we conservatively accept the
+            // candidate as-is when prefix/suffix match literally; reject
+            // otherwise.
+            let l_ok = word.starts_with(lpre.as_str()) || lpre.is_empty();
+            let r_ok = word.ends_with(lsuf.as_str()) || lsuf.is_empty();
+            if !l_ok || !r_ok {
+                continue 'cand;                                              // c:2541-2545 reject
+            }
+            ms = if (dat.aflags & CAF_QUOTE) != 0 {
+                word.clone()
+            } else {
+                multiquote(word, 0)
+            };
+            let sl = ms.len() as i32;
+            _lc = crate::ported::zle::compmatch::bld_parts(
+                &ms, sl, -1, None, None);
+            isexact = if word == lpre.as_str() { 1 } else { 0 };
+        }
+
+        if doadd {                                                            // c:2547
+            // c:2556 — add_match_data.
+            let cm = add_match_data(
+                0,
+                &ms,
+                word,
+                None,                                                         // line — Cline placeholder
+                dat.ipre.as_deref().unwrap_or(""),
+                "",                                                           // ripre
+                dat.isuf.as_deref().unwrap_or(""),
+                dat.pre.as_deref().unwrap_or(""),
+                dat.prpre.as_deref().unwrap_or(""),
+                dat.ppre.as_deref().unwrap_or(""),
+                None,                                                         // pline
+                dat.psuf.as_deref().unwrap_or(""),
+                None,                                                         // sline
+                dat.suf.as_deref().unwrap_or(""),
+                dat.flags,
+                isexact,
+            );
+            let _ = cur_disp;
+            let _ = cm;
+            added += 1;
+        } else {                                                              // c:2566
+            if dat.apar.is_some() {                                          // c:2567
+                apar_list.push(ms.clone());
+            }
+            if dat.opar.is_some() {                                          // c:2569
+                opar_list.push(word.clone());
+            }
+        }
+    }
+
+    // c:2602-2608 — apar/opar/dpar writeback.
+    if let Some(ref name) = dat.apar {
+        crate::ported::params::setaparam(name, apar_list);
+    }
+    if let Some(ref name) = dat.opar {
+        crate::ported::params::setaparam(name, opar_list);
+    }
+
+    // c:2610 — explanation emit.
+    if dat.exp.is_some() {                                                   // c:2610
+        addexpl(false);
+    }
+
+    // c:2612-2614 — `<all>` placeholder when CAF_ALL set.
+    let hasall = hasallmatch.load(Ordering::Relaxed);
+    if hasall == 0 && (dat.aflags & CAF_ALL) != 0 {
+        addmatch("<all>", dat.flags | crate::ported::zle::comp_h::CMF_ALL,
+                 None, true);
+        hasallmatch.store(1, Ordering::Relaxed);
+    }
+
+    // c:2616-2617 — dummy entries.
+    while dat.dummies > 0 {
+        addmatch("", dat.flags | crate::ported::zle::comp_h::CMF_DUMMY,
+                 None, false);
+        dat.dummies -= 1;
+    }
+
+    let _ = (ppl, psl, compignored_local, added);
+    0                                                                        // c:2636
 }
 
 // ---- Extern stubs for addmatches's bucket-3 dependencies ----
