@@ -589,13 +589,8 @@ pub fn match_str(                                                            // 
                 }
             }
             if mp.wlen < 0 {
-                // c:603-867 — `*`-pattern matcher. The line-pattern + an
-                // anchor + a recursively-located rest-of-line. Suffix
-                // mode (sfx != 0) requires byte-mutation of the input
-                // string that Rust slices can't replicate cheaply; we
-                // handle prefix mode (sfx == 0) here and skip sfx-mode
-                // until the recursion-with-truncated-suffix path lands.
-                if sfx != 0 { continue; }
+                // c:603-867 — `*`-pattern matcher. Handles both prefix
+                // (sfx == 0) and suffix (sfx != 0) modes.
 
                 // c:689-694 — set up llen / alen / aol per CMF_LEFT.
                 let llen_p = mp.llen;
@@ -609,7 +604,7 @@ pub fn match_str(                                                            // 
                 }
 
                 // c:701-715 — set ap/aop/moff/loff/aoff/both per CMF_LEFT
-                // + sfx. Prefix-mode only here.
+                // × sfx. Four combinations.
                 let (ap, aop, moff, both, loff, aoff): (
                     Option<&crate::ported::zle::comp_h::Cpattern>,
                     Option<&crate::ported::zle::comp_h::Cpattern>,
@@ -617,11 +612,21 @@ pub fn match_str(                                                            // 
                 if (mp.flags & CMF_LEFT) != 0 {                              // c:701
                     ap = mp.left.as_deref();
                     aop = mp.right.as_deref();
-                    moff = alen; both = 1; loff = alen; aoff = 0;
+                    moff = alen;
+                    if sfx != 0 {                                            // c:703
+                        both = 0; loff = -llen_p; aoff = -(llen_p + alen);
+                    } else {                                                 // c:706
+                        both = 1; loff = alen; aoff = 0;
+                    }
                 } else {                                                     // c:708
                     ap = mp.right.as_deref();
                     aop = mp.left.as_deref();
-                    moff = 0; both = 0; loff = 0; aoff = llen_p;
+                    moff = 0;
+                    if sfx != 0 {                                            // c:710
+                        both = 1; loff = -(llen_p + alen); aoff = -alen;
+                    } else {                                                 // c:712
+                        both = 0; loff = 0; aoff = llen_p;
+                    }
                 }
 
                 // c:717 — pattern_match(mp.line, l + loff).
@@ -680,7 +685,12 @@ pub fn match_str(                                                            // 
                 let mut ct = 0i32;
                 let ict_total = lw - alen + 1;
                 let mut found_tp_pos: i32 = w_pos;
-                for tp_pos in (w_pos..w_pos + ict_total.max(0)).step_by(1) {
+                // c:737 — tp walks from w outward. In prefix mode (add=+1)
+                // forward through w[w_pos..]; in sfx mode (add=-1)
+                // backward through w[..w_pos]. We iterate ict_total
+                // steps, computing tp_pos as w_pos + ct*add.
+                for step in 0..ict_total.max(0) {
+                    let tp_pos = w_pos + step * add;
                     let mut accept = false;
                     if both != 0 {
                         // c:740-745 — both-mode: succeed only if ap stops
@@ -726,16 +736,36 @@ pub fn match_str(                                                            // 
 
                     if accept {
                         // c:757-769 — recursive match_str call.
-                        let l_rest_start = (l_pos + llen_p + moff) as usize;
-                        let l_rest = std::str::from_utf8(
-                            &l_bytes.get(l_rest_start..).unwrap_or(&[]))
-                            .unwrap_or("");
-                        let w_rest_start = (tp_pos + moff) as usize;
-                        let w_rest = std::str::from_utf8(
-                            &w_bytes.get(w_rest_start..).unwrap_or(&[]))
-                            .unwrap_or("");
-                        t = match_str(l_rest, w_rest, None, 0, None, sfx,
-                                       1, part);
+                        if sfx != 0 {
+                            // c:763 — l-ll, w-lw with bounded slices.
+                            // C uses savl + tp[-alen] NUL trick; in Rust
+                            // we pass slice up to position (l_pos - llen_p
+                            // - alen) for l (the "savl" boundary) and up
+                            // to (tp_pos - alen) for w (the "savw"
+                            // boundary).
+                            let l_bound = (l_pos - llen_p - alen).max(0) as usize;
+                            let w_bound = (tp_pos - alen).max(0) as usize;
+                            let l_rest = std::str::from_utf8(
+                                &l_bytes[..l_bound.min(l_bytes.len())])
+                                .unwrap_or("");
+                            let w_rest = std::str::from_utf8(
+                                &w_bytes[..w_bound.min(w_bytes.len())])
+                                .unwrap_or("");
+                            t = match_str(l_rest, w_rest, None, 0, None, sfx,
+                                           2, part);
+                        } else {
+                            // c:768 — l + llen + moff, tp + moff.
+                            let l_rest_start = (l_pos + llen_p + moff) as usize;
+                            let l_rest = std::str::from_utf8(
+                                &l_bytes.get(l_rest_start..).unwrap_or(&[]))
+                                .unwrap_or("");
+                            let w_rest_start = (tp_pos + moff) as usize;
+                            let w_rest = std::str::from_utf8(
+                                &w_bytes.get(w_rest_start..).unwrap_or(&[]))
+                                .unwrap_or("");
+                            t = match_str(l_rest, w_rest, None, 0, None, sfx,
+                                           1, part);
+                        }
                         if t != 0 || (mp.wlen == -1 && both == 0) {
                             found_tp_pos = tp_pos;
                             break;
@@ -750,15 +780,33 @@ pub fn match_str(                                                            // 
                 // c:783-833 — emit Cline parts via add_match_*.
                 let _tp_pos = found_tp_pos;
                 if test == 0 && (he == 0 || (llen_p + alen) != 0) {
-                    let op_start = ow_pos as usize;
-                    let ol = (w_pos - ow_pos).max(0);
-                    let map_start = ow_pos as usize;
-                    let (wap_start, wmp_start) = if (mp.flags & CMF_LEFT) != 0 {
-                        (w_pos as usize, (w_pos + alen) as usize)
-                    } else {
-                        (found_tp_pos as usize, ow_pos as usize)
-                    };
-                    let lp_start = l_pos as usize;
+                    // c:789-805 — op/ol/lp/map/wap/wmp computed per sfx mode.
+                    let (op_start, ol, lp_start, map_start, wap_start, wmp_start);
+                    if sfx != 0 {                                             // c:789
+                        op_start = w_pos as usize;
+                        ol = (ow_pos - w_pos).max(0);
+                        lp_start = (l_pos - (llen_p + alen)).max(0) as usize;
+                        map_start = (found_tp_pos - alen).max(0) as usize;
+                        if (mp.flags & CMF_LEFT) != 0 {                       // c:792
+                            wap_start = (found_tp_pos - alen).max(0) as usize;
+                            wmp_start = found_tp_pos as usize;
+                        } else {                                              // c:794
+                            wap_start = (w_pos - alen).max(0) as usize;
+                            wmp_start = (found_tp_pos - alen).max(0) as usize;
+                        }
+                    } else {                                                  // c:797
+                        op_start = ow_pos as usize;
+                        ol = (w_pos - ow_pos).max(0);
+                        lp_start = l_pos as usize;
+                        map_start = ow_pos as usize;
+                        if (mp.flags & CMF_LEFT) != 0 {                       // c:800
+                            wap_start = w_pos as usize;
+                            wmp_start = (w_pos + alen) as usize;
+                        } else {                                              // c:802
+                            wap_start = found_tp_pos as usize;
+                            wmp_start = ow_pos as usize;
+                        }
+                    }
 
                     if (mp.flags & CMF_LINE) != 0 {                          // c:810
                         let op_str = std::str::from_utf8(
@@ -814,11 +862,17 @@ pub fn match_str(                                                            // 
                 }
 
                 // c:834-866 — advance pointers past the matched portion
-                // + anchor.
+                // + anchor. In sfx mode positions decrement; in prefix
+                // mode they increment.
                 let llen_new = llen_p + alen;
                 let alen_new = alen + ct;
-                l_pos += llen_new;
-                w_pos += alen_new;
+                if sfx != 0 {                                                // c:836
+                    l_pos -= llen_new;
+                    w_pos -= alen_new;
+                } else {                                                     // c:839
+                    l_pos += llen_new;
+                    w_pos += alen_new;
+                }
                 ll -= llen_new; il += llen_new;
                 lw -= alen_new; iw += alen_new;
                 bc += llen_new;
