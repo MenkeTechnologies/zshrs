@@ -8,9 +8,10 @@ use std::io::{self, Write};
 // TextAttr / RefreshElement / VideoBuffer / RefreshState moved to
 // `src/extensions/zle_refresh_state.rs` — they are Rust-only
 // abstractions, not C ports. Re-exported here so the rest of this
-// file (free fns, `impl Zle { ... zrefresh ... }`) and external
-// callers (`src/ported/prompt.rs`, `src/ported/modules/hlgroup.rs`)
-// keep their existing import paths working.
+// file (`zrefresh`/`compute_render_attrs` free fns at file scope)
+// and external callers (`src/ported/prompt.rs`,
+// `src/ported/modules/hlgroup.rs`) keep their existing import paths
+// working.
 pub use crate::zle_refresh_state::{RefreshElement, RefreshState, TextAttr, VideoBuffer};
 use HighlightCategory as HC;
 use crate::ported::zsh_h::TXT_MULTIWORD_MASK;
@@ -870,15 +871,16 @@ pub fn wpfxlen(olds: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
 ///
 /// C's `free_colour_buffer` frees the per-cell colour-attribute
 /// storage used by `region_highlight`. In the Rust port that
-/// storage is a `Vec<HighlightSpan>` field on the active Zle
-/// struct, dropped automatically by Vec::clear at the same
-/// invalidate points that fire the C free. No-op here is the
+/// storage is a `Vec<HighlightSpan>` inside the file-scope
+/// `HIGHLIGHT` static, dropped automatically by Vec::clear at the
+/// same invalidate points that fire the C free. No-op here is the
 /// correct cross-language equivalent for this fn shape (the
-/// caller doesn't have a Zle handle from this entry point;
-/// the live tick clears its buffer directly via Zle methods).
+/// caller doesn't reach into the highlight buffer from this entry
+/// point; the live tick clears its buffer directly).
 pub fn zle_free_highlight() {                                                // c:415
     // Rust ownership handles the equivalent free; explicit clear
-    // happens on the active Zle when invalidate fires.
+    // happens against the file-scope HIGHLIGHT static when
+    // invalidate fires.
 }
 
 /// Port of `ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)` from `Src/Zle/zle_refresh.c:86`.
@@ -1194,8 +1196,8 @@ pub static ONUMSCROLLS: std::sync::atomic::AtomicI32 =
 
 // =====================================================================
 // mod_export refresh-state globals — `Src/Zle/zle_refresh.c:157-188`.
-// Exposed across translation units (other modules read them) so they
-// can't be inlined onto Zle. AtomicI32 for safe lock-free access.
+// Exposed across translation units (other modules read them).
+// AtomicI32 for safe lock-free access.
 // =====================================================================
 
 /// Port of `mod_export int nlnct` from `Src/Zle/zle_refresh.c:157`.
