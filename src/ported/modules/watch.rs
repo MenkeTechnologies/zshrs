@@ -261,158 +261,11 @@ pub fn watchlog_match(pattern: &str, value: &str) -> bool {                  // 
     }
 }
 
-/// Format a watch event
-/// Format a watch event line (login or logout).
-/// Port of `watch3ary(int inout, WATCH_STRUCT_UTMP *u, char *fmt, int prnt)` from Src/Modules/watch.c:206 (the
-/// per-format-character branch of `watchlog2()` line 242) — same
-/// `%n`/`%M`/`%l`/`%a`/`%T`/`%t`/`%w`/`%W`/`%D` directives.
-/// WARNING: param names don't match C — Rust=(entry, logged_in, fmt) vs C=(inout, u, fmt, prnt)
-pub fn watch3ary(entry: &libc::utmpx, logged_in: bool, fmt: &str) -> String { // c:206
-    let mut result = String::new();
-    let mut chars = fmt.chars().peekable();
-    let user = utmp_user(entry);
-    let line = utmp_line(entry);
-    let host = utmp_host(entry);
-    let time = entry.ut_tv.tv_sec as i64;
-
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            if let Some(next) = chars.next() {
-                result.push(next);
-            }
-        } else if c == '%' {
-            if let Some(&next) = chars.peek() {
-                chars.next();
-                match next {
-                    'n' => result.push_str(&user),
-                    'a' => {
-                        if logged_in {
-                            result.push_str("logged on");
-                        } else {
-                            result.push_str("logged off");
-                        }
-                    }
-                    'l' => {
-                        let line = if line.starts_with("tty") {
-                            &line[3..]
-                        } else {
-                            &line
-                        };
-                        result.push_str(line);
-                    }
-                    'm' => {
-                        let host = host.split('.').next().unwrap_or(&host);
-                        result.push_str(host);
-                    }
-                    'M' => result.push_str(&host),
-                    't' | '@' => {
-                        // c:319-320 — strftime(buf2, sizeof(buf2), "%l:%M%p", tm);
-                        if let Some(dt) = Local.timestamp_opt(time, 0).single() {
-                            result.push_str(&dt.format("%l:%M%p").to_string());
-                        }
-                    }
-                    'T' => {
-                        // c:323-324 — strftime(buf2, sizeof(buf2), "%H:%M", tm);
-                        if let Some(dt) = Local.timestamp_opt(time, 0).single() {
-                            result.push_str(&dt.format("%H:%M").to_string());
-                        }
-                    }
-                    'w' => {
-                        // c:327-328 — strftime(buf2, sizeof(buf2), "%a %e", tm);
-                        if let Some(dt) = Local.timestamp_opt(time, 0).single() {
-                            result.push_str(&dt.format("%a %e").to_string());
-                        }
-                    }
-                    'W' => {
-                        // c:331-332 — strftime(buf2, sizeof(buf2), "%m/%d/%y", tm);
-                        if let Some(dt) = Local.timestamp_opt(time, 0).single() {
-                            result.push_str(&dt.format("%m/%d/%y").to_string());
-                        }
-                    }
-                    'D' => {
-                        if chars.peek() == Some(&'{') {
-                            chars.next();
-                            let mut custom_fmt = String::new();
-                            for fc in chars.by_ref() {
-                                if fc == '}' {
-                                    break;
-                                }
-                                custom_fmt.push(fc);
-                            }
-                            // c:335-336 — user-supplied strftime format
-                            if let Some(dt) = Local.timestamp_opt(time, 0).single() {
-                                result.push_str(&dt.format(&custom_fmt).to_string());
-                            }
-                        } else {
-                            // c:339-340 — strftime(buf2, sizeof(buf2), "%y-%m-%d", tm);
-                            if let Some(dt) = Local.timestamp_opt(time, 0).single() {
-                                result.push_str(&dt.format("%y-%m-%d").to_string());
-                            }
-                        }
-                    }
-                    '%' => result.push('%'),
-                    '(' => {
-                        // Inline %(c.true.false) conditional parser.
-                        // Direct port of the inline conditional handling
-                        // in zsh's watchlog_string (Src/Modules/watch.c).
-                        // C: parses single condition char + separator,
-                        // then walks until matching `)` collecting true/
-                        // false branches, recursing on nested `%(`.
-                        if let (Some(condition), Some(separator)) = (chars.next(), chars.next()) {
-                            let truth = match condition {
-                                'n' => !user.is_empty(),
-                                'a' => logged_in,
-                                'l' => {
-                                    if line.starts_with("tty") {
-                                        line.len() > 3
-                                    } else {
-                                        !line.is_empty()
-                                    }
-                                }
-                                'm' | 'M' => !host.is_empty(),
-                                _ => false,
-                            };
-                            let mut true_branch = String::new();
-                            let mut false_branch = String::new();
-                            let mut depth = 1;
-                            let mut in_true = true;
-                            while let Some(c) = chars.next() {
-                                if c == ')' {
-                                    depth -= 1;
-                                    if depth == 0 {
-                                        break;
-                                    }
-                                }
-                                if c == separator && depth == 1 {
-                                    in_true = false;
-                                    continue;
-                                }
-                                if c == '%' && chars.peek() == Some(&'(') {
-                                    depth += 1;
-                                }
-                                if in_true {
-                                    true_branch.push(c);
-                                } else {
-                                    false_branch.push(c);
-                                }
-                            }
-                            let branch = if truth { &true_branch } else { &false_branch };
-                            result.push_str(&watch3ary(entry, logged_in, branch));
-                        }
-                    }
-                    _ => {
-                        result.push('%');
-                        result.push(next);
-                    }
-                }
-            }
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
-}
+// `watch3ary` / `watchlog2` now live further down (after their
+// helpers); the C ordering has watch3ary at c:206 above watchlog2
+// at c:242 because watch3ary's recursive call to watchlog2 is via
+// forward declaration. The Rust port consolidates both at the
+// same site so the inline ternary helper sits next to its caller.
 
 // printtime helper deleted — C uses inline strftime() at each format
 // directive in watchlog2() (c:319-340), so the Rust port inlines the
@@ -421,83 +274,129 @@ pub fn watch3ary(entry: &libc::utmpx, logged_in: bool, fmt: &str) -> String { //
 
 /// Perform watch check and return login/logout events
 /// Run one tick of the watch loop, returning login/logout events.
-/// Port of `dowatch()` from Src/Modules/watch.c:597 — the C
-/// source diffs the cached `wtab` against a fresh utmp read and
-/// fires `watchlog()` for each new entry / departure.
-/// WARNING: param names don't match C — Rust=(current_user) vs C=()
-pub fn dowatch(current_user: &str) -> Vec<(libc::utmpx, bool)> {            // c:597
-    let mut events: Vec<libc::utmpx> = Vec::new();
-    // Inline utmp walk — direct port of the setutxent/getutxent/endutxent
-    // loop watchlog2 uses every poll (Src/Modules/watch.c:204). zsh C
-    // performs this walk in-place inside watchlog2; mirroring that
-    // structure here keeps the call shape 1:1.
-    let mut new_entries: Vec<libc::utmpx> = Vec::new();
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    unsafe {
-        libc::setutxent();
-        loop {
-            let entry = libc::getutxent();
-            if entry.is_null() {
-                break;
-            }
-            // Copy the FFI-owned utmpx into our Vec (C's `wtab` is an
-            // owned malloc'd array; we own the same way via Vec<utmpx>).
-            new_entries.push(std::ptr::read(entry));
-        }
-        libc::endutxent();
+/// Port of `dowatch(void)` from `Src/Modules/watch.c:597-647`. The
+/// preprompt-driven watch refresh — diffs the cached `wtab`
+/// against a fresh utmp read and fires `watchlog()` inline for
+/// each new entry / departure.
+///
+/// C body (transcribed):
+/// ```c
+/// s = watch;
+/// holdintr();
+/// if (!wtab) wtabsz = readwtab(&wtab, 32);
+/// if (stat(WATCH_UTMP_FILE, &st) == -1 || st.st_mtime <= lastutmpcheck) {
+///     noholdintr(); return;
+/// }
+/// lastutmpcheck = st.st_mtime;
+/// utabsz = readwtab(&utab, wtabsz + 4);
+/// noholdintr();
+/// if (errflag) { free(utab); return; }
+/// /* merge-walk uptr/wptr by ucmp ordering, calling
+///    watchlog(0, wptr++) for departures, watchlog(1, uptr++) for arrivals */
+/// queue_signals();
+/// if (!(fmt = getsparam_u("WATCHFMT"))) fmt = DEFAULT_WATCHFMT;
+/// while ((uct || wct) && !errflag) {
+///     if (!uct || (wct && ucmp(uptr, wptr) > 0))
+///         wct--, watchlog(0, wptr++, s, fmt);
+///     else if (!wct || (uct && ucmp(uptr, wptr) < 0))
+///         uct--, watchlog(1, uptr++, s, fmt);
+///     else uptr++, wptr++, wct--, uct--;
+/// }
+/// unqueue_signals();
+/// free(wtab); wtab = utab; wtabsz = utabsz;
+/// fflush(stdout);
+/// lastwatch = time(NULL);
+/// ```
+pub fn dowatch() {                                                          // c:597
+    let s: Vec<String> = WATCH.with(|w| w.borrow().clone());
+    // c:607 — `holdintr();`
+    crate::ported::signals::holdintr();
+    // c:608 — `if (!wtab) wtabsz = readwtab(&wtab, 32);`
+    let wtab_empty = WTAB.with(|t| t.borrow().is_empty());
+    if wtab_empty {
+        let initial = readwtab(32);
+        WTAB.with(|t| *t.borrow_mut() = initial);
     }
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-
-    // Borrow old entries by reference instead of cloning (libc::utmpx
-    // implements Copy via the libc::s! macro on most targets).
-    let old_entries = WTAB.with(|t| t.borrow().clone());
-    let key_of = |e: &libc::utmpx| format!("{}:{}", utmp_user(e), utmp_line(e));
-    let old_active: HashMap<String, libc::utmpx> = old_entries
-        .iter()
-        .filter(|e| utmp_is_active(e))
-        .map(|e| (key_of(e), *e))
-        .collect();
-
-    let new_active: HashMap<String, libc::utmpx> = new_entries
-        .iter()
-        .filter(|e| utmp_is_active(e))
-        .map(|e| (key_of(e), *e))
-        .collect();
-
-    for (key, entry) in &new_active {
-        if !old_active.contains_key(key) && check_entry(entry, current_user) {
-            events.push(*entry);
+    // c:610 — `if ((stat(...) == -1) || (st.st_mtime <= lastutmpcheck))
+    //           { noholdintr(); return; }`
+    let utmp_path = utmp_file_path();
+    let mtime = std::fs::metadata(utmp_path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64);
+    let last = LASTUTMPCHECK.with(|t| t.get());
+    match mtime {
+        Some(m) if m > last => {
+            LASTUTMPCHECK.with(|t| t.set(m));                              // c:614 lastutmpcheck = st.st_mtime
+        }
+        _ => {
+            crate::ported::signals::noholdintr();                          // c:611 noholdintr
+            return;                                                        // c:611 return
         }
     }
-    for (key, entry) in &old_active {
-        if !new_active.contains_key(key) && check_entry(entry, current_user) {
-            events.push(*entry);
+    // c:615 — `utabsz = readwtab(&utab, wtabsz + 4);`
+    let wtabsz = WTAB.with(|t| t.borrow().len()) as i32;
+    let utab = readwtab(wtabsz + 4);
+    // c:616 — `noholdintr();`
+    crate::ported::signals::noholdintr();
+    // c:617 — `if (errflag) { free(utab); return; }`
+    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+        return;
+    }
+    // c:625 — `queue_signals();` + WATCHFMT fallback.
+    crate::ported::signals_h::queue_signals();
+    let fmt = crate::ported::params::getsparam("WATCHFMT")
+        .unwrap_or_else(|| DEFAULT_WATCHFMT.to_string());
+    // c:631-643 — merge-walk uptr/wptr by ucmp.
+    let wtab_snapshot: Vec<libc::utmpx> = WTAB.with(|t| t.borrow().clone());
+    let mut uct = utab.len();
+    let mut wct = wtab_snapshot.len();
+    let mut uidx = 0usize;
+    let mut widx = 0usize;
+    while uct > 0 || wct > 0 {
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            break;
+        }
+        let cmp_gt_zero = wct > 0 && uct > 0 && ucmp(&utab[uidx], &wtab_snapshot[widx]) > 0;
+        let cmp_lt_zero = uct > 0 && wct > 0 && ucmp(&utab[uidx], &wtab_snapshot[widx]) < 0;
+        if uct == 0 || cmp_gt_zero {
+            // c:634 — `wct--, watchlog(0, wptr++, s, fmt);` — departure
+            wct -= 1;
+            watchlog(0, &wtab_snapshot[widx], &s, &fmt);
+            widx += 1;
+        } else if wct == 0 || cmp_lt_zero {
+            // c:636 — `uct--, watchlog(1, uptr++, s, fmt);` — arrival
+            uct -= 1;
+            watchlog(1, &utab[uidx], &s, &fmt);
+            uidx += 1;
+        } else {
+            // c:638 — entries match (same session) — advance both.
+            uidx += 1;
+            widx += 1;
+            wct -= 1;
+            uct -= 1;
         }
     }
-
-    let login_keys: std::collections::HashSet<String> = new_active
-        .keys()
-        .filter(|k| !old_active.contains_key(*k))
-        .cloned()
-        .collect();
-
-    let result: Vec<(libc::utmpx, bool)> = events
-        .into_iter()
-        .map(|e| {
-            let key = key_of(&e);
-            let is_login = login_keys.contains(&key);
-            (e, is_login)
-        })
-        .collect();
-
-    WTAB.with(|t| *t.borrow_mut() = new_entries);
+    // c:644 — `unqueue_signals();`
+    crate::ported::signals_h::unqueue_signals();
+    // c:645-646 — `free(wtab); wtab = utab; wtabsz = utabsz;`
+    WTAB.with(|t| *t.borrow_mut() = utab);
+    // c:647 — `fflush(stdout); lastwatch = time(NULL);`
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let now = unsafe { libc::time(std::ptr::null_mut()) as i64 };
     LASTWATCH.with(|t| t.set(now));
+}
 
-    result
+/// Port of the `WATCH_UTMP_FILE` macro from `Src/Modules/watch.c:116-127`.
+/// Same platform-default selection scheme as wtmp_file_path. WARNING:
+/// NOT IN WATCH.C — Rust-only helper extracted from inline
+/// `#ifdef HAVE_UTMPX_H` macro selection.
+fn utmp_file_path() -> &'static str {
+    #[cfg(target_os = "linux")] { "/var/run/utmp" }
+    #[cfg(target_os = "macos")] { "/var/run/utmpx" }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))] { "/dev/null" }
 }
 
 /// Port of `bin_log(UNUSED(char *nam), UNUSED(char **argv),
@@ -534,11 +433,10 @@ pub fn bin_log(_name: &str, _argv: &[String],                                // 
     //              lastutmpcheck = 0;`
     WTAB.with(|t| t.borrow_mut().clear());
     LASTUTMPCHECK.with(|t| t.set(0));
-    // c:668 — `dowatch();` — the standalone driver. zshrs's dowatch
-    // takes the current-user name; resolve via $USER.
-    let current_user = crate::ported::params::getsparam("USER")
-        .unwrap_or_default();
-    let _ = dowatch(&current_user);
+    // c:668 — `dowatch();` — the standalone driver. No args now;
+    // current-user resolution happens inside watchlog itself via
+    // `getsparam("USERNAME")` to match C's `cached_username` lookup.
+    dowatch();
     0
 }
 
@@ -747,56 +645,105 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 /// for the matching login record so the resulting time pairs the
 /// real session start, not the wtmp logout marker.
 ///
-/// C signature: `static time_t getlogtime(WATCH_STRUCT_UTMP *u, int inout)`.
-/// The Rust port takes the captured `(line, ut_time)` tuple +
-/// inout flag and returns the resolved login time.
-///
-/// **Partial port:** the wtmp scan-backwards path (c:170-198) is
-/// approximate — Rust uses `getutxent` for live utmp but doesn't
-/// model the random-access wtmp seek in libc. Returns
-/// `time(NULL)` when scanning would be needed.
-pub fn getlogtime(u_line: &str, u_time: i64, inout: i32) -> i64 {        // c:161
+/// Port of `getlogtime(WATCH_STRUCT_UTMP *u, int inout)` from
+/// `Src/Modules/watch.c:161`. For login events (`inout` non-zero)
+/// returns `u->ut_time` directly per c:169. For logout events
+/// (inout == 0), seeks WATCH_WTMP_FILE backward looking for the
+/// matching login record so the resulting time pairs the real
+/// session start, not the wtmp logout marker (c:170-198).
+pub fn getlogtime(u: &libc::utmpx, inout: i32) -> i64 {                  // c:161
     if inout != 0 {                                                      // c:161
-        return u_time;                                                   // c:169 return u->ut_time
+        return u.ut_tv.tv_sec as i64;                                    // c:169 return u->ut_time
     }
     // c:170 — `if (!(in = fopen(WATCH_WTMP_FILE, "r"))) return time(NULL);`
-    // zshrs's wtmp seek isn't wired; return current time as the
-    // documented fallback.
-    let _ = u_line;
-    unsafe { libc::time(std::ptr::null_mut()) as i64 }                   // c:171/175/181/186 return time(NULL)
+    // c:172-198 — `fseek(in, 0, SEEK_END); while (sz >= sizeof(...))
+    //               { fseek; fread; if (matches our line && type
+    //               is login) return uu.ut_time; sz -= sizeof; }`
+    let wtmp_path = wtmp_file_path();
+    let target_line = utmp_line(u);
+    if let Ok(file) = std::fs::File::open(wtmp_path) {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = file;
+        let rec_size = std::mem::size_of::<libc::utmpx>() as i64;
+        if let Ok(end) = f.seek(SeekFrom::End(0)) {
+            let mut pos = end as i64 - rec_size;
+            while pos >= 0 {
+                if f.seek(SeekFrom::Start(pos as u64)).is_err() {
+                    break;
+                }
+                let mut buf = vec![0u8; rec_size as usize];
+                if f.read_exact(&mut buf).is_err() {
+                    break;
+                }
+                // c:183-185 — `if (uu.ut_type == USER_PROCESS &&
+                //               !strncmp(u->ut_line, uu.ut_line, ...))
+                //               return uu.ut_time;`. Reinterpret the
+                // raw bytes as utmpx (best-effort — wtmp format
+                // matches utmpx on macOS/Linux glibc).
+                let rec = unsafe { std::ptr::read(buf.as_ptr() as *const libc::utmpx) };
+                if rec.ut_type == libc::USER_PROCESS
+                    && utmp_line(&rec) == target_line
+                {
+                    return rec.ut_tv.tv_sec as i64;                      // c:184 return uu.ut_time
+                }
+                pos -= rec_size;
+            }
+        }
+    }
+    // c:175/181/186 — `fclose(in); return time(NULL);` fallthrough.
+    unsafe { libc::time(std::ptr::null_mut()) as i64 }
 }
 
-/// Port of `ucmp(WATCH_STRUCT_UTMP *u, WATCH_STRUCT_UTMP *v)` from `Src/Modules/watch.c:527`. The qsort
-/// comparator for utmp records: by `ut_time` ascending, then by
-/// `ut_line` lexicographic.
+/// Port of the `WATCH_WTMP_FILE` macro from `Src/Modules/watch.c:118-147`.
+/// C selects between REAL_WTMPX_FILE / REAL_WTMP_FILE / "/dev/null"
+/// based on configure-time UTMPX availability. Rust port picks the
+/// platform-default path. WARNING: NOT IN WATCH.C — Rust-only helper
+/// extracted from inline `#ifdef HAVE_UTMPX_H` macro selection.
+fn wtmp_file_path() -> &'static str {
+    #[cfg(target_os = "linux")]   { "/var/log/wtmp" }
+    #[cfg(target_os = "macos")]   { "/var/log/wtmpx" }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))] { "/dev/null" }
+}
+
+/// Port of `ucmp(WATCH_STRUCT_UTMP *u, WATCH_STRUCT_UTMP *v)` from
+/// `Src/Modules/watch.c:527`. qsort comparator for utmp records:
+/// by `ut_time` ascending, then by `ut_line` lexicographic.
 ///
-/// C signature: `static int ucmp(WATCH_STRUCT_UTMP *u, WATCH_STRUCT_UTMP *v)`.
-/// Rust port takes (time, line) tuples — the only fields the C
-/// body reads.
-/// WARNING: param names don't match C — Rust=(u_time, u_line, v_time, v_line) vs C=(u, v)
-pub fn ucmp(u_time: i64, u_line: &str, v_time: i64, v_line: &str) -> i32 {  // c:527
-    if u_time == v_time {                                                // c:527
+/// C body:
+/// ```c
+/// if (u->ut_time == v->ut_time)
+///     return strncmp(u->ut_line, v->ut_line, sizeof(u->ut_line));
+/// return u->ut_time - v->ut_time;
+/// ```
+pub fn ucmp(u: &libc::utmpx, v: &libc::utmpx) -> i32 {                   // c:527
+    let ut = u.ut_tv.tv_sec as i64;
+    let vt = v.ut_tv.tv_sec as i64;
+    if ut == vt {                                                        // c:527
         // c:530 — `return strncmp(u->ut_line, v->ut_line, sizeof(u->ut_line));`
-        return match u_line.cmp(v_line) {
+        return match utmp_line(u).cmp(&utmp_line(v)) {
             std::cmp::Ordering::Less => -1,
             std::cmp::Ordering::Equal => 0,
             std::cmp::Ordering::Greater => 1,
         };
     }
-    (u_time - v_time) as i32                                             // c:537
+    (ut - vt) as i32                                                     // c:531 return u->ut_time - v->ut_time
 }
 
-/// Port of `readwtab(WATCH_STRUCT_UTMP **head, int initial_sz)` from `Src/Modules/watch.c:537`. Reads the
-/// utmp file (`getutxent` on systems with it, otherwise raw
-/// `WATCH_UTMP_FILE`), filters out non-USER_PROCESS entries, and
-/// returns them sorted by `ucmp`.
+/// Port of `readwtab(WATCH_STRUCT_UTMP **head, int initial_sz)` from
+/// `Src/Modules/watch.c:537`. Reads the utmp file (`getutxent` on
+/// systems with it, otherwise raw `WATCH_UTMP_FILE`), filters
+/// USER_PROCESS-only entries, and returns them sorted by `ucmp`.
 ///
-/// C signature: `static int readwtab(WATCH_STRUCT_UTMP **head, int initial_sz)`.
-/// C writes the array to `*head` and returns the count. Rust port
-/// returns the Vec directly (count is `.len()`).
-/// WARNING: param names don't match C — Rust=() vs C=(head, initial_sz)
-pub fn readwtab() -> Vec<libc::utmpx> {                                  // c:537
-    let mut entries: Vec<libc::utmpx> = Vec::new();                      // c:537 zalloc
+/// The C signature passes `*head` out-param + returns the count.
+/// Rust returns the Vec directly (length = count). The
+/// `initial_sz` arg honours the C `wtabmax = initial_sz < 2 ?
+/// 32 : initial_sz` capacity hint (parse.c:539) — dowatch calls
+/// `readwtab(&utab, wtabsz + 4)` on subsequent reads so the
+/// reallocation doesn't fire on a stable utmp.
+pub fn readwtab(initial_sz: i32) -> Vec<libc::utmpx> {                   // c:537
+    // c:539 — `int wtabmax = initial_sz < 2 ? 32 : initial_sz;`
+    let wtabmax = if initial_sz < 2 { 32 } else { initial_sz } as usize;
+    let mut entries: Vec<libc::utmpx> = Vec::with_capacity(wtabmax);     // c:549 zalloc wtabmax*sizeof
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     unsafe {
         libc::setutxent();                                               // c:553 setutent
@@ -811,57 +758,302 @@ pub fn readwtab() -> Vec<libc::utmpx> {                                  // c:53
         libc::endutxent();                                               // c:584 endutent
     }
     // c:587-588 — `qsort(*head, sz, sizeof(...), ucmp);`
-    entries.sort_by(|a, b| {
-        let at = a.ut_tv.tv_sec as i64;
-        let bt = b.ut_tv.tv_sec as i64;
-        match ucmp(at, &utmp_line(a), bt, &utmp_line(b)) {
-            n if n < 0 => std::cmp::Ordering::Less,
-            n if n > 0 => std::cmp::Ordering::Greater,
-            _ => std::cmp::Ordering::Equal,
-        }
+    entries.sort_by(|a, b| match ucmp(a, b) {
+        n if n < 0 => std::cmp::Ordering::Less,
+        n if n > 0 => std::cmp::Ordering::Greater,
+        _ => std::cmp::Ordering::Equal,
     });
     entries                                                              // c:589 return sz
 }
 
-/// Port of `watchlog(int inout, WATCH_STRUCT_UTMP *u, char **w, char *fmt)` from `Src/Modules/watch.c:458`. Top-level
-/// per-event dispatcher: for each entry in the `$watch` array,
-/// run pattern-match against the user/host/line of the changed
-/// utmp entry; on match, format via `watch3ary` (or print
-/// directly) and emit to stderr.
+/// Port of `watchlog(int inout, WATCH_STRUCT_UTMP *u, char **w,
+/// char *fmt)` from `Src/Modules/watch.c:458-524`. Top-level
+/// per-event dispatcher driven by `dowatch`. Walks the `$watch`
+/// array (`w`) honoring the C trinary patterns:
 ///
-/// C signature: `static void watchlog(int inout, WATCH_STRUCT_UTMP *u, char **w, char *fmt)`.
+/// - `"all"` (c:466): unconditional match
+/// - `"notme"` (c:470): match anything except the current user
+/// - `user@host%line` entries (c:481-515): per-component glob match
+///
+/// On match, calls `watchlog2(inout, u, fmt, 1, 0)` to print the
+/// event followed by a newline. Output goes to stdout per c:434.
 pub fn watchlog(inout: i32, u: &libc::utmpx, w: &[String], fmt: &str) {  // c:458
-    // c:458 — `*str` and `*p` locals. Rust port walks `w` directly.
-    // C: `getsparam("USERNAME")` / `cached_username`. Read from paramtab.
-    let current_user = crate::ported::params::getsparam("USERNAME")
-        .or_else(|| crate::ported::params::getsparam("USER"))
-        .unwrap_or_default();
-    if !check_entry(u, &current_user) {                                  // c:474 watchlog_match
+    // c:463 — `if (!*u->ut_name) return;`
+    let user_name = utmp_user(u);
+    if user_name.is_empty() {
         return;
     }
-    let _ = w;                                                           // C reads $watch from caller-passed array
-    // c:519 — print formatted.
-    let line = watch3ary(u, inout != 0, fmt);
-    eprintln!("{}", line);                                               // c:520 fputs(stderr) + putc
+    // c:465 — `if (*w && !strcmp(*w, "all"))` → unconditional emit.
+    if w.first().map(|s| s.as_str()) == Some("all") {
+        emit_event(inout, u, fmt);
+        return;
+    }
+    // c:469-477 — `"notme"` handling: emit when entry user != current.
+    let mut idx = 0;
+    if w.first().map(|s| s.as_str()) == Some("notme") {
+        let current = crate::ported::params::getsparam("USERNAME")
+            .or_else(|| crate::ported::params::getsparam("USER"))
+            .unwrap_or_default();
+        if user_name != current {
+            emit_event(inout, u, fmt);
+            return;
+        }
+        idx = 1;
+    }
+    // c:483-518 — `user@host%line` per-entry matching.
+    let host_name = utmp_host(u);
+    let line_name = utmp_line(u);
+    while idx < w.len() {
+        let entry = &w[idx];
+        idx += 1;
+        let mut bad = false;
+        let chars: Vec<char> = entry.chars().collect();
+        let mut i = 0usize;
+        // c:486-492 — leading `user` (until `@` or `%`).
+        if !chars.is_empty() && chars[0] != '@' && chars[0] != '%' {
+            let mut j = i;
+            while j < chars.len() && chars[j] != '@' && chars[j] != '%' { j += 1; }
+            let v: String = chars[i..j].iter().collect();
+            if !watchlog_match(&v, &user_name) { bad = true; }
+            i = j;
+        }
+        // c:494-518 — interleaved `%line` and `@host`.
+        loop {
+            if i >= chars.len() { break; }
+            if chars[i] == '%' {                                          // c:495
+                i += 1;
+                let mut j = i;
+                while j < chars.len() && chars[j] != '@' { j += 1; }
+                let v: String = chars[i..j].iter().collect();
+                if !watchlog_match(&v, &line_name) { bad = true; }
+                i = j;
+            } else if chars[i] == '@' {                                   // c:507
+                i += 1;
+                let mut j = i;
+                while j < chars.len() && chars[j] != '%' { j += 1; }
+                let v: String = chars[i..j].iter().collect();
+                if !watchlog_match(&v, &host_name) { bad = true; }
+                i = j;
+            } else {
+                break;
+            }
+        }
+        if !bad {
+            emit_event(inout, u, fmt);
+            return;
+        }
+    }
 }
 
-/// Port of `watchlog2(int inout, WATCH_STRUCT_UTMP *u, char *fmt, int prnt, int fini)` from `Src/Modules/watch.c:242`. The
-/// mutually-recursive ternary handler for `$WATCHFMT` parsing.
-/// C body walks the format string handling `%(c.true.false)`
-/// ternaries (where `c` is one of `n`/`m`/`l`/`a` etc.) by
-/// dispatching back to itself for each branch.
+/// Emit one formatted watch event to stdout. Mirrors the C `(void)
+/// watchlog2(inout, u, fmt, 1, 0);` call (parse.c:467/477/518) plus
+/// the trailing `putchar('\n')` at c:434. WARNING: NOT IN WATCH.C —
+/// Rust-only adapter: C's watchlog2 prints to stdout directly via
+/// putchar/printf; Rust collects into a String and writes once for
+/// atomicity.
+fn emit_event(inout: i32, u: &libc::utmpx, fmt: &str) {
+    use std::io::Write;
+    let line = watchlog2(inout, u, fmt, 1, 0);
+    let _ = writeln!(std::io::stdout(), "{}", line);
+}
+
+/// Port of `watchlog2(int inout, WATCH_STRUCT_UTMP *u, char *fmt,
+/// int prnt, int fini)` from `Src/Modules/watch.c:242-429`. The
+/// main `$WATCHFMT` parser — walks the format string handling
+/// `\X` escapes, `%n`/`%a`/`%l`/`%m`/`%M`/`%T`/`%t`/`%@`/`%W`/`%w`/
+/// `%D`/`%D{…}` directives, `%%` literal, and `%(c.true.false)`
+/// ternaries (dispatched through `watch3ary`).
 ///
-/// C signature: `static char *watchlog2(int inout, WATCH_STRUCT_UTMP *u, char *fmt, int prnt, int fini)`.
-/// Rust port takes the same args + returns the post-format
-/// pointer offset (`prnt = 0` mode) or empty (`prnt = 1` mode).
-///
-/// **Partial port:** the full ternary parser at c:255-432 is
-/// extensive (~190 lines of state machine over %-codes). Rust
-/// port currently handles the simplest pass-through case;
-/// production ternary support comes through `watch3ary` which
-/// already handles the common cases.
-pub fn watchlog2(_inout: i32, _u: &libc::utmpx, fmt: &str, _prnt: i32, _fini: i32) -> String { // c:242
-    fmt.to_string()                                                      // c:431 return p
+/// C returns the post-format `char *` (cursor after the matching
+/// `fini` delimiter, or end-of-string). Rust returns the
+/// concatenated output as a String — `prnt=1` accumulates into
+/// the result, `prnt=0` walks but emits nothing. The `fini`
+/// delimiter is honored: parsing stops when `*fmt == fini`.
+pub fn watchlog2(inout: i32, u: &libc::utmpx, fmt: &str, prnt: i32, fini: i32) -> String { // c:242
+    let mut result = String::new();
+    let mut chars = fmt.chars().peekable();
+    let user = utmp_user(u);
+    let line = utmp_line(u);
+    let host = utmp_host(u);
+    let logged_in = inout != 0;
+    while let Some(c) = chars.peek().copied() {
+        // c:256 — `if (*fmt == '\\')`.
+        if c == '\\' {
+            chars.next();
+            if let Some(esc) = chars.next() {
+                if prnt != 0 {
+                    result.push(esc);                                    // c:259 putchar
+                }
+            } else if fini != 0 {
+                return result;                                           // c:263 return fmt
+            } else {
+                break;                                                   // c:264 break
+            }
+            continue;
+        }
+        // c:268 — `else if (*fmt == fini) return ++fmt;`.
+        if fini != 0 && (c as i32) == fini {
+            chars.next();
+            return result;
+        }
+        // c:270 — `else if (*fmt != '%')`.
+        if c != '%' {
+            chars.next();
+            if prnt != 0 {
+                result.push(c);                                          // c:273 putchar
+            }
+            continue;
+        }
+        // c:277 — `%`-directive. Consume the `%`.
+        chars.next();
+        let directive = match chars.next() {
+            Some(d) => d,
+            None => break,
+        };
+        // c:278 — `if (*++fmt == BEGIN3) fmt = watch3ary(...);`. BEGIN3
+        // is `(` per the c:206 `%(` ternary opener.
+        if directive == '(' {
+            // c:206 — watch3ary handles the ternary subexpression
+            // and returns the new cursor. Re-feed remaining fmt
+            // through it; Rust port handles inline because
+            // peekable iter doesn't expose the post-cursor cleanly.
+            let rest: String = chars.clone().collect();
+            let (out, advance) = watch3ary_inline(inout, u, &rest, prnt);
+            result.push_str(&out);
+            for _ in 0..advance {
+                chars.next();
+            }
+            continue;
+        }
+        if prnt == 0 {
+            continue;                                                    // c:280 !prnt skip
+        }
+        match directive {
+            'n' => result.push_str(&user),                               // c:283
+            'a' => result.push_str(if logged_in { "logged on" } else { "logged off" }),  // c:287
+            'l' => {                                                     // c:291
+                let trimmed = if line.starts_with("tty") { &line[3..] } else { &line };
+                result.push_str(trimmed);
+            }
+            'm' => {                                                     // c:299
+                let short = host.split('.').next().unwrap_or(&host);
+                result.push_str(short);
+            }
+            'M' => result.push_str(&host),                               // c:307
+            'T' | 't' | '@' | 'W' | 'w' | 'D' => {                       // c:312-340
+                let time = getlogtime(u, inout);
+                let mut fm2: String = match directive {
+                    '@' | 't' => "%l:%M%p".to_string(),                  // c:321
+                    'T' => "%H:%M".to_string(),                          // c:324
+                    'w' => "%a %e".to_string(),                          // c:328
+                    'W' => "%m/%d/%y".to_string(),                       // c:331
+                    'D' => {                                             // c:333
+                        if chars.peek() == Some(&'{') {
+                            chars.next();
+                            // c:336-340 — collect chars until `}`,
+                            // honoring `\X` escapes (each `\` is
+                            // followed by a single char that's
+                            // appended literally, not the `\`).
+                            let mut buf = String::new();
+                            loop {
+                                let fc = match chars.next() { Some(c) => c, None => break };
+                                if fc == '}' { break; }
+                                if fc == '\\' {
+                                    if let Some(esc) = chars.next() {
+                                        buf.push(esc);
+                                    }
+                                } else {
+                                    buf.push(fc);
+                                }
+                            }
+                            if buf.is_empty() { "%y-%m-%d".to_string() } else { buf }
+                        } else {
+                            "%y-%m-%d".to_string()                       // c:347
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                let formatted = Local.timestamp_opt(time, 0).single()
+                    .map(|dt| dt.format(&fm2).to_string())
+                    .unwrap_or_default();
+                // c:355-356 — strip leading space (strftime %l left-pads).
+                let trimmed = formatted.strip_prefix(' ').unwrap_or(&formatted);
+                result.push_str(trimmed);
+                let _ = fm2.len();
+            }
+            '%' => result.push('%'),                                     // c:359 putchar('%')
+            _ => {                                                       // c:419 default
+                result.push('%');
+                result.push(directive);
+            }
+        }
+    }
+    // c:434-436 — `if (prnt) putchar('\n');`. zshrs lets the caller
+    // append the trailing newline (watchlog/checksched control output).
+    result
+}
+
+/// Inline `%(c.true.false)` ternary parser called from `watchlog2`.
+/// Returns `(rendered, chars_consumed_from_input)`. WARNING: NOT
+/// directly in watch.c — this Rust-port helper exists because
+/// Peekable<Chars> can't be re-seated from a returned char*; the
+/// C port uses a moving `char *fmt` pointer. Mirrors the role
+/// played by watch3ary (c:206) but with index-based bookkeeping.
+fn watch3ary_inline(inout: i32, u: &libc::utmpx, rest: &str, prnt: i32) -> (String, usize) {
+    let bytes: Vec<char> = rest.chars().collect();
+    if bytes.len() < 2 { return (String::new(), 0); }
+    let cond = bytes[0];
+    let sep = bytes[1];
+    let user = utmp_user(u);
+    let line = utmp_line(u);
+    let host = utmp_host(u);
+    let truth = match cond {
+        'n' => !user.is_empty(),
+        'a' => inout != 0,
+        'l' => if line.starts_with("tty") { line.len() > 3 } else { !line.is_empty() },
+        'm' | 'M' => !host.is_empty(),
+        _ => false,
+    };
+    let mut true_branch = String::new();
+    let mut false_branch = String::new();
+    let mut depth = 1;
+    let mut in_true = true;
+    let mut consumed = 2;
+    while consumed < bytes.len() {
+        let c = bytes[consumed];
+        consumed += 1;
+        if c == ')' {
+            depth -= 1;
+            if depth == 0 { break; }
+        }
+        if c == sep && depth == 1 {
+            in_true = false;
+            continue;
+        }
+        if c == '%' && consumed < bytes.len() && bytes[consumed] == '(' {
+            depth += 1;
+        }
+        if in_true { true_branch.push(c); } else { false_branch.push(c); }
+    }
+    let branch = if truth { &true_branch } else { &false_branch };
+    let rendered = if prnt != 0 {
+        watchlog2(inout, u, branch, 1, 0)
+    } else {
+        String::new()
+    };
+    (rendered, consumed)
+}
+
+/// Port of `watch3ary(int inout, WATCH_STRUCT_UTMP *u, char *fmt,
+/// int prnt)` from `Src/Modules/watch.c:206`. C body handles
+/// `%(cond.true.false)` and calls watchlog2 for the chosen branch.
+/// Public wrapper kept for the test/back-compat surface — callers
+/// pass an entry + logged_in flag + the full format string and get
+/// the formatted output as a String (Rust adapts the C
+/// printf-to-stdout convention to a return-value-string style for
+/// the AST/exec pipeline).
+pub fn watch3ary(entry: &libc::utmpx, logged_in: bool, fmt: &str) -> String { // c:206
+    watchlog2(if logged_in { 1 } else { 0 }, entry, fmt, 1, 0)
 }
 
 /// Port of `checksched()` from `Src/Modules/watch.c:650`. Called
@@ -885,11 +1077,7 @@ pub fn checksched() {                                                    // c:65
         if raw > 0 { raw } else { 60 }
     };
     if (now - last) > logcheck {                                         // c:654 difftime > LOGCHECK
-        // c:655 — `getsparam("USERNAME")`. paramtab read.
-        let user = crate::ported::params::getsparam("USERNAME")
-            .or_else(|| crate::ported::params::getsparam("USER"))
-            .unwrap_or_default();
-        let _ = dowatch(&user);                                          // c:655 dowatch()
+        dowatch();                                                       // c:655 dowatch();
     }
 }
 

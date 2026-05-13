@@ -489,6 +489,22 @@ set_watch_list
 should_check
 check_entry
 
+# watch.rs — Rust-only helpers for the dowatch() port. C inlines:
+#   * the WATCH_UTMP_FILE / WATCH_WTMP_FILE macro selection
+#     (watch.c:116-147) — two #ifdef blocks pick REAL_UTMPX_FILE or
+#     REAL_UTMP_FILE based on configure-time HAVE_UTMPX_H.
+#   * watchlog2's print-then-newline sequence (watch.c:434) — C uses
+#     putchar/printf directly; Rust collects into a String and
+#     writes once via writeln! for atomicity.
+#   * watch3ary's char* cursor tracking — C has a moving char *fmt
+#     pointer; Rust's Peekable<Chars> can't be re-seated from a
+#     returned cursor, so the inline helper does index-based
+#     bookkeeping and returns (rendered, chars_consumed).
+utmp_file_path
+wtmp_file_path
+emit_event
+watch3ary_inline
+
 # termcap.rs — `capability_lookup` is the Rust-only in-memory ANSI
 # table replacing libtermcap's `tgetstr`/`tgetflag`/`tgetnum` triple.
 # C source links against system libtermcap (or libtinfo) and reads
