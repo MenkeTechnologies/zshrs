@@ -1316,3 +1316,6 @@ setup_vicmd_keymap   # WARNING: NOT IN ZLE_KEYMAP.C — Rust-only factoring of z
 errno_get            # WARNING: NOT IN OPENSSH_BSD_SETRES_ID.C — Rust-only errno read; C reads errno directly
 errno_set            # WARNING: NOT IN OPENSSH_BSD_SETRES_ID.C — Rust-only errno write; dispatches __errno_location/__error per target_os
 errno_str            # WARNING: NOT IN OPENSSH_BSD_SETRES_ID.C — Rust-only error-string formatter; C uses strerror
+clone_castate         # WARNING: NOT IN COMPUTIL.C — Rust-only ownership artifact, mimics C `memcpy(&ca_laststate, &state, sizeof(state))` (computil.c:2056/2314/2346/2363) without moving the in-scope `state`
+clone_cadef_shallow   # WARNING: NOT IN COMPUTIL.C — Rust-only helper, mimics C pointer aliasing where `ca_laststate.d = d` shares ownership; Rust requires owned copy
+clone_castate_full    # WARNING: NOT IN COMPUTIL.C — Rust-only helper, mimics C `memcpy(&local, &ca_laststate, sizeof(state))` to release the Mutex before walking the snext chain
