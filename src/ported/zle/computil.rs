@@ -1622,6 +1622,68 @@ mod tests {
         assert!(comptags.lock().unwrap()[1].is_none());
     }
 
+    /// c:4903-4923 — cf_remove_other with pre="dir/foo" returns
+    /// only names starting with "dir/" and clears `amb`.
+    #[test]
+    fn cf_remove_other_filters_by_dir_head() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let names = vec![
+            "dir/a".to_string(),
+            "dir/b".to_string(),
+            "other/c".to_string(),
+        ];
+        let mut amb = 99;
+        let ret = cf_remove_other(&names, "dir/foo", &mut amb);
+        assert_eq!(amb, 0);
+        let v = ret.expect("matching names returned");
+        assert_eq!(v, vec!["dir/a".to_string(), "dir/b".to_string()]);
+    }
+
+    /// c:4942-4951 — pre without '/' and names diverge → `amb=1`,
+    /// returns None.
+    #[test]
+    fn cf_remove_other_no_slash_diverge_sets_amb() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let names = vec!["a".to_string(), "b".to_string()];
+        let mut amb = 0;
+        let ret = cf_remove_other(&names, "x", &mut amb);
+        assert!(ret.is_none());
+        assert_eq!(amb, 1);
+    }
+
+    /// c:4870 — no "parent" and no "pwd" in style → cf_ignore returns
+    /// without touching `ign`.
+    #[test]
+    fn cf_ignore_no_style_is_noop() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut ign: Vec<String> = vec!["x".into()];
+        cf_ignore(&["/tmp".into()], &mut ign, "", "/tmp/foo");
+        assert_eq!(ign, vec!["x".to_string()],
+            "no style match must leave ign untouched");
+    }
+
+    /// c:3691 — empty compqstack short-circuits bin_compquote to 0.
+    #[test]
+    fn bin_compquote_returns_zero_when_qstack_empty() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let saved_incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
+        INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
+        // Ensure compqstack is empty (zle_test_setup resets things).
+        if let Some(m) = COMPQSTACK.get() {
+            if let Ok(mut s) = m.lock() {
+                s.clear();
+            }
+        }
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0, argsalloc: 0,
+        };
+        let r = bin_compquote("compquote", &["foo".into()], &ops, 0);
+        INCOMPFUNC.store(saved_incompfunc, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(r, 0);
+    }
+
     /// c:3192-3203 — cv_quote_get_val unquotes input then delegates
     /// to cv_get_val. Quoted name with backslash should still match
     /// after parse_subst_string strips the quoting.
@@ -3656,20 +3718,70 @@ pub fn ca_set_data(descr: &mut Vec<String>,                                  // 
     }
 }
 
-/// Port of `cf_ignore(char **names, LinkList ign, char *style, char *path)` from Src/Zle/computil.c:4860.
+/// Direct port of `static void cf_ignore(char **names, LinkList ign,
+///                                          char *style, char *path)`
+/// from `Src/Zle/computil.c:4860-4896`. Adds to `ign` any directory
+/// in `names` that:
+///   - "pwd" style: shares the same dev/ino as `$PWD` (so completion
+///     doesn't offer the directory you're already in).
+///   - "parent" style: is an ancestor directory of `path` (so when
+///     completing under `/a/b/c/`, `/a/`, `/a/b/`, etc. don't show
+///     up as options).
+/// Quoted with QT_BACKSLASH for safe re-insertion into the line.
 pub fn cf_ignore(names: &[String], ign: &mut Vec<String>, style: &str, path: &str) {  // c:4860
-    // C body c:4862-4895 — adds to `ign` any directory in `names`
-    //                      that is the parent of `path` (style "parent")
-    //                      or matches PWD (style "pwd"). Without
-    //                      lstat substrate exposed we apply only the
-    //                      string-prefix variant of the parent rule.
-    let tpar = style.contains("parent");
-    if !tpar {
-        return;
-    }
-    for n in names {
-        if !n.is_empty() && path.starts_with(n.as_str()) && n != path {      // c:4874-4895
-            ign.push(n.clone());
+    use std::os::unix::fs::MetadataExt;
+    use crate::ported::utils::quotestring;
+    use crate::ported::zsh_h::QT_BACKSLASH;
+    use crate::ported::zle::compresult::ztat;
+
+    let pl = path.len();
+    let tpar = style.contains("parent");                                     // c:4866
+    let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
+    let est = if !pwd.is_empty() { ztat(&pwd, true) } else { None };
+    let tpwd = style.contains("pwd") && est.is_some();                       // c:4867
+
+    if !tpar && !tpwd { return; }                                            // c:4870
+
+    for n in names {                                                         // c:4873
+        let nst = match ztat(n, true) {                                      // c:4874 lstat
+            Some(m) if m.is_dir() => m,
+            _ => continue,
+        };
+        if tpwd {
+            if let Some(ref est) = est {
+                if nst.dev() == est.dev() && nst.ino() == est.ino() {        // c:4875
+                    ign.push(quotestring(n, QT_BACKSLASH));                  // c:4876
+                    continue;
+                }
+            }
+        }
+        if tpar && pl > 0 && n.starts_with(path) {                           // c:4879
+            let mut c = n.clone();
+            let mut found = false;
+            // c:4881 — walk up via strrchr('/') while above path-prefix.
+            while let Some(idx) = c.rfind('/') {
+                if idx <= pl { break; }
+                c.truncate(idx);
+                if let Some(st) = ztat(&c, false) {                          // c:4883 stat
+                    if st.dev() == nst.dev() && st.ino() == nst.ino() {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            // c:4889 — fallback last-segment check via lstat.
+            let last_match = if !found {
+                if let Some(idx) = c.rfind('/') {
+                    if idx > pl {
+                        c.truncate(idx);
+                        ztat(&c, true).map_or(false, |st|
+                            st.dev() == nst.dev() && st.ino() == nst.ino())
+                    } else { false }
+                } else { false }
+            } else { false };
+            if found || last_match {
+                ign.push(quotestring(n, QT_BACKSLASH));                      // c:4892
+            }
         }
     }
 }
@@ -3700,24 +3812,68 @@ pub fn cf_pats(_dirs: i32, _noopt: i32, names: &[String],                    // 
     out
 }
 
-/// Port of `cf_remove_other(char **names, char *pre, int *amb)` from Src/Zle/computil.c:4899.
-pub fn cf_remove_other(names: &[String], pre: &str, amb: &mut i32) -> Vec<String> {  // c:4899
-    // C body c:4900-4955 — if `pre` contains `/`, strips the suffix
-    //                      and keeps only entries with that prefix;
-    //                      tracks ambig flag.
-    let mut out = Vec::new();
-    if let Some(slash) = pre.find('/') {
-        let trimmed = &pre[..slash + 1];                                     // c:4907
-        for n in names {                                                     // c:4910
-            if n.starts_with(trimmed) {                                      // c:4911
-                out.push(n.clone());
+/// Direct port of `static LinkList cf_remove_other(char **names,
+///                                                   char *pre, int *amb)`
+/// from `Src/Zle/computil.c:4899-4953`. Helper for `_path_files` that
+/// reports whether the remaining `names` share a common directory
+/// prefix (`*amb` cleared) or diverge (`*amb` set, return None).
+/// When `pre` itself contains a `/`, names matching that head are
+/// returned as the consensus list.
+pub fn cf_remove_other(names: &[String], pre: &str, amb: &mut i32)           // c:4899
+                       -> Option<Vec<String>>
+{
+    use crate::ported::utils::strpfx;
+
+    if let Some(slash) = pre.find('/') {                                     // c:4903
+        // c:4906-4908 — pre' = pre[..slash] + "/".
+        let pre2 = format!("{}/", &pre[..slash]);
+
+        // c:4910-4912 — any name with the truncated prefix?
+        let any_match = names.iter().any(|n| strpfx(&pre2, n));
+
+        if any_match {                                                       // c:4914
+            // c:4915-4922 — return all matching names with amb=0.
+            let ret: Vec<String> = names.iter()
+                .filter(|n| strpfx(&pre2, n))
+                .cloned()
+                .collect();
+            *amb = 0;
+            return Some(ret);                                                // c:4923
+        } else {                                                             // c:4924
+            // c:4925-4940 — check if remaining names all share first-name's head.
+            let mut it = names.iter();
+            let Some(first) = it.next() else {
+                *amb = 0;                                                    // c:4926
+                return None;
+            };
+            // c:4930 — strip after first '/' in first name.
+            let p_head = match first.find('/') {
+                Some(i) => format!("{}/", &first[..i]),
+                None    => format!("{}/", first),
+            };
+            for n in it {                                                    // c:4935
+                if !strpfx(&p_head, n) {
+                    *amb = 1;                                                // c:4937
+                    return None;
+                }
+            }
+            // All match — fall through to return None (matches C).
+        }
+    } else {                                                                 // c:4942
+        // c:4943 — empty list: amb cleared.
+        let mut it = names.iter();
+        let Some(first) = it.next() else {
+            *amb = 0;
+            return None;
+        };
+        for n in it {                                                        // c:4946
+            if first != n {                                                  // c:4947
+                *amb = 1;
+                return None;
             }
         }
-        *amb = if out.len() > 1 { 1 } else { 0 };
-    } else {
-        out.extend_from_slice(names);
     }
-    out
+    None                                                                     // c:4952
 }
 
 /// Port of `cfp_add_sdirs(LinkList final, LinkList orig, char *skipped, char *sdirs, char **fake)` from Src/Zle/computil.c:4735.
@@ -5462,20 +5618,61 @@ pub fn settags(level: i32, tags: &[String]) {                                // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_compquote(nam: &str, args: &[String],                             // c:3679
                      ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3686
-        zwarnnam(nam, "can only be called from completion function");        // c:3687
-        return 1;                                                            // c:3688
+    use crate::ported::params::{getvalue, getstrvalue, getvaluearr,
+        setstrvalue, setarrvalue};
+    use crate::ported::zsh_h::{value, PM_ARRAY, PM_TYPE};
+    use std::sync::atomic::Ordering;
+
+    if INCOMPFUNC.load(Ordering::Relaxed) != 1 {                             // c:3685
+        zwarnnam(nam, "can only be called from completion function");
+        return 1;
     }
-    // c:3692-3693 — `if (!compqstack || !*compqstack) return 0;`
+    // c:3691 — `if (!compqstack || !*compqstack) return 0;`.
     let qstack_empty = COMPQSTACK.get()
         .map(|m| m.lock().map(|s| s.is_empty()).unwrap_or(true))
         .unwrap_or(true);
-    if qstack_empty { return 0; }                                            // c:3693
-    let _p = OPT_ISSET(ops, b'p');                                           // c:3704 -p flag
-    // c:3697-3722 — for each arg, getvalue + dispatch on PM_TYPE.
-    // Static-link path: getvalue / setstrvalue not yet wired.
-    for _name in args {                                                      // c:3697
-        // Deferred: getvalue + setstrvalue + comp_quote chain.
+    if qstack_empty { return 0; }
+    let p_flag = OPT_ISSET(ops, b'p');                                       // c:3704
+
+    // c:3696 — `while ((name = *args++))`. Walk param names.
+    for name in args {                                                       // c:3696
+        let mut vbuf = value {
+            pm: None, arr: Vec::new(), scanflags: 0,
+            valflags: 0, start: 0, end: 0,
+        };
+        let mut nameref: &str = name.as_str();
+        let v = getvalue(Some(&mut vbuf), &mut nameref, 0);                  // c:3699
+        if v.is_none() {                                                     // c:3724
+            zwarnnam(nam, &format!("unknown parameter: {}", name));
+            continue;
+        }
+        let v = v.unwrap();
+        let flags = v.pm.as_ref().map(|pm| pm.node.flags).unwrap_or(0);
+        let pm_type = PM_TYPE(flags as u32);
+        // c:3700-3705 — PM_SCALAR / PM_NAMEREF path.
+        if pm_type == 0 || (flags as u32 & crate::ported::zsh_h::PM_NAMEREF) != 0 {
+            let s = getstrvalue(Some(v));
+            let q = comp_quote(&s, p_flag as i32);
+            let mut nameref_re: &str = name.as_str();
+            setstrvalue(getvalue(Some(&mut vbuf), &mut nameref_re, 0), &q);
+        } else if pm_type == PM_ARRAY {                                      // c:3706
+            let arr = getvaluearr(Some(v));
+            let new_arr: Vec<String> = arr.into_iter()
+                .map(|elem| comp_quote(&elem, p_flag as i32))
+                .collect();
+            // Re-fetch a fresh value for the setarrvalue call (getvalue
+            // consumed the prior borrow).
+            let mut vbuf2 = value {
+                pm: None, arr: Vec::new(), scanflags: 0,
+                valflags: 0, start: 0, end: 0,
+            };
+            let mut nameref2: &str = name.as_str();
+            if let Some(v2) = getvalue(Some(&mut vbuf2), &mut nameref2, 0) {
+                setarrvalue(v2, new_arr);
+            }
+        } else {                                                             // c:3720
+            zwarnnam(nam, &format!("invalid parameter type: {}", name));
+        }
     }
     0                                                                        // c:3725
 }
