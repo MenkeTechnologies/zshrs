@@ -973,7 +973,7 @@ mod tests {
         vi_start_change_recording();
         vi_record_change(b'd');
         vi_record_change(b'w');
-        assert_eq!(zle.vi_chg_buf, vec![b'd', b'w']);
+        assert_eq!(*crate::ported::zle::zle_main::VICHGBUF.lock().unwrap(), vec![b'd', b'w']);
         vi_start_change_recording();
         assert!(crate::ported::zle::zle_main::VICHGBUF.lock().unwrap().is_empty());
     }
