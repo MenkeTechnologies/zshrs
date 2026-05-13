@@ -230,7 +230,7 @@ use crate::ported::lex::{
     tokstr_take, zshlex,
 };
 use crate::prompt::{cmdpop, cmdpush};
-use crate::zsh_h::{wc_bdata, CS_CASE, CS_CMDAND, CS_CMDOR, CS_COND, CS_CURSH, CS_ERRPIPE, CS_FOR, CS_FOREACH, CS_FUNCDEF, CS_PIPE, CS_REPEAT, CS_SELECT, CS_SUBSH, CS_UNTIL, CS_WHILE, EF_RUN, WCB_ARITH, WCB_CURSH, WCB_END, WCB_LIST, WCB_PIPE, WCB_REDIR, WCB_SUBLIST, WCB_SUBSH, WCB_TIMED, WCB_TRY, WC_PIPE_END, WC_PIPE_LINENO, WC_PIPE_MID, WC_REDIR_WORDS, WC_SUBLIST_AND, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_OR, WC_SUBLIST_SIMPLE, WC_SUBLIST_TYPE, WC_TIMED_EMPTY, WC_TIMED_PIPE, Z_ASYNC, Z_DISOWN, Z_END, Z_SIMPLE, Z_SYNC};
+use crate::zsh_h::{wc_bdata, CS_CASE, CS_CMDAND, CS_CMDOR, CS_COND, CS_CURSH, CS_ELIF, CS_ELSE, CS_ERRPIPE, CS_FOR, CS_FOREACH, CS_FUNCDEF, CS_IF, CS_IFTHEN, CS_PIPE, CS_REPEAT, CS_SELECT, CS_SUBSH, CS_UNTIL, CS_WHILE, EF_RUN, WCB_ARITH, WCB_CURSH, WCB_END, WCB_FOR, WCB_FUNCDEF, WCB_IF, WCB_LIST, WCB_PIPE, WCB_REDIR, WCB_REPEAT, WCB_SELECT, WCB_SUBLIST, WCB_SUBSH, WCB_TIMED, WCB_TRY, WCB_WHILE, WC_CASE_AND, WC_CASE_OR, WC_CASE_TESTAND, WC_FOR_COND, WC_FOR_LIST, WC_FOR_PPARAM, WC_IF_HEAD, WC_IF_IF, WC_PIPE_END, WC_PIPE_LINENO, WC_PIPE_MID, WC_REDIR_WORDS, WC_SELECT_LIST, WC_SELECT_PPARAM, WC_SUBLIST_AND, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_OR, WC_SUBLIST_SIMPLE, WC_SUBLIST_TYPE, WC_TIMED_EMPTY, WC_TIMED_PIPE, WC_WHILE_UNTIL, WC_WHILE_WHILE, Z_ASYNC, Z_DISOWN, Z_END, Z_SIMPLE, Z_SYNC};
 // === end AST relocation ===
 
 // Parser state lives in file-scope thread_locals:
@@ -1947,133 +1947,316 @@ pub fn par_cmd_wordcode_noargs() {
 }
 
 /// P9c stub: direct port of `par_for(int *complex)` from
-/// `Src/parse.c:1641-1820`. Emits WC_FOR header + var-name strcode +
-/// list-words + body wordcode. Stub form: emit WC_FOR header with
-/// zero skip + zero param-name slot; real implementation parses
-/// `for VAR in WORDS; do BODY; done`.
+/// Port of `par_for(int *cmplx)` from `Src/parse.c:1087-1199`.
 pub fn par_for_wordcode() {
-    zshlex(); // consume FOR
+    let csh = tok() == FOREACH;
+    let sel = tok() == SELECT;
     let p = ecadd(0);
-    ecadd(0); // param-name strcode placeholder
-    par_list_wordcode();
+    set_incmdpos(false);
+    set_infor(if tok() == FOR { 2 } else { 0 });
+    zshlex();
+    let type_code: wordcode;
+    if tok() == DINPAR {
+        zshlex();
+        if tok() != DINPAR { error("par_for: expected init"); return; }
+        ecstr(&tokstr().unwrap_or_default());
+        zshlex();
+        if tok() != DINPAR { error("par_for: expected cond"); return; }
+        ecstr(&tokstr().unwrap_or_default());
+        zshlex();
+        if tok() != DOUTPAR { error("par_for: expected ))"); return; }
+        ecstr(&tokstr().unwrap_or_default());
+        set_infor(0);
+        set_incmdpos(true);
+        zshlex();
+        type_code = WC_FOR_COND;
+    } else {
+        set_infor(0);
+        if tok() != STRING_LEX { error("par_for: expected identifier"); return; }
+        let np = if !sel { Some(ecadd(0)) } else { None };
+        let mut n = 0u32;
+        set_incmdpos(true);
+        loop {
+            n += 1;
+            ecstr(&tokstr().unwrap_or_default());
+            zshlex();
+            if tok() != STRING_LEX || sel { break; }
+            if tokstr().as_deref() == Some("in") { break; }
+        }
+        if let Some(np) = np {
+            ECBUF.with_borrow_mut(|b| { if np < b.len() { b[np] = n; } });
+        }
+        let posix_in = isnewlin() != 0;
+        while isnewlin() != 0 { zshlex(); }
+        if tok() == STRING_LEX && tokstr().as_deref() == Some("in") {
+            set_incmdpos(false);
+            zshlex();
+            let np = ecadd(0);
+            let mut n = 0u32;
+            while tok() == STRING_LEX {
+                if let Some(s) = tokstr() { ecstr(&s); }
+                n += 1;
+                zshlex();
+            }
+            if tok() != SEPER { error("par_for: expected separator after `in`"); return; }
+            ECBUF.with_borrow_mut(|b| { if np < b.len() { b[np] = n as wordcode; } });
+            type_code = if sel { WC_SELECT_LIST } else { WC_FOR_LIST };
+        } else if !posix_in && tok() == INPAR_TOK {
+            set_incmdpos(false);
+            zshlex();
+            let np = ecadd(0);
+            let mut n = 0u32;
+            while tok() == NEWLIN { zshlex(); }
+            while tok() == STRING_LEX {
+                if let Some(s) = tokstr() { ecstr(&s); }
+                n += 1;
+                zshlex();
+            }
+            while tok() == NEWLIN { zshlex(); }
+            if tok() != OUTPAR_TOK { error("par_for: expected `)`"); return; }
+            ECBUF.with_borrow_mut(|b| { if np < b.len() { b[np] = n as wordcode; } });
+            set_incmdpos(true);
+            zshlex();
+            type_code = if sel { WC_SELECT_LIST } else { WC_FOR_LIST };
+        } else {
+            type_code = if sel { WC_SELECT_PPARAM } else { WC_FOR_PPARAM };
+        }
+    }
+    set_incmdpos(true);
+    while tok() == SEPER { zshlex(); }
+    par_loop_body_wordcode(csh);
+    let used = ECUSED.get() as usize;
+    let off = used.saturating_sub(1 + p) as wordcode;
     ECBUF.with_borrow_mut(|b| {
         if p < b.len() {
-            let skip = b.len() - p - 1;
-            b[p] =
-                crate::ported::zsh_h::WC_FOR | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+            b[p] = if sel { WCB_SELECT(type_code, off) } else { WCB_FOR(type_code, off) };
         }
     });
 }
 
-/// P9c stub: `par_select`. Direct port shape of Src/parse.c:1822-1860.
+/// Body dispatch shared by par_for / par_while / par_repeat.
+/// Direct port of `Src/parse.c:1167-1195`.
+fn par_loop_body_wordcode(csh: bool) {
+    if tok() == DOLOOP {
+        zshlex();
+        par_list_wordcode();
+        if tok() != DONE { error("missing `done`"); return; }
+        set_incmdpos(false);
+        zshlex();
+    } else if tok() == INBRACE_TOK {
+        zshlex();
+        par_list_wordcode();
+        if tok() != OUTBRACE_TOK { error("missing `}`"); return; }
+        set_incmdpos(false);
+        zshlex();
+    } else if csh || isset(CSHJUNKIELOOPS) {
+        par_list_wordcode();
+        if tok() != ZEND { error("missing `end`"); return; }
+        set_incmdpos(false);
+        zshlex();
+    } else if unset(SHORTLOOPS) {
+        error("short loop form requires SHORTLOOPS");
+    } else {
+        par_list1_wordcode();
+    }
+}
+
+/// `select` shares par_for body (c:1024 routes SELECT to par_for).
 pub fn par_select_wordcode() {
-    zshlex();
-    let p = ecadd(0);
-    ecadd(0);
-    par_list_wordcode();
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            b[p] = crate::ported::zsh_h::WC_SELECT
-                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
-        }
-    });
+    par_for_wordcode();
 }
 
-/// P9c stub: direct port of `par_case` from
-/// `Src/parse.c:1862-1990`. Emits WC_CASE + word + arms.
+/// Port of `par_case(int *cmplx)` from `Src/parse.c:1209-1409`.
 pub fn par_case_wordcode() {
-    zshlex();
     let p = ecadd(0);
-    par_list_wordcode();
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            b[p] = crate::ported::zsh_h::WC_CASE
-                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+    set_incmdpos(false);
+    zshlex();
+    if tok() != STRING_LEX { error("par_case: expected scrutinee"); return; }
+    ecstr(&tokstr().unwrap_or_default());
+    set_incmdpos(true);
+    zshlex();
+    while tok() == SEPER { zshlex(); }
+    let saw_brace = tok() == INBRACE_TOK;
+    if !saw_brace && !(tok() == STRING_LEX && tokstr().as_deref() == Some("in")) {
+        error("par_case: expected `in` or `{`");
+        return;
+    }
+    zshlex();
+    loop {
+        while tok() == SEPER { zshlex(); }
+        if (saw_brace && tok() == OUTBRACE_TOK)
+            || (!saw_brace && tok() == STRING_LEX && tokstr().as_deref() == Some("esac"))
+        {
+            zshlex();
+            break;
         }
+        if tok() == INPAR_TOK { zshlex(); }
+        let arm = ecadd(0);
+        let np = ecadd(0);
+        let mut pat_n = 0u32;
+        loop {
+            if tok() != STRING_LEX { error("par_case: expected pattern"); return; }
+            ecstr(&tokstr().unwrap_or_default());
+            pat_n += 1;
+            zshlex();
+            if tok() != BAR_TOK { break; }
+            zshlex();
+        }
+        ECBUF.with_borrow_mut(|b| { if np < b.len() { b[np] = pat_n; } });
+        if tok() != OUTPAR_TOK { error("par_case: expected `)`"); return; }
+        set_incmdpos(true);
+        zshlex();
+        par_list_wordcode();
+        let arm_type = match tok() {
+            DSEMI => WC_CASE_OR,
+            SEMIAMP => WC_CASE_AND,
+            SEMIBAR => WC_CASE_TESTAND,
+            _ => WC_CASE_OR,
+        };
+        let used = ECUSED.get() as usize;
+        let arm_off = used.saturating_sub(1 + arm) as wordcode;
+        ECBUF.with_borrow_mut(|b| {
+            if arm < b.len() { b[arm] = (arm_type as wordcode) | (arm_off << 2); }
+        });
+        if tok() == DSEMI || tok() == SEMIAMP || tok() == SEMIBAR { zshlex(); }
+    }
+    let used = ECUSED.get() as usize;
+    let off = used.saturating_sub(1 + p) as wordcode;
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() { b[p] = WCB_CASE(WC_CASE_HEAD, off); }
     });
 }
 
-/// P9c stub: direct port of `par_if` from
-/// `Src/parse.c:1992-2090`. Emits WC_IF + cond + then + elif chain.
+/// Port of `par_if(int *cmplx)` from `Src/parse.c:1411-1519`.
 pub fn par_if_wordcode() {
-    zshlex();
     let p = ecadd(0);
-    par_list_wordcode();
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            b[p] =
-                crate::ported::zsh_h::WC_IF | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
+    cmdpush(CS_IF as u8);
+    loop {
+        let arm = ecadd(0);
+        zshlex();
+        par_list_wordcode();
+        let body_brace = tok() == INBRACE_TOK;
+        if !body_brace {
+            while tok() == SEPER { zshlex(); }
+            if tok() != THEN {
+                error("par_if: expected `then`");
+                cmdpop();
+                return;
+            }
         }
+        cmdpop();
+        cmdpush(CS_IFTHEN as u8);
+        zshlex();
+        par_list_wordcode();
+        cmdpop();
+        let used = ECUSED.get() as usize;
+        let arm_off = used.saturating_sub(1 + arm) as wordcode;
+        ECBUF.with_borrow_mut(|b| {
+            if arm < b.len() { b[arm] = WCB_IF(WC_IF_IF, arm_off); }
+        });
+        match tok() {
+            ELIF => { cmdpush(CS_ELIF as u8); continue; }
+            ELSE => {
+                cmdpush(CS_ELSE as u8);
+                let arm = ecadd(0);
+                zshlex();
+                par_list_wordcode();
+                let used = ECUSED.get() as usize;
+                let arm_off = used.saturating_sub(1 + arm) as wordcode;
+                ECBUF.with_borrow_mut(|b| {
+                    if arm < b.len() { b[arm] = WCB_IF(WC_IF_IF, arm_off); }
+                });
+                cmdpop();
+                if tok() != FI { error("par_if: expected `fi`"); return; }
+                zshlex();
+                break;
+            }
+            FI => { zshlex(); break; }
+            _ => {
+                if body_brace && tok() == OUTBRACE_TOK { zshlex(); break; }
+                error("par_if: expected `elif`/`else`/`fi`");
+                return;
+            }
+        }
+    }
+    let used = ECUSED.get() as usize;
+    let off = used.saturating_sub(1 + p) as wordcode;
+    ECBUF.with_borrow_mut(|b| {
+        if p < b.len() { b[p] = WCB_IF(WC_IF_HEAD, off); }
     });
 }
 
-/// P9c stub: direct port of `par_while` from
-/// `Src/parse.c:2092-2150`. Emits WC_WHILE + cond + body.
+/// Port of `par_while(int *cmplx)` from `Src/parse.c:1521-1564`.
 pub fn par_while_wordcode() {
-    zshlex();
+    let until = tok() == UNTIL;
     let p = ecadd(0);
+    zshlex();
     par_list_wordcode();
+    while tok() == SEPER { zshlex(); }
+    par_loop_body_wordcode(false);
+    let type_code = if until { WC_WHILE_UNTIL } else { WC_WHILE_WHILE };
+    let used = ECUSED.get() as usize;
+    let off = used.saturating_sub(1 + p) as wordcode;
     ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            b[p] = crate::ported::zsh_h::WC_WHILE
-                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
-        }
+        if p < b.len() { b[p] = WCB_WHILE(type_code, off); }
     });
 }
 
-/// P9c stub: WC_WHILE with the until flag set on the header.
-pub fn par_until_wordcode() {
-    zshlex();
-    let p = ecadd(0);
-    par_list_wordcode();
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            // WC_WHILE with type bit set = UNTIL (parse.c:2105 sets
-            // type = WC_WHILE_UNTIL).
-            let data = 1u32 | ((skip as u32) << 1);
-            b[p] = crate::ported::zsh_h::WC_WHILE | (data << crate::ported::zsh_h::WC_CODEBITS);
-        }
-    });
-}
+/// `until` shares par_while body — tok==UNTIL flips the type.
+pub fn par_until_wordcode() { par_while_wordcode(); }
 
-/// P9c stub: direct port of `par_repeat` from
-/// `Src/parse.c:2152-2200`. Emits WC_REPEAT + count strcode + body.
+/// Port of `par_repeat(int *cmplx)` from `Src/parse.c:1565-1618`.
 pub fn par_repeat_wordcode() {
-    zshlex();
     let p = ecadd(0);
-    par_list_wordcode();
+    set_incmdpos(false);
+    zshlex();
+    if tok() != STRING_LEX { error("par_repeat: expected count"); return; }
+    ecstr(&tokstr().unwrap_or_default());
+    set_incmdpos(true);
+    zshlex();
+    while tok() == SEPER { zshlex(); }
+    par_loop_body_wordcode(false);
+    let used = ECUSED.get() as usize;
+    let off = used.saturating_sub(1 + p) as wordcode;
     ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            b[p] = crate::ported::zsh_h::WC_REPEAT
-                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
-        }
+        if p < b.len() { b[p] = WCB_REPEAT(off); }
     });
 }
 
-/// P9c stub: direct port of `par_funcdef` from
-/// `Src/parse.c:2202-2310`. Emits WC_FUNCDEF + name-list strcodes +
-/// body. Real implementation parses multi-name funcdefs; stub emits
-/// a header for a single-name body.
+/// Port of `par_funcdef(int *cmplx)` from `Src/parse.c:1672-1786`.
 pub fn par_funcdef_wordcode() {
-    zshlex();
     let p = ecadd(0);
-    par_list_wordcode();
+    zshlex();
+    let np = ecadd(0);
+    let mut n = 0u32;
+    set_incmdpos(false);
+    while tok() == STRING_LEX {
+        ecstr(&tokstr().unwrap_or_default());
+        n += 1;
+        zshlex();
+    }
+    ECBUF.with_borrow_mut(|b| { if np < b.len() { b[np] = n; } });
+    set_incmdpos(true);
+    if tok() == INOUTPAR { zshlex(); }
+    while tok() == SEPER { zshlex(); }
+    if tok() == INBRACE_TOK {
+        zshlex();
+        par_list_wordcode();
+        if tok() != OUTBRACE_TOK { error("par_funcdef: expected `}`"); return; }
+        zshlex();
+    } else if unset(SHORTLOOPS) {
+        error("par_funcdef: short body requires SHORTLOOPS");
+        return;
+    } else {
+        par_list1_wordcode();
+    }
+    let used = ECUSED.get() as usize;
+    let off = used.saturating_sub(1 + p) as wordcode;
     ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            let skip = b.len() - p - 1;
-            b[p] = crate::ported::zsh_h::WC_FUNCDEF
-                | ((skip as u32) << crate::ported::zsh_h::WC_CODEBITS);
-        }
+        if p < b.len() { b[p] = WCB_FUNCDEF(off); }
     });
 }
 
-/// Port of `par_subsh(int *cmplx, int zsh_construct)` from
 /// `Src/parse.c:1619-1665`. Handles both `(...)` subshell and
 /// `{...}` brace group (cursh) plus optional `always { ... }`
 /// trailing block. C uses a single function with `zsh_construct=1`
