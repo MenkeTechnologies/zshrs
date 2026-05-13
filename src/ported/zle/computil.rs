@@ -1568,6 +1568,81 @@ mod tests {
         assert!(cv_get_val(&d, "missing").is_none());
     }
 
+    /// c:5126-5131 — setup_ frees every cache slot and zeros
+    /// lasttaglevel. Pre-fill all three caches + lasttaglevel, then
+    /// call setup_ and verify they're cleared.
+    #[test]
+    fn setup_clears_all_caches() {
+        use std::sync::atomic::Ordering;
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // Pre-fill.
+        if let Ok(mut cache) = cadef_cache.lock() {
+            cache[0] = Some(Box::new(cadef::default()));
+        }
+        if let Ok(mut cache) = cvdef_cache.lock() {
+            cache[0] = Some(Box::new(cvdef::default()));
+        }
+        if let Ok(mut tab) = comptags.lock() {
+            tab[0] = Some(Box::new(ctags::default()));
+        }
+        lasttaglevel.store(42, Ordering::Relaxed);
+
+        let r = setup_();
+        assert_eq!(r, 0);
+
+        assert!(cadef_cache.lock().unwrap()[0].is_none(),
+            "cadef_cache[0] should be cleared");
+        assert!(cvdef_cache.lock().unwrap()[0].is_none(),
+            "cvdef_cache[0] should be cleared");
+        assert!(comptags.lock().unwrap()[0].is_none(),
+            "comptags[0] should be cleared");
+        assert_eq!(lasttaglevel.load(Ordering::Relaxed), 0,
+            "lasttaglevel should reset to 0");
+    }
+
+    /// c:5171-5177 — finish_ frees every slot in all three caches.
+    /// Same pre-fill pattern as setup_clears_all_caches; finish_
+    /// differs in not zeroing lasttaglevel.
+    #[test]
+    fn finish_frees_all_caches() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        if let Ok(mut cache) = cadef_cache.lock() {
+            cache[1] = Some(Box::new(cadef::default()));
+        }
+        if let Ok(mut cache) = cvdef_cache.lock() {
+            cache[1] = Some(Box::new(cvdef::default()));
+        }
+        if let Ok(mut tab) = comptags.lock() {
+            tab[1] = Some(Box::new(ctags::default()));
+        }
+        let r = finish_();
+        assert_eq!(r, 0);
+        assert!(cadef_cache.lock().unwrap()[1].is_none());
+        assert!(cvdef_cache.lock().unwrap()[1].is_none());
+        assert!(comptags.lock().unwrap()[1].is_none());
+    }
+
+    /// c:3192-3203 — cv_quote_get_val unquotes input then delegates
+    /// to cv_get_val. Quoted name with backslash should still match
+    /// after parse_subst_string strips the quoting.
+    #[test]
+    fn cv_quote_get_val_unquotes_then_lookup() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::utils::inittyptab();
+        let d = cvdef {
+            vals: Some(Box::new(cvval {
+                name: Some("foo".into()),
+                r#type: CVV_NOARG,
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        // Plain name → hit.
+        assert!(cv_quote_get_val(&d, "foo").is_some());
+        // Unknown → miss.
+        assert!(cv_quote_get_val(&d, "bar").is_none());
+    }
+
     /// c:3211-3217 — cv_inactive clears active for each name in xor.
     #[test]
     fn cv_inactive_clears_named_vals() {
@@ -1771,18 +1846,62 @@ pub fn bin_comparguments(nam: &str, args: &[String],                         // 
             ca_doff.store(0, Ordering::Relaxed);
             let all_clone = Box::new(clone_cadef_shallow(&def_head));
 
-            // c:2643 — for each set, ca_parse_line.
+            // c:2643-2664 — for each set walk: track which parses
+            // succeeded ("use"). When a set succeeds AND more sets
+            // remain, snapshot ca_laststate into a fallback chain.
+            // When the final set rejects, restore the most-recent
+            // saved state (or fail with ret=1 if no fallback).
             let mut first = 1;
             let mut def_opt: Option<Box<cadef>> = Some(def_head);
+            let mut multi = 0;
+            // Look ahead once to see if we have more than one set;
+            // matches C's `multi = !!def->snext` at c:2639.
+            if let Some(ref d) = def_opt {
+                if d.snext.is_some() { multi = 1; }
+            }
+            let mut states: Vec<castate> = Vec::new();                       // c:2632
+            let mut ret = 0i32;
+
             while let Some(mut current) = def_opt {
                 let next = current.snext.take();
-                let multi = if next.is_some() || first == 0 { 1 } else { 0 };
-                let _ = ca_parse_line(&mut current, &all_clone, multi, first);
-                first = 0;
+                let parse_ret = ca_parse_line(&mut current, &all_clone, multi, first);
+                let use_state = parse_ret == 0;                              // c:2644
+                let has_next = next.is_some();
+                if use_state && has_next {                                   // c:2646
+                    // c:2648 — snapshot ca_laststate, push onto fallback.
+                    if let Ok(ls) = ca_laststate.lock() {
+                        states.push(clone_castate_full(&ls));
+                    }
+                } else if !use_state && !has_next {                          // c:2652
+                    // c:2654 — restore most-recent saved state (if any).
+                    if let Some(saved) = states.pop() {
+                        if let Ok(mut ls) = ca_laststate.lock() {
+                            freecastate(&mut ls);
+                            *ls = saved;
+                        }
+                    } else {
+                        ret = 1;                                             // c:2661
+                    }
+                }
+                first = 0;                                                   // c:2663
                 def_opt = next;
             }
             ca_parsed.store(1, Ordering::Relaxed);                           // c:2665
-            0
+
+            // c:2666 — thread fallback chain into ca_laststate.snext.
+            if !states.is_empty() {
+                if let Ok(mut ls) = ca_laststate.lock() {
+                    // Build a linked snext chain from oldest → newest.
+                    let mut head: Option<Box<castate>> = None;
+                    for s in states.into_iter().rev() {
+                        let mut s = s;
+                        s.snext = head;
+                        head = Some(Box::new(s));
+                    }
+                    ls.snext = head;
+                }
+            }
+            ret                                                              // c:2668
         }
 
         b'D' => {                                                            // c:2672
@@ -4059,16 +4178,25 @@ pub fn cv_parse_word(d: &mut cvdef) {                                        // 
 }
 
 /// Direct port of `static Cvval cv_quote_get_val(Cvdef d, char *name)`
-/// from `Src/Zle/computil.c:3190-3204`. Unquotes `name` via
-/// `remnulargs` + `untokenize`, then delegates to `cv_get_val`.
-/// `parse_subst_string` is not on this Rust port path; the unquote
-/// chain is approximated by `remnulargs` + `untokenize` which covers
-/// the common cases (compsystem feeds already-tokenized strings).
+/// from `Src/Zle/computil.c:3190-3204`. Unquotes `name` via the full
+/// C chain: `parse_subst_string` (with noerrs=2 to suppress errors),
+/// `remnulargs`, then `untokenize`; result fed to `cv_get_val`.
 pub fn cv_quote_get_val(d: &cvdef, name: &str) -> Option<Box<cvval>> {       // c:3190
+    // c:3195 — `name = dupstring(name)` (Rust: own a mutable copy).
     let mut s = name.to_string();
-    crate::ported::glob::remnulargs(&mut s);                                 // c:3200
-    let s = crate::ported::lex::untokenize(&s);                              // c:3201
-    cv_get_val(d, &s)                                                        // c:3203
+    // c:3196-3199 — `ne = noerrs; noerrs = 2; parse_subst_string(name);
+    //                noerrs = ne`. The parse_subst_string port (lex.rs:3797)
+    // returns Result; we discard errors so noerrs=2/restore is a no-op.
+    crate::ported::utils::set_noerrs(2);
+    let parsed = crate::ported::lex::parse_subst_string(&s).ok();
+    crate::ported::utils::set_noerrs(0);
+    if let Some(p) = parsed { s = p; }
+    // c:3200 — `remnulargs(name)`.
+    crate::ported::glob::remnulargs(&mut s);
+    // c:3201 — `untokenize(name)`.
+    let s = crate::ported::lex::untokenize(&s);
+    // c:3203 — `return cv_get_val(d, name)`.
+    cv_get_val(d, &s)
 }
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from Src/Zle/computil.c:5146.
@@ -4087,25 +4215,56 @@ pub fn features_() -> i32 {                                                  // 
     0
 }
 
-/// Port of `finish_(UNUSED(Module m))` from Src/Zle/computil.c:5167.
-/// WARNING: param names don't match C — Rust=() vs C=(m)
+/// Direct port of `int finish_(UNUSED(Module m))` from
+/// `Src/Zle/computil.c:5167-5180`. Frees every cached cadef/cvdef
+/// and the comptags table on module unload.
 pub fn finish_() -> i32 {                                                    // c:5167
-    // C body c:5169-5176 — `for (i...) freecadef(cadef_cache[i]);
-    //                       for (i...) freecvdef(cvdef_cache[i]); return 0`.
-    //                      cadef_cache/cvdef_cache are not yet hydrated;
-    //                      cleanup is a no-op.
-    0
+    // c:5171 — `for (i = 0; i < MAX_CACACHE; i++) freecadef(cadef_cache[i])`.
+    if let Ok(mut cache) = cadef_cache.lock() {
+        for slot in cache.iter_mut() {
+            freecadef(slot.take());
+        }
+    }
+    // c:5173 — `for (i = 0; i < MAX_CVCACHE; i++) freecvdef(cvdef_cache[i])`.
+    if let Ok(mut cache) = cvdef_cache.lock() {
+        for slot in cache.iter_mut() {
+            freecvdef(slot.take());
+        }
+    }
+    // c:5176 — `for (i = 0; i < MAX_TAGS; i++) freectags(comptags[i])`.
+    if let Ok(mut tab) = comptags.lock() {
+        for slot in tab.iter_mut() {
+            freectags(slot.take());
+        }
+    }
+    0                                                                        // c:5179
 }
 
-/// Port of `setup_(UNUSED(Module m))` from Src/Zle/computil.c:5124.
-/// WARNING: param names don't match C — Rust=() vs C=(m)
+/// Direct port of `int setup_(UNUSED(Module m))` from
+/// `Src/Zle/computil.c:5124-5134`. Zeroes the three module caches
+/// and resets `lasttaglevel`. Called on module load.
 pub fn setup_() -> i32 {                                                     // c:5124
-    // C body c:5126-5132 — `memset(cadef_cache, 0, ...);
-    //                       memset(cvdef_cache, 0, ...);
-    //                       memset(comptags, 0, ...);
-    //                       lasttaglevel = 0; return 0`.
-    //                      Caches not yet hydrated; this is a no-op.
-    0
+    // c:5126 — `memset(cadef_cache, 0, sizeof(cadef_cache))`.
+    if let Ok(mut cache) = cadef_cache.lock() {
+        for slot in cache.iter_mut() {
+            freecadef(slot.take());
+        }
+    }
+    // c:5127 — `memset(cvdef_cache, 0, sizeof(cvdef_cache))`.
+    if let Ok(mut cache) = cvdef_cache.lock() {
+        for slot in cache.iter_mut() {
+            freecvdef(slot.take());
+        }
+    }
+    // c:5129 — `memset(comptags, 0, sizeof(comptags))`.
+    if let Ok(mut tab) = comptags.lock() {
+        for slot in tab.iter_mut() {
+            freectags(slot.take());
+        }
+    }
+    // c:5131 — `lasttaglevel = 0`.
+    lasttaglevel.store(0, std::sync::atomic::Ordering::Relaxed);
+    0                                                                        // c:5133
 }
 
 // `freecastate` / `freectags` / `freectset` / `freecvdef` real ports
