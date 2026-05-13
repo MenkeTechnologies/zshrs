@@ -21,6 +21,35 @@
 // Group-flag constants (c:85-95) — flags on `cmgroup.flags`.
 // ---------------------------------------------------------------------------
 
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::extensions::widget::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_refresh::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+
 pub const CGF_NOSORT:  i32 = 1;                                          // c:85
 pub const CGF_LINES:   i32 = 2;                                          // c:86
 pub const CGF_HASDL:   i32 = 4;                                          // c:87
@@ -640,6 +669,7 @@ mod tests {
     /// Verifies CGF_* group flag values per c:85-95.
     #[test]
     fn cgf_flags_correct() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CGF_NOSORT, 1);
         assert_eq!(CGF_LINES, 2);
         assert_eq!(CGF_HASDL, 4);
@@ -650,6 +680,7 @@ mod tests {
     /// per c:127-143.
     #[test]
     fn cmf_match_flags_distinct() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let all = CMF_FILE | CMF_REMOVE | CMF_ISPAR | CMF_PARBR
                 | CMF_PARNEST | CMF_NOLIST | CMF_DISPLINE | CMF_HIDE
                 | CMF_NOSPACE | CMF_PACKED | CMF_ROWS | CMF_MULT
@@ -661,6 +692,7 @@ mod tests {
     /// Verifies CMF_LINE/LEFT/RIGHT/INTER cmatcher flags per c:172-178.
     #[test]
     fn cmf_matcher_flags_correct() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CMF_LINE, 1);
         assert_eq!(CMF_LEFT, 2);
         assert_eq!(CMF_RIGHT, 4);
@@ -670,6 +702,7 @@ mod tests {
     /// Verifies CPAT_* enum values per c:184-190.
     #[test]
     fn cpat_enum_values_correct() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CPAT_CCLASS, 0);
         assert_eq!(CPAT_NCLASS, 1);
         assert_eq!(CPAT_EQUIV, 2);
@@ -680,6 +713,7 @@ mod tests {
     /// Verifies CP_REALPARAMS / CP_ALLREALS aggregate per c:385-386.
     #[test]
     fn cp_realparams_mask_covers_10_bits() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CP_REALPARAMS, 10);
         assert_eq!(CP_ALLREALS, 0x3ff);
         assert_eq!(CP_ALLREALS.count_ones(), 10);
@@ -692,6 +726,7 @@ mod tests {
     /// Verifies CP_KEYPARAMS / CP_ALLKEYS aggregate per c:442-443.
     #[test]
     fn cp_keyparams_mask_covers_26_bits() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CP_KEYPARAMS, 26);
         assert_eq!(CP_ALLKEYS, 0x3ffffff);
         assert_eq!(CP_ALLKEYS.count_ones(), 26);
@@ -700,6 +735,7 @@ mod tests {
     /// Verifies CAF_* compadd flags per c:299-309.
     #[test]
     fn caf_flags_correct() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CAF_QUOTE, 1);
         assert_eq!(CAF_NOSORT, 2);
         assert_eq!(CAF_REVSORT, 1024);
@@ -708,6 +744,7 @@ mod tests {
     /// Verifies hook offset constants per c:447-451.
     #[test]
     fn hook_offsets_sequential() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(INSERTMATCHHOOK_OFFSET, 0);
         assert_eq!(MENUSTARTHOOK_OFFSET, 1);
         assert_eq!(COMPCTLMAKEHOOK_OFFSET, 2);
@@ -718,12 +755,14 @@ mod tests {
     /// Verifies CM_SPACE per c:474.
     #[test]
     fn cm_space_is_2() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CM_SPACE, 2);
     }
 
     /// Verifies the structs construct cleanly with `Default`.
     #[test]
     fn structs_default_construct() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _ = Cexpl::default();
         let _ = Cmgroup::default();
         let _ = Cmatch::default();

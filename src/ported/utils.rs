@@ -5360,7 +5360,6 @@ pub fn deltimedfn(func: fn()) {                                              // 
 /// WARNING: param names don't match C — Rust=(name, args, arrayp) vs C=(name, lnklst, arrayp, retval)
 pub fn callhookfunc(name: &str, args: Option<&[String]>, arrayp: bool) -> i32 {
     let mut stat: i32 = 1;
-    let _ = args;
 
     // c:utils.c:1494 — `if ((hn = gethashnode2(shfunctab, name)))
     //                     doshfunc((Shfunc) hn, args, 1);`

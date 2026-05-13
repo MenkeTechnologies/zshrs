@@ -1143,3 +1143,136 @@ vibuf
 history
 vimarks
 highlight
+
+# zle_reset — ZLE-session zero-state reset. C does this inline at the
+# head of `zleread()` (Src/Zle/zle_main.c:1216) — no separate C fn.
+# The Rust port factors it out as a free fn because tests + the host
+# both need to reach the same reset block without re-entering zleread.
+zle_reset
+
+# zle_test_setup — process-wide ZLE-test serialiser. Acquires the
+# global ZLE_TEST_LOCK and calls zle_reset(). Tests hold the returned
+# guard for their body's lifetime so the cargo parallel runner
+# effectively serialises ZLE-touching tests. No C counterpart —
+# C is single-threaded so the question doesn't arise.
+zle_test_setup
+
+# Hoisted impl-Zle methods (no C counterpart by design; they were
+# Rust-only helpers on the now-deleted `Zle` struct). Most are widget
+# glue (`accept_line`, `kill_buffer`, `self_insert`) or convenience
+# predicates (`is_emacs`, `is_vicmd`) that C handles inline inside
+# `execzlefunc()` (Src/Zle/zle_main.c:1420). Promoted to free fns when
+# `pub struct Zle;` was deleted.
+abort_line
+accept_and_hold
+accept_line
+accept_line_and_down_history
+apply_change
+backspace_chars
+beginning_of_history
+call_hook
+capitalize_word
+clear_line
+compute_render_attrs
+copy_prev_shell_word
+copy_prev_word
+count_lines
+current_column
+current_line
+cut_to_buffer
+delete_chars
+describe_key_briefly
+digit_argument
+display_msg
+do_self_insert
+downcase_word
+drain_hooks
+exchange_point_and_mark
+execute_widget
+finish_line
+full_refresh
+get_key_cmd
+get_line
+get_mult
+get_region
+get_zle_query
+handle_feep
+handle_suffix
+history_down
+history_isearch_backward
+history_isearch_forward
+history_search_prefix
+history_up
+in_vi_cmd_mode
+init_history
+insert_chars
+insert_str
+is_emacs
+is_insert_mode
+is_neg
+is_region_active
+is_vicmd
+is_viins
+kill_buffer
+kill_region
+kill_whole_line
+move_down
+move_to_bol
+move_to_eol
+move_up
+neg_argument
+overwrite_mode
+partial_refresh
+paste_from_buffer
+pound_insert
+prompt
+push_line
+quote_line
+quote_region
+recursive_edit
+redo_widget
+rprompt
+self_insert
+send_break
+set_last_line
+set_line
+set_line_keep_cursor
+set_local_history
+set_mark_here
+set_prompt
+toggle_neg_arg
+transpose_chars
+transpose_words
+try_read_byte
+unapply_change
+undefined_key
+undo_widget
+upcase_word
+vi_change_op
+vi_cut_into_killring
+vi_deactivate_region
+vi_delete_op
+vi_fetch_history
+vi_find_char
+vi_find_char_inner
+vi_get_arg
+vi_get_range
+vi_goto_mark
+vi_match_bracket
+vi_put_after
+vi_put_before
+vi_record_change
+vi_repeat_change
+vi_repeat_search
+vi_replace_mode
+vi_set_mark
+vi_start_change_recording
+vi_swap_case
+vi_undo
+vi_visual_block_mode
+vi_visual_line_mode
+vi_visual_mode
+vi_yank_op
+was_yank
+what_cursor_position
+yank_pop

@@ -26,6 +26,35 @@ use std::io::Write;
 
 /// Port of `KMN_IMMORTAL` from `Src/Zle/zle_keymap.c:62`. Marks a
 /// keymap-name node that can't be deleted (the `.safe` keymap).
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::extensions::widget::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_refresh::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+
 pub const KMN_IMMORTAL: i32 = 1 << 1;                                        // c:62
 
 /// Port of `KM_IMMUTABLE` from `Src/Zle/zle_keymap.c:83`. Marks a
@@ -868,6 +897,7 @@ mod tests {
 
     #[test]
     fn emacs_default_has_quoted_insert_undo_yank_pop() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _ = KeymapManager;
         createkeymapnamtab();
         default_bindings();
@@ -889,6 +919,7 @@ mod tests {
 
     #[test]
     fn emacs_default_has_history_search_and_insert_last_word() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _ = KeymapManager;
         createkeymapnamtab();
         default_bindings();
@@ -914,6 +945,7 @@ mod tests {
 
     #[test]
     fn vicmd_default_has_visual_marks_indent() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _ = KeymapManager;
         createkeymapnamtab();
         default_bindings();
@@ -947,6 +979,7 @@ mod tests {
 
     #[test]
     fn viins_default_has_history_search_and_quoted_insert() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _ = KeymapManager;
         createkeymapnamtab();
         default_bindings();
@@ -973,6 +1006,7 @@ mod tests {
 
     #[test]
     fn refkeymap_increments_rc() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:470 — `km->rc++`. Default Keymap starts with rc=0.
         let mut km = Keymap::default();
         assert_eq!(km.rc, 0);
@@ -984,6 +1018,7 @@ mod tests {
 
     #[test]
     fn unrefkeymap_decrements_returns_new_count() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:482 — `--km->rc`. With rc=3 → returns 2.
         let mut km = Keymap::default();
         km.rc = 3;
@@ -996,6 +1031,7 @@ mod tests {
 
     #[test]
     fn unrefkeymap_returns_zero_at_last_ref() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:482-484 — `if (!--km->rc) { deletekeymap(km); return 0; }`.
         // rc=1 → -- → 0 → returns 0 (deletion signal).
         let mut km = Keymap::default();
@@ -1012,6 +1048,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_empty_seq() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:687-688 — empty input → always prefix → 1.
         let km = Keymap::default();
         assert_eq!(keyisprefix(&km, b""), 1);
@@ -1019,6 +1056,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_single_byte_bound_returns_zero() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:689-692 — single byte that has a first[] binding is NOT
         // a prefix; it IS the binding.
         let mut km = Keymap::default();
@@ -1028,6 +1066,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_single_byte_unbound() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:694-695 — fall through to multi lookup; no match → 0.
         let km = Keymap::default();
         assert_eq!(keyisprefix(&km, b"x"), 0);
@@ -1035,6 +1074,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_seq_is_real_prefix() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:694-695 — multi has prefixct > 0 → 1.
         // bind_seq("ab", X) marks "a" as a prefix (prefixct=1).
         let mut km = Keymap::default();
@@ -1045,6 +1085,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_seq_is_complete_binding() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:694-695 — when seq itself IS a binding (not a prefix),
         // multi[seq] has prefixct=0 → 0.
         let mut km = Keymap::default();
@@ -1055,6 +1096,7 @@ mod tests {
 
     #[test]
     fn keyisprefix_meta_pair_decoded() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:690 — `seq[0]==Meta` (0x83) → use seq[1]^32 as single byte.
         // Bind 'A' (0x41) in first[]. Seq [0x83, 0x61] decodes to
         // 0x61^0x20 = 0x41 = 'A'. So this is single-byte 'A'.
@@ -1086,7 +1128,7 @@ pub fn add_cursor_key(km: &mut Keymap, tccode: i32, thingy: Thingy, defchar: i32
 
 /// Port of `addkeybuf(int c)` from Src/Zle/zle_keymap.c:1717.
 /// WARNING: param names don't match C — Rust=(zle, c) vs C=(c)
-pub fn addkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) {      // c:1717
+pub fn addkeybuf(c: i32) {      // c:1717
     // C body (zle_keymap.c:1700):
     //   addkeybuf(int c) {
     //     if(keybuflen + 3 > keybufsz) keybuf = realloc(...);
@@ -1104,7 +1146,6 @@ pub fn addkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) {      // 
     // safe single-byte values. zsh's imeta() returns true when
     // byte needs Meta-quoting in the key buffer.
     let is_meta = c >= 0x83 && c != 0x83 && c != 0x84;
-    let _ = zle;
     let mut buf = keybuf.lock().unwrap();
     if is_meta {
         buf.push(0x83);                                                      // Meta
@@ -1450,14 +1491,14 @@ pub fn freekeynode(hn: KeyBinding) {                                        // c
 
 /// Port of `getkeybuf(int w)` from Src/Zle/zle_keymap.c:1744.
 /// WARNING: param names don't match C — Rust=(zle, w) vs C=(w)
-pub fn getkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, w: i32) -> i32 {  // c:1744
+pub fn getkeybuf(w: i32) -> i32 {  // c:1744
     // C body (c:1658-1664): `int c = getbyte((long)w, NULL, 1);
     //                       if (c < 0) return EOF; addkeybuf(c); return c`.
     // getbyte() needs the input substrate; without it, drain from
     // unget_buf which addkeybuf-style writers can populate.
     let _ = w; // would be `(long)w` to getbyte's timeout arg
     if let Some(b) = crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front() {
-        addkeybuf(zle, b as i32);
+        addkeybuf(b as i32);
         b as i32
     } else {
         -1                                                                   // c:1661 EOF
@@ -1466,7 +1507,7 @@ pub fn getkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, w: i32) -> i32 {  
 
 /// Port of `getkeycmd()` from Src/Zle/zle_keymap.c:1768.
 /// WARNING: param names don't match C — Rust=(_zle) vs C=()
-pub fn getkeycmd(_zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:1768
+pub fn getkeycmd() -> i32 {      // c:1768
     // C body c:1770-1804 — calls getkeymapcmd in a loop until a
     //                      non-prefix keymap entry is selected; sets
     //                      bindk to the resulting Thingy. Without an
@@ -1477,7 +1518,7 @@ pub fn getkeycmd(_zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // 
 
 /// Port of `getkeymapcmd(Keymap km, Thingy *funcp, char **strp)` from Src/Zle/zle_keymap.c:1581.
 /// WARNING: param names don't match C — Rust=(_zle, _km) vs C=(km, funcp, strp)
-pub fn getkeymapcmd(_zle: &mut crate::ported::zle::zle_main::Zle, _km: i32) -> i32 { // c:1581
+pub fn getkeymapcmd(_km: i32) -> i32 { // c:1581
     // C body c:1583-1700 — reads bytes via getkeybuf and walks the
     //                      keymap multi-table; returns the matched
     //                      Thingy. Without input substrate: EOF.
@@ -1486,10 +1527,10 @@ pub fn getkeymapcmd(_zle: &mut crate::ported::zle::zle_main::Zle, _km: i32) -> i
 
 /// Port of `getrestchar_keybuf()` from Src/Zle/zle_keymap.c:1504.
 /// WARNING: param names don't match C — Rust=(zle) vs C=()
-pub fn getrestchar_keybuf(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:1504
+pub fn getrestchar_keybuf() -> i32 {  // c:1504
     // C body (c:1675): `return getrestchar(getkeybuf(0), NULL, NULL)`.
-    let c = getkeybuf(zle, 0);
-    crate::ported::zle::zle_main::getrestchar(zle, c)
+    let c = getkeybuf(0);
+    crate::ported::zle::zle_main::getrestchar(c)
 }
 
 /// Port of `keyisprefix(Keymap km, char *seq)` from `Src/Zle/zle_keymap.c:683`.
@@ -1703,9 +1744,8 @@ pub fn refkeymap_by_name(kmn: &str) {                                       // c
 
 /// Port of `reselectkeymap()` from Src/Zle/zle_keymap.c:549.
 /// WARNING: param names don't match C — Rust=(zle) vs C=()
-pub fn reselectkeymap(zle: &crate::ported::zle::zle_main::Zle) {             // c:549
+pub fn reselectkeymap() {             // c:549
     // C body (c:551): `selectkeymap(curkeymapname, 1)`.
-    let _ = zle;
     let name = curkeymapname().clone();
     selectkeymap(&name, 1);
 }
@@ -1889,10 +1929,10 @@ pub static LOCALKEYMAP: Mutex<Option<Arc<Keymap>>> = Mutex::new(None);       // 
 
 /// Port of `ungetkeycmd()` from Src/Zle/zle_keymap.c:1759.
 /// WARNING: param names don't match C — Rust=(zle) vs C=()
-pub fn ungetkeycmd(zle: &mut crate::ported::zle::zle_main::Zle) {            // c:1759
+pub fn ungetkeycmd() {            // c:1759
     // C body (c:1761): `ungetbytes_unmeta(keybuf, keybuflen)`.
     let buf = keybuf.lock().unwrap().clone();
-    crate::ported::zle::zle_main::ungetbytes_unmeta(zle, &buf);
+    crate::ported::zle::zle_main::ungetbytes_unmeta(&buf);
 }
 
 /// Port of `unlinkkeymap(char *name, int ignm)` from Src/Zle/zle_keymap.c:436.

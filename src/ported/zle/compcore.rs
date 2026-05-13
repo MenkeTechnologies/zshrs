@@ -25,8 +25,38 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::ported::zsh_h::{
+
+
     Bnull, Inbrace, Outbrace, QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_SINGLE, Stringg,
 };
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::extensions::widget::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_refresh::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
 use crate::ported::zle::comp_h::{
     Aminfo, Cexpl, Cmatch, Cmgroup, CGF_MATSORT, CGF_NOSORT, CGF_NUMSORT, CGF_REVSORT,
     CGF_UNIQALL, CGF_UNIQCON, CMF_DELETE, CMF_DISPLINE, CMF_FMULT, CMF_MULT, CMF_NOLIST,
@@ -2703,6 +2733,7 @@ mod tests {
 
     #[test]
     fn rembslash_basic() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(rembslash("hello\\ world"), "hello world");
         assert_eq!(rembslash("no\\\\slash"),   "no\\slash");
         assert_eq!(rembslash("plain"),         "plain");
@@ -2710,6 +2741,7 @@ mod tests {
 
     #[test]
     fn comp_quoting_string_table() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(comp_quoting_string(QT_SINGLE),  "'");
         assert_eq!(comp_quoting_string(QT_DOUBLE),  "\"");
         assert_eq!(comp_quoting_string(QT_DOLLARS), "$'");
@@ -2719,6 +2751,7 @@ mod tests {
 
     #[test]
     fn matcheq_equal_strings() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut a = Cmatch::default(); a.str = Some("foo".into());
         let mut b = Cmatch::default(); b.str = Some("foo".into());
         assert!(matcheq(&a, &b));
@@ -2726,6 +2759,7 @@ mod tests {
 
     #[test]
     fn matcheq_different_strings() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut a = Cmatch::default(); a.str = Some("foo".into());
         let mut b = Cmatch::default(); b.str = Some("bar".into());
         assert!(!matcheq(&a, &b));
@@ -2733,6 +2767,7 @@ mod tests {
 
     #[test]
     fn matcheq_one_side_none() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut a = Cmatch::default(); a.pre = Some("p".into());
         let b = Cmatch::default();
         assert!(!matcheq(&a, &b));
@@ -2740,6 +2775,7 @@ mod tests {
 
     #[test]
     fn remsquote_default_quoting() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut s = String::from("a'\\''b");
         let n = remsquote(&mut s);
         assert_eq!(s, "a'b");
@@ -2748,6 +2784,7 @@ mod tests {
 
     #[test]
     fn ctokenize_dollar_substitution() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let out = ctokenize("$x{y}");
         let chars: Vec<char> = out.chars().collect();
         assert_eq!(chars[0], Stringg);
@@ -2759,12 +2796,14 @@ mod tests {
 
     #[test]
     fn get_user_var_inline_list() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let result = get_user_var(Some("(a b c)")).unwrap();
         assert_eq!(result, vec!["a", "b", "c"]);
     }
 
     #[test]
     fn matchcmp_str_sort_default() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         MATCHORDER.store(CGF_MATSORT, Ordering::Relaxed);
         let mut a = Cmatch::default(); a.str = Some("apple".into());
         let mut b = Cmatch::default(); b.str = Some("banana".into());
@@ -2776,6 +2815,7 @@ mod tests {
 
     #[test]
     fn dupmatch_clones_strings_and_truncates_braces() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // C body c:3370: deep-copy strings, truncate brpl/brsl to nbeg/nend.
         let mut src = Cmatch::default();
         src.str = Some("foo".into());
@@ -2802,6 +2842,7 @@ mod tests {
 
     #[test]
     fn dupmatch_empty_braces_stay_empty() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // C body c:3395/3404: NULL brpl/brsl stay NULL regardless of nbeg/nend.
         let src = Cmatch::default();
         let r = dupmatch(&src, 5, 5);
@@ -2811,6 +2852,7 @@ mod tests {
 
     #[test]
     fn makearray_sorted_and_deduped() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3262-3291: sort + dedup with matcheq. Same str + nil disp =>
         // collapses into one entry with CMF_FMULT set on the survivor.
         let mut a = Cmatch::default(); a.str = Some("z".into());
@@ -2826,6 +2868,7 @@ mod tests {
 
     #[test]
     fn makearray_nosort_unchanged_order() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3300: CGF_NOSORT branch; with no UNIQ flags, order preserved.
         let mut a = Cmatch::default(); a.str = Some("z".into());
         let mut b = Cmatch::default(); b.str = Some("a".into());
@@ -2838,6 +2881,7 @@ mod tests {
 
     #[test]
     fn makearray_strings_dedup_consecutive() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:3239 path: sort + drop adjacent duplicates.
         let (arr, n) = makearray_strings(
             vec!["b".into(), "a".into(), "a".into(), "c".into()],
@@ -2849,6 +2893,7 @@ mod tests {
 
     #[test]
     fn check_param_no_dollar_returns_none() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1316: no `$` in string → return None.
         OFFS.store(2, Ordering::Relaxed);
         assert_eq!(check_param("abc", false, false), None);
@@ -2856,6 +2901,7 @@ mod tests {
 
     #[test]
     fn check_param_simple_dollar_var_at_cursor() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1259-1311: `$FOO` with cursor inside the name → return b.
         OFFS.store(2, Ordering::Relaxed);
         let s = format!("{}FOO", crate::ported::zsh_h::Stringg);
@@ -2865,12 +2911,14 @@ mod tests {
 
     #[test]
     fn callcompfunc_empty_fn_no_panic() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:552: getshfunc(NULL) early-return.
         callcompfunc("anything", "");
     }
 
     #[test]
     fn callcompfunc_sets_compstate_context() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         // c:619: context selection — verified via the pure
         // compcontext_for helper (callcompfunc calls it and writes
@@ -2888,6 +2936,7 @@ mod tests {
 
     #[test]
     fn compcontext_for_routes_ispar_first() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         ispar.store(2, Ordering::Relaxed);
         linwhat.store(IN_NOTHING_LW, Ordering::Relaxed);
@@ -2907,6 +2956,7 @@ mod tests {
 
     #[test]
     fn addmatches_empty_argv_early_return() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:2138-2139: empty argv + dummies==0 + no CAF_ALL → return 1.
         let mut dat = crate::ported::zle::comp_h::Cadata::default();
         dat.dummies = 0;
@@ -2916,6 +2966,7 @@ mod tests {
 
     #[test]
     fn addmatches_appends_argv_to_default_group() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         // c:2200 simplified body: each argv entry → addmatch into "default" group.
         amatches.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().clear();
@@ -2929,6 +2980,7 @@ mod tests {
 
     #[test]
     fn add_match_data_returns_populated_cmatch() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         // c:3052-3067: cm.str/orig/pre/suf populated; mnum bumps by 1.
         matches.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().clear();
@@ -2949,6 +3001,7 @@ mod tests {
 
     #[test]
     fn add_match_data_exact_records_into_ainfo() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         // c:3060-3062: exact != 0 writes ai.exact/exactm.
         if let Ok(mut g) = ainfo.get_or_init(|| Mutex::new(None)).lock() {
@@ -2964,12 +3017,14 @@ mod tests {
 
     #[test]
     fn set_comp_sep_returns_one() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1937: stubbed body returns 1 (no-change marker).
         assert_eq!(set_comp_sep(), 1);
     }
 
     #[test]
     fn foredel_deletes_forward_from_zlemetacs() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         // zle_utils.c:1105 — delete `ct` chars forward from ZLEMETACS.
         if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
@@ -2985,6 +3040,7 @@ mod tests {
 
     #[test]
     fn inststr_inserts_at_zlemetacs() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         // zle_tricky.c:278 — insert at cursor.
         if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
@@ -3000,6 +3056,7 @@ mod tests {
 
     #[test]
     fn metafy_and_unmetafy_roundtrip_globals() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         // zle_tricky.c:978,995 — meta/unmeta operate on the global pair.
         if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
@@ -3023,6 +3080,7 @@ mod tests {
 
     #[test]
     fn selfinsert_appends_lastchar_at_zlecs() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         // zle_misc.c:112-141 — insert one char at cursor, bump zlecs.
         if let Ok(mut g) = ZLELINE.get_or_init(|| Mutex::new(String::new())).lock() {
@@ -3039,6 +3097,7 @@ mod tests {
 
     #[test]
     fn minfo_clear_and_asked_zero_mutate_state() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())).lock() {
             let mut cm = Cmatch::default();
@@ -3055,6 +3114,7 @@ mod tests {
 
     #[test]
     fn cline_matched_stub_marks_node() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // compmatch.c:253 — sets CLF_MATCHED on the node chain. We
         // verify by running through the stub on a non-empty string
         // without panicking and trusting compmatch's body for the
@@ -3066,6 +3126,7 @@ mod tests {
 
     #[test]
     fn permmatches_returns_fi_zero_when_count_present() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
         // c:3444-3447: if ainfo->count is non-zero, fi stays 0.
         amatches.get_or_init(|| Mutex::new(Vec::new())).lock().unwrap().clear();
