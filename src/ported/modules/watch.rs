@@ -703,24 +703,32 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/watch.c:738`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:738
-    // C body c:740-770: ties $watch and $WATCH, creates empty `watch`
+    // C body c:740-762: ties $watch and $WATCH, creates empty `watch`
     // array, sets WATCHFMT/LOGCHECK defaults IFF unset, installs the
     // checksched preprompt hook. Seed `WATCHFMT` and `LOGCHECK` only
     // when no env value pre-exists — preserves the `${WATCHFMT-unset}`
     // distinction zsh makes between "unset" (no zmodload) and "set
     // to default" (after zmodload).
     if crate::ported::params::getsparam("WATCHFMT").is_none() {
-        crate::ported::params::setsparam("WATCHFMT", DEFAULT_WATCHFMT);     // c:768
+        crate::ported::params::setsparam("WATCHFMT", DEFAULT_WATCHFMT);     // c:757
     }
     if crate::ported::params::getsparam("LOGCHECK").is_none() {
-        crate::ported::params::setsparam("LOGCHECK", "60");                 // c:768
+        crate::ported::params::setsparam("LOGCHECK", "60");                 // c:759
     }
+    // c:761 — `addprepromptfn(&checksched);`. Without this, the
+    // watch module never gets driven on each prompt — `$watch`
+    // is set but no login/logout notifications ever fire.
+    crate::ported::utils::addprepromptfn(checksched);
     0
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/watch.c:768`.
 /// C body: `delprepromptfn(checksched); return setfeatureenables(...);`
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:768
+    // c:770 — `delprepromptfn(&checksched);` — must mirror the
+    // addprepromptfn done at boot_. Otherwise unloading + reloading
+    // the watch module accumulates duplicate hook entries.
+    crate::ported::utils::delprepromptfn(checksched);
     setfeatureenables(m, module_features(), None)
 }
 
