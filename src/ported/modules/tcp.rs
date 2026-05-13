@@ -183,10 +183,10 @@ pub fn zts_alloc(ztflags: i32) -> usize {                                // c:21
 // indexes into the thread-local `ZTCP_SESSIONS` Vec. NULL → None.
 type TcpSessionHandle = Option<usize>;
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/tcp.c`.
-/// !!! RUST-ONLY HELPER — see WARNING block above. Equivalent to
-/// the C expression `sess->FIELD` (read).
+// WARNING: NOT IN TCP.C — Rust-only closure accessor for the
+// `ZTCP_SESSIONS` thread_local Vec. C reads `sess->FIELD` directly on
+// a heap-allocated `Tcp_session *` from `ztcp_head` (tcp.c:155);
+// Rust's TLS-Vec layout requires a borrow-scoped access pattern.
 fn sess_get<R, F: FnOnce(&tcp_session) -> R>(idx: usize, f: F) -> R {
     ZTCP_SESSIONS.with(|s| {
         let g = s.borrow();
@@ -194,10 +194,8 @@ fn sess_get<R, F: FnOnce(&tcp_session) -> R>(idx: usize, f: F) -> R {
     })
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/tcp.c`.
-/// !!! RUST-ONLY HELPER — see WARNING block above. Equivalent to
-/// the C statement `sess->FIELD = X;` (write).
+// WARNING: NOT IN TCP.C — Rust-only mutable closure accessor; see
+// `sess_get` above. C writes `sess->FIELD = X;` directly.
 fn sess_with<F: FnOnce(&mut tcp_session)>(idx: usize, f: F) {
     ZTCP_SESSIONS.with(|s| {
         let mut g = s.borrow_mut();
