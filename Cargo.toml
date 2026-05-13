@@ -12,6 +12,7 @@ keywords = ["shell", "zsh", "bytecode", "terminal", "unix"]
 categories = ["command-line-utilities"]
 exclude = [
     "/tests/",
+    "/.github/",
     "/test_data/",
     "/test_corpus/",
     "**/*parity*",
