@@ -412,15 +412,23 @@ Every executor takes `Estate` and is invoked by direct C call from a `switch (wc
 
 | Property | True VM (CPython, Lua, JVM, fusevm) | zsh |
 |---|---|---|
+| **Execution model** | **flat dispatch over a uniform instruction stream (fetch-decode-execute loop)** | **recursive descent over program structure (tree walk)** |
 | Uniform opcode set with VM-level semantics | ✓ | wordcode tags exist, but they drive a switch in C; no VM execution model owns them |
 | Value stack or register file | ✓ | LinkList on heap, not a VM stack |
 | Explicit call frames | ✓ | C call stack |
 | VM-level CALL/RET | ✓ | direct C function recursion |
+| Source program's structure exists at runtime | no — compiled away into JUMP/CALL/RET | yes — every nested construct has a dedicated C executor in the dispatch chain |
 | JIT-compilable | ✓ (VM semantics are formally definable) | only by lifting to a real IR first |
 | Bytecode is a self-contained program | ✓ | wordcode is a serialized tree the C code walks |
 | Could in principle run on a different engine | ✓ | no — the C executors ARE the engine |
 
-**Implication.** zsh is structurally a tree-walking interpreter — same execution-model class as bash, dash, ksh, the original Bourne shell, the Bash 1.0 AST walker. Its single innovation over those shells is to *flatten* the parse tree into a contiguous `u32` array (the wordcode) for mmap-friendly serialization. That's a representation change, not an execution-model change. **The "switch (wc_code(code))" in `execlist` is structurally identical to `switch (node->type)` in a classical tree walker.**
+**Implication: no VM walks your code. zsh walks; therefore zsh is not a VM.**
+
+The verb is the giveaway. Real VMs *dispatch*; they do not *walk*. The dispatch loop of a VM is a flat `while (1) { op = fetch(pc); execute(op); }` over a uniform instruction stream — fetch-decode-execute, instruction pointer advances by opcode length or by an explicit JUMP/CALL target. The program's structure (`if/then/else`, function bodies, loop nesting) is **compiled away** at codegen time into JUMP/CALL/RET opcodes that mutate VM state. The VM dispatch loop has no idea it's executing an `if` or a `for` — it just sees the next opcode, executes it, and loops. **There is no traversal. There is no recursion shaped by the source program.** That is the architectural definition of a VM, and it is the reason CPython, Lua, the JVM, and fusevm can JIT — the execution model is decoupled from the program's structure, so a JIT can re-emit native code for any opcode sequence without consulting source-shape information.
+
+zsh does the opposite. `execlist` *traverses* a structure: pulls the next `u32`, decodes the tag, and **recurses into one of N specialized C executors based on what kind of construct it is.** `WC_LIST` → `execlist`; `WC_SUBLIST` → `execsublist`; `WC_PIPE` → `execpline`; `WC_SIMPLE` → `execsimple`; `WC_IF`/`WC_FOR`/`WC_WHILE`/`WC_CASE` → their own dedicated C functions. Each executor knows about its construct's shape. Each recursive descent matches the source program's nesting depth. The C call stack at any moment **mirrors the source program's syntactic structure** — `if (cond) { while (x) { for y in z; do …` produces a stack frame for `execif`, then `execwhile`, then `execfor`. This is the textbook profile of a tree walker. Wordcode just changes the **representation** the walker walks over (flat `u32` array vs pointer-chained tree nodes) — not the **execution model** (recursive descent over structure).
+
+Same execution-model class as: bash (AST walker), dash (AST walker), ksh (AST walker), original Bourne shell (AST walker), Tcl (string walker), the textbook "Crafting Interpreters" chapter-5 tree walker. zsh's single innovation over those is mmap-friendly serialization of the AST — a representation tweak, not a model change. **The "switch (wc_code(code))" in `execlist` is structurally identical to `switch (node->type)` in a classical AST walker; the flat-array vs pointer-chase difference is a serialization detail.**
 
 This is why the "but zsh IS compiled, see `.zwc`" defense doesn't work, and why `.zwc` is structurally a half-cache no matter how it's tuned. Compilation in the VM sense means lowering source to a self-contained program for a state machine that no longer needs the source AST. zsh's wordcode IS the AST. The execution engine is still the recursive descent over its structure, in C.
 
