@@ -684,7 +684,7 @@ mod tests {
         crate::ported::zle::zle_main::MARK.store(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
-        zle_set_highlight(&mut zle.highlight, &["region:fg=red,bold"]);
+        zle_set_highlight(&mut crate::ported::zle::zle_main::highlight().lock().unwrap(), &["region:fg=red,bold"]);
         let attrs = compute_render_attrs();
         for slot in attrs.iter().take(4).skip(1) {
             let a = slot.expect("region painted");
@@ -705,7 +705,7 @@ mod tests {
             fg_color: Some(1),
             ..TextAttr::default()
         };
-        zle.highlight
+        crate::ported::zle::zle_main::highlight().lock().unwrap()
             .set_region_highlight(1, 4, custom);
         let attrs = compute_render_attrs();
         assert!(attrs[0].is_none());

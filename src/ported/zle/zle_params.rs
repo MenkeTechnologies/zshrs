@@ -672,7 +672,6 @@ pub fn set_prepost(textvar: &mut String, lenvar: &mut usize, x: Option<&str>) { 
 /// becomes 1) via the C double-bang idiom.
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn set_region_active(                                                    // c:318
-    zle: &mut crate::ported::zle::zle_main::Zle,
     x: i64,
 ) {
     // c:320 — `region_active = (int)!!x`. !!x: 0→0, anything else→1.
@@ -1220,7 +1219,7 @@ mod widget_killring_tests {
         let mut t = Thingy::new("forward-char");
         t.widget = Some(Arc::new(Widget {
             flags: WidgetFlags::INT,
-            func: WidgetFunc::Internal(|_| {}),
+            func: WidgetFunc::Internal(|| {}),
         }));
         *crate::ported::zle::zle_main::BINDK.lock().unwrap() = Some(t);
         assert_eq!(get_widgetfunc(), ".internal");
@@ -1232,7 +1231,7 @@ mod widget_killring_tests {
         let mut t = Thingy::new("self-insert");
         t.widget = Some(Arc::new(Widget {
             flags: WidgetFlags::INT,
-            func: WidgetFunc::Internal(|_| {}),
+            func: WidgetFunc::Internal(|| {}),
         }));
         *crate::ported::zle::zle_main::BINDK.lock().unwrap() = Some(t);
         assert_eq!(get_widgetstyle(), ".internal");

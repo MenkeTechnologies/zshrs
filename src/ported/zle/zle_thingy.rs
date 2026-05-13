@@ -1309,7 +1309,7 @@ mod tests {
         rthingy("hello");
         let w = Arc::new(Widget {
             flags: WidgetFlags::INT,
-            func: WidgetFunc::Internal(|_| {}),
+            func: WidgetFunc::Internal(|| {}),
         });
         let r = bindwidget(w.clone(), "hello");
         assert_eq!(r, 0);
@@ -1328,7 +1328,7 @@ mod tests {
         thingytab().lock().unwrap().get_mut("imm").unwrap().flags |= TH_IMMORTAL;
         let w = Arc::new(Widget {
             flags: WidgetFlags::INT,
-            func: WidgetFunc::Internal(|_| {}),
+            func: WidgetFunc::Internal(|| {}),
         });
         let r = bindwidget(w, "imm");
         assert_eq!(r, -1);
@@ -1342,7 +1342,7 @@ mod tests {
         rthingy("only");
         let w = Arc::new(Widget {
             flags: WidgetFlags::INT,
-            func: WidgetFunc::Internal(|_| {}),
+            func: WidgetFunc::Internal(|| {}),
         });
         bindwidget(w, "only");
         assert!(thingytab().lock().unwrap().get("only").unwrap().widget.is_some());
@@ -1358,7 +1358,7 @@ mod tests {
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
-        let w = addzlefunction("self-insert", |_| {}, WidgetFlags::empty());
+        let w = addzlefunction("self-insert", || {}, WidgetFlags::empty());
         assert!(w.is_some());
         let tab = thingytab().lock().unwrap();
         // Both `.self-insert` and `self-insert` exist
@@ -1379,7 +1379,7 @@ mod tests {
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
-        let r = addzlefunction(".bad", |_| {}, WidgetFlags::empty());
+        let r = addzlefunction(".bad", || {}, WidgetFlags::empty());
         assert!(r.is_none());
     }
 
@@ -1388,7 +1388,7 @@ mod tests {
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
-        let w = addzlefunction("test-fn", |_| {}, WidgetFlags::empty()).unwrap();
+        let w = addzlefunction("test-fn", || {}, WidgetFlags::empty()).unwrap();
         assert!(thingytab().lock().unwrap().contains_key("test-fn"));
         deletezlefunction(&w);
         let tab = thingytab().lock().unwrap();

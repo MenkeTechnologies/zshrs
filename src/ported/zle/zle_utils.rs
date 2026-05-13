@@ -451,7 +451,7 @@ pub fn printbind(seq: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests_hooks {
-    use super::Zle;
+    use super::*;
 
     #[test]
     fn call_hook_queues_for_host_dispatch() {

@@ -2357,30 +2357,41 @@ fn widget_history_beginning_search_backward() {
     // Port of historybeginningsearchbackward(char **args) from Src/Zle/zle_hist.c:2039.
     // Searches history for entries that start with the text *before* the
     // cursor (the prefix), keeping the cursor where it is on a match.
-    let prefix: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[..crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst).min(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len())]
-        .iter()
-        .collect();
-    if crate::ported::zle::zle_main::history().lock().unwrap().cursor == 0 {
-        return;
-    }
-    let saved_cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-    let mut i = crate::ported::zle::zle_main::history().lock().unwrap().cursor.min(crate::ported::zle::zle_main::history().lock().unwrap().entries.len()).saturating_sub(1);
+    use std::sync::atomic::Ordering::SeqCst;
+    let prefix: String = {
+        let line = crate::ported::zle::zle_main::ZLELINE.lock().unwrap();
+        let end = crate::ported::zle::zle_main::ZLECS.load(SeqCst).min(line.len());
+        line[..end].iter().collect()
+    };
+    let (start_i, entries_len) = {
+        let h = crate::ported::zle::zle_main::history().lock().unwrap();
+        if h.cursor == 0 { return; }
+        (h.cursor, h.entries.len())
+    };
+    let saved_cs = crate::ported::zle::zle_main::ZLECS.load(SeqCst);
+    let mut i = start_i.min(entries_len).saturating_sub(1);
     loop {
-        if crate::ported::zle::zle_main::history().lock().unwrap().entries[i].line.starts_with(&prefix) {
-            if crate::ported::zle::zle_main::history().lock().unwrap().saved_line.is_none() {
-                crate::ported::zle::zle_main::history().lock().unwrap().saved_line = Some(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().clone());
-                crate::ported::zle::zle_main::history().lock().unwrap().saved_cs = saved_cs;
+        let entry_line = {
+            let h = crate::ported::zle::zle_main::history().lock().unwrap();
+            h.entries[i].line.clone()
+        };
+        if entry_line.starts_with(&prefix) {
+            {
+                let mut h = crate::ported::zle::zle_main::history().lock().unwrap();
+                if h.saved_line.is_none() {
+                    h.saved_line = Some(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().clone());
+                    h.saved_cs = saved_cs;
+                }
+                h.cursor = i;
             }
-            crate::ported::zle::zle_main::history().lock().unwrap().cursor = i;
-            *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = crate::ported::zle::zle_main::history().lock().unwrap().entries[i].line.chars().collect();
-            crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
-            crate::ported::zle::zle_main::ZLECS.store(saved_cs.min(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)), std::sync::atomic::Ordering::SeqCst);
-            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+            *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = entry_line.chars().collect();
+            let new_ll = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len();
+            crate::ported::zle::zle_main::ZLELL.store(new_ll, SeqCst);
+            crate::ported::zle::zle_main::ZLECS.store(saved_cs.min(new_ll), SeqCst);
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, SeqCst);
             return;
         }
-        if i == 0 {
-            break;
-        }
+        if i == 0 { break; }
         i -= 1;
     }
 }
@@ -2388,18 +2399,29 @@ fn widget_history_beginning_search_backward() {
 fn widget_history_beginning_search_forward() {
     // Port of historybeginningsearchforward() — same shape as the
     // backward variant (zle_hist.c:2039 area) but stepping forward.
-    let prefix: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[..crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst).min(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len())]
-        .iter()
-        .collect();
-    let saved_cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-    let len = crate::ported::zle::zle_main::history().lock().unwrap().entries.len();
-    for i in (crate::ported::zle::zle_main::history().lock().unwrap().cursor + 1)..len {
-        if crate::ported::zle::zle_main::history().lock().unwrap().entries[i].line.starts_with(&prefix) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let prefix: String = {
+        let line = crate::ported::zle::zle_main::ZLELINE.lock().unwrap();
+        let end = crate::ported::zle::zle_main::ZLECS.load(SeqCst).min(line.len());
+        line[..end].iter().collect()
+    };
+    let saved_cs = crate::ported::zle::zle_main::ZLECS.load(SeqCst);
+    let (start_i, len) = {
+        let h = crate::ported::zle::zle_main::history().lock().unwrap();
+        (h.cursor + 1, h.entries.len())
+    };
+    for i in start_i..len {
+        let entry_line = {
+            let h = crate::ported::zle::zle_main::history().lock().unwrap();
+            h.entries[i].line.clone()
+        };
+        if entry_line.starts_with(&prefix) {
             crate::ported::zle::zle_main::history().lock().unwrap().cursor = i;
-            *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = crate::ported::zle::zle_main::history().lock().unwrap().entries[i].line.chars().collect();
-            crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
-            crate::ported::zle::zle_main::ZLECS.store(saved_cs.min(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)), std::sync::atomic::Ordering::SeqCst);
-            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+            *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = entry_line.chars().collect();
+            let new_ll = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len();
+            crate::ported::zle::zle_main::ZLELL.store(new_ll, SeqCst);
+            crate::ported::zle::zle_main::ZLECS.store(saved_cs.min(new_ll), SeqCst);
+            crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, SeqCst);
             return;
         }
     }
@@ -4201,7 +4223,7 @@ mod tests {
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "newest");
         assert_eq!(crate::ported::zle::zle_main::YANKB.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(crate::ported::zle::zle_main::YANKE.load(std::sync::atomic::Ordering::SeqCst), 6);
-        assert_eq!(zle.yank_ring_idx, Some(0));
+        assert_eq!(*crate::ported::zle::zle_main::KCT.lock().unwrap(), Some(0));
         assert!(crate::ported::zle::zle_main::YANKLAST.load(std::sync::atomic::Ordering::SeqCst));
     }
 

@@ -598,7 +598,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(1, std::sync::atomic::Ordering::SeqCst);
         push_line();
-        assert_eq!(zle.bufstack, vec!["in flight".to_string()]);
+        assert_eq!(*crate::ported::zle::zle_main::BUFSTACK.lock().unwrap(), vec!["in flight".to_string()]);
         assert!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().is_empty());
         assert_eq!(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -638,46 +638,50 @@ mod tests {
         crate::ported::zle::zle_main::history().lock().unwrap().cursor = 0;
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "echo Z".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
-        // Snapshot — borrow-check: take History out, mutate, put back.
-        let mut hist = std::mem::take(&mut zle.history);
-        remember_edits(&mut hist);
-        *crate::ported::zle::zle_main::history().lock().unwrap() = hist;
-        assert!(crate::ported::zle::zle_main::history().lock().unwrap().have_edits);
-        assert_eq!(crate::ported::zle::zle_main::history().lock().unwrap().entries[0].line, "echo Z");
-        assert_eq!(crate::ported::zle::zle_main::history().lock().unwrap().originals[0].as_deref(), Some("echo a"));
-        // Restore.
-        let mut hist = std::mem::take(&mut zle.history);
-        forget_edits(&mut hist);
-        *crate::ported::zle::zle_main::history().lock().unwrap() = hist;
-        assert!(!crate::ported::zle::zle_main::history().lock().unwrap().have_edits);
-        assert_eq!(crate::ported::zle::zle_main::history().lock().unwrap().entries[0].line, "echo a");
-        assert!(crate::ported::zle::zle_main::history().lock().unwrap().originals[0].is_none());
+        {
+            let mut hist = crate::ported::zle::zle_main::history().lock().unwrap();
+            remember_edits(&mut hist);
+        }
+        {
+            let hist = crate::ported::zle::zle_main::history().lock().unwrap();
+            assert!(hist.have_edits);
+            assert_eq!(hist.entries[0].line, "echo Z");
+            assert_eq!(hist.originals[0].as_deref(), Some("echo a"));
+        }
+        {
+            let mut hist = crate::ported::zle::zle_main::history().lock().unwrap();
+            forget_edits(&mut hist);
+        }
+        {
+            let hist = crate::ported::zle::zle_main::history().lock().unwrap();
+            assert!(!hist.have_edits);
+            assert_eq!(hist.entries[0].line, "echo a");
+            assert!(hist.originals[0].is_none());
+        }
     }
 
     #[test]
     fn set_local_history_mult_sets_or_clears_foreign_skip() {
         let mut zle = zle_with_history(&[]);
-        let mut hist = std::mem::take(&mut zle.history);
+        let mut hist = crate::ported::zle::zle_main::history().lock().unwrap();
         // mult=2 with has_mult=true → set HIST_FOREIGN.
         set_local_history(&mut hist, true, 2);
         assert_eq!(hist.hist_skip_flags, 1);
         // mult=0 with has_mult=true → clear.
         set_local_history(&mut hist, true, 0);
         assert_eq!(hist.hist_skip_flags, 0);
-        *crate::ported::zle::zle_main::history().lock().unwrap() = hist;
     }
 
     #[test]
     fn set_local_history_no_mult_xor_toggles() {
         let mut zle = zle_with_history(&[]);
-        let mut hist = std::mem::take(&mut zle.history);
+        let mut hist = crate::ported::zle::zle_main::history().lock().unwrap();
         // From 0, no-mult toggle → 1.
         set_local_history(&mut hist, false, 0);
         assert_eq!(hist.hist_skip_flags, 1);
         // Toggle again → 0.
         set_local_history(&mut hist, false, 0);
         assert_eq!(hist.hist_skip_flags, 0);
-        *crate::ported::zle::zle_main::history().lock().unwrap() = hist;
     }
 
     #[test]
@@ -697,7 +701,7 @@ mod tests {
         }
         crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
         assert!(crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) != 0);
-        assert_eq!(zle.bufstack, vec!["two".to_string()]);
+        assert_eq!(*crate::ported::zle::zle_main::BUFSTACK.lock().unwrap(), vec!["two".to_string()]);
     }
 }
 
@@ -781,7 +785,27 @@ pub fn downhistory() -> i32 {                                   // c:434
 
 /// Port of `downlineorhistory(char **args)` from Src/Zle/zle_hist.c:370.
 pub fn downlineorhistory() -> i32 {                             // c:370
-    downlineorhistory()
+    let ocs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    let n = downline();
+    if n != 0 {
+        crate::ported::zle::zle_main::ZLECS.store(ocs, std::sync::atomic::Ordering::SeqCst);
+        if (crate::ported::zle::zle_main::ZLEREADFLAGS.load(std::sync::atomic::Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
+            return 1;
+        }
+        let saved_mult = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
+        let ret = if zle_goto_hist(crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst), false) {
+            0
+        } else {
+            1
+        };
+        crate::ported::zle::zle_main::MULT.store(saved_mult, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+        ret
+    } else {
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+        0
+    }
 }
 
 /// Port of `downlineorsearch(char **args)` from Src/Zle/zle_hist.c:400.
@@ -1208,7 +1232,27 @@ pub fn uphistory() -> i32 {                                     // c:233
 
 /// Port of `uplineorhistory(char **args)` from Src/Zle/zle_hist.c:282.
 pub fn uplineorhistory() -> i32 {                               // c:282
-    uplineorhistory()
+    let ocs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    let n = upline();
+    if n != 0 {
+        crate::ported::zle::zle_main::ZLECS.store(ocs, std::sync::atomic::Ordering::SeqCst);
+        if (crate::ported::zle::zle_main::ZLEREADFLAGS.load(std::sync::atomic::Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
+            return 1;
+        }
+        let saved_mult = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
+        let ret = if zle_goto_hist(-crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst), false) {
+            0
+        } else {
+            1
+        };
+        crate::ported::zle::zle_main::MULT.store(saved_mult, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+        ret
+    } else {
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+        0
+    }
 }
 
 /// Port of `uplineorsearch(char **args)` from Src/Zle/zle_hist.c:312.
