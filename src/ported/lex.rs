@@ -391,6 +391,44 @@ impl lexbufstate {
         }
         c
     }
+
+    /// Replace the char at BYTE position `byte_idx` in lexbuf. The
+    /// lexbuf's `len` field tracks BYTE length (matching C's
+    /// `lexbuf.len` which indexes the raw `tokstr[]` array), and
+    /// `buf_len()` returns the same. So when `cmd_or_math_sub`
+    /// saves `lexpos = buf_len()` before `add(Inpar)`, lexpos is
+    /// the byte offset where the Inpar marker landed.
+    ///
+    /// Mirrors C's `tokstr[lexpos] = MARKER` rewrites (lex.c:560,
+    /// cmd_or_math_sub) that retroactively patch a marker byte
+    /// after the surrounding parse confirms the context. The
+    /// caller must guarantee the new char's UTF-8 byte width
+    /// matches the current char's width at that offset — used
+    /// only for swapping equally-sized markers (e.g. Inpar
+    /// `\u{88}` → Inparmath `\u{89}`, both 2 UTF-8 bytes).
+    pub(crate) fn set_char_at(&mut self, byte_idx: usize, c: char) {
+        let Some(buf) = self.ptr.as_mut() else { return };
+        if byte_idx >= buf.len() {
+            return;
+        }
+        // Walk to the char-start at byte_idx (must be on a UTF-8
+        // boundary). Find the char length so we can replace exactly
+        // that many bytes.
+        if !buf.is_char_boundary(byte_idx) {
+            return;
+        }
+        let old_byte_end = buf[byte_idx..]
+            .chars()
+            .next()
+            .map(|ch| byte_idx + ch.len_utf8());
+        let Some(old_byte_end) = old_byte_end else { return };
+        let mut new_bytes = [0u8; 4];
+        let new_str = c.encode_utf8(&mut new_bytes);
+        if new_str.len() == old_byte_end - byte_idx {
+            let new_owned = new_str.to_string();
+            buf.replace_range(byte_idx..old_byte_end, &new_owned);
+        }
+    }
 }
 
 // Per-heredoc state — Rust-only AST-glue, NOT in lex.c. Canonical home
@@ -578,6 +616,15 @@ pub fn nocorrect() -> i32 {
 }
 pub fn set_nocorrect(v: i32) {
     LEX_NOCORRECT.set(v);
+}
+/// Port of `int noaliases` from `Src/lex.c:135`. Suppresses alias
+/// expansion. par_case saves and restores this around the case-word
+/// + `in` lex so the literal `in` keyword isn't alias-expanded.
+pub fn noaliases() -> bool {
+    LEX_NOALIASES.get()
+}
+pub fn set_noaliases(v: bool) {
+    LEX_NOALIASES.set(v);
 }
 pub fn incond() -> i32 {
     LEX_INCOND.get()
@@ -3142,6 +3189,16 @@ fn cmd_or_math_sub() -> i32 {
             if dquote_parse(')', false).is_ok() {
                 let c2 = hgetc();
                 if c2 == Some(')') {
+                    // c:559-562 — `tokstr[lexpos] = Inparmath;` — on
+                    // confirmed math `$(( ... ))`, retroactively
+                    // rewrite the Inpar marker (just emitted at
+                    // lexpos) to Inparmath. `buf_len()` is the BYTE
+                    // length of the lexbuf (matching C's
+                    // `lexbuf.len`), so lexpos is the byte offset
+                    // where Inpar landed. Inpar and Inparmath are
+                    // both 2-byte UTF-8 chars (`\u{88}` and
+                    // `\u{89}`) so set_char_at can swap in place.
+                    LEX_LEXBUF.with_borrow_mut(|b| b.set_char_at(lexpos, Inparmath));
                     add(')');
                     return CMD_OR_MATH_MATH;
                 }
