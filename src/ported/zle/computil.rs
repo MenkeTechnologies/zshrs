@@ -28,6 +28,35 @@ use crate::ported::zsh_h::OPT_ISSET;
 // =====================================================================
 
 /// Port of `CRT_SIMPLE` from `Src/Zle/computil.c:79`. Plain match row.
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::extensions::widget::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_refresh::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+
 pub const CRT_SIMPLE: i32 = 0;                                               // c:79
 /// Port of `CRT_DESC` from `computil.c:80`. Match with description.
 pub const CRT_DESC:   i32 = 1;                                               // c:80
@@ -1811,7 +1840,6 @@ pub fn bin_comptags(nam: &str, args: &[String],                              // 
     // -T (test), -N (next), -A (args), -L (list). Each path mutates
     // curtags via cv_* helpers (defined elsewhere in computil.c).
     // Deferred until the tag-stack globals land.
-    let _ = args;
     0                                                                        // c:3961
 }
 
@@ -1829,7 +1857,6 @@ pub fn bin_comptry(nam: &str, args: &[String],                               // 
     }
     if args.is_empty() { return 0; }                                         // c:3972 default success
     // c:3975-4135 — subcommand dispatch. Deferred.
-    let _ = args;
     0                                                                        // c:4137
 }
 
@@ -1847,6 +1874,5 @@ pub fn bin_compvalues(nam: &str, args: &[String],                            // 
     }
     if args.is_empty() { return 0; }
     // c:3489-3650 — full subcommand dispatch. Deferred.
-    let _ = args;
     0                                                                        // c:3653
 }

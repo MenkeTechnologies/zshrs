@@ -21,6 +21,33 @@ use super::zle_main::{Zle, ZleChar};
 /// Word style for the deleted Rust-only `find_word_start` / `find_word_end`
 /// helpers. Not in C; C has separate widget fns per (style × direction)
 /// instead of a parameterised helper.
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_refresh::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WordStyle {
     Emacs,
@@ -29,10 +56,9 @@ pub enum WordStyle {
     BlankDelimited,
 }
 
-impl Zle {
     /// Find the start of the current (or preceding) word at the cursor
     /// for the requested word style. Rust-only — see WordStyle doc-note.
-    pub fn find_word_start(&self, style: WordStyle) -> usize {
+    pub fn find_word_start(style: WordStyle) -> usize {
         let mut pos = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
         match style {
             WordStyle::Emacs => {
@@ -78,7 +104,7 @@ impl Zle {
     }
 
     /// Find the end (exclusive) of the current (or following) word.
-    pub fn find_word_end(&self, style: WordStyle) -> usize {
+    pub fn find_word_end(style: WordStyle) -> usize {
         let mut pos = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
         match style {
             WordStyle::Emacs => {
@@ -122,7 +148,7 @@ impl Zle {
         }
         pos
     }
-}
+
 
 /// Walk `line` left-to-right collecting (start, end_exclusive) ranges of
 /// shell words. Quote-aware (single, double, backslash). Rust-only —
@@ -183,13 +209,13 @@ pub fn forwardword_shell(line: &[ZleChar], pos: usize) -> usize {
 }
 
 /// Widget function type
-pub type ZleIntFunc = fn(&mut Zle) -> i32;
+pub type ZleIntFunc = fn() -> i32;
 
 /// Widget function variants
 #[derive(Clone)]
 pub enum WidgetFunc {
     /// Internally implemented widget
-    Internal(fn(&mut Zle)),
+    Internal(fn()),
     /// User-defined widget (name of shell function)
     User(String),
 }
@@ -260,7 +286,7 @@ impl Widget {
     /// `iwidgets.list` entry (the static built-in table); we collapse
     /// "internal" + "builtin" into the same WidgetFunc::Internal
     /// variant since both end up dispatching a Rust fn ptr.
-    pub fn internal(name: &str, func: fn(&mut Zle), flags: WidgetFlags) -> Self {
+    pub fn internal(name: &str, func: fn(), flags: WidgetFlags) -> Self {
         let _ = name; // Mirrors addzlefunction's `w->name` field — unused
                       // here because dispatch is by table lookup, not name.
         Widget {
@@ -299,7 +325,7 @@ impl Widget {
 }
 
 /// Get the builtin widget function for a name
-fn acceptline(name: &str) -> (fn(&mut Zle), WidgetFlags) {
+fn acceptline(name: &str) -> (fn(), WidgetFlags) {
     match name {
         // Accept/execute
         "accept-line" => (widget_accept_line, WidgetFlags::empty()),
@@ -646,14 +672,14 @@ fn acceptline(name: &str) -> (fn(&mut Zle), WidgetFlags) {
 
 // Widget implementations
 
-fn widget_accept_line(zle: &mut Zle) {
+fn widget_accept_line() {
     // Port of acceptline(UNUSED(char **args)) from Src/Zle/zle_misc.c:401. The C source is
     // a one-liner: `done = 1`; everything else (return current line,
     // history append, hooks) happens in zleread() after zlecore returns.
     crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_accept_and_hold(zle: &mut Zle) {
+fn widget_accept_and_hold() {
     // Port of acceptandhold(UNUSED(char **args)) from Src/Zle/zle_misc.c:409.
     // Push current line onto bufstack so the next zleread() re-feeds it
     // as the next entry, then exit the editor.
@@ -661,10 +687,10 @@ fn widget_accept_and_hold(zle: &mut Zle) {
     crate::ported::zle::zle_main::BUFSTACK.lock().unwrap().push(line);
     crate::ported::zle::zle_main::STACKCS.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
-    zle.accept_line();
+    accept_line();
 }
 
-fn widget_accept_line_and_down_history(zle: &mut Zle) {
+fn widget_accept_line_and_down_history() {
     // Port of acceptlineanddownhistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:420.
     // Move forward one history entry and queue it on bufstack so the
     // next zleread() loads it; then exit the editor to run the current line.
@@ -677,10 +703,10 @@ fn widget_accept_line_and_down_history(zle: &mut Zle) {
         }
     }
     crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
-    zle.accept_line();
+    accept_line();
 }
 
-fn widget_self_insert(zle: &mut Zle) {
+fn widget_self_insert() {
     // Port of selfinsert(UNUSED(char **args)) from Src/Zle/zle_misc.c:113. Insert the
     // last-read char at the cursor (`zmult` times — count-aware).
     let n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst).max(1);
@@ -694,30 +720,30 @@ fn widget_self_insert(zle: &mut Zle) {
     };
     if let Some(c) = c_opt {
         for _ in 0..n {
-            zle.self_insert(c);
+            self_insert(c);
         }
     }
 }
 
-fn widget_self_insert_unmeta(zle: &mut Zle) {
+fn widget_self_insert_unmeta() {
     // Port of selfinsertunmeta(char **args) from Src/Zle/zle_misc.c:149. Strip the
     // 0x80 meta bit from lastchar before inserting — used when the user
     // bound an Esc-prefixed key (e.g. `\\eA`) to literally insert 'A'.
     let n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst).max(1);
     let c = (crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) & 0x7f) as u8 as char;
     for _ in 0..n {
-        zle.self_insert(c);
+        self_insert(c);
     }
 }
 
-fn widget_forward_char(zle: &mut Zle) {
+fn widget_forward_char() {
     // Port of forwardchar(char **args) from Src/Zle/zle_move.c:441. Count-aware;
     // negative count delegates to backward-char (mirrors the C source's
     // recursive flip at zle_move.c:445).
     let mut n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
     if n < 0 {
         crate::ported::zle::zle_main::MULT.store(-n, std::sync::atomic::Ordering::SeqCst);
-        widget_backward_char(zle);
+        widget_backward_char();
         crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
         return;
     }
@@ -728,12 +754,12 @@ fn widget_forward_char(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_backward_char(zle: &mut Zle) {
+fn widget_backward_char() {
     // Port of backwardchar(char **args) from Src/Zle/zle_move.c:464.
     let mut n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
     if n < 0 {
         crate::ported::zle::zle_main::MULT.store(-n, std::sync::atomic::Ordering::SeqCst);
-        widget_forward_char(zle);
+        widget_forward_char();
         crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
         return;
     }
@@ -744,7 +770,7 @@ fn widget_backward_char(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_forward_word(zle: &mut Zle) {
+fn widget_forward_word() {
     // Port of forwardword(char **args) from Src/Zle/zle_word.c:45. Count-aware;
     // skips the current word (iword chars) then trailing non-iword
     // chars, repeated `mult` times.
@@ -763,7 +789,7 @@ fn widget_forward_word(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_backward_word(zle: &mut Zle) {
+fn widget_backward_word() {
     // Port of backwardword(char **args) from Src/Zle/zle_word.c:240. Count-aware
     // mirror of forward-word.
     let n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst).max(1);
@@ -781,21 +807,21 @@ fn widget_backward_word(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_beginning_of_line(zle: &mut Zle) {
+fn widget_beginning_of_line() {
     // Port of beginningofline(char **args) from Src/Zle/zle_move.c. Cursor moves
     // to the start of the current logical line — findbol respects
     // embedded newlines.
-    crate::ported::zle::zle_main::ZLECS.store(zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)), std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLECS.store(findbol(), std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_end_of_line(zle: &mut Zle) {
+fn widget_end_of_line() {
     // Port of endofline(char **args) from Src/Zle/zle_move.c.
-    crate::ported::zle::zle_main::ZLECS.store(zle.findeol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)), std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLECS.store(findeol(), std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_delete_char(zle: &mut Zle) {
+fn widget_delete_char() {
     // Port of deletechar(char **args) from Src/Zle/zle_misc.c:157. Count-aware;
     // negative count delegates to backward-delete-char. The C source
     // returns 1 (failure) if it can't delete `mult` chars (cursor hit
@@ -804,13 +830,13 @@ fn widget_delete_char(zle: &mut Zle) {
     let mut n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
     if n < 0 {
         crate::ported::zle::zle_main::MULT.store(-n, std::sync::atomic::Ordering::SeqCst);
-        widget_backward_delete_char(zle);
+        widget_backward_delete_char();
         crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
         return;
     }
     while n > 0 {
         if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) >= crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
-            zle.handle_feep();
+            handle_feep();
             return;
         }
         crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
@@ -820,7 +846,7 @@ fn widget_delete_char(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_backward_delete_char(zle: &mut Zle) {
+fn widget_backward_delete_char() {
     // Port of backwarddeletechar(char **args) from Src/Zle/zle_misc.c:180.
     // Count-aware; negative count delegates to delete-char. C clamps
     // count to zlecs (zle_misc.c:189) so deleting past BoB stops at 0
@@ -828,7 +854,7 @@ fn widget_backward_delete_char(zle: &mut Zle) {
     let mut n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
     if n < 0 {
         crate::ported::zle::zle_main::MULT.store(-n, std::sync::atomic::Ordering::SeqCst);
-        widget_delete_char(zle);
+        widget_delete_char();
         crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
         return;
     }
@@ -844,19 +870,19 @@ fn widget_backward_delete_char(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_delete_char_or_list(zle: &mut Zle) {
+fn widget_delete_char_or_list() {
     // Port of deletecharorlist(char **args) from Src/Zle/zle_misc.c. With an empty
     // buffer this is EOF; with non-end cursor it deletes one char; at
     // end-of-line it falls through to list-choices completion.
     if crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) == 0 {
         crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
     } else if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
-        widget_delete_char(zle);
+        widget_delete_char();
     } else {
     }
 }
 
-fn widget_kill_line(zle: &mut Zle) {
+fn widget_kill_line() {
     // Port of killline(char **args) from Src/Zle/zle_misc.c:419. Count-aware:
     // killing N lines from the cursor — for each iteration, if the
     // cursor sits on a newline consume just that newline, otherwise
@@ -866,7 +892,7 @@ fn widget_kill_line(zle: &mut Zle) {
     let mut n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
     if n < 0 {
         crate::ported::zle::zle_main::MULT.store(-n, std::sync::atomic::Ordering::SeqCst);
-        widget_backward_kill_line(zle);
+        widget_backward_kill_line();
         crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
         return;
     }
@@ -896,7 +922,7 @@ fn widget_kill_line(zle: &mut Zle) {
     }
 }
 
-fn widget_backward_kill_line(zle: &mut Zle) {
+fn widget_backward_kill_line() {
     // Port of backwardkillline(char **args) from Src/Zle/zle_misc.c:225. Mirror of
     // kill-line: per iteration, consume a leading \\n if present;
     // otherwise back up to the previous \\n (or BoB). Negative count
@@ -904,7 +930,7 @@ fn widget_backward_kill_line(zle: &mut Zle) {
     let mut n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
     if n < 0 {
         crate::ported::zle::zle_main::MULT.store(-n, std::sync::atomic::Ordering::SeqCst);
-        widget_kill_line(zle);
+        widget_kill_line();
         crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
         return;
     }
@@ -933,14 +959,14 @@ fn widget_backward_kill_line(zle: &mut Zle) {
     }
 }
 
-fn widget_kill_whole_line(zle: &mut Zle) {
+fn widget_kill_whole_line() {
     // Port of killwholeline(UNUSED(char **args)) from Src/Zle/zle_misc.c:195. The C source
     // is count-aware: kills `mult` lines centered on the current line
     // (or the whole buffer if -1). Our simplified version kills the
     // entire buffer once — sufficient for the common single-line use,
     // multi-line variants left as a follow-up.
     if crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) > 0 {
-        let killed = std::mem::take(&mut zle.zleline);
+        let killed = std::mem::take(&mut *crate::ported::zle::zle_main::ZLELINE.lock().unwrap());
         crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(killed);
         if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
             crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
@@ -951,7 +977,7 @@ fn widget_kill_whole_line(zle: &mut Zle) {
     }
 }
 
-fn widget_kill_word(zle: &mut Zle) {
+fn widget_kill_word() {
     // Port of killword(char **args) from Src/Zle/zle_word.c. The C source skips
     // non-word chars then the word, captures the killed region in the
     // kill ring, and leaves the cursor at the start. Honours the count
@@ -983,7 +1009,7 @@ fn widget_kill_word(zle: &mut Zle) {
     }
 }
 
-fn widget_backward_kill_word(zle: &mut Zle) {
+fn widget_backward_kill_word() {
     // Port of backwardkillword(char **args) from Src/Zle/zle_word.c. Mirrors
     // kill-word but in the opposite direction; cursor lands at the
     // start of the killed range. Count-aware.
@@ -1013,7 +1039,7 @@ fn widget_backward_kill_word(zle: &mut Zle) {
     }
 }
 
-fn widget_yank(zle: &mut Zle) {
+fn widget_yank() {
     // Port of yank(UNUSED(char **args)) from Src/Zle/zle_misc.c. Inserts the most-recent kill-ring
     // entry at the cursor and remembers the inserted region so that an
     // immediately-following yank-pop can rotate to the previous entry.
@@ -1033,7 +1059,7 @@ fn widget_yank(zle: &mut Zle) {
     }
 }
 
-fn widget_yank_pop(zle: &mut Zle) {
+fn widget_yank_pop() {
     // Port of yankpop(UNUSED(char **args)) from Src/Zle/zle_misc.c:728.
     // Only meaningful immediately after a yank; replaces the just-yanked
     // region with the previous kill-ring entry, cycling around the ring.
@@ -1090,50 +1116,50 @@ fn widget_yank_pop(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_undo(zle: &mut Zle) {
+fn widget_undo() {
     // Port of undo(char **args) from Src/Zle/zle_utils.c:1601.
-    let _ = zle.undo_widget();
+    let _ = undo_widget();
 }
 
-fn widget_redo(zle: &mut Zle) {
+fn widget_redo() {
     // Port of redo(UNUSED(char **args)) from Src/Zle/zle_utils.c:1661.
-    let _ = zle.redo_widget();
+    let _ = redo_widget();
 }
 
-fn widget_up_line_or_history(zle: &mut Zle) {
+fn widget_up_line_or_history() {
     // Port of uplineorhistory(char **args) from Src/Zle/zle_hist.c:282.
-    let _ = zle.uplineorhistory();
+    let _ = uplineorhistory();
 }
 
-fn widget_down_line_or_history(zle: &mut Zle) {
+fn widget_down_line_or_history() {
     // Port of downlineorhistory(char **args) from Src/Zle/zle_hist.c:370.
-    let _ = zle.downlineorhistory();
+    let _ = downlineorhistory();
 }
 
-fn widget_up_history(zle: &mut Zle) {
+fn widget_up_history() {
     // Port of uphistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:233.
     // C calls zle_goto_hist(histline, -zmult, isset(HISTIGNOREDUPS)).
     // skipdups=false until ZLE has access to ShellOptions; behavior matches HISTIGNOREDUPS unset.
     let m = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
-    zle.zle_goto_hist(-m, false);
+    zle_goto_hist(-m, false);
 }
 
-fn widget_down_history(zle: &mut Zle) {
+fn widget_down_history() {
     // Port of downhistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:434.
     let m = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
-    zle.zle_goto_hist(m, false);
+    zle_goto_hist(m, false);
 }
 
-fn widget_history_isearch_backward(zle: &mut Zle) {
+fn widget_history_isearch_backward() {
     // Port of historyincrementalsearchbackward(char **args) from Src/Zle/zle_hist.c:922
     // (which is doisearch(-1, 0)).
-    do_isearch(zle, -1);
+    do_isearch(-1);
 }
 
-fn widget_history_isearch_forward(zle: &mut Zle) {
+fn widget_history_isearch_forward() {
     // Port of historyincrementalsearchforward(char **args) from Src/Zle/zle_hist.c:929
     // (doisearch(1, 0)).
-    do_isearch(zle, 1);
+    do_isearch(1);
 }
 
 /// Minimal port of doisearch(char **args, int dir, int pattern) from zle_hist.c.
@@ -1142,7 +1168,7 @@ fn widget_history_isearch_forward(zle: &mut Zle) {
 /// Ctrl-G/Esc cancels (restores starting line), backspace shortens the
 /// pattern, Enter accepts. Anything else exits the loop with the current
 /// match in place.
-fn do_isearch(zle: &mut Zle, mut dir: i32) {
+fn do_isearch(mut dir: i32) {
     // Save start state for cancel.
     let start_line = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().clone();
     let start_cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
@@ -1151,7 +1177,7 @@ fn do_isearch(zle: &mut Zle, mut dir: i32) {
     let mut pattern = String::new();
     let mut current_idx: i32 = crate::ported::zle::zle_main::history().lock().unwrap().cursor as i32;
 
-    while let Some(c) = zle.getfullchar(true) {
+    while let Some(c) = getfullchar(true) {
         match c {
             // Enter / Newline → accept current match.
             '\r' | '\n' => break,
@@ -1220,44 +1246,45 @@ fn do_isearch(zle: &mut Zle, mut dir: i32) {
             *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = crate::ported::zle::zle_main::history().lock().unwrap().entries[idx].line.chars().collect();
             crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
             // Place cursor at the start of the match for visual feedback.
-            zle.zlecs = crate::ported::zle::zle_main::history().lock().unwrap().entries[idx]
+            let new_cs = crate::ported::zle::zle_main::history().lock().unwrap().entries[idx]
                 .line
                 .find(&pattern)
                 .unwrap_or(0)
                 .min(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst));
+            crate::ported::zle::zle_main::ZLECS.store(new_cs, std::sync::atomic::Ordering::SeqCst);
             crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
         } else {
             // No match — beep but keep the prior position.
-            zle.handle_feep();
+            handle_feep();
         }
     }
 }
 
-fn widget_beginning_of_buffer_or_history(zle: &mut Zle) {
+fn widget_beginning_of_buffer_or_history() {
     // Port of beginningofbufferorhistory(char **args) from Src/Zle/zle_hist.c:573.
     // If the cursor is past the start of its current logical line
     // (findbol > 0), jump to absolute position 0 inside the buffer;
     // otherwise we're already at BoB → fall through to
     // beginning-of-history (load oldest entry).
-    if zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) > 0 {
+    if findbol() > 0 {
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     } else {
-        widget_beginning_of_history(zle);
+        widget_beginning_of_history();
     }
 }
 
-fn widget_end_of_buffer_or_history(zle: &mut Zle) {
+fn widget_end_of_buffer_or_history() {
     // Port of endofbufferorhistory(char **args) from Src/Zle/zle_hist.c:593.
-    if zle.findeol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+    if findeol() != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
         crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     } else {
-        widget_end_of_history(zle);
+        widget_end_of_history();
     }
 }
 
-fn widget_transpose_chars(zle: &mut Zle) {
+fn widget_transpose_chars() {
     // Port of transposechars(UNUSED(char **args)) from Src/Zle/zle_misc.c:313. The C source
     // is count-aware (negative count transposes backwards, positive
     // forwards, default 1) and respects newline boundaries — at BoL or
@@ -1306,20 +1333,20 @@ fn widget_transpose_chars(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_clear_screen(zle: &mut Zle) {
+fn widget_clear_screen() {
     // Port of clearscreen(UNUSED(char **args)) from Src/Zle/zle_refresh.c. Routes through
     // the existing Zle::clearscreen helper which emits the CSI clear +
     // home, then forces a refresh on the next zlecore iteration.
-    zle.clearscreen();
+    clearscreen();
 }
 
-fn widget_redisplay(zle: &mut Zle) {
+fn widget_redisplay() {
     // Port of redisplay(UNUSED(char **args)) from Src/Zle/zle_refresh.c. Just sets the
     // reset flag — the next zlecore iteration calls zrefresh.
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_send_break(zle: &mut Zle) {
+fn widget_send_break() {
     // Port of sendbreak(UNUSED(char **args)) from Src/Zle/zle_misc.c:1144. The C source
     // sets errflag |= ERRFLAG_ERROR | ERRFLAG_INT and returns 1, which
     // causes the zlecore loop at zle_main.c:1128 to exit. Our
@@ -1327,55 +1354,55 @@ fn widget_send_break(zle: &mut Zle) {
     // effect, no errflag needed because we don't carry it through to
     // the caller. (send_break() exists separately for non-widget
     // callers that want just the buffer clear.)
-    zle.abort_line();
+    abort_line();
 }
 
-fn widget_overwrite_mode(zle: &mut Zle) {
+fn widget_overwrite_mode() {
     // Port of overwritemode(UNUSED(char **args)) from Src/Zle/zle_misc.c. Toggles between
     // insert (default) and overwrite. Insert mode appends at the cursor;
     // overwrite replaces the char under the cursor.
     crate::ported::zle::zle_main::INSMODE.fetch_xor(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_quoted_insert(zle: &mut Zle) {
+fn widget_quoted_insert() {
     // Port of quotedinsert(char **args) from Src/Zle/zle_misc.c. Reads the next
     // input char and inserts it literally (bypassing keymap dispatch),
     // letting the user enter control chars verbatim — the canonical
     // Ctrl-V binding.
-    if let Some(c) = zle.getfullchar(true) {
-        zle.self_insert(c);
+    if let Some(c) = getfullchar(true) {
+        self_insert(c);
     }
 }
 
-fn widget_expand_or_complete(zle: &mut Zle) {
+fn widget_expand_or_complete() {
     // Port of expandorcomplete(char **args) from Src/Zle/zle_tricky.c — tries
     // expansion first, falls back to completion. Compsys lives in a
     // separate crate; surface the request and let the host run it.
 }
 
-fn widget_complete_word(zle: &mut Zle) {
+fn widget_complete_word() {
     // Port of completeword(char **args) from Src/Zle/zle_tricky.c.
 }
 
-fn widget_expand_word(zle: &mut Zle) {
+fn widget_expand_word() {
     // Port of expandword(char **args) from Src/Zle/zle_tricky.c — runs only the
     // expansion phase (history, glob, parameter, brace) without falling
     // through to completion.
 }
 
-fn widget_list_choices(zle: &mut Zle) {
+fn widget_list_choices() {
     // Port of listchoices(UNUSED(char **args)) from Src/Zle/zle_tricky.c — shows matches
     // without inserting.
 }
 
-fn widget_menu_complete(zle: &mut Zle) {
+fn widget_menu_complete() {
     // Port of menucomplete(char **args) from Src/Zle/zle_tricky.c — enters/steps
     // the menu-selection state.
 }
 
 // Vi mode widgets
 
-fn widget_vi_cmd_mode(zle: &mut Zle) {
+fn widget_vi_cmd_mode() {
     // Port of vicmdmode(UNUSED(char **args)) from Src/Zle/zle_vi.c. ESC out of insert →
     // command mode; cursor steps back one (vim convention) since vi
     // command mode treats the cursor as ON a char rather than between.
@@ -1386,18 +1413,18 @@ fn widget_vi_cmd_mode(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_insert(zle: &mut Zle) {
+fn widget_vi_insert() {
     // Port of viinsert(UNUSED(char **args)) from Src/Zle/zle_vi.c:355.
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_insert_bol(zle: &mut Zle) {
+fn widget_vi_insert_bol() {
     // Port of viinsertbol(UNUSED(char **args)) from Src/Zle/zle_vi.c:374. Vim's `I` —
     // first-non-blank of current line, then enter insert mode.
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
-    let bol = zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    let bol = findbol();
     let mut p = bol;
     while { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[p]; p < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && __c.is_whitespace() && __c != '\n' } {
         p += 1;
@@ -1406,39 +1433,39 @@ fn widget_vi_insert_bol(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_add_next(zle: &mut Zle) {
+fn widget_vi_add_next() {
     // Port of viaddnext(UNUSED(char **args)) from Src/Zle/zle_vi.c:336. Vim's `a` —
     // step right one then enter insert mode (so insert lands AFTER
     // the cursor's current char).
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
-    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < zle.findeol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) {
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < findeol() {
         crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_add_eol(zle: &mut Zle) {
+fn widget_vi_add_eol() {
     // Port of viaddeol(UNUSED(char **args)) from Src/Zle/zle_vi.c:346. Vim's `A` —
     // jump to end-of-line then enter insert mode.
     crate::ported::zle::zle_keymap::selectkeymap("viins", 1);
     crate::ported::zle::zle_main::INSMODE.store(1, std::sync::atomic::Ordering::SeqCst);
-    crate::ported::zle::zle_main::ZLECS.store(zle.findeol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)), std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLECS.store(findeol(), std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_forward_char(zle: &mut Zle) {
+fn widget_vi_forward_char() {
     // Port of viforwardchar(char **args) from Src/Zle/zle_move.c:653. Vim's `l`
     // — count-aware, can't cross EoL (cursor lands on the last char
     // of the current logical line at most).
     let mut n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
     if n < 0 {
         crate::ported::zle::zle_main::MULT.store(-n, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_backward_char(zle);
+        widget_vi_backward_char();
         crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
         return;
     }
-    let eol = zle.findeol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    let eol = findeol();
     let limit = eol.saturating_sub(1);
     while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < limit && n > 0 {
         crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1447,17 +1474,17 @@ fn widget_vi_forward_char(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_backward_char(zle: &mut Zle) {
+fn widget_vi_backward_char() {
     // Port of vibackwardchar(char **args) from Src/Zle/zle_move.c:683. Vim's `h`
     // — count-aware, can't cross BoL.
     let mut n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst);
     if n < 0 {
         crate::ported::zle::zle_main::MULT.store(-n, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_forward_char(zle);
+        widget_vi_forward_char();
         crate::ported::zle::zle_main::MULT.store(n, std::sync::atomic::Ordering::SeqCst);
         return;
     }
-    let bol = zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    let bol = findbol();
     while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > bol && n > 0 {
         crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         n -= 1;
@@ -1465,13 +1492,13 @@ fn widget_vi_backward_char(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_forward_word(zle: &mut Zle) {
+fn widget_vi_forward_word() {
     // Port of viforwardword(char **args) from Src/Zle/zle_word.c. Vim's `w` —
     // routes to forward-word with the iword class definition.
-    widget_forward_word(zle);
+    widget_forward_word();
 }
 
-fn widget_vi_forward_word_end(zle: &mut Zle) {
+fn widget_vi_forward_word_end() {
     // Port of viforwardwordend(char **args) from Src/Zle/zle_word.c. Vim's `e` —
     // step right one, skip non-word, then walk word chars but land on
     // the LAST word char (peek-ahead pattern). Count-aware.
@@ -1492,7 +1519,7 @@ fn widget_vi_forward_word_end(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_forward_blank_word(zle: &mut Zle) {
+fn widget_vi_forward_blank_word() {
     // Port of viforwardblankword(char **args) from Src/Zle/zle_word.c. Vim's `W` —
     // whitespace-only word boundary (no iword class distinction).
     let n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst).max(1);
@@ -1507,7 +1534,7 @@ fn widget_vi_forward_blank_word(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_forward_blank_word_end(zle: &mut Zle) {
+fn widget_vi_forward_blank_word_end() {
     // Port of viforwardblankwordend(char **args) from Src/Zle/zle_word.c. Vim's
     // `E` — whitespace-only end-of-word.
     let n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst).max(1);
@@ -1527,12 +1554,12 @@ fn widget_vi_forward_blank_word_end(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_backward_word(zle: &mut Zle) {
+fn widget_vi_backward_word() {
     // Port of vibackwardword(char **args) from Src/Zle/zle_word.c. Vim's `b`.
-    widget_backward_word(zle);
+    widget_backward_word();
 }
 
-fn widget_vi_backward_blank_word(zle: &mut Zle) {
+fn widget_vi_backward_blank_word() {
     // Port of vibackwardblankword(char **args) from Src/Zle/zle_word.c. Vim's `B`.
     let n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst).max(1);
     for _ in 0..n {
@@ -1546,59 +1573,59 @@ fn widget_vi_backward_blank_word(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_delete(zle: &mut Zle) {
+fn widget_vi_delete() {
     // Port of videlete(UNUSED(char **args)) from Src/Zle/zle_vi.c:384.
-    let _ = zle.vi_delete_op();
+    let _ = vi_delete_op();
 }
 
-fn widget_vi_delete_char(zle: &mut Zle) {
+fn widget_vi_delete_char() {
     // Port of videletechar(char **args) from Src/Zle/zle_vi.c:405. Vim's `x`
     // command — same as delete-char but C source clamps the count to
     // findeol-zlecs to avoid spilling past the current line. We let
     // delete-char run with EoB clamp; for vi-aware line-bounded
     // semantics, callers should use vi_delete_op('l').
-    widget_delete_char(zle);
+    widget_delete_char();
 }
 
-fn widget_vi_backward_delete_char(zle: &mut Zle) {
+fn widget_vi_backward_delete_char() {
     // Port of vibackwarddeletechar(char **args) from Src/Zle/zle_vi.c. Vim's `X`.
-    widget_backward_delete_char(zle);
+    widget_backward_delete_char();
 }
 
-fn widget_vi_change(zle: &mut Zle) {
+fn widget_vi_change() {
     // Port of vichange(UNUSED(char **args)) from Src/Zle/zle_vi.c:438.
-    let _ = zle.vi_change_op();
+    let _ = vi_change_op();
 }
 
-fn widget_vi_change_eol(zle: &mut Zle) {
+fn widget_vi_change_eol() {
     // Port of vichangeeol(UNUSED(char **args)) from Src/Zle/zle_vi.c:482. Vim's `C` —
     // kill from cursor to EoL, enter insert mode.
-    widget_kill_line(zle);
-    widget_vi_insert(zle);
+    widget_kill_line();
+    widget_vi_insert();
 }
 
-fn widget_vi_kill_eol(zle: &mut Zle) {
+fn widget_vi_kill_eol() {
     // Port of vikilleol(UNUSED(char **args)) from Src/Zle/zle_vi.c. Vim's `D` — kill
     // from cursor to EoL without entering insert.
-    widget_kill_line(zle);
+    widget_kill_line();
 }
 
-fn widget_vi_yank(zle: &mut Zle) {
+fn widget_vi_yank() {
     // Port of viyank(UNUSED(char **args)) from Src/Zle/zle_vi.c:507.
-    let _ = zle.vi_yank_op();
+    let _ = vi_yank_op();
 }
 
-fn widget_vi_yank_whole_line(zle: &mut Zle) {
+fn widget_vi_yank_whole_line() {
     // Port of viyankwholeline(UNUSED(char **args)) from Src/Zle/zle_vi.c:550. Vim's `Y` —
     // yank `mult` whole lines into the kill ring (with the trailing
     // newline included so vi-put-after / vi-put-before recognise this
     // as a line-wise yank). C source: zle_vi.c:559 walks zlecs through
     // findeol+1 to capture each line.
     let n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst).max(1);
-    let bol = zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    let bol = findbol();
     let mut end = bol;
     for _ in 0..n {
-        end = zle.findeol(end);
+        end = findeol();
         if end < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
             end += 1; // include trailing '\n'
         } else {
@@ -1614,7 +1641,7 @@ fn widget_vi_yank_whole_line(zle: &mut Zle) {
     }
 }
 
-fn widget_vi_put_after(zle: &mut Zle) {
+fn widget_vi_put_after() {
     // Port of viputafter(UNUSED(char **args)) from Src/Zle/zle_misc.c. Vim's `p` command —
     // for character-wise paste, insert AFTER the cursor; for line-wise
     // paste (when the kill-ring entry contains a trailing '\n'), insert
@@ -1622,24 +1649,23 @@ fn widget_vi_put_after(zle: &mut Zle) {
     // text. The C source distinguishes line vs char ranges via the
     // CUTBUFFER_LINE flag on the cutbuf; we approximate by checking
     // whether the most-recent kill-ring entry ends in a newline.
-    let is_line_paste = zle
-        .killring
+    let is_line_paste = crate::ported::zle::zle_main::KILLRING.lock().unwrap()
         .front()
         .and_then(|v| v.last().copied())
         == Some('\n');
     if is_line_paste {
         // Move to end of current line, then paste (which inserts the
         // newline-prefixed content immediately).
-        crate::ported::zle::zle_main::ZLECS.store(zle.findeol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)), std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(findeol(), std::sync::atomic::Ordering::SeqCst);
         if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
             crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
-        widget_yank(zle);
+        widget_yank();
     } else {
         if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
             crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
-        widget_yank(zle);
+        widget_yank();
         // Vim convention: cursor on last pasted char, not after.
         if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
             crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
@@ -1647,29 +1673,28 @@ fn widget_vi_put_after(zle: &mut Zle) {
     }
 }
 
-fn widget_vi_put_before(zle: &mut Zle) {
+fn widget_vi_put_before() {
     // Port of viputbefore(UNUSED(char **args)) from Src/Zle/zle_misc.c. Vim's `P` command —
     // char-wise paste BEFORE the cursor; line-wise paste opens a new
     // line ABOVE. Cursor lands on the last char of the pasted region.
-    let is_line_paste = zle
-        .killring
+    let is_line_paste = crate::ported::zle::zle_main::KILLRING.lock().unwrap()
         .front()
         .and_then(|v| v.last().copied())
         == Some('\n');
     if is_line_paste {
         // Move to start of current line, paste (the newline at end of
         // the kill-ring entry pushes the existing line down).
-        crate::ported::zle::zle_main::ZLECS.store(zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)), std::sync::atomic::Ordering::SeqCst);
-        widget_yank(zle);
+        crate::ported::zle::zle_main::ZLECS.store(findbol(), std::sync::atomic::Ordering::SeqCst);
+        widget_yank();
     } else {
-        widget_yank(zle);
+        widget_yank();
         if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
             crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 }
 
-fn widget_vi_replace(zle: &mut Zle) {
+fn widget_vi_replace() {
     // Port of vireplace(UNUSED(char **args)) from Src/Zle/zle_vi.c (the `R` command).
     // Switch to insert keymap with overwrite mode so subsequent self-
     // inserts replace existing chars instead of pushing them right.
@@ -1677,12 +1702,12 @@ fn widget_vi_replace(zle: &mut Zle) {
     crate::ported::zle::zle_main::INSMODE.store(0, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_replace_chars(zle: &mut Zle) {
+fn widget_vi_replace_chars() {
     // Port of vireplacechars(UNUSED(char **args)) from Src/Zle/zle_vi.c (the `r` command).
     // Read one char and overwrite the char under the cursor with it.
     // The C source supports a numeric prefix (`3rX` replaces the next
     // 3 chars all with X); replicated below.
-    if let Some(c) = zle.getfullchar(true) {
+    if let Some(c) = getfullchar(true) {
         let n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst).max(1);
         for _ in 0..n {
             if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) >= crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
@@ -1699,27 +1724,27 @@ fn widget_vi_replace_chars(zle: &mut Zle) {
     }
 }
 
-fn widget_vi_substitute(zle: &mut Zle) {
+fn widget_vi_substitute() {
     // Port of visubstitute(UNUSED(char **args)) from Src/Zle/zle_vi.c:455. Delete `mult`
     // chars then enter insert mode — vim's `s` command.
     let n = crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst).max(1);
     for _ in 0..n {
-        widget_delete_char(zle);
+        widget_delete_char();
     }
-    widget_vi_insert(zle);
+    widget_vi_insert();
 }
 
-fn widget_vi_change_whole_line(zle: &mut Zle) {
+fn widget_vi_change_whole_line() {
     // Port of vichangewholeline(char **args) from Src/Zle/zle_vi.c:499 (the `S`
     // command). Kill the whole line, then enter insert mode.
-    widget_kill_whole_line(zle);
-    widget_vi_insert(zle);
+    widget_kill_whole_line();
+    widget_vi_insert();
 }
 
-fn widget_vi_first_non_blank(zle: &mut Zle) {
+fn widget_vi_first_non_blank() {
     // Port of vifirstnonblank(UNUSED(char **args)) from Src/Zle/zle_move.c:862. Move
     // cursor to the first non-blank character on the current line.
-    let bol = zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    let bol = findbol();
     let mut p = bol;
     while { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[p]; p < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && __c.is_whitespace() && __c != '\n' } {
         p += 1;
@@ -1728,10 +1753,10 @@ fn widget_vi_first_non_blank(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_end_of_line(zle: &mut Zle) {
+fn widget_vi_end_of_line() {
     // Port of viendofline(UNUSED(char **args)) from Src/Zle/zle_move.c:708. Vim's `$`
     // semantics — cursor lands on the last char of the line, not past it.
-    let eol = zle.findeol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    let eol = findeol();
     if eol > 0 && (eol == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) || crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[eol] == '\n') {
         crate::ported::zle::zle_main::ZLECS.store(eol.saturating_sub(1), std::sync::atomic::Ordering::SeqCst);
     } else {
@@ -1740,37 +1765,37 @@ fn widget_vi_end_of_line(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_digit_or_beginning_of_line(zle: &mut Zle) {
+fn widget_vi_digit_or_beginning_of_line() {
     // Port of vidigitorbeginningofline(char **args) from Src/Zle/zle_vi.c. With
     // an active numeric prefix the `0` key acts as a digit; otherwise
     // it's beginning-of-line.
     if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_MULT != 0 {
-        widget_digit_argument(zle);
+        widget_digit_argument();
     } else {
-        widget_beginning_of_line(zle);
+        widget_beginning_of_line();
     }
 }
 
-fn widget_vi_open_line_below(zle: &mut Zle) {
+fn widget_vi_open_line_below() {
     // Port of viopenlinebelow(UNUSED(char **args)) from Src/Zle/zle_vi.c (the `o` command).
     // Move to end of line, insert newline, enter insert mode.
-    crate::ported::zle::zle_main::ZLECS.store(zle.findeol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)), std::sync::atomic::Ordering::SeqCst);
-    zle.self_insert('\n');
-    widget_vi_insert(zle);
+    crate::ported::zle::zle_main::ZLECS.store(findeol(), std::sync::atomic::Ordering::SeqCst);
+    self_insert('\n');
+    widget_vi_insert();
 }
 
-fn widget_vi_open_line_above(zle: &mut Zle) {
+fn widget_vi_open_line_above() {
     // Port of viopenlineabove(UNUSED(char **args)) from Src/Zle/zle_vi.c (the `O` command).
     // Move to start of line, insert newline, step back, enter insert.
-    crate::ported::zle::zle_main::ZLECS.store(zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)), std::sync::atomic::Ordering::SeqCst);
-    zle.self_insert('\n');
+    crate::ported::zle::zle_main::ZLECS.store(findbol(), std::sync::atomic::Ordering::SeqCst);
+    self_insert('\n');
     if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
         crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
-    widget_vi_insert(zle);
+    widget_vi_insert();
 }
 
-fn widget_vi_join(zle: &mut Zle) {
+fn widget_vi_join() {
     // Port of vijoin(UNUSED(char **args)) from Src/Zle/zle_misc.c (the `J` command).
     // Find the newline at or after the cursor, remove it, and insert
     // a separator space (unless the newline was at end-of-buffer or
@@ -1809,7 +1834,7 @@ fn widget_vi_join(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_repeat_change(zle: &mut Zle) {
+fn widget_vi_repeat_change() {
     // Port of virepeatchange(UNUSED(char **args)) from Src/Zle/zle_vi.c. Replays the keys in
     // vi_chg_buf — but the recording side (which captures keystrokes during
     // d/c/y operators into vi_chg_buf) is still pending, so without a
@@ -1822,40 +1847,40 @@ fn widget_vi_repeat_change(zle: &mut Zle) {
     // zlecore re-runs them. ungetbytes prepends to the input buffer so the
     // bytes will be consumed before any new keystrokes.
     let bytes = crate::ported::zle::zle_main::VICHGBUF.lock().unwrap().clone();
-    zle.ungetbytes(&bytes);
+    ungetbytes(&bytes);
 }
 
-fn widget_vi_find_next_char(zle: &mut Zle) {
+fn widget_vi_find_next_char() {
     // Port of vifindnextchar(char **args) from Src/Zle/zle_move.c:739.
-    zle.vi_find_char(true, false);
+    vi_find_char(true, false);
 }
 
-fn widget_vi_find_prev_char(zle: &mut Zle) {
+fn widget_vi_find_prev_char() {
     // Port of vifindprevchar(char **args) from Src/Zle/zle_move.c:751.
-    zle.vi_find_char(false, false);
+    vi_find_char(false, false);
 }
 
-fn widget_vi_find_next_char_skip(zle: &mut Zle) {
+fn widget_vi_find_next_char_skip() {
     // Port of vifindnextcharskip(char **args) from Src/Zle/zle_move.c:763.
-    zle.vi_find_char(true, true);
+    vi_find_char(true, true);
 }
 
-fn widget_vi_find_prev_char_skip(zle: &mut Zle) {
+fn widget_vi_find_prev_char_skip() {
     // Port of vifindprevcharskip(char **args) from Src/Zle/zle_move.c:775.
-    zle.vi_find_char(false, true);
+    vi_find_char(false, true);
 }
 
-fn widget_vi_repeat_find(zle: &mut Zle) {
+fn widget_vi_repeat_find() {
     // Port of virepeatfind(char **args) from Src/Zle/zle_move.c:835.
-    let _ = zle.virepeatfind();
+    let _ = virepeatfind();
 }
 
-fn widget_vi_rev_repeat_find(zle: &mut Zle) {
+fn widget_vi_rev_repeat_find() {
     // Port of virevrepeatfind(char **args) from Src/Zle/zle_move.c:842.
-    let _ = zle.virevrepeatfind();
+    let _ = virevrepeatfind();
 }
 
-fn widget_vi_history_search_forward(zle: &mut Zle) {
+fn widget_vi_history_search_forward() {
     // Port of vihistorysearchforward(char **args) from Src/Zle/zle_hist.c.
     // Read the search pattern starting from `?` then run a forward history search.
     // For now: re-run the last srch_str if any.
@@ -1881,7 +1906,7 @@ fn widget_vi_history_search_forward(zle: &mut Zle) {
     }
 }
 
-fn widget_vi_history_search_backward(zle: &mut Zle) {
+fn widget_vi_history_search_backward() {
     // Port of vihistorysearchbackward(char **args) from Src/Zle/zle_hist.c.
     let pat = match crate::ported::zle::zle_main::SRCH_STR.lock().unwrap().clone() {
         Some(s) if !s.is_empty() => s,
@@ -1911,22 +1936,20 @@ fn widget_vi_history_search_backward(zle: &mut Zle) {
     }
 }
 
-fn widget_vi_repeat_search(zle: &mut Zle) {
+fn widget_vi_repeat_search() {
     // Port of virepeatsearch(UNUSED(char **args)) from Src/Zle/zle_hist.c.
     // Replays the last vi search in the same direction.
-    let mut hist = std::mem::take(&mut zle.history);
-    zle.vi_repeat_search(&mut hist);
-    *crate::ported::zle::zle_main::history().lock().unwrap() = hist;
+    let mut hist = crate::ported::zle::zle_main::history().lock().unwrap();
+    vi_repeat_search(&mut hist);
 }
 
-fn widget_vi_rev_repeat_search(zle: &mut Zle) {
-    // Port of virevrepeatsearch(char **args) from Src/Zle/zle_hist.c.
-    let mut hist = std::mem::take(&mut zle.history);
-    zle.virevrepeatsearch(&mut hist);
-    *crate::ported::zle::zle_main::history().lock().unwrap() = hist;
+fn widget_vi_rev_repeat_search() {
+    // Port of virevrepeatsearch() from Src/Zle/zle_hist.c.
+    let mut hist = crate::ported::zle::zle_main::history().lock().unwrap();
+    virevrepeatsearch();
 }
 
-fn widget_vi_fetch_history(zle: &mut Zle) {
+fn widget_vi_fetch_history() {
     // Port of vifetchhistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:1787.
     // With no count: jump to the live (newest) entry. With a count: load
     // that history event by 1-based index. Negative count is rejected.
@@ -1938,7 +1961,7 @@ fn widget_vi_fetch_history(zle: &mut Zle) {
     if on_live || (crate::ported::zle::zle_main::ZLEREADFLAGS.load(std::sync::atomic::Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY) == 0 {
         if !has_mult {
             crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
-            crate::ported::zle::zle_main::ZLECS.store(zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)), std::sync::atomic::Ordering::SeqCst);
+            crate::ported::zle::zle_main::ZLECS.store(findbol(), std::sync::atomic::Ordering::SeqCst);
             crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
             return;
         }
@@ -1969,26 +1992,26 @@ fn widget_vi_fetch_history(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_goto_column(zle: &mut Zle) {
+fn widget_vi_goto_column() {
     // Port of vigotocolumn(UNUSED(char **args)) from Src/Zle/zle_move.c. Vim's `|` —
     // jump to column N (1-based) on the current logical line. The
     // count is in zmod.mult; cursor lands at bol + (mult - 1),
     // clamped to the line's EoL.
     let col = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult.saturating_sub(1) as usize;
-    let bol = zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
-    let eol = zle.findeol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    let bol = findbol();
+    let eol = findeol();
     crate::ported::zle::zle_main::ZLECS.store((bol + col).min(eol), std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_backward_kill_word(zle: &mut Zle) {
+fn widget_vi_backward_kill_word() {
     // Port of vibackwardkillword(UNUSED(char **args)) from Src/Zle/zle_word.c. Vim's
     // ^W in insert mode — same as backward-kill-word but specifically
     // bound for the vi insert keymap.
-    widget_backward_kill_word(zle);
+    widget_backward_kill_word();
 }
 
-fn widget_digit_argument(zle: &mut Zle) {
+fn widget_digit_argument() {
     // Port of digitargument(UNUSED(char **args)) from Src/Zle/zle_misc.c:950 plus the
     // parsedigit() helper at zle_misc.c:919. Accepts a digit in the
     // current zmod.base (10 by default; up to 36 honours a-z / A-Z),
@@ -1998,14 +2021,11 @@ fn widget_digit_argument(zle: &mut Zle) {
     let base = crate::ported::zle::zle_main::ZMOD.lock().unwrap().base;
     let new_digit = parse_digit_in_base(crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) as u8, base);
     if new_digit < 0 {
-        zle.handle_feep();
+        handle_feep();
         return;
     }
     let sign = if crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult < 0 { -1 } else { 1 };
-    if !zle
-        .zmod
-        .flags
-         & crate::ported::zle::zle_h::MOD_TMULT != 0
+    if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_TMULT == 0
     {
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = 0;
     }
@@ -2020,14 +2040,13 @@ fn widget_digit_argument(zle: &mut Zle) {
     crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_undefined(zle: &mut Zle) {
+fn widget_undefined() {
     // Port of undefinedkey(UNUSED(char **args)) from Src/Zle/zle_main.c. zsh dispatches
     // here when a key has no binding in the current keymap; the C
     // source just beeps. We do the same by ignoring `zle` (handle_feep
     // would also work, but the zlecore's no-binding fallback already
     // calls handle_feep before reaching this — calling it again would
     // double-beep).
-    let _ = zle;
 }
 
 /// Parse a single byte as a digit in `base`. Returns `-1` if the byte
@@ -2062,13 +2081,13 @@ fn parse_digit_in_base(b: u8, base: i32) -> i32 {
 // pins the Src/Zle/*.c origin.
 // =============================================================================
 
-fn widget_beep(zle: &mut Zle) {
+fn widget_beep() {
     // Port of beep / handlefeep() from Src/Zle/zle_utils.c. Just emits the
     // bell — `handle_feep` already does the right thing.
-    zle.handle_feep();
+    handle_feep();
 }
 
-fn widget_set_mark_command(zle: &mut Zle) {
+fn widget_set_mark_command() {
     // Port of setmarkcommand(UNUSED(char **args)) from Src/Zle/zle_move.c:483. Negative count
     // disables the region; otherwise marks the current cursor and turns
     // on the visual region (charwise).
@@ -2080,7 +2099,7 @@ fn widget_set_mark_command(zle: &mut Zle) {
     crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_exchange_point_and_mark(zle: &mut Zle) {
+fn widget_exchange_point_and_mark() {
     // Port of exchangepointandmark(UNUSED(char **args)) from Src/Zle/zle_move.c:496. With
     // mult==0 the C source just turns the region on without swapping;
     // with mult>0 swaps cursor↔mark and clamps cursor.
@@ -2097,38 +2116,38 @@ fn widget_exchange_point_and_mark(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_deactivate_region(zle: &mut Zle) {
+fn widget_deactivate_region() {
     // Port of deactivateregion(UNUSED(char **args)) from Src/Zle/zle_move.c:564.
-    zle.vi_deactivate_region();
+    vi_deactivate_region();
 }
 
-fn widget_visual_mode(zle: &mut Zle) {
+fn widget_visual_mode() {
     // Port of visualmode(UNUSED(char **args)) from Src/Zle/zle_move.c:516.
-    zle.vi_visual_mode();
+    vi_visual_mode();
 }
 
-fn widget_visual_line_mode(zle: &mut Zle) {
+fn widget_visual_line_mode() {
     // Port of visuallinemode(UNUSED(char **args)) from Src/Zle/zle_move.c:540.
-    zle.vi_visual_line_mode();
+    vi_visual_line_mode();
 }
 
-fn widget_capitalize_word(zle: &mut Zle) {
+fn widget_capitalize_word() {
     // Port of capitalizeword(UNUSED(char **args)) from Src/Zle/zle_misc.c. Method already
     // exists on Zle; this is the dispatch entry.
-    zle.capitalize_word();
+    capitalize_word();
 }
 
-fn widget_down_case_word(zle: &mut Zle) {
+fn widget_down_case_word() {
     // Port of downcaseword(UNUSED(char **args)) from Src/Zle/zle_misc.c.
-    zle.downcase_word();
+    downcase_word();
 }
 
-fn widget_up_case_word(zle: &mut Zle) {
+fn widget_up_case_word() {
     // Port of upcaseword(UNUSED(char **args)) from Src/Zle/zle_misc.c.
-    zle.upcase_word();
+    upcase_word();
 }
 
-fn widget_pound_insert(zle: &mut Zle) {
+fn widget_pound_insert() {
     // Port of poundinsert(UNUSED(char **args)) from Src/Zle/zle_misc.c:369. Toggle a leading
     // `#` on every logical line so the entire input is commented out
     // (or uncommented). Common keybinding: M-#.
@@ -2139,14 +2158,14 @@ fn widget_pound_insert(zle: &mut Zle) {
         // (C source: zle_misc.c:384-394).
         let mut p = 0;
         loop {
-            let bol = zle.findbol(p);
+            let bol = findbol();
             if crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(bol).copied() == Some('#') {
                 crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(bol);
                 if crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) > 0 {
                     crate::ported::zle::zle_main::ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                 }
             }
-            let eol = zle.findeol(bol);
+            let eol = findeol();
             if eol >= crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
                 break;
             }
@@ -2156,10 +2175,10 @@ fn widget_pound_insert(zle: &mut Zle) {
         // Insert '#' at start of every logical line (zle_misc.c:373-383).
         let mut p = 0;
         loop {
-            let bol = zle.findbol(p);
+            let bol = findbol();
             crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(bol, '#');
             crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let eol = zle.findeol(bol);
+            let eol = findeol();
             if eol >= crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
                 break;
             }
@@ -2170,7 +2189,7 @@ fn widget_pound_insert(zle: &mut Zle) {
     crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst); // C zsh accepts the line after a pound-insert.
 }
 
-fn widget_quote_line(zle: &mut Zle) {
+fn widget_quote_line() {
     // Port of quoteline(UNUSED(char **args)) from Src/Zle/zle_misc.c:1187. Wrap the entire
     // buffer in single quotes, escaping any embedded single bslashquote as
     // `'\''` (the C source's makequote routine).
@@ -2183,7 +2202,7 @@ fn widget_quote_line(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_quote_region(zle: &mut Zle) {
+fn widget_quote_region() {
     // Port of quoteregion(UNUSED(char **args)) from Src/Zle/zle_misc.c:1152. Wrap the
     // currently-selected region (mark..zlecs, normalised) in single
     // quotes with embedded-bslashquote escaping.
@@ -2207,7 +2226,7 @@ fn widget_quote_region(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_copy_region_as_kill(zle: &mut Zle) {
+fn widget_copy_region_as_kill() {
     // Port of copyregionaskill(char **args) from Src/Zle/zle_misc.c:494. Copies
     // mark..zlecs (normalised) onto the kill ring without removing it.
     let (lo, hi) = if crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) <= crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
@@ -2227,7 +2246,7 @@ fn widget_copy_region_as_kill(zle: &mut Zle) {
     }
 }
 
-fn widget_copy_prev_word(zle: &mut Zle) {
+fn widget_copy_prev_word() {
     // Port of copyprevword(UNUSED(char **args)) from Src/Zle/zle_misc.c:1066. Inserts the
     // previous word (per ZC_iword) at the cursor. The full C version
     // walks `zmult` words back; we replicate that by scanning backward
@@ -2262,7 +2281,7 @@ fn widget_copy_prev_word(zle: &mut Zle) {
     }
 }
 
-fn widget_transpose_words(zle: &mut Zle) {
+fn widget_transpose_words() {
     // Port of transposewords(UNUSED(char **args)) from Src/Zle/zle_word.c:652. The C source
     // is a multi-step pointer dance; this Rust port recreates the
     // common-case behavior: swap the two whitespace-separated words
@@ -2334,7 +2353,7 @@ fn widget_transpose_words(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_history_beginning_search_backward(zle: &mut Zle) {
+fn widget_history_beginning_search_backward() {
     // Port of historybeginningsearchbackward(char **args) from Src/Zle/zle_hist.c:2039.
     // Searches history for entries that start with the text *before* the
     // cursor (the prefix), keeping the cursor where it is on a match.
@@ -2366,7 +2385,7 @@ fn widget_history_beginning_search_backward(zle: &mut Zle) {
     }
 }
 
-fn widget_history_beginning_search_forward(zle: &mut Zle) {
+fn widget_history_beginning_search_forward() {
     // Port of historybeginningsearchforward() — same shape as the
     // backward variant (zle_hist.c:2039 area) but stepping forward.
     let prefix: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[..crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst).min(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len())]
@@ -2386,37 +2405,35 @@ fn widget_history_beginning_search_forward(zle: &mut Zle) {
     }
 }
 
-fn widget_beginning_of_history(zle: &mut Zle) {
+fn widget_beginning_of_history() {
     // Port of beginningofhistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:464.
-    let mut hist = std::mem::take(&mut zle.history);
-    zle.beginning_of_history(&mut hist);
-    *crate::ported::zle::zle_main::history().lock().unwrap() = hist;
+    let mut hist = crate::ported::zle::zle_main::history().lock().unwrap();
+    beginning_of_history(&mut hist);
 }
 
-fn widget_end_of_history(zle: &mut Zle) {
-    // Port of endofhistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:478.
-    let mut hist = std::mem::take(&mut zle.history);
-    zle.endofhistory(&mut hist);
-    *crate::ported::zle::zle_main::history().lock().unwrap() = hist;
+fn widget_end_of_history() {
+    // Port of endofhistory() from Src/Zle/zle_hist.c:478.
+    let mut hist = crate::ported::zle::zle_main::history().lock().unwrap();
+    endofhistory();
 }
 
-fn widget_push_line(zle: &mut Zle) {
+fn widget_push_line() {
     // Port of pushline(UNUSED(char **args)) from Src/Zle/zle_hist.c:832.
-    zle.push_line();
+    push_line();
     crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_describe_key_briefly(zle: &mut Zle) {
+fn widget_describe_key_briefly() {
     // Port of describekeybriefly(UNUSED(char **args)) from Src/Zle/zle_thingy.c. Existing
     // method on Zle handles the input read + lookup loop.
-    zle.describe_key_briefly();
+    describe_key_briefly();
 }
 
-fn widget_delete_word(zle: &mut Zle) {
+fn widget_delete_word() {
     // Port of deleteword(char **args) from Src/Zle/zle_word.c. Like kill-word but
     // doesn't put the deleted text on the kill ring.
     let saved_cs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-    let end = zle.find_word_end(WordStyle::Emacs);
+    let end = find_word_end(WordStyle::Emacs);
     if end > saved_cs {
         crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(saved_cs..end);
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
@@ -2424,11 +2441,11 @@ fn widget_delete_word(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_backward_delete_word(zle: &mut Zle) {
+fn widget_backward_delete_word() {
     // Port of backwarddeleteword(char **args) from Src/Zle/zle_word.c. Like
     // backward-kill-word but no kill-ring update.
     let end = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-    let start = zle.find_word_start(WordStyle::Emacs);
+    let start = find_word_start(WordStyle::Emacs);
     if end > start {
         crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(start..end);
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
@@ -2437,21 +2454,21 @@ fn widget_backward_delete_word(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_emacs_forward_word(zle: &mut Zle) {
+fn widget_emacs_forward_word() {
     // Port of emacsforwardword(char **args) from Src/Zle/zle_word.c — same as
     // forward-word in emacs style; explicit name binding for users who
     // want it independent of the global word style.
-    crate::ported::zle::zle_main::ZLECS.store(zle.find_word_end(WordStyle::Emacs), std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLECS.store(find_word_end(WordStyle::Emacs), std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_emacs_backward_word(zle: &mut Zle) {
+fn widget_emacs_backward_word() {
     // Port of emacsbackwardword(char **args) from Src/Zle/zle_word.c.
-    crate::ported::zle::zle_main::ZLECS.store(zle.find_word_start(WordStyle::Emacs), std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLECS.store(find_word_start(WordStyle::Emacs), std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_kill_region(zle: &mut Zle) {
+fn widget_kill_region() {
     // Port of killregion(UNUSED(char **args)) from Src/Zle/zle_misc.c. Drains the region
     // (mark..zlecs, normalised) into the kill ring and removes it.
     let (lo, hi) = if crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) <= crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
@@ -2475,7 +2492,7 @@ fn widget_kill_region(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_kill_buffer(zle: &mut Zle) {
+fn widget_kill_buffer() {
     // Port of killbuffer(UNUSED(char **args)) from Src/Zle/zle_misc.c. Cuts the entire line
     // to the kill ring.
     if crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) == 0 {
@@ -2492,30 +2509,30 @@ fn widget_kill_buffer(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_set_mark_widget(zle: &mut Zle) {
+fn widget_vi_set_mark_widget() {
     // Port of visetmark(UNUSED(char **args)) from Src/Zle/zle_move.c:872. Reads the next
     // char as the mark name and stores it in vi_marks via the existing
     // Zle::vi_set_mark method.
-    if let Some(c) = zle.getfullchar(false) {
-        zle.vi_set_mark(c);
+    if let Some(c) = getfullchar(false) {
+        vi_set_mark(c);
     }
 }
 
-fn widget_vi_goto_mark_widget(zle: &mut Zle) {
+fn widget_vi_goto_mark_widget() {
     // Port of vigotomark(UNUSED(char **args)) from Src/Zle/zle_move.c:887.
-    if let Some(c) = zle.getfullchar(false) {
-        zle.vi_goto_mark(c);
+    if let Some(c) = getfullchar(false) {
+        vi_goto_mark(c);
     }
 }
 
-fn widget_vi_goto_mark_line_widget(zle: &mut Zle) {
+fn widget_vi_goto_mark_line_widget() {
     // Port of vigotomarkline(char **args) from Src/Zle/zle_move.c. Same as
     // vi-goto-mark but lands at first non-blank of the line containing
     // the mark.
-    if let Some(c) = zle.getfullchar(false) {
-        zle.vi_goto_mark(c);
+    if let Some(c) = getfullchar(false) {
+        vi_goto_mark(c);
         // Move to first non-blank of the line we landed on.
-        let bol = zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+        let bol = findbol();
         let mut p = bol;
         while { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[p]; p < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && __c.is_whitespace() && __c != '\n' } {
             p += 1;
@@ -2525,24 +2542,24 @@ fn widget_vi_goto_mark_line_widget(zle: &mut Zle) {
     }
 }
 
-fn widget_vi_match_bracket(zle: &mut Zle) {
+fn widget_vi_match_bracket() {
     // Port of vimatchbracket(UNUSED(char **args)) from Src/Zle/zle_vi.c. Method already
     // exists on Zle via vi_match_bracket.
-    zle.vi_match_bracket();
+    vi_match_bracket();
 }
 
-fn widget_vi_caps_lock_panic(zle: &mut Zle) {
+fn widget_vi_caps_lock_panic() {
     // Port of vicapslockpanic(UNUSED(char **args)) from Src/Zle/zle_vi.c. zsh's joke
     // widget: blocks until you press a non-Caps-Lock key. Practical
     // port simply beeps once.
-    zle.handle_feep();
+    handle_feep();
 }
 
-fn widget_vi_kill_line(zle: &mut Zle) {
+fn widget_vi_kill_line() {
     // Port of vikillline(UNUSED(char **args)) from Src/Zle/zle_vi.c. Kills from cursor
     // back to start of line — different from Emacs kill-line which
     // kills forward.
-    let bol = zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    let bol = findbol();
     if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > bol {
         let killed: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(bol..crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)).collect();
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
@@ -2555,10 +2572,10 @@ fn widget_vi_kill_line(zle: &mut Zle) {
     }
 }
 
-fn widget_vi_yank_eol(zle: &mut Zle) {
+fn widget_vi_yank_eol() {
     // Port of viyankeol(UNUSED(char **args)) from Src/Zle/zle_vi.c:537. Copies from cursor
     // to end of line into the kill ring without removing.
-    let eol = zle.findeol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    let eol = findeol();
     if eol > crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
         let region: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..eol].to_vec();
         crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(region);
@@ -2568,13 +2585,13 @@ fn widget_vi_yank_eol(zle: &mut Zle) {
     }
 }
 
-fn widget_vi_beginning_of_line(zle: &mut Zle) {
+fn widget_vi_beginning_of_line() {
     // Port of vibeginningofline(UNUSED(char **args)) from Src/Zle/zle_move.c:728.
-    crate::ported::zle::zle_main::ZLECS.store(zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)), std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLECS.store(findbol(), std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_swap_case(zle: &mut Zle) {
+fn widget_vi_swap_case() {
     // Port of viswapcase(UNUSED(char **args)) from Src/Zle/zle_vi.c. Swap the case of
     // the char under the cursor and advance one position; repeat
     // `mult` times.
@@ -2599,12 +2616,12 @@ fn widget_vi_swap_case(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_oper_swap_case(zle: &mut Zle) {
+fn widget_vi_oper_swap_case() {
     // Port of vioperswapcase(UNUSED(char **args)) from Src/Zle/zle_vi.c. As an operator,
     // swaps the case of every char in a vi range. The range read is
     // delegated to `vi_get_range('~')` (the C source uses the same
     // operator-pending machinery as d/c/y).
-    if let Some((start, end, _)) = zle.vi_get_range('~') {
+    if let Some((start, end, _)) = vi_get_range('~') {
         for i in start..end.min(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)) {
             let c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[i];
             let swapped = if c.is_uppercase() {
@@ -2621,16 +2638,16 @@ fn widget_vi_oper_swap_case(zle: &mut Zle) {
     }
 }
 
-fn widget_vi_undo_change(zle: &mut Zle) {
+fn widget_vi_undo_change() {
     // Port of viundochange(char **args) from Src/Zle/zle_vi.c. zsh's vi-undo-change
     // walks back to the change boundary recorded at insert-mode entry
     // (vistartchange) — undo until cur_change drops below that. Our
     // simpler model: just call undo_widget once, matching the common
     // behavior of `u` in vi command mode.
-    let _ = zle.undo_widget();
+    let _ = undo_widget();
 }
 
-fn widget_universal_argument(zle: &mut Zle) {
+fn widget_universal_argument() {
     // Port of universalargument(char **args) from Src/Zle/zle_misc.c:986. The C
     // source greedily reads digits (and an optional leading '-') from
     // the input stream right after C-u, then applies the result as
@@ -2642,7 +2659,7 @@ fn widget_universal_argument(zle: &mut Zle) {
     let mut pref: i32 = 0;
     let mut minus: i32 = 1;
     let base = crate::ported::zle::zle_main::ZMOD.lock().unwrap().base;
-    while let Some(b) = zle.getbyte(false) {
+    while let Some(b) = getbyte(false) {
         if b == b'-' && digcnt == 0 {
             minus = -1;
             digcnt += 1;
@@ -2653,7 +2670,7 @@ fn widget_universal_argument(zle: &mut Zle) {
             pref = pref * base + new_digit;
             digcnt += 1;
         } else {
-            zle.ungetbyte(b);
+            ungetbyte(b);
             break;
         }
     }
@@ -2667,14 +2684,14 @@ fn widget_universal_argument(zle: &mut Zle) {
     crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_neg_argument(zle: &mut Zle) {
+fn widget_neg_argument() {
     // Port of negargument(UNUSED(char **args)) from Src/Zle/zle_misc.c:974. The C source
     // bails (returns 1) if MOD_TMULT is already set — neg-argument is
     // only valid as the *first* prefix, not after a digit. Otherwise
     // sets tmult = -1 and the MOD_TMULT|MOD_NEG flags so the next
     // digit-argument knows to use sign on its first digit.
     if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_TMULT != 0 {
-        zle.handle_feep();
+        handle_feep();
         return;
     }
     crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = -1;
@@ -2683,13 +2700,13 @@ fn widget_neg_argument(zle: &mut Zle) {
     crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_recursive_edit(zle: &mut Zle) {
+fn widget_recursive_edit() {
     // Port of recursiveedit(UNUSED(char **args)) from Src/Zle/zle_main.c. Method already
     // exists on Zle via recursive_edit.
-    let _ = zle.recursive_edit();
+    let _ = recursive_edit();
 }
 
-fn widget_what_cursor_position(zle: &mut Zle) {
+fn widget_what_cursor_position() {
     // Port of whatcursorposition(UNUSED(char **args)) from Src/Zle/zle_misc.c. Emits a
     // status-line message describing the cursor position. The C source
     // formats "Char: X (NNN, 0xHH, 0bBB) Point N of N (PP%) Column N".
@@ -2707,65 +2724,61 @@ fn widget_what_cursor_position(zle: &mut Zle) {
     } else {
         format!("Point {} of {} (end of buffer)", pos, len)
     };
-    zle.showmsg(&msg);
+    showmsg(&msg);
 }
 
-fn widget_set_local_history_widget(zle: &mut Zle) {
+fn widget_set_local_history_widget() {
     // Port of setlocalhistory(UNUSED(char **args)) from Src/Zle/zle_hist.c:794.
     let has_mult = crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_MULT != 0;
     let mult = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
-    let mut hist = std::mem::take(&mut zle.history);
-    zle.set_local_history(&mut hist, has_mult, mult);
-    *crate::ported::zle::zle_main::history().lock().unwrap() = hist;
+    let mut hist = crate::ported::zle::zle_main::history().lock().unwrap();
+    set_local_history(&mut hist, has_mult, mult);
 }
 
-fn widget_undefined_key(zle: &mut Zle) {
+fn widget_undefined_key() {
     // Port of undefinedkey(UNUSED(char **args)) from Src/Zle/zle_main.c. The C source just
     // beeps; we route to handle_feep.
-    zle.handle_feep();
+    handle_feep();
 }
 
-fn widget_history_search_backward(zle: &mut Zle) {
-    // Port of historysearchbackward(char **args) from Src/Zle/zle_hist.c. Method
+fn widget_history_search_backward() {
+    // Port of historysearchbackward() from Src/Zle/zle_hist.c. Method
     // exists; this is the dispatch entry.
-    let mut hist = std::mem::take(&mut zle.history);
-    zle.historysearchbackward(&mut hist);
-    *crate::ported::zle::zle_main::history().lock().unwrap() = hist;
+    let mut hist = crate::ported::zle::zle_main::history().lock().unwrap();
+    historysearchbackward();
 }
 
-fn widget_history_search_forward(zle: &mut Zle) {
-    // Port of historysearchforward(char **args) from Src/Zle/zle_hist.c.
-    let mut hist = std::mem::take(&mut zle.history);
-    zle.historysearchforward(&mut hist);
-    *crate::ported::zle::zle_main::history().lock().unwrap() = hist;
+fn widget_history_search_forward() {
+    // Port of historysearchforward() from Src/Zle/zle_hist.c.
+    let mut hist = crate::ported::zle::zle_main::history().lock().unwrap();
+    historysearchforward();
 }
 
-fn widget_insert_last_word_widget(zle: &mut Zle) {
-    // Port of insertlastword(char **args) from Src/Zle/zle_hist.c. Method exists;
+fn widget_insert_last_word_widget() {
+    // Port of insertlastword() from Src/Zle/zle_hist.c. Method exists;
     // this is the dispatch entry.
-    let hist = std::mem::take(&mut zle.history);
-    zle.insertlastword(&hist);
-    *crate::ported::zle::zle_main::history().lock().unwrap() = hist;
+    let hist = crate::ported::zle::zle_main::history().lock().unwrap();
+    insertlastword();
 }
 
-fn widget_up_line(zle: &mut Zle) {
+fn widget_up_line() {
     // Port of upline(char **args) from Src/Zle/zle_hist.c:243. Just the
     // multi-line cursor motion — no history fallback.
-    let _ = zle.upline();
+    let _ = upline();
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_down_line(zle: &mut Zle) {
+fn widget_down_line() {
     // Port of downline(char **args) from Src/Zle/zle_hist.c:332.
-    let _ = zle.downline();
+    let _ = downline();
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_up_line_or_history(zle: &mut Zle) {
+fn widget_vi_up_line_or_history() {
     // Port of viuplineorhistory(char **args) from Src/Zle/zle_hist.c:302. Same as
     // up-line-or-history but lands at the first non-blank.
-    let _ = zle.uplineorhistory();
-    let bol = zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    let _ = uplineorhistory();
+    let bol = findbol();
     let mut p = bol;
     while { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[p]; p < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && __c.is_whitespace() && __c != '\n' } {
         p += 1;
@@ -2774,10 +2787,10 @@ fn widget_vi_up_line_or_history(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_down_line_or_history(zle: &mut Zle) {
+fn widget_vi_down_line_or_history() {
     // Port of vidownlineorhistory(char **args) from Src/Zle/zle_hist.c:390.
-    let _ = zle.downlineorhistory();
-    let bol = zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    let _ = downlineorhistory();
+    let bol = findbol();
     let mut p = bol;
     while { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[p]; p < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && __c.is_whitespace() && __c != '\n' } {
         p += 1;
@@ -2786,28 +2799,28 @@ fn widget_vi_down_line_or_history(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_up_line_or_search(zle: &mut Zle) {
+fn widget_up_line_or_search() {
     // Port of uplineorsearch(char **args) from Src/Zle/zle_hist.c:312. Try cursor
     // motion first; if at top, fall through to history-search-backward.
     let ocs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-    let n = zle.upline();
+    let n = upline();
     if n != 0 {
         crate::ported::zle::zle_main::ZLECS.store(ocs, std::sync::atomic::Ordering::SeqCst);
-        widget_history_search_backward(zle);
+        widget_history_search_backward();
     }
 }
 
-fn widget_down_line_or_search(zle: &mut Zle) {
+fn widget_down_line_or_search() {
     // Port of downlineorsearch(char **args) from Src/Zle/zle_hist.c:400.
     let ocs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-    let n = zle.downline();
+    let n = downline();
     if n != 0 {
         crate::ported::zle::zle_main::ZLECS.store(ocs, std::sync::atomic::Ordering::SeqCst);
-        widget_history_search_forward(zle);
+        widget_history_search_forward();
     }
 }
 
-fn widget_beginning_of_line_hist(zle: &mut Zle) {
+fn widget_beginning_of_line_hist() {
     // Port of beginningoflinehist(char **args) from Src/Zle/zle_move.c. Same as
     // beginning-of-line at the start of the buffer; otherwise jumps to
     // the start of the current logical line.
@@ -2816,17 +2829,17 @@ fn widget_beginning_of_line_hist(zle: &mut Zle) {
         // beginning-of-line at top.
         return;
     }
-    crate::ported::zle::zle_main::ZLECS.store(zle.findbol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)), std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLECS.store(findbol(), std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_end_of_line_hist(zle: &mut Zle) {
+fn widget_end_of_line_hist() {
     // Port of endoflinehist(char **args) from Src/Zle/zle_move.c.
-    crate::ported::zle::zle_main::ZLECS.store(zle.findeol(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)), std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLECS.store(findeol(), std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_copy_prev_shell_word(zle: &mut Zle) {
+fn widget_copy_prev_shell_word() {
     // Port of copyprevshellword(UNUSED(char **args)) from Src/Zle/zle_misc.c:1108. Copies
     // the previous shell-word (quoted spans intact) at the cursor —
     // uses our shell-word boundary helper from src/zle/zle_word.
@@ -2860,7 +2873,7 @@ fn widget_copy_prev_shell_word(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_gosmacs_transpose_chars(zle: &mut Zle) {
+fn widget_gosmacs_transpose_chars() {
     // Port of gosmacstransposechars(UNUSED(char **args)) from Src/Zle/zle_misc.c. Like
     // transpose-chars but doesn't advance the cursor afterwards (the
     // C source: swaps the two chars before the cursor).
@@ -2871,21 +2884,21 @@ fn widget_gosmacs_transpose_chars(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_reset_prompt(zle: &mut Zle) {
+fn widget_reset_prompt() {
     // Port of resetprompt(UNUSED(char **args)) from Src/Zle/zle_main.c. Already a method on
     // Zle (sets resetneeded); call through.
-    zle.resetprompt();
+    resetprompt();
 }
 
-fn widget_split_undo(zle: &mut Zle) {
+fn widget_split_undo() {
     // Port of splitundo(UNUSED(char **args)) from Src/Zle/zle_utils.c. Closes any pending
     // change record so the next mkundoent starts a fresh entry. Routes
     // to setlastline() which snapshots the current line state — the
     // C source achieves the same effect by flushing nextchanges.
-    zle.setlastline();
+    setlastline();
 }
 
-fn widget_argument_base(zle: &mut Zle) {
+fn widget_argument_base() {
     // Port of argumentbase(char **args) from Src/Zle/zle_misc.c:1038. The C source
     // takes the requested base from the previous mult (no explicit
     // arg), validates it's in [2, 36], stashes it in zmod.base, and
@@ -2894,7 +2907,7 @@ fn widget_argument_base(zle: &mut Zle) {
     // = forward-word x15 in base 16.
     let multbase = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
     if !(2..=36).contains(&multbase) {
-        zle.handle_feep();
+        handle_feep();
         return;
     }
     crate::ported::zle::zle_main::ZMOD.lock().unwrap().base = multbase;
@@ -2905,7 +2918,7 @@ fn widget_argument_base(zle: &mut Zle) {
     crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_infer_next_history(zle: &mut Zle) {
+fn widget_infer_next_history() {
     // Port of infernexthistory(char **args) from Src/Zle/zle_hist.c. Looks for
     // the entry following the most recent match of the current line
     // and loads it. Useful when stepping through related commands.
@@ -2927,54 +2940,54 @@ fn widget_infer_next_history(zle: &mut Zle) {
     }
 }
 
-fn widget_accept_and_infer_next_history(zle: &mut Zle) {
+fn widget_accept_and_infer_next_history() {
     // Port of acceptandinfernexthistory(char **args) from Src/Zle/zle_hist.c.
     // Like accept-line but pre-loads the entry following the most
     // recent match for the next prompt.
-    widget_infer_next_history(zle);
+    widget_infer_next_history();
     crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_quoted_insert(zle: &mut Zle) {
+fn widget_vi_quoted_insert() {
     // Port of viquotedinsert(char **args) from Src/Zle/zle_vi.c. Same as
     // quoted-insert in our model — read the next char and self-insert
     // it literally (existing widget_quoted_insert does this).
-    widget_quoted_insert(zle);
+    widget_quoted_insert();
 }
 
-fn widget_run_help(zle: &mut Zle) {
+fn widget_run_help() {
     // Port of processcmd(UNUSED(char **args)) (run-help binding) from Src/Zle/zle_misc.c.
     // The C source spawns the run-help function on the current command
     // word; we record a hook so the host can dispatch it.
-    zle.call_hook("run-help", None);
+    call_hook("run-help", None);
 }
 
-fn widget_expand_history(zle: &mut Zle) {
+fn widget_expand_history() {
     // Port of expandhistory(UNUSED(char **args)) from Src/Zle/zle_tricky.c:2921. zsh
     // walks the line through the history-expansion machinery (`!!`,
     // `!$`, `!:0` etc.). Without that engine wired in here, surface
     // a hook for the host to satisfy.
-    zle.call_hook("expand-history", None);
+    call_hook("expand-history", None);
 }
 
-fn widget_magic_space(zle: &mut Zle) {
+fn widget_magic_space() {
     // Port of magicspace(char **args) from Src/Zle/zle_tricky.c:2882. The C source
     // expands history (via expandhistory above) then self-inserts a
     // literal space.
-    widget_expand_history(zle);
+    widget_expand_history();
     crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), ' ');
     crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_spell_word(zle: &mut Zle) {
+fn widget_spell_word() {
     // Port of spellword(UNUSED(char **args)) from Src/Zle/zle_tricky.c. Surface as a hook
     // — the C source spawns an external speller; the host binds.
-    zle.call_hook("spell-word", None);
+    call_hook("spell-word", None);
 }
 
-fn widget_get_line(zle: &mut Zle) {
+fn widget_get_line() {
     // Port of getline() from Src/Zle/zle_hist.c. Pops the most-recent
     // bufstack entry into the current line.
     if let Some(line) = crate::ported::zle::zle_main::BUFSTACK.lock().unwrap().pop() {
@@ -2990,21 +3003,21 @@ fn widget_get_line(zle: &mut Zle) {
     }
 }
 
-fn widget_push_input(zle: &mut Zle) {
+fn widget_push_input() {
     // Port of pushinput(char **args) from Src/Zle/zle_hist.c. Pushes the entire
     // input including any in-progress continuation onto bufstack and
     // clears the editor — a superset of push-line that also flushes
     // pending PS2 lines. With our single-line model it behaves like
     // push-line.
-    zle.push_line();
+    push_line();
 }
 
-fn widget_vi_set_buffer(zle: &mut Zle) {
+fn widget_vi_set_buffer() {
     // Port of visetbuffer(char **args) from Src/Zle/zle_vi.c. The C source reads
     // a vi-buffer name (`"a..z`) and stores it for the next y/d/p.
     // Without the full vibuf register dispatch wired here, consume the
     // next char and stash it on zmod for later inspection.
-    if let Some(c) = zle.getfullchar(false) {
+    if let Some(c) = getfullchar(false) {
         if c.is_ascii_lowercase() {
             crate::ported::zle::zle_main::ZMOD.lock().unwrap().vibuf = (c as i32) - ('a' as i32);
         } else if c.is_ascii_uppercase() {
@@ -3014,32 +3027,32 @@ fn widget_vi_set_buffer(zle: &mut Zle) {
     }
 }
 
-fn widget_vi_indent(zle: &mut Zle) {
+fn widget_vi_indent() {
     // Port of viindent(UNUSED(char **args)) from Src/Zle/zle_vi.c. Inserts SHWIDTH spaces
     // at the start of every logical line in the range read via
     // vi_get_range. Defaults to 4 spaces (tab width); zsh's actual
     // shiftwidth comes from the SH_WORD_SPLIT family — left as a fixed
     // 4 here until the wider option store is wired.
-    if let Some((start, end, _)) = zle.vi_get_range('>') {
-        let bol_start = zle.findbol(start);
+    if let Some((start, end, _)) = vi_get_range('>') {
+        let bol_start = findbol();
         let mut p = bol_start;
         while p < end && p <= crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
             for i in 0..4 {
                 crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(p + i, ' ');
             }
             crate::ported::zle::zle_main::ZLELL.fetch_add(4, std::sync::atomic::Ordering::SeqCst);
-            p = zle.findeol(p) + 1;
+            p = findeol() + 1;
         }
         crate::ported::zle::zle_main::ZLECS.store(bol_start, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
-fn widget_vi_unindent(zle: &mut Zle) {
+fn widget_vi_unindent() {
     // Port of viunindent(UNUSED(char **args)) from Src/Zle/zle_vi.c. Removes up to 4
     // leading spaces from every logical line in the range.
-    if let Some((start, end, _)) = zle.vi_get_range('<') {
-        let bol_start = zle.findbol(start);
+    if let Some((start, end, _)) = vi_get_range('<') {
+        let bol_start = findbol();
         let mut p = bol_start;
         while p < end && p <= crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
             for _ in 0..4 {
@@ -3052,23 +3065,23 @@ fn widget_vi_unindent(zle: &mut Zle) {
                     break;
                 }
             }
-            p = zle.findeol(p) + 1;
+            p = findeol() + 1;
         }
         crate::ported::zle::zle_main::ZLECS.store(bol_start, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
-fn widget_bracketed_paste(zle: &mut Zle) {
+fn widget_bracketed_paste() {
     // Port of bracketedpaste(char **args) from Src/Zle/zle_misc.c. The C source
     // reads bytes between the bracketed-paste open + close escapes.
     // Surface as a hook so the host (which owns the input loop) drains
     // and inserts the text — host-driven because the paste sentinel
     // detection happens at the byte stream level.
-    zle.call_hook("bracketed-paste", None);
+    call_hook("bracketed-paste", None);
 }
 
-fn widget_vi_backward_word_end(zle: &mut Zle) {
+fn widget_vi_backward_word_end() {
     // Port of vibackwardwordend(char **args) from Src/Zle/zle_word.c:348. Step
     // backward to the end (last char) of the previous word. Faithful to
     // the C loop: read class at current position, step back once, walk
@@ -3104,7 +3117,7 @@ fn widget_vi_backward_word_end(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_vi_backward_blank_word_end(zle: &mut Zle) {
+fn widget_vi_backward_blank_word_end() {
     // Port of vibackwardblankwordend(char **args) from Src/Zle/zle_word.c:375.
     // Same shape as vibackwardwordend but whitespace is the only
     // separator (no class distinction between alnum and punctuation).
@@ -3124,7 +3137,7 @@ fn widget_vi_backward_blank_word_end(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_select_in_word(zle: &mut Zle) {
+fn widget_select_in_word() {
     // Port of selectinword() from Src/Zle/textobjects.c. Sets a region
     // containing the inner word at the cursor — different from
     // Zle::find_word_start (which is a backward-motion helper); here we
@@ -3161,17 +3174,17 @@ fn widget_select_in_word(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_select_a_word(zle: &mut Zle) {
+fn widget_select_a_word() {
     // Port of selectaword() from Src/Zle/textobjects.c. "around" form —
     // includes a trailing whitespace separator if any.
-    widget_select_in_word(zle);
+    widget_select_in_word();
     while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)].is_whitespace() {
         crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_select_in_blank_word(zle: &mut Zle) {
+fn widget_select_in_blank_word() {
     // Port of selectinblankword() from Src/Zle/textobjects.c. Spans a
     // run of non-whitespace characters around the cursor.
     let n = crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst);
@@ -3193,16 +3206,16 @@ fn widget_select_in_blank_word(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_select_a_blank_word(zle: &mut Zle) {
+fn widget_select_a_blank_word() {
     // Port of selectablankword() from Src/Zle/textobjects.c.
-    widget_select_in_blank_word(zle);
+    widget_select_in_blank_word();
     while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)].is_whitespace() {
         crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_select_in_shell_word(zle: &mut Zle) {
+fn widget_select_in_shell_word() {
     // Port of selectinshellword() from Src/Zle/textobjects.c. Uses the
     // shell-word splitter that respects single/double quotes + escapes.
     let saved = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
@@ -3214,41 +3227,40 @@ fn widget_select_in_shell_word(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_select_a_shell_word(zle: &mut Zle) {
+fn widget_select_a_shell_word() {
     // Port of selectashellword() from Src/Zle/textobjects.c.
-    widget_select_in_shell_word(zle);
+    widget_select_in_shell_word();
     while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)].is_whitespace() {
         crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_accept_search(zle: &mut Zle) {
+fn widget_accept_search() {
     // Port of acceptsearch() from Src/Zle/zle_hist.c. Acceptance handler
     // inside the isearch sub-loop — outside of isearch it's a no-op,
     // which matches our design where do_isearch() handles its own loop.
-    let _ = zle;
 }
 
-fn widget_auto_suffix_remove(zle: &mut Zle) {
+fn widget_auto_suffix_remove() {
     // Port of handlesuffix() (auto-suffix-remove flag) from
     // Src/Zle/zle_misc.c. The C source clears the auto-removable
     // suffix from the kill ring's tail. Surface as a hook so the host
     // updates compsys's pending-suffix state.
-    zle.call_hook("auto-suffix-remove", None);
+    call_hook("auto-suffix-remove", None);
 }
 
-fn widget_auto_suffix_retain(zle: &mut Zle) {
+fn widget_auto_suffix_retain() {
     // Port of handlesuffix(UNUSED(char **args)) (KEEPSUFFIX) from Src/Zle/zle_misc.c.
-    zle.call_hook("auto-suffix-retain", None);
+    call_hook("auto-suffix-retain", None);
 }
 
-fn widget_put_replace_selection(zle: &mut Zle) {
+fn widget_put_replace_selection() {
     // Port of putreplaceselection(UNUSED(char **args)) from Src/Zle/zle_misc.c:680. With
     // an active region, replaces it with the most-recent kill-ring
     // entry; otherwise pastes at the cursor (same as yank).
     if crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) == 0 || crate::ported::zle::zle_main::KILLRING.lock().unwrap().is_empty() {
-        widget_yank(zle);
+        widget_yank();
         return;
     }
     let (lo, hi) = if crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) <= crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
@@ -3261,8 +3273,7 @@ fn widget_put_replace_selection(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(lo..hi);
     crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLECS.store(lo, std::sync::atomic::Ordering::SeqCst);
-    let text: Vec<char> = zle
-        .killring
+    let text: Vec<char> = crate::ported::zle::zle_main::KILLRING.lock().unwrap()
         .front()
         .cloned()
         .unwrap_or_default();
@@ -3275,85 +3286,85 @@ fn widget_put_replace_selection(zle: &mut Zle) {
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn widget_where_is(zle: &mut Zle) {
+fn widget_where_is() {
     // Port of whereis(UNUSED(char **args)) from Src/Zle/zle_thingy.c. The C source prompts
     // for a widget name and shows what keys it's bound to. Surface as
     // a hook so the host can prompt + look up in the current keymap.
-    zle.call_hook("where-is", None);
+    call_hook("where-is", None);
 }
 
-fn widget_execute_named_cmd(zle: &mut Zle) {
+fn widget_execute_named_cmd() {
     // Port of executenamedcmd() from Src/Zle/zle_thingy.c. Reads a
     // widget name and executes it. Host-driven because completion of
     // the prompt + dispatch live in host land.
-    zle.call_hook("execute-named-cmd", None);
+    call_hook("execute-named-cmd", None);
 }
 
-fn widget_execute_last_named_cmd(zle: &mut Zle) {
+fn widget_execute_last_named_cmd() {
     // Port of executelastnamedcmd() from Src/Zle/zle_thingy.c. Same
     // shape as execute-named-cmd; replays the last one.
-    zle.call_hook("execute-last-named-cmd", None);
+    call_hook("execute-last-named-cmd", None);
 }
 
-fn widget_read_command(zle: &mut Zle) {
+fn widget_read_command() {
     // Port of readcommand(UNUSED(char **args)) from Src/Zle/zle_thingy.c. Reads a widget
     // name from input and stores it for the host's executor.
-    zle.call_hook("read-command", None);
+    call_hook("read-command", None);
 }
 
-fn widget_menu_expand_or_complete(zle: &mut Zle) {
+fn widget_menu_expand_or_complete() {
     // Port of menuexpandorcomplete(char **args) from Src/Zle/zle_tricky.c. Menu
     // completion variant of expand-or-complete.
 }
 
-fn widget_reverse_menu_complete(zle: &mut Zle) {
+fn widget_reverse_menu_complete() {
     // Port of reversemenucomplete(char **args) from Src/Zle/zle_tricky.c. Steps
     // the menu backwards. Surfaced via a separate hook so the host's
     // menu state knows which direction to step.
-    zle.call_hook("reverse-menu-complete", None);
+    call_hook("reverse-menu-complete", None);
 }
 
-fn widget_accept_and_menu_complete(zle: &mut Zle) {
+fn widget_accept_and_menu_complete() {
     // Port of acceptandmenucomplete(char **args) from Src/Zle/zle_tricky.c.
-    zle.call_hook("accept-and-menu-complete", None);
+    call_hook("accept-and-menu-complete", None);
 }
 
-fn widget_list_expand(zle: &mut Zle) {
+fn widget_list_expand() {
     // Port of listexpand(UNUSED(char **args)) from Src/Zle/zle_tricky.c. Expands current
     // word and lists the candidates.
 }
 
-fn widget_expand_cmd_path(zle: &mut Zle) {
+fn widget_expand_cmd_path() {
     // Port of expandcmdpath(UNUSED(char **args)) from Src/Zle/zle_tricky.c. Expands the
     // first word into its full path via PATH lookup.
-    zle.call_hook("expand-cmd-path", None);
+    call_hook("expand-cmd-path", None);
 }
 
-fn widget_expand_or_complete_prefix(zle: &mut Zle) {
+fn widget_expand_or_complete_prefix() {
     // Port of expandorcompleteprefix(char **args) from Src/Zle/zle_tricky.c.
     // Same as expand-or-complete but only considers the prefix before
     // the cursor.
 }
 
-fn widget_end_of_list(zle: &mut Zle) {
+fn widget_end_of_list() {
     // Port of endoflist(UNUSED(char **args)) from Src/Zle/zle_tricky.c. Used inside the
     // completion menu to dismiss the listing — host-driven.
-    zle.call_hook("end-of-list", None);
+    call_hook("end-of-list", None);
 }
 
-fn widget_history_incremental_pattern_search_backward(zle: &mut Zle) {
+fn widget_history_incremental_pattern_search_backward() {
     // Port of historyincrementalpatternsearchbackward() from
     // Src/Zle/zle_hist.c:936. Pattern-mode variant of isearch — uses
     // glob-pattern matching instead of plain-substring. Until the
     // pattern engine is wired in to do_isearch, fall through to the
     // plain backward isearch.
-    do_isearch(zle, -1);
+    do_isearch(-1);
 }
 
-fn widget_history_incremental_pattern_search_forward(zle: &mut Zle) {
+fn widget_history_incremental_pattern_search_forward() {
     // Port of historyincrementalpatternsearchforward() from
     // Src/Zle/zle_hist.c:943.
-    do_isearch(zle, 1);
+    do_isearch(1);
 }
 
 /// Check if a character is a word character
@@ -3398,7 +3409,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
-        widget_delete_char_or_list(&mut zle);
+        widget_delete_char_or_list();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "ac");
     }
 
@@ -3408,7 +3419,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcdef".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);
-        widget_set_mark_command(&mut zle);
+        widget_set_mark_command();
         assert_eq!(crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst), 3);
         assert_eq!(crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
@@ -3418,7 +3429,7 @@ mod tests {
         let mut zle = Zle::new();
         crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(-1, std::sync::atomic::Ordering::SeqCst);
-        widget_set_mark_command(&mut zle);
+        widget_set_mark_command();
         assert_eq!(crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
@@ -3430,7 +3441,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(1, std::sync::atomic::Ordering::SeqCst);
-        widget_exchange_point_and_mark(&mut zle);
+        widget_exchange_point_and_mark();
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst), 4);
     }
@@ -3442,7 +3453,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(0, std::sync::atomic::Ordering::SeqCst);
-        widget_copy_region_as_kill(&mut zle);
+        widget_copy_region_as_kill();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "hello world");
         assert_eq!(
             crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().map(|v| v.iter().collect::<String>()),
@@ -3457,7 +3468,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(1, std::sync::atomic::Ordering::SeqCst);
-        widget_copy_prev_word(&mut zle);
+        widget_copy_prev_word();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "echo hello hello");
     }
 
@@ -3466,7 +3477,7 @@ mod tests {
         let mut zle = Zle::new();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "echo hi".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
-        widget_quote_line(&mut zle);
+        widget_quote_line();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "'echo hi'");
     }
 
@@ -3475,7 +3486,7 @@ mod tests {
         let mut zle = Zle::new();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "it's".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(4, std::sync::atomic::Ordering::SeqCst);
-        widget_quote_line(&mut zle);
+        widget_quote_line();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), r"'it'\''s'");
     }
 
@@ -3486,7 +3497,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(13, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(7, std::sync::atomic::Ordering::SeqCst); // "hi"
-        widget_quote_region(&mut zle);
+        widget_quote_region();
         assert_eq!(
             crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(),
             "echo 'hi' there"
@@ -3498,11 +3509,11 @@ mod tests {
         let mut zle = Zle::new();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "echo hi".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
-        widget_pound_insert(&mut zle);
+        widget_pound_insert();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "#echo hi");
         // Toggle off.
         crate::ported::zle::zle_misc::DONE.store(0, std::sync::atomic::Ordering::SeqCst);
-        widget_pound_insert(&mut zle);
+        widget_pound_insert();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "echo hi");
     }
 
@@ -3512,7 +3523,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "foo bar".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(7, std::sync::atomic::Ordering::SeqCst); // at end of line
-        widget_transpose_words(&mut zle);
+        widget_transpose_words();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "bar foo");
     }
 
@@ -3522,7 +3533,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
-        widget_capitalize_word(&mut zle);
+        widget_capitalize_word();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "Hello world");
     }
 
@@ -3533,7 +3544,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst); // on 'a'
         crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front("XY".chars().collect());
-        widget_vi_put_after(&mut zle);
+        widget_vi_put_after();
         // `p` after 'a' inserts XY at index 1 → "aXYbc". Cursor lands
         // on 'Y' (last char of pasted region) at index 2.
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "aXYbc");
@@ -3547,7 +3558,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst); // on 'b'
         crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front("XY".chars().collect());
-        widget_vi_put_before(&mut zle);
+        widget_vi_put_before();
         // `P` at cursor 1 inserts XY → "aXYbc". Cursor lands on 'Y'.
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "aXYbc");
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 2);
@@ -3561,7 +3572,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLECS.store(2, std::sync::atomic::Ordering::SeqCst); // mid-"first"
         // Linewise yank entry ends in newline.
         crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front("second\n".chars().collect());
-        widget_vi_put_after(&mut zle);
+        widget_vi_put_after();
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         // Should now be "first\nsecond\nthird".
         assert!(s.contains("first\nsecond\nthird"), "got: {:?}", s);
@@ -3573,8 +3584,8 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
-        zle.ungetbytes(b"X");
-        widget_vi_replace_chars(&mut zle);
+        ungetbytes(b"X");
+        widget_vi_replace_chars();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "Xello");
     }
 
@@ -3585,8 +3596,8 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(3, std::sync::atomic::Ordering::SeqCst);
-        zle.ungetbytes(b"X");
-        widget_vi_replace_chars(&mut zle);
+        ungetbytes(b"X");
+        widget_vi_replace_chars();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "XXXlo");
         // Cursor lands on the LAST replaced char.
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 2);
@@ -3599,7 +3610,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(1, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_join(&mut zle);
+        widget_vi_join();
         // Newline replaced with single space.
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "foo bar");
     }
@@ -3610,7 +3621,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(2, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_open_line_above(&mut zle);
+        widget_vi_open_line_above();
         // Newline inserted at start; cursor sits before it on first line.
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert!(s.starts_with('\n') || s.contains('\n'));
@@ -3622,7 +3633,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "    hello".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(9, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(8, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_first_non_blank(&mut zle);
+        widget_vi_first_non_blank();
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 4);
     }
 
@@ -3631,7 +3642,7 @@ mod tests {
         let mut zle = Zle::new();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "echo hi".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
-        widget_accept_line(&mut zle);
+        widget_accept_line();
         assert!(crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) != 0);
         // accept-line keeps the buffer intact for the caller to read.
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "echo hi");
@@ -3643,7 +3654,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(2, std::sync::atomic::Ordering::SeqCst);
-        widget_send_break(&mut zle);
+        widget_send_break();
         assert!(crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) != 0);
         assert!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().is_empty());
         assert_eq!(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -3654,9 +3665,9 @@ mod tests {
     fn overwrite_mode_widget_toggles_insmode() {
         let mut zle = Zle::new();
         let initial = (crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0);
-        widget_overwrite_mode(&mut zle);
+        widget_overwrite_mode();
         assert_eq!((crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0), !initial);
-        widget_overwrite_mode(&mut zle);
+        widget_overwrite_mode();
         assert_eq!((crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst) != 0), initial);
     }
 
@@ -3666,7 +3677,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "foo bar baz".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst); // inside "bar"
-        widget_select_in_word(&mut zle);
+        widget_select_in_word();
         assert_eq!(crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst), 1);
         // mark/cursor should bracket "bar".
         let lo = crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst).min(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
@@ -3680,7 +3691,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = r#"echo "hello world""#.chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(8, std::sync::atomic::Ordering::SeqCst); // inside the quoted string
-        widget_select_in_shell_word(&mut zle);
+        widget_select_in_shell_word();
         let lo = crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst).min(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
         let hi = crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst).max(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
         let span: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[lo..hi].iter().collect();
@@ -3696,7 +3707,7 @@ mod tests {
         crate::ported::zle::zle_main::MARK.store(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst); // selecting "bcd"
         crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
-        widget_put_replace_selection(&mut zle);
+        widget_put_replace_selection();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "aXYZef");
         assert_eq!(crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
@@ -3707,7 +3718,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "foo bar baz".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(11, std::sync::atomic::Ordering::SeqCst); // at EOB (past 'z')
-        widget_vi_backward_word_end(&mut zle);
+        widget_vi_backward_word_end();
         // vim's `ge` from past-EOL lands at the end of the LAST word —
         // position of 'z' in "baz" = index 10 (matches the C source's
         // vibackwardwordend in Src/Zle/zle_word.c:348).
@@ -3721,7 +3732,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(15, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(2, std::sync::atomic::Ordering::SeqCst);
-        widget_kill_word(&mut zle);
+        widget_kill_word();
         // 2*kill-word from start removes "foo bar" plus its trailing
         // separator into the kill ring; remaining buffer starts at " baz".
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
@@ -3737,7 +3748,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(16, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(16, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(2, std::sync::atomic::Ordering::SeqCst);
-        widget_backward_kill_word(&mut zle);
+        widget_backward_kill_word();
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "alpha ");
         let killed = crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().unwrap().iter().collect::<String>();
@@ -3751,7 +3762,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
         let kr_before = crate::ported::zle::zle_main::KILLRING.lock().unwrap().len();
-        widget_delete_word(&mut zle);
+        widget_delete_word();
         // Emacs delete-word removes the word but not the trailing separator
         // (zle_word.c convention) — leaves a leading space.
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), " world");
@@ -3765,7 +3776,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(8, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(2, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(6, std::sync::atomic::Ordering::SeqCst);
-        widget_kill_region(&mut zle);
+        widget_kill_region();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "abgh");
         assert_eq!(
             crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().map(|v| v.iter().collect::<String>()),
@@ -3778,7 +3789,7 @@ mod tests {
         let mut zle = Zle::new();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "echo hi".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
-        widget_kill_buffer(&mut zle);
+        widget_kill_buffer();
         assert!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().is_empty());
         assert_eq!(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -3794,7 +3805,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc def".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(7, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_kill_line(&mut zle);
+        widget_vi_kill_line();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "");
         assert_eq!(
             crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().map(|v| v.iter().collect::<String>()),
@@ -3808,7 +3819,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "Hello".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_swap_case(&mut zle);
+        widget_vi_swap_case();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "hello");
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
@@ -3820,7 +3831,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(3, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_swap_case(&mut zle);
+        widget_vi_swap_case();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "ABCdef");
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
@@ -3831,44 +3842,44 @@ mod tests {
         // not mult — handleprefixes promotes TMULT→MULT on the next
         // widget call. Matches initmodifier() which seeds tmult=1.
         let mut zle = Zle::new();
-        zle.initmodifier();
-        widget_universal_argument(&mut zle);
+        initmodifier();
+        widget_universal_argument();
         // No bytes available in test → digcnt=0 path → tmult *= 4.
         assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult, 4);
         assert!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_TMULT != 0);
-        widget_universal_argument(&mut zle);
+        widget_universal_argument();
         assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult, 16);
     }
 
     #[test]
     fn universal_argument_with_digits_reads_pref() {
         let mut zle = Zle::new();
-        zle.initmodifier();
+        initmodifier();
         // Pre-feed "42x" — universal-argument should pull the "42" and
         // unget the trailing 'x' for the next read.
-        zle.ungetbytes(b"42x");
-        widget_universal_argument(&mut zle);
+        ungetbytes(b"42x");
+        widget_universal_argument();
         assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult, 42);
         assert!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_TMULT != 0);
         // 'x' should still be in the unget buffer.
-        let next = zle.getbyte(false);
+        let next = getbyte(false);
         assert_eq!(next, Some(b'x'));
     }
 
     #[test]
     fn universal_argument_with_minus_reads_negative() {
         let mut zle = Zle::new();
-        zle.initmodifier();
-        zle.ungetbytes(b"-7\n");
-        widget_universal_argument(&mut zle);
+        initmodifier();
+        ungetbytes(b"-7\n");
+        widget_universal_argument();
         assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult, -7);
     }
 
     #[test]
     fn neg_argument_first_invocation_sets_tmult_minus_one() {
         let mut zle = Zle::new();
-        zle.initmodifier();
-        widget_neg_argument(&mut zle);
+        initmodifier();
+        widget_neg_argument();
         assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult, -1);
         assert!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_TMULT != 0);
         assert!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_NEG != 0);
@@ -3878,10 +3889,10 @@ mod tests {
     fn neg_argument_after_tmult_already_set_is_rejected() {
         // C: returns 1 (error/beep) if MOD_TMULT was already set.
         let mut zle = Zle::new();
-        zle.initmodifier();
+        initmodifier();
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= crate::ported::zle::zle_h::MOD_TMULT;
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult = 5;
-        widget_neg_argument(&mut zle);
+        widget_neg_argument();
         // tmult unchanged, NEG NOT set.
         assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult, 5);
         assert!(!crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_NEG != 0);
@@ -3894,13 +3905,13 @@ mod tests {
         // negative sign to the first digit (C: zle_misc.c:961-964 +
         // zle_main.c:1620 promote chain).
         let mut zle = Zle::new();
-        zle.initmodifier();
-        widget_neg_argument(&mut zle);
+        initmodifier();
+        widget_neg_argument();
         // Simulate the zlecore→handleprefixes step the live loop runs
         // between widgets.
-        zle.handleprefixes();
+        handleprefixes();
         crate::ported::zle::compcore::LASTCHAR.store((b'5' as i32) as i32, std::sync::atomic::Ordering::SeqCst);
-        widget_digit_argument(&mut zle);
+        widget_digit_argument();
         assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().tmult, -5);
         assert!(!crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_NEG != 0);
     }
@@ -3914,7 +3925,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(12, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(2, std::sync::atomic::Ordering::SeqCst); // mid-"first"
         crate::ported::zle::zle_main::MULT.store(1, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_yank_whole_line(&mut zle);
+        widget_vi_yank_whole_line();
         let killed = crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().unwrap().iter().collect::<String>();
         assert_eq!(killed, "first\n");
     }
@@ -3926,7 +3937,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(3, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_yank_whole_line(&mut zle);
+        widget_vi_yank_whole_line();
         let killed = crate::ported::zle::zle_main::KILLRING.lock().unwrap().front().unwrap().iter().collect::<String>();
         assert_eq!(killed, "a\nb\nc\n");
     }
@@ -3938,7 +3949,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(9, std::sync::atomic::Ordering::SeqCst); // mid-"world"
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 3; // 1-based → column 3 = 'r'
-        widget_vi_goto_column(&mut zle);
+        widget_vi_goto_column();
         // bol of "world" is 6 → 6 + (3-1) = 8.
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 8);
     }
@@ -3950,7 +3961,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(3, std::sync::atomic::Ordering::SeqCst); // on "cd" line
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 99;
-        widget_vi_goto_column(&mut zle);
+        widget_vi_goto_column();
         // EoL of "cd" is index 5; clamp lands there.
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 5);
     }
@@ -3961,7 +3972,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_add_eol(&mut zle);
+        widget_vi_add_eol();
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 5);
     }
 
@@ -3974,7 +3985,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst); // on 'b' of "abc"
         crate::ported::zle::zle_main::MULT.store(5, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_forward_char(&mut zle);
+        widget_vi_forward_char();
         // EoL of "abc" is 3 (the \n); limit is 2 (eol-1 = on 'c').
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
@@ -3986,7 +3997,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(3, std::sync::atomic::Ordering::SeqCst);
-        widget_forward_char(&mut zle);
+        widget_forward_char();
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
@@ -3997,7 +4008,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(-2, std::sync::atomic::Ordering::SeqCst);
-        widget_forward_char(&mut zle);
+        widget_forward_char();
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
@@ -4009,7 +4020,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(5, std::sync::atomic::Ordering::SeqCst); // ask to delete 5 but only 1 char available before cursor
-        widget_backward_delete_char(&mut zle);
+        widget_backward_delete_char();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "b");
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
@@ -4021,7 +4032,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(2, std::sync::atomic::Ordering::SeqCst);
-        widget_forward_word(&mut zle);
+        widget_forward_word();
         // After 2 word skips: a→b, b→c, lands at c's start (index 4).
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 4);
     }
@@ -4033,7 +4044,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(18, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(2, std::sync::atomic::Ordering::SeqCst);
-        widget_kill_line(&mut zle);
+        widget_kill_line();
         // 2 iterations: kill "first", then \n. Buffer: "second\nthird".
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "second\nthird");
     }
@@ -4044,7 +4055,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "first\nsecond".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(12, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(9, std::sync::atomic::Ordering::SeqCst); // mid-"second"
-        widget_beginning_of_line(&mut zle);
+        widget_beginning_of_line();
         // Should land at start of the SECOND logical line, not 0.
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 6);
     }
@@ -4055,7 +4066,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcd".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(4, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(2, std::sync::atomic::Ordering::SeqCst); // between 'b' and 'c'
-        widget_transpose_chars(&mut zle);
+        widget_transpose_chars();
         // Default count=1 swaps line[ct-1]<->line[ct] (= 'b'<->'c').
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "acbd");
         // Cursor advances past the swap.
@@ -4068,7 +4079,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "ab".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(2, std::sync::atomic::Ordering::SeqCst); // at end-of-buffer
-        widget_transpose_chars(&mut zle);
+        widget_transpose_chars();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "ba");
     }
 
@@ -4078,7 +4089,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "ab".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(2, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
-        widget_transpose_chars(&mut zle);
+        widget_transpose_chars();
         // At BoL (ct=0) with content available, advance and swap.
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "ba");
     }
@@ -4090,7 +4101,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(4, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(3, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MULT.store(-1, std::sync::atomic::Ordering::SeqCst);
-        widget_transpose_chars(&mut zle);
+        widget_transpose_chars();
         // Negative count moves cursor back, swaps prior pair.
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "acbd");
     }
@@ -4110,9 +4121,9 @@ mod tests {
     #[test]
     fn argument_base_clamps_invalid_base_via_feep() {
         let mut zle = Zle::new();
-        zle.initmodifier();
+        initmodifier();
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 1; // base 1 is invalid (< 2)
-        widget_argument_base(&mut zle);
+        widget_argument_base();
         // base unchanged at 10; no prefixflag side effect.
         assert_eq!(crate::ported::zle::zle_main::ZMOD.lock().unwrap().base, 10);
     }
@@ -4123,7 +4134,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "    foo".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(5, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_beginning_of_line(&mut zle);
+        widget_vi_beginning_of_line();
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
@@ -4133,7 +4144,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
-        widget_emacs_forward_word(&mut zle);
+        widget_emacs_forward_word();
         // find_word_end (Emacs style) skips non-word + word; "hello" ends
         // at byte 5.
         assert!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) >= 5);
@@ -4145,7 +4156,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(11, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(6, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_yank_eol(&mut zle);
+        widget_vi_yank_eol();
         // Cursor stays put; killring gets "world".
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "hello world");
         assert_eq!(
@@ -4160,7 +4171,7 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(3, std::sync::atomic::Ordering::SeqCst); // past last char
-        widget_what_cursor_position(&mut zle);
+        widget_what_cursor_position();
         // No assertion on stderr — just verifying the EOB branch doesn't
         // index out of bounds.
     }
@@ -4175,18 +4186,18 @@ mod tests {
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "git ".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(4, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
-        widget_history_beginning_search_backward(&mut zle);
+        widget_history_beginning_search_backward();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "git push");
         // Cursor stays where it was on the prefix.
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 4);
-        widget_history_beginning_search_backward(&mut zle);
+        widget_history_beginning_search_backward();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "git commit");
     }
 
     #[test]
     fn yank_records_region_for_yank_pop() {
         let mut zle = populated();
-        widget_yank(&mut zle);
+        widget_yank();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "newest");
         assert_eq!(crate::ported::zle::zle_main::YANKB.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(crate::ported::zle::zle_main::YANKE.load(std::sync::atomic::Ordering::SeqCst), 6);
@@ -4197,10 +4208,10 @@ mod tests {
     #[test]
     fn yank_pop_replaces_with_previous_kill_ring_entry() {
         let mut zle = populated();
-        widget_yank(&mut zle);
-        widget_yank_pop(&mut zle);
+        widget_yank();
+        widget_yank_pop();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "middle");
-        widget_yank_pop(&mut zle);
+        widget_yank_pop();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "oldest");
     }
 
@@ -4209,7 +4220,7 @@ mod tests {
         let mut zle = populated();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(3, std::sync::atomic::Ordering::SeqCst);
-        widget_yank_pop(&mut zle);
+        widget_yank_pop();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "abc");
     }
 
@@ -4220,12 +4231,12 @@ mod tests {
         crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front("real".chars().collect());
         crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front("first".chars().collect());
         // widget_yank picks killring[0] = "first"
-        widget_yank(&mut zle);
+        widget_yank();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "first");
-        widget_yank_pop(&mut zle);
+        widget_yank_pop();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "real");
         // Next pop wraps past the empty entry.
-        widget_yank_pop(&mut zle);
+        widget_yank_pop();
         // After wrapping the empty entry, ring length 3, start_idx 1, advances
         // to idx=2 (empty, skipped within loop), then idx=0 — but 0 == start_idx
         // would only be true if start_idx were 0. We started from idx 1 and
@@ -4246,7 +4257,7 @@ mod tests {
         crate::ported::zle::zle_main::ZLELL.store(7, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::history().lock().unwrap().cursor = 1; // live buffer
-        widget_vi_fetch_history(&mut zle);
+        widget_vi_fetch_history();
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
@@ -4260,7 +4271,7 @@ mod tests {
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= crate::ported::zle::zle_h::MOD_MULT;
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 2; // 1-based: event #2 = entry index 1
         crate::ported::zle::zle_main::MULT.store(2, std::sync::atomic::Ordering::SeqCst);
-        widget_vi_fetch_history(&mut zle);
+        widget_vi_fetch_history();
         assert_eq!(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(), "b");
         assert_eq!(crate::ported::zle::zle_main::history().lock().unwrap().cursor, 1);
     }

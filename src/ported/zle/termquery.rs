@@ -17,6 +17,35 @@ use std::sync::atomic::Ordering;
 // Rust port should write to that param when the param layer is wired.
 
 /// Default probe timeout (from termquery.c TIMEOUT)
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::extensions::widget::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_refresh::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+
 const PROBE_TIMEOUT_MS: u64 = 500;
 
 // =====================================================================
