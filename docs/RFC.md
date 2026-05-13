@@ -41,8 +41,9 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
 
 1. **Tree-walking interpretation** — Parse and traverse AST on every execution
 2. **Fork/exec model** — Spawn new processes for common operations (`cat`, `grep`, `sed`)
-3. **No persistent caching** — Re-parse identical scripts on every invocation
-4. **Fragmented tooling** — Shell + coreutils + text processors = multiple binaries
+3. **Cache layering inverted** — `.zwc` and `.zcompdump` cache the *cheap* parse phase; every exec still re-walks the wordcode array and re-scans raw word bytes for `$`/`~`/`*`/`` ` `` sigils to classify expansion. The expensive layer (`prefork`/`singsub`/`multsub`/`filesub`) is *uncached by design* — see [`ZSH_CODEBASE_AUDIT.md` § ".zwc Files: Fake Compilation"](./ZSH_CODEBASE_AUDIT.md#zwc-files-fake-compilation) and [§ "Why `.zwc` + `.zcompdump` Don't Compound"](./ZSH_CODEBASE_AUDIT.md#why-zwc--zcompdump-dont-compound) for the mechanism with C-source citations
+4. **Library code written as interpreted shell script** — compsys's *infrastructure* functions (`_arguments`, `_path_files`, `_complete`, `_dispatch`, `_describe`, `_alternative`, `_values`) are written in shell, not C — 105,050 lines total, 11,656 interpreted per Tab press. These are not end-completion data files (which would legitimately be scripts); they are an argument-parser, filesystem-walker, dispatch table, and formatter — the kind of code that should be native. Path-of-least-resistance around an unmaintainable C core — see [`ZSH_CODEBASE_AUDIT.md` § "Completion System (compsys)"](./ZSH_CODEBASE_AUDIT.md#completion-system-compsys-library-code-in-shell-scripts)
+5. **Fragmented tooling** — Shell + coreutils + text processors = multiple binaries
 
 **Global cost of shell inefficiency:**
 
