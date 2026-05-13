@@ -1586,31 +1586,276 @@ pub fn join_psfx(
     nrest: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
     sfx: i32,
 ) {
-    use crate::ported::zle::comp_h::CLF_MISS;
+    use crate::ported::zle::comp_h::{CLF_DIFF, CLF_JOIN, CLF_LINE, CLF_MISS};
 
-    let (oref, nref) = if sfx != 0 {                                         // c:2452
-        (ot.suffix.clone(), nt.suffix.clone())
+    // c:2451-2455 — pick prefix/suffix chains.
+    let mut remaining: Option<Box<crate::ported::zle::comp_h::Cline>> = if sfx != 0 {
+        ot.suffix.take()
     } else {
-        (ot.prefix.clone(), nt.prefix.clone())
+        ot.prefix.take()
     };
+    let n_chain = if sfx != 0 { nt.suffix.clone() } else { nt.prefix.clone() };
 
-    if oref.is_none() {                                                      // c:2456
+    // c:2456-2465 — `o == NULL` shortcut.
+    if remaining.is_none() {
         if let Some(out) = orest { *out = None; }                            // c:2458
-        if let Some(out) = nrest { *out = nref.clone(); }                    // c:2459
-        if let Some(ref nn) = nref {                                         // c:2461
+        if let Some(out) = nrest { *out = n_chain.clone(); }                 // c:2459
+        if let Some(ref nn) = n_chain {                                      // c:2461
             if nn.wlen != 0 {
                 ot.flags |= CLF_MISS;                                        // c:2462
             }
         }
+        if sfx != 0 { ot.suffix = remaining; } else { ot.prefix = remaining; }
         return;                                                              // c:2464
     }
 
-    // c:2470-2600 — full anchor-walk + join_strs merge. The
-    // intricate inner loop is pending the 200-line `join_strs`
-    // port. Hand back the chains unchanged so callers that only
-    // need the contract (empty-rest detection) see the right shape.
-    if let Some(out) = orest { *out = oref; }
-    if let Some(out) = nrest { *out = nref; }
+    // c:2466-2479 — `n == NULL` shortcut: drain o into orest (or free).
+    if n_chain.is_none() {
+        if let Some(out) = orest {                                           // c:2472
+            *out = remaining.take();
+        } else {
+            free_cline(remaining.take());                                    // c:2475
+        }
+        if let Some(out) = nrest { *out = None; }                            // c:2477
+        // ot.prefix/suffix already cleared by take() above.
+        return;                                                              // c:2478
+    }
+
+    // c:2480 — md.cl = n; md.len = 0.
+    let mut md = cmdata {
+        cl: n_chain.clone(),
+        pcl: None,
+        str: String::new(),
+        astr: String::new(),
+        len: 0,
+        alen: 0,
+        olen: 0,
+        line: 0,
+    };
+
+    // Build the rewritten o-chain into result_head; result_tail_ptr tracks
+    // the tail position so we can append in O(1).
+    let mut result_head: Option<Box<crate::ported::zle::comp_h::Cline>> = None;
+    let mut result_tail_ptr: *mut Option<Box<crate::ported::zle::comp_h::Cline>> =
+        &mut result_head;
+    let mut have_prev = false; // mirrors C's `p` non-null check
+
+    let ot_slen = ot.slen;
+
+    // c:2484 — `while (o)`.
+    'walk: while let Some(mut o_node) = remaining.take() {
+        // Detach the rest of the chain so we can either re-prepend
+        // (continue retry case) or splice (join_sub success).
+        remaining = o_node.next.take();
+
+        let omd = md.clone();                                                // c:2486
+        let mut len: i32;
+        let mut join = 0;
+        let mut line = 0;
+
+        // c:2489-2494 — compute longest matching prefix/suffix.
+        if (o_node.flags & CLF_LINE) != 0 {
+            let line_str = o_node.line.clone().unwrap_or_default();
+            len = sub_match(&mut md, &line_str, o_node.llen, sfx);
+            if len != o_node.llen && len >= 0 {
+                join = 1;
+                line = 1;
+            }
+        } else {
+            let word_str = o_node.word.clone().unwrap_or_default();
+            len = sub_match(&mut md, &word_str, o_node.wlen, sfx);
+            if len != o_node.wlen && len >= 0 {
+                // c:2496 — if o->line, retry as line.
+                if o_node.line.is_some() {
+                    md = omd;
+                    o_node.flags |= CLF_LINE | CLF_DIFF;                     // c:2498
+                    o_node.next = remaining.take();
+                    remaining = Some(o_node);
+                    continue 'walk;                                          // c:2500
+                }
+                // c:2502 — adjust o->llen.
+                o_node.llen -= ot_slen;
+                join = 1;
+                line = 0;
+            }
+        }
+
+        if join != 0 {
+            // c:2511 — attempt to build a unifying cline for the remainder.
+            let (sstr_owned, slen) = if line != 0 {
+                (o_node.line.clone().unwrap_or_default(), o_node.llen)
+            } else {
+                (o_node.word.clone().unwrap_or_default(), o_node.wlen)
+            };
+            let sstr_bytes = sstr_owned.as_bytes();
+            // c:2511 — `*sstr + len` is "start from byte index len" in both
+            // sfx and !sfx — the C macro `*sstr` already points at the
+            // active portion. For our string-owned representation we slice
+            // from len bytes onward.
+            let rest_start = (len as usize).min(sstr_bytes.len());
+            let rest_str = String::from_utf8_lossy(&sstr_bytes[rest_start..]).into_owned();
+            let mut jlen: i32 = 0;
+            let new_join_flag = if (o_node.flags & CLF_JOIN) != 0 { 0 } else { 1 };
+            let joinl_opt = join_sub(&mut md, &rest_str, slen - len,
+                                      &mut jlen, sfx, new_join_flag);
+            if let Some(mut joinl) = joinl_opt {
+                joinl.flags |= CLF_DIFF;                                     // c:2514
+                if len + jlen != slen {
+                    // c:2515-2522 — build rest from the unconsumed tail.
+                    let off = if sfx != 0 { 0usize } else { (len + jlen) as usize };
+                    let off = off.min(sstr_bytes.len());
+                    let take_n = ((slen - len - jlen).max(0) as usize)
+                        .min(sstr_bytes.len() - off);
+                    let rest_word_str = String::from_utf8_lossy(
+                        &sstr_bytes[off..off + take_n],
+                    ).into_owned();
+                    let mut rest = get_cline(
+                        None, 0,
+                        Some(rest_word_str),
+                        slen - len - jlen,
+                        None, 0, 0,
+                    );
+                    rest.next = remaining.take();                            // c:2521
+                    joinl.next = Some(rest);
+                } else {
+                    joinl.next = remaining.take();                           // c:2524
+                }
+
+                if len != 0 {
+                    // c:2526-2530 — keep o, trim to len, then advance to joinl.
+                    if sfx != 0 {
+                        let drop_n = ((slen - len).max(0) as usize)
+                            .min(sstr_bytes.len());
+                        let kept = String::from_utf8_lossy(&sstr_bytes[drop_n..])
+                            .into_owned();
+                        if line != 0 { o_node.line = Some(kept); }
+                        else { o_node.word = Some(kept); }
+                    } else {
+                        let keep_n = (len as usize).min(sstr_bytes.len());
+                        let kept = String::from_utf8_lossy(&sstr_bytes[..keep_n])
+                            .into_owned();
+                        if line != 0 { o_node.line = Some(kept); }
+                        else { o_node.word = Some(kept); }
+                    }
+                    if line != 0 { o_node.llen = len; } else { o_node.wlen = len; }
+                    // Append o_node to result; advance loop with joinl.
+                    unsafe {
+                        *result_tail_ptr = Some(o_node);
+                        let nxt = &mut (*result_tail_ptr).as_mut().unwrap().next;
+                        result_tail_ptr = nxt as *mut _;
+                    }
+                    have_prev = true;
+                } else {
+                    // c:2531-2540 — drop o, splice joinl into its slot.
+                    drop(o_node);
+                }
+                remaining = Some(joinl);                                     // c:2541
+                continue 'walk;
+            }
+
+            // c:2545-2590 — join_sub failed; cut here and emit rests.
+            let orest_some = orest.is_some();
+            let nrest_some = nrest.is_some();
+
+            if len != 0 {
+                if orest_some {
+                    // c:2552-2563 — build orest = rest of o starting at len.
+                    let off = (len as usize).min(sstr_bytes.len());
+                    let tail_str = String::from_utf8_lossy(&sstr_bytes[off..])
+                        .into_owned();
+                    let r = if line != 0 {
+                        get_cline(Some(tail_str), slen - len,
+                                  None, 0, None, 0, o_node.flags)
+                    } else {
+                        get_cline(None, 0,
+                                  Some(tail_str), slen - len,
+                                  None, 0, o_node.flags)
+                    };
+                    let mut r = r;
+                    r.next = remaining.take();
+                    if let Some(out) = orest { *out = Some(r); }
+                    // c:2562 — *slen = len; trim o.
+                    if line != 0 {
+                        o_node.llen = len;
+                        let keep = String::from_utf8_lossy(&sstr_bytes[..off])
+                            .into_owned();
+                        o_node.line = Some(keep);
+                    } else {
+                        o_node.wlen = len;
+                        let keep = String::from_utf8_lossy(&sstr_bytes[..off])
+                            .into_owned();
+                        o_node.word = Some(keep);
+                    }
+                    o_node.next = None;
+                    unsafe {
+                        *result_tail_ptr = Some(o_node);
+                    }
+                } else {
+                    // c:2564-2570 — strip o, drop rest.
+                    if sfx != 0 {
+                        let drop_n = ((slen - len).max(0) as usize)
+                            .min(sstr_bytes.len());
+                        let kept = String::from_utf8_lossy(&sstr_bytes[drop_n..])
+                            .into_owned();
+                        if line != 0 { o_node.line = Some(kept); }
+                        else { o_node.word = Some(kept); }
+                    } else {
+                        let keep_n = (len as usize).min(sstr_bytes.len());
+                        let kept = String::from_utf8_lossy(&sstr_bytes[..keep_n])
+                            .into_owned();
+                        if line != 0 { o_node.line = Some(kept); }
+                        else { o_node.word = Some(kept); }
+                    }
+                    if line != 0 { o_node.llen = len; } else { o_node.wlen = len; }
+                    free_cline(remaining.take());                            // c:2568
+                    o_node.next = None;
+                    unsafe {
+                        *result_tail_ptr = Some(o_node);
+                    }
+                }
+            } else {
+                // c:2571-2583 — splice out o entirely.
+                let _ = have_prev;
+                if orest_some {
+                    o_node.next = remaining.take();
+                    if let Some(out) = orest { *out = Some(o_node); }
+                } else {
+                    drop(o_node);
+                }
+                // Truncate the result chain — `p->next = NULL` or
+                // `ot->prefix = NULL`: result_head/tail already reflect
+                // the truncation since we didn't push anything new.
+            }
+
+            if !orest_some || !nrest_some {
+                ot.flags |= CLF_MISS;                                        // c:2585
+            }
+            if let Some(out) = nrest { *out = undo_cmdata(&md, sfx); }       // c:2588
+
+            // Re-attach result chain.
+            if sfx != 0 { ot.suffix = result_head; }
+            else { ot.prefix = result_head; }
+            return;                                                          // c:2590
+        }
+
+        // c:2592-2593 — `p = o; o = o->next;` advance.
+        unsafe {
+            *result_tail_ptr = Some(o_node);
+            let nxt = &mut (*result_tail_ptr).as_mut().unwrap().next;
+            result_tail_ptr = nxt as *mut _;
+        }
+        have_prev = true;
+    }
+
+    // c:2595-2600 — post-loop.
+    if md.len != 0 || md.cl.is_some() {
+        ot.flags |= CLF_MISS;                                                // c:2596
+    }
+    if let Some(out) = orest { *out = None; }                                // c:2598
+    if let Some(out) = nrest { *out = undo_cmdata(&md, sfx); }               // c:2600
+
+    if sfx != 0 { ot.suffix = result_head; }
+    else { ot.prefix = result_head; }
     let _ = &nt;
 }
 
@@ -2095,31 +2340,107 @@ fn patmatchrange(s: Option<&str>, c: u32, indp: Option<&mut u32>, _mtp: Option<&
 /// that pre-check `b == e`.
 pub fn sub_join(a: &mut crate::ported::zle::comp_h::Cline,                   // c:2649
                 b: Option<Box<crate::ported::zle::comp_h::Cline>>,
-                e: &crate::ported::zle::comp_h::Cline,
-                _anew: i32) -> i32
+                e: &mut crate::ported::zle::comp_h::Cline,
+                anew: i32) -> i32
 {
-    if e.suffix.is_some() || a.prefix.is_none() {                            // c:2651
-        return 0;                                                            // c:2705
+    use crate::ported::zle::comp_h::CLF_SUF;
+
+    // c:2651 — `if (!e->suffix && a->prefix)`.
+    if e.suffix.is_some() || a.prefix.is_none() {
+        return 0;                                                            // c:2698
     }
 
-    let mut min_total: i32 = 0;                                              // c:2654
-    let mut max_total: i32 = 0;
-    let mut cur = b;                                                         // c:2657
-    while let Some(node) = cur {                                             // c:2657 for (; b != e; b = b->next)
-        // c:2660-2666 — splice node into the working chain. The
-        // join_psfx pass below performs the actual prefix-merge;
-        // here we accumulate min/max and walk.
-        min_total += node.min;                                               // c:2665
-        max_total += node.max;
-        if std::ptr::addr_eq(node.as_ref() as *const _, e as *const _) {
+    // c:2654 — int min = 0, max = 0.
+    let mut min: i32 = 0;
+    let mut max: i32 = 0;
+
+    // c:2655-2667 — walk b..e, splicing prefix sub-chains and the b
+    // nodes themselves into a flat chain `chain`. We use a Vec since
+    // we re-index it during the walk loop below.
+    let mut chain: Vec<Box<crate::ported::zle::comp_h::Cline>> = Vec::new();
+    let mut cur = b;
+    while let Some(mut b_node) = cur {
+        cur = b_node.next.take();
+        // c:2656 — `if ((*p = t = b->prefix))` — splice prefix sub-list.
+        let mut walk_pref = b_node.prefix.take();
+        while let Some(mut p_node) = walk_pref {
+            walk_pref = p_node.next.take();
+            chain.push(p_node);
+        }
+        // c:2661-2664 — clear suffix/prefix, drop CLF_SUF, accumulate.
+        b_node.suffix = None;
+        b_node.prefix = None;
+        b_node.flags &= !CLF_SUF;
+        min += b_node.min;
+        max += b_node.max;
+        // c:2665 — `*p = b; p = &(b->next)`.
+        chain.push(b_node);
+    }
+
+    // c:2668 — `*p = e->prefix`. Splice e's prefix chain onto the tail.
+    // We move it out (e.prefix is overwritten inside the loop anyway).
+    let mut walk_e = e.prefix.take();
+    let op_index = chain.len();                                              // c:2652 op marker
+    let mut had_op = false;
+    while let Some(mut node) = walk_e {
+        walk_e = node.next.take();
+        chain.push(node);
+        had_op = true;
+    }
+
+    // c:2669 — `ca = a->prefix`.
+    let ca: Option<Box<crate::ported::zle::comp_h::Cline>> = a.prefix.clone();
+
+    // c:2671 — `while (n)`. Walk the chain index by index, calling
+    // join_psfx with a fresh deep-clone of chain[i..] in e.prefix and
+    // a fresh deep-clone of ca in a.prefix.
+    let mut i = 0usize;
+    while i < chain.len() {
+        // c:2672 — `e->prefix = cp_cline(n, 1)`. Inline a deep clone of
+        // chain[i..] as a fresh Cline chain.
+        let mut head: Option<Box<crate::ported::zle::comp_h::Cline>> = None;
+        let mut tail: *mut Option<Box<crate::ported::zle::comp_h::Cline>> = &mut head;
+        for src in &chain[i..] {
+            let mut clone = Box::new((**src).clone());
+            clone.next = None;
+            // c:201-204 — deep clone of prefix/suffix.
+            clone.prefix = cp_cline(src.prefix.as_deref(), 0);
+            clone.suffix = cp_cline(src.suffix.as_deref(), 0);
+            unsafe {
+                *tail = Some(clone);
+                let nn = (*tail).as_mut().unwrap();
+                tail = &mut nn.next;
+            }
+        }
+        e.prefix = head;
+
+        // c:2673 — `a->prefix = cp_cline(ca, 1)`.
+        a.prefix = cp_cline(ca.as_deref(), 1);
+
+        let f = e.flags;                                                     // c:2676 / c:2683
+        if anew != 0 {
+            join_psfx(e, a, None, None, 0);                                  // c:2678
+            e.flags = f;                                                     // c:2679
+            if e.prefix.is_some() {                                          // c:2680
+                return max - min;                                            // c:2681
+            }
+        } else {
+            join_psfx(a, e, None, None, 0);                                  // c:2685
+            e.flags = f;                                                     // c:2686
+            if a.prefix.is_some() {                                          // c:2687
+                return max - min;                                            // c:2688
+            }
+        }
+        // c:2690 — `min -= n->min`.
+        min -= chain[i].min;
+
+        // c:2692 — `if (n == op) break`.
+        if had_op && i == op_index {
             break;
         }
-        cur = node.next.clone();
+        i += 1;                                                              // c:2694 n = n->next
     }
-    // c:2680-2701 — iterative join_psfx walk over (a, e) — stubbed
-    // pending join_psfx port. Return the accumulated diff so callers
-    // that only need the size delta see the right value.
-    max_total - min_total                                                    // c:2702
+    max - min                                                                // c:2696
 }
 
 /// Direct port of `static int sub_match(cmdata md, char *str, int len,
