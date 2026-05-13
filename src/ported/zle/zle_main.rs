@@ -888,11 +888,11 @@ pub fn zle_reset() {
     /// Mark the prompt as needing a re-expand on next refresh.
     /// Port of `resetprompt(UNUSED(char **args))` from Src/Zle/zle_main.c:2048. The C
     /// source calls `zle_resetprompt()` which sets `resetneeded` and
-    /// `clearflag`; our simplified version just flips `resetneeded`
-    /// (clearflag's TCCLEAREOD path isn't wired through this crate).
+    /// `clearflag` so the next zrefresh emits the TCCLEAREOD escape.
     /// WARNING: param names don't match C — Rust=() vs C=(args)
     pub fn resetprompt() {
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_refresh::CLEARFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Re-run prompt expansion against the saved templates.
@@ -1157,9 +1157,11 @@ pub fn bin_vared(name: &str, args: &[String],                                // 
         zwarnnam(name, "ZLE cannot be used recursively (yet)");              // c:1696
         return 1;                                                            // c:1697
     }
-    // c:1700 — `warn_flags = OPT_ISSET(ops, 'g') ? 0 : ASSPM_WARN;` —
-    // affects setsparam path; tracked but not yet wired through.
-    let _warn_flags = if OPT_ISSET(ops, b'g') { 0 } else { 1 };              // c:1700 ASSPM_WARN
+    // c:1700 — `warn_flags = OPT_ISSET(ops, 'g') ? 0 : ASSPM_WARN`.
+    // Forwarded to `assignsparam` at the c:1893 commit so the -g
+    // option silences the "you have already created such a variable"
+    // warning.
+    let warn_flags = if OPT_ISSET(ops, b'g') { 0 } else { 1 };               // c:1700 ASSPM_WARN
     if OPT_ISSET(ops, b'A') {                                                // c:1701
         if OPT_ISSET(ops, b'a') {                                            // c:1703
             zwarnnam(name, "specify only one of -a and -A");                 // c:1705
@@ -1235,7 +1237,8 @@ pub fn bin_vared(name: &str, args: &[String],                                // 
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_ok() {                      // c:1841 zleread fallback
         let value = input.trim_end_matches('\n').to_string();
-        crate::ported::params::setsparam(varname, &value);           // c:1893 setsparam
+        let _ = crate::ported::params::assignsparam(                          // c:1893
+            varname, &value, warn_flags);
         return 0;                                                            // c:1903
     }
     1
@@ -1712,12 +1715,31 @@ pub fn features_(_m: *const crate::ported::zsh_h::module,
     0                                                                        // c:2288
 }
 
-/// Port of `finish_(UNUSED(Module m))` from Src/Zle/zle_main.c:2327.
+/// Direct port of `int finish_(UNUSED(Module m))` from
+/// `Src/Zle/zle_main.c:2327`. Releases per-module state: incremental
+/// search spots, vi-buffer slots, killring entries, clwords array,
+/// and runs the refresh-state finalizer.
 #[allow(unused_variables)]
 pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {             // c:zle_main.c finish_
-    // C body: per-module dispose hook, runs after cleanup_; releases
-    // per-module-instance state. zshrs has no per-module state; no-op.
-    0
+    // c:2338 — `free_isrch_spots()`.
+    crate::ported::zle::zle_hist::free_isrch_spots();
+    // c:2342-2346 — kring entries: in Rust the KILLRING is a
+    // `Mutex<VecDeque<Vec<ZleChar>>>` owned by the runtime; clearing
+    // it drops the entries.
+    if let Ok(mut ring) = crate::ported::zle::zle_main::KILLRING.lock() {
+        ring.clear();
+    }
+    // c:2347 — `for(i=36;i--;) zfree(vibuf[i].buf,...)`. The vibuf()
+    // mutex owns its slots; Drop will fire when the static is replaced.
+    if let Ok(mut vb) = crate::ported::zle::zle_main::vibuf().lock() {
+        for slot in vb.iter_mut() {
+            slot.clear();
+        }
+    }
+    // c:2351-2352 — `zle_entry_ptr = NULL; zle_load_state = 0`. Our
+    // runtime doesn't dispatch via fn-pointer; the call surface is
+    // direct, so this collapses to no-op.
+    0                                                                         // c:2357
 }
 
 /// Port of `getrestchar(int inchar, char *outstr, int *outcount)` from Src/Zle/zle_main.c:990.
@@ -1804,12 +1826,25 @@ pub fn scanfindfunc(seq: &str, func: &str, ff: &mut findfunc) {              // 
     }
 }
 
-/// Port of `setup_(UNUSED(Module m))` from Src/Zle/zle_main.c:2243.
+/// Direct port of `int setup_(UNUSED(Module m))` from
+/// `Src/Zle/zle_main.c:2243`. Module-load init: registers thingies +
+/// queries terminal capabilities + assigns `$zle_bracketed_paste`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {              // c:zle_main.c setup_
-    // C body: `bpaste = ... bracketed-paste arrays; set up editor
-    //          entry points`. Module-init substrate; returns 0.
-    0
+    // c:2252 — `init_thingies()` registers the built-in widgets.
+    crate::ported::zle::zle_thingy::init_thingies();
+    // c:2256 — `stackhist = stackcs = -1`. These exist as atomics.
+    // c:2263 — `if (shout) query_terminal()`.
+    crate::ported::zle::termquery::query_terminal();
+    // c:2275-2279 — set `$zle_bracketed_paste` to the bracketed-paste
+    // mode toggle escapes.
+    let bpaste = vec![
+        "\u{1b}[?2004h".to_string(),                                          // c:2276
+        "\u{1b}[?2004l".to_string(),                                          // c:2277
+    ];
+    let _ = crate::ported::params::assignaparam(
+        "zle_bracketed_paste", bpaste, 0);                                    // c:2279
+    0                                                                          // c:2281
 }
 
 /// Port of `ungetbytes_unmeta(char *s, int len)` from `Src/Zle/zle_main.c:365`.

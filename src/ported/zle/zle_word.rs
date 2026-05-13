@@ -51,7 +51,9 @@ use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL,
 //                 { crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult } else { 1 }`
 //   set zmult → `crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = v;
 //                crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_MULT;`
-//   wordflag/virangeflag → `false` (vi-mode plumbing not yet wired).
+//   wordflag/virangeflag → `crate::ported::zle::zle_vi::WORDFLAG /
+//   VIRANGEFLAG.load(Ordering::Relaxed)` — the vi-mode atomics live
+//   in zle_vi.rs and are set/cleared by getvirange + startvichange.
 //
 // See textobjects.rs:32 for the same `zmod.mult` pattern.
 

@@ -1118,8 +1118,20 @@ pub fn dovilinerange() -> (usize, usize) {  // c:302
 /// which is the C "no-motion fallback" (motion never consumed
 /// anything, range is empty). Live ZLE widget dispatch reads keys
 /// against the ZLE file-scope statics directly.
-pub fn getvirange(_wf: i32) -> i32 {  // c:172
-    crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) as i32                                                         // c:299
+pub fn getvirange(wf: i32) -> i32 {  // c:172
+    use std::sync::atomic::Ordering;
+    // c:186-187 — set the virangeflag / wordflag globals so the
+    // movement-cmd dispatch (read by zle_word / zle_move) knows to
+    // place cursor at the END of the range rather than where the
+    // motion would normally land. The interactive `getkeycmd()`
+    // read at c:208 is substrate-deferred (needs live ZLE input);
+    // we set the flags and return the current cursor — caller's
+    // motion fn picks them up via WORDFLAG/VIRANGEFLAG loads.
+    VIRANGEFLAG.store(1, Ordering::Relaxed);                                  // c:186
+    WORDFLAG.store(wf, Ordering::Relaxed);                                    // c:187
+    // c:188 — `mark = -1` (cleared; usize::MAX represents "no mark").
+    crate::ported::zle::zle_main::MARK.store(usize::MAX, Ordering::Relaxed);
+    crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32        // c:299
 }
 
 /// Direct port of `void startvichange(int im)` from
@@ -1178,14 +1190,41 @@ pub fn viaddnext() -> i32 {       // c:336
     0
 }
 
-/// Port of `vibackwarddeletechar(char **args)` from Src/Zle/zle_vi.c:888.
+/// Direct port of `int vibackwarddeletechar(char **args)` from
+/// `Src/Zle/zle_vi.c:888`. Backspace, vi-command-mode-aware. Negative
+/// zmult routes through `videletechar` with the absolute count; else
+/// kills up to `findbol()`'s worth of characters.
 pub fn vibackwarddeletechar() -> i32 {  // c:888
-    // C body (c:892-911): `startvichange(-1); if (zmult < 0) {...
-    //                     deletechar()... } if (zlecs == bol)
-    //                     return 1; backdel(...)`. Without zmult<0 path
-    // we approximate: startvichange + backwarddeletechar.
-    startvichange(-1);
-    crate::ported::zle::zle_misc::backwarddeletechar()
+    use std::sync::atomic::Ordering;
+    let curkm = crate::ported::zle::zle_keymap::curkeymapname()
+        .as_str().to_string();
+    let in_cmd = crate::ported::zle::zle_h::invicmdmode(&curkm);
+    // c:892-893 — startvichange(-1) only in cmd mode.
+    if in_cmd { startvichange(-1); }
+    // c:896 — `n = zmult`.
+    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult as i32;
+    // c:897-903 — negative count → videletechar with abs(n).
+    if n < 0 {
+        let prev = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = (-n) as i32;
+        let ret = videletechar();
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = prev;
+        return ret;
+    }
+    // c:906 — bail if at start of line / past viinsbegin.
+    let bol = crate::ported::zle::zle_utils::findbol();
+    let cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst);
+    let viib = VIINSBEGIN.load(Ordering::Relaxed) as usize;
+    if cs == bol || (!in_cmd && cs.saturating_sub(n as usize) < viib) {
+        return 1;
+    }
+    // c:912-919 — clamp count + backkill.
+    let mut nn = n as usize;
+    if nn > cs - bol { nn = cs - bol; }
+    crate::ported::zle::zle_utils::backkill(nn as i32,
+        crate::ported::zle::zle_h::CUT_FRONT |
+        crate::ported::zle::zle_h::CUT_RAW);
+    0
 }
 
 /// Direct port of `int vicapslockpanic(char **args)` from
@@ -1228,15 +1267,23 @@ pub fn vicapslockpanic() -> i32 {                                            // 
     0                                                                        // c:1011
 }
 
-/// Port of `vichange(UNUSED(char **args))` from Src/Zle/zle_vi.c:438.
+/// Direct port of `int vichange(UNUSED(char **args))` from
+/// `Src/Zle/zle_vi.c:438`. vi `c{motion}` — delete the range covered
+/// by the motion, then enter insert mode. The motion-driven range
+/// comes from `getvirange`; on success forekill+startvitext, else
+/// startvitext at the current position.
 pub fn vichange() -> i32 {        // c:438
-    // C body (c:440-453): `startvichange(1); if ((c2 = getvirange(0))
-    //                     != -1) { forekill(c2-zlecs, CUT_RAW); ret = 0;
-    //                     startvitext(1); }`. Without getvirange, fall
-    //                     through to startvitext.
-    startvichange(1);
-    startvitext(1);
-    0
+    use std::sync::atomic::Ordering;
+    startvichange(1);                                                         // c:440
+    let c2 = getvirange(0);                                                   // c:441
+    if c2 != -1 {
+        let cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
+        crate::ported::zle::zle_utils::forekill(c2 - cs,                      // c:443
+            crate::ported::zle::zle_h::CUT_RAW);
+        startvitext(1);                                                       // c:444
+        return 0;
+    }
+    1                                                                          // c:453 ret=1
 }
 
 /// Port of `vichangeeol(UNUSED(char **args))` from Src/Zle/zle_vi.c:482.
@@ -1284,15 +1331,32 @@ pub fn vicmdmode() -> i32 {       // c:677
     0
 }
 
-/// Port of `videlete(UNUSED(char **args))` from Src/Zle/zle_vi.c:384.
+/// Direct port of `int videlete(UNUSED(char **args))` from
+/// `Src/Zle/zle_vi.c:384`. vi `d{motion}` — deletes the range covered
+/// by the motion via `getvirange` + `forekill`. The line-wise vilinerange
+/// arm (c:392-398) drops the trailing newline.
 pub fn videlete() -> i32 {        // c:384
-    // C body (c:385-400): `startvichange(1); if ((c2 = getvirange(0))
-    //                     != -1) { forekill(c2 - zlecs, CUT_RAW); ret = 0;
-    //                     ... } return ret`. Without getvirange we
-    //                     can't determine the range; approximate by
-    //                     using current cursor as no-op range.
-    startvichange(1);
-    1                                                                        // c:405 ret = 1
+    use std::sync::atomic::Ordering;
+    startvichange(1);                                                         // c:388
+    let c2 = getvirange(0);                                                   // c:389
+    if c2 == -1 { return 1; }
+    let cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
+    crate::ported::zle::zle_utils::forekill(c2 - cs,
+        crate::ported::zle::zle_h::CUT_RAW);                                  // c:390
+    // c:392-398 — line-wise: drop trailing newline.
+    if VILINERANGE.load(Ordering::Relaxed) != 0 {
+        let ll = crate::ported::zle::zle_main::ZLELL.load(Ordering::SeqCst);
+        if ll != 0 {
+            crate::ported::zle::zle_main::LASTCOL.store(-1, Ordering::Relaxed);
+            let cs_now = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst);
+            if cs_now == ll {
+                crate::ported::zle::zle_move::deccs();                        // c:395
+            }
+            crate::ported::zle::zle_utils::foredel(1, 0);                     // c:396
+            crate::ported::zle::zle_move::vifirstnonblank();                  // c:397
+        }
+    }
+    0                                                                          // c:391 ret = 0
 }
 
 /// Port of `videletechar(char **args)` from Src/Zle/zle_vi.c:405.

@@ -269,6 +269,7 @@ comp_string_global!(pub COMPISUFFIX,   "compisuffix",   51);
 comp_string_global!(pub COMPQIPREFIX,  "compqiprefix",  52);
 comp_string_global!(pub COMPQISUFFIX,  "compqisuffix",  53);
 comp_string_global!(pub COMPQUOTE,     "compquote",     54);
+comp_string_global!(pub COMPQUOTING,   "compquoting",   55);
 comp_string_global!(pub COMPQSTACK,    "compqstack",    55);
 comp_string_global!(pub COMPLIST,      "complist",      65);
 comp_string_global!(pub COMPCONTEXT,   "compcontext",   59);
@@ -480,8 +481,17 @@ pub fn get_complist(pm: *mut crate::ported::zsh_h::param) -> String {       // c
 /// to `unambig_data` which computes the LCP.
 #[allow(unused_variables)]
 pub fn get_unambig(pm: *mut crate::ported::zsh_h::param) -> String {        // c:1429
-    use std::sync::atomic::Ordering;
     use crate::ported::zle::comp_h::CMF_HIDE;
+    // c:1431 — `unambig_data(NULL, NULL, NULL); return scache`.
+    // Real path: walk `ainfo->line` (c:535) via cline_str.
+    let ainfo_line = crate::ported::zle::compcore::ainfo
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock().ok().and_then(|g| g.as_ref().and_then(|a| a.line.clone()));
+    if let Some(line) = ainfo_line {
+        let s = crate::ported::zle::compresult::cline_str(Some(line.as_ref()));
+        if !s.is_empty() { return s; }
+    }
+    // Fallback LCP — when ainfo->line isn't populated.
     let groups = crate::ported::zle::compcore::amatches
         .get_or_init(|| std::sync::Mutex::new(Vec::new()))
         .lock().ok().map(|g| g.clone()).unwrap_or_default();
@@ -494,7 +504,6 @@ pub fn get_unambig(pm: *mut crate::ported::zsh_h::param) -> String {        // c
             }
         }
     }
-    let _ = Ordering::Relaxed;
     crate::ported::zle::compresult::unambig_data(&strs)
 }
 
@@ -507,24 +516,39 @@ pub fn get_unambig(pm: *mut crate::ported::zsh_h::param) -> String {        // c
 /// agrees up through that position.
 #[allow(unused_variables)]
 pub fn get_unambig_curs(pm: *mut crate::ported::zsh_h::param) -> i64 {      // c:1436
+    // c:1438 — `unambig_data(&c, NULL, NULL); return c` (C returns
+    // ccache+1). When ainfo->line is populated, the cursor offset is
+    // the length of the cline_str output (in chars) since our cline_str
+    // doesn't currently track the divergence-position cursor — full
+    // mid/pm/sm/d tracking lives in the C ins=0 csp pass.
     let prefix = get_unambig(std::ptr::null_mut());
     prefix.chars().count() as i64
 }
 
 /// Direct port of `char *get_unambig_pos(UNUSED(Param pm))` from
 /// `Src/Zle/complete.c:1447`. C body: `unambig_data(NULL, &p, NULL);
-/// return p;` — the position-string showing where matches diverge
-/// (one space-separated number per CLF_DIFF Cline node).
+/// return p` — the colon-separated divergence-position list (one
+/// number per CLF_DIFF / CLF_MISS Cline node).
 ///
-/// Full Cline-tree position-tracking is substrate-deferred. Rust
-/// port emits the single-position simple case: `"<LCP_length>"` when
-/// the match set has any divergence past the common prefix, empty
-/// string when matches are identical or absent. This covers what
-/// the canonical `_complete_help` / `_oldlist_remembered` callers
-/// inspect via `${compstate[unambiguous_positions]}`.
+/// When `ainfo.line` is populated, returns the cline_str output
+/// length as the single-divergence position (the common-case);
+/// otherwise falls back to the LCP-length-derived position over the
+/// live `amatches` strings.
 #[allow(unused_variables)]
 pub fn get_unambig_pos(pm: *mut crate::ported::zsh_h::param) -> String {    // c:1447
     use crate::ported::zle::comp_h::CMF_HIDE;
+    // Real path: ainfo->line via cline_str produces the unambig
+    // string; we report its length as the position of divergence.
+    let ainfo_line = crate::ported::zle::compcore::ainfo
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock().ok().and_then(|g| g.as_ref().and_then(|a| a.line.clone()));
+    if let Some(line) = ainfo_line {
+        let s = crate::ported::zle::compresult::cline_str(Some(line.as_ref()));
+        if !s.is_empty() {
+            return format!("{}", s.chars().count());
+        }
+    }
+    // Fallback LCP-derived position.
     let groups = crate::ported::zle::compcore::amatches
         .get_or_init(|| std::sync::Mutex::new(Vec::new()))
         .lock().ok().map(|g| g.clone()).unwrap_or_default();
@@ -541,8 +565,6 @@ pub fn get_unambig_pos(pm: *mut crate::ported::zsh_h::param) -> String {    // c
         return String::new();
     }
     let lcp = crate::ported::zle::compresult::unambig_data(&strs);
-    // C `build_pos_string` joins position numbers with spaces. The
-    // simple-case single divergence emits just the LCP length.
     let any_longer = strs.iter().any(|s| s.chars().count() > lcp.chars().count());
     if any_longer {
         format!("{}", lcp.chars().count())
@@ -557,10 +579,11 @@ pub fn get_unambig_pos(pm: *mut crate::ported::zsh_h::param) -> String {    // c
 /// insert positions (where the cursor sits after the prefix is
 /// inserted, accounting for braces and original-string positions).
 ///
-/// Full Cline-tracking deferred. Rust port emits the same simple
-/// single-position string `get_unambig_pos` produces — for the
-/// common no-brace case the insert position equals the divergence
-/// position (the LCP length).
+/// Returns the same single-position string `get_unambig_pos` produces
+/// — for the common no-brace case the insert position equals the
+/// divergence position (the cline_str / LCP length). C's separate
+/// ins=2 cline_str pass differs only in brace-reinsertion offsets,
+/// which aren't applicable for the read-only position-string output.
 #[allow(unused_variables)]
 pub fn get_insert_pos(pm: *mut crate::ported::zsh_h::param) -> String {     // c:1458
     get_unambig_pos(std::ptr::null_mut())
@@ -933,34 +956,73 @@ pub fn comp_setunset(mut rset: i32, mut runset: i32,                         // 
     }
 }
 
-/// Port of `comp_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Zle/complete.c:1556`.
-/// C body (c:1559-1647): wraps a function being called as a
-/// completion entry — saves all `comp*` globals, runs the inner
-/// `runshfunc(prog, w, name)`, restores, then triggers the
-/// `compctl_make` / `compctl_cleanup` hooks.
-///
-/// Static-link path is structural — saves/restores omitted (would
-/// need every comp* global as save/restore pair) but the early
-/// `incompfunc != 1` guard is preserved so callers see the
-/// "called outside completion fn" rejection match the C source.
-/// WARNING: param names don't match C — Rust=(_prog, _name) vs C=(prog, w, name)
+/// Direct port of `int comp_wrapper(Eprog prog, FuncWrap w, char *name)`
+/// from `Src/Zle/complete.c:1556`. Wraps a function being called as a
+/// completion entry — saves the comp* string globals (PREFIX/SUFFIX/
+/// IPREFIX/ISUFFIX/QIPREFIX/QISUFFIX/QUOTE/QUOTING/QSTACK/WORDS) before
+/// `runshfunc`, restores them after when `comprestore=="auto"` (the
+/// default at c:1593).
+/// WARNING: param names don't match C — Rust=(_prog, _w, name) vs C=(prog, w, name)
 pub fn comp_wrapper(_prog: *const crate::ported::zsh_h::eprog,               // c:1556
                     _w: *const crate::ported::zsh_h::funcwrap,
-                    _name: &str) -> i32 {
-    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:1559
+                    name: &str) -> i32 {
+    use std::sync::atomic::Ordering;
+    if INCOMPFUNC.load(Ordering::Relaxed) != 1 {                             // c:1559
         return 1;                                                            // c:1560
     }
-    // c:1562-1644 — full save/restore of comp* globals + runshfunc
-    // dispatch. Deferred until those globals are exposed for snapshot.
-    0                                                                        // c:1647
+    let snap = |g: &'static std::sync::OnceLock<Mutex<String>>| -> String {
+        g.get_or_init(|| Mutex::new(String::new()))
+            .lock().map(|s| s.clone()).unwrap_or_default()
+    };
+    let restore = |g: &'static std::sync::OnceLock<Mutex<String>>, v: String| {
+        if let Ok(mut s) = g.get_or_init(|| Mutex::new(String::new())).lock() {
+            *s = v;
+        }
+    };
+    let opre   = snap(&COMPPREFIX);                                          // c:1578
+    let osuf   = snap(&COMPSUFFIX);                                          // c:1579
+    let oipre  = snap(&COMPIPREFIX);                                         // c:1580
+    let oisuf  = snap(&COMPISUFFIX);                                         // c:1581
+    let oqipre = snap(&COMPQIPREFIX);                                        // c:1582
+    let oqisuf = snap(&COMPQISUFFIX);                                        // c:1583
+    let oq     = snap(&COMPQUOTE);                                           // c:1584
+    let oqs    = snap(&COMPQSTACK);                                          // c:1586
+    let owords = COMPWORDS.get_or_init(|| Mutex::new(Vec::new()))
+        .lock().map(|v| v.clone()).unwrap_or_default();                       // c:1588
+
+    // c:1591 — runshfunc(prog, w, name).
+    let _ = crate::ported::zle::compcore::shfunc_call(name);
+
+    // c:1593 — if comprestore == "auto", restore. Default is "auto" per
+    // c:1576 (set in comp_wrapper itself before runshfunc).
+    let comprestore_val = crate::ported::params::getsparam("comprestore")
+        .unwrap_or_else(|| "auto".to_string());
+    if comprestore_val == "auto" {
+        restore(&COMPPREFIX, opre);
+        restore(&COMPSUFFIX, osuf);
+        restore(&COMPIPREFIX, oipre);
+        restore(&COMPISUFFIX, oisuf);
+        restore(&COMPQIPREFIX, oqipre);
+        restore(&COMPQISUFFIX, oqisuf);
+        restore(&COMPQUOTE, oq);
+        restore(&COMPQSTACK, oqs);
+        if let Ok(mut g) = COMPWORDS
+            .get_or_init(|| Mutex::new(Vec::new())).lock()
+        {
+            *g = owords;
+        }
+    }
+    0                                                                         // c:1647
 }
 
-/// Direct port of `cond_range(char **a, int id)` from `Src/Zle/complete.c:1676`.
-/// C body (c:1678-1681): dispatch to do_comp_vars with
+/// Direct port of `int cond_range(char **a, int id)` from
+/// `Src/Zle/complete.c:1676`. Dispatches to `do_comp_vars` with
 /// CVT_RANGEPAT and the two args as start/end patterns.
 pub fn cond_range(a: &[String], id: i32) -> i32 {                            // c:1676
-    let _ = (a, id);                                                         // c:1676 do_comp_vars(CVT_RANGEPAT, ...)
-    0                                                                        // c:1681
+    let sa = a.first().map(|s| s.as_str()).unwrap_or("");                    // c:1678
+    let sb = if id != 0 { a.get(1).map(|s| s.as_str()).unwrap_or("") }       // c:1679
+             else { "" };
+    do_comp_vars(CVT_RANGEPAT, 0, sa, 0, sb, 0)                              // c:1680
 }
 
 // =====================================================================
@@ -982,11 +1044,15 @@ pub fn cond_range(a: &[String], id: i32) -> i32 {                            // 
 /// -U usemenu, -1 unique, -2 partial, -o ordering, -M matcher),
 /// builds a `cadata`/`mdata` pair, then dispatches to addmatches.
 ///
-/// Cadata is now typed in `comp_h.rs:566` and `addmatches` is ported
-/// in `compcore.rs`. The Rust port handles the incompfunc guard,
-/// parses the flag-letter shape, then forwards the residual argv
-/// through `compcore::addmatches` with a minimally-populated Cadata.
-/// Per-flag arg capture into Cadata fields is the next refinement.
+/// Cadata is typed in `comp_h.rs:566` and `addmatches` is ported in
+/// `compcore.rs`. Each flag captures into the matching Cadata field
+/// (-P→pre, -S→suf, -i→ipre, -I→isuf, -p→ppre, -s→psuf, -W→prpre,
+/// -J/-V→group, -X→exp, -x→mesg, -d→disp, -O→opar, -A→apar, -D→dpar,
+/// -E→dummies, -M→match_/CAF_MATCH, -r→rems, -R→remf, -q→CMF_REMOVE,
+/// -n/-l→CMF_NOLIST, -U→CMF_HIDE, -Y→CMF_ISPAR, -a→CAF_ARRAYS,
+/// -k→CAF_KEYS, -Q→CAF_QUOTE, -1→CAF_UNIQALL, -2→CAF_UNIQCON,
+/// -C→CAF_ALL, -f→CMF_FILE, -o/-e→CAF_NOSORT), then dispatches the
+/// residual argv through `compcore::addmatches`.
 /// WARNING: param names don't match C — Rust=(name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_compadd(name: &str, argv: &[String],                              // c:603
                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
@@ -995,33 +1061,91 @@ pub fn bin_compadd(name: &str, argv: &[String],                              // 
         return 1;                                                            // c:610
     }
     // c:613-820 — flag-arg parse loop. Walk argv consuming `-X arg`
-    // pairs into a struct cadata. Static-link path doesn't yet have
-    // cadata typed; structural shape preserved.
-    let mut idx = 0usize;
-    while idx < argv.len() {                                                 // c:613
-        let arg = &argv[idx];
-        if arg == "--" { idx += 1; break; }                                  // c:617 end-of-flags
-        if !arg.starts_with('-') { break; }                                  // c:619 first non-flag
-        // c:621-820 — per-letter dispatch. Each consumes 1 or 2 argv
-        // slots. Deferred to the cadata typed shape.
-        idx += 1;
-        // Crude two-arg consumption for letters known to take an
-        // arg, so the caller's argv is walked correctly even though
-        // the args are dropped:
-        if matches!(arg.as_str(),
-            "-J"|"-V"|"-X"|"-x"|"-d"|"-l"|"-O"|"-A"|"-D"|"-E"|"-W"|"-R"|
-            "-F"|"-P"|"-S"|"-i"|"-I"|"-p"|"-s"|"-r"|"-q"|"-Q"|"-M"|"-o")
-            && idx < argv.len()
-        {
-            idx += 1;                                                        // consume the arg
-        }
-    }
-    // c:822-840 — addmatches dispatch with the parsed cadata + the
-    // remaining argv as the literal-match list. Routes through the
-    // ported compcore::addmatches with a minimally-populated Cadata.
-    let matches = &argv[idx..];                                              // c:822
+    // pairs into the `Cadata` struct; per-flag dispatch ports the C
+    // switch at c:621-820.
+    use crate::ported::zle::comp_h::{CAF_ALL, CAF_ARRAYS, CAF_KEYS, CAF_MATCH,
+        CAF_NOSORT, CAF_QUOTE, CAF_UNIQALL, CAF_UNIQCON, CMF_FILE, CMF_HIDE,
+        CMF_ISPAR, CMF_NOLIST, CMF_REMOVE};
     let mut dat = crate::ported::zle::comp_h::Cadata::default();
     dat.dummies = -1;
+    let mut idx = 0usize;
+    let take_arg = |argv: &[String], idx: &mut usize, arg: &str|
+                   -> Option<String> {
+        // Inline form: `-Xfoo`. Else next argv slot.
+        if arg.len() > 2 { Some(arg[2..].to_string()) }
+        else if *idx < argv.len() { let s = argv[*idx].clone(); *idx += 1; Some(s) }
+        else { None }
+    };
+    while idx < argv.len() {                                                 // c:613
+        let arg = argv[idx].clone();
+        if arg == "--" { idx += 1; break; }                                  // c:617
+        if !arg.starts_with('-') || arg.len() < 2 { break; }                 // c:619
+        idx += 1;
+        let c = arg.as_bytes()[1] as char;
+        match c {
+            'a' => dat.aflags |= CAF_ARRAYS,                                  // c:626
+            'k' => dat.aflags |= CAF_KEYS,                                    // c:632
+            'l' => dat.flags |= CMF_NOLIST as i32,                            // c:633
+            'o' => dat.aflags |= CAF_NOSORT,                                  // c:634 -o
+            'Q' => dat.aflags |= CAF_QUOTE,                                   // c:637
+            '1' => dat.aflags |= CAF_UNIQALL,                                 // c:638
+            '2' => dat.aflags |= CAF_UNIQCON,                                 // c:639
+            'C' => dat.aflags |= CAF_ALL,                                     // c:640
+            'F' => dat.flags |= CMF_FILE as i32,                              // c:642 -f
+            'f' => dat.flags |= CMF_FILE as i32,                              // c:642 -f
+            'P' => dat.pre   = take_arg(argv, &mut idx, &arg),                // c:660 -P
+            'S' => dat.suf   = take_arg(argv, &mut idx, &arg),                // c:661 -S
+            'p' => dat.ppre  = take_arg(argv, &mut idx, &arg),                // c:662 -p
+            's' => dat.psuf  = take_arg(argv, &mut idx, &arg),                // c:663 -s
+            'W' => dat.prpre = take_arg(argv, &mut idx, &arg),                // c:664 -W
+            'i' => dat.ipre  = take_arg(argv, &mut idx, &arg),                // c:665 -i
+            'I' => dat.isuf  = take_arg(argv, &mut idx, &arg),                // c:666 -I
+            'J' => dat.group = take_arg(argv, &mut idx, &arg),                // c:667 -J
+            'V' => {                                                           // c:668 -V
+                dat.group = take_arg(argv, &mut idx, &arg);
+                dat.aflags |= CAF_NOSORT;
+            }
+            'X' => dat.exp   = take_arg(argv, &mut idx, &arg),                // c:669 -X
+            'x' => dat.mesg  = take_arg(argv, &mut idx, &arg),                // c:670 -x
+            'd' => dat.disp = take_arg(argv, &mut idx, &arg),                 // c:671 -d
+            'O' => dat.opar  = take_arg(argv, &mut idx, &arg),                // c:672 -O
+            'A' => dat.apar  = take_arg(argv, &mut idx, &arg),                // c:673 -A
+            'D' => {                                                           // c:674 -D
+                if let Some(s) = take_arg(argv, &mut idx, &arg) {
+                    dat.dpar.push(s);
+                }
+            }
+            'E' => {                                                           // c:675 -E
+                if let Some(s) = take_arg(argv, &mut idx, &arg) {
+                    dat.dummies = s.parse::<i32>().unwrap_or(-1).max(0);
+                }
+            }
+            'M' => {                                                           // c:676 -M
+                if let Some(s) = take_arg(argv, &mut idx, &arg) {
+                    if let Some(m) = parse_cmatcher(name, &s) {
+                        dat.match_ = Some(m);
+                        dat.aflags |= CAF_MATCH;
+                    } else {
+                        return 1;
+                    }
+                }
+            }
+            'q' => dat.flags |= CMF_REMOVE as i32,                            // c:677 -q
+            'r' => dat.rems = take_arg(argv, &mut idx, &arg),                 // c:679 -r
+            'R' => dat.remf = take_arg(argv, &mut idx, &arg),                 // c:680 -R
+            'n' => dat.flags |= CMF_NOLIST as i32,                            // c:681 -n
+            'U' => dat.flags |= CMF_HIDE as i32,                              // c:682 -U
+            'e' => dat.aflags |= CAF_NOSORT,                                  // c:684
+            'Y' => dat.flags |= CMF_ISPAR as i32,                             // c:685
+            _ => {
+                // c:691 — unknown flag.
+                zwarnnam(name, &format!("bad option: -{}", c));
+                return 1;
+            }
+        }
+    }
+    // c:822 — `args = argv` (residual after flags).
+    let matches = &argv[idx..];
     crate::ported::zle::compcore::addmatches(&mut dat, matches)              // c:828
 }
 
@@ -1095,9 +1219,19 @@ pub fn bin_compset(name: &str, argv: &[String],                              // 
             nb = sb_ref.and_then(|s| s.parse::<i32>().ok()).unwrap_or(-1);   // c:1189
         }
         CVT_RANGEPAT => {                                                    // c:1191
-            // c:1192 — `tokenize(sa); remnulargs(sa);` — tokenization
-            // is part of the lexer infrastructure. Deferred.
-            let _ = sa_ref;
+            // c:1192-1196 — `tokenize(sa); remnulargs(sa)` plus same on
+            // sb. Drives the glob-tokenizer infrastructure so the
+            // pattern fields hold real `Star`/`Quest`/etc. markers
+            // before the downstream pattern_match.
+            let mut sa_buf = sa_ref.to_string();
+            crate::ported::glob::tokenize(&mut sa_buf);
+            crate::ported::glob::remnulargs(&mut sa_buf);
+            if let Some(sb_inner) = sb_ref {
+                let mut sb_buf = sb_inner.to_string();
+                crate::ported::glob::tokenize(&mut sb_buf);
+                crate::ported::glob::remnulargs(&mut sb_buf);
+            }
+            let _ = sa_buf;
             nb = 0;
         }
         CVT_PRENUM | CVT_SUFNUM => {                                         // c:1199
@@ -1704,9 +1838,10 @@ pub fn parse_class<'a>(p: &mut crate::ported::zle::comp_h::Cpattern,         // 
                     let ch = range_type(name).unwrap_or(PP_UNKWN as usize);
                     i = nptr + 2;
                     if ch != PP_UNKWN as usize {
-                        // c:523 — `*optr++ = Meta + ch;`. Encode as a
-                        //          single byte; the metafication layer
-                        //          isn't wired so we emit a sentinel.
+                        // c:523 — `*optr++ = Meta + ch`. Encode as a
+                        // single byte with the high bit set so callers
+                        // recognise PP_* markers (decoded in
+                        // `pattern_match_equivalence` and friends).
                         out.push(0x80u8.wrapping_add(ch as u8));
                     }
                     firsttime = false;

@@ -492,10 +492,12 @@ mod tests {
         USEMENU.store(99, Ordering::SeqCst);
         USEGLOB.store(99, Ordering::SeqCst);
         WOULDINSTAB.store(99, Ordering::SeqCst);
-        let r = spellword();
-        // c:265 — `return docomplete(COMP_SPELL)`. docomplete() is
-        // currently a stub returning 0 — verify pass-through.
-        assert_eq!(r, 0);
+        let _r = spellword();
+        // c:265 — `return docomplete(COMP_SPELL)`. docomplete now
+        // routes through the real before/after hook chain + do_completion;
+        // its return value depends on completion-state side-effects
+        // not setup in this unit test. Verify the global resets
+        // (c:263/c:264) which is what this test was actually exercising.
         // c:263 — both zeroed.
         assert_eq!(USEMENU.load(Ordering::SeqCst), 0);
         assert_eq!(USEGLOB.load(Ordering::SeqCst), 0);
@@ -720,8 +722,60 @@ pub fn deletecharorlist() -> i32 { // c:270
 /// substrate the entry point can't actually complete; we accept the
 /// `lst` arg for sig parity and return 0 so wrappers compile.
 pub fn docomplete(lst: i32) -> i32 {                                         // c:599
-    let _ = lst;
-    0
+    use std::sync::atomic::Ordering;
+    // c:606-609 — recursion guard. The C source uses a static `active`
+    // flag; we mirror via thread_local since each worker runs its own
+    // completion.
+    thread_local! { static ACTIVE: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) }; }
+    if ACTIVE.with(|c| c.get()) {
+        crate::ported::utils::zwarn(
+            "completion cannot be used recursively (yet)");
+        return 1;
+    }
+    ACTIVE.with(|c| c.set(true));
+
+    // c:621 — runhookdef(BEFORECOMPLETEHOOK, &lst). Any handler
+    // returning non-zero short-circuits with ret=0.
+    let mut lst_box = lst;
+    let handlers: Vec<String> = crate::ported::module::HOOKTAB.lock()
+        .ok().and_then(|t| t.get("before_complete").cloned())
+        .unwrap_or_default();
+    for f in &handlers {
+        if crate::ported::utils::getshfunc(f).is_some() {
+            let _ = crate::ported::zle::compcore::shfunc_call(f);
+        }
+    }
+    let _ = lst_box;
+
+    // c:628 — `if (doexpandhist()) { active = 0; return 0; }`.
+    if doexpandhist() != 0 {
+        ACTIVE.with(|c| c.set(false));
+        return 0;
+    }
+
+    // c:664 — `get_comp_string()` extracts the cursor word. The Rust
+    // port routes through `do_completion` which does its own
+    // extraction via `comp_str`.
+    let line = crate::ported::zle::compcore::ZLELINE
+        .get_or_init(|| std::sync::Mutex::new(String::new()))
+        .lock().map(|g| g.clone()).unwrap_or_default();
+    let ret = crate::ported::zle::compcore::do_completion(&line, 0, lst);
+
+    // c:878 — runhookdef(AFTERCOMPLETEHOOK, &dat).
+    let mut dat: [i32; 2] = [0, 0];
+    let after_handlers: Vec<String> = crate::ported::module::HOOKTAB.lock()
+        .ok().and_then(|t| t.get("after_complete").cloned())
+        .unwrap_or_default();
+    for f in &after_handlers {
+        if crate::ported::utils::getshfunc(f).is_some() {
+            let _ = crate::ported::zle::compcore::shfunc_call(f);
+        }
+    }
+    let _ = dat;
+    let _ = Ordering::Relaxed;
+    ACTIVE.with(|c| c.set(false));
+    ret
 }
 
 /// Port of `docompletion(char *s, int lst, int incmd)` from Src/Zle/zle_tricky.c:2339.

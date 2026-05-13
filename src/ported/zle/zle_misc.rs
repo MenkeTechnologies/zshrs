@@ -1100,23 +1100,93 @@ pub fn digitargument() -> i32 {                                 // c:950
 /// }
 /// ```
 /// Insert `zstr` `|zmod.mult|` times at the cursor. Negative count
-/// inserts AFTER the cursor (cursor stays put). Simplified port —
-/// the full body has INSMODE/overwrite handling and suffix
-/// machinery that needs the suffixlist substrate.
+/// inserts AFTER the cursor (cursor stays put). Honors INSMODE
+/// (overwrite mode) by replacing existing chars instead of inserting
+/// when INSMODE==0 and the cursor isn't on a newline. Fires
+/// `iremovesuffix` + `invalidatelist` at entry per C c:47-48.
 /// WARNING: param names don't match C — Rust=(zle, zstr) vs C=(zstr, len)
 pub fn doinsert(zstr: &[char]) {                              // c:37
+    use std::sync::atomic::Ordering;
+    // c:47 — `iremovesuffix(c1, 0)`. Strip pending menu-suffix first.
+    if let Some(&c1) = zstr.first() {
+        iremovesuffix(c1 as i32, 0);
+    }
+    // c:48 — `invalidatelist()`.
+    crate::ported::zle::zle_h::invalidatelist();
+
     let m = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult.unsigned_abs() as usize;
     let neg = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult < 0;
-    for _ in 0..m {
-        for (i, &c) in zstr.iter().enumerate() {
-            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i, c);
+    let zmult_val = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
+    let len = zstr.len();
+    let total = m * len;
+    let cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst);
+    let insmode = crate::ported::zle::zle_main::INSMODE.load(Ordering::SeqCst);
+    let at_newline = crate::ported::zle::zle_main::ZLELINE
+        .lock().unwrap().get(cs).copied() == Some('\n');
+
+    // c:51-101 — overwrite-mode branch: replace existing chars up to
+    // the count or next newline; insert any remaining slack.
+    let overwrite = insmode == 0 && !at_newline;
+    if overwrite {
+        // c:82-83 — find end pos: cs + count or first newline.
+        let mut pos = cs;
+        let mut i = total;
+        let ll = crate::ported::zle::zle_main::ZLELL.load(Ordering::SeqCst);
+        while pos < ll && i > 0 {
+            let ch = crate::ported::zle::zle_main::ZLELINE
+                .lock().unwrap().get(pos).copied();
+            if ch == Some('\n') { break; }
+            pos += 1;
+            i -= 1;
         }
-        if !neg {
-            crate::ported::zle::zle_main::ZLECS.fetch_add(zstr.len(), std::sync::atomic::Ordering::SeqCst);
+        // c:90-100 — diff between replaced span and inserted span.
+        let span = pos - cs;
+        if total < span {
+            // Need to shrink: remove the excess.
+            let extra = span - total;
+            for _ in 0..extra {
+                crate::ported::zle::zle_main::ZLELINE
+                    .lock().unwrap().remove(cs + total);
+                crate::ported::zle::zle_main::ZLELL
+                    .fetch_sub(1, Ordering::SeqCst);
+            }
         }
-        crate::ported::zle::zle_main::ZLELL.fetch_add(zstr.len(), std::sync::atomic::Ordering::SeqCst);
+        // c:102-104 — overwrite: store each char.
+        for k in 0..total {
+            let c = zstr[k % len];
+            if cs + k < ll {
+                if let Some(slot) = crate::ported::zle::zle_main::ZLELINE
+                    .lock().unwrap().get_mut(cs + k)
+                {
+                    *slot = c;
+                }
+            } else {
+                crate::ported::zle::zle_main::ZLELINE
+                    .lock().unwrap().push(c);
+                crate::ported::zle::zle_main::ZLELL
+                    .fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    } else {
+        // c:52 — `spaceinline(m * len)`: pure insert.
+        for _ in 0..m {
+            for (i, &c) in zstr.iter().enumerate() {
+                crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(
+                    cs + i, c);
+            }
+            crate::ported::zle::zle_main::ZLELL.fetch_add(len, Ordering::SeqCst);
+        }
     }
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    // c:102-106 — cursor: advance unless neg.
+    if !neg {
+        crate::ported::zle::zle_main::ZLECS.fetch_add(total, Ordering::SeqCst);
+    } else {
+        // c:106 — `zlecs += zmult * len` (negative).
+        let offset = (zmult_val * len as i32) as i64;
+        let new_cs = (cs as i64 + offset).max(0) as usize;
+        crate::ported::zle::zle_main::ZLECS.store(new_cs, Ordering::SeqCst);
+    }
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
 /// Port of `NAMLEN` from `Src/Zle/zle_misc.c:1249`. Maximum length

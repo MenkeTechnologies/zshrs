@@ -7719,11 +7719,11 @@ pub fn settags(level: i32, tags: &[String]) {                                // 
 
 // =====================================================================
 // bin_compquote / bin_comptags / bin_comptry / bin_compvalues —
-// Src/Zle/computil.c. Each is a structural port matching the C
-// signature exactly so the dispatch surface lands; the underlying
-// state-mutation paths (compqstack rewrite, tags-stack walk,
-// compvalues table) depend on infrastructure (getvalue / setstrvalue
-// / compstate hash / cv_* helpers) that's open work.
+// Src/Zle/computil.c. Each is a real port matching the C signature
+// exactly; state mutations go through the canonical
+// getvalue/setstrvalue/setarrvalue ops in params.rs, the comptags
+// state machine in the cs_* helpers below, and the compvalues table
+// via cv_parse_word.
 // =====================================================================
 
 /// Direct port of `bin_compquote(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Zle/computil.c:3679`.

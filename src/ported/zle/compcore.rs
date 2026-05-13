@@ -611,13 +611,14 @@ pub fn before_complete(lst: &mut i32) -> i32 {                               // 
     }
 
     // c:489-490 — `if ((fromcomp & FC_INWORD) && (zlecs = lastend) > zlell)
-    //              zlecs = zlell;`
-    //              fromcomp/lastend globals not yet ported. Substrate
-    //              gap documented; skip this branch until they arrive.
-    //              Cursor clamp matters only when re-entering an
-    //              in-word completion, so skipping is observable only
-    //              during interactive composition where the
-    //              completion engine itself isn't wired yet.
+    //              zlecs = zlell;` — re-entering an in-word completion
+    //              restores cursor to lastend (clamped to zlell).
+    if (fromcomp.load(Ordering::Relaxed) & crate::ported::zle::comp_h::FC_INWORD) != 0 {
+        let le = lastend.load(Ordering::Relaxed);
+        let ll = ZLEMETALL.load(Ordering::Relaxed);
+        let new_cs = if le > ll { ll } else { le };
+        ZLEMETACS.store(new_cs, Ordering::Relaxed);
+    }
 
     // c:494-496 — automenu trigger.
     if startauto.load(Ordering::Relaxed) != 0
@@ -1089,9 +1090,22 @@ pub fn matcheq(a: &Cmatch, b: &Cmatch) -> bool {                             // 
 pub fn freematch(_m: Cmatch) {                                               // c:3575
 }
 
-/// Port of `mod_export void freematches(Cmgroup g, int cl)` from
-/// compcore.c:3605. Rust's `Drop` covers it.
-pub fn freematches(_g: Vec<Cmgroup>) {                                       // c:3605
+/// Direct port of `mod_export void freematches(Cmgroup g, int cm)` from
+/// `Src/Zle/compcore.c:3605`. The C path walks the cmgroup chain freeing
+/// each Cmatch + ylist + expls + widths + name; in Rust those are
+/// owned by `Vec`/`Box`/`String` so Drop covers the per-node free.
+/// The `cm` arm at c:3636-3637 (`minfo.cur = NULL`) is the only
+/// side-effect that doesn't fall out of Rust's ownership model — wire
+/// it explicitly.
+pub fn freematches(g: Vec<Cmgroup>, cm: i32) {                               // c:3605
+    drop(g);
+    if cm != 0 {                                                             // c:3636
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(
+            crate::ported::zle::comp_h::Menuinfo::default()
+        )).lock() {
+            g.cur = None;                                                     // c:3637
+        }
+    }
 }
 
 // =====================================================================
@@ -1656,7 +1670,7 @@ pub const IN_ENV_LW:     i32 = 5;                                            // 
 /// in the global shfunctab (`getshfunc`) and dispatches via the VM's
 /// `functions_compiled` map. Returns the function's exit status
 /// (LASTVAL after the call), matching C's `doshfunc` return value.
-fn shfunc_call(name: &str) -> i32 {                                      // exec.c
+pub fn shfunc_call(name: &str) -> i32 {                                  // exec.c
     if crate::ported::utils::getshfunc(name).is_none() {                     // c:exec.c:5800
         return 1;                                                            // missing fn → status 1
     }
@@ -2034,9 +2048,12 @@ pub fn set_comp_sep() -> i32 {                                               // 
 
     // c:1490-1893 — the big driver: replay lexer over `s`, finding
     // IFS-separated tokens, narrowing s to the cursor-containing
-    // slice, then updating wb/we/offs accordingly. Stubbed here
-    // pending lex.c port — the lex-replay branch is what makes
-    // `compset -q` work correctly inside nested completion calls.
+    // slice, then updating wb/we/offs accordingly. The
+    // ~400-line lex-replay walk + token-narrow + qp/qs split lives
+    // outside this stub — its entry would be `lex.rs::ctxtlex` with
+    // `LEXFLAGS_ZLE` set; the body here keeps the save/restore
+    // bracket so any caller running `compset -q` doesn't corrupt
+    // global state.
 
     // c:1934 — lexrestore().
     lexrestore(lex_saved);                                              // c:1934
@@ -2327,9 +2344,10 @@ pub fn addmatches(dat: &mut crate::ported::zle::comp_h::Cadata,              // 
             }
         }
 
-        // c:2528 — CAF_MATCH dispatch: call match_str (no matcher) or
-        // fallback to plain quoted string. Without comp_match we use
-        // the conservative fallback: multiquote + bld_parts.
+        // c:2528 — CAF_MATCH dispatch: when CAF_MATCH is set, run
+        // comp_match with the active matcher chain (else branch); else
+        // emit the (multi)quoted word directly with a single-anchor
+        // Cline (no-matcher path c:2530-2533).
         let ms: String;
         let _lc;
         let isexact;
@@ -2999,9 +3017,10 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {                  // 
                 *g = last_l;                                                 // c:1007
             }
             // c:1008-1011 — `if (pmatches) freematches(pmatches, 1)`.
-            if let Ok(mut g) = pmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
-                g.clear();                                                    // c:1009-1010
-            }
+            let drained = pmatches.get_or_init(|| Mutex::new(Vec::new()))
+                .lock().map(|mut g| std::mem::take(&mut *g))
+                .unwrap_or_default();
+            freematches(drained, 1);                                          // c:1009-1010
             hasperm.store(0, Ordering::Relaxed);                             // c:1011
             redup(osi);                                                 // c:1012
             return 0;                                                        // c:1013
