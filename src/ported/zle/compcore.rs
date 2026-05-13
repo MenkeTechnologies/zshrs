@@ -2362,16 +2362,16 @@ pub fn addmatches(dat: &mut crate::ported::zle::comp_h::Cadata,              // 
                 0,
                 &ms,
                 word,
-                None,                                                         // line — Cline placeholder
+                _lc.clone(),                                                  // line — real Cline from comp_match
                 dat.ipre.as_deref().unwrap_or(""),
                 "",                                                           // ripre
                 dat.isuf.as_deref().unwrap_or(""),
                 dat.pre.as_deref().unwrap_or(""),
                 dat.prpre.as_deref().unwrap_or(""),
                 dat.ppre.as_deref().unwrap_or(""),
-                None,                                                         // pline
+                None,                                                         // pline (path-prefix Cline; unused on this path)
                 dat.psuf.as_deref().unwrap_or(""),
-                None,                                                         // sline
+                None,                                                         // sline (path-suffix Cline; unused on this path)
                 dat.suf.as_deref().unwrap_or(""),
                 dat.flags,
                 isexact,
@@ -2453,42 +2453,48 @@ fn autoq_set(s: &str) {                                                       //
 ///    char *suf, int flags, int exact)` from compcore.c:2643.
 ///
 /// Builds one `Cmatch` from the supplied prefix/suffix bits plus the
-/// surrounding Cline chain. Body shell ports the prologue (locals
-/// init, cline_matched chain at c:2666-2671, salen/palen accounting
-/// at c:2675-2697) with the inner Cline-splice machinery (c:2700-3060)
-/// stubbed pending the Cline operations port.
+/// surrounding Cline chain. Now takes real `Option<Box<Cline>>` for
+/// line/pline/sline, threading them through `cline_matched` so the
+/// CLF_MATCHED state-machine update fires correctly. Inner Cline-
+/// splice machinery (c:2700-3060) is still partial pending fuller
+/// Cline ops port; the salen/palen accounting now uses real Cline
+/// presence checks.
 #[allow(clippy::too_many_arguments)]
 pub fn add_match_data(                                                       // c:2643
     alt:   i32,
     str:  &str,
     orig:  &str,
-    _line: Option<&str>,                                                     // Cline placeholder
+    mut line: Option<Box<crate::ported::zle::comp_h::Cline>>,
     ipre_: &str,
     ripre_: &str,
     isuf_: &str,
     pre:   &str,
     prpre: &str,
     ppre:  &str,
-    _pline: Option<&str>,                                                    // Cline placeholder
+    mut pline: Option<Box<crate::ported::zle::comp_h::Cline>>,
     psuf:  &str,
-    _sline: Option<&str>,                                                    // Cline placeholder
+    mut sline: Option<Box<crate::ported::zle::comp_h::Cline>>,
     suf:   &str,
     flags: i32,
     exact: i32,
 ) -> Cmatch {
     // c:2657 — pick the active aminfo by `alt` (alternative path = fignore).
     let _ai_ref = if alt != 0 { &fainfo } else { &ainfo };                   // c:2657
-    // c:2666-2671 — cline_matched(line); pline; sline (Cline ops stubbed).
-    cline_matched_compcore(_line);
-    if _pline.is_some() { cline_matched_compcore(_pline); }
-    if _sline.is_some() { cline_matched_compcore(_sline); }
+    // c:2666-2671 — cline_matched(line); pline; sline.
+    crate::ported::zle::compmatch::cline_matched(&mut line);
+    if pline.is_some() {
+        crate::ported::zle::compmatch::cline_matched(&mut pline);
+    }
+    if sline.is_some() {
+        crate::ported::zle::compmatch::cline_matched(&mut sline);
+    }
 
     // c:2675-2697 — accumulator lengths.
     let psl = psuf.len();
     let isl = isuf_.len();
     let qisuf_v = qisuf_get();                                              // c:2680
     let qisl = qisuf_v.len();
-    let _salen = (if _sline.is_none() { psl } else { 0 }) + isl + qisl;       // c:2675-2683
+    let _salen = (if sline.is_none() { psl } else { 0 }) + isl + qisl;       // c:2675-2683
 
     let ipl = ipre_.len();
     let _ppl = ppre.len();
