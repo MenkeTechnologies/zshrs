@@ -3128,6 +3128,107 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 }
                 sr += added;
             }
+            INOUTPAR => {
+                // c:2051-2168 — `name() { body }` funcdef detection.
+                // C rewrites the SIMPLE placeholder at `p` into a
+                // FUNCDEF header structure with multiple words:
+                //   p:        WCB_FUNCDEF(total_offset)
+                //   p+1:      argc (name count)
+                //   p+2..N:   the names already ecstr'd above
+                //   N+1:      0 (placeholder)
+                //   N+2:      0 (placeholder)
+                //   N+3:      0 (placeholder)
+                //   N+4:      0 (placeholder)
+                //   N+5:      WCB_END()
+                //   ...body wordcode...
+                //   ecbuf[p+argc+2] = so - oecssub; (string area)
+                //   ecbuf[p+argc+3] = ecsoffs - so;
+                //   ecbuf[p+argc+4] = ecnpats;
+                //   ecbuf[p+argc+5] = 0;
+                //
+                // This Rust port handles the common `name() { … }`
+                // case (single name + brace body); anonymous funcdef
+                // and short-body forms are stubbed for now.
+                if !isset(MULTIFUNCDEF) && argc > 1 {
+                    error("par_simple: too many function names for funcdef");
+                    return 0;
+                }
+                if assignments || postassigns > 0 {
+                    error("par_simple: assignments before funcdef");
+                    return 0;
+                }
+                cmplx_set(true);
+                set_incmdpos(true);
+                cmdpush(CS_FUNCDEF as u8);
+                zshlex();
+                while tok() == SEPER {
+                    zshlex();
+                }
+                // c:2079 — `ecispace(p + 1, 1); ecbuf[p+1] = argc;
+                // ecadd(0)*4`. Insert the argc word at p+1, then
+                // append 4 placeholder words.
+                ecispace(p + 1, 1);
+                ECBUF.with_borrow_mut(|b| {
+                    if p + 1 < b.len() {
+                        b[p + 1] = argc;
+                    }
+                });
+                ecadd(0);
+                ecadd(0);
+                ecadd(0);
+                ecadd(0);
+                let so = ECSOFFS.get();
+                let onp = ECNPATS.with(|c| c.get());
+                ECNPATS.with(|c| c.set(0));
+                ECNFUNC.set(ECNFUNC.get() + 1);
+                let oecssub = ECSSUB.get();
+                ECSSUB.set(so);
+                if tok() == INBRACE_TOK {
+                    zshlex();
+                    par_list_wordcode();
+                    if tok() != OUTBRACE_TOK {
+                        cmdpop();
+                        error("par_simple: funcdef expected `}`");
+                        return 0;
+                    }
+                    if argc == 0 {
+                        // Anonymous funcdef.
+                        set_incmdpos(false);
+                    }
+                    zshlex();
+                } else {
+                    // Short-body or non-brace form not yet ported.
+                    cmdpop();
+                    error("par_simple: funcdef expected `{`");
+                    return 0;
+                }
+                cmdpop();
+                ecadd(WCB_END());
+                let used = ECUSED.get() as usize;
+                let header_off = used.saturating_sub(1 + p) as wordcode;
+                let p_argc = (p + (argc as usize) + 2) as usize;
+                let cur_so = ECSOFFS.get();
+                let np_now = ECNPATS.with(|c| c.get());
+                ECBUF.with_borrow_mut(|b| {
+                    if p_argc + 3 < b.len() {
+                        b[p_argc] = (so - oecssub) as wordcode;
+                        b[p_argc + 1] = (cur_so - so) as wordcode;
+                        b[p_argc + 2] = np_now as wordcode;
+                        b[p_argc + 3] = 0;
+                    }
+                    if p < b.len() {
+                        b[p] = WCB_FUNCDEF(header_off);
+                    }
+                });
+                ECNPATS.with(|c| c.set(onp));
+                ECSSUB.set(oecssub);
+                ECNFUNC.set(ECNFUNC.get() + 1);
+                isnull = false;
+                // Anonymous funcdef may have arguments — not ported
+                // yet. Break out of the words loop; outer parser
+                // handles whatever follows.
+                break;
+            }
             _ => break,
         }
     }
