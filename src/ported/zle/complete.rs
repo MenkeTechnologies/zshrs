@@ -1585,8 +1585,9 @@ pub fn parse_class<'a>(p: &mut crate::ported::zle::comp_h::Cpattern,         // 
         firsttime = false;
     }
 
-    // c:564 — `*optr = '\0';` — null-terminate. Rust String/Vec handles this.
-    p.str = Some(String::from_utf8_lossy(&out).into_owned());
+    // c:564 — `*optr = '\0';`. Rust Vec<u8> stores raw byte sequence
+    // verbatim; marker bytes (0x80 + PP_*) survive without UTF-8 munging.
+    p.str = Some(out);
 
     // c:565 — `return iptr;` — input ptr now past the close-bracket.
     let consumed = (i + 1).min(bytes.len());
@@ -1605,7 +1606,7 @@ mod tests {
         let mut p = Cpattern::default();
         let rest = parse_class(&mut p, "[abc]rest");
         assert_eq!(p.tp, CPAT_CCLASS);
-        assert_eq!(p.str.as_deref(), Some("abc"));
+        assert_eq!(p.str.as_deref(), Some(b"abc".as_slice()));
         assert_eq!(rest, "rest");
     }
 
