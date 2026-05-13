@@ -321,9 +321,76 @@ bin_dumpwordcode(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))
     return 0;
 }
 
+/**/
+static int
+bin_dumpast(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))
+{
+    char *path = args[0];
+    int fd;
+    struct stat st;
+    char *buf;
+    ssize_t n;
+    Eprog prog;
+    char *text;
+
+    if (!path) {
+        zwarnnam(nam, "missing FILE argument");
+        return 1;
+    }
+
+    fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        zwarnnam(nam, "%s: %s", path, strerror(errno));
+        return 1;
+    }
+    if (fstat(fd, &st) < 0) {
+        zwarnnam(nam, "%s: stat: %s", path, strerror(errno));
+        close(fd);
+        return 1;
+    }
+    buf = (char *) zalloc(st.st_size + 1);
+    n = read(fd, buf, st.st_size);
+    close(fd);
+    if (n < 0) {
+        zwarnnam(nam, "%s: read: %s", path, strerror(errno));
+        zfree(buf, st.st_size + 1);
+        return 1;
+    }
+    buf[n] = '\0';
+
+    /* parse_string from exec.c — same path used by all C zsh script
+     * loaders. Returns a heap Eprog; we then deparse via getpermtext
+     * (text.c:279) which is the same path `typeset -f funcname`
+     * uses to print function bodies. The output is canonical source
+     * text: indented/normalized whitespace, no comments, predictable
+     * quoting. Both sides must produce the same normalization for
+     * byte-equal AST parity to work. */
+    char *meta_buf = metafy(buf, n, META_DUP);
+    prog = parse_string(meta_buf, 0);
+
+    if (!prog) {
+        printf("PARSE_ERR\n");
+        fflush(stdout);
+        zfree(buf, st.st_size + 1);
+        return 0;
+    }
+
+    text = getpermtext(prog, NULL, 0);
+    if (text) {
+        fputs(text, stdout);
+        if (text[0] == '\0' || text[strlen(text) - 1] != '\n')
+            putchar('\n');
+    }
+    fflush(stdout);
+
+    zfree(buf, st.st_size + 1);
+    return 0;
+}
+
 static struct builtin bintab[] = {
-    BUILTIN("dumptokens", 0, bin_dumptokens, 1, 1, 0, NULL, NULL),
+    BUILTIN("dumptokens",   0, bin_dumptokens,   1, 1, 0, NULL, NULL),
     BUILTIN("dumpwordcode", 0, bin_dumpwordcode, 1, 1, 0, NULL, NULL),
+    BUILTIN("dumpast",      0, bin_dumpast,      1, 1, 0, NULL, NULL),
 };
 
 static struct features module_features = {
