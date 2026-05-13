@@ -355,6 +355,26 @@ pub struct Cmgroup {                                                     // c:49
     pub perm: Option<Box<Cmgroup>>,                                      // c:78
 }
 
+/// Port of `struct brinfo` from `Src/Zle/zle.h:368-375`. Brace-info
+/// node — tracks one `{` or `}` position in the pattern being
+/// completed, used by `compadd -b` brace-aware matching.
+#[derive(Debug, Clone, Default)]
+#[allow(non_camel_case_types)]
+pub struct Brinfo {                                                      // zle.h:368
+    /// Next in list.
+    pub next: Option<Box<Brinfo>>,                                       // zle.h:369
+    /// Previous (only for closing braces).
+    pub prev: Option<Box<Brinfo>>,                                       // zle.h:370
+    /// The string to insert.
+    pub str: Option<String>,                                             // zle.h:371
+    /// Original position.
+    pub pos: i32,                                                        // zle.h:372
+    /// Original position with quoting.
+    pub qpos: i32,                                                       // zle.h:373
+    /// Position for current match.
+    pub curpos: i32,                                                     // zle.h:374
+}
+
 /// Port of `struct cmatch` from `Src/Zle/comp.h:99-125`. A single
 /// completion match.
 #[derive(Debug, Clone, Default)]

@@ -665,17 +665,46 @@ pub struct compldat {                                                        // 
     pub incmd: i32,                                                          // c:393
 }
 
-/// Port of `listmatches()` from zle.h:398.
-/// C: `runhookdef(LISTMATCHESHOOK, NULL)`.
+/// Direct port of `listmatches()` from `Src/Zle/zle.h:398`. Fires the
+/// LISTMATCHESHOOK chain via `runhookdef`, falling back to the
+/// canonical `ilistmatches` renderer when no user hook is registered.
 pub fn listmatches() {                                                       // c:398
-    // c:398 — `runhookdef(LISTMATCHESHOOK, NULL);`. Hook dispatch
-    // is handled by the hook registry once `runhookdef` lands.
+    // c:398 — `runhookdef(LISTMATCHESHOOK, NULL)`.
+    let registered = crate::ported::module::HOOKTAB.lock().ok()
+        .and_then(|tab| tab.get("list-matches").cloned())
+        .unwrap_or_default();
+    let mut handled = false;
+    for f in &registered {
+        if crate::ported::utils::getshfunc(f).is_some() {
+            let _ = crate::ported::zle::compcore::shfunc_call(f);
+            handled = true;
+        }
+    }
+    if !handled {
+        // Default handler — ilistmatches (compresult.c:2284).
+        let _ = crate::ported::zle::compresult::ilistmatches();
+    }
 }
 
-/// Port of `invalidatelist()` from zle.h:402.
-/// C: `runhookdef(INVALIDATELISTHOOK, NULL)`.
+/// Direct port of `invalidatelist()` from `Src/Zle/zle.h:402`. Fires
+/// the INVALIDATELISTHOOK chain via `runhookdef`, falling back to the
+/// canonical `invalidate_list` cleanup (compresult.c:2334) when no
+/// user hook is registered.
 pub fn invalidatelist() {                                                    // c:402
-    // c:402 — `runhookdef(INVALIDATELISTHOOK, NULL);`.
+    // c:402 — `runhookdef(INVALIDATELISTHOOK, NULL)`.
+    let registered = crate::ported::module::HOOKTAB.lock().ok()
+        .and_then(|tab| tab.get("invalidate-list").cloned())
+        .unwrap_or_default();
+    let mut handled = false;
+    for f in &registered {
+        if crate::ported::utils::getshfunc(f).is_some() {
+            let _ = crate::ported::zle::compcore::shfunc_call(f);
+            handled = true;
+        }
+    }
+    if !handled {
+        let _ = crate::ported::zle::compresult::invalidate_list();
+    }
 }
 
 // =====================================================================

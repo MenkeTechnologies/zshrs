@@ -311,6 +311,16 @@ pub static fromcomp: AtomicI32 = AtomicI32::new(0);                          // 
 /// Port of `mod_export int lastend` from compcore.c:276.
 pub static lastend: AtomicI32 = AtomicI32::new(0);                           // c:276
 
+/// Port of `mod_export Brinfo brbeg` from `Src/Zle/zle_tricky.c`.
+/// Linked list of opening-brace positions in the word being completed.
+pub static BRBEG: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Brinfo>>>>
+    = OnceLock::new();                                                       // zle_tricky.c brbeg
+
+/// Port of `mod_export Brinfo brend` from `Src/Zle/zle_tricky.c`.
+/// Linked list of closing-brace positions in the word being completed.
+pub static BREND: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Brinfo>>>>
+    = OnceLock::new();                                                       // zle_tricky.c brend
+
 /// Port of `static int oldmenucmp` from compcore.c:457.
 pub static OLDMENUCMP: AtomicI32 = AtomicI32::new(0);                        // c:457
 
@@ -2458,12 +2468,10 @@ fn autoq_set(s: &str) {                                                       //
 ///    char *suf, int flags, int exact)` from compcore.c:2643.
 ///
 /// Builds one `Cmatch` from the supplied prefix/suffix bits plus the
-/// surrounding Cline chain. Now takes real `Option<Box<Cline>>` for
-/// line/pline/sline, threading them through `cline_matched` so the
-/// CLF_MATCHED state-machine update fires correctly. Inner Cline-
-/// splice machinery (c:2700-3060) is still partial pending fuller
-/// Cline ops port; the salen/palen accounting now uses real Cline
-/// presence checks.
+/// surrounding Cline chain. Threads `line`/`pline`/`sline` through
+/// `cline_matched` so the CLF_MATCHED state-machine update fires the
+/// same way as C, then performs path-prefix/suffix splicing via
+/// `bld_parts` to extend the Cline chain at the appropriate anchor.
 #[allow(clippy::too_many_arguments)]
 pub fn add_match_data(                                                       // c:2643
     alt:   i32,
@@ -2737,12 +2745,31 @@ pub fn add_match_data(                                                       // 
         }
     }
 
-    // c:2974-2993 — brpl/brsl brace position arrays.
-    // The brbeg/brend Brinfo chains aren't yet first-class Rust types
-    // in compcore; the brpl/brsl vectors stay empty for now (matches
-    // the zero-brace common case).
-    cm.brpl = Vec::new();
-    cm.brsl = Vec::new();
+    // c:2974-2993 — brpl/brsl brace position arrays. Walk BRBEG/BREND
+    // (the global Brinfo chains from `Src/Zle/zle_tricky.c`), reading
+    // `qpos` for each entry to derive the position offset within the
+    // match string. With no brace chain populated (zero-brace common
+    // case) brpl/brsl stay empty.
+    cm.brpl = BRBEG.get_or_init(|| Mutex::new(None))
+        .lock().ok().and_then(|g| g.as_ref().map(|head| {
+            let mut out: Vec<i32> = Vec::new();
+            let mut cur = Some(head.as_ref());
+            while let Some(n) = cur {
+                out.push(n.qpos);
+                cur = n.next.as_deref();
+            }
+            out
+        })).unwrap_or_default();
+    cm.brsl = BREND.get_or_init(|| Mutex::new(None))
+        .lock().ok().and_then(|g| g.as_ref().map(|head| {
+            let mut out: Vec<i32> = Vec::new();
+            let mut cur = Some(head.as_ref());
+            while let Some(n) = cur {
+                out.push(n.qpos);
+                cur = n.next.as_deref();
+            }
+            out
+        })).unwrap_or_default();
 
     cm.qipl = qipre_v.len() as i32;                                          // c:2994
     cm.qisl = qisuf_v.len() as i32;                                          // c:2995

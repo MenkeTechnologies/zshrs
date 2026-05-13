@@ -8420,3 +8420,23 @@ pub fn bin_compvalues(nam: &str, args: &[String],                            // 
         _ => 1,                                                              // c:3658
     }
 }
+
+/// Direct port of `static int arrcmp(char **a, char **b)` from
+/// `Src/Zle/computil.c:978`. Element-wise string-equality test on
+/// two `char**` arrays — returns 1 if both are null or both contain
+/// the same sequence of strings, 0 otherwise.
+pub fn arrcmp(a: Option<&[String]>, b: Option<&[String]>) -> i32 {           // c:978
+    match (a, b) {
+        (None, None) => 1,                                                   // c:980
+        (None, _) | (_, None) => 0,                                          // c:982
+        (Some(a), Some(b)) => {                                              // c:984
+            // c:985-988 — walk in lockstep, bail on inequality.
+            let len = a.len().min(b.len());
+            for i in 0..len {
+                if a[i] != b[i] { return 0; }                                // c:986
+            }
+            // c:989 — equal iff both reached end together.
+            if a.len() == b.len() { 1 } else { 0 }
+        }
+    }
+}
