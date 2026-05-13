@@ -67,6 +67,7 @@
 parse_compound
 parse_pre_inc
 parse_assign
+find_assign_equals
 
 # math.rs save_state/restore_state — Rust-side wrappers for C
 # `mathevall()` (Src/math.c:367)'s xyy* stack-locals save/restore
@@ -1275,3 +1276,6 @@ vi_yank_op
 was_yank
 what_cursor_position
 yank_pop
+setup_emacs_keymap   # WARNING: NOT IN ZLE_KEYMAP.C — Rust-only factoring of zsh's inlined default_bindings() body (Src/Zle/zle_keymap.c:124)
+setup_viins_keymap   # WARNING: NOT IN ZLE_KEYMAP.C — Rust-only factoring of zsh's inlined default_bindings() body (Src/Zle/zle_keymap.c:124)
+setup_vicmd_keymap   # WARNING: NOT IN ZLE_KEYMAP.C — Rust-only factoring of zsh's inlined default_bindings() body (Src/Zle/zle_keymap.c:124)
