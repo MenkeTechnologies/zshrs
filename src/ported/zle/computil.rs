@@ -592,6 +592,15 @@ pub static cv_parsed: std::sync::atomic::AtomicI32 =                         // 
 pub static cv_alloced: std::sync::atomic::AtomicI32 =                        // c:3230
     std::sync::atomic::AtomicI32::new(0);
 
+/// Port of `static Cadef cadef_cache[MAX_CACACHE]` from
+/// `Src/Zle/computil.c:973`. The LRU cache holds parsed
+/// `_arguments` defs keyed by the raw arg vector — `get_cadef`
+/// scans linearly, returns on first match (arr-compare on `defs`),
+/// and on miss evicts the entry with the oldest `lastt` slot before
+/// inserting the freshly parsed result.
+pub static cadef_cache: std::sync::Mutex<[Option<Box<cadef>>; MAX_CACACHE]> = // c:973
+    std::sync::Mutex::new([const { None }; MAX_CACACHE]);
+
 // =====================================================================
 // `ctags` / `ctset` — `comptags` cache.
 // Src/Zle/computil.c:3732-3760. MAX_TAGS already declared above.
@@ -1228,19 +1237,45 @@ mod tests {
 // exports). exec.rs's re-export updated to point to the new home.
 
 
-/// Port of `alloc_cadef(char **args, int single, char *match, char *nonarg, int flags)` from Src/Zle/computil.c:1147.
-/// WARNING: param names don't match C — Rust=(_args, _single, _matchstr, _flags) vs C=(args, single, match, nonarg, flags)
-pub fn alloc_cadef(_args: &[String], _single: i32, _matchstr: &str,         // c:1147
-                   _nonarg: &str, _flags: i32) -> i32 {
-    // C body c:1149-1180 — `ret = zalloc(...); ret->next = ret->snext = NULL;
-    //                       ret->opts = NULL; ret->args = ret->rest = NULL;
-    //                       ret->nonarg = ztrdup(nonarg);
-    //                       if (args) { ret->defs = zarrdup(args);
-    //                                   ret->ndefs = arrlen(args); }
-    //                       ret->nopts = ret->ndopts = ret->nodopts = 0;
-    //                       ret->lastt = time(0); ret->set = NULL; ...`.
-    //                      Cadef Rust struct not yet hydrated; placeholder returns 0.
-    0
+/// Direct port of `static Cadef alloc_cadef(char **args, int single,
+/// char *match, char *nonarg, int flags)` from `Src/Zle/computil.c:1147-1177`.
+///
+/// Builds a fresh `cadef` with the option/single-letter/match/nonarg
+/// fields initialized. `args` (if present) is captured into `defs`
+/// for later cache-key compare in `get_cadef` (c:1681). `single` set
+/// allocates the 188-slot single-letter index array. `match` is the
+/// match-spec carried through to the option/arg matchers.
+pub fn alloc_cadef(args: Option<&[String]>, single: i32, matchstr: &str,    // c:1147
+                   nonarg: Option<&str>, flags: i32) -> Box<cadef> {
+    Box::new(cadef {
+        next:       None,                                                    // c:1152
+        snext:      None,                                                    // c:1152
+        opts:       None,                                                    // c:1153
+        args:       None,                                                    // c:1154
+        rest:       None,                                                    // c:1154
+        nonarg:     nonarg.map(|s| s.to_string()),                           // c:1155 ztrdup(nonarg)
+        defs:       args.map(|a| a.to_vec()),                                // c:1157 zarrdup(args)
+        ndefs:      args.map_or(0, |a| a.len() as i32),                      // c:1158 arrlen(args)
+        nopts:      0,                                                       // c:1163
+        ndopts:     0,                                                       // c:1164
+        nodopts:    0,                                                       // c:1165
+        lastt:      {                                                        // c:1166 time(0)
+            use std::time::{SystemTime, UNIX_EPOCH};
+            SystemTime::now().duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64).unwrap_or(0)
+        },
+        set:        None,                                                    // c:1167
+        // c:1168-1172 — 188-slot single-letter Caopt index. Capacity
+        // 188 matches C exactly (range of single-letter option names).
+        single:     if single != 0 {
+            Some((0..188).map(|_| None).collect())
+        } else {
+            None
+        },
+        r#match:    Some(matchstr.to_string()),                              // c:1173 ztrdup(match)
+        argsactive: 0,
+        flags,                                                               // c:1174
+    })
 }
 
 /// Port of `arrcontains(char **a, char *s, int colon)` from Src/Zle/computil.c:3813.
@@ -1760,15 +1795,194 @@ pub fn setup_() -> i32 {                                                     // 
 // `freecastate` / `freectags` / `freectset` / `freecvdef` real ports
 // landed above with the castate / ctags / ctset / cvdef structs.
 
-/// Port of `get_cadef(char *nam, char **args)` from Src/Zle/computil.c:1673.
-#[allow(unused_variables)]
-pub fn get_cadef(nam: &str, args: &[String]) -> i32 {                      // c:1673
-    // C body c:1675-1700 — scans cadef_cache[MAX_CACACHE] for a hit
-    //                      keyed by `args`; on miss parses `args` via
-    //                      parse_cadef + caches in the LRU slot.
-    //                      Without cadef_cache hydrated: cache miss
-    //                      every time, parse_cadef returns NULL.
-    0
+/// Direct port of `static Cadef get_cadef(char *nam, char **args)`
+/// from `Src/Zle/computil.c:1673-1694`. Walks `cadef_cache` looking
+/// for an entry whose `defs` array matches the requested `args`
+/// (same length + position-for-position string equality). On hit,
+/// bumps that entry's `lastt` and returns it. On miss, parses via
+/// `parse_cadef` and evicts the entry with the oldest `lastt`
+/// (or the first empty slot) to make room for the new one.
+///
+/// Returns `1` on hit, `0` on miss-and-cache-insert. The previous
+/// return-`i32` shape is preserved for callers; the parsed cadef
+/// itself lives in `cadef_cache` and is looked up by separate
+/// per-name accessors (`ca_get_opt`, `ca_get_arg`, etc.).
+pub fn get_cadef(nam: &str, args: &[String]) -> i32 {                       // c:1673
+    let na = args.len() as i32;
+    let now = {                                                              // c:1681 time(0)
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now().duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64).unwrap_or(0)
+    };
+
+    if let Ok(mut cache) = cadef_cache.lock() {
+        // c:1678 — `for (i = MAX_CACACHE, p = cadef_cache, min = NULL;
+        //                  i && *p; p++, i--)`. Linear scan; track LRU
+        //          candidate for eviction in `min_idx`.
+        let mut min_idx: Option<usize> = None;
+        let mut min_lastt: i64 = i64::MAX;
+        let mut hit_idx: Option<usize> = None;
+        for (i, slot) in cache.iter().enumerate() {
+            match slot {
+                Some(entry) => {
+                    // c:1679 — `if (*p && na == (*p)->ndefs && arrcmp(args, (*p)->defs))`.
+                    if entry.ndefs == na
+                        && entry.defs.as_deref()
+                            .map_or(false, |d| d.len() == args.len()
+                                && d.iter().zip(args.iter()).all(|(a, b)| a == b))
+                    {
+                        hit_idx = Some(i);
+                        break;                                               // c:1682 break on match
+                    }
+                    // c:1684 — track entry with smallest lastt as eviction target.
+                    if entry.lastt < min_lastt {
+                        min_lastt = entry.lastt;
+                        min_idx = Some(i);
+                    }
+                }
+                None => {
+                    // c:1684 — empty slot wins as eviction target.
+                    min_idx = Some(i);
+                    break;
+                }
+            }
+        }
+        if let Some(i) = hit_idx {
+            if let Some(entry) = cache[i].as_mut() {
+                entry.lastt = now;                                           // c:1681
+            }
+            return 1;                                                        // c:1683 hit
+        }
+        // c:1688 — parse_cadef; on success replace the chosen slot.
+        if let Some(new) = parse_cadef(nam, args) {
+            let idx = min_idx.unwrap_or(0);
+            cache[idx] = Some(new);
+        }
+    }
+    0                                                                        // c:1693 miss
+}
+
+/// Direct port of the header section of `static Cadef parse_cadef(
+/// char *nam, char **args)` from `Src/Zle/computil.c:1196-1269`.
+///
+/// Parses the leading auto-description (first arg up to `%d`) and
+/// the `-s/-A/-S/-M` flag block, then allocates the cadef via
+/// `alloc_cadef`. The 400+ line spec-list loop (c:1275-1660) that
+/// fills in opts/args/rest from each `_arguments` spec entry is a
+/// separate substrate port — this header alone is enough for
+/// `get_cadef` to start populating its cache slot with a partially-
+/// hydrated cadef whose flags/single/match/nonarg/defs fields
+/// reflect the caller's `args` vector.
+pub fn parse_cadef(_nam: &str, args: &[String]) -> Option<Box<cadef>> {     // c:1196
+    if args.is_empty() {
+        return None;                                                         // c:1262 `!*args`
+    }
+
+    let orig_args = args;
+    let mut idx = 0usize;
+    let mut single: i32 = 0;
+    let mut flags: i32 = 0;
+    let mut match_spec: &str = "r:|[_-]=* r:|=*";                            // c:1200 default match
+    let mut nonarg: Option<String> = None;
+
+    // c:1208 — strip optional `%d` auto-description split from args[0].
+    // The leading text up to `%d` is `adpre`, the trailing text is
+    // `adsuf`; neither is stored on cadef directly — they get woven
+    // into description templating during _arguments completion. The
+    // header port simply skips over them so the flag parse below sees
+    // a clean args[1..] window.
+    idx += 1;                                                                // c:1220 args++ (past args[0])
+
+    // c:1221-1259 — `-s/-A/-S/-M[arg]` flag block.
+    while idx < args.len() {
+        let p = &args[idx];
+        let bytes = p.as_bytes();
+        if bytes.len() < 2 || bytes[0] != b'-' {                             // c:1221
+            break;
+        }
+        // c:1222-1227 — scan flag-cluster bytes; `M`/`A` terminate the
+        // cluster (their value follows), `s`/`S` are pure flags. Any
+        // other byte aborts the flag-block parse.
+        let cluster = &bytes[1..];
+        let mut ok = true;
+        let mut consumed_value = false;
+        for (i, &c) in cluster.iter().enumerate() {
+            match c {
+                b's' => single = 1,                                          // c:1233
+                b'S' => flags |= CDF_SEP,                                    // c:1235
+                b'A' => {                                                    // c:1237
+                    if i + 1 < cluster.len() {                               // c:1238 inline value
+                        nonarg = Some(String::from_utf8_lossy(&cluster[i + 1..]).into_owned());
+                    } else if idx + 1 < args.len() {                         // c:1241 separate arg
+                        nonarg = Some(args[idx + 1].clone());
+                        idx += 1;
+                    } else {
+                        ok = false;
+                    }
+                    consumed_value = true;
+                    break;
+                }
+                b'M' => {                                                    // c:1245
+                    if i + 1 < cluster.len() {                               // c:1246 inline value
+                        match_spec = std::str::from_utf8(&cluster[i + 1..])
+                            .unwrap_or("r:|[_-]=* r:|=*");
+                        // The slice's lifetime borrows from args[idx],
+                        // which lives at least until we exit the loop.
+                        // Clone into a String binding outside this fn
+                        // would be needed for storage, but alloc_cadef
+                        // makes its own copy below.
+                    } else if idx + 1 < args.len() {                         // c:1249 separate arg
+                        match_spec = &args[idx + 1];
+                        idx += 1;
+                    } else {
+                        ok = false;
+                    }
+                    consumed_value = true;
+                    break;
+                }
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if !ok {
+            break;                                                           // c:1230 abort flag block
+        }
+        let _ = consumed_value;
+        idx += 1;                                                            // c:1258 args++
+    }
+
+    // c:1260 — `if (*args && !strcmp(*args, ":")) args++;` — skip `:`.
+    if idx < args.len() && args[idx] == ":" {
+        idx += 1;
+    }
+    // c:1262 — `if (!*args) return NULL;` — empty after flag block.
+    if idx >= args.len() {
+        return None;
+    }
+
+    // c:1265 — `if (nonarg) tokenize(nonarg);` — pattern-token marker
+    // substitution. The Rust port stores the raw string; tokenize is a
+    // pattern-compile step run on demand inside the matcher path.
+
+    // c:1269 — `alloc_cadef(orig_args, single, match, nonarg, flags)`.
+    let def = alloc_cadef(
+        Some(orig_args),
+        single,
+        match_spec,
+        nonarg.as_deref(),
+        flags,
+    );
+
+    // c:1275-1660 — main spec-list loop (~400 lines) populates
+    // def->opts / def->args / def->rest from each remaining args[idx..]
+    // entry. Not yet ported — opts/args/rest stay None, which means
+    // the cached cadef's option-name matchers don't fire. The cache
+    // shell is real and observable; the spec-list body is the next
+    // substrate chunk.
+
+    Some(def)
 }
 
 /// Port of `get_cvdef(char *nam, char **args)` from Src/Zle/computil.c:3154.
@@ -1787,13 +2001,25 @@ pub fn parse_cvdef(nam: &str, args: &[String]) -> i32 {                    // c:
     0
 }
 
-/// Port of `set_cadef_opts(Cadef def)` from Src/Zle/computil.c:1180.
-/// WARNING: param names don't match C — Rust=() vs C=(def)
-pub fn set_cadef_opts() {                                                    // c:1180
-    // C body c:1182-1190 — walks def->args linked list updating
-    //                      argp->min based on argp->num minus
-    //                      cumulative xnum (CAA_OPT count). No Cadef
-    //                      Rust struct yet; no-op.
+/// Direct port of `static void set_cadef_opts(Cadef def)` from
+/// `Src/Zle/computil.c:1180-1191`. After a set-of-arg-definitions has
+/// been parsed into the cadef, walk the args linked list and update
+/// each non-direct argp's `min` field to the cumulative number of
+/// CAA_OPT entries that precede it. The optionality count compounds
+/// down the chain, which determines minimum-argument-count semantics
+/// during completion.
+pub fn set_cadef_opts(def: &mut cadef) {                                    // c:1180
+    let mut xnum: i32 = 0;
+    let mut argp = def.args.as_deref_mut();                                  // c:1185 argp = def->args
+    while let Some(node) = argp {                                            // c:1185
+        if node.direct == 0 {                                                // c:1186 !argp->direct
+            node.min = node.num - xnum;                                      // c:1187
+        }
+        if node.r#type == CAA_OPT {                                          // c:1188
+            xnum += 1;                                                       // c:1189
+        }
+        argp = node.next.as_deref_mut();                                     // c:1185 argp = argp->next
+    }
 }
 
 /// Port of `settags(int level, char **tags)` from Src/Zle/computil.c:3794.
