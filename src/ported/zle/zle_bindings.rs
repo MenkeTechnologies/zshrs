@@ -2,7 +2,6 @@
 //!
 //! Direct port from zsh/Src/Zle/zle_bindings.c
 
-use super::zle_keymap::KeymapManager;
 use super::zle_thingy::Thingy;
 
 /// Parse a bindkey-style key sequence string into raw bytes.
@@ -191,8 +190,7 @@ pub fn printbind(seq: &[u8]) -> String {                                     // 
 /// Src/Zle/zle_keymap.c). Returns true if the keymap exists and the binding
 /// is installed. Uses `Arc::make_mut` to copy-on-write the wrapped Keymap so
 /// the mutation respects the existing Arc-shared layout.
-pub fn bindkey(km: &mut KeymapManager, keymap: &str, seq: &str, widget: &str) -> bool { // c:zle_keymap.c:566
-    let _ = km;
+pub fn bindkey(keymap: &str, seq: &str, widget: &str) -> bool { // c:zle_keymap.c:566
     let seq_bytes = getkeystring(seq);
     let mut tab = crate::ported::zle::zle_keymap::keymapnamtab().lock().unwrap();
     let node = match tab.get_mut(keymap) {
@@ -208,8 +206,7 @@ pub fn bindkey(km: &mut KeymapManager, keymap: &str, seq: &str, widget: &str) ->
 /// Port of `bindkey -L` listing from Src/Zle/zle_keymap.c (the
 /// listing branch of `bin_bindkey`). Both 1-byte fast-path entries
 /// (`first[]`) and multi-byte trie entries (`multi`) are included.
-pub fn bindlistout(km: &KeymapManager, keymap: &str) -> Vec<(String, String)> { // c:zle_keymap.c:1094
-    let _ = km;
+pub fn bindlistout(keymap: &str) -> Vec<(String, String)> { // c:zle_keymap.c:1094
     let mut bindings = Vec::new();
 
     if let Some(map) = crate::ported::zle::zle_keymap::openkeymap(keymap) {
@@ -246,8 +243,7 @@ mod tests {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::createkeymapnamtab();
         crate::ported::zle::zle_keymap::default_bindings();
-        let mut km = KeymapManager;
-        assert!(!bindkey(&mut km, "no-such-keymap", "^A", "self-insert"));
+        assert!(!bindkey("no-such-keymap", "^A", "self-insert"));
     }
 
     #[test]
@@ -255,12 +251,11 @@ mod tests {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::createkeymapnamtab();
         crate::ported::zle::zle_keymap::default_bindings();
-        let mut km = KeymapManager;
         // Pick a sequence unlikely to clash with the default emacs map.
         // \M-z = ESC z = bytes 0x1B 0x7A.
-        assert!(bindkey(&mut km, "emacs", "\\ez", "self-insert"));
+        assert!(bindkey("emacs", "\\ez", "self-insert"));
         // Verify the binding shows up in bindlistout.
-        let listed = bindlistout(&km, "emacs");
+        let listed = bindlistout("emacs");
         let seq = printbind(&[0x1b, 0x7a]);
         assert!(
             listed.iter().any(|(k, v)| k == &seq && v == "self-insert"),
@@ -268,14 +263,13 @@ mod tests {
             listed
         );
         // Now remove it (inline of the deleted unbindkey helper).
-        let _ = &km;
         let seq_bytes = getkeystring("\\ez");
         let mut tab = crate::ported::zle::zle_keymap::keymapnamtab().lock().unwrap();
         let node = tab.get_mut("emacs").unwrap();
         let inner = std::sync::Arc::make_mut(&mut node.keymap);
         inner.unbind_seq(&seq_bytes);
         drop(tab);
-        let listed = bindlistout(&km, "emacs");
+        let listed = bindlistout("emacs");
         assert!(
             !listed.iter().any(|(k, _)| k == &seq),
             "unbound sequence still present: {:?}",

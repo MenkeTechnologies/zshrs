@@ -78,6 +78,6 @@ pub use keymaps::{zle, Keymap as LegacyKeymap, KeymapName, ZleManager, ZleState}
 pub use widgets::{BuiltinWidget, Widget as LegacyWidget, WidgetResult};
 
 // Re-export new API
-pub use zle_keymap::{Keymap, KeymapManager};
+pub use zle_keymap::Keymap;
 pub use zle_thingy::Thingy;
 pub use widget::{Widget, WidgetFlags, WidgetFunc};
