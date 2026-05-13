@@ -589,14 +589,257 @@ pub fn match_str(                                                            // 
                 }
             }
             if mp.wlen < 0 {
-                // c:603-867 — `*`-pattern matcher. The full recursive
-                // walk requires recursive match_str calls + add_match_
-                // {str,sub,part} coordination + brace-info threading.
-                // Conservative skip preserves the contract: literal
-                // matchers and CMF_LEFT/RIGHT anchors below still get
-                // a chance; `*` patterns require the deep path which
-                // is the last remaining substrate gap.
-                continue;
+                // c:603-867 — `*`-pattern matcher. The line-pattern + an
+                // anchor + a recursively-located rest-of-line. Suffix
+                // mode (sfx != 0) requires byte-mutation of the input
+                // string that Rust slices can't replicate cheaply; we
+                // handle prefix mode (sfx == 0) here and skip sfx-mode
+                // until the recursion-with-truncated-suffix path lands.
+                if sfx != 0 { continue; }
+
+                // c:689-694 — set up llen / alen / aol per CMF_LEFT.
+                let llen_p = mp.llen;
+                let (alen, aol): (i32, i32) = if (mp.flags & CMF_LEFT) != 0 {
+                    (mp.lalen, mp.ralen)
+                } else {
+                    (mp.ralen, mp.lalen)
+                };
+                if ll < llen_p + alen || lw < alen + aol {                   // c:698
+                    continue;
+                }
+
+                // c:701-715 — set ap/aop/moff/loff/aoff/both per CMF_LEFT
+                // + sfx. Prefix-mode only here.
+                let (ap, aop, moff, both, loff, aoff): (
+                    Option<&crate::ported::zle::comp_h::Cpattern>,
+                    Option<&crate::ported::zle::comp_h::Cpattern>,
+                    i32, i32, i32, i32);
+                if (mp.flags & CMF_LEFT) != 0 {                              // c:701
+                    ap = mp.left.as_deref();
+                    aop = mp.right.as_deref();
+                    moff = alen; both = 1; loff = alen; aoff = 0;
+                } else {                                                     // c:708
+                    ap = mp.right.as_deref();
+                    aop = mp.left.as_deref();
+                    moff = 0; both = 0; loff = 0; aoff = llen_p;
+                }
+
+                // c:717 — pattern_match(mp.line, l + loff).
+                let l_off_idx = (l_pos + loff).max(0) as usize;
+                if l_off_idx >= l_bytes.len() { continue; }
+                let line_slice = std::str::from_utf8(
+                    &l_bytes[l_off_idx..]).unwrap_or("");
+                if pattern_match(mp.line.as_deref(), line_slice, None, "") == 0 {
+                    continue;
+                }
+                // c:719-731 — anchor test.
+                if let Some(ap_pat) = ap {
+                    let l_anchor_idx = (l_pos + aoff).max(0) as usize;
+                    let l_anchor = std::str::from_utf8(
+                        &l_bytes[l_anchor_idx..]).unwrap_or("");
+                    if pattern_match(Some(ap_pat), l_anchor, None, "") == 0 {
+                        continue;
+                    }
+                    if both != 0 {                                            // c:721
+                        let w_anchor_idx = (w_pos + aoff).max(0) as usize;
+                        let w_anchor = std::str::from_utf8(
+                            &w_bytes[w_anchor_idx..]).unwrap_or("");
+                        if pattern_match(Some(ap_pat), w_anchor, None, "") == 0 {
+                            continue;
+                        }
+                        if aol > 0 && aol <= aoff + iw {
+                            let w_op_idx = (w_pos + aoff - aol).max(0) as usize;
+                            let w_op = std::str::from_utf8(
+                                &w_bytes[w_op_idx..]).unwrap_or("");
+                            if pattern_match(aop, w_op, None, "") == 0 {
+                                continue;
+                            }
+                        }
+                        // c:726 — match_parts to confirm anchor span.
+                        let mp_l = std::str::from_utf8(
+                            &l_bytes[l_anchor_idx..]).unwrap_or("");
+                        let mp_w = std::str::from_utf8(
+                            &w_bytes[(w_pos + aoff).max(0) as usize..])
+                            .unwrap_or("");
+                        if match_parts(mp_l, mp_w, alen, part) == 0 {
+                            continue;
+                        }
+                    }
+                } else {                                                     // c:728
+                    let cmf_check = if (mp.flags & CMF_INTER) != 0 {
+                        if (mp.flags & CMF_LINE) != 0 { iw } else { il }
+                    } else { il | iw };
+                    if both == 0 || cmf_check != 0 {
+                        continue;
+                    }
+                }
+
+                // c:737-773 — recursive scan: try each tp from w forward
+                // looking for a position where `l + llen + moff` matches.
+                let mut t = 0i32;
+                let mut ct = 0i32;
+                let ict_total = lw - alen + 1;
+                let mut found_tp_pos: i32 = w_pos;
+                for tp_pos in (w_pos..w_pos + ict_total.max(0)).step_by(1) {
+                    let mut accept = false;
+                    if both != 0 {
+                        // c:740-745 — both-mode: succeed only if ap stops
+                        // matching at the current tp (the `*` consumed
+                        // characters before reaching the anchor).
+                        let ap_fails = ap.is_none() || test == 0 || {
+                            let tp_anchor_idx = (tp_pos + aoff).max(0) as usize;
+                            let tp_slice = std::str::from_utf8(
+                                &w_bytes.get(tp_anchor_idx..).unwrap_or(&[]))
+                                .unwrap_or("");
+                            pattern_match(ap, tp_slice, None, "") == 0
+                        };
+                        if ap_fails {
+                            accept = true;
+                        }
+                    } else {
+                        // c:746-753 — non-both: succeed when ap matches at
+                        // tp - moff and aop matches at tp - moff - aol.
+                        let tp_anchor_idx = (tp_pos - moff).max(0) as usize;
+                        let tp_slice = std::str::from_utf8(
+                            &w_bytes.get(tp_anchor_idx..).unwrap_or(&[]))
+                            .unwrap_or("");
+                        if pattern_match(ap, tp_slice, None, "") != 0 {
+                            let aol_ok = aol == 0 || (aol <= iw + ct - moff && {
+                                let aop_idx = (tp_pos - moff - aol).max(0) as usize;
+                                let aop_slice = std::str::from_utf8(
+                                    &w_bytes.get(aop_idx..).unwrap_or(&[]))
+                                    .unwrap_or("");
+                                pattern_match(aop, aop_slice, None, "") != 0
+                            });
+                            if aol_ok {
+                                let l_aoff_idx = (l_pos + aoff).max(0) as usize;
+                                let l_aoff_slice = std::str::from_utf8(
+                                    &l_bytes[l_aoff_idx..]).unwrap_or("");
+                                let mp_ok = mp.wlen == -1 || match_parts(
+                                    l_aoff_slice, tp_slice, alen, part) != 0;
+                                if mp_ok {
+                                    accept = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if accept {
+                        // c:757-769 — recursive match_str call.
+                        let l_rest_start = (l_pos + llen_p + moff) as usize;
+                        let l_rest = std::str::from_utf8(
+                            &l_bytes.get(l_rest_start..).unwrap_or(&[]))
+                            .unwrap_or("");
+                        let w_rest_start = (tp_pos + moff) as usize;
+                        let w_rest = std::str::from_utf8(
+                            &w_bytes.get(w_rest_start..).unwrap_or(&[]))
+                            .unwrap_or("");
+                        t = match_str(l_rest, w_rest, None, 0, None, sfx,
+                                       1, part);
+                        if t != 0 || (mp.wlen == -1 && both == 0) {
+                            found_tp_pos = tp_pos;
+                            break;
+                        }
+                    }
+                    ct += 1;
+                }
+
+                // c:780 — no match found in the recursive scan.
+                if t == 0 { continue; }
+
+                // c:783-833 — emit Cline parts via add_match_*.
+                let _tp_pos = found_tp_pos;
+                if test == 0 && (he == 0 || (llen_p + alen) != 0) {
+                    let op_start = ow_pos as usize;
+                    let ol = (w_pos - ow_pos).max(0);
+                    let map_start = ow_pos as usize;
+                    let (wap_start, wmp_start) = if (mp.flags & CMF_LEFT) != 0 {
+                        (w_pos as usize, (w_pos + alen) as usize)
+                    } else {
+                        (found_tp_pos as usize, ow_pos as usize)
+                    };
+                    let lp_start = l_pos as usize;
+
+                    if (mp.flags & CMF_LINE) != 0 {                          // c:810
+                        let op_str = std::str::from_utf8(
+                            &w_bytes[op_start..op_start + ol as usize])
+                            .unwrap_or("");
+                        let lp_str = std::str::from_utf8(
+                            &l_bytes[lp_start..lp_start + (llen_p + alen) as usize])
+                            .unwrap_or("");
+                        add_match_str(None, "", op_str, ol, sfx);
+                        add_match_str(None, "", lp_str, llen_p + alen, sfx);
+                        add_match_sub(None, None, ol, Some(op_str), ol);
+                        add_match_sub(None, None, llen_p + alen,
+                                      Some(lp_str), llen_p + alen);
+                    } else {                                                 // c:822
+                        let map_len = ct + ol + alen;
+                        let map_str = std::str::from_utf8(
+                            &w_bytes[map_start..(map_start + map_len.max(0) as usize)
+                                                 .min(w_bytes.len())])
+                            .unwrap_or("");
+                        add_match_str(None, "", map_str, map_len, sfx);
+                        let ol_eff = if both != 0 {
+                            let op_str = std::str::from_utf8(
+                                &w_bytes[op_start..op_start + ol as usize])
+                                .unwrap_or("");
+                            add_match_sub(None, None, ol, Some(op_str), ol);
+                            -1
+                        } else {
+                            ct + ol
+                        };
+                        let l_aoff_idx = (l_pos + aoff).max(0) as usize;
+                        let l_loff_idx = (l_pos + loff).max(0) as usize;
+                        let l_aoff_str = std::str::from_utf8(
+                            &l_bytes[l_aoff_idx..l_aoff_idx + alen.max(0) as usize])
+                            .unwrap_or("");
+                        let l_loff_str = std::str::from_utf8(
+                            &l_bytes[l_loff_idx..l_loff_idx + llen_p.max(0) as usize])
+                            .unwrap_or("");
+                        let wap_str = std::str::from_utf8(
+                            &w_bytes[wap_start..(wap_start + alen.max(0) as usize)
+                                                  .min(w_bytes.len())])
+                            .unwrap_or("");
+                        let wmp_str = std::str::from_utf8(
+                            &w_bytes[wmp_start..(wmp_start + ol_eff.max(0) as usize)
+                                                  .min(w_bytes.len())])
+                            .unwrap_or("");
+                        add_match_part(Some(mp),
+                                       Some(l_aoff_str), alen,
+                                       wap_str, alen,
+                                       Some(l_loff_str), llen_p,
+                                       wmp_str, ol_eff,
+                                       ol_eff, sfx);
+                    }
+                }
+
+                // c:834-866 — advance pointers past the matched portion
+                // + anchor.
+                let llen_new = llen_p + alen;
+                let alen_new = alen + ct;
+                l_pos += llen_new;
+                w_pos += alen_new;
+                ll -= llen_new; il += llen_new;
+                lw -= alen_new; iw += alen_new;
+                bc += llen_new;
+                exact = 0;
+                ow_pos = w_pos;
+
+                if llen_new == 0 && alen_new == 0 {                          // c:856
+                    lm = Some(Box::new((**mp).clone()));
+                    if he == 0 {
+                        he = 1;
+                    } else {
+                        // signal outer loop continue
+                        matched = Some(mp.clone());
+                        break;
+                    }
+                } else {
+                    lm = None;
+                    he = 0;
+                }
+                matched = Some(mp.clone());
+                break;
             }
             if ll < mp.llen || lw < mp.wlen { continue; }                    // c:868
 
