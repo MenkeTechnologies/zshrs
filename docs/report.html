@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="description" content="zshrs — Full zsh C-to-Rust port coverage report. 92 C files, 147,355 C lines, 369,525 Rust lines, 4,838 #[test] hooks. Strict-port src/ported/ + non-port src/extensions/ split enforced by tests/port_purity.rs. Updated 2026-05-11.">
+  <meta name="description" content="zshrs — Full zsh C-to-Rust port coverage report. 94 C files, 147,656 C lines, 371,790 Rust lines, 4,849 #[test] hooks. Strict-port src/ported/ + non-port src/extensions/ split enforced by tests/port_purity.rs. Updated 2026-05-12.">
   <title>zshrs — Port Coverage Report</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -84,7 +84,7 @@
             <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
           </nav>
           <p style="margin:0.35rem 0 0;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:0.03em;opacity:0.75;">
-            src/zsh/Src/*.c &rarr; src/ported/*.rs &middot; 92 C files (32 core + 24 ZLE + 34 modules + 2 Builtins) &middot; 147,355 C lines &middot; 369,525 Rust lines (all <code>.rs</code> incl. tests + <code>build.rs</code>; <code>git ls-files '*.rs' | xargs wc -l</code>) &middot; 412 <code>.rs</code> files &middot; 4,838 <code>#[test]</code> hooks (<code>rg '^\s*#\[test\]'</code> over <code>src/</code>, <code>tests/</code>, <code>parse/</code>, <code>compsys/</code>, <code>daemon/</code>, <code>fish/</code>, <code>bins/</code>, <code>build.rs</code>) &middot; <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);">PORT.md</a> ruleset &middot; <code>tests/port_purity.rs</code> enforces strict-port purity
+            src/zsh/Src/*.c &rarr; src/ported/*.rs &middot; 94 C files (33 core + 24 ZLE + 35 modules + 2 Builtins) &middot; 147,656 C lines &middot; 371,790 Rust lines (all <code>.rs</code> incl. tests + <code>build.rs</code>; <code>git ls-files '*.rs' | xargs wc -l</code>) &middot; 413 <code>.rs</code> files &middot; 4,849 <code>#[test]</code> hooks (<code>rg '^\s*#\[test\]'</code> over <code>src/</code>, <code>tests/</code>, <code>compsys/</code>, <code>daemon/</code>, <code>fish/</code>, <code>bins/</code>, <code>build.rs</code>) &middot; <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);">PORT.md</a> ruleset &middot; <code>tests/port_purity.rs</code> enforces strict-port purity
           </p>
         </div>
         <div class="tutorial-toolbar">
@@ -122,12 +122,12 @@
       </p>
 
       <div class="stat-grid">
-        <div class="stat-card"><div class="stat-val green">4,838</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val green">4,849</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
         <div class="stat-card"><div class="stat-val">92</div><div class="stat-label">C Files Ported</div></div>
-        <div class="stat-card"><div class="stat-val accent">5,489</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
-        <div class="stat-card"><div class="stat-val">412</div><div class="stat-label">Rust Source Files</div></div>
+        <div class="stat-card"><div class="stat-val accent">5,592</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
+        <div class="stat-card"><div class="stat-val">413</div><div class="stat-label">Rust Source Files</div></div>
         <div class="stat-card"><div class="stat-val cyan">103 / 35 / 1</div><div class="stat-label">ported / extensions / recorder</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:var(--yellow,#ffb800);text-shadow:0 0 20px rgba(255,184,0,.3);">147,355</div><div class="stat-label">C Lines Covered</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:var(--yellow,#ffb800);text-shadow:0 0 20px rgba(255,184,0,.3);">147,656</div><div class="stat-label">C Lines Covered</div></div>
         <div class="stat-card"><div class="stat-val green">0</div><div class="stat-label">Missing Functionality</div></div>
       </div>
 
@@ -135,7 +135,7 @@
         <p style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;font-family:'Orbitron',sans-serif;font-weight:700;">Overall Line Coverage</p>
         <div class="bar-wrap" style="height:26px;">
           <div class="bar-fill cyan" style="width:100%;"></div>
-          <span class="bar-pct" style="font-size:12px;">369,525 Rust / 147,355 C &mdash; 100% coverage</span>
+          <span class="bar-pct" style="font-size:12px;">371,790 Rust / 147,656 C &mdash; 100% coverage</span>
         </div>
         <p style="font-size:10px;color:var(--text-muted);margin-top:4px;">Rust line count covers the entire 3-crate workspace (<code>zshrs</code> runtime, <code>compsys</code>, <code>zshrs-daemon</code>) plus <code>fish/</code>, <code>tests/</code>, <code>bins/</code>, and root <code>build.rs</code>. C-line ratio is ~251% Rust : C by raw lines, but most files are <em>more concise</em> than their C source &mdash; the inflation comes from the non-port surface (extensions, daemon, parse, fish, compsys) that has no C ancestor. <code>exec.rs</code> alone is 353% of <code>exec.c</code> because it includes 180+ builtins (23 coreutils anti-fork) that C splits across <code>builtin.c</code>.</p>
       </div>
@@ -151,8 +151,8 @@
       <table class="file-table">
         <thead><tr><th>C Source</th><th>Rust Target</th><th class="num">C Lines</th><th class="num">Rust Lines</th><th class="num">Ratio</th><th class="num">C Fns</th><th class="num">Grep</th><th class="num">Renamed</th><th style="min-width:120px;">Coverage</th><th class="status">&nbsp;</th></tr></thead>
         <tbody>
-          <tr><td>lex.c</td><td>parse/src/lex.rs</td><td class="num">2,294</td><td class="num">2,551</td><td class="num">111%</td><td class="num">26</td><td class="num">14</td><td class="num">12</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:100%"></div><span class="bar-pct">100%</span></div></td><td class="status">&#x2705;</td></tr>
-          <tr><td>parse.c</td><td>parse/src/parse.rs</td><td class="num">4,066</td><td class="num">4,099</td><td class="num">100%</td><td class="num">80</td><td class="num">9</td><td class="num">71</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:100%"></div><span class="bar-pct">100%</span></div></td><td class="status">&#x2705;</td></tr>
+          <tr><td>lex.c</td><td>ported/lex.rs</td><td class="num">2,294</td><td class="num">4,617</td><td class="num">201%</td><td class="num">26</td><td class="num">14</td><td class="num">12</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:100%"></div><span class="bar-pct">100%</span></div></td><td class="status">&#x2705;</td></tr>
+          <tr><td>parse.c</td><td>ported/parse.rs</td><td class="num">4,066</td><td class="num">5,015</td><td class="num">123%</td><td class="num">80</td><td class="num">9</td><td class="num">71</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:100%"></div><span class="bar-pct">100%</span></div></td><td class="status">&#x2705;</td></tr>
           <tr><td>subst.c</td><td>src/ported/subst.rs</td><td class="num">4,922</td><td class="num">5,021</td><td class="num">102%</td><td class="num">24</td><td class="num">22</td><td class="num">2</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:100%"></div><span class="bar-pct">100%</span></div></td><td class="status">&#x2705;</td></tr>
           <tr><td>math.c</td><td>src/ported/math.rs</td><td class="num">1,677</td><td class="num">1,714</td><td class="num">102%</td><td class="num">20</td><td class="num">12</td><td class="num">8</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:100%"></div><span class="bar-pct">100%</span></div></td><td class="status">&#x2705;</td></tr>
           <tr><td>exec.c</td><td>src/exec.rs <span style="opacity:.6;">(re-exported as <code>crate::ported::exec</code>)</span></td><td class="num">6,503</td><td class="num">22,994</td><td class="num">353%</td><td class="num">78</td><td class="num">29</td><td class="num">49</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:100%"></div><span class="bar-pct">100%</span></div></td><td class="status">&#x2705;</td></tr>
@@ -223,30 +223,30 @@
         <div class="fn-section-body">
 <table class="fn-table"><thead><tr><th>C Function</th><th>Rust Location</th><th>File</th><th>Status</th></tr></thead><tbody>
 <tr><td><code>add</code></td><td>line 310</td><td><code>zle/keymaps.rs</code></td><td class="st-ok">&#x2705;</td></tr>
-<tr class="renamed"><td><code>checkalias</code></td><td>renamed / restructured</td><td><code>parse/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr><td><code>cmd_or_math</code></td><td>line 741</td><td><code>parse/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
-<tr><td><code>cmd_or_math_sub</code></td><td>line 1101</td><td><code>parse/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
-<tr><td><code>ctxtlex</code></td><td>line 1929</td><td><code>parse/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
-<tr><td><code>dquote_parse</code></td><td>line 608</td><td><code>parse/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
-<tr class="renamed"><td><code>exalias</code></td><td>renamed / restructured</td><td><code>parse/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr><td><code>gettok</code></td><td>line 315</td><td><code>parse/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
-<tr><td><code>gettokstr</code></td><td>line 652</td><td><code>parse/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
-<tr class="renamed"><td><code>gotword</code></td><td>renamed / restructured</td><td><code>parse/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>initlextabs</code></td><td>renamed / restructured</td><td><code>parse/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr><td><code>isnumglob</code></td><td>line 2036</td><td><code>parse/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
-<tr class="renamed"><td><code>lex_context_restore</code></td><td>renamed / restructured</td><td><code>parse/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>lex_context_save</code></td><td>renamed / restructured</td><td><code>parse/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>lexinit</code></td><td>renamed / restructured</td><td><code>parse/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>checkalias</code></td><td>renamed / restructured</td><td><code>ported/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr><td><code>cmd_or_math</code></td><td>line 741</td><td><code>ported/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
+<tr><td><code>cmd_or_math_sub</code></td><td>line 1101</td><td><code>ported/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
+<tr><td><code>ctxtlex</code></td><td>line 1929</td><td><code>ported/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
+<tr><td><code>dquote_parse</code></td><td>line 608</td><td><code>ported/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
+<tr class="renamed"><td><code>exalias</code></td><td>renamed / restructured</td><td><code>ported/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr><td><code>gettok</code></td><td>line 315</td><td><code>ported/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
+<tr><td><code>gettokstr</code></td><td>line 652</td><td><code>ported/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
+<tr class="renamed"><td><code>gotword</code></td><td>renamed / restructured</td><td><code>ported/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>initlextabs</code></td><td>renamed / restructured</td><td><code>ported/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr><td><code>isnumglob</code></td><td>line 2036</td><td><code>ported/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
+<tr class="renamed"><td><code>lex_context_restore</code></td><td>renamed / restructured</td><td><code>ported/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>lex_context_save</code></td><td>renamed / restructured</td><td><code>ported/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>lexinit</code></td><td>renamed / restructured</td><td><code>ported/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
 <tr><td><code>parse_subscript</code></td><td>line 2758</td><td><code>ported/subst.rs</code></td><td class="st-ok">&#x2705;</td></tr>
 <tr><td><code>parse_subst_string</code></td><td>line 3444</td><td><code>ported/subst.rs</code></td><td class="st-ok">&#x2705;</td></tr>
 <tr><td><code>parsestr</code></td><td>line 4164</td><td><code>ported/subst.rs</code></td><td class="st-ok">&#x2705;</td></tr>
-<tr class="renamed"><td><code>parsestrnoerr</code></td><td>renamed / restructured</td><td><code>parse/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>skipcomm</code></td><td>renamed / restructured</td><td><code>parse/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr><td><code>zshlex</code></td><td>line 299</td><td><code>parse/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
-<tr class="renamed"><td><code>zshlex_raw_add</code></td><td>renamed / restructured</td><td><code>parse/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>zshlex_raw_back</code></td><td>renamed / restructured</td><td><code>parse/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>zshlex_raw_back_to_mark</code></td><td>renamed / restructured</td><td><code>parse/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>zshlex_raw_mark</code></td><td>renamed / restructured</td><td><code>parse/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>parsestrnoerr</code></td><td>renamed / restructured</td><td><code>ported/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>skipcomm</code></td><td>renamed / restructured</td><td><code>ported/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr><td><code>zshlex</code></td><td>line 299</td><td><code>ported/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
+<tr class="renamed"><td><code>zshlex_raw_add</code></td><td>renamed / restructured</td><td><code>ported/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>zshlex_raw_back</code></td><td>renamed / restructured</td><td><code>ported/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>zshlex_raw_back_to_mark</code></td><td>renamed / restructured</td><td><code>ported/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>zshlex_raw_mark</code></td><td>renamed / restructured</td><td><code>ported/lex.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
 </tbody></table></div></div>
 
       <div class="fn-section">
@@ -255,77 +255,77 @@
         </button>
         <div class="fn-section-body">
 <table class="fn-table"><thead><tr><th>C Function</th><th>Rust Location</th><th>File</th><th>Status</th></tr></thead><tbody>
-<tr class="renamed"><td><code>bin_zcompile</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>bld_eprog</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>build_cur_dump</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>build_dump</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>check_dump_file</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>clear_hdocs</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>closedumps</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>copy_ecstr</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>cur_add_func</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>decrdumpcount</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>dump_autoload</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>dump_find_func</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>dupeprog</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>ecadd</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>ecadjusthere</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>eccopyredirs</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>ecdel</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>ecgetarr</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>ecgetlist</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>ecgetredirs</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>ecgetstr</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>ecispace</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>ecrawstr</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>ecstrcode</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>empty_eprog</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>fdswap</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>freedump</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>freeeprog</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>get_cond_num</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>incrdumpcount</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>init_eprog</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>init_parse</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>init_parse_status</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>load_dump_file</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>load_dump_header</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_case</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_cmd</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_cond</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_cond_double</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_cond_multi</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_cond_triple</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_dinbrack</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_event</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_for</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_funcdef</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_if</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_list</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_nl_wordlist</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_pline</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_redir</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_repeat</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_simple</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_sublist</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_subsh</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_time</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_while</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>par_wordlist</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr><td><code>parse_cond</code></td><td>line 2569</td><td><code>parse/parse.rs</code></td><td class="st-ok">&#x2705;</td></tr>
-<tr class="renamed"><td><code>parse_context_restore</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>parse_context_save</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>parse_event</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr><td><code>parse_list</code></td><td>line 1331</td><td><code>parse/parse.rs</code></td><td class="st-ok">&#x2705;</td></tr>
-<tr class="renamed"><td><code>set_list_code</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>set_sublist_code</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>setheredoc</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>try_dump_file</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>try_source_file</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>useeprog</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>write_dump</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>yyerror</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
-<tr class="renamed"><td><code>zwcstat</code></td><td>renamed / restructured</td><td><code>parse/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>bin_zcompile</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>bld_eprog</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>build_cur_dump</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>build_dump</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>check_dump_file</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>clear_hdocs</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>closedumps</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>copy_ecstr</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>cur_add_func</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>decrdumpcount</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>dump_autoload</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>dump_find_func</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>dupeprog</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>ecadd</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>ecadjusthere</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>eccopyredirs</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>ecdel</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>ecgetarr</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>ecgetlist</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>ecgetredirs</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>ecgetstr</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>ecispace</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>ecrawstr</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>ecstrcode</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>empty_eprog</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>fdswap</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>freedump</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>freeeprog</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>get_cond_num</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>incrdumpcount</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>init_eprog</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>init_parse</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>init_parse_status</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>load_dump_file</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>load_dump_header</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_case</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_cmd</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_cond</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_cond_double</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_cond_multi</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_cond_triple</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_dinbrack</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_event</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_for</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_funcdef</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_if</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_list</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_nl_wordlist</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_pline</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_redir</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_repeat</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_simple</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_sublist</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_subsh</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_time</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_while</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>par_wordlist</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr><td><code>parse_cond</code></td><td>line 2569</td><td><code>ported/parse.rs</code></td><td class="st-ok">&#x2705;</td></tr>
+<tr class="renamed"><td><code>parse_context_restore</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>parse_context_save</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>parse_event</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr><td><code>parse_list</code></td><td>line 1331</td><td><code>ported/parse.rs</code></td><td class="st-ok">&#x2705;</td></tr>
+<tr class="renamed"><td><code>set_list_code</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>set_sublist_code</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>setheredoc</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>try_dump_file</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>try_source_file</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>useeprog</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>write_dump</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>yyerror</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
+<tr class="renamed"><td><code>zwcstat</code></td><td>renamed / restructured</td><td><code>ported/parse.rs</code></td><td class="st-rn">&#x1F504;</td></tr>
 </tbody></table></div></div>
 
       <div class="fn-section">
@@ -955,7 +955,7 @@
 <tr><td><code>gettempname</code></td><td>line 781</td><td><code>ported/utils.rs</code></td><td class="st-ok">&#x2705;</td></tr>
 <tr><td><code>gettygrp</code></td><td>line 2225</td><td><code>ported/utils.rs</code></td><td class="st-ok">&#x2705;</td></tr>
 <tr><td><code>gettyinfo</code></td><td>line 2475</td><td><code>ported/utils.rs</code></td><td class="st-ok">&#x2705;</td></tr>
-<tr><td><code>has_token</code></td><td>line 2326</td><td><code>parse/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
+<tr><td><code>has_token</code></td><td>line 2326</td><td><code>ported/lex.rs</code></td><td class="st-ok">&#x2705;</td></tr>
 <tr><td><code>hasspecial</code></td><td>line 2185</td><td><code>ported/utils.rs</code></td><td class="st-ok">&#x2705;</td></tr>
 <tr><td><code>hmkarray</code></td><td>line 3150</td><td><code>ported/subst.rs</code></td><td class="st-ok">&#x2705;</td></tr>
 <tr><td><code>init_dirsav</code></td><td>line 3128</td><td><code>ported/utils.rs</code></td><td class="st-ok">&#x2705;</td></tr>
@@ -1210,15 +1210,15 @@
       <!-- SECTION 8: ENGINEERING OVERVIEW         -->
       <!-- ═══════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">%</span>ENGINEERING OVERVIEW</h2>
-      <p class="tutorial-subtitle">Workspace-wide cargo workspace metrics (three packages: <code>zshrs</code>, <code>compsys</code>, <code>zshrs-daemon</code>). Counts below are from <code>wc</code> / <code>rg</code> on 2026-05-11; per-subsystem module tables follow unchanged.</p>
+      <p class="tutorial-subtitle">Workspace-wide cargo workspace metrics (three packages: <code>zshrs</code>, <code>compsys</code>, <code>zshrs-daemon</code>). Counts below are from <code>wc</code> / <code>rg</code> on 2026-05-12; per-subsystem module tables follow unchanged.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));">
-        <div class="stat-card"><div class="stat-val">369,525</div><div class="stat-label">Total Rust Lines</div></div>
-        <div class="stat-card"><div class="stat-val accent">412</div><div class="stat-label"><code>.rs</code> Files</div></div>
-        <div class="stat-card"><div class="stat-val green">4,838</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
-        <div class="stat-card"><div class="stat-val">5,489</div><div class="stat-label"><code>pub fn</code> (tracked <code>.rs</code>)</div></div>
-        <div class="stat-card"><div class="stat-val">675</div><div class="stat-label"><code>pub struct</code></div></div>
-        <div class="stat-card"><div class="stat-val">167</div><div class="stat-label"><code>pub enum</code></div></div>
+        <div class="stat-card"><div class="stat-val">371,790</div><div class="stat-label">Total Rust Lines</div></div>
+        <div class="stat-card"><div class="stat-val accent">413</div><div class="stat-label"><code>.rs</code> Files</div></div>
+        <div class="stat-card"><div class="stat-val green">4,849</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val">5,592</div><div class="stat-label"><code>pub fn</code> (tracked <code>.rs</code>)</div></div>
+        <div class="stat-card"><div class="stat-val">648</div><div class="stat-label"><code>pub struct</code></div></div>
+        <div class="stat-card"><div class="stat-val">148</div><div class="stat-label"><code>pub enum</code></div></div>
         <div class="stat-card"><div class="stat-val accent">2,108</div><div class="stat-label">Git Commits</div></div>
       </div>
 
@@ -1270,7 +1270,7 @@
         <tbody>
           <tr><td style="color:var(--cyan);">Core Engine</td><td><code>lexer, parser, exec, subst_port, subst</code></td><td class="num">29,933</td><td class="num">23.4%</td><td><div class="bar-wrap"><div class="bar-fill cyan" style="width:23.4%"></div></div></td><td>Lexer, parser (AST), executor (pipelines, redirects, 145 builtins), substitution</td></tr>
           <tr><td style="color:var(--cyan);">ZLE Line Editor</td><td><code>zle/* (28 files)</code></td><td class="num">35,670</td><td class="num">27.9%</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:27.9%"></div></div></td><td>Keymaps, widgets, vi mode, completion, refresh, history navigation, text objects, complete/complist/compctl/compmatch/compcore</td></tr>
-          <tr><td style="color:var(--cyan);">Loadable Modules</td><td><code>datetime, files, stat, system, tcp, pcre, curses, zftp, parameter, ksh93, zutil, ...</code></td><td class="num">26,418</td><td class="num">20.7%</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:20.7%"></div></div></td><td>34 module ports: networking, files, PCRE, curses, profiling, pseudo-tty, parameter introspection, math functions, db_gdbm, etc.</td></tr>
+          <tr><td style="color:var(--cyan);">Loadable Modules</td><td><code>datetime, files, stat, system, tcp, pcre, curses, zftp, parameter, ksh93, zutil, ...</code></td><td class="num">26,418</td><td class="num">20.7%</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:20.7%"></div></div></td><td>35 module ports: networking, files, PCRE, curses, profiling, pseudo-tty, parameter introspection, math functions, db_gdbm, etc.</td></tr>
           <tr><td style="color:var(--cyan);">Utilities</td><td><code>utils, compat, sort, tokens, input, linklist, mem, ...</code></td><td class="num">6,204</td><td class="num">7.3%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:7.3%"></div></div></td><td>String ops, quoting (7 modes), escape parsing, path resolution, spelling correction</td></tr>
           <tr><td style="color:var(--cyan);">Parameters</td><td><code>params, param_private, parameter</code></td><td class="num">4,596</td><td class="num">5.4%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:5.4%"></div></div></td><td>80+ special params, namerefs, scoping, tied pairs, typeset, GSU dispatch</td></tr>
           <tr><td style="color:var(--cyan);">Pattern / Glob</td><td><code>pattern, glob</code></td><td class="num">4,082</td><td class="num">4.8%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:4.8%"></div></div></td><td>Compiled pattern engine, glob qualifiers, brace expansion, match/replace</td></tr>
@@ -1287,7 +1287,7 @@
       <hr class="section-rule">
 
       <!-- ═══════════ LOADABLE MODULES ═══════════ -->
-      <h2 class="tutorial-title"><span class="step-hash">+</span>34 LOADABLE MODULE PORTS</h2>
+      <h2 class="tutorial-title"><span class="step-hash">+</span>35 LOADABLE MODULE PORTS</h2>
       <p class="tutorial-subtitle">Each C module from <code>src/zsh/Src/Modules/</code> has a corresponding strict-port Rust implementation in <code>src/ported/modules/</code>. Module file set is included in the file freeze on <code>src/ported/</code>; every module now routes its <code>features_</code> / <code>enables_</code> / <code>cleanup_</code> hooks through the canonical <code>module::featuresarray</code> / <code>handlefeatures</code> / <code>setfeatureenables</code> impls instead of per-module Rust-only stub copies.</p>
 
       <div class="mapping-grid" style="grid-template-columns:repeat(auto-fill,minmax(16rem,1fr));">
@@ -1491,21 +1491,19 @@
       <hr class="section-rule">
 
       <!-- ═════════════════════════════════════════════════ -->
-      <!-- SECTION: FUSEVM + PARSE CRATE — WORKSPACE COMPILATION -->
+      <!-- SECTION: FUSEVM + LEX/PARSE — WORKSPACE COMPILATION -->
       <!-- ═════════════════════════════════════════════════ -->
-      <h2 class="tutorial-title" style="color:var(--accent);"><span class="step-hash" style="color:var(--accent);">&#x2B22;</span>FUSEVM + <code>ZSHRS-PARSE</code></h2>
+      <h2 class="tutorial-title" style="color:var(--accent);"><span class="step-hash" style="color:var(--accent);">&#x2B22;</span>FUSEVM + LEX / PARSE (<code>src/ported/</code>)</h2>
       <p class="tutorial-subtitle">Runtime bytecode targets the crates.io <a href="https://crates.io/crates/fusevm" target="_blank" rel="noopener noreferrer"><code>fusevm</code></a> crate (pinned in workspace <code>Cargo.toml</code>). Lexing and parsing live in <code>src/ported/lex.rs</code> and <code>src/ported/parse.rs</code> in the runtime crate (the standalone parse package was absorbed back). <a href="https://github.com/MenkeTechnologies/strykelang" target="_blank" rel="noopener noreferrer">Stryke / strykelang</a> is a separate repository &mdash; it is not part of this workspace; the former Perl-interpreter block here was erroneous pasted content.</p>
 
-      <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--accent);letter-spacing:1.5px;margin:1.5rem 0 0.5rem;">// PARSE CRATE FILES</h3>
+      <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--accent);letter-spacing:1.5px;margin:1.5rem 0 0.5rem;">// LEX + PARSER (IN-CRATE PORTS)</h3>
       <table class="file-table">
         <thead><tr><th>File</th><th class="num">Lines</th><th>Role</th></tr></thead>
         <tbody>
-          <tr><td><code>parse/src/lex.rs</code></td><td class="num">3,747</td><td>Lexer port of <code>Src/lex.c</code> &mdash; tokens, contexts, alias fusion</td></tr>
-          <tr><td><code>parse/src/parse.rs</code></td><td class="num">3,778</td><td>Parser port of <code>Src/parse.c</code> &mdash; lists, compounds, redirections</td></tr>
-          <tr><td><code>parse/src/tokens.rs</code></td><td class="num">449</td><td>Token kinds + keyword tables shared with the lexer</td></tr>
-          <tr><td><code>parse/src/lib.rs</code></td><td class="num">25</td><td>Crate root exports</td></tr>
+          <tr><td><code>src/ported/lex.rs</code></td><td class="num">4,617</td><td>Lexer port of <code>Src/lex.c</code> &mdash; tokens, contexts, alias fusion</td></tr>
+          <tr><td><code>src/ported/parse.rs</code></td><td class="num">5,015</td><td>Parser port of <code>Src/parse.c</code> &mdash; lists, compounds, redirections</td></tr>
         </tbody>
-        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL PARSE</td><td class="num">7,999</td><td>four files</td></tr></tfoot>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">LEX + PARSE</td><td class="num">9,632</td><td>two files in <code>src/ported/</code> (no separate parse crate)</td></tr></tfoot>
       </table>
 
       <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--accent);letter-spacing:1.5px;margin:1.5rem 0 0.5rem;">// EXECUTION PIPELINE (ZSHRS)</h3>
@@ -1514,7 +1512,7 @@
        │
        ▼
   ┌─────────────────┐     ┌──────────────────┐
-  │  parse::Lexer   │────▶│  parse::Parser   │
+  │  Lexer          │────▶│  Parser          │
   │  (lex.rs)       │     │  (parse.rs)      │
   │  token stream   │     │  AST / commands  │
   └────────┬────────┘     └────────┬─────────┘
@@ -1536,16 +1534,16 @@
       <!-- SECTION: BEYOND THE C PORT — RUNTIME INFRASTRUCTURE -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title" style="color:var(--accent);"><span class="step-hash" style="color:var(--accent);">&#x25CF;</span>BEYOND THE C PORT &mdash; RUNTIME INFRASTRUCTURE</h2>
-      <p class="tutorial-subtitle">The C-to-Rust port covered above (103 strict-port files in <code>src/ported/</code>, 92 upstream <code>Src/*.c</code> files, 859 C functions in the core 14 + 100s more across modules &amp; ZLE) is what zshrs <em>inherits</em> from zsh. The numbers below count what zshrs <em>adds</em> &mdash; new Rust code with no C ancestor. This is the layer that takes zshrs from &ldquo;zsh in Rust&rdquo; to &ldquo;the first compiled Unix shell with a session-persistent daemon, AOP-intercept recorder, and bidirectional ptmx-attach job supervisor.&rdquo; All non-port runtime code now lives in <code>src/extensions/</code> (35 files) &mdash; mechanically isolated from <code>src/ported/</code> by <code>tests/port_purity.rs</code>.</p>
+      <p class="tutorial-subtitle">The C-to-Rust port covered above (105 strict-port files in <code>src/ported/</code>, 94 upstream <code>Src/*.c</code> files, 859 C functions in the core 14 + 100s more across modules &amp; ZLE) is what zshrs <em>inherits</em> from zsh. The numbers below count what zshrs <em>adds</em> &mdash; new Rust code with no C ancestor. This is the layer that takes zshrs from &ldquo;zsh in Rust&rdquo; to &ldquo;the first compiled Unix shell with a session-persistent daemon, AOP-intercept recorder, and bidirectional ptmx-attach job supervisor.&rdquo; All non-port runtime code now lives in <code>src/extensions/</code> (37 files) &mdash; mechanically isolated from <code>src/ported/</code> by <code>tests/port_purity.rs</code>.</p>
 
       <table class="file-table">
         <thead><tr><th>Crate / Layer</th><th class="num">Files</th><th class="num">Lines</th><th class="num">Pub Fns</th><th class="num">Tests</th><th>Purpose</th></tr></thead>
         <tbody>
           <tr>
             <td style="color:var(--cyan);"><code>src/extensions/</code></td>
-            <td class="num">35</td>
-            <td class="num">34,992</td>
-            <td class="num">293</td>
+            <td class="num">37</td>
+            <td class="num">35,737</td>
+            <td class="num">294</td>
             <td class="num">173</td>
             <td>The non-port directory. Features zsh C demonstrably does <em>not</em> have: AOT compile (<code>aot.rs</code>, <code>compile_zsh.rs</code>), autoload / plugin / script caches (<code>autoload_cache.rs</code>, <code>plugin_cache.rs</code>, <code>script_cache.rs</code>), fish-style features (<code>fish_features.rs</code>), persistent worker pool (<code>worker.rs</code>), arith JIT compiler (<code>arith_compiler.rs</code>), AST s-exp dump (<code>ast_sexp.rs</code>), ZWC byte-code helpers (<code>zwc.rs</code>, <code>zwc_decode.rs</code>), recorder hooks (<code>recorder.rs</code>), daemon presence (<code>daemon_presence.rs</code>), structured logging (<code>log.rs</code>), keymaps / widgets (<code>zle/keymaps.rs</code>, <code>zle/widgets.rs</code>, <code>zle/widget.rs</code>), ext builtins (<code>ext_builtins.rs</code>), regex module (<code>regex_mod.rs</code>), config (<code>config.rs</code>), overlay snapshot + canonical apply (<code>overlay_snapshot.rs</code>, <code>canonical_apply.rs</code>), subscript / fds / hist (<code>subscript.rs</code>, <code>fds.rs</code>, <code>history.rs</code>), stringsort, completion shim. Re-exported at crate root via <code>pub use crate::*</code> aliases so call sites still resolve to <code>crate::aot::*</code>, etc.</td>
           </tr>
@@ -1556,14 +1554,6 @@
             <td class="num">202</td>
             <td class="num">91</td>
             <td>Singleton daemon: IPC server, HTTP listener (auto-derived OpenAPI 3.1), canonical-state engine, fsnotify, schedule, supervisor (jobs + bidirectional ptmx attach), pub/sub bus, named locks, ask-inbox, snapshots, artifacts, cache. Hosts every <code>z*</code> builtin.</td>
-          </tr>
-          <tr>
-            <td style="color:var(--magenta);"><code>parse/</code></td>
-            <td class="num">4</td>
-            <td class="num">7,999</td>
-            <td class="num">66</td>
-            <td class="num">33</td>
-            <td>Standalone lexer + parser crate. Direct port of <code>src/zsh/Src/lex.c</code> + <code>parse.c</code>, but factored out so the recorder + daemon can re-tokenize without pulling the executor. Counts here go against the &ldquo;ported&rdquo; ledger above &mdash; this is the only port code that lives outside <code>src/ported/</code>, and it does so because two consumers (runtime + daemon) need it.</td>
           </tr>
           <tr>
             <td style="color:var(--cyan);"><code>src/recorder/</code> (feature-gated)</td>
@@ -1591,8 +1581,8 @@
           </tr>
         </tbody>
         <tfoot>
-          <tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">NEW INFRASTRUCTURE (rows above)</td><td class="num">265</td><td class="num">178,250</td><td class="num">2,331</td><td class="num">694</td></tr>
-          <tr><td colspan="6" style="font-size:11px;color:var(--text-muted);padding-top:0.35rem;">Sums cover the six layers in this table only. Workspace-wide Rust LOC (369,525) additionally includes <code>src/ported/</code>, remaining <code>src/</code> glue, <code>tests/</code>, <code>bins/</code>, and <code>build.rs</code>.</td></tr>
+          <tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">NEW INFRASTRUCTURE (rows above)</td><td class="num">263</td><td class="num">170,996</td><td class="num">2,266</td><td class="num">661</td></tr>
+          <tr><td colspan="6" style="font-size:11px;color:var(--text-muted);padding-top:0.35rem;">Sums cover the five layers in this table only. Workspace-wide Rust LOC (371,790) additionally includes <code>src/ported/</code>, remaining <code>src/</code> glue, <code>tests/</code>, <code>bins/</code>, and <code>build.rs</code>.</td></tr>
         </tfoot>
       </table>
 
@@ -1616,21 +1606,21 @@
       <!-- SECTION: GRAND TOTAL — WORKSPACE CRATES       -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">&#x2261;</span>GRAND TOTAL &mdash; FULL WORKSPACE</h2>
-      <p class="tutorial-subtitle">Three Rust packages in one Cargo workspace (<code>zshrs</code>, <code>compsys</code>, <code>zshrs-daemon</code>). Combined: 369,525 Rust lines (<code>git ls-files '*.rs' | xargs wc -l</code>), 5,489 <code>pub fn</code> lines (<code>rg '^\s*pub fn '</code>), 675 <code>pub struct</code>, 167 <code>pub enum</code>, 4,838 <code>#[test]</code> lines (<code>rg '^\s*#\[test\]'</code>) — each <code>rg</code> scoped to the same path sets as the table, 2026-05-11.</p>
+      <p class="tutorial-subtitle">Three Rust packages in one Cargo workspace (<code>zshrs</code>, <code>compsys</code>, <code>zshrs-daemon</code>). Combined: 371,790 Rust lines (<code>git ls-files '*.rs' | xargs wc -l</code>), 5,592 <code>pub fn</code> lines (<code>rg '^\s*pub fn '</code>), 648 <code>pub struct</code>, 148 <code>pub enum</code>, 4,849 <code>#[test]</code> lines (<code>rg '^\s*#\[test\]'</code>) — each <code>rg</code> scoped to the same path sets as the table, 2026-05-12.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">369,525</div><div class="stat-label">Total Rust Lines</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">5,489</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
-        <div class="stat-card"><div class="stat-val green">4,838</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">4</div><div class="stat-label">Workspace Crates</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">371,790</div><div class="stat-label">Total Rust Lines</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">5,592</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
+        <div class="stat-card"><div class="stat-val green">4,849</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">3</div><div class="stat-label">Workspace Crates</div></div>
       </div>
 
       <table class="file-table">
         <thead><tr><th>Crate</th><th class="num">Lines</th><th class="num">Files</th><th class="num">Pub Fns</th><th class="num">Structs</th><th class="num">Enums</th><th class="num">Tests</th><th style="min-width:120px;">Share</th><th>Description</th></tr></thead>
         <tbody>
           <tr>
-            <td style="color:var(--cyan);"><code>zshrs</code> (root, lib <code>zsh</code>)</td><td class="num">314,317</td><td class="num">340</td><td class="num">4,741</td><td class="num">533</td><td class="num">124</td><td class="num">4,492</td>
-            <td><div class="bar-wrap"><div class="bar-fill cyan" style="width:85.1%"></div><span class="bar-pct">85.1%</span></div></td>
+            <td style="color:var(--cyan);"><code>zshrs</code> (root, lib <code>zsh</code>)</td><td class="num">324,581</td><td class="num">345</td><td class="num">4,910</td><td class="num">535</td><td class="num">125</td><td class="num">4,536</td>
+            <td><div class="bar-wrap"><div class="bar-fill cyan" style="width:87.4%"></div><span class="bar-pct">87.4%</span></div></td>
             <td>Runtime: <code>src/</code> (ported + extensions + exec bridge), <code>fish/</code>, <code>bins/</code>, <code>tests/</code>, <code>build.rs</code>. Lines/tests include integration suites.</td>
           </tr>
           <tr>
@@ -1640,21 +1630,17 @@
           </tr>
           <tr>
             <td style="color:var(--accent);"><code>zshrs-daemon</code></td><td class="num">23,881</td><td class="num">41</td><td class="num">202</td><td class="num">38</td><td class="num">6</td><td class="num">91</td>
-            <td><div class="bar-wrap"><div class="bar-fill magenta" style="width:6.5%"></div><span class="bar-pct">6.5%</span></div></td>
+            <td><div class="bar-wrap"><div class="bar-fill magenta" style="width:6.4%"></div><span class="bar-pct">6.4%</span></div></td>
             <td>Singleton daemon: IPC + HTTP/OpenAPI, canonical shards, jobs, fsnotify, pub/sub.</td>
           </tr>
-          <tr>
-            <td><div class="bar-wrap"><div class="bar-fill green" style="width:2.2%"></div><span class="bar-pct">2.2%</span></div></td>
-            <td>Shared lexer/parser extracted from upstream <code>lex.c</code> + <code>parse.c</code> for shell + daemon.</td>
-          </tr>
         </tbody>
-        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">WORKSPACE</td><td class="num">369,525</td><td class="num">412</td><td class="num">5,489</td><td class="num">675</td><td class="num">167</td><td class="num">4,838</td><td></td><td></td></tr></tfoot>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">WORKSPACE</td><td class="num">371,790</td><td class="num">413</td><td class="num">5,592</td><td class="num">648</td><td class="num">148</td><td class="num">4,849</td><td></td><td></td></tr></tfoot>
       </table>
 
     </main>
 
     <footer style="text-align:center;padding:2rem;font-size:10px;color:var(--text-muted);font-family:'Orbitron',sans-serif;letter-spacing:2px;">
-      ZSHRS PORT-COVERAGE REPORT &middot; NON-PORT INFRASTRUCTURE LAYER &middot; UPDATED 2026-05-11 &middot; MENKETECHNOLOGIES
+      ZSHRS PORT-COVERAGE REPORT &middot; NON-PORT INFRASTRUCTURE LAYER &middot; UPDATED 2026-05-12 &middot; MENKETECHNOLOGIES
     </footer>
   </div>
 
