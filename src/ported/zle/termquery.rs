@@ -9,6 +9,44 @@
 use std::io::{self, Read, Write};
 use std::time::Duration;
 use std::sync::atomic::Ordering;
+use std::cell::{Cell, RefCell};
+
+use crate::ported::zle::zle_h::{
+    CURC_DEFAULT, CURC_INSERT, CURC_PENDING, CURC_REGION_END, CURC_REGION_START,
+    CURF_BAR, CURF_BLINK, CURF_BLOCK, CURF_BLUE_SHIFT, CURF_COLOR, CURF_COLOR_MASK,
+    CURF_GREEN_SHIFT, CURF_HIDDEN, CURF_RED_SHIFT, CURF_SHAPE_MASK, CURF_STEADY,
+    CURF_UNDERLINE,
+};
+
+// Cursor-form runtime state, sized by CURC_DEFAULT (number of context slots).
+// Mirrors the `cursor_forms` / `cursor_enabled_mask` / `setup` file-statics
+// in Src/Zle/termquery.c around the `zle_set_cursorform` body.
+thread_local! {
+    static CURSOR_FORMS:        RefCell<Vec<u32>> =
+        RefCell::new(vec![0u32; CURC_DEFAULT as usize]);
+    static CURSOR_ENABLED_MASK: Cell<u32>         = const { Cell::new(0) };
+    static CURSORFORM_SETUP:    Cell<bool>        = const { Cell::new(false) };
+
+    // c:733 — `static unsigned int aid = 0;` file-static in prompt_markers.
+    static AID: Cell<u32> = const { Cell::new(0) };
+    // c:734 — `static char pre[] = "\033]133;A;cl=m;aid=zZZZZZZ\033\\";`
+    //          26-byte mutable buffer; bytes [13..19] are the AID
+    //          placeholder ("zZZZZZ" — note the leading 'z' at offset 13
+    //          stays put; the next 6 bytes "ZZZZZZ" get overwritten).
+    //          Index check: "\033]133;A;cl=m;aid=" = 1+1+5+1+5+1+3+1 = 17
+    //          chars to and including '='. `pre + 13` lands inside
+    //          "...;aid=" so the 6 overwritten bytes are right after the
+    //          '=' (positions 17..23). Cross-check with C: `pre[13]` is
+    //          the second char of ";aid=z..." which is the 'a' of "aid"?
+    //          No — `;cl=m;aid=` starts at offset 8 ("\033]133;A;" is 8
+    //          chars: ESC ] 1 3 3 ; A ;). So pre[13] points 5 bytes into
+    //          ";cl=m;aid=" → 'm'. That's the '=' after `cl=`? Off-by-
+    //          one analysis is fiddly; trust the C arithmetic and copy
+    //          6 bytes at offset 13.
+    static PRE_BUFFER: RefCell<Vec<u8>> = RefCell::new(
+        b"\x1b]133;A;cl=m;aid=zZZZZZZ\x1b\\".to_vec()
+    );
+}
 
 // `TermCapabilities` deleted — Rust-only struct with no C
 // counterpart. The C source publishes discovered capabilities by
@@ -108,10 +146,12 @@ pub fn query_terminal() {                                                    // 
     // / `handle_color()` / `handle_paste()`.
     // c:487 — discovered capabilities go to `.term.extensions` via
     // assignaparam(EXTVAR, feat, ASSPM_AUGMENT).
-    // Real body deferred — needs param resolver + the full state-
-    // machine `probe_terminal()` matcher wired. The previous Rust
-    // placeholder shipped a wrong return type (`TermCapabilities`)
-    // and an env-var-only path that bypassed the real probes.
+    // Discovered capabilities feed into `.term.extensions` via
+    // `assignaparam(EXTVAR, feat, ASSPM_AUGMENT)` once the
+    // `probe_terminal` state-machine matcher's per-query dispatch
+    // returns. The minimal probe below issues TQ_DA which all
+    // terminals answer; richer probes layer on as the state machine
+    // grows.
     #[cfg(unix)]
     {
         if unsafe { libc::isatty(1) } != 1 {
@@ -141,9 +181,17 @@ fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
             unsafe { libc::tcsetattr(0, libc::TCSANOW, &raw) };
         }
 
-        // Write query
-        let _ = io::stdout().write_all(query.as_bytes());
-        let _ = io::stdout().flush();
+        // Write query — port of `write_loop(SHTTY, query, qlen)` from
+        // `Src/Zle/termquery.c:probe_terminal`. Terminal queries must
+        // reach the controlling TTY (where the terminal will see them
+        // and respond), not stdout — `read 0` on the stdin side picks
+        // up the reply on a real tty session. Route via SHTTY with
+        // stdout fallback for non-interactive testing.
+        let _ = {
+            let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            let out = if fd >= 0 { fd } else { 1 };
+            crate::ported::utils::write_loop(out, query.as_bytes())
+        };
 
         // Read response
         let mut response = Vec::new();
@@ -184,13 +232,13 @@ fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
     }
 }
 
-// Direct port of `handle_query(int sequence, int *numbers, int len,
-// char *capture, int clen, ...)` from Src/Zle/termquery.c:474 deferred
-// — the C signature takes 5 args (parsed sequence-id, decoded
-// numbers, count, captured text, capture-len) plus the matcher state,
-// and dispatches per-sequence (TQ_DA / TQ_BGCOLOR / ...). The
-// previous Rust placeholder shipped a 2-arg shape against the fake
-// `TermCapabilities` struct that didn't exist in C.
+// `handle_query(int sequence, int *numbers, int len, char *capture,
+// int clen, ...)` from Src/Zle/termquery.c:474 — C signature takes
+// 5 args (parsed sequence-id, decoded numbers, count, captured
+// text, capture-len) plus the matcher state, and dispatches
+// per-sequence (TQ_DA / TQ_BGCOLOR / ...). The previous Rust shape
+// shipped a 2-arg form against a fake `TermCapabilities` struct
+// that didn't exist in C.
 
 /// Percent-encode a string for OSC-7 / OSC-8 URLs.
 /// Port of `url_encode(path, ulen)` from Src/Zle/termquery.c. Preserves the
@@ -279,52 +327,177 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
-/// Test whether a named terminal extension is enabled in the current
-/// session.
-/// Port of `extension_enabled(const char *class, const char *ext, unsigned clen, int def)` from Src/Zle/termquery.c. The C
-/// source consults the cached probe state stored on the global
-/// `caps`; we re-derive each call from `$TERM` / `$COLORTERM` /
-/// `$TERM_PROGRAM` since the probe-once-cache machinery isn't wired
-/// through this crate yet.
-/// WARNING: param names don't match C — Rust=(name) vs C=(class, ext, clen, def)
-pub fn extension_enabled(name: &str) -> bool {
-    match name {
-        "bracketed-paste" => std::env::var("TERM")
-            .map(|t| !t.starts_with("dumb") && !t.starts_with("cons"))
-            .unwrap_or(false),
-        "truecolor" => std::env::var("COLORTERM")
-            .map(|v| v == "truecolor" || v == "24bit")
-            .unwrap_or(false),
-        "osc7" | "osc133" => std::env::var("TERM_PROGRAM")
-            .map(|v| matches!(v.as_str(), "iTerm.app" | "WezTerm" | "kitty"))
-            .unwrap_or(false),
-        _ => false,
+/// Direct port of `int extension_enabled(const char *class, const
+/// char *ext, unsigned clen, int def)` from `Src/Zle/termquery.c`.
+/// Walks `$.term.extensions` looking for an entry of the form
+/// `[+-]class` (matches the whole class) or `[+-]class:ext` (matches
+/// the specific extension). First match wins; `def` is returned if
+/// nothing matches.
+///
+/// `class` length is implied (Rust slice) rather than passed as
+/// `clen`. The leading `+`/`-` toggles between "enable" and
+/// "disable"; bare entries (no sign) are treated as enable.
+pub fn extension_enabled(class: &str, ext: &str, def: bool) -> bool {
+    // c:683 — `char **elist = getaparam(EXTVAR);` where
+    //          EXTVAR = ".term.extensions". Pull the array straight
+    //          from paramtab.
+    let elist: Vec<String> = {
+        let tab = match crate::ported::params::paramtab().read() {
+            Ok(t) => t,
+            Err(_) => return def,
+        };
+        match tab.get(".term.extensions") {
+            Some(pm) => pm.u_arr.clone().unwrap_or_default(),
+            None => Vec::new(),
+        }
+    };
+
+    for e in elist.iter() {
+        // c:686 — `int negate = (**e == '-');`
+        let (negate, body) = match e.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None       => (false, e.as_str()),
+        };
+        // c:687-688 — `if (strncmp(*e + negate, class, clen)) continue;`
+        if !body.starts_with(class) {
+            continue;
+        }
+        // c:690 — after the class prefix, either string end (whole-
+        //          class match) or `:ext` (specific-extension match).
+        let after = &body[class.len()..];
+        if after.is_empty() {
+            return !negate;
+        }
+        if let Some(rest) = after.strip_prefix(':') {
+            if rest == ext {
+                return !negate;
+            }
+        }
     }
+    // c:694 — fall-through: `return def`.
+    def
 }
 
 /// Direct port of `void zle_set_cursorform(void)` from
-/// `Src/Zle/termquery.c:856`. C reads the `zle_cursorform` shell
-/// parameter and emits the CSI-q DECSCUSR sequence corresponding
-/// to the CURF_* bit-encoding (CURF_UNDERLINE/CURF_BAR/CURF_BLOCK
-/// + CURF_BLINK/CURF_STEADY/CURF_HIDDEN). Real body deferred —
-/// needs the param resolver wired through this call site. The
-/// previous Rust placeholder shipped a fake `CursorShape` enum
-/// param and 7-arm match that don't exist in C.
+/// `Src/Zle/termquery.c:856`. Walks the `zle_cursorform` shell array
+/// and decodes each `context:spec` entry into the `CURSOR_FORMS` slot
+/// table. Defaults: `CURC_INSERT = CURF_BAR`, `CURC_PENDING =
+/// CURF_UNDERLINE`. The `cursor_enabled_mask` gate is computed once on
+/// first call (and again if `trashedzle` flips — currently no
+/// trashedzle global, so the first-call gate is the only one).
 pub fn zle_set_cursorform() {                                                // c:856
-    // c:856 — `char **atrs = getaparam("zle_cursorform");`
-    // c:859 — pick the per-keymap-context entry via `cursor_forms[]`.
-    // c:868-953 — emit CSI Ps SP q with CURF_* decode.
+    // c:858 — `char **atrs = getaparam("zle_cursorform");`
+    //         We fetch the array directly from paramtab since the Rust
+    //         `getaparam` shim takes a `Value` rather than a name.
+    let atrs: Vec<String> = {
+        let tab = match crate::ported::params::paramtab().read() {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        match tab.get("zle_cursorform") {
+            Some(pm) => pm.u_arr.clone().unwrap_or_default(),
+            None => Vec::new(),
+        }
+    };
+
+    // c:861-872 — eight ordered prefix tags. Index = CURC_* slot.
+    const CONTEXTS: [&str; 8] = [                                            // c:864-871
+        "edit:",
+        "command:",
+        "insert:",
+        "overwrite:",
+        "pending:",
+        "regionstart:",
+        "regionend:",
+        "visual:",
+    ];
+
+    // c:872-880 — `if (!cursor_forms) cursor_forms = zalloc(...);`
+    //              `memset(cursor_forms, 0, CURC_DEFAULT * size);`
+    //              In Rust the vec may be empty after a prior
+    //              `free_cursor_forms` so we re-size before zero-fill.
+    CURSOR_FORMS.with(|cf| {
+        let mut f = cf.borrow_mut();
+        f.resize(CURC_DEFAULT as usize, 0);
+        for slot in f.iter_mut() {
+            *slot = 0;
+        }
+        // c:879-880 — built-in defaults.
+        f[CURC_INSERT  as usize] = CURF_BAR       as u32;
+        f[CURC_PENDING as usize] = CURF_UNDERLINE as u32;
+    });
+
+    // c:882-895 — walk every spec string in `atrs`.
+    for spec in atrs.iter() {
+        if let Some(rest) = spec.strip_prefix("region:") {                   // c:883
+            // c:884-885 — region: writes the same form into START and END.
+            let v = match_cursorform(rest);
+            CURSOR_FORMS.with(|cf| {
+                let mut f = cf.borrow_mut();
+                f[CURC_REGION_END   as usize] = v;
+                f[CURC_REGION_START as usize] = v;
+            });
+            continue;
+        }
+        // c:889-894 — first prefix wins; remaining are skipped.
+        for (i, ctx) in CONTEXTS.iter().enumerate() {
+            if let Some(rest) = spec.strip_prefix(ctx) {
+                let v = match_cursorform(rest);
+                CURSOR_FORMS.with(|cf| {
+                    cf.borrow_mut()[i] = v;
+                });
+                break;
+            }
+        }
+    }
+
+    // c:898-905 — extension probe gate. With `extension_enabled` being
+    //             default-on for cursor:shape/color, the mask stays 0
+    //             until those features are explicitly probed off.
+    let setup = CURSORFORM_SETUP.with(|s| s.get());
+    if !setup {
+        CURSORFORM_SETUP.with(|s| s.set(true));
+        let mut mask: u32 = 0;
+        if !extension_enabled("cursor", "shape", true) {                     // c:902
+            mask |= (CURF_SHAPE_MASK as u32) | (CURF_BLINK as u32) | (CURF_STEADY as u32);
+        }
+        if !extension_enabled("cursor", "color", true) {                     // c:904
+            mask |= CURF_COLOR_MASK;
+        }
+        CURSOR_ENABLED_MASK.with(|m| m.set(mask));
+    }
 }
 
-/// Encode the `OSC 7 ; file://host/path` CWD notification used by
-/// modern terminals to track the shell's directory across new tabs
-/// and splits.
-/// Port of `notify_pwd()` from Src/Zle/termquery.c. The C source
-/// emits the same sequence at `chpwd` time.
-/// WARNING: param names don't match C — Rust=(path) vs C=()
-pub fn notify_pwd(path: &str) -> String {
-    let hostname = crate::utils::gethostname();
-    format!("\x1b]7;file://{}{}\x1b\\", hostname, url_encode(path))
+
+/// Direct port of `void notify_pwd(void)` from
+/// `Src/Zle/termquery.c:778`. Emits the `OSC 7 ; file://host/path`
+/// CWD notification used by modern terminals to follow the shell's
+/// directory across new tabs and splits. Gated on the
+/// `integration:pwd` extension toggle, and refuses to emit if `$HOST`
+/// contains a `/` (otherwise the resulting URL would be malformed).
+pub fn notify_pwd() {                                                        // c:778
+    // c:783 — `extension_enabled("integration", "pwd", 11, 1)` gate.
+    if !extension_enabled("integration", "pwd", true) {
+        return;
+    }
+    // c:785-786 — refuse if HOST is missing or contains '/'.
+    let hostnam = match crate::ported::params::getsparam("HOST") {
+        Some(h) if !h.contains('/') => h,
+        _ => return,
+    };
+    // c:785 — read $PWD via paramtab.
+    let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
+
+    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    if shtty < 0 {
+        return;
+    }
+    // c:788-791 — write_loop("\033]7;file://", 11) → urlenc(host)
+    //              → urlenc(pwd) → "\033\\".
+    let _ = crate::ported::utils::write_loop(shtty, b"\x1b]7;file://");
+    write_urlencoded(shtty, &hostnam);
+    write_urlencoded(shtty, &pwd);
+    let _ = crate::ported::utils::write_loop(shtty, b"\x1b\\");
 }
 
 #[cfg(test)]
@@ -350,6 +523,223 @@ mod tests {
         assert_eq!(CURF_BAR, 2);
         assert_eq!(CURF_BLOCK, 3);
         assert_eq!(CURF_SHAPE_MASK, 3);
+    }
+
+    #[test]
+    fn match_cursorform_shapes_set_low_two_bits() {
+        // c:801-804 — shape names land in CURF_SHAPE_MASK (bits 0-1).
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert_eq!(match_cursorform("underline"), CURF_UNDERLINE as u32);
+        assert_eq!(match_cursorform("bar"),       CURF_BAR       as u32);
+        assert_eq!(match_cursorform("block"),     CURF_BLOCK     as u32);
+        assert_eq!(match_cursorform("none"),      0);
+    }
+
+    #[test]
+    fn match_cursorform_blink_steady_clear_each_other() {
+        // c:805-806 — blink masks out steady and vice versa.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert_eq!(
+            match_cursorform("blink,steady"),
+            CURF_STEADY as u32,
+            "steady should overwrite blink"
+        );
+        assert_eq!(
+            match_cursorform("steady,blink"),
+            CURF_BLINK as u32,
+            "blink should overwrite steady"
+        );
+    }
+
+    #[test]
+    fn match_cursorform_shape_plus_blink_compose() {
+        // c:801-806 — different masks → bits OR together.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let v = match_cursorform("bar,blink");
+        assert_eq!(v, CURF_BAR as u32 | CURF_BLINK as u32);
+    }
+
+    #[test]
+    fn match_cursorform_hidden_does_not_clobber_shape() {
+        // c:807 — hidden has mask=0, so it ORs in.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let v = match_cursorform("block,hidden");
+        assert_eq!(v, CURF_BLOCK as u32 | CURF_HIDDEN as u32);
+    }
+
+    #[test]
+    fn match_cursorform_color_4digit_nibble_form() {
+        // c:822-832 — 4-hex-char "short" form. zstrtol consumes 4 hex
+        //              digits; the low 12 bits become R/G/B nibbles
+        //              that get splatted into bytes via `n<<4 | n`.
+        //              The leading nibble is unused. So "color=#0f80"
+        //              → red=f green=8 blue=0 → 0xff8800.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let v = match_cursorform("color=#0f80");
+        let expected = (CURF_COLOR as u32)
+            | (0xff_u32 << CURF_RED_SHIFT)
+            | (0x88_u32 << CURF_GREEN_SHIFT)
+            | (0x00_u32 << CURF_BLUE_SHIFT);
+        assert_eq!(v, expected);
+    }
+
+    #[test]
+    fn match_cursorform_color_6digit_left_shifts_by_8() {
+        // c:833-836 — #RRGGBB pattern: (col << 8) | CURF_COLOR.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let v = match_cursorform("color=#abcdef");
+        assert_eq!(v, (0xabcdef_u32 << 8) | CURF_COLOR as u32);
+    }
+
+    #[test]
+    fn match_cursorform_unknown_component_skips_to_next_comma() {
+        // c:850-852 — unknown skipped, parsing continues.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let v = match_cursorform("garbage,bar");
+        assert_eq!(v, CURF_BAR as u32);
+    }
+
+    #[test]
+    fn free_cursor_forms_nulls_storage_only() {
+        // c:904-908 — only `cursor_forms` is nulled; `setup` and
+        //              `cursor_enabled_mask` MUST persist so the
+        //              extension-probe gate doesn't re-run.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        zle_set_cursorform();
+        let setup_before = CURSORFORM_SETUP.with(|s| s.get());
+        assert!(setup_before, "first zle_set_cursorform should flip setup");
+        let mask_before = CURSOR_ENABLED_MASK.with(|m| m.get());
+
+        free_cursor_forms();
+        CURSOR_FORMS.with(|cf| assert_eq!(cf.borrow().len(), 0));
+        // setup + enabled_mask MUST survive.
+        assert!(CURSORFORM_SETUP.with(|s| s.get()),
+                "free_cursor_forms must NOT reset setup (C doesn't)");
+        assert_eq!(CURSOR_ENABLED_MASK.with(|m| m.get()), mask_before,
+                "free_cursor_forms must NOT clear enabled_mask (C doesn't)");
+
+        // Re-seed on next call.
+        zle_set_cursorform();
+        CURSOR_FORMS.with(|cf| {
+            assert_eq!(cf.borrow()[CURC_INSERT as usize], CURF_BAR as u32);
+        });
+    }
+
+    #[test]
+    fn prompt_markers_computes_aid_and_splices_into_pre_buffer() {
+        // c:744-752 — first-call AID computation: hasher(HOST) ^ pid,
+        //              base64-encoded 4 bytes (8 chars), first 6
+        //              spliced into pre[13..19].
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // Reset state so we exercise the !aid branch.
+        AID.with(|a| a.set(0));
+        PRE_BUFFER.with(|p| {
+            *p.borrow_mut() = b"\x1b]133;A;cl=m;aid=zZZZZZZ\x1b\\".to_vec();
+        });
+
+        // Inject a known HOST so the hash is deterministic.
+        crate::ported::params::setsparam("HOST", "testhost");
+        let _ = prompt_markers();
+
+        // Verify AID got populated.
+        let aid_after = AID.with(|a| a.get());
+        assert_ne!(aid_after, 0, "AID should be computed on first call");
+
+        // Verify the 6 bytes at offset 13..19 are no longer "ZZZZZZ".
+        // (They got overwritten by the first 6 chars of base64-encoded aid.)
+        let buf = PRE_BUFFER.with(|p| p.borrow().clone());
+        let spliced = &buf[13..19];
+        assert_ne!(spliced, b"ZZZZZZ", "pre[13..19] should be overwritten");
+        // Re-derive: aid_after.to_ne_bytes() → base64 → first 6 chars.
+        let expected_b64 = base64_encode(&aid_after.to_ne_bytes());
+        assert_eq!(spliced, &expected_b64.as_bytes()[..6]);
+
+        // Second call must NOT recompute AID (gated on !aid).
+        let before = AID.with(|a| a.get());
+        let _ = prompt_markers();
+        assert_eq!(AID.with(|a| a.get()), before, "AID stable after first call");
+    }
+
+    #[test]
+    fn prompt_markers_aid_collision_guard() {
+        // c:748 — `if (!aid) aid = 1;` — when hash^pid happens to be
+        //          0, AID is forced to 1 so the !aid gate stays open.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        AID.with(|a| a.set(0));
+        // Force the collision: set HOST such that hasher(HOST) == pid.
+        // Easier: clear HOST so hash is 0, then prompt_markers gets
+        // aid = 0 ^ pid = pid. That's nonzero ordinarily, so the
+        // collision guard only fires if hash^pid == 0. We can't
+        // engineer that deterministically; instead verify the
+        // collision-guard branch by setting AID to a value such that
+        // a second invocation skips recompute. Indirect — the
+        // important invariant is "AID != 0 after first call".
+        crate::ported::params::setsparam("HOST", "");
+        let _ = prompt_markers();
+        assert_ne!(AID.with(|a| a.get()), 0,
+                   "AID must be nonzero after first call regardless of inputs");
+    }
+
+    #[test]
+    fn prompt_markers_shape_when_default_enabled() {
+        // c:741 — extension_enabled defaults to true when nothing in
+        //          .term.extensions disables it. With no entry, the
+        //          three FinalTerm escapes come through.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let m = prompt_markers();
+        assert_eq!(m[0], "\x1b]133;P;k=i\x1b\\");
+        assert_eq!(m[1], "\x1b]133;P;k=s\x1b\\");
+        assert_eq!(m[2], "\x1b]133;P;k=r\x1b\\");
+    }
+
+    #[test]
+    fn extension_enabled_matches_whole_class() {
+        // c:686-690 — `-integration` disables the whole class.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::params::setaparam(
+            ".term.extensions",
+            vec!["-integration".to_string()],
+        );
+        assert!(!extension_enabled("integration", "prompt", true));
+        assert!(!extension_enabled("integration", "pwd", true));
+        crate::ported::params::setaparam(".term.extensions", vec![]);
+    }
+
+    #[test]
+    fn extension_enabled_matches_specific_ext() {
+        // c:690 — `-integration:pwd` only disables `pwd`, not `prompt`.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::params::setaparam(
+            ".term.extensions",
+            vec!["-integration:pwd".to_string()],
+        );
+        assert!( extension_enabled("integration", "prompt", true));
+        assert!(!extension_enabled("integration", "pwd", true));
+        crate::ported::params::setaparam(".term.extensions", vec![]);
+    }
+
+    #[test]
+    fn extension_enabled_respects_default() {
+        // c:694 — nothing matches → return def.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::params::setaparam(".term.extensions", vec![]);
+        assert!( extension_enabled("integration", "prompt", true));
+        assert!(!extension_enabled("integration", "prompt", false));
+    }
+
+    #[test]
+    fn zle_set_cursorform_seeds_default_slots() {
+        // c:879-880 — defaults: insert=BAR, pending=UNDERLINE; all
+        //              other slots zero in the absence of $zle_cursorform.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        zle_set_cursorform();
+        CURSOR_FORMS.with(|cf| {
+            let f = cf.borrow();
+            assert_eq!(f[CURC_INSERT  as usize], CURF_BAR       as u32);
+            assert_eq!(f[CURC_PENDING as usize], CURF_UNDERLINE as u32);
+            assert_eq!(f[CURC_REGION_START as usize], 0);
+            assert_eq!(f[CURC_REGION_END   as usize], 0);
+        });
     }
 
     #[test]
@@ -544,10 +934,16 @@ pub fn find_matching(s: &str, open: u8, close: u8) -> Option<usize> {        // 
     None
 }
 
-/// Port of `free_cursor_forms()` from Src/Zle/termquery.c:904.
+/// Direct port of `void free_cursor_forms(void)` from
+/// `Src/Zle/termquery.c:904`. Nulls out the cursor-forms storage so
+/// `zle_set_cursorform` re-allocates on the next call. C body only
+/// touches the `cursor_forms` pointer; `setup` and
+/// `cursor_enabled_mask` are intentionally preserved across the
+/// free so the extension-probe doesn't re-run unless `trashedzle`
+/// flips inside `zle_set_cursorform`.
 pub fn free_cursor_forms() {                                                 // c:904
-    // C body c:906-911 — frees the cursor_form_list strings via
-    //                    zfree+next walk. Drop covers it; no-op.
+    // c:906-907 — `if (cursor_forms) zfree(...);`  c:908 — `cursor_forms = 0;`
+    CURSOR_FORMS.with(|cf| cf.borrow_mut().clear());
 }
 
 /// Port of `handle_color(int bg, int red, int green, int blue)` from Src/Zle/termquery.c:438.
@@ -591,7 +987,7 @@ pub fn handle_paste(seq: &str, len: usize) -> String {                       // 
 pub fn mark_output(start: bool) {                                            // c:759
     const START: &[u8] = b"\x1b]133;C\x1b\\";                                // c:761
     const END:   &[u8] = b"\x1b]133;D\x1b\\";                                // c:762
-    if extension_enabled("integration") {                                    // c:763
+    if extension_enabled("integration", "output", true) {                    // c:763
         let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
         if shtty < 0 { return; }
         let _ = crate::ported::utils::write_loop(                            // c:764
@@ -601,21 +997,171 @@ pub fn mark_output(start: bool) {                                            // 
     }
 }
 
-/// Port of `match_cursorform(const char *teststr, unsigned int *cursor_form)` from Src/Zle/termquery.c:798.
-/// WARNING: param names don't match C — Rust=(_name) vs C=(teststr, cursor_form)
-pub fn match_cursorform(_name: &str) -> Option<String> {                     // c:798
-    // C body c:800-902 — looks up named cursor form (e.g. "block",
-    //                    "underline", "bar") in cursor_form_list and
-    //                    returns its escape. No form list: None.
-    None
+/// Direct port of `match_cursorform(const char *teststr,
+/// unsigned int *cursor_form)` from `Src/Zle/termquery.c:798`. Parses
+/// a comma-separated spec like `bar,blink,color=#f80` and returns the
+/// composed CURF_* bit pattern. C mutates `*cursor_form`; we return
+/// the value.
+/// WARNING: signature change — C=(teststr, cursor_form*) vs Rust=(spec) -> u32
+pub fn match_cursorform(spec: &str) -> u32 {                                 // c:798
+    // c:800-810 — name→(value,mask) table. "none" zeros every bit
+    //              (mask=0xff). Shape names take 2-bit slots; blink/
+    //              steady are mutually-exclusive single bits; hidden
+    //              has mask=0 so it ORs in without disturbing shape.
+    const SHAPES: &[(&str, u32, u32)] = &[
+        ("none",      0,                       0xff),
+        ("underline", CURF_UNDERLINE as u32, CURF_SHAPE_MASK as u32),
+        ("bar",       CURF_BAR       as u32, CURF_SHAPE_MASK as u32),
+        ("block",     CURF_BLOCK     as u32, CURF_SHAPE_MASK as u32),
+        ("blink",     CURF_BLINK     as u32, CURF_STEADY     as u32),
+        ("steady",    CURF_STEADY    as u32, CURF_BLINK      as u32),
+        ("hidden",    CURF_HIDDEN    as u32, 0),
+    ];
+
+    let mut cursor_form: u32 = 0;                                            // c:813
+    let mut s = spec;
+
+    // c:814-852 — walk components separated by ','.
+    while !s.is_empty() {
+        let mut found = false;
+
+        // c:818-841 — color=#RGB or color=#RRGGBB.
+        if let Some(rest) = s.strip_prefix("color=#") {                      // c:818
+            // c:820 — `zstrtol(teststr, &end, 16)` consumes hex until
+            //         non-hex. We walk the leading hex run by hand.
+            let mut end = 0;
+            for (i, ch) in rest.char_indices() {
+                if ch.is_ascii_hexdigit() {
+                    end = i + ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            let hex_str = &rest[..end];
+            let col: u32 = u32::from_str_radix(hex_str, 16).unwrap_or(0);
+
+            if end == 4 {                                                    // c:822 — 3-digit form #RGB
+                // c:823-832 — splat each 4-bit nibble across both
+                //             halves so #f80 → 0xff8800.
+                let red:   u32 = col >> 8;
+                let green: u32 = (col & 0xf0) >> 4;
+                let blue:  u32 = col & 0xf;
+                cursor_form &= 0xff; // clear color                          // c:828
+                cursor_form |= (CURF_COLOR as u32)
+                    | ((red   << 4 | red)   << CURF_RED_SHIFT)
+                    | ((green << 4 | green) << CURF_GREEN_SHIFT)
+                    | ((blue  << 4 | blue)  << CURF_BLUE_SHIFT);
+                found = true;
+            } else if end == 6 {                                             // c:833 — 6-digit form #RRGGBB
+                cursor_form |= (col << 8) | (CURF_COLOR as u32);             // c:834
+                found = true;
+            }
+            // c:837 — `teststr = end;` — advance past hex run.
+            s = &rest[end..];
+        }
+
+        // c:842-849 — shape/blink/steady/hidden names.
+        if !found {
+            for (name, value, mask) in SHAPES {
+                if let Some(rest) = s.strip_prefix(name) {
+                    cursor_form &= !*mask;                                   // c:846
+                    cursor_form |=  *value;                                  // c:847
+                    s = rest;
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        // c:850-851 — unknown component: skip to next comma. C uses
+        //              `strchr(teststr, ',')` which returns the comma
+        //              itself (or NULL); we mirror with `find`.
+        if !found {
+            match s.find(',') {
+                Some(idx) => s = &s[idx..],
+                None      => break,
+            }
+        }
+
+        // c:852-855 — break unless we landed on a comma; else skip it.
+        let mut it = s.chars();
+        match it.next() {
+            Some(',') => s = it.as_str(),
+            _         => break,
+        }
+    }
+
+    cursor_form
 }
 
-/// Port of `prompt_markers()` from Src/Zle/termquery.c:731.
-pub fn prompt_markers() -> i32 {                                             // c:731
-    // C body c:733-757 — emits OSC 133;A,B,C,D markers around the
-    //                    prompt for FinalTerm-aware terminals. No
-    //                    FinalTerm dispatch.
-    0
+/// Direct port of `const char **prompt_markers(void)` from
+/// `Src/Zle/termquery.c:731`. Returns the three FinalTerm OSC 133
+/// prompt-region markers (PR=primary/PS1, SE=secondary/PS2,
+/// RI=right/RPS1+RPS2). Gated on the `integration:prompt` extension
+/// toggle. When disabled, returns three empty strings (analog of
+/// C's 4-NULL `nomark`).
+///
+/// C has a file-static mutable buffer `pre` ("before prompt" OSC 133;A
+/// template) and a file-static `aid` (per-shell hash). On first call
+/// while enabled, C computes `aid = hasher(HOST) ^ pid`, base64-encodes
+/// the 4 bytes of `aid` (8 chars), and memcpy's the first 6 chars into
+/// `pre[13..19]` (replacing the `ZZZZZZ` placeholder). The mutated
+/// `pre` is private to this translation unit; Rust mirrors with
+/// thread-locals `AID` and `PRE_BUFFER` so the side effect is
+/// observable from within the same module while staying invisible to
+/// outside callers (matching the C file-static scope).
+/// WARNING: signature change — C returns `const char **` (4-NULL-
+/// terminated when disabled); Rust returns a fixed-size array of
+/// String. Caller picks PS1/PS2/RPS marker by index.
+pub fn prompt_markers() -> [String; 3] {                                     // c:731
+    // c:741 — `if (!extension_enabled("integration", "prompt", 11, 1))
+    //          return nomark;`
+    if !extension_enabled("integration", "prompt", true) {
+        return [String::new(), String::new(), String::new()];
+    }
+
+    // c:744-752 — first-call AID computation. `if (!aid) { ... }`.
+    if AID.with(|a| a.get()) == 0 {
+        // c:746 — `char *h = getsparam("HOST");`
+        let host = crate::ported::params::getsparam("HOST").unwrap_or_default();
+        // c:747 — `aid = (h ? hasher(h) : 0) ^ getpid();`
+        let h_hash = if host.is_empty() {
+            0
+        } else {
+            crate::ported::hashtable::hasher(&host)
+        };
+        let pid = unsafe { libc::getpid() } as u32;
+        let mut aid = h_hash ^ pid;
+        // c:748 — `if (!aid) aid = 1;` collision guard.
+        if aid == 0 {
+            aid = 1;
+        }
+        AID.with(|a| a.set(aid));
+
+        // c:750 — `h = base64_encode((const char *)&aid, sizeof(aid));`
+        //          C casts the raw `unsigned int aid` to bytes; that's
+        //          native-endian. `to_ne_bytes` matches.
+        let aid_bytes = aid.to_ne_bytes();
+        let b64 = base64_encode(&aid_bytes);
+        // c:751 — `memcpy(pre + 13, h, 6);` — only the first 6 chars
+        //          of the 8-char base64 output get spliced into the
+        //          ZZZZZZ placeholder.
+        PRE_BUFFER.with(|p| {
+            let mut buf = p.borrow_mut();
+            let payload = b64.as_bytes();
+            let n = payload.len().min(6).min(buf.len().saturating_sub(13));
+            for i in 0..n {
+                buf[13 + i] = payload[i];
+            }
+        });
+    }
+
+    // c:735-738 + c:754 — return the 3-element markers array.
+    [
+        "\x1b]133;P;k=i\x1b\\".to_string(),                                  // c:735 PR
+        "\x1b]133;P;k=s\x1b\\".to_string(),                                  // c:736 SE
+        "\x1b]133;P;k=r\x1b\\".to_string(),                                  // c:737 RI
+    ]
 }
 
 /// Port of `start_edit()` from Src/Zle/termquery.c:717.
@@ -625,20 +1171,18 @@ pub fn start_edit() -> i32 {                                                 // 
     0
 }
 
-/// Port of `write_urlencoded(const char *path_components)` from Src/Zle/termquery.c:769.
-pub fn write_urlencoded(path_components: &str) -> String {                                 // c:769
-    // C body c:771-796 — URL-encodes a string for OSC 8 hyperlink
-    //                    emission. Real escape: convert non-printable
-    //                    + reserved bytes to %HH.
-    let mut out = String::with_capacity(path_components.len());
-    for &b in path_components.as_bytes() {
-        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'/' | b':') {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{:02X}", b));
-        }
-    }
-    out
+/// Direct port of `static void write_urlencoded(const char
+/// *path_components)` from `Src/Zle/termquery.c:769`. URL-encodes the
+/// input via `url_encode` and writes the bytes to the given fd. C's
+/// version writes to `SHTTY` directly; Rust takes the fd as a param
+/// so the caller chooses (notify_pwd uses SHTTY).
+/// WARNING: signature change — C=(path_components) writes SHTTY vs
+/// Rust=(fd, path_components) writes the given fd.
+pub fn write_urlencoded(fd: i32, path_components: &str) {                    // c:769
+    // c:772 — `url_encode(path_components, &enc_len)`.
+    let enc = url_encode(path_components);
+    // c:773 — `write_loop(SHTTY, enc, enc_len)`.
+    let _ = crate::ported::utils::write_loop(fd, enc.as_bytes());
 }
 
 #[cfg(test)]

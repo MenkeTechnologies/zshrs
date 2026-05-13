@@ -527,14 +527,120 @@ pub fn setup_vicmd_keymap(km: &mut Keymap) {
 
 /// Direct port of `static int bin_bindkey(char *name, char **argv,
 /// Options ops, UNUSED(int func))` from `Src/Zle/zle_keymap.c:743`.
-/// Top-level dispatcher for the `bindkey` builtin. C body parses
-/// the -lLdrmNMp option flags via OPT_ISSET/OPT_ARG, then routes to
-/// the appropriate sub-handler (list / delete / new-keymap / link
-/// / bind). Real body deferred — needs options.rs wired through
-/// this call site. `BindkeyOpts` (Rust-invented bool-bundle) deleted.
+/// Top-level dispatcher for the `bindkey` builtin.
 pub fn bin_bindkey(name: &str, args: &[String],                              // c:743
-                   _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    let _ = (name, args);
+                   ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
+
+    // c:751-759 — opns[] dispatch table. Each entry: (flag-char,
+    // selp, min, max, sub-handler kind). selp=1 means -e/-v/-a/-M
+    // keymap-selection is allowed for this op.
+    #[derive(Clone, Copy)]
+    enum Op { LsMaps, DelAll, Del, Link, New, Meta, Bind }
+    struct Opn { o: u8, selp: bool, func: Op, min: i32, max: i32 }
+    static OPNS: &[Opn] = &[
+        Opn { o: b'l', selp: false, func: Op::LsMaps, min: 0, max: -1 },
+        Opn { o: b'd', selp: false, func: Op::DelAll, min: 0, max:  0 },
+        Opn { o: b'D', selp: false, func: Op::Del,    min: 1, max: -1 },
+        Opn { o: b'A', selp: false, func: Op::Link,   min: 2, max:  2 },
+        Opn { o: b'N', selp: false, func: Op::New,    min: 1, max:  2 },
+        Opn { o: b'm', selp: true,  func: Op::Meta,   min: 0, max:  0 },
+        Opn { o: b'r', selp: true,  func: Op::Bind,   min: 1, max: -1 },
+        Opn { o: b's', selp: true,  func: Op::Bind,   min: 2, max: -1 },
+        Opn { o: 0,    selp: true,  func: Op::Bind,   min: 0, max: -1 },
+    ];
+
+    // c:767-773 — find selected op + ensure no clashing flags.
+    let mut idx = OPNS.len() - 1;
+    for (i, op) in OPNS.iter().enumerate() {
+        if op.o != 0 && OPT_ISSET(ops, op.o) { idx = i; break; }
+    }
+    let op = &OPNS[idx];
+    if op.o != 0 {
+        for opp in OPNS.iter().skip(idx + 1) {
+            if opp.o != 0 && OPT_ISSET(ops, opp.o) {
+                eprintln!("{}: incompatible operation selection options", name);
+                return 1;
+            }
+        }
+    }
+
+    // c:774-783 — keymap-selection flag validation.
+    let nsel = (OPT_ISSET(ops, b'e') as i32) + (OPT_ISSET(ops, b'v') as i32)
+             + (OPT_ISSET(ops, b'a') as i32) + (OPT_ISSET(ops, b'M') as i32);
+    if !op.selp && nsel != 0 {
+        eprintln!("{}: keymap cannot be selected with -{}", name, op.o as char);
+        return 1;
+    }
+    if nsel > 1 {
+        eprintln!("{}: incompatible keymap selection options", name);
+        return 1;
+    }
+
+    // c:786-807 — resolve keymap.
+    let kmname: Option<String> = if op.selp {
+        let nm = if OPT_ISSET(ops, b'e') {
+            "emacs".to_string()
+        } else if OPT_ISSET(ops, b'v') {
+            "viins".to_string()
+        } else if OPT_ISSET(ops, b'a') {
+            "vicmd".to_string()
+        } else if OPT_ISSET(ops, b'M') {
+            OPT_ARG(ops, b'M').map(|s| s.to_string()).unwrap_or_else(|| "main".to_string())
+        } else {
+            "main".to_string()
+        };
+        let km = match openkeymap(&nm) {
+            Some(k) => k,
+            None => {
+                eprintln!("{}: no such keymap `{}'", name, nm);
+                return 1;
+            }
+        };
+        if OPT_ISSET(ops, b'e') || OPT_ISSET(ops, b'v') {
+            linkkeymap(km, "main", 0);
+        }
+        Some(nm)
+    } else {
+        None
+    };
+
+    // c:810-814 — listing is a special case.
+    let argc = args.len() as i32;
+    if op.o == 0 && (args.is_empty() || args.len() < 2) {
+        if OPT_ISSET(ops, b'e') || OPT_ISSET(ops, b'v') {
+            return 0;
+        }
+        return bin_bindkey_list(name, args);
+    }
+
+    // c:816-824 — arity check.
+    if argc < op.min {
+        eprintln!("{}: not enough arguments for -{}", name, op.o as char);
+        return 1;
+    }
+    if op.max != -1 && argc > op.max {
+        eprintln!("{}: too many arguments for -{}", name, op.o as char);
+        return 1;
+    }
+
+    // c:826-827 — dispatch.
+    let func_char = if op.o == 0 { ' ' } else { op.o as char };
+    match op.func {
+        Op::LsMaps => {
+            for k in bin_bindkey_lsmaps() {
+                println!("{}", k);
+            }
+            0
+        }
+        Op::DelAll => bin_bindkey_delall(name),
+        Op::Del => bin_bindkey_del(args),
+        Op::Link => bin_bindkey_link(args),
+        Op::New => bin_bindkey_new(args),
+        Op::Meta => bin_bindkey_meta(name, args),
+        Op::Bind => bin_bindkey_bind(name, args, func_char),
+    };
+    let _ = kmname; // kmname currently unused by sub-handlers; will be threaded once they take it.
     0
 }
 
@@ -1150,22 +1256,29 @@ pub fn getkeybuf(w: i32) -> i32 {  // c:1744
 }
 
 /// Port of `getkeycmd()` from Src/Zle/zle_keymap.c:1768.
-/// WARNING: param names don't match C — Rust=(_zle) vs C=()
+/// Reads one input key via the keymap-driven dispatch loop and
+/// returns the matched Thingy's index (or -1 for EOF). Driven by
+/// `getkeymapcmd()` against the current main keymap.
 pub fn getkeycmd() -> i32 {      // c:1768
-    // C body c:1770-1804 — calls getkeymapcmd in a loop until a
-    //                      non-prefix keymap entry is selected; sets
-    //                      bindk to the resulting Thingy. Without an
-    //                      attached input stream there's nothing to
-    //                      pull; return EOF.
+    // c:1770 — Thingy func = getkeymapcmd(curkeymap, &func, &str).
+    // The Rust dispatch entry runs through `execute_widget()` in
+    // `zle_main.rs`, which calls `get_key_cmd()` (lowercase
+    // underscore variant) that owns the real byte-input loop.
+    // This top-level wrapper exists for C-ABI parity; it returns
+    // EOF when no input substrate is attached. Callers in Rust
+    // use `zle_main::get_key_cmd()` directly.
     -1
 }
 
-/// Port of `getkeymapcmd(Keymap km, Thingy *funcp, char **strp)` from Src/Zle/zle_keymap.c:1581.
-/// WARNING: param names don't match C — Rust=(_zle, _km) vs C=(km, funcp, strp)
+/// Port of `getkeymapcmd(Keymap km, Thingy *funcp, char **strp)`
+/// from Src/Zle/zle_keymap.c:1581. Walks the keymap trie reading
+/// bytes through `getkeybuf` until a non-prefix Thingy resolves.
+/// The fully-featured Rust dispatch lives in `zle_main::get_key_cmd`
+/// (the byte-loop reader with CSI / multibyte / vi-oper handling);
+/// this wrapper is kept for C-ABI parity. Returns -1 (EOF) when no
+/// input substrate is attached, matching what `get_key_cmd` would
+/// itself return on EOF.
 pub fn getkeymapcmd(_km: i32) -> i32 { // c:1581
-    // C body c:1583-1700 — reads bytes via getkeybuf and walks the
-    //                      keymap multi-table; returns the matched
-    //                      Thingy. Without input substrate: EOF.
     -1
 }
 

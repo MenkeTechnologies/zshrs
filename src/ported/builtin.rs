@@ -844,10 +844,10 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32)       // 
                     .and_then(|d| d.get(1).cloned());
             }
         }
-        // c:880-884 — fall through to $HOME.
-        match std::env::var("HOME") {
-            Ok(h) => Some(h),                                                // c:884
-            Err(_) => {
+        // c:880-884 — fall through to $HOME (paramtab, not OS env).
+        match crate::ported::params::getsparam("HOME") {
+            Some(h) if !h.is_empty() => Some(h),                             // c:884
+            _ => {
                 crate::ported::utils::zwarnnam(nam, "HOME not set");         // c:881
                 None                                                         // c:882
             }
@@ -871,16 +871,20 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32)       // 
             });
         }
         // c:910-911 — `-` alias for $OLDPWD; else literal arg.
+        //              C reads `oldpwd` global / `$OLDPWD` param;
+        //              route through paramtab via getsparam.
         if arg == "-" {                                                      // c:911
             DOPRINTDIR.fetch_sub(1, Ordering::Relaxed);
-            std::env::var("OLDPWD").ok()
+            crate::ported::params::getsparam("OLDPWD")
         } else {
             Some(arg.clone())                                                // c:911
         }
     } else {
-        // c:914-924 — two-arg substitution: cd OLDPATTERN NEWPATTERN
-        let pwd = std::env::var("PWD")
-            .unwrap_or_else(|_| crate::ported::utils::zgetcwd().unwrap_or_default());
+        // c:914-924 — two-arg substitution: cd OLDPATTERN NEWPATTERN.
+        //              C reads `pwd` global / `$PWD` param via getsparam;
+        //              fall back to getcwd if the param isn't populated.
+        let pwd = crate::ported::params::getsparam("PWD")
+            .unwrap_or_else(|| crate::ported::utils::zgetcwd().unwrap_or_default());
         let pat = &argv[0];
         let new_pat = &argv[1];
         match pwd.find(pat.as_str()) {                                       // c:917
@@ -987,7 +991,7 @@ pub fn cd_new_pwd(_func: i32, _dir: usize, _quiet: i32) {                    // 
     // c:1238-1242 — PWD/OLDPWD write moved to caller (`bin_cd`) so
     // the LOGICAL dest_path is preserved instead of being overwritten
     // by `getcwd()` (which resolves symlinks, breaking parity).
-    let _old = std::env::var("PWD").ok();
+    let _old = crate::ported::params::getsparam("PWD");
     if let Ok(cwd) = std::env::current_dir() {
         if let Some(s) = cwd.to_str() {
             // PWD already set by caller; preserve OLDPWD write only if
@@ -2435,9 +2439,12 @@ pub fn bin_cd(nam: &str, argv: &[String],                                    // 
 
     crate::ported::mem::queue_signals();                                     // c:848
 
-    // c:849 — `zpushnode(dirstack, ztrdup(pwd));`
-    let pwd = std::env::var("PWD")
-        .unwrap_or_else(|_| crate::ported::utils::zgetcwd().unwrap_or_default());
+    // c:849 — `zpushnode(dirstack, ztrdup(pwd));`. C uses the `pwd`
+    //          global (the in-shell logical cwd, kept in sync with
+    //          $PWD). Read from paramtab; fall back to getcwd if
+    //          unset.
+    let pwd = crate::ported::params::getsparam("PWD")
+        .unwrap_or_else(|| crate::ported::utils::zgetcwd().unwrap_or_default());
     if let Ok(mut d) = crate::ported::modules::parameter::DIRSTACK.lock() {
         d.insert(0, pwd);                                                    // c:849
     }
@@ -2456,7 +2463,10 @@ pub fn bin_cd(nam: &str, argv: &[String],                                    // 
 
     // c:856 — `cd_new_pwd(func, dir, OPT_ISSET(ops, 'q'));`
     // Static-link path: do the actual chdir + PWD/OLDPWD env update.
-    let old = std::env::var("PWD").ok();
+    // c:1238 — `oldpwd = pwd;` snapshot pre-cd $PWD for $OLDPWD.
+    //          Read from paramtab (the canonical zsh-side `pwd`
+    //          global); was reading OS env which can lag behind.
+    let old = crate::ported::params::getsparam("PWD");
     if std::env::set_current_dir(&dest_path).is_err() {
         // chdir failed — pop placeholder and bail.
         if let Ok(mut d) = crate::ported::modules::parameter::DIRSTACK.lock() {
@@ -2465,8 +2475,13 @@ pub fn bin_cd(nam: &str, argv: &[String],                                    // 
         crate::ported::mem::unqueue_signals();
         return 1;
     }
-    if let Some(o) = old {
-        std::env::set_var("OLDPWD", o);                                      // c:1239 oldpwd = pwd
+    if let Some(o) = old {                                                   // c:1239 oldpwd = pwd
+        // c:1239 + setsparam path: write OLDPWD to paramtab so
+        //          subsequent expansions of $OLDPWD see the new value
+        //          (the OS env write below is the export side; the
+        //          shell-side read must come from paramtab).
+        crate::ported::params::setsparam("OLDPWD", &o);
+        std::env::set_var("OLDPWD", &o);
     }
     // c:1241 — `pwd = new_pwd;` writes the LOGICAL path (the dest
     // argument as given to cd, not `getcwd()`). Symlink resolution
@@ -2485,7 +2500,9 @@ pub fn bin_cd(nam: &str, argv: &[String],                                    // 
     } else {
         dest_path.clone()                                                    // c:1241 pwd = new_pwd
     };
-    std::env::set_var("PWD", &pwd);                                          // c:1242 set_pwd_env
+    // c:1242 — `setsparam("PWD", pwd);` + export side via env.
+    crate::ported::params::setsparam("PWD", &pwd);
+    std::env::set_var("PWD", &pwd);
     cd_new_pwd(func, 0, OPT_ISSET(ops, b'q') as i32);                        // c:856
 
     crate::ported::mem::unqueue_signals();                                   // c:858
@@ -2542,11 +2559,16 @@ pub fn bin_shift(name: &str, argv: &[String],                                // 
     // c:5600-5605 — first arg parsed as math expr unless it's an array name.
     if !argv.is_empty() {                                                    // c:5600
         let first = &argv[0];
-        // Approximate `getaparam(*argv) == NULL` by checking PATH-style
-        // env array semantics from getaparam's static-link impl.
-        let is_array = std::env::var(first)
-            .map(|v| v.contains(':'))
-            .unwrap_or(false);
+        // c:5600 — `if (!getaparam(*argv))` decides whether the arg is
+        //          a numeric shift-count vs an array name. Check
+        //          paramtab for a PM_ARRAY entry, not OS env.
+        let is_array = {
+            use crate::ported::zsh_h::{PM_ARRAY, PM_TYPE};
+            let tab = crate::ported::params::paramtab().read().unwrap();
+            tab.get(first)
+                .map(|pm| PM_TYPE(pm.node.flags as u32) == PM_ARRAY)
+                .unwrap_or(false)
+        };
         if !is_array {                                                       // c:5600
             num = first.trim().parse::<i32>().unwrap_or_else(|_| {           // c:5601
                 ret = 1;
@@ -2572,11 +2594,16 @@ pub fn bin_shift(name: &str, argv: &[String],                                // 
     if idx < argv.len() {                                                    // c:5614
         for arr_name in &argv[idx..] {                                       // c:5615
             // c:5616 — `if ((s = getaparam(*argv)))` else silent skip.
-            let s: Vec<String> = std::env::var(arr_name)
-                .ok()
-                .map(|v| v.split(':').map(String::from).collect())
-                .unwrap_or_default();
-            if s.is_empty() && std::env::var(arr_name).is_err() { continue; }
+            //          Read paramtab directly; was approximating arrays
+            //          as `:`-separated env values which is wrong (env
+            //          can never carry array structure).
+            let s: Vec<String> = {
+                let tab = crate::ported::params::paramtab().read().unwrap();
+                match tab.get(arr_name).and_then(|pm| pm.u_arr.clone()) {
+                    Some(arr) => arr,
+                    None => continue,
+                }
+            };
             // c:5617-5621 — arrlen_lt check.
             if (s.len() as i32) < num {                                      // c:5617
                 crate::ported::utils::zwarnnam(name,
@@ -3498,9 +3525,12 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
         return 1;
     }
 
-    // c:1573-1610 — default ranges + listing/edit dispatch.
-    let curhist: i64 = std::env::var("HISTCMD").ok()
-        .and_then(|s| s.parse().ok()).unwrap_or(0);
+    // c:1573-1610 — default ranges + listing/edit dispatch. C reads
+    //                the live `curhist` global; in zshrs that comes
+    //                from `prompt_tls::HISTNUM` (which mirrors $HISTCMD).
+    //                Use getiparam so paramtab handles the lookup and
+    //                conversion uniformly.
+    let curhist: i64 = crate::ported::params::getiparam("HISTCMD");
     if last == -1 {                                                          // c:1573
         if OPT_ISSET(ops, b'l') && first < curhist {                         // c:1574
             last = curhist;                                                  // c:1583
@@ -3973,10 +4003,13 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
                 }
             });
         } else {
-            // c:3072 — bare name + no type flag: declare empty scalar
-            // when not already set.
-            if std::env::var(arg).is_err() {
-                std::env::set_var(arg, "");                                  // c:3074
+            // c:3072 — `if (!getsparam(arg)) setsparam(arg, "")`. Bare
+            //          name + no type flag declares an empty scalar
+            //          when none exists. C consults paramtab; was
+            //          checking OS env which never sees scalar-only
+            //          params (a `local foo` would be invisible).
+            if crate::ported::params::getsparam(arg).is_none() {
+                crate::ported::params::setsparam(arg, "");                   // c:3074
             }
         }
     }
@@ -4116,8 +4149,9 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
                         }
                     }
                     // c:4070-4072 — cmdnamtab scan ($PATH-cached external commands).
-                    // Static-link path: walk $PATH dirs and match basenames.
-                    if let Ok(path) = std::env::var("PATH") {
+                    // Static-link path: walk $PATH dirs (from paramtab —
+                    // shell-side $PATH, not OS env) and match basenames.
+                    if let Some(path) = crate::ported::params::getsparam("PATH") {
                         for dir in path.split(':') {
                             if dir.is_empty() { continue; }
                             if let Ok(rd) = std::fs::read_dir(dir) {
@@ -4271,7 +4305,7 @@ pub fn bin_whence(nam: &str, argv: &[String],                                // 
         }
         // c:4178-4198 — `-a` all-paths search through $PATH.
         if all && !arg.starts_with('/') {                                    // c:4178
-            if let Ok(path) = std::env::var("PATH") {
+            if let Some(path) = crate::ported::params::getsparam("PATH") {
                 for dir in path.split(':') {
                     if dir.is_empty() { continue; }
                     let full = format!("{}/{}", dir, arg);
@@ -4351,7 +4385,11 @@ pub fn findcmd(name: &str, _docopy: i32, _default_path: i32) -> Option<String> {
         let p = std::path::Path::new(name);
         return if p.is_file() { Some(name.to_string()) } else { None };
     }
-    let path = std::env::var("PATH").ok()?;
+    // c:907-912 — walk `path[]` (the shell $path array). Read $PATH
+    //              from paramtab so shell-private PATH edits via
+    //              `path=(...)` show up; OS env-only PATH would miss
+    //              them in nested shells.
+    let path = crate::ported::params::getsparam("PATH")?;
     for dir in path.split(':') {
         if dir.is_empty() { continue; }
         let candidate = format!("{}/{}", dir, name);
@@ -5028,7 +5066,9 @@ pub fn bin_hash(name: &str, argv: &[String],                                 // 
                 crate::ported::hashnameddir::fillnameddirtable();
             } else {
                 // Read $path (the lowercase array form) from env.
-                let path_str = std::env::var("PATH").unwrap_or_default();
+                // c:4260 — fill cmdnamtab from $path. Read shell-side
+                //          $PATH so changes via `path=(...)` flow in.
+                let path_str = crate::ported::params::getsparam("PATH").unwrap_or_default();
                 let path_arr: Vec<String> =
                     path_str.split(':').map(|s| s.to_string()).collect();
                 crate::ported::hashtable::fillcmdnamtable(&path_arr);
@@ -5135,8 +5175,10 @@ pub fn bin_hash(name: &str, argv: &[String],                                 // 
                     }
                 }
             } else {
-                // c:4332-4334 — `if (!hashcmd(name, path)) zwarnnam("no such command")`
-                let found = std::env::var("PATH").ok().is_some_and(|p| {
+                // c:4332-4334 — `if (!hashcmd(name, path)) zwarnnam(
+                //                "no such command")`. Walk shell-side
+                //                $PATH (paramtab).
+                let found = crate::ported::params::getsparam("PATH").is_some_and(|p| {
                     p.split(':').any(|d|
                         !d.is_empty() && std::path::Path::new(&format!("{}/{}", d, n)).exists()
                     )
@@ -5681,13 +5723,13 @@ pub fn bin_dirs(_name: &str, argv: &[String],                                // 
             " "
         };
         // c:771-774 — print pwd via fprintdir or zputs (`-l`).
-        let pwd = std::env::var("PWD")
-            .unwrap_or_else(|_| crate::ported::utils::zgetcwd().unwrap_or_default());
+        let pwd = crate::ported::params::getsparam("PWD")
+            .unwrap_or_else(|| crate::ported::utils::zgetcwd().unwrap_or_default());
         if OPT_ISSET(ops, b'l') {                                            // c:771
             print!("{}", pwd);                                               // c:772
         } else {
             // fprintdir replaces $HOME prefix with `~`; approximate.
-            let home = std::env::var("HOME").unwrap_or_default();
+            let home = crate::ported::params::getsparam("HOME").unwrap_or_default();
             if !home.is_empty() && pwd.starts_with(&home) {
                 print!("~{}", &pwd[home.len()..]);                           // c:774 (effective)
             } else {
@@ -5706,7 +5748,7 @@ pub fn bin_dirs(_name: &str, argv: &[String],                                // 
                 if OPT_ISSET(ops, b'l') {                                    // c:777
                     print!("{}", entry);                                     // c:778
                 } else {
-                    let home = std::env::var("HOME").unwrap_or_default();
+                    let home = crate::ported::params::getsparam("HOME").unwrap_or_default();
                     if !home.is_empty() && entry.starts_with(&home) {
                         print!("~{}", &entry[home.len()..]);
                     } else {
@@ -5797,7 +5839,12 @@ pub fn bin_dot(name: &str, argv: &[String],                                  // 
     // c:6102-6121 — $path search (with PATHDIRS guard).
     let pathdirs = crate::ported::zsh_h::isset(crate::ported::options::optlookup("pathdirs"));
     if found_path.is_none() && (!arg0.contains('/') || (pathdirs && diddot < 2 && dotdot == 0)) { // c:6102
-        let path_env = std::env::var("PATH").unwrap_or_default();
+        // c:6103 — `for (pp = path; *pp; pp++)`. C walks the `path[]`
+        //          array (the shell-side $path), not the colon-joined
+        //          $PATH env. Read $PATH from paramtab (the shell
+        //          string view); the colon-split below mirrors the C
+        //          path[] iteration.
+        let path_env = crate::ported::params::getsparam("PATH").unwrap_or_default();
         for dir in path_env.split(':') {                                     // c:6107
             let buf = if dir.is_empty() || dir == "." {                      // c:6108
                 if diddot != 0 { continue; }
@@ -6043,16 +6090,21 @@ pub fn bin_set(nam: &str, args: &[String],                                   // 
         let aname = arrayname.unwrap_or_default();
         let mut new_arr: Vec<String> = sorted;
         if array < 0 {                                                       // c:701
-            // c:702-704 — `if ((a = getaparam(arrayname)) && arrlen_gt(a, len))`
-            let existing = std::env::var(&aname).ok()
-                .map(|v| v.split(':').map(String::from).collect::<Vec<_>>())
-                .unwrap_or_default();
+            // c:702-704 — `if ((a = getaparam(arrayname)) && arrlen_gt(a, len))`.
+            //              Read paramtab.u_arr directly; was using `:`-
+            //              split env value as a fake array.
+            let existing: Vec<String> = {
+                let tab = crate::ported::params::paramtab().read().unwrap();
+                tab.get(&aname).and_then(|pm| pm.u_arr.clone()).unwrap_or_default()
+            };
             if existing.len() > new_arr.len() {                              // c:702
                 new_arr.extend(existing.into_iter().skip(new_arr.len()));    // c:703
             }
         }
-        // c:709 — `setaparam(arrayname, x);`
-        crate::ported::params::setsparam(&aname, &new_arr.join(":"));
+        // c:709 — `setaparam(arrayname, x);`. Use setaparam (array
+        //          setter) so the value lands as a proper PM_ARRAY,
+        //          not a colon-joined scalar.
+        crate::ported::params::setaparam(&aname, new_arr);
     } else {
         // c:711-712 — `freearray(pparams); pparams = zarrdup(args);`
         // PPARAMS is the single source of truth; fusevm reads via

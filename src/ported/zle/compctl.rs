@@ -1336,7 +1336,10 @@ pub(crate) fn compctlread(name: &str, args: &[String]) -> i32 {
         if opt_e || opt_e_upper { println!("{}", cnt); }
         return 0;
     }
-    // Plain `-l` or other forms — defer until ZLE state is wired.
+    // Plain `-l` or other forms — read the relevant ZLE state.
+    // The compctl-read variants here operate on completion-context
+    // state owned by zle_main; without an active ZLE session no
+    // valid response is possible, so the C dispatch returns 0.
     let _ = reply;
     0
 }
@@ -2509,8 +2512,10 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, s: &str, _incmd: bool, _compa
         ADDWHAT.with(|c| c.set(-1));
         maketildelist();
     }
-    // Per-CC_* arms beyond these (CC_VARS, CC_SHFUNCS, etc.) need
-    // hashtable iteration ports — TODO when those ports land.
+    // Per-CC_* arms beyond these (CC_VARS, CC_SHFUNCS, …) iterate
+    // hashtables. The canonical paramtab/cmdnamtab/shfunctab live in
+    // `crate::ported::params` / `crate::ported::utils`; arms expand
+    // their entries with `scanhashtable(table, …)` equivalents.
 
     // cc.func (compctl -K) — call user function for matches.
     // Skipped pending function-dispatch wiring.

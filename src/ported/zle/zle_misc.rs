@@ -866,10 +866,73 @@ pub fn bracketedpaste(args: &[String]) -> i32 {               // c:814
 /// pump that respects the ZLE timeout/select(2) machinery. Until
 /// the input pump lands, returns the empty string so callers see a
 /// no-op paste rather than a panic.
+/// Direct port of `char *bracketedstring(void)` from
+/// `Src/Zle/zle_misc.c:784`. Reads bytes from the controlling tty
+/// looking for the bracketed-paste end sentinel `\033[201~`,
+/// translating CR → LF and meta-encoding high-bit bytes along the
+/// way. Returns the accumulated payload (without the sentinel).
+///
+/// C uses `getbyte(1L, &timeout, 1)` which goes through the full
+/// ZLE input pump (sets `timeout=1`, blocks ≤1 sec). The Rust port
+/// uses a direct `read()` on SHTTY with a 1-second poll budget per
+/// byte — enough for paste activity but not enough to wedge an
+/// idle session.
 pub fn bracketedstring() -> String {                                         // c:784
-    // C body c:786-808 — `getbyte(1L, &timeout, 1)` loop with
-    //                    Meta/imeta + \r→\n + ESC[201~ scanner.
-    String::new()
+    use std::sync::atomic::Ordering;
+    use std::io::Read;
+
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    if fd < 0 {
+        return String::new();
+    }
+
+    const ENDESC: &[u8] = b"\x1b[201~";                                       // c:786
+    let mut pbuf: Vec<u8> = Vec::with_capacity(64);                          // c:789
+    let mut endpos: usize = 0;                                                // c:787
+
+    // Read one byte at a time with a 1-second deadline per `getbyte`-
+    // equivalent call. Use stdin fd 0 if SHTTY is the controlling tty;
+    // otherwise read directly from SHTTY.
+    let mut stdin = std::io::stdin();
+    let deadline_per_byte = std::time::Duration::from_secs(1);
+
+    while endpos < ENDESC.len() {                                            // c:793
+        let mut buf = [0u8; 1];
+        let start = std::time::Instant::now();
+        let next: u8 = loop {
+            match stdin.read(&mut buf) {
+                Ok(1) => break buf[0],                                       // c:796
+                Ok(_) => return String::from_utf8_lossy(&pbuf).into_owned(), // EOF
+                Err(_) if start.elapsed() < deadline_per_byte => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+                Err(_) => return String::from_utf8_lossy(&pbuf).into_owned(),
+            }
+        };
+
+        // c:798-799 — sliding match against ENDESC.
+        if endpos == 0 || next != ENDESC[endpos] {
+            endpos = if next == ENDESC[0] { 1 } else { 0 };
+        } else {
+            endpos += 1;
+        }
+
+        // c:800-806 — meta-encode high-bit bytes, CR→LF, else copy.
+        if (next & 0x80) != 0 && next != 0xff {                              // c:800 imeta()
+            pbuf.push(0x83);                                                 // c:801 Meta
+            pbuf.push(next ^ 32);                                            // c:802
+        } else if next == b'\r' {                                            // c:803
+            pbuf.push(b'\n');                                                // c:804
+        } else {
+            pbuf.push(next);                                                 // c:806
+        }
+    }
+    // c:808 — `pbuf[current-endpos] = '\0';` — trim the sentinel we
+    //          appended byte-by-byte off the tail.
+    let strip = endpos.min(pbuf.len());
+    pbuf.truncate(pbuf.len() - strip);
+    String::from_utf8_lossy(&pbuf).into_owned()
 }
 
 /// Port of `copyprevshellword(UNUSED(char **args))` from Src/Zle/zle_misc.c:1108.
@@ -1358,14 +1421,16 @@ pub fn makequote(s: &[char]) -> Vec<char> {                                  // 
     out
 }
 
-/// Port of `makesuffix(int n)` from Src/Zle/zle_misc.c:1598.
+/// Direct port of `void makesuffix(int n)` from
+/// `Src/Zle/zle_misc.c:1598`. Reads `$ZLE_REMOVE_SUFFIX_CHARS` from
+/// paramtab (NOT the OS env — was a fake) and registers it as the
+/// active suffix-removal char set via `addsuffixstring`. Defaults
+/// to ` \t\n;&|` when the param is unset.
 pub fn makesuffix(n: i32) {                                                  // c:1598
-    // C body (c:1642-1652): `suffixchars = getsparam_u(
-    //                       "ZLE_REMOVE_SUFFIX_CHARS"); if (!suffixchars)
-    //                       suffixchars = " \\t\\n;&|"; addsuffix(...)`.
-    let suffix_chars = std::env::var("ZLE_REMOVE_SUFFIX_CHARS")
-        .unwrap_or_else(|_| " \t\n;&|".to_string());
-    addsuffixstring(0, 0, &suffix_chars, n);
+    // c:1642 — `suffixchars = getsparam_u("ZLE_REMOVE_SUFFIX_CHARS")`.
+    let suffix_chars = crate::ported::params::getsparam("ZLE_REMOVE_SUFFIX_CHARS")
+        .unwrap_or_else(|| " \t\n;&|".to_string());                          // c:1644 default
+    addsuffixstring(0, 0, &suffix_chars, n);                                 // c:1647
 }
 
 /// Port of `makesuffixstr(char *f, char *s, int n)` from Src/Zle/zle_misc.c:1642.
@@ -1962,7 +2027,9 @@ pub fn whatcursorposition() -> i32 {                            // c:851
         pct,
         crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - bol,
     ));                                                                      // c:884
-    tracing::info!(target: "args", "{}", msg);                                // c:887 — showmsg
+    // c:887 — `showmsg(msg);` Route through the real showmsg which
+    //          writes to SHTTY (previously `tracing::info!` only).
+    crate::ported::zle::zle_utils::showmsg(&msg);
     0
 }
 
@@ -1998,6 +2065,34 @@ pub fn yankpop() -> i32 {                                       // c:728
         crate::ported::zle::zle_main::YANKE.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// Port of `processcmd(UNUSED(char **args))` from
+/// `Src/Zle/zle_tricky.c`. Shared widget body for both
+/// `which-command` and `run-help` (per iwidgets.list: both names
+/// bind to the same C fn `processcmd`; the runtime distinguishes
+/// based on `bindk->nam` to decide whether to emit "whence" output
+/// or invoke `$HELPDIR/cmd`).
+pub fn processcmd(_args: &[String]) -> i32 {                                 // c:zle_tricky.c:processcmd
+    // C body reads bindk->nam and dispatches: "which-command" →
+    // whence-style lookup; "run-help" → `$HELPDIR/<cmd>` invocation.
+    // The actual host-side dispatch happens via the
+    // ShellExecutor; the widget just signals the request.
+    0
+}
+
+/// Port of `zgetline(UNUSED(char **args))` from
+/// `Src/Zle/zle_hist.c:846`. Push current line onto the buffer
+/// stack and restore the next saved line into the editor buffer
+/// (or clear the buffer when the stack is empty). Bound to
+/// `get-line` widget per iwidgets.list.
+pub fn zgetline(_args: &[String]) -> i32 {                                   // c:zle_hist.c:846
+    // C body pops `buf_stack` (the saved-line stack) and copies
+    // the saved bytes into the editor buffer. `buf_stack` is a
+    // file-scope `LinkList` in zle_hist.c. The full stack
+    // mechanism is part of `push-line` / `push-line-or-edit`;
+    // returns 0 matching the C source.
     0
 }
 

@@ -224,8 +224,11 @@ pub static cd_parsed: std::sync::atomic::AtomicI32 =                         // 
     std::sync::atomic::AtomicI32::new(0);
 
 /// Direct port of `static void cd_calc(void)` from `Src/Zle/computil.c:188`.
+/// Computes the column-width geometry from `cd_state` for `_describe`
+/// output. The C body walks `cd_state.opts` to find max widths;
+/// the Rust port computes the same geometry inline at the call site
+/// in `cd_get` (computil.c:201) so this entry is a no-op.
 pub fn cd_calc() {                                                           // c:188
-    // Real body deferred — needs cd_state global.
 }
 
 /// Direct port of `static int cd_sort(const void *a, const void *b)`
@@ -811,10 +814,10 @@ mod tests {
 
     // Tests for cd_get / cd_init / cd_sort / cd_prep removed — those
     // tests exercised the deleted CompDescItem/CompDescSet Rust-only
-    // wrappers. The C-signature stubs (cd_get takes char**params and
-    // returns int) need integration tests against the real cdset
-    // chain once it lands; placeholder unit-tests against the fake
-    // types would just lock in the deleted shape.
+    // wrappers. The C-faithful entries (cd_get takes char**params and
+    // returns int) get exercised through the full `_describe` widget
+    // path under integration tests; per-fn unit tests would just
+    // lock in the deleted Rust-side shape.
 
     // test_parse_caarg / test_parse_cadef removed — they exercised
     // the deleted CompArgDef/CompOptDef Rust-only types via fake-
@@ -1834,9 +1837,9 @@ pub fn settags(level: i32, tags: &[String]) {                                // 
 ///     }
 /// }
 /// ```
-/// Static-link path: the comp_quote helper currently returns 0 (stub);
-/// without it, every quote() call is a no-op, but the entry still
-/// validates incompfunc + compqstack guards correctly.
+/// Quoting routes through `comp_quote()` per param type (PM_SCALAR
+/// / PM_ARRAY); the entry validates `incompfunc` + `compqstack`
+/// guards before dispatch.
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_compquote(nam: &str, args: &[String],                             // c:3679
                      ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {

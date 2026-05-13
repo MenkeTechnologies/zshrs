@@ -236,13 +236,13 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     // src/exec.rs); strip that prefix and dispatch to the right
     // keymap. Default = Main.
     {
-        // bindkey replay skipped — the legacy ZleManager.bind_key()
-        // wrote to a Rust-only keymap aggregate that no longer
-        // exists. Canonical replay through
-        // `ported::zle::zle_keymap::keymapnamtab` / Keymap::bind_seq
-        // is pending. Count rows so the total stays accurate.
-        for _ in shard.bindkeys {
-            let _ = parse_bindkey_value;
+        // bindkey replay routes through the canonical `bindkey()`
+        // free fn (`ported::zle::zle_bindings.rs:192`) which writes
+        // to `keymapnamtab` matching what the C `bindkey` builtin
+        // does at runtime.
+        for (keyseq, value) in shard.bindkeys {
+            let (keymap, widget) = parse_bindkey_value(&value);
+            crate::ported::zle::zle_bindings::bindkey(keymap, &keyseq, widget);
             total += 1;
         }
     }
@@ -299,11 +299,16 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     // gave; the widget invocation path looks it up at execution
     // time so re-installing the name+body string is enough.
     if let Some(zle_widgets) = shard.extras.get("zle") {
-        // user-widget replay skipped — see bindkeys block above.
-        // Canonical path will route through
-        // `ported::zle::zle_thingy::Thingy::user_defined` +
-        // `bindwidget` once that wiring lands.
-        for _ in zle_widgets {
+        // User-widget replay through the canonical `Widget::user_defined`
+        // + `bindwidget` machinery in `ported::zle/zle_thingy.rs`,
+        // matching the C `bin_zle_new()` registration path at
+        // `Src/Zle/zle_thingy.c:584`.
+        for (name, body) in zle_widgets {
+            let w = std::sync::Arc::new(
+                crate::ported::zle::zle_h::widget::user_defined(name, body),
+            );
+            crate::ported::zle::zle_thingy::rthingy(name);
+            crate::ported::zle::zle_thingy::bindwidget(w, name);
             total += 1;
         }
     }

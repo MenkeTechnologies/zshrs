@@ -381,7 +381,7 @@ pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // 
     pub fn vi_set_mark(name: char) {
         // Set the historical mark (mirror with crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) for emacs compat).
         crate::ported::zle::zle_main::MARK.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
-        if let Some(idx) = viyank(name) {
+        if let Some(idx) = vimark_slot(name) {
             crate::ported::zle::zle_main::vimarks().lock().unwrap()[idx] = Some((crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), crate::ported::zle::zle_main::history().lock().unwrap().cursor as i32));
         }
     }
@@ -391,7 +391,7 @@ pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // 
     /// `'` / `` ` `` jumps to the implicit "last position" mark; other
     /// characters are rejected.
     pub fn vi_goto_mark(name: char) {
-        let idx = match viyank(name) {
+        let idx = match vimark_slot(name) {
             Some(i) => i,
             None => return,
         };
@@ -737,7 +737,7 @@ pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // 
 /// Map a vi mark name to its slot index in the file-scope
 /// `VIMARKS` static.
 /// `a..z` → 0..25; `'` / `` ` `` → 26 (the implicit last-position mark).
-fn viyank(name: char) -> Option<usize> {
+fn vimark_slot(name: char) -> Option<usize> {
     if name.is_ascii_lowercase() {
         Some(name as usize - 'a' as usize)
     } else if name == '\'' || name == '`' {
@@ -745,6 +745,62 @@ fn viyank(name: char) -> Option<usize> {
     } else {
         None
     }
+}
+
+/// Port of `viyank(UNUSED(char **args))` from `Src/Zle/zle_vi.c:546`.
+/// ```c
+/// int viyank(UNUSED(char **args)) {
+///     int c2, ret = 1;
+///     startvichange(1);
+///     if ((c2 = getvirange(0)) != -1) {
+///         cut(zlecs, c2 - zlecs, CUT_YANK);
+///         ret = 0;
+///     }
+///     if (vilinerange && lastcol != -1) {
+///         int x = findeol();
+///         if ((zlecs += lastcol) >= x) {
+///             zlecs = x;
+///             if (zlecs > findbol() && invicmdmode()) DECCS();
+///         }
+///         lastcol = -1;
+///     }
+///     return ret;
+/// }
+/// ```
+pub fn viyank(_args: &[String]) -> i32 {                                     // c:zle_vi.c:546
+    use std::sync::atomic::Ordering::SeqCst;
+    let mut ret = 1;
+    startvichange(1);                                                        // c:550
+    let c2 = getvirange(0);                                                  // c:551
+    if c2 != -1 {
+        let zlecs_now = crate::ported::zle::zle_main::ZLECS.load(SeqCst) as i32;
+        crate::ported::zle::zle_utils::cut(                                  // c:552
+            zlecs_now,
+            c2 - zlecs_now,
+            crate::ported::zle::zle_h::CUT_YANK,
+        );
+        ret = 0;
+    }
+    // c:557 — line-mode column restoration.
+    if VILINERANGE.load(SeqCst) != 0
+        && crate::ported::zle::zle_main::LASTCOL.load(SeqCst) != -1
+    {
+        let x = crate::ported::zle::zle_utils::findeol() as i32;
+        let new_cs = crate::ported::zle::zle_main::ZLECS.load(SeqCst) as i32
+            + crate::ported::zle::zle_main::LASTCOL.load(SeqCst);
+        if new_cs >= x {
+            crate::ported::zle::zle_main::ZLECS.store(x as usize, SeqCst);
+            let bol = crate::ported::zle::zle_utils::findbol() as i32;
+            let cmname = crate::ported::zle::zle_keymap::curkeymapname().clone();
+            if x > bol && crate::ported::zle::zle_h::invicmdmode(&cmname) {
+                crate::ported::zle::zle_move::deccs();
+            }
+        } else {
+            crate::ported::zle::zle_main::ZLECS.store(new_cs as usize, SeqCst);
+        }
+        crate::ported::zle::zle_main::LASTCOL.store(-1, SeqCst);             // c:570
+    }
+    ret
 }
 
 #[cfg(test)]
@@ -1159,8 +1215,9 @@ pub fn vicapslockpanic() -> i32 {                                            // 
         "STATUSLINE", "press a lowercase key to continue",
     );
     // c:1007 — zrefresh() — flushes paramtab/buffer state to the
-    // refresh layer; deferred to live ZLE draw. The CLEARLIST flag is
-    // the trigger the draw path watches.
+    // refresh layer. The CLEARLIST flag set above is the trigger
+    // the draw path watches; the actual repaint runs on the next
+    // ZLE event loop iteration via `zrefresh()` in `zle_refresh.rs`.
     // c:1008-1009 — `while (!ZC_ilower(getfullchar(0))) ;`.
     // Without a live key-read loop we cannot block here; the live
     // ZLE input path (getfullchar) does the wait. The flag

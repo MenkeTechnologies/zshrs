@@ -256,6 +256,133 @@ mod tests {
     }
 
     #[test]
+    fn addx_skips_when_cursor_in_middle_of_word() {
+        // c:949-952 — when the char at cursor is a normal word-char
+        //              (not separator/quote/blank/eol), addx must NOT
+        //              insert anything; addedx → 0, *ptmp → NULL.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        use std::sync::atomic::Ordering;
+        use crate::ported::zle::zle_main::{ZLECS, ZLELINE, ZLELL};
+        use crate::ported::zle::compcore::ADDEDX;
+
+        *ZLELINE.lock().unwrap() = "hello".chars().collect();
+        ZLECS.store(2, Ordering::SeqCst);                 // cursor on 'l'
+        ZLELL.store(5, Ordering::SeqCst);
+        INSTRING.store(crate::ported::zsh_h::QT_NONE, Ordering::SeqCst);
+        COMPPREF.store(0, Ordering::SeqCst);
+        ADDEDX.store(99, Ordering::SeqCst);               // sentinel
+
+        let mut snap = String::new();
+        let added = addx(&mut snap);
+        assert_eq!(added, 0, "no insertion when cursor lands on word-char");
+        assert_eq!(ADDEDX.load(Ordering::SeqCst), 0);
+        assert!(snap.is_empty(), "ptmp must be NULL/empty when addx doesn't fire");
+        assert_eq!(
+            ZLELINE.lock().unwrap().iter().collect::<String>(),
+            "hello",
+            "buffer must be untouched"
+        );
+    }
+
+    #[test]
+    fn addx_inserts_at_end_of_line() {
+        // c:937-947 — cursor at end-of-line → insert 'x', addedx=1.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        use std::sync::atomic::Ordering;
+        use crate::ported::zle::zle_main::{ZLECS, ZLELINE, ZLELL};
+        use crate::ported::zle::compcore::ADDEDX;
+
+        *ZLELINE.lock().unwrap() = "abc".chars().collect();
+        ZLECS.store(3, Ordering::SeqCst);                 // cursor past end
+        ZLELL.store(3, Ordering::SeqCst);
+        INSTRING.store(crate::ported::zsh_h::QT_NONE, Ordering::SeqCst);
+        COMPPREF.store(0, Ordering::SeqCst);
+
+        let mut snap = String::new();
+        let added = addx(&mut snap);
+        assert_eq!(added, 1, "exactly one 'x' inserted at EOL");
+        assert_eq!(ADDEDX.load(Ordering::SeqCst), 1);
+        assert_eq!(snap, "abc", "snapshot is pre-edit buffer");
+        assert_eq!(
+            ZLELINE.lock().unwrap().iter().collect::<String>(),
+            "abcx"
+        );
+    }
+
+    #[test]
+    fn addx_inserts_x_space_when_comppref_on_nonblank() {
+        // c:936 + c:945-946 — comppref + non-blank at cursor →
+        //                      insert "x ", addedx=2.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        use std::sync::atomic::Ordering;
+        use crate::ported::zle::zle_main::{ZLECS, ZLELINE, ZLELL};
+        use crate::ported::zle::compcore::ADDEDX;
+
+        *ZLELINE.lock().unwrap() = "ab".chars().collect();
+        ZLECS.store(1, Ordering::SeqCst);                 // on 'b'
+        ZLELL.store(2, Ordering::SeqCst);
+        INSTRING.store(crate::ported::zsh_h::QT_NONE, Ordering::SeqCst);
+        COMPPREF.store(1, Ordering::SeqCst);
+
+        let mut snap = String::new();
+        let added = addx(&mut snap);
+        assert_eq!(added, 2, "comppref non-blank → 'x ' (2 chars)");
+        assert_eq!(ADDEDX.load(Ordering::SeqCst), 2);
+        // Reset for siblings.
+        COMPPREF.store(0, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn addx_inserts_when_cursor_on_separator() {
+        // c:929-933 — ')' / '|' / '&' / '>' / '<' etc. → insert.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        use std::sync::atomic::Ordering;
+        use crate::ported::zle::zle_main::{ZLECS, ZLELINE, ZLELL};
+
+        *ZLELINE.lock().unwrap() = "echo|".chars().collect();
+        ZLECS.store(4, Ordering::SeqCst);                 // on '|'
+        ZLELL.store(5, Ordering::SeqCst);
+        INSTRING.store(crate::ported::zsh_h::QT_NONE, Ordering::SeqCst);
+        COMPPREF.store(0, Ordering::SeqCst);
+
+        let mut snap = String::new();
+        let added = addx(&mut snap);
+        assert_eq!(added, 1, "separator at cursor → insert 'x'");
+    }
+
+    #[test]
+    fn checkparams_hascompmod_gate() {
+        // c:447-448 — `!menucmp && exact && (!hascompmod || RECEXACT)`.
+        //              When hascompmod is true and RECEXACT is unset,
+        //              the function must return 0 even on an exact
+        //              prefix match with multiple candidates.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        use std::sync::atomic::Ordering;
+
+        // Seed paramtab with two params: "abc" + "abcd".
+        crate::ported::params::setsparam("abc",  "v1");
+        crate::ported::params::setsparam("abcd", "v2");
+        MENUCMP.store(0, Ordering::SeqCst);
+        crate::ported::zle::zle_main::HASCOMPMOD.store(true, Ordering::SeqCst);
+        // RECEXACT is an OPT_*; unsetopt via flip().
+        crate::ported::zle::zle_main::HASCOMPMOD.store(true, Ordering::SeqCst);
+
+        // With hascompmod=true and RECEXACT presumed-off, gate closes.
+        // (We can't easily flip OPT_RECEXACT here without disturbing
+        // global option state; the assertion below verifies the
+        // !hascompmod escape — set hascompmod=false → gate opens.)
+        crate::ported::zle::zle_main::HASCOMPMOD.store(false, Ordering::SeqCst);
+        assert_eq!(checkparams("abc"), 1,
+                   "with !hascompmod, exact + non-menu → return 1");
+
+        // Reset hascompmod for siblings.
+        crate::ported::zle::zle_main::HASCOMPMOD.store(false, Ordering::SeqCst);
+        // Cleanup params.
+        crate::ported::params::setsparam("abc", "");
+        crate::ported::params::setsparam("abcd", "");
+    }
+
+    #[test]
     fn test_has_real_token() {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(has_real_token("$HOME"));
@@ -392,58 +519,122 @@ pub fn acceptandmenucomplete() -> i32 {                                      // 
 
 /// Port of `addx(char **ptmp)` from Src/Zle/zle_tricky.c:922.
 /// WARNING: param names don't match C — Rust=(zle, ptmp) vs C=(ptmp)
-pub fn addx(ptmp: &mut String) -> i32 { // c:922
-    // C body c:924-955 — inserts an "x" placeholder at the cursor so
-    //                    the parser sees a complete word; saves the
-    //                    snapshot in *ptmp.
-    let snap: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
-    *ptmp = snap;
-    let need_space = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)
-        || matches!(
-            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)).copied(),
-            Some(' ' | '\t' | '\n' | ')' | '`' | '}' | ';' | '|' | '&' | '>' | '<')
-        );
-    let ins = if need_space { "x " } else { "x" };                           // c:945
-    for (i, ch) in ins.chars().enumerate() {
-        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i, ch);
-    }
-    if need_space {
-        2
+/// Direct port of `void addx(char **ptmp)` from
+/// `Src/Zle/zle_tricky.c:922`. Conditionally inserts an 'x'
+/// placeholder at the ZLE cursor so the parser sees a complete word
+/// at completion time. The condition only fires when the char at the
+/// cursor would terminate / split the word (whitespace, separators,
+/// closing brackets, end-of-line, quote inside-string, or comppref
+/// mode landing on a non-blank).
+///
+/// Rust signature: returns `*ptmp` as a Result-ish `Option<String>`
+/// snapshot of the pre-edit buffer when addx fires; None when it
+/// doesn't. Side effects: mutates `ZLELINE`, stores the insertion
+/// length (1 or 2) in `ADDEDX`. The `int` return value mirrors C's
+/// implicit return (its return type is `void`; the i32 conveys
+/// `addedx` for callers that want it without a global read).
+pub fn addx(ptmp: &mut String) -> i32 {                                       // c:922
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::zle_main::{ZLECS, ZLELINE, ZLELL};
+    use crate::ported::zsh_h::QT_NONE;
+    use crate::ported::zle::compcore::ADDEDX;
+
+    let cs = ZLECS.load(Ordering::SeqCst) as usize;
+    let ll = ZLELL.load(Ordering::SeqCst) as usize;
+    let instring = INSTRING.load(Ordering::SeqCst);
+    let comppref = COMPPREF.load(Ordering::SeqCst) != 0;
+
+    // Read the char at the cursor (and previous, for the iblank gate).
+    let (ch_at, prev_at): (Option<char>, Option<char>) = {
+        let line = ZLELINE.lock().unwrap();
+        let at = line.get(cs).copied();
+        let prev = if cs > 0 { line.get(cs - 1).copied() } else { None };
+        (at, prev)
+    };
+
+    // c:924 — `iblank` in C tests space/tab (not '\n'). c:923's
+    // outer check splits '\n' off as its own arm, so the iblank
+    // gate proper is space/tab only.
+    let is_iblank = matches!(ch_at, Some(' ' | '\t'));
+    let is_blank_unescaped = is_iblank
+        && (cs == 0 || prev_at != Some('\\'));                               // c:927-928
+
+    // c:924-936 — the full insertion gate.
+    let cs_at_end = ch_at.is_none() || cs >= ll;
+    let is_newline = ch_at == Some('\n');                                    // c:925
+    let is_separator = matches!(ch_at,
+        Some(')' | '`' | '}' | ';' | '|' | '&' | '>' | '<'));                // c:929-933
+    let is_instring_quote = instring != QT_NONE                              // c:934-935
+        && matches!(ch_at, Some('"' | '\''));
+    let addspace = comppref                                                  // c:936
+        && ch_at.is_some()
+        && !matches!(ch_at, Some(' ' | '\t'));
+
+    let fire = cs_at_end || is_newline || is_blank_unescaped
+        || is_separator || is_instring_quote || addspace;
+
+    if fire {
+        // c:937-946 — snapshot, insert 'x' (+ optional ' '), set addedx.
+        let snap: String = ZLELINE.lock().unwrap().iter().collect();
+        *ptmp = snap;
+        let mut line = ZLELINE.lock().unwrap();
+        // c:944 — `zlemetaline[zlemetacs] = 'x';`
+        line.insert(cs, 'x');
+        if addspace {
+            // c:945-946 — `zlemetaline[zlemetacs+1] = ' ';`
+            line.insert(cs + 1, ' ');
+        }
+        drop(line);
+        // c:947 — `addedx = 1 + addspace;`
+        let added = if addspace { 2 } else { 1 };
+        ADDEDX.store(added, Ordering::SeqCst);
+        // Keep ZLELL consistent with the insertion.
+        ZLELL.fetch_add(added as usize, Ordering::SeqCst);
+        added
     } else {
-        1
+        // c:949-952 — `addedx = 0; *ptmp = NULL;`
+        ADDEDX.store(0, Ordering::SeqCst);
+        ptmp.clear();
+        0
     }
 }
 
 /// Port of `checkparams(char *p)` from Src/Zle/zle_tricky.c:435.
 pub fn checkparams(p: &str) -> i32 {                                         // c:435
     use std::sync::atomic::Ordering;
-    // C body c:437-449 — walks `paramtab` directly via `scanhashtable`
-    // to find names with `pfxlen(p, nam) == l`, count up to 2, track
-    // exact-match. Then:
-    //   if n == 1 return (getsparam(p) != NULL)
-    //   else      return !menucmp && exact && (!hascompmod || isset(RECEXACT))
+    // C body c:437-449:
+    //   - scanhashtable(paramtab) for names with `pfxlen(p, nam) == l`
+    //   - count up to 2, track exact-match
+    //   - n == 1   → getsparam(p) != NULL
+    //   - n != 1   → !menucmp && exact && (!hascompmod || isset(RECEXACT))
+    //
+    // `pfxlen(p, nam) == l` means all of `p` is a prefix of `nam`,
+    // i.e. `nam.starts_with(p)`. Rust port reads paramtab directly.
     let l = p.len();
     let mut n = 0;
     let mut exact = false;
     if let Ok(tab) = crate::ported::params::paramtab().read() {              // c:437
-        for name in tab.keys() {
-            if name.starts_with(p) && name.len() >= l {
-                n += 1;
-                if name.len() == l {
-                    exact = true;
+        for name in tab.keys() {                                             // c:438 walk nodes
+            if name.starts_with(p) {                                         // c:439 pfxlen == l
+                n += 1;                                                      // c:440
+                if name.len() == l {                                         // c:441
+                    exact = true;                                            // c:442
                 }
-                if n >= 2 {
+                if n >= 2 {                                                  // c:438 n < 2 gate
                     break;
                 }
             }
         }
     }
-    if n == 1 {
+    if n == 1 {                                                              // c:446
         return if crate::ported::params::getsparam(p).is_some() { 1 } else { 0 };
     }
+    // c:447-448 — `!menucmp && e && (!hascompmod || isset(RECEXACT))`.
     let menucmp = MENUCMP.load(Ordering::SeqCst) != 0;
+    let hascompmod = crate::ported::zle::zle_main::HASCOMPMOD
+        .load(Ordering::SeqCst);
     let recexact = isset(RECEXACT);
-    if !menucmp && exact && recexact {
+    if !menucmp && exact && (!hascompmod || recexact) {                      // c:448
         1
     } else {
         0
@@ -953,19 +1144,30 @@ pub fn listlist(items: &[String], cols: usize) -> i32 {                      // 
     // c:2622-2640 — pack=0 path: ncols = max columns we can fit.
     let ncols = (cols / longest).max(1);
     let nlines = num.div_ceil(ncols);                                        // c:2643
-    // tracing print mirrors C's listmatches output.
+    // c:2645-2680 — emit each row to the shell-out fd. C uses
+    //                `compzputs(item, ml); for (j=pad) compzputs(" ", ml);`
+    //                then newline. Rust writes the same visible bytes
+    //                directly to SHTTY (stdout fallback) instead of
+    //                routing through tracing.
+    use std::sync::atomic::Ordering;
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
     let mut row = String::new();
     for (i, s) in items.iter().enumerate() {
         row.push_str(s);
         let pad = longest - lens[i];
         row.push_str(&" ".repeat(pad));
         if (i + 1) % ncols == 0 {
-            tracing::info!(target: "zle", "{}", row.trim_end());
+            let line = row.trim_end();
+            let _ = crate::ported::utils::write_loop(out_fd, line.as_bytes());
+            let _ = crate::ported::utils::write_loop(out_fd, b"\n");
             row.clear();
         }
     }
     if !row.is_empty() {
-        tracing::info!(target: "zle", "{}", row.trim_end());
+        let line = row.trim_end();
+        let _ = crate::ported::utils::write_loop(out_fd, line.as_bytes());
+        let _ = crate::ported::utils::write_loop(out_fd, b"\n");
     }
     let _ = (lens.pop(),);
     nlines as i32
@@ -1095,7 +1297,15 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {         // 
         }
     }
     if dopr {
-        tracing::info!(target: "zle", "{}", out);
+        // c:2543-2548 — `fputs(out, shout); putc('\n', shout);`. The
+        //                C source writes each rendered char to shout
+        //                via per-char compzputs; the visible-byte
+        //                output is the assembled string we built.
+        use std::sync::atomic::Ordering;
+        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let out_fd = if fd >= 0 { fd } else { 1 };
+        let _ = crate::ported::utils::write_loop(out_fd, out.as_bytes());
+        let _ = crate::ported::utils::write_loop(out_fd, b"\n");
     }
     cc
 }

@@ -506,8 +506,10 @@ pub fn adjustcolumns() -> usize {                                           // c
             }
         }
     }
-    std::env::var("COLUMNS")
-        .ok()
+    // c:1820 fallback — `if (zterm_columns <= 0) zterm_columns =
+    //                    tccolumns > 0 ? tccolumns : 80`. C consults
+    //                    `getsparam("COLUMNS")` (paramtab), not OS env.
+    crate::ported::params::getsparam("COLUMNS")
         .and_then(|s| s.parse().ok())
         .unwrap_or(80)
 }
@@ -530,8 +532,8 @@ pub fn adjustlines() -> usize {                                             // c
             }
         }
     }
-    std::env::var("LINES")
-        .ok()
+    // c:1844 fallback — paramtab `$LINES`, not OS env.
+    crate::ported::params::getsparam("LINES")
         .and_then(|s| s.parse().ok())
         .unwrap_or(24)
 }
@@ -997,8 +999,10 @@ pub fn gettempname(prefix: Option<&str>, _use_heap: bool) -> Option<String> { //
     crate::ported::signals::queue_signals();                                 // c:2182
     let prefix_owned: String = match prefix {                                // c:2183
         Some(p) => p.to_string(),
-        None => std::env::var("TMPPREFIX")
-            .unwrap_or_else(|_| crate::ported::config_h::DEFAULT_TMPPREFIX.to_string()), // c:2184
+        // c:2184 — `getsparam("TMPPREFIX")`. Read from paramtab (not OS
+        //          env); fall back to compile-time default when unset.
+        None => crate::ported::params::getsparam("TMPPREFIX")
+            .unwrap_or_else(|| crate::ported::config_h::DEFAULT_TMPPREFIX.to_string()),
     };
     let template = format!("{}{}", prefix_owned, suffix);                    // c:2186-2188
     // C uses mktemp(3) which mutates the X's into a unique name              // c:2192/2219

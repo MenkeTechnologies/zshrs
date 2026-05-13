@@ -171,11 +171,12 @@ pub static histlinect: AtomicI64 = AtomicI64::new(0);
 /// lead character (`!` by default).
 pub static bangchar: AtomicI32 = AtomicI32::new(b'!' as i32);
 
-/// Resolve the active history file path. Mirrors C's
-/// `getsparam("HISTFILE")` lookup used inside `lockhistfile()` (c:3188)
-/// and `readhistfile()` / `savehistfile()` when their `fn` arg is NULL.
+/// Direct port of C's `getsparam("HISTFILE")` lookup used inside
+/// `lockhistfile()` (c:3188) and `readhistfile()` / `savehistfile()`
+/// when their `fn` arg is NULL. C reads from paramtab; was reading
+/// the OS env which never carries the shell-private HISTFILE param.
 fn resolve_histfile() -> Option<String> {
-    std::env::var("HISTFILE").ok()
+    crate::ported::params::getsparam("HISTFILE")
 }
 
 /// Port of `int lockhistct` from Src/hist.c. Re-entrant lock counter.

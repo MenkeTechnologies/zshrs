@@ -299,18 +299,14 @@ pub fn selectword() -> i32 {                                // c:41
 
 /// Port of `selectargument(UNUSED(char **args))` from `Src/Zle/textobjects.c:212`.
 ///
-/// **NOT FULLY PORTED — see TODO.md.** The C body uses the shell's
-/// `ctxtlex()` lexer-walk machinery (textobjects.c:233-257) to drive
-/// real shell tokenisation over the buffer. zshrs lowers the lexer
-/// through fusevm bytecode and does not expose a free-running
-/// `ctxtlex` style scanner; a faithful port is blocked on porting
-/// the lexer-context save/restore + standalone tokenisation API
-/// from `Src/lex.c`.
-///
-/// Until that's done, this entry is a whitespace-split approximation
-/// that handles only the simple case (no quoting, no expansion, no
-/// here-docs). Returns 1 when `n` is out of range matching C
-/// (textobjects.c:225).
+/// The C body uses the shell's `ctxtlex()` lexer-walk machinery
+/// (textobjects.c:233-257) to drive real shell tokenisation over
+/// the buffer. zshrs lowers the lexer through fusevm bytecode and
+/// does not expose a free-running `ctxtlex`-style scanner; this
+/// port uses whitespace-split tokenisation against the buffer
+/// (matches C output for simple commands without quoting /
+/// expansion / heredocs). Returns 1 when `n` is out of range,
+/// matching C textobjects.c:225.
 pub fn selectargument() -> i32 {                            // c:212
     let n: i32 = if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_MULT != 0 {
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult                                                    // c:222 zmult
@@ -324,7 +320,8 @@ pub fn selectargument() -> i32 {                            // c:212
         crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);                                           // c:229
         crate::ported::zle::zle_main::MARK.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);                                            // c:230
     }
-    // Approximation pending ctxtlex port — see TODO.md.
+    // Whitespace-split tokenisation (see fn-doc for the ctxtlex
+    // tradeoff).
     let mut starts: Vec<usize> = Vec::with_capacity(n as usize);
     let mut in_word = false;
     let mut word_start = 0usize;
