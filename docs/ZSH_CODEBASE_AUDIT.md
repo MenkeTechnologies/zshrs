@@ -282,6 +282,30 @@ These are the kind of code where you want a type system, a real call stack, an a
 
 Same architectural failure mode that produced the `.zwc` half-cache: design *around* the C core's hostility instead of fixing it. With Emacs-style precedent already in production for 14 years by 1999, the perf-vs-customizability tradeoff was not forced by the state of the art — it was forced by the local maintainability problem in `Src/`.
 
+### Cross-shell survey: who else makes the same mistake?
+
+Surveyed via GitHub source inspection. The question for each shell: is the completion *library* (dispatcher, argument-parser, filesystem-walker, formatter) implemented in native code or in the shell's own scripting language?
+
+| Shell | Library implementation | End completion files | Library in shell-script? |
+|---|---|---|---|
+| **zsh** (compsys) | Shell — `_arguments` (589), `_path_files` (895), `_main_complete` (418), `_describe` (140), `_dispatch` (91), `_complete` (144), `_normal` (40), `_values` (160) | Shell — `_git` (9,026), `_apt`, `_docker`, etc. | **YES (reference case)** |
+| **bash** (bash-completion project) | **Shell** — `bash_completion` ~3,000+ lines pure shell: `_comp_compgen` (central dispatcher), `_filedir`, `_init_completion`, `_known_hosts_real`, `_comp_quote`, `_comp_split` | Shell — `completions/*` | **YES** |
+| **tcsh** (Ken Greer, late 1970s) | C engine + **declarative records** in `complete.tcsh` (1,277 lines of `complete <cmd> <pattern>` syntax). Records are data, not imperative shell library code. | Same file (declarative) | **No** — declarative records, native engine |
+| **fish** (2005+) | C++/Rust engine | **Declarative** records: `complete -c git -l help -s h -d 'Display manual'` | No |
+| **nushell** (2019+) | **Native Rust** — `completer.rs`, `command_completions.rs`, `file_completions.rs`, `arg_value_completion.rs`, `custom_completions.rs` | Native or declarative | No |
+| **elvish** (2017+) | **Hybrid** — Go core (`completion.go`, `complete_getopt.go`) + elvish-script hook surface (`completion.d.elv`) | Mix | No — Go for library, elvish for narrow hooks |
+| **xonsh** (2015+) | **Native Python** — `base.py`, `commands.py`, `path.py`, `completer.py` | Python | No |
+| **oil / osh** (2016+) | **Native Python** — `core/completion.py`, `core/comp_ui.py` | Python | No |
+| **PowerShell** (2006+) | **Native C#** — `ScopeArgumentCompleter.cs` etc.; `Register-ArgumentCompleter` API for narrow scriptblock hooks | C# or scriptblock | No |
+
+**Three findings:**
+
+1. **Only bash and zsh make this mistake.** Two shells, both old, both ship ~3,000+ line shell-script completion libraries. Every other shell surveyed implements the library in its native host language regardless of which language that is (C, C++, Rust, Go, Python, C#). The pattern is generational: bash-completion + compsys are the artifacts of an architectural decision that the rest of the shell ecosystem rejected.
+2. **tcsh proved the correct architecture BEFORE zsh.** tcsh (late 1970s, decades older than zsh's compsys) uses declarative completion records — `complete grep c/-*A/x:.../ p/1/x:.../` — parsed by a C engine. Same model fish later adopted. The "perf vs customizability was a forced tradeoff in 1999" defense is refuted not just by Emacs/Vim prior art but by *zsh's direct ancestor in the C-shell lineage*. The right shell-completion architecture existed ~20 years before compsys, in a shell every zsh developer was familiar with.
+3. **Every shell designed after compsys rejected the pattern.** fish (2005), PowerShell (2006), xonsh (2015), oil/osh (2016), elvish (2017), nushell (2019). Six shells, six native-library implementations. The compsys / bash-completion design has zero forward adoption.
+
+This is not a contested design tradeoff. It's a design choice that lost in the historical record — earlier shells did it better, and no shell built since has copied it forward. The 105,050-line shell-script "library" in `Completion/` is the artifact of a pattern that was wrong by 1999 and is unanimously dead by 2026.
+
 The zshrs answer is the split your gut already drew:
 
 - **Library functions** (`_arguments`, `_path_files`, `_complete`, `_dispatch`, `_describe`, …) → reimplemented in Rust in the `compsys/` crate (27 source files, 23k+ lines of Rust per `compsys/README.md`). Typed function pointers, real call stack, bytecode-via-fusevm where dynamic, Cranelift JIT for hot paths.
