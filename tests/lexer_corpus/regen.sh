@@ -1,26 +1,22 @@
 #!/usr/bin/env zsh
-# Regenerate the .tokens reference files committed alongside each
-# corpus entry. The lexer parity harness reads these directly so it
-# can run without needing the C-side zsh + zshrs_dump module on every
-# invocation.
+# Regenerate the .tokens AND .wordcode reference files committed
+# alongside each corpus entry. Two parity harnesses consume these
+# offline (no need for zsh/zshrs_dump on every invocation):
+#
+#   - tests/lexer_parity.rs    reads `<basename>.tokens`
+#   - tests/wordcode_parity.rs reads `<basename>.wordcode`
 #
 # Run after making changes to:
 #   - any corpus *.sh / *.zsh (new test cases)
 #   - the C-side dump module (zshrs_dump.c at the repo root)
-#   - any code path that legitimately changes the C lexer's output
+#   - any code path that legitimately changes the C lexer / parser
 #
 # Requires:
 #   - The zshrs_dump module built and placed at one of
 #     `src/zsh/Src/Modules/zshrs_dump.{so,bundle}` (and a matching
-#     copy under `src/zsh/Src/Modules/zsh/zshrs_dump.bundle` for brew
-#     zsh's `module_path/zsh/<name>.bundle` lookup).
+#     copy under `src/zsh/Src/Modules/zsh/zshrs_dump.bundle` for
+#     brew zsh's `module_path/zsh/<name>.bundle` lookup).
 #   - `zsh` on PATH (5.9+).
-#
-# Note: a sibling `dumpwordcode` builtin exists for ad-hoc debugging
-# of C wordcode output, but is NOT used for parity. zshrs's runtime
-# IR is fusevm bytecode, not wordcode, so byte-for-byte parity at
-# that layer is meaningless. Lock parser fidelity via execution
-# parity or AST tree-shape parity instead.
 
 set -e
 
@@ -33,11 +29,14 @@ if [[ ! -e $MODULE_DIR/zshrs_dump.so && ! -e $MODULE_DIR/zshrs_dump.bundle ]]; t
     exit 1
 fi
 
-count=0
+tokens_count=0
+wc_count=0
 # Explicit numbered-prefix glob skips regen.sh (which would match *.sh).
 for f in $CORPUS_DIR/[0-9]*.sh $CORPUS_DIR/[0-9]*.zsh; do
-    zsh -fc "module_path=($MODULE_DIR); zmodload zsh/zshrs_dump && dumptokens '$f'" > "$f.tokens"
-    (( count += 1 ))
+    zsh -fc "module_path=($MODULE_DIR); zmodload zsh/zshrs_dump && dumptokens   '$f'" > "$f.tokens"
+    (( tokens_count += 1 ))
+    zsh -fc "module_path=($MODULE_DIR); zmodload zsh/zshrs_dump && dumpwordcode '$f'" > "$f.wordcode"
+    (( wc_count += 1 ))
 done
 
-print "Regenerated $count token files in $CORPUS_DIR"
+print "Regenerated $tokens_count .tokens + $wc_count .wordcode files in $CORPUS_DIR"
