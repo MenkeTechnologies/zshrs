@@ -1512,6 +1512,26 @@ pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {               // 
     //                addhookfunc("after_trap",  zleaftertrap);`
     crate::ported::module::addhookfunc("before_trap", "zlebeforetrap");      // c:2303
     crate::ported::module::addhookfunc("after_trap",  "zleaftertrap");       // c:2304
+
+    // Register comphooks defs. C zsh's complete-module setup_() does
+    // `addhookdefs(m, comphooks, ...)` (complete.c:1766) with the
+    // 5-entry comphooks[] table (complete.c:1702). The zle and
+    // complete modules are statically linked together in zshrs so the
+    // registration happens here; this seeds HOOKTAB with empty handler
+    // lists for each name so `add-zsh-hook NAME fn` (and the canonical
+    // after_complete runhookdef walk in compcore.rs) see valid hook
+    // entries. Insertion is idempotent — re-running boot_() is a
+    // no-op for already-present entries.
+    if let Ok(mut t) = crate::ported::module::HOOKTAB.lock() {
+        for name in ["insert_match",                                         // c:1703
+                     "menu_start",                                           // c:1704
+                     "compctl_make",                                         // c:1705
+                     "compctl_cleanup",                                      // c:1706
+                     "comp_list_matches"]                                    // c:1707
+        {
+            t.entry(name.to_string()).or_default();
+        }
+    }
     0                                                                        // c:2309
 }
 
