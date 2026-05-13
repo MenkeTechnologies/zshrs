@@ -3068,6 +3068,51 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 isnull = false;
                 zshlex();
             }
+            ENVARRAY => {
+                // c:2027-2050 — mid-cmd ENVARRAY (typeset N=(…) form).
+                // C tracks postassigns + ppost the same as ENVSTRING,
+                // but the inner emit is WCB_ASSIGN(ARRAY, NEW, n)
+                // with `n` patched in after par_nl_wordlist consumes
+                // the elements. C also toggles intypeset=0 around the
+                // wordlist so the lexer doesn't try to re-emit
+                // assignments inside the array.
+                cmplx_set(true);
+                if postassigns == 0 {
+                    ppost = ecadd(0);
+                }
+                postassigns += 1;
+                let parr = ecadd(0);
+                let raw = tokstr().unwrap_or_default();
+                let is_inc = raw.ends_with('+');
+                let name = if is_inc { &raw[..raw.len() - 1] } else { raw.as_str() };
+                let flag = if is_inc { WC_ASSIGN_INC } else { WC_ASSIGN_NEW };
+                ecstr(name);
+                cmdpush(CS_ARRAY as u8);
+                set_intypeset(false);
+                zshlex();
+                let mut nelem = 0u32;
+                while tok() == STRING_LEX {
+                    ecstr(&tokstr().unwrap_or_default());
+                    nelem += 1;
+                    zshlex();
+                    while tok() == NEWLIN {
+                        zshlex();
+                    }
+                }
+                ECBUF.with_borrow_mut(|b| {
+                    if parr < b.len() {
+                        b[parr] = WCB_ASSIGN(WC_ASSIGN_ARRAY, flag, nelem);
+                    }
+                });
+                cmdpop();
+                set_intypeset(true);
+                if tok() != OUTPAR_TOK {
+                    error("expected `)' after array assignment");
+                    return 0;
+                }
+                isnull = false;
+                zshlex();
+            }
             t if IS_REDIROP(t) => {
                 // c:1999-2010 — `nrediradd = par_redir(&r, NULL);
                 // p += nrediradd; if (ppost) ppost += nrediradd;
