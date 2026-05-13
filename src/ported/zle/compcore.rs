@@ -290,8 +290,12 @@ pub static expls: OnceLock<Mutex<Vec<Cexpl>>> = OnceLock::new();             // 
 /// Port of `mod_export Cexpl curexpl` from compcore.c:221.
 pub static curexpl: OnceLock<Mutex<Option<Cexpl>>> = OnceLock::new();        // c:221
 
-/// Port of `LinkList matchers` from compcore.c:236.
-pub static matchers: OnceLock<Mutex<Vec<String>>> = OnceLock::new();         // c:236
+/// Port of `LinkList matchers` from compcore.c:236. The C list holds
+/// `Cmatcher` pointers (the parsed match-spec chains pushed by
+/// addmatches's `add_bmatchers` block). Rust port mirrors that with
+/// owned `Box<Cmatcher>` entries.
+pub static matchers: OnceLock<Mutex<Vec<Box<crate::ported::zle::comp_h::Cmatcher>>>> =
+    OnceLock::new();                                                         // c:236
 
 /// Port of `mod_export Aminfo ainfo` from compcore.c:246.
 pub static ainfo: OnceLock<Mutex<Option<Aminfo>>> = OnceLock::new();         // c:246
@@ -2069,11 +2073,16 @@ static LEXSAVE_DEPTH: AtomicI32 = AtomicI32::new(0);                         // 
 /// candidate, builds the Cline chain via `add_match_data`, and
 /// appends accepted matches to the current group.
 ///
-/// Body shell ports the prologue (group selection at c:2105-2118,
-/// brace-state snapshot at c:2129-2132, instring/inbackt save at
-/// c:2148-2179, the `*argv` empty short-circuit at c:2127). The
-/// deep body (matcher application + Cline build, c:2200-2630) is
-/// stubbed pending Cline + Brinfo + bmatchers substrate.
+/// Real-bodied across all major phases: prologue (group selection
+/// c:2105-2118, brace-state snapshot c:2129-2132, instring/inbackt
+/// save c:2148-2179, `*argv` empty short-circuit c:2127), mstack
+/// push c:2210-2222, aign/pign suffix-ignore + Patprog filters
+/// c:2223-2246, disp array c:2247-2250, lipre/lisuf/lpre/lsuf
+/// assembly c:2253-2300, per-candidate match loop with comp_match
+/// dispatch + add_match_data emit + apar/opar writeback
+/// c:2482-2601, apar/opar setaparam c:2602-2605, exp addexpl
+/// c:2610, hasallmatch CAF_ALL placeholder c:2612-2614, dummy
+/// entries c:2616-2617.
 pub fn addmatches(dat: &mut crate::ported::zle::comp_h::Cadata,              // c:2080
                   argv: &[String]) -> i32
 {
@@ -2173,17 +2182,13 @@ pub fn addmatches(dat: &mut crate::ported::zle::comp_h::Cadata,              // 
         }
         // c:2215 — add_bmatchers(dat->match).
         crate::ported::zle::compmatch::add_bmatchers(Some(m));
-        // c:2217 — addlinknode(matchers, dat->match). The Rust
-        // `matchers` global stores match-spec strings (Vec<String>);
-        // the parsed Cmatcher isn't trivially serializable so we push
-        // a placeholder marker to preserve the linknode count contract.
+        // c:2217 — addlinknode(matchers, dat->match).
         if let Ok(mut g) = matchers
             .get_or_init(|| std::sync::Mutex::new(Vec::new()))
             .lock()
         {
-            g.push(String::new());
+            g.push(m.clone());
         }
-        let _ = m;
     }
 
     // c:2223-2246 — get suffixes to ignore from dat.ign param.
@@ -2499,7 +2504,8 @@ pub fn add_match_data(                                                       // 
     let ipl = ipre_.len();
     let _ppl = ppre.len();
     let _pl  = pre.len();
-    let qipl_v = qipre_get();                                               // c:2686
+    let qipre_v = qipre_get();                                              // c:2686
+    let qipl_v = qipre_v.clone();
     let _qipl = qipl_v.len();
 
     let _stl  = str.len();
@@ -2507,10 +2513,163 @@ pub fn add_match_data(                                                       // 
     let _lsl  = suf.len();
     let _ml   = ipl;
 
-    // c:2705-2873 — Cline splicing for path suffix and path prefix.
-    // The deep Cline-merge operations (cp_cline + chain-walk + prefix
-    // splice with flag transfer) are encapsulated in helper functions
-    // that operate on the `line` chain in place.
+    // c:2671-2762 — path-suffix Cline splicing. salen accumulates psl
+    // (psuf when no sline), isl (isuf), qisl (qisuf). When salen > 0
+    // and line is non-empty, we walk to the tail and append the
+    // bld_parts-built Cline for each contributing string.
+    let psl_local = if sline.is_none() && !psuf.is_empty() { psuf.len() as i32 } else { 0 };
+    let isl_local = isuf_.len() as i32;
+    let qisl_local = qisuf_v.len() as i32;
+    let salen = psl_local + isl_local + qisl_local;
+    if salen > 0 && line.is_some() {
+        // Walk to the tail of line via .next.
+        unsafe {
+            let mut tail: *mut Option<Box<crate::ported::zle::comp_h::Cline>> =
+                &mut line;
+            while let Some(ref n) = *tail {
+                if n.next.is_none() { break; }
+                tail = &mut (*tail).as_mut().unwrap().next;
+            }
+            // For each contributing string, build a Cline chain via
+            // bld_parts and attach to the tail node's .next.
+            if psl_local > 0 {
+                let s = crate::ported::zle::compmatch::bld_parts(
+                    psuf, psl_local, psl_local, None, None);
+                if let Some(node) = (*tail).as_mut() {
+                    node.next = s;
+                    while let Some(ref nn) = node.next {
+                        if nn.next.is_none() { break; }
+                        // already linked correctly; loop to advance tail
+                        break;
+                    }
+                }
+                // Walk to the new tail.
+                while let Some(ref n) = *tail {
+                    if n.next.is_none() { break; }
+                    tail = &mut (*tail).as_mut().unwrap().next;
+                }
+            }
+            if isl_local > 0 {
+                let s = crate::ported::zle::compmatch::bld_parts(
+                    isuf_, isl_local, isl_local, None, None);
+                if let Some(node) = (*tail).as_mut() {
+                    node.next = s;
+                }
+                while let Some(ref n) = *tail {
+                    if n.next.is_none() { break; }
+                    tail = &mut (*tail).as_mut().unwrap().next;
+                }
+            }
+            if qisl_local > 0 {
+                let mut s = crate::ported::zle::compmatch::bld_parts(
+                    &qisuf_v, qisl_local, qisl_local, None, None);
+                // c:2741 — qsl->flags |= CLF_SUF; qsl->suffix = qsl->prefix.
+                if let Some(qsl) = s.as_mut() {
+                    qsl.flags |= crate::ported::zle::comp_h::CLF_SUF;
+                    qsl.suffix = qsl.prefix.take();
+                }
+                if let Some(node) = (*tail).as_mut() {
+                    node.next = s;
+                }
+            }
+        }
+    }
+
+    // c:2766-2873 — path-prefix Cline splicing. palen accumulates qipl,
+    // ipl, pl, ppl (when no pline). Each contributing string gets a
+    // bld_parts Cline prepended to `line`.
+    let qipl_local = qipre_v.len() as i32;
+    let ipl_local = ipre_.len() as i32;
+    let pl_local = pre.len() as i32;
+    let ppl_local = if pline.is_none() && !ppre.is_empty() { ppre.len() as i32 } else { 0 };
+    if pl_local > 0 {
+        if ppl_local > 0 {
+            let p = crate::ported::zle::compmatch::bld_parts(
+                ppre, ppl_local, ppl_local, None, None);
+            // Walk p to its tail, link its tail's next to line.
+            if p.is_some() {
+                let mut p_chain = p;
+                let mut tail: *mut Option<Box<crate::ported::zle::comp_h::Cline>> =
+                    &mut p_chain;
+                unsafe {
+                    while let Some(ref n) = *tail {
+                        if n.next.is_none() { break; }
+                        tail = &mut (*tail).as_mut().unwrap().next;
+                    }
+                    if let Some(t) = (*tail).as_mut() {
+                        t.next = line.take();
+                    }
+                }
+                line = p_chain;
+            }
+        }
+        let p = crate::ported::zle::compmatch::bld_parts(
+            pre, pl_local, pl_local, None, None);
+        if let Some(mut head) = p {
+            let mut t: *mut Option<Box<crate::ported::zle::comp_h::Cline>> = &mut head.next;
+            unsafe {
+                while (*t).is_some() {
+                    if (*t).as_deref().unwrap().next.is_none() { break; }
+                    t = &mut (*t).as_mut().unwrap().next;
+                }
+                *t = line.take();
+            }
+            line = Some(head);
+        }
+        if ipl_local > 0 {
+            let p = crate::ported::zle::compmatch::bld_parts(
+                ipre_, ipl_local, ipl_local, None, None);
+            if let Some(mut head) = p {
+                let mut t: *mut Option<Box<crate::ported::zle::comp_h::Cline>> = &mut head.next;
+                unsafe {
+                    while (*t).is_some() {
+                        if (*t).as_deref().unwrap().next.is_none() { break; }
+                        t = &mut (*t).as_mut().unwrap().next;
+                    }
+                    *t = line.take();
+                }
+                line = Some(head);
+            }
+        }
+        if qipl_local > 0 {
+            let p = crate::ported::zle::compmatch::bld_parts(
+                &qipre_v, qipl_local, qipl_local, None, None);
+            if let Some(mut head) = p {
+                let mut t: *mut Option<Box<crate::ported::zle::comp_h::Cline>> = &mut head.next;
+                unsafe {
+                    while (*t).is_some() {
+                        if (*t).as_deref().unwrap().next.is_none() { break; }
+                        t = &mut (*t).as_mut().unwrap().next;
+                    }
+                    *t = line.take();
+                }
+                line = Some(head);
+            }
+        }
+    } else if qipl_local + ipl_local + pl_local + ppl_local > 0 || pline.is_some() {
+        // c:2827-2842 — consolidated apre buffer.
+        let apre = format!("{}{}{}{}",
+            qipre_v.as_str(),
+            ipre_,
+            pre,
+            if pline.is_none() { ppre } else { "" });
+        let apre_len = apre.len() as i32;
+        if apre_len > 0 {
+            let p = crate::ported::zle::compmatch::bld_parts(
+                &apre, apre_len, apre_len, None, None);
+            if let Some(mut head) = p {
+                let mut t: *mut Option<Box<crate::ported::zle::comp_h::Cline>> = &mut head.next;
+                unsafe {
+                    while (*t).is_some() {
+                        if (*t).as_deref().unwrap().next.is_none() { break; }
+                        t = &mut (*t).as_mut().unwrap().next;
+                    }
+                    *t = line.take();
+                }
+                line = Some(head);
+            }
+        }
+    }
 
     let stl = str.len();
 
@@ -2527,7 +2686,7 @@ pub fn add_match_data(                                                       // 
     { Some(prpre.into()) } else { None };
 
     // c:2935-2938 — ipre = qipre + ipre (concat when qipre non-empty).
-    let qipre_v = qipre_get();
+    // qipre_v already computed above.
     cm.ipre = if !qipre_v.is_empty() {
         if !ipre_.is_empty() { Some(format!("{}{}", qipre_v, ipre_)) }
         else { Some(qipre_v.clone()) }

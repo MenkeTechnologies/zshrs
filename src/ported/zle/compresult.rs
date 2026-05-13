@@ -1391,14 +1391,17 @@ pub fn ilistmatches() -> i32 {                                               // 
     use std::sync::atomic::Ordering;
     use crate::ported::zle::zle_refresh::{LISTSHOWN, SHOWINGLIST};
     let _ = calclist(0);                                                     // c:2286
-    // c:2288 — `listdat.nlines` not yet a Rust struct. Without it,
-    // we conservatively treat the list as non-empty and let
-    // printlist's no-op path emit nothing.
-    let _ = SHOWINGLIST;                                                     // c:2289
-    let _ = LISTSHOWN;
-    // c:2292 — `if (asklist()) return 0`. asklist() prompts the user
-    // via the listdat overflow path; without listdat we always proceed.
-    let _ = printlist(0, 0);                                                 // c:2295 printlist(0, iprintm, 0)
+    // c:2288 — bail when listdat.nlines == 0 (no matches to display).
+    let nlines = crate::ported::zle::compcore::listdat
+        .get_or_init(|| std::sync::Mutex::new(Default::default()))
+        .lock().map(|g| g.nlines).unwrap_or(0);
+    if nlines == 0 {
+        SHOWINGLIST.store(0, Ordering::Relaxed);
+        LISTSHOWN.store(0, Ordering::Relaxed);
+        return 0;
+    }
+    // c:2295 — printlist(0, iprintm, 0).
+    let _ = printlist(0, 0);
     0                                                                        // c:2297
 }
 

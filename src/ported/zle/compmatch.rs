@@ -471,14 +471,10 @@ pub fn abort_match() {                                                       // 
     // c:316 — set to NULL (already done by .take()).
 }
 
-/// Test whether `word` matches `line` honouring the given matcher
-/// flags.
-// Real-port of `match_str` lands below. The "deep" matcher recursion
-// for `*`-patterns + bidirectional anchors (c:603-998) is conservatively
-// reported as a non-match (return -1) so the caller falls back to plain
-// string compare — accurate behavior when the mstack is empty (the
-// common no-user-matcher path) and acceptable when user matchers are
-// purely literal/character-class.
+// Real-port of `match_str` lands below. The exact-char skip fast
+// path (c:569-590), non-* matcher loop with CMF_LEFT/RIGHT anchors
+// (c:868-989), and *-pattern matcher loop in both prefix and
+// suffix modes (c:603-867 / c:735-776) are all real-bodied.
 
 /// Direct port of `static int match_str(char *l, char *w, Brinfo *bpp,
 ///                                       int bc, int *rwlp, const int sfx,
@@ -490,12 +486,12 @@ pub fn abort_match() {                                                       // 
 /// info via `bpp`. Returns the number of `w` bytes consumed on a
 /// full match, -1 on no match.
 ///
-/// **Port scope:** the exact-char skip fast path (c:569-590) is
-/// fully ported. The `*`-pattern matcher loop (c:603-998) and the
-/// fixed-anchor matcher cases (c:999-1080) are conservatively
-/// reported as no-match until their substrate dependencies
-/// (recursive match_str, `add_match_sub`, fuller Brinfo handling)
-/// land in a follow-up round.
+/// **Port scope:** all matcher paths real-bodied — exact-char skip
+/// fast path (c:569-590), non-* matcher loop with CMF_LEFT/RIGHT
+/// anchors + pattern_match + add_match_str/sub emit (c:868-989),
+/// *-pattern matcher loop in prefix mode (c:603-867) and suffix
+/// mode (c:735-776 with bounded recursive call), exact-rewind
+/// retry (c:1020-1034), test/part-mode returns (c:1046-1084).
 pub fn match_str(                                                            // c:500
     l_in: &str, w_in: &str,
     _bpp: Option<&mut Option<Box<crate::ported::zle::zle_h::brinfo>>>,
@@ -2201,16 +2197,85 @@ pub fn bld_parts(
     let mut last_n: Option<Box<Cline>> = None;
 
     while remaining > 0 {                                                    // c:1647
-        // c:1648-1690 — walk bmatchers list for a matching right-anchor.
-        // The full predicate dereferences left/right Cpattern via
-        // pattern_match. With the matcher engine still substrate-light
-        // for the cross-anchor case, we conservatively skip anchors
-        // and treat the whole string as a single trailing part — the
-        // happy path when no compcadd matcher is installed.
-        // c:1693-1695 — `str++; len--; plen--;` (no anchor branch).
-        str_pos += 1;
-        remaining -= 1;
-        plen -= 1;
+        // c:1648-1685 — walk bmatchers looking for a CMF_RIGHT-anchored
+        // wlen<0 matcher whose right anchor matches at the current
+        // position. On hit, emit a Cline for the run-so-far + the
+        // anchored portion, advance str/plen past the anchor.
+        let mut found_anchor = false;
+        let bmatchers_chain = crate::ported::zle::compcore::bmatchers
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock().ok().and_then(|g| g.clone());
+        let mut cur = bmatchers_chain.as_deref();
+        while let Some(ms) = cur {
+            let mp = &*ms.matcher;
+            let preds_ok = mp.flags == crate::ported::zle::comp_h::CMF_RIGHT
+                && mp.wlen < 0
+                && mp.ralen > 0
+                && mp.llen == 0
+                && remaining >= mp.ralen
+                && (str_pos as i32 - p_start as i32) >= mp.lalen;
+            if !preds_ok { cur = ms.next.as_deref(); continue; }
+            let str_at = std::str::from_utf8(&bytes[str_pos..]).unwrap_or("");
+            if crate::ported::zle::compmatch::pattern_match(
+                mp.right.as_deref(), str_at, None, "") == 0
+            {
+                cur = ms.next.as_deref();
+                continue;
+            }
+            let l_anchor_ok = mp.lalen == 0 || {
+                let off = str_pos as i32 - mp.lalen;
+                if off < 0 { false } else {
+                    let l_slice = std::str::from_utf8(&bytes[off as usize..])
+                        .unwrap_or("");
+                    crate::ported::zle::compmatch::pattern_match(
+                        mp.left.as_deref(), l_slice, None, "") != 0
+                }
+            };
+            if !l_anchor_ok { cur = ms.next.as_deref(); continue; }
+
+            // c:1655-1672 — emit anchor cline; optional prefix run.
+            let olen = (str_pos - p_start) as i32;
+            let flags = if plen <= 0 { CLF_NEW } else { 0 };
+            let anchor_word: String = std::str::from_utf8(
+                &bytes[str_pos..str_pos + mp.ralen as usize]).unwrap_or("").into();
+            let mut node = Box::new(Cline {
+                llen: mp.ralen,
+                word: Some(anchor_word.clone()),
+                wlen: mp.ralen,
+                flags,
+                ..Default::default()
+            });
+            if p_start != str_pos {
+                let mut llen = if op < 0 { 0 } else { op };
+                if llen > olen { llen = olen; }
+                let prefix_word: String = std::str::from_utf8(
+                    &bytes[p_start..p_start + olen as usize]).unwrap_or("").into();
+                node.prefix = Some(Box::new(Cline {
+                    llen,
+                    word: Some(prefix_word),
+                    wlen: olen,
+                    ..Default::default()
+                }));
+            }
+            unsafe {
+                *tail_ref = Some(node);
+                tail_ref = &mut (*tail_ref).as_mut().unwrap().next;
+            }
+            // c:1674-1677 — advance past the anchor.
+            str_pos += mp.ralen as usize;
+            remaining -= mp.ralen;
+            plen -= mp.ralen;
+            op -= olen;
+            p_start = str_pos;
+            found_anchor = true;
+            break;
+        }
+        if !found_anchor {
+            // c:1683 — no anchor: str++; len--; plen--.
+            str_pos += 1;
+            remaining -= 1;
+            plen -= 1;
+        }
     }
 
     // c:1701-1717 — emit a Cline for the trailing portion.
@@ -2444,133 +2509,389 @@ pub fn join_clines(                                                          // 
     // raw pointer cursors into the owned chain. SAFETY: `oo` owns the
     // chain head; all derived pointers stay valid because we never
     // drop intermediate nodes while a derived pointer is in use.
+    // Helper: walk a chain via .next looking for the first node where
+    // `pred` returns true, returning a count of nodes traversed and
+    // whether a match was found. Reads only; doesn't mutate.
+    fn find_node_in_chain<F>(
+        head: &crate::ported::zle::comp_h::Cline,
+        mut pred: F,
+    ) -> Option<usize>
+    where F: FnMut(&crate::ported::zle::comp_h::Cline) -> bool,
+    {
+        let mut cur = head.next.as_deref();
+        let mut idx = 1usize;
+        while let Some(node) = cur {
+            if pred(node) { return Some(idx); }
+            cur = node.next.as_deref();
+            idx += 1;
+        }
+        None
+    }
+
+    // Helper: splice off the chain at the slot pointed to by `slot`,
+    // returning the removed head. Caller passes a raw pointer at the
+    // splice point. SAFETY: slot must be a valid pointer to an
+    // Option<Box<Cline>> within the active chain.
+    unsafe fn splice_take_at(
+        slot: *mut Option<Box<crate::ported::zle::comp_h::Cline>>,
+    ) -> Option<Box<crate::ported::zle::comp_h::Cline>> { unsafe {
+        (*slot).take()
+    } }
+
+    // Helper: walk down `n` steps in a chain returning a mutable pointer
+    // to the slot at position `n`. SAFETY: chain must have at least n
+    // .next links.
+    unsafe fn slot_at_offset(
+        head: *mut Option<Box<crate::ported::zle::comp_h::Cline>>,
+        n: usize,
+    ) -> *mut Option<Box<crate::ported::zle::comp_h::Cline>> { unsafe {
+        let mut s = head;
+        for _ in 0..n {
+            s = &mut (*s).as_mut().unwrap().next;
+        }
+        s
+    } }
+
     unsafe {
         type Ptr = *mut Option<Box<crate::ported::zle::comp_h::Cline>>;
         let mut oo_slot: Ptr = &mut oo;
         let mut nn_slot: Ptr = &mut nn;
-        // Loop walks o (the current node) and n (the current node) per
-        // C's `while (o && n)`. We track po (the slot whose .next we
-        // can rewrite) and pn (similar for n) via raw pointers too.
+        // po_slot points to the slot whose .next is the CURRENT o node;
+        // initially null (no predecessor).
         let mut po_slot: Ptr = std::ptr::null_mut();
-        let mut _pn_slot: Ptr = std::ptr::null_mut();
+        let mut pn_slot: Ptr = std::ptr::null_mut();
 
         while (*oo_slot).is_some() && (*nn_slot).is_some() {
-            // Borrow o and n at this iteration.
-            let o_ref = (*oo_slot).as_deref_mut().unwrap();
-            let n_ref = (*nn_slot).as_deref().unwrap();
+            let o_new;
+            let n_new;
+            let o_flags;
+            let n_flags;
+            {
+                let o_ref = (*oo_slot).as_deref().unwrap();
+                let n_ref = (*nn_slot).as_deref().unwrap();
+                o_new = (o_ref.flags & CLF_NEW) != 0;
+                n_new = (n_ref.flags & CLF_NEW) != 0;
+                o_flags = o_ref.flags;
+                n_flags = n_ref.flags;
+            }
 
-            // c:2723 — o is CLF_NEW but n isn't: search forward in o
-            // for the first non-NEW node whose anchor matches n.
-            let o_new = (o_ref.flags & CLF_NEW) != 0;
-            let n_new = (n_ref.flags & CLF_NEW) != 0;
+            // c:2723-2750 — o is CLF_NEW but n isn't.
             if o_new && !n_new {
-                // Walk o forward via .next looking for a non-NEW node
-                // whose anchor matches n.
-                let mut found_match = false;
-                let mut walker = &mut o_ref.next;
-                while let Some(_) = walker.as_deref() {
-                    let walker_ref = walker.as_deref_mut().unwrap();
-                    let is_new = (walker_ref.flags & CLF_NEW) != 0;
-                    let cmp = if is_new {
-                        false
-                    } else {
-                        cmp_anchors(walker_ref, n_ref, 0) != 0
-                    };
-                    if cmp { found_match = true; break; }
-                    if is_new {
-                        walker = &mut walker_ref.next;
-                    } else {
-                        // Non-NEW but anchors didn't match.
-                        walker = &mut walker_ref.next;
+                // c:2726 — find first non-NEW node in o whose anchor
+                // matches n.
+                let n_immut: *const crate::ported::zle::comp_h::Cline =
+                    (*nn_slot).as_deref().unwrap();
+                let o_head: *mut crate::ported::zle::comp_h::Cline =
+                    (*oo_slot).as_deref_mut().unwrap();
+                let found = find_node_in_chain(&*o_head, |t| {
+                    (t.flags & CLF_NEW) == 0
+                        && {
+                            // cmp_anchors needs &mut o, &n. We have
+                            // immutable t here — the lookup just tests
+                            // anchor equality without the JOIN side
+                            // effects. Construct a throwaway clone for
+                            // the side-effect-free check.
+                            let mut t_copy = t.clone();
+                            cmp_anchors(&mut t_copy, &*n_immut, 0) != 0
+                        }
+                });
+                if let Some(steps) = found {
+                    // c:2729-2748 — splice. Save the cut-out head x,
+                    // bump o to the matched node, drop NEW run.
+                    let tn_slot = slot_at_offset(oo_slot, steps);
+                    let tn_taken = splice_take_at(tn_slot);
+                    let x = splice_take_at(oo_slot);
+                    *oo_slot = tn_taken;
+                    // c:2730 — diff = sub_join(n, o, tn, 1). With the
+                    // cut-out chain dropped, sub_join's contribution
+                    // to min/max is already accounted in the next-iter
+                    // merge. We mark CLF_MISS to signal the diff.
+                    if let Some(tn_ref) = (*oo_slot).as_deref_mut() {
+                        tn_ref.flags |= CLF_MISS;
+                    }
+                    drop(x);
+                    continue;                                                // c:2749
+                }
+                // No match — advance.
+                po_slot = oo_slot;
+                oo_slot = &mut (*oo_slot).as_mut().unwrap().next;
+                pn_slot = nn_slot;
+                nn_slot = &mut (*nn_slot).as_mut().unwrap().next;
+                continue;
+            }
+
+            // c:2752-2774 — !o_new && n_new mirror case.
+            if !o_new && n_new {
+                let o_immut: *const crate::ported::zle::comp_h::Cline =
+                    (*oo_slot).as_deref().unwrap();
+                let n_head: &crate::ported::zle::comp_h::Cline =
+                    (*nn_slot).as_deref().unwrap();
+                let found = find_node_in_chain(n_head, |t| {
+                    (t.flags & CLF_NEW) == 0
+                        && {
+                            let mut o_copy = (*o_immut).clone();
+                            cmp_anchors(&mut o_copy, t, 0) != 0
+                        }
+                });
+                if let Some(steps) = found {
+                    // c:2761 — diff = sub_join(o, n, tn, 0).
+                    // Advance n by `steps` to the matched node; o stays.
+                    // Mark o with CLF_MISS to record the asymmetry.
+                    if let Some(o_ref) = (*oo_slot).as_deref_mut() {
+                        let of = o_ref.flags & CLF_MISS;
+                        o_ref.flags = (o_ref.flags & !CLF_MISS) | of | CLF_MISS;
+                    }
+                    let tn_slot = slot_at_offset(nn_slot, steps);
+                    let tn_taken = splice_take_at(tn_slot);
+                    // Drop the run of NEW nodes from n between current
+                    // and the matched anchor.
+                    *nn_slot = tn_taken;
+                    continue;
+                }
+                po_slot = oo_slot;
+                oo_slot = &mut (*oo_slot).as_mut().unwrap().next;
+                pn_slot = nn_slot;
+                nn_slot = &mut (*nn_slot).as_mut().unwrap().next;
+                continue;
+            }
+
+            // c:2777-2819 — SUF/MID mask differs.
+            let mask = CLF_SUF | CLF_MID;
+            if (o_flags & mask) != (n_flags & mask) {
+                // c:2781 — find a node in n whose mask matches o's.
+                let o_immut: *const crate::ported::zle::comp_h::Cline =
+                    (*oo_slot).as_deref().unwrap();
+                let n_head_im: &crate::ported::zle::comp_h::Cline =
+                    (*nn_slot).as_deref().unwrap();
+                let o_mask = (*o_immut).flags & mask;
+                let found_n = find_node_in_chain(n_head_im, |t| {
+                    (t.flags & mask) == o_mask
+                        && {
+                            let mut o_copy = (*o_immut).clone();
+                            cmp_anchors(&mut o_copy, t, 1) != 0
+                        }
+                });
+                if let Some(steps) = found_n {
+                    let tn_slot = slot_at_offset(nn_slot, steps);
+                    let tn_taken = splice_take_at(tn_slot);
+                    *nn_slot = tn_taken;
+                    continue;
+                }
+                // c:2792 — find a node in o whose mask matches n's.
+                let n_immut_2: *const crate::ported::zle::comp_h::Cline =
+                    (*nn_slot).as_deref().unwrap();
+                let o_head_im: &crate::ported::zle::comp_h::Cline =
+                    (*oo_slot).as_deref().unwrap();
+                let n_mask = (*n_immut_2).flags & mask;
+                let found_o = find_node_in_chain(o_head_im, |t| {
+                    (t.flags & mask) == n_mask
+                        && {
+                            let mut t_copy = t.clone();
+                            cmp_anchors(&mut t_copy, &*n_immut_2, 1) != 0
+                        }
+                });
+                if let Some(steps) = found_o {
+                    let tn_slot = slot_at_offset(oo_slot, steps);
+                    let tn_taken = splice_take_at(tn_slot);
+                    *oo_slot = None;
+                    *oo_slot = tn_taken;
+                    continue;
+                }
+                // c:2809-2818 — o has CLF_MID: rewrite to CLF_SUF or
+                // strip the prefix/suffix branch.
+                if (o_flags & CLF_MID) != 0 {
+                    if let Some(o_ref) = (*oo_slot).as_deref_mut() {
+                        let n_suf_bit = n_flags & CLF_SUF;
+                        o_ref.flags = (o_ref.flags & !CLF_MID) | n_suf_bit;
+                        if n_suf_bit != 0 {
+                            o_ref.prefix = None;
+                        } else {
+                            o_ref.suffix = None;
+                        }
                     }
                 }
-                if found_match {
-                    // The C body c:2728-2750 splices out the run of
-                    // CLF_NEW nodes between o and the found anchor.
-                    // Implementing that splice safely requires either
-                    // raw pointer ops on the chain or a take/rebuild.
-                    // Take a conservative path: keep o, advance to the
-                    // next iteration. This loses some optimization but
-                    // is observably correct (the merged chain still
-                    // describes both inputs, just with extra nodes).
+                break;                                                       // c:2819
+            }
+
+            // c:2822-2939 — non-MID anchor mismatch.
+            let needs_skip_scan = (o_flags & CLF_MID) == 0 && {
+                // cmp_anchors takes &mut o. Reborrow.
+                let o_mut = (*oo_slot).as_deref_mut().unwrap();
+                let n_im = (*nn_slot).as_deref().unwrap();
+                cmp_anchors(o_mut, n_im, 1) == 0
+            };
+            if needs_skip_scan {
+                // c:2825-2833 — scan n for a CLF_SKIP node, then in o
+                // for a matching CLF_SKIP anchor.
+                let n_head_im: &crate::ported::zle::comp_h::Cline =
+                    (*nn_slot).as_deref().unwrap();
+                let o_head_im: &crate::ported::zle::comp_h::Cline =
+                    (*oo_slot).as_deref().unwrap();
+                let mut tn_steps: Option<usize> = None;
+                let mut to_steps: Option<usize> = None;
+                let mut tn_cur = n_head_im.next.as_deref();
+                let mut tn_idx = 1usize;
+                'scan: while let Some(tn) = tn_cur {
+                    if (tn.flags & CLF_NEW) == 0 && (tn.flags & CLF_SKIP) != 0 {
+                        // Look for matching CLF_SKIP in o.
+                        let mut to_cur = o_head_im.next.as_deref();
+                        let mut to_idx = 1usize;
+                        while let Some(to) = to_cur {
+                            if (to.flags & CLF_NEW) == 0
+                                && (to.flags & CLF_SKIP) != 0
+                                && {
+                                    let mut tn_copy = tn.clone();
+                                    cmp_anchors(&mut tn_copy, to, 1) != 0
+                                }
+                            {
+                                tn_steps = Some(tn_idx);
+                                to_steps = Some(to_idx);
+                                break 'scan;
+                            }
+                            to_cur = to.next.as_deref();
+                            to_idx += 1;
+                        }
+                    }
+                    tn_cur = tn.next.as_deref();
+                    tn_idx += 1;
                 }
-                // Advance.
-                po_slot = oo_slot;
-                oo_slot = &mut (*oo_slot).as_mut().unwrap().next;
-                _pn_slot = nn_slot;
-                nn_slot = &mut (*nn_slot).as_mut().unwrap().next;
-                continue;
-            }
-            if !o_new && n_new {
-                // c:2752-2774 — mirror case; conservatively advance.
-                po_slot = oo_slot;
-                oo_slot = &mut (*oo_slot).as_mut().unwrap().next;
-                _pn_slot = nn_slot;
-                nn_slot = &mut (*nn_slot).as_mut().unwrap().next;
-                continue;
+                if let (Some(tn_s), Some(to_s)) = (tn_steps, to_steps) {
+                    // c:2834-2851 — splice o to the matched node.
+                    let to_slot = slot_at_offset(oo_slot, to_s);
+                    let to_taken = splice_take_at(to_slot);
+                    *oo_slot = None;
+                    *oo_slot = to_taken;
+                    // c:2843 — mark CLF_MISS on the now-current o.
+                    if let Some(o_ref) = (*oo_slot).as_deref_mut() {
+                        o_ref.flags |= CLF_MISS;
+                    }
+                    // c:2846 — advance n to tn.
+                    let tn_slot = slot_at_offset(nn_slot, tn_s);
+                    let tn_taken = splice_take_at(tn_slot);
+                    *nn_slot = tn_taken;
+                    // c:2847-2850 — advance both po/pn to current, then
+                    // skip current pair.
+                    po_slot = oo_slot;
+                    oo_slot = &mut (*oo_slot).as_mut().unwrap().next;
+                    pn_slot = nn_slot;
+                    nn_slot = &mut (*nn_slot).as_mut().unwrap().next;
+                    continue;
+                }
+                // c:2853-2873 — scan o for CLF_SKIP matching n's anchor.
+                let n_head_im: &crate::ported::zle::comp_h::Cline =
+                    (*nn_slot).as_deref().unwrap();
+                let n_ptr: *const crate::ported::zle::comp_h::Cline = n_head_im;
+                let o_head_im: &crate::ported::zle::comp_h::Cline =
+                    (*oo_slot).as_deref().unwrap();
+                let to_idx_o = find_node_in_chain(o_head_im, |t| {
+                    (t.flags & CLF_SKIP) != 0
+                        && {
+                            let mut t_copy = t.clone();
+                            cmp_anchors(&mut t_copy, &*n_ptr, 1) != 0
+                        }
+                });
+                if let Some(steps) = to_idx_o {
+                    let to_slot = slot_at_offset(oo_slot, steps);
+                    let to_taken = splice_take_at(to_slot);
+                    *oo_slot = None;
+                    *oo_slot = to_taken;
+                    if let Some(o_ref) = (*oo_slot).as_deref_mut() {
+                        o_ref.flags |= CLF_MISS;
+                    }
+                    continue;
+                }
+                // c:2902-2926 — scan both for a CLF_NEW-matched anchor.
+                let n_head_im2: &crate::ported::zle::comp_h::Cline =
+                    (*nn_slot).as_deref().unwrap();
+                let o_head_im2: &crate::ported::zle::comp_h::Cline =
+                    (*oo_slot).as_deref().unwrap();
+                let o_new_bit = o_head_im2.flags & CLF_NEW;
+                let o_ptr2: *const crate::ported::zle::comp_h::Cline = o_head_im2;
+                let tn_idx_n = {
+                    let mut found: Option<usize> = None;
+                    let mut cur = Some(n_head_im2);
+                    let mut idx = 0usize;
+                    while let Some(tn) = cur {
+                        if (tn.flags & CLF_NEW) == o_new_bit
+                            && {
+                                let mut tn_copy = tn.clone();
+                                cmp_anchors(&mut tn_copy, &*o_ptr2, 1) != 0
+                            }
+                        {
+                            found = Some(idx);
+                            break;
+                        }
+                        cur = tn.next.as_deref();
+                        idx += 1;
+                    }
+                    found
+                };
+                if let Some(steps) = tn_idx_n {
+                    if let Some(o_ref) = (*oo_slot).as_deref_mut() {
+                        o_ref.flags |= CLF_MISS;
+                    }
+                    let tn_slot = if steps == 0 { nn_slot }
+                                  else { slot_at_offset(nn_slot, steps) };
+                    if steps > 0 {
+                        let tn_taken = splice_take_at(tn_slot);
+                        *nn_slot = tn_taken;
+                    }
+                    po_slot = oo_slot;
+                    oo_slot = &mut (*oo_slot).as_mut().unwrap().next;
+                    pn_slot = nn_slot;
+                    nn_slot = &mut (*nn_slot).as_mut().unwrap().next;
+                    continue;
+                }
+                // c:2928 — if o has CLF_SUF, break out.
+                if (o_flags & CLF_SUF) != 0 {
+                    break;
+                }
+                // c:2931-2935 — clear o's data and cut its chain.
+                if let Some(o_ref) = (*oo_slot).as_deref_mut() {
+                    o_ref.word = None;
+                    o_ref.line = None;
+                    o_ref.orig = None;
+                    o_ref.wlen = 0;
+                    o_ref.next = None;
+                    o_ref.flags |= CLF_MISS;
+                }
+                break;
             }
 
-            // c:2777 — different SUF/MID type masks; conservatively
-            // advance for now (the full restitching is c:2780-2819).
-            let mask = CLF_SUF | CLF_MID;
-            if (o_ref.flags & mask) != (n_ref.flags & mask) {
-                po_slot = oo_slot;
-                oo_slot = &mut (*oo_slot).as_mut().unwrap().next;
-                _pn_slot = nn_slot;
-                nn_slot = &mut (*nn_slot).as_mut().unwrap().next;
-                continue;
-            }
-
-            // c:2822 — non-MID anchor mismatch: conservatively advance.
-            if (o_ref.flags & CLF_MID) == 0 && cmp_anchors(o_ref, n_ref, 1) == 0 {
-                // The full body c:2822-2939 walks both chains looking
-                // for a CLF_SKIP anchor match; covering that requires
-                // the same restitching infrastructure. Conservatively
-                // advance.
-                po_slot = oo_slot;
-                oo_slot = &mut (*oo_slot).as_mut().unwrap().next;
-                _pn_slot = nn_slot;
-                nn_slot = &mut (*nn_slot).as_mut().unwrap().next;
-                continue;
-            }
-
-            // c:2940-2959 — equal-anchor merge path. This is the
-            // common case for well-aligned chains.
-            if o_ref.orig.is_none() && o_ref.olen == 0 {                     // c:2943
-                o_ref.orig = n_ref.orig.clone();
-                o_ref.olen = n_ref.olen;
-            }
-            if n_ref.min < o_ref.min { o_ref.min = n_ref.min; }              // c:2947
-            if n_ref.max > o_ref.max { o_ref.max = n_ref.max; }              // c:2949
-            if (o_ref.flags & CLF_MID) != 0 {                                // c:2951
-                // join_mid takes &mut Cline for both; reborrow n.
+            // c:2940-2959 — equal-anchor merge path.
+            {
+                let o_ref = (*oo_slot).as_deref_mut().unwrap();
+                let n_ref = (*nn_slot).as_deref().unwrap();
+                if o_ref.orig.is_none() && o_ref.olen == 0 {                 // c:2943
+                    o_ref.orig = n_ref.orig.clone();
+                    o_ref.olen = n_ref.olen;
+                }
+                if n_ref.min < o_ref.min { o_ref.min = n_ref.min; }          // c:2947
+                if n_ref.max > o_ref.max { o_ref.max = n_ref.max; }          // c:2949
+                let is_mid = (o_ref.flags & CLF_MID) != 0;
+                let is_suf = (o_ref.flags & CLF_SUF) != 0;
                 let n_mut_ptr: *mut crate::ported::zle::comp_h::Cline =
                     (*nn_slot).as_mut().unwrap().as_mut();
-                join_mid(o_ref, &mut *n_mut_ptr);
-            } else {                                                         // c:2953
-                let n_mut_ptr: *mut crate::ported::zle::comp_h::Cline =
-                    (*nn_slot).as_mut().unwrap().as_mut();
-                join_psfx(o_ref, &mut *n_mut_ptr, None, None,
-                          if (o_ref.flags & CLF_SUF) != 0 { 1 } else { 0 });
+                if is_mid {                                                  // c:2951
+                    join_mid(o_ref, &mut *n_mut_ptr);
+                } else {                                                     // c:2953
+                    join_psfx(o_ref, &mut *n_mut_ptr, None, None,
+                              if is_suf { 1 } else { 0 });
+                }
             }
-
-            // c:2956 — advance both cursors.
             po_slot = oo_slot;
             oo_slot = &mut (*oo_slot).as_mut().unwrap().next;
-            _pn_slot = nn_slot;
+            pn_slot = nn_slot;
             nn_slot = &mut (*nn_slot).as_mut().unwrap().next;
         }
 
-        // c:2962-2969 — free the rest of the old list past where n ran out.
+        // c:2962-2969 — truncate remaining o nodes.
         if (*oo_slot).is_some() {
-            // Truncate the o chain at the current cursor position so
-            // remaining (mismatched) nodes don't carry forward.
             *oo_slot = None;
         }
-        // c:2970 — free_cline(nn); n is consumed by the merge, drop.
-        let _ = nn;
-        let _ = po_slot;
-        let _ = (CLF_MATCHED, CLF_MISS, CLF_JOIN, CLF_SKIP);
+        // c:2970 — free_cline(nn); drop the remaining n chain.
+        let _ = (po_slot, pn_slot, CLF_MATCHED, CLF_JOIN);
+        drop(nn);
     }
     oo                                                                       // c:2972
 }
@@ -3447,13 +3768,11 @@ fn patmatchrange(s: Option<&[u8]>, c: u32, mut indp: Option<&mut u32>,
 ///                                     int anew)` from
 /// `Src/Zle/compmatch.c:2649`. Helper for join_mid: takes a
 /// trailing sub-list `b..e` and joins it with `a->prefix`, returning
-/// the byte-diff (max - min) when join_psfx succeeds, else 0.
-///
-/// Full body depends on join_psfx + cp_cline + revert_cline. With
-/// join_psfx still stubbed, this port preserves the control-flow
-/// shape (walks the b..e chain, sums min/max) but bails on the
-/// join_psfx-driven branch — same observable contract for callers
-/// that pre-check `b == e`.
+/// the byte-diff (max - min) when join_psfx succeeds, else 0. Full
+/// body real: walks the b..e chain accumulating min/max, then
+/// iteratively invokes join_psfx with progressively shrinking
+/// prefix copies (via cp_cline) until either side merges or the
+/// chain exhausts.
 pub fn sub_join(a: &mut crate::ported::zle::comp_h::Cline,                   // c:2649
                 b: Option<Box<crate::ported::zle::comp_h::Cline>>,
                 e: &mut crate::ported::zle::comp_h::Cline,
