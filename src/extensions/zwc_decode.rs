@@ -1,22 +1,23 @@
-//! Faithful recursive wordcode decoder + canonical sexp emitter.
+//! Recursive wordcode walker — decodes a `.zwc` blob into the parser's
+//! own `ZshProgram` AST so the parity harness can compare zsh-side and
+//! zshrs-side ASTs through a single sexp emitter (`ast_sexp`).
 //!
-//! Used by `tests/parity_harness.rs` to compare zsh's parser output
-//! (via `.zwc` wordcode) against zshrs's parser output (via `ast_sexp`).
+//! ## Why this exists alongside `src/extensions/zwc.rs`
 //!
-//! ## Why this exists alongside `src/zwc.rs`
-//!
-//! The pre-existing `zwc.rs::WordcodeDecoder` is shallow: 12 of 14
-//! body-bearing decoders (Pipe, Sublist, FuncDef, For, While, If, Case,
-//! Cond, Try, Repeat, Select) return `vec![]` for their body fields.
-//! Only `decode_subsh` and `decode_cursh` walk children. That decoder is
-//! adequate for callers that only need function names + flat opcode
-//! types (autoload introspection), but cannot serve as a parity oracle.
+//! `zwc.rs::WordcodeDecoder` is shallow: 12 of 14 body-bearing decoders
+//! (Pipe, Sublist, FuncDef, For, While, If, Case, Cond, Try, Repeat,
+//! Select) return `vec![]` for their body fields. Only `decode_subsh`
+//! and `decode_cursh` walk children. Adequate for autoload introspection
+//! (function-name lookup, flat opcode types), but cannot serve as a
+//! parity oracle.
 //!
 //! This module reuses `zwc::ZwcFile::load()` for file-level parsing
-//! (header, function table, wordcode buffer, string table) but
-//! implements its OWN recursive walker over the wordcode array, citing
+//! (header, function table, wordcode buffer, string table) and adds a
+//! recursive walker over the wordcode array, citing
 //! `~/forkedRepos/zsh/Src/parse.c` and `~/forkedRepos/zsh/Src/zsh.h`
-//! for every opcode interpretation.
+//! for every opcode interpretation. The walker emits directly into
+//! `crate::extensions::zsh_ast::ZshProgram` — the same AST type the
+//! parser produces — so both sides share `crate::extensions::ast_sexp`.
 //!
 //! ## References
 //!
@@ -38,363 +39,41 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::zwc::{wc_code, wc_data, ZwcFile};
+use crate::extensions::zsh_ast::{
+    CaseArm, CaseTerm, ForList, ListFlags, SublistFlags, SublistOp, ZshAssign, ZshAssignValue,
+    ZshCase, ZshCommand, ZshCond, ZshFor, ZshFuncDef, ZshIf, ZshList, ZshPipe, ZshProgram,
+    ZshRedir, ZshRepeat, ZshSimple, ZshSublist, ZshTry, ZshWhile,
+};
+use crate::extensions::heredoc_ast::HereDocInfo;
 use std::path::Path;
-use std::fmt::Write;
 
-// ---------------------------------------------------------------------------
-// Opcode constants — `zsh.h:888-909`
-// ---------------------------------------------------------------------------
-
-const WC_END: u32 = 0;
-const WC_LIST: u32 = 1;
-const WC_SUBLIST: u32 = 2;
-const WC_PIPE: u32 = 3;
-const WC_REDIR: u32 = 4;
-const WC_ASSIGN: u32 = 5;
-const WC_SIMPLE: u32 = 6;
-const WC_TYPESET: u32 = 7;
-const WC_SUBSH: u32 = 8;
-const WC_CURSH: u32 = 9;
-const WC_TIMED: u32 = 10;
-const WC_FUNCDEF: u32 = 11;
-const WC_FOR: u32 = 12;
-const WC_SELECT: u32 = 13;
-const WC_WHILE: u32 = 14;
-const WC_REPEAT: u32 = 15;
-const WC_CASE: u32 = 16;
-const WC_IF: u32 = 17;
-const WC_COND: u32 = 18;
-const WC_ARITH: u32 = 19;
-const WC_AUTOFN: u32 = 20;
-const WC_TRY: u32 = 21;
-
-// `zsh.h:645-648, 921-922` — list flags
-const Z_SYNC: u32 = 1 << 1;
-const Z_ASYNC: u32 = 1 << 2;
-const Z_DISOWN: u32 = 1 << 3;
-const Z_END: u32 = 1 << 4;
-const Z_SIMPLE: u32 = 1 << 5;
-const WC_LIST_FREE: u32 = 6;
-
-// `zsh.h:927-936` — sublist
-const WC_SUBLIST_END: u32 = 0;
-const WC_SUBLIST_AND: u32 = 1;
-const WC_SUBLIST_OR: u32 = 2;
-const WC_SUBLIST_COPROC: u32 = 4;
-const WC_SUBLIST_NOT: u32 = 8;
-const WC_SUBLIST_SIMPLE: u32 = 16;
-const WC_SUBLIST_FREE: u32 = 5;
-
-// `zsh.h:940-944` — pipe
-const WC_PIPE_END: u32 = 0;
-const WC_PIPE_MID: u32 = 1;
-
-// `zsh.h:397-401` — redir mask bits
-const REDIR_TYPE_MASK: u32 = 0x1f;
-const REDIR_VARID_MASK: u32 = 0x20;
-const REDIR_FROM_HEREDOC_MASK: u32 = 0x40;
-
-// `zsh.h:376-395` — REDIR_* enum order
-const REDIR_WRITE: u32 = 0;
-const REDIR_WRITENOW: u32 = 1;
-const REDIR_APP: u32 = 2;
-const REDIR_APPNOW: u32 = 3;
-const REDIR_ERRWRITE: u32 = 4;
-const REDIR_ERRWRITENOW: u32 = 5;
-const REDIR_ERRAPP: u32 = 6;
-const REDIR_ERRAPPNOW: u32 = 7;
-const REDIR_READWRITE: u32 = 8;
-const REDIR_READ: u32 = 9;
-const REDIR_HEREDOC: u32 = 10;
-const REDIR_HEREDOCDASH: u32 = 11;
-const REDIR_HERESTR: u32 = 12;
-const REDIR_MERGEIN: u32 = 13;
-const REDIR_MERGEOUT: u32 = 14;
-const _REDIR_CLOSE: u32 = 15;
-const REDIR_INPIPE: u32 = 16;
-const REDIR_OUTPIPE: u32 = 17;
-
-// `zsh.h:957-967` — assign
-const WC_ASSIGN_SCALAR: u32 = 0;
-const WC_ASSIGN_ARRAY: u32 = 1;
-const WC_ASSIGN_INC: u32 = 1; // bit-1 set in TYPE2 = `+=`
-
-// `zsh.h:1014-1020` — for
-const WC_FOR_PPARAM: u32 = 0;
-const WC_FOR_LIST: u32 = 1;
-const WC_FOR_COND: u32 = 2;
-
-// `zsh.h:1022-1027` — select
-const WC_SELECT_PPARAM: u32 = 0;
-const WC_SELECT_LIST: u32 = 1;
-
-// `zsh.h:1029-1034` — while
-const WC_WHILE_WHILE: u32 = 0;
-const WC_WHILE_UNTIL: u32 = 1;
-
-// `zsh.h:1043-1049` — case
-const WC_CASE_HEAD: u32 = 0;
-const WC_CASE_OR: u32 = 1;
-const WC_CASE_AND: u32 = 2;
-const WC_CASE_TESTAND: u32 = 3;
-const WC_CASE_FREE: u32 = 3;
-
-// `zsh.h:1051-1057` — if
-const WC_IF_HEAD: u32 = 0;
-const WC_IF_IF: u32 = 1;
-const WC_IF_ELIF: u32 = 2;
-const WC_IF_ELSE: u32 = 3;
-
-// `zsh.h:1058-1059` — cond
+// Canonical opcode / flag / redir constants live in `ported::zsh_h`
+// (faithful port of `Src/zsh.h`). Re-import as u32 (matching the
+// `wordcode` type) so they participate in bitwise ops with `wc_data()`
+// output without inline casts.
+use crate::ported::zsh_h::{
+    WC_ARITH, WC_ASSIGN, WC_ASSIGN_ARRAY, WC_ASSIGN_INC, WC_AUTOFN, WC_CASE, WC_CASE_AND,
+    WC_CASE_FREE, WC_CASE_OR, WC_CASE_TESTAND, WC_COND, WC_CURSH, WC_END, WC_FOR, WC_FOR_COND,
+    WC_FOR_LIST, WC_FUNCDEF, WC_IF, WC_IF_ELIF, WC_IF_ELSE, WC_IF_IF, WC_LIST, WC_LIST_FREE,
+    WC_PIPE, WC_PIPE_MID, WC_REDIR, WC_REPEAT, WC_SELECT, WC_SELECT_LIST, WC_SIMPLE, WC_SUBLIST,
+    WC_SUBLIST_AND, WC_SUBLIST_FREE, WC_SUBLIST_NOT, WC_SUBLIST_OR, WC_SUBLIST_SIMPLE, WC_SUBSH,
+    WC_TIMED, WC_TRY, WC_TYPESET, WC_WHILE, WC_WHILE_UNTIL,
+};
+// i32-typed in zsh_h (since C uses int for these flag/enum values).
+// Rebind to u32 for bitwise ops against `wordcode` data.
+const Z_ASYNC: u32 = crate::ported::zsh_h::Z_ASYNC as u32;
+const Z_DISOWN: u32 = crate::ported::zsh_h::Z_DISOWN as u32;
+const Z_END: u32 = crate::ported::zsh_h::Z_END as u32;
+const Z_SIMPLE: u32 = crate::ported::zsh_h::Z_SIMPLE as u32;
+const REDIR_TYPE_MASK: u32 = crate::ported::zsh_h::REDIR_TYPE_MASK as u32;
+const REDIR_VARID_MASK: u32 = crate::ported::zsh_h::REDIR_VARID_MASK as u32;
+const REDIR_FROM_HEREDOC_MASK: u32 = crate::ported::zsh_h::REDIR_FROM_HEREDOC_MASK as u32;
+const COND_NOT: u32 = crate::ported::zsh_h::COND_NOT as u32;
+const COND_AND: u32 = crate::ported::zsh_h::COND_AND as u32;
+const COND_OR: u32 = crate::ported::zsh_h::COND_OR as u32;
+// `zsh.h:1058` — `WC_COND_TYPE(C) = wc_data(C) & 127`. No standalone
+// const in zsh_h; the macro inlines the literal. Kept local.
 const WC_COND_TYPE_MASK: u32 = 127;
-const _WC_COND_FREE: u32 = 7;
-
-// `zsh.h:660-680` — cond types
-const COND_NOT: u32 = 0;
-const COND_AND: u32 = 1;
-const COND_OR: u32 = 2;
-
-// ---------------------------------------------------------------------------
-// AST shape (mirrors `parser::ZshCommand` so sexp emit can match)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-/// Top-level decoded `.zwc` program.
-/// Mirrors `Eprog` from Src/zsh.h — the C source treats this as
-/// the canonical compiled-form, dispatched by `execlist()` in
-/// Src/exec.c.
-pub struct WcProgram {
-    pub lists: Vec<WcList>,
-}
-
-#[derive(Debug, Clone)]
-/// One semicolon-separated list within a program.
-/// Port of the `WC_LIST` opcode shape from Src/parse.c:771
-/// `par_list()`.
-pub struct WcList {
-    pub flags: WcListFlags,
-    pub sublist: WcSublist,
-}
-
-#[derive(Debug, Clone, Copy)]
-/// List execution flags (`Sync`/`Async`/`Disown`).
-/// Port of the `Z_*` flag bits in `WC_LIST` data —
-/// `set_list_code()` (Src/parse.c:738) packs them.
-pub struct WcListFlags {
-    pub async_: bool,
-    pub disown: bool,
-}
-
-#[derive(Debug, Clone)]
-/// One `&&`/`||` chain inside a list.
-/// Port of the `WC_SUBLIST` opcode shape from Src/parse.c
-/// `par_sublist2()`.
-pub struct WcSublist {
-    pub flags: WcSublistFlags,
-    pub pipe: WcPipe,
-    pub next: Option<(WcSublistOp, Box<WcSublist>)>,
-}
-
-#[derive(Debug, Clone, Copy)]
-/// Sublist flags (`Not`/`Coproc`).
-/// Port of the C source's `WC_SUBLIST_*` flag bits —
-/// `set_sublist_code()` (Src/parse.c:755) packs them.
-pub struct WcSublistFlags {
-    pub not: bool,
-    pub coproc: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Connector between sublists.
-/// Mirrors the `WC_SUBLIST_END`/`WC_SUBLIST_AND`/
-/// `WC_SUBLIST_OR` constants from Src/zsh.h.
-pub enum WcSublistOp {
-    And,
-    Or,
-}
-
-#[derive(Debug, Clone)]
-/// One pipe-connected command sequence.
-/// Port of the `WC_PIPE` opcode shape from Src/parse.c
-/// `par_pline()`.
-pub struct WcPipe {
-    pub cmd: WcCommand,
-    pub next: Option<Box<WcPipe>>,
-}
-
-#[derive(Debug, Clone)]
-/// One command node inside a pipe.
-/// Port of the `WC_*` per-command opcodes (`WC_SIMPLE`,
-/// `WC_SUBSH`, `WC_FOR`, `WC_CASE`, `WC_IF`, `WC_WHILE`,
-/// `WC_REPEAT`, `WC_FUNCDEF`, `WC_TIME`, `WC_COND`, `WC_ARITH`,
-/// `WC_TRY`) from Src/zsh.h.
-pub enum WcCommand {
-    Simple(WcSimple),
-    Subsh(Box<WcProgram>),
-    Cursh(Box<WcProgram>),
-    For(WcFor),
-    Case(WcCase),
-    If(WcIf),
-    While(WcWhile),
-    Until(WcWhile),
-    Repeat(WcRepeat),
-    FuncDef(WcFuncDef),
-    Time(Option<Box<WcSublist>>),
-    Cond(WcCond),
-    Arith(String),
-    Try(WcTry),
-    AutoFn,
-}
-
-#[derive(Debug, Clone, Default)]
-/// Simple command (assigns + words + redirs).
-/// Port of the `WC_SIMPLE` opcode shape from Src/parse.c
-/// `par_simple()`.
-pub struct WcSimple {
-    pub assigns: Vec<WcAssign>,
-    pub words: Vec<String>,
-    pub redirs: Vec<WcRedir>,
-}
-
-#[derive(Debug, Clone)]
-/// Variable assignment within a simple command.
-/// Port of the `WC_ASSIGN` opcode shape from Src/parse.c.
-pub struct WcAssign {
-    pub name: String,
-    pub value: WcAssignValue,
-    pub append: bool,
-}
-
-#[derive(Debug, Clone)]
-/// Assignment value (scalar / array).
-/// Port of the `WC_ASSIGN_*` opcode flag bits.
-pub enum WcAssignValue {
-    Scalar(String),
-    Array(Vec<String>),
-}
-
-#[derive(Debug, Clone)]
-/// Redirection record.
-/// Port of `struct redir` from Src/zsh.h — `WC_REDIR` opcodes
-/// in the wordcode stream.
-pub struct WcRedir {
-    pub rtype: u32,
-    pub fd: i32,
-    pub name: String,
-    pub varid: Option<String>,
-    pub heredoc: Option<WcHeredoc>,
-}
-
-#[derive(Debug, Clone)]
-/// Heredoc body record.
-/// Port of the heredoc-handling inside `par_redir()`
-/// (Src/parse.c) — body is captured separately from the
-/// surrounding command.
-pub struct WcHeredoc {
-    pub terminator: String,
-    pub quoted: bool,
-    pub content: String,
-}
-
-#[derive(Debug, Clone)]
-/// `for` loop opcode shape.
-/// Port of the `WC_FOR`/`WC_SELECT` opcode from Src/parse.c
-/// `par_for()`.
-pub struct WcFor {
-    pub var: String,
-    pub list: WcForList,
-    pub body: Box<WcProgram>,
-    pub is_select: bool,
-}
-
-#[derive(Debug, Clone)]
-/// `for` loop iteration source.
-/// Mirrors the `WC_FOR_*` flag bits — word-list / arithmetic /
-/// implicit `"$@"`.
-pub enum WcForList {
-    Words(Vec<String>),
-    CStyle {
-        init: String,
-        cond: String,
-        step: String,
-    },
-    Positional,
-}
-
-#[derive(Debug, Clone)]
-/// `case` statement opcode shape.
-/// Port of the `WC_CASE` opcode from Src/parse.c `par_case()`.
-pub struct WcCase {
-    pub word: String,
-    pub arms: Vec<WcCaseArm>,
-}
-
-#[derive(Debug, Clone)]
-/// One `pat) body ;;` arm of a case statement.
-/// Port of the per-arm shape Src/parse.c `par_case()` builds.
-pub struct WcCaseArm {
-    pub patterns: Vec<String>,
-    pub body: WcProgram,
-    pub terminator: u32,
-}
-
-#[derive(Debug, Clone)]
-/// `if`/`elif`/`else` opcode shape.
-/// Port of the `WC_IF` opcode from Src/parse.c `par_if()`.
-pub struct WcIf {
-    pub cond: WcProgram,
-    pub then: WcProgram,
-    pub elif: Vec<(WcProgram, WcProgram)>,
-    pub else_: Option<WcProgram>,
-}
-
-#[derive(Debug, Clone)]
-/// `while`/`until` opcode shape.
-/// Port of the `WC_WHILE` opcode from Src/parse.c
-/// `par_while()`.
-pub struct WcWhile {
-    pub cond: WcProgram,
-    pub body: WcProgram,
-}
-
-#[derive(Debug, Clone)]
-/// `repeat` loop opcode shape.
-/// Port of the `WC_REPEAT` opcode from Src/parse.c
-/// `par_repeat()`.
-pub struct WcRepeat {
-    pub count: String,
-    pub body: WcProgram,
-}
-
-#[derive(Debug, Clone)]
-/// Function-definition opcode shape.
-/// Port of the `WC_FUNCDEF` opcode from Src/parse.c
-/// `par_funcdef()`.
-pub struct WcFuncDef {
-    pub names: Vec<String>,
-    pub body: WcProgram,
-}
-
-#[derive(Debug, Clone)]
-/// `[[ ... ]]` conditional opcode tree.
-/// Port of the `WC_COND` opcode tree the C source builds via
-/// `par_cond_*` in Src/parse.c.
-pub enum WcCond {
-    Not(Box<WcCond>),
-    And(Box<WcCond>, Box<WcCond>),
-    Or(Box<WcCond>, Box<WcCond>),
-    Unary(String, String),
-    Binary(String, String, String),
-}
-
-#[derive(Debug, Clone)]
-/// `try { ... } always { ... }` opcode shape.
-/// Port of the `WC_TRY` opcode from Src/parse.c
-/// `par_try()`.
-pub struct WcTry {
-    pub try_block: WcProgram,
-    pub always: WcProgram,
-}
 
 // ---------------------------------------------------------------------------
 // Walker
@@ -482,7 +161,7 @@ impl<'a> Walker<'a> {
 
     /// Top-level: walk a complete program until WC_END.
     /// Maps to `parse.c::par_event` driving `par_list`.
-    fn decode_program(&mut self) -> WcProgram {
+    fn decode_program(&mut self) -> ZshProgram {
         let mut lists = Vec::new();
         while let Some(wc) = self.peek() {
             let code = wc_code(wc);
@@ -497,7 +176,7 @@ impl<'a> Walker<'a> {
             }
             lists.push(self.decode_list());
         }
-        WcProgram { lists }
+        ZshProgram { lists }
     }
 
     /// Sub-program inside a known-bounded region (subsh body, for body, etc.).
@@ -505,7 +184,7 @@ impl<'a> Walker<'a> {
     /// a list with Z_END flag is consumed (per execlist's `if (ltype &
     /// Z_END) break;` at exec.c:1626 — Z_END marks the natural boundary
     /// between cond/body programs in WC_IF / WC_WHILE etc.).
-    fn decode_program_until(&mut self, end_pos: usize) -> WcProgram {
+    fn decode_program_until(&mut self, end_pos: usize) -> ZshProgram {
         let mut lists = Vec::new();
         while self.pos < end_pos {
             let wc = match self.peek() {
@@ -530,29 +209,46 @@ impl<'a> Walker<'a> {
                 break;
             }
         }
-        WcProgram { lists }
+        ZshProgram { lists }
+    }
+
+    /// Decode one program until WC_END or a list with Z_END flag.
+    fn decode_program_to_end(&mut self) -> ZshProgram {
+        let mut lists = Vec::new();
+        while let Some(wc) = self.peek() {
+            let code = wc_code(wc);
+            if code == WC_END {
+                self.next();
+                break;
+            }
+            if code != WC_LIST {
+                break;
+            }
+            let type_bits = wc_data(wc) & ((1 << WC_LIST_FREE) - 1);
+            let is_z_end = (type_bits & Z_END) != 0;
+            lists.push(self.decode_list());
+            if is_z_end {
+                break;
+            }
+        }
+        ZshProgram { lists }
     }
 
     /// `parse.c:771-817` par_list / par_list1 — emits `WCB_LIST(type, skip)`.
     /// Z_SIMPLE shortcut: body is `[lineno, single_pipe_body]` directly,
     /// with no inner WC_SUBLIST. Otherwise body starts with WC_SUBLIST.
-    fn decode_list(&mut self) -> WcList {
+    fn decode_list(&mut self) -> ZshList {
         let header = match self.next() {
             Some(h) if wc_code(h) == WC_LIST => h,
             _ => {
-                return WcList {
-                    flags: WcListFlags { async_: false, disown: false },
-                    sublist: WcSublist {
-                        flags: WcSublistFlags { not: false, coproc: false },
-                        pipe: WcPipe { cmd: WcCommand::Simple(WcSimple::default()), next: None },
-                        next: None,
-                    },
+                return ZshList {
+                    sublist: empty_sublist(),
+                    flags: ListFlags::default(),
                 };
             }
         };
         let data = wc_data(header);
         let type_bits = data & ((1 << WC_LIST_FREE) - 1);
-        let _skip = data >> WC_LIST_FREE;
 
         let async_ = (type_bits & Z_ASYNC) != 0;
         let disown = (type_bits & Z_DISOWN) != 0;
@@ -561,46 +257,40 @@ impl<'a> Walker<'a> {
         let sublist = if is_simple {
             // Z_SIMPLE shortcut: lineno, then a single pipe stage body
             // (possibly with redirs/assigns), no WC_SUBLIST wrapper.
-            let _lineno = self.next();
+            let lineno = self.next().unwrap_or(0);
             // The body that follows is the inside of a single Pipe.
             // Synthesize a Sublist+Pipe wrapper so canonical AST matches.
             let cmd = self.decode_command_body();
-            WcSublist {
-                flags: WcSublistFlags {
-                    not: false,
-                    coproc: false,
+            ZshSublist {
+                pipe: ZshPipe {
+                    cmd,
+                    next: None,
+                    lineno: lineno as u64,
+                    merge_stderr: false,
                 },
-                pipe: WcPipe { cmd, next: None },
                 next: None,
+                flags: SublistFlags::default(),
             }
         } else {
             self.decode_sublist()
         };
 
-        WcList {
-            flags: WcListFlags { async_, disown },
+        ZshList {
             sublist,
+            flags: ListFlags { async_, disown },
         }
     }
 
     /// `parse.c:825-869` par_sublist — emits chained `WCB_SUBLIST` ops with
     /// types END/AND/OR. SUBLIST_SIMPLE flag means body is single-pipe
     /// shortcut (lineno + body without inner WC_PIPE).
-    fn decode_sublist(&mut self) -> WcSublist {
-        // Peek (don't advance) — if not WC_SUBLIST, the parent's expectations
-        // are wrong. Don't consume; let the outer loop decide what to do.
+    fn decode_sublist(&mut self) -> ZshSublist {
         let header = match self.peek() {
             Some(h) if wc_code(h) == WC_SUBLIST => {
                 self.next();
                 h
             }
-            _ => {
-                return WcSublist {
-                    flags: WcSublistFlags { not: false, coproc: false },
-                    pipe: WcPipe { cmd: WcCommand::Simple(WcSimple::default()), next: None },
-                    next: None,
-                };
-            }
+            _ => return empty_sublist(),
         };
         let data = wc_data(header);
         let stype = data & 3;
@@ -608,49 +298,62 @@ impl<'a> Walker<'a> {
         let _skip = data >> WC_SUBLIST_FREE;
 
         let not = (flags_bits & WC_SUBLIST_NOT) != 0;
-        let coproc = (flags_bits & WC_SUBLIST_COPROC) != 0;
+        let coproc = (flags_bits & WC_SUBLIST_FREE) != 0 && (flags_bits & 4) != 0;
+        let _ = coproc; // recompute below to use canonical const
+        let coproc = (flags_bits & crate::ported::zsh_h::WC_SUBLIST_COPROC) != 0;
         let is_simple = (flags_bits & WC_SUBLIST_SIMPLE) != 0;
 
         let pipe = if is_simple {
-            let _lineno = self.next();
+            let lineno = self.next().unwrap_or(0);
             let cmd = self.decode_command_body();
-            WcPipe { cmd, next: None }
+            ZshPipe {
+                cmd,
+                next: None,
+                lineno: lineno as u64,
+                merge_stderr: false,
+            }
         } else {
             self.decode_pipe()
         };
 
         let next = match stype {
-            WC_SUBLIST_AND => Some((WcSublistOp::And, Box::new(self.decode_sublist()))),
-            WC_SUBLIST_OR => Some((WcSublistOp::Or, Box::new(self.decode_sublist()))),
+            x if x == WC_SUBLIST_AND => Some((SublistOp::And, Box::new(self.decode_sublist()))),
+            x if x == WC_SUBLIST_OR => Some((SublistOp::Or, Box::new(self.decode_sublist()))),
             _ => None, // WC_SUBLIST_END
         };
 
-        WcSublist {
-            flags: WcSublistFlags { not, coproc },
+        ZshSublist {
             pipe,
             next,
+            flags: SublistFlags { coproc, not },
         }
     }
 
     /// `parse.c:894-944` par_pline — chained `WCB_PIPE(MID|END, lineno)`.
     /// MID stages have an extra skip-count word inserted at p+1 (per
     /// parse.c:912-913 ecispace) — consume it. END stages have no extra.
-    fn decode_pipe(&mut self) -> WcPipe {
+    fn decode_pipe(&mut self) -> ZshPipe {
         let header = match self.peek() {
             Some(h) if wc_code(h) == WC_PIPE => {
                 self.next();
                 h
             }
             _ => {
-                return WcPipe {
-                    cmd: WcCommand::Simple(WcSimple::default()),
+                return ZshPipe {
+                    cmd: ZshCommand::Simple(ZshSimple {
+                        assigns: vec![],
+                        words: vec![],
+                        redirs: vec![],
+                    }),
                     next: None,
+                    lineno: 0,
+                    merge_stderr: false,
                 };
             }
         };
         let data = wc_data(header);
         let ptype = data & 1;
-        // lineno = data >> 1 — discarded (not part of canonical AST).
+        let lineno = (data >> 1) as u64;
 
         if ptype == WC_PIPE_MID {
             // par_pline (parse.c:912) inserts ecused-1-p as skip count.
@@ -665,42 +368,44 @@ impl<'a> Walker<'a> {
             None
         };
 
-        WcPipe { cmd, next }
+        ZshPipe {
+            cmd,
+            next,
+            lineno,
+            merge_stderr: false,
+        }
     }
 
-    /// Decode the command body of a Pipe stage. zsh wordcode emits the
-    /// command's leading opcode (WC_SIMPLE / WC_SUBSH / WC_FOR / etc.),
-    /// optionally with surrounding redirs/assigns for Simple. Per
-    /// `parse.c:958-1085` par_cmd dispatch.
-    fn decode_command_body(&mut self) -> WcCommand {
-        // For SIMPLE, zsh emits assigns + redirs interleaved with WC_SIMPLE.
-        // Other compound commands have the command-leading opcode first.
-        // Use lookahead to discriminate.
-        //
-        // Strategy: read a pre-amble of WC_ASSIGN/WC_REDIR ops; on the first
-        // non-assign-non-redir op, dispatch based on its WC_*. If it's
-        // WC_SIMPLE, finish gathering the trailing redirs into the simple's
-        // redirs list. If it's a compound (WC_FOR etc.), pass through.
-
-        let mut leading_assigns: Vec<WcAssign> = Vec::new();
-        let mut leading_redirs: Vec<WcRedir> = Vec::new();
+    /// Decode the command body of a Pipe stage. Per `parse.c:958-1085`
+    /// par_cmd dispatch: SIMPLE has leading assigns/redirs interleaved
+    /// with WC_SIMPLE; other compounds have the command-leading opcode
+    /// first.
+    fn decode_command_body(&mut self) -> ZshCommand {
+        let mut leading_assigns: Vec<ZshAssign> = Vec::new();
+        let mut leading_redirs: Vec<ZshRedir> = Vec::new();
 
         loop {
             let wc = match self.peek() {
                 Some(w) => w,
-                None => return WcCommand::Simple(WcSimple::default()),
+                None => {
+                    return ZshCommand::Simple(ZshSimple {
+                        assigns: leading_assigns,
+                        words: vec![],
+                        redirs: leading_redirs,
+                    });
+                }
             };
             let code = wc_code(wc);
             match code {
-                WC_ASSIGN => {
+                x if x == WC_ASSIGN => {
                     self.next();
                     leading_assigns.push(self.decode_assign(wc_data(wc)));
                 }
-                WC_REDIR => {
+                x if x == WC_REDIR => {
                     self.next();
                     leading_redirs.push(self.decode_redir(wc_data(wc)));
                 }
-                WC_SIMPLE => {
+                x if x == WC_SIMPLE => {
                     self.next();
                     let argc = wc_data(wc) as usize;
                     let mut words = Vec::with_capacity(argc);
@@ -716,13 +421,13 @@ impl<'a> Walker<'a> {
                         self.next();
                         leading_redirs.push(self.decode_redir(wc_data(next_wc)));
                     }
-                    return WcCommand::Simple(WcSimple {
+                    return ZshCommand::Simple(ZshSimple {
                         assigns: leading_assigns,
                         words,
                         redirs: leading_redirs,
                     });
                 }
-                WC_TYPESET => {
+                x if x == WC_TYPESET => {
                     // typeset: like SIMPLE but with assigns appended after
                     // the args. Conservatively render as SIMPLE for now.
                     self.next();
@@ -742,61 +447,75 @@ impl<'a> Walker<'a> {
                             }
                         }
                     }
-                    return WcCommand::Simple(WcSimple {
+                    return ZshCommand::Simple(ZshSimple {
                         assigns: leading_assigns,
                         words,
                         redirs: leading_redirs,
                     });
                 }
                 _ => {
-                    // Compound command. Decode it; preserve any leading
-                    // redirs by wrapping (Redirected ...) — but for now
-                    // most compound forms have no leading redirs; if they
-                    // do, the parser audit will surface that.
+                    // Compound command. Decode it; if there were leading
+                    // redirs, wrap the result in ZshCommand::Redirected.
                     let cmd = self.decode_compound();
-                    if leading_redirs.is_empty() && leading_assigns.is_empty() {
+                    if leading_redirs.is_empty() {
                         return cmd;
                     }
-                    // Best-effort: leading redirs/assigns on a compound cmd
-                    // are unusual in real source; record on a synthetic
-                    // wrapper. The AST side wraps via ZshCommand::Redirected.
-                    return cmd; // assigns/redirs lost; will surface as a
-                                // diff if real cases exist.
+                    return ZshCommand::Redirected(Box::new(cmd), leading_redirs);
                 }
             }
         }
     }
 
-    fn decode_compound(&mut self) -> WcCommand {
-        let wc = self.next().expect("compound command opcode");
+    fn decode_compound(&mut self) -> ZshCommand {
+        let wc = match self.next() {
+            Some(w) => w,
+            None => {
+                return ZshCommand::Simple(ZshSimple {
+                    assigns: vec![],
+                    words: vec![],
+                    redirs: vec![],
+                });
+            }
+        };
         let code = wc_code(wc);
         let data = wc_data(wc);
         match code {
-            WC_SUBSH => WcCommand::Subsh(Box::new(self.decode_subsh(data))),
-            WC_CURSH => WcCommand::Cursh(Box::new(self.decode_cursh(data))),
-            WC_FOR => self.decode_for(data, false),
-            WC_SELECT => self.decode_select(data),
-            WC_WHILE => self.decode_while(data),
-            WC_REPEAT => WcCommand::Repeat(self.decode_repeat(data)),
-            WC_IF => WcCommand::If(self.decode_if(data)),
-            WC_CASE => WcCommand::Case(self.decode_case(data)),
-            WC_FUNCDEF => WcCommand::FuncDef(self.decode_funcdef(data)),
-            WC_TIMED => self.decode_timed(data),
-            WC_COND => WcCommand::Cond(self.decode_cond_expr(data)),
-            WC_ARITH => {
-                let expr = self.read_string();
-                WcCommand::Arith(expr)
+            x if x == WC_SUBSH => ZshCommand::Subsh(Box::new(self.decode_subsh(data))),
+            x if x == WC_CURSH => ZshCommand::Cursh(Box::new(self.decode_cursh(data))),
+            x if x == WC_FOR => self.decode_for(data),
+            x if x == WC_SELECT => self.decode_select(data),
+            x if x == WC_WHILE => self.decode_while(data),
+            x if x == WC_REPEAT => ZshCommand::Repeat(self.decode_repeat(data)),
+            x if x == WC_IF => ZshCommand::If(self.decode_if(data)),
+            x if x == WC_CASE => ZshCommand::Case(self.decode_case(data)),
+            x if x == WC_FUNCDEF => ZshCommand::FuncDef(self.decode_funcdef(data)),
+            x if x == WC_TIMED => self.decode_timed(data),
+            x if x == WC_COND => ZshCommand::Cond(self.decode_cond_expr(data)),
+            x if x == WC_ARITH => ZshCommand::Arith(self.read_string()),
+            x if x == WC_AUTOFN => {
+                // Autoload-stub function body (zsh.h: WC_AUTOFN). Stored
+                // in the shfunc's eprog, not in compiled scripts. No
+                // ZshCommand variant — emit a placeholder Simple so parity
+                // diff surfaces if it ever appears in a script blob.
+                ZshCommand::Simple(ZshSimple {
+                    assigns: vec![],
+                    words: vec![],
+                    redirs: vec![],
+                })
             }
-            WC_AUTOFN => WcCommand::AutoFn,
-            WC_TRY => WcCommand::Try(self.decode_try(data)),
-            _ => WcCommand::Simple(WcSimple::default()),
+            x if x == WC_TRY => ZshCommand::Try(self.decode_try(data)),
+            _ => ZshCommand::Simple(ZshSimple {
+                assigns: vec![],
+                words: vec![],
+                redirs: vec![],
+            }),
         }
     }
 
     /// `parse.c::par_redir` — emits WCB_REDIR(type|flags) + fd + target_str
     /// + [varid_str?] + [heredoc 2 words?].
-    fn decode_redir(&mut self, data: u32) -> WcRedir {
-        let rtype = data & REDIR_TYPE_MASK;
+    fn decode_redir(&mut self, data: u32) -> ZshRedir {
+        let rtype = (data & REDIR_TYPE_MASK) as i32;
         let has_varid = (data & REDIR_VARID_MASK) != 0;
         let from_heredoc = (data & REDIR_FROM_HEREDOC_MASK) != 0;
         let fd = self.next().unwrap_or(0) as i32;
@@ -814,29 +533,31 @@ impl<'a> Walker<'a> {
             let terminator = self.decode_string_word(term_wc);
             let content = self.decode_string_word(body_wc);
             // `quoted` flag isn't directly encoded in wordcode here — it
-            // affects expansion at runtime, not the AST shape. Zshrs's AST
-            // tracks it in `HereDocInfo.quoted`. For parity, render as
-            // Unquoted on this side; if zshrs ever stores Quoted heredocs
-            // verbatim differently, that's a real divergence to surface.
-            Some(WcHeredoc {
+            // affects expansion at runtime, not the AST shape. zshrs's
+            // AST tracks it in `HereDocInfo.quoted`. For parity, render
+            // as unquoted on this side; if zshrs ever stores Quoted
+            // heredocs verbatim differently, that's a real divergence to
+            // surface.
+            Some(HereDocInfo {
+                content,
                 terminator,
                 quoted: false,
-                content,
             })
         } else {
             None
         };
-        WcRedir {
+        ZshRedir {
             rtype,
             fd,
             name,
-            varid,
             heredoc,
+            varid,
+            heredoc_idx: None,
         }
     }
 
     /// `parse.c::par_assign` — WCB_ASSIGN(scalar_or_array, append, num).
-    fn decode_assign(&mut self, data: u32) -> WcAssign {
+    fn decode_assign(&mut self, data: u32) -> ZshAssign {
         let is_array = (data & 1) == WC_ASSIGN_ARRAY;
         let append = ((data >> 1) & 1) == WC_ASSIGN_INC;
         let num = (data >> 2) as usize;
@@ -846,11 +567,11 @@ impl<'a> Walker<'a> {
             for _ in 0..num {
                 vs.push(self.read_string());
             }
-            WcAssignValue::Array(vs)
+            ZshAssignValue::Array(vs)
         } else {
-            WcAssignValue::Scalar(self.read_string())
+            ZshAssignValue::Scalar(self.read_string())
         };
-        WcAssign {
+        ZshAssign {
             name,
             value,
             append,
@@ -860,7 +581,7 @@ impl<'a> Walker<'a> {
     /// `parse.c:1619-1632` par_subsh — emits WC_SUBSH at p, an EXTRA word
     /// at p+1 (reserved for optional `always` block / WC_TRY wrapper),
     /// then the body lists, terminated by WCB_END().
-    fn decode_subsh(&mut self, skip: u32) -> WcProgram {
+    fn decode_subsh(&mut self, skip: u32) -> ZshProgram {
         let end_pos = self.pos + skip as usize;
         // Consume the reserved-for-try word at p+1.
         let _ = self.next();
@@ -869,7 +590,7 @@ impl<'a> Walker<'a> {
         prog
     }
 
-    fn decode_cursh(&mut self, skip: u32) -> WcProgram {
+    fn decode_cursh(&mut self, skip: u32) -> ZshProgram {
         let end_pos = self.pos + skip as usize;
         // Same as par_subsh — extra word at p+1 (parse.c:1626).
         let _ = self.next();
@@ -884,12 +605,12 @@ impl<'a> Walker<'a> {
     /// - WC_FOR_PPARAM: n_vars (count), var_strcodes×n
     ///
     /// Followed by body lists.
-    fn decode_for(&mut self, data: u32, _unused: bool) -> WcCommand {
+    fn decode_for(&mut self, data: u32) -> ZshCommand {
         let ftype = data & 3;
         let skip = (data >> 2) as usize;
         let end_pos = self.pos + skip;
         let (var, list) = match ftype {
-            WC_FOR_LIST => {
+            x if x == WC_FOR_LIST => {
                 let n_vars = self.next().unwrap_or(0) as usize;
                 let mut vars = Vec::with_capacity(n_vars);
                 for _ in 0..n_vars {
@@ -904,15 +625,15 @@ impl<'a> Walker<'a> {
                 // aren't represented in the current AST, so multi-var
                 // sources will surface as parity diffs.
                 let var = vars.into_iter().next().unwrap_or_default();
-                (var, WcForList::Words(ws))
+                (var, ForList::Words(ws))
             }
-            WC_FOR_COND => {
+            x if x == WC_FOR_COND => {
                 let init = self.read_string();
                 let cond = self.read_string();
                 let step = self.read_string();
                 (
                     String::new(),
-                    WcForList::CStyle { init, cond, step },
+                    ForList::CStyle { init, cond, step },
                 )
             }
             _ => {
@@ -923,12 +644,12 @@ impl<'a> Walker<'a> {
                     vars.push(self.read_string());
                 }
                 let var = vars.into_iter().next().unwrap_or_default();
-                (var, WcForList::Positional)
+                (var, ForList::Positional)
             }
         };
         let body = self.decode_program_until(end_pos);
         self.pos = end_pos.min(self.code.len());
-        WcCommand::For(WcFor {
+        ZshCommand::For(ZshFor {
             var,
             list,
             body: Box::new(body),
@@ -936,7 +657,7 @@ impl<'a> Walker<'a> {
         })
     }
 
-    fn decode_select(&mut self, data: u32) -> WcCommand {
+    fn decode_select(&mut self, data: u32) -> ZshCommand {
         // par_for path with sel=1 — same layout as for-list/for-pparam,
         // minus the n_vars count slot for SELECT_PPARAM (par_for line
         // 1124: `if (!sel) np = ecadd(0)`). For SELECT, vars are emitted
@@ -951,13 +672,13 @@ impl<'a> Walker<'a> {
             for _ in 0..n {
                 ws.push(self.read_string());
             }
-            WcForList::Words(ws)
+            ForList::Words(ws)
         } else {
-            WcForList::Positional
+            ForList::Positional
         };
         let body = self.decode_program_until(end_pos);
         self.pos = end_pos.min(self.code.len());
-        WcCommand::For(WcFor {
+        ZshCommand::For(ZshFor {
             var,
             list,
             body: Box::new(body),
@@ -966,49 +687,46 @@ impl<'a> Walker<'a> {
     }
 
     /// `parse.c:1521` par_while — body is [cond_program] [body_program].
-    fn decode_while(&mut self, data: u32) -> WcCommand {
+    fn decode_while(&mut self, data: u32) -> ZshCommand {
         let until = (data & 1) == WC_WHILE_UNTIL;
         let skip = (data >> 1) as usize;
         let end_pos = self.pos + skip;
-        // The wordcode lays out: cond-list ... body-list ... but they're
-        // separated only by structural markers. Both are full programs,
-        // each terminating in WC_END. Read two programs back-to-back.
+        // The wordcode lays out: cond-list ... body-list ... separated
+        // only by structural markers. Both are full programs, each
+        // terminating in WC_END. Read two programs back-to-back.
         let cond = self.decode_program_to_end();
         let body = self.decode_program_until(end_pos);
         self.pos = end_pos.min(self.code.len());
-        let w = WcWhile { cond, body };
-        if until {
-            WcCommand::Until(w)
-        } else {
-            WcCommand::While(w)
-        }
+        ZshCommand::While(ZshWhile {
+            cond: Box::new(cond),
+            body: Box::new(body),
+            until,
+        })
     }
 
-    fn decode_repeat(&mut self, data: u32) -> WcRepeat {
+    fn decode_repeat(&mut self, data: u32) -> ZshRepeat {
         let skip = data as usize;
         let end_pos = self.pos + skip;
         let count = self.read_string();
         let body = self.decode_program_until(end_pos);
         self.pos = end_pos.min(self.code.len());
-        WcRepeat { count, body }
+        ZshRepeat {
+            count,
+            body: Box::new(body),
+        }
     }
 
     /// `parse.c:1411-1519` par_if — chain of WC_IF entries:
     /// HEAD opens, IF head clause, ELIF for each elif, ELSE for the else.
     /// Each entry has its own skip count to its body terminator.
-    fn decode_if(&mut self, data: u32) -> WcIf {
-        // The data of the leading WC_IF holds the type and skip-to-end-of-if.
-        let head_type = data & 3;
+    fn decode_if(&mut self, data: u32) -> ZshIf {
         let head_skip = (data >> 2) as usize;
         let if_end = self.pos + head_skip;
 
-        // After WC_IF(HEAD), zsh emits subsequent WC_IF(IF), WC_IF(ELIF)*,
-        // WC_IF(ELSE)? entries until reaching if_end.
-        let _ = head_type; // HEAD is always the wrapper; substructure follows
-        let mut cond = WcProgram { lists: vec![] };
-        let mut then = WcProgram { lists: vec![] };
-        let mut elif: Vec<(WcProgram, WcProgram)> = Vec::new();
-        let mut else_: Option<WcProgram> = None;
+        let mut cond = ZshProgram { lists: vec![] };
+        let mut then = ZshProgram { lists: vec![] };
+        let mut elif: Vec<(ZshProgram, ZshProgram)> = Vec::new();
+        let mut else_: Option<Box<ZshProgram>> = None;
 
         while self.pos < if_end {
             let wc = match self.peek() {
@@ -1025,31 +743,28 @@ impl<'a> Walker<'a> {
             let entry_end = self.pos + entry_skip;
 
             match entry_type {
-                WC_IF_IF => {
-                    // followed by cond program then body program
+                x if x == WC_IF_IF => {
                     cond = self.decode_program_to_end();
                     then = self.decode_program_until(entry_end);
                 }
-                WC_IF_ELIF => {
+                x if x == WC_IF_ELIF => {
                     let c = self.decode_program_to_end();
                     let b = self.decode_program_until(entry_end);
                     elif.push((c, b));
                 }
-                WC_IF_ELSE => {
+                x if x == WC_IF_ELSE => {
                     let b = self.decode_program_until(entry_end);
-                    else_ = Some(b);
+                    else_ = Some(Box::new(b));
                 }
-                _ => {
-                    // Unknown; consume entry's wordcode.
-                }
+                _ => {}
             }
             self.pos = entry_end.min(self.code.len());
         }
         self.pos = if_end.min(self.code.len());
 
-        WcIf {
-            cond,
-            then,
+        ZshIf {
+            cond: Box::new(cond),
+            then: Box::new(then),
             elif,
             else_,
         }
@@ -1060,12 +775,11 @@ impl<'a> Walker<'a> {
     /// `pos >= end` immediately. Non-empty: each arm is
     /// `WC_CASE(arm_type, skip) n_alts (pat_strcode npats_word)×n_alts body...`.
     /// Multi-alternative arms (`(a|b|c)`) emit n_alts > 1.
-    fn decode_case(&mut self, data: u32) -> WcCase {
-        let _head_type = data & 7;
+    fn decode_case(&mut self, data: u32) -> ZshCase {
         let head_skip = (data >> WC_CASE_FREE) as usize;
         let case_end = self.pos + head_skip;
         let word = self.read_string();
-        let mut arms: Vec<WcCaseArm> = Vec::new();
+        let mut arms: Vec<CaseArm> = Vec::new();
         while self.pos < case_end {
             let wc = match self.peek() {
                 Some(w) => w,
@@ -1088,14 +802,20 @@ impl<'a> Walker<'a> {
             }
             let body = self.decode_program_until(arm_end);
             self.pos = arm_end.min(self.code.len());
-            arms.push(WcCaseArm {
+            let terminator = match arm_type {
+                x if x == WC_CASE_OR => CaseTerm::Break,
+                x if x == WC_CASE_AND => CaseTerm::Continue,
+                x if x == WC_CASE_TESTAND => CaseTerm::TestNext,
+                _ => CaseTerm::Break,
+            };
+            arms.push(CaseArm {
                 patterns,
                 body,
-                terminator: arm_type,
+                terminator,
             });
         }
         self.pos = case_end.min(self.code.len());
-        WcCase { word, arms }
+        ZshCase { word, arms }
     }
 
     /// `parse.c:1672-1779` par_funcdef — names, metadata, body.
@@ -1103,7 +823,7 @@ impl<'a> Walker<'a> {
     /// `ecsoffs` save/restore around par_list at parse.c:1739-1741).
     /// The metadata `strs_offset` tells us how much to advance strs_base
     /// for the duration of the body decode.
-    fn decode_funcdef(&mut self, skip: u32) -> WcFuncDef {
+    fn decode_funcdef(&mut self, skip: u32) -> ZshFuncDef {
         let end_pos = self.pos + skip as usize;
         let num = self.next().unwrap_or(0) as usize;
         let mut names = Vec::with_capacity(num);
@@ -1118,23 +838,29 @@ impl<'a> Walker<'a> {
         let strs_offset = self.next().unwrap_or(0) as usize;
         let _strs_len = self.next();
         let _npats = self.next();
-        let _tracing = self.next();
+        let tracing_word = self.next().unwrap_or(0);
 
         let saved_base = self.strs_base;
         self.strs_base = saved_base + strs_offset;
         let body = self.decode_program_until(end_pos);
         self.strs_base = saved_base;
         self.pos = end_pos.min(self.code.len());
-        WcFuncDef { names, body }
+        ZshFuncDef {
+            names,
+            body: Box::new(body),
+            tracing: tracing_word != 0,
+            auto_call_args: None,
+            body_source: None,
+        }
     }
 
-    fn decode_timed(&mut self, data: u32) -> WcCommand {
+    fn decode_timed(&mut self, data: u32) -> ZshCommand {
         if data == 1 {
             // WC_TIMED_PIPE — a sublist follows.
             let sl = self.decode_sublist();
-            WcCommand::Time(Some(Box::new(sl)))
+            ZshCommand::Time(Some(Box::new(sl)))
         } else {
-            WcCommand::Time(None)
+            ZshCommand::Time(None)
         }
     }
 
@@ -1142,7 +868,7 @@ impl<'a> Walker<'a> {
     /// Layout: outer WC_TRY(total_skip), inner WC_TRY(try_body_skip) at p+1,
     /// try body, then always body. Both halves are patched as WC_TRY by
     /// par_subsh (parse.c:1659/1661).
-    fn decode_try(&mut self, outer_skip: u32) -> WcTry {
+    fn decode_try(&mut self, outer_skip: u32) -> ZshTry {
         let outer_end = self.pos + outer_skip as usize;
         // Inner WC_TRY at p+1: its data field is the try-body skip count.
         let inner_wc = self.next().unwrap_or(0);
@@ -1152,7 +878,10 @@ impl<'a> Walker<'a> {
         self.pos = try_end.min(self.code.len());
         let always = self.decode_program_until(outer_end);
         self.pos = outer_end.min(self.code.len());
-        WcTry { try_block, always }
+        ZshTry {
+            try_block: Box::new(try_block),
+            always: Box::new(always),
+        }
     }
 
     /// `parse.c::par_cond_double` / `par_cond_triple` — cond opcode encoding.
@@ -1172,36 +901,42 @@ impl<'a> Walker<'a> {
     /// | COND_MOD  (18) | 1 or 2 | 1+data strings (op_name + operand(s)) |
     /// | COND_MODI (19) | 0    | 3 strs (op + a + c) |
     /// | ASCII letter   | 0    | 1 str (unary file test like -f, -d) |
-    fn decode_cond_expr(&mut self, data: u32) -> WcCond {
+    fn decode_cond_expr(&mut self, data: u32) -> ZshCond {
         let ctype = data & WC_COND_TYPE_MASK;
         let high = data >> 7;
         match ctype {
-            COND_NOT => {
+            x if x == COND_NOT => {
                 let inner = self.read_inner_cond();
-                WcCond::Not(Box::new(inner))
+                ZshCond::Not(Box::new(inner))
             }
-            COND_AND => {
+            x if x == COND_AND => {
                 let a = self.read_inner_cond();
                 let b = self.read_inner_cond();
-                WcCond::And(Box::new(a), Box::new(b))
+                ZshCond::And(Box::new(a), Box::new(b))
             }
-            COND_OR => {
+            x if x == COND_OR => {
                 let a = self.read_inner_cond();
                 let b = self.read_inner_cond();
-                WcCond::Or(Box::new(a), Box::new(b))
+                ZshCond::Or(Box::new(a), Box::new(b))
             }
             3..=7 => {
                 // STREQ, STRDEQ, STRNEQ, STRLT, STRGTR — 2 strs + ecnpats
                 let x = self.read_string();
                 let y = self.read_string();
                 let _ecnpats = self.next();
-                WcCond::Binary(x, cond_op_name(ctype).to_string(), y)
+                ZshCond::Binary(x, cond_op_name(ctype).to_string(), y)
             }
-            8..=17 => {
-                // -nt, -ot, -ef, -eq, -ne, -lt, -gt, -le, -ge, =~ — 2 strs only
+            8..=16 => {
+                // -nt, -ot, -ef, -eq, -ne, -lt, -gt, -le, -ge — 2 strs only
                 let x = self.read_string();
                 let y = self.read_string();
-                WcCond::Binary(x, cond_op_name(ctype).to_string(), y)
+                ZshCond::Binary(x, cond_op_name(ctype).to_string(), y)
+            }
+            17 => {
+                // =~ regex — distinct ZshCond variant.
+                let x = self.read_string();
+                let y = self.read_string();
+                ZshCond::Regex(x, y)
             }
             18 => {
                 // COND_MOD: data=high holds operand count (1 or 2).
@@ -1209,9 +944,9 @@ impl<'a> Walker<'a> {
                 let a = self.read_string();
                 if high == 2 {
                     let b = self.read_string();
-                    WcCond::Binary(a, op, b)
+                    ZshCond::Binary(a, op, b)
                 } else {
-                    WcCond::Unary(op, a)
+                    ZshCond::Unary(op, a)
                 }
             }
             19 => {
@@ -1219,48 +954,43 @@ impl<'a> Walker<'a> {
                 let op = self.read_string();
                 let a = self.read_string();
                 let b = self.read_string();
-                WcCond::Binary(a, op, b)
+                ZshCond::Binary(a, op, b)
             }
             _ => {
                 // ASCII-letter unary file test — cond_type is the letter byte.
                 let x = self.read_string();
                 let mut op = String::from("-");
                 op.push(ctype as u8 as char);
-                WcCond::Unary(op, x)
+                ZshCond::Unary(op, x)
             }
         }
     }
 
-    fn read_inner_cond(&mut self) -> WcCond {
+    fn read_inner_cond(&mut self) -> ZshCond {
         match self.peek() {
             Some(w) if wc_code(w) == WC_COND => {
                 self.next();
                 self.decode_cond_expr(wc_data(w))
             }
-            _ => WcCond::Unary(String::new(), String::new()),
+            _ => ZshCond::Unary(String::new(), String::new()),
         }
     }
+}
 
-    /// Decode one program until WC_END or a list with Z_END flag.
-    fn decode_program_to_end(&mut self) -> WcProgram {
-        let mut lists = Vec::new();
-        while let Some(wc) = self.peek() {
-            let code = wc_code(wc);
-            if code == WC_END {
-                self.next();
-                break;
-            }
-            if code != WC_LIST {
-                break;
-            }
-            let type_bits = wc_data(wc) & ((1 << WC_LIST_FREE) - 1);
-            let is_z_end = (type_bits & Z_END) != 0;
-            lists.push(self.decode_list());
-            if is_z_end {
-                break;
-            }
-        }
-        WcProgram { lists }
+fn empty_sublist() -> ZshSublist {
+    ZshSublist {
+        pipe: ZshPipe {
+            cmd: ZshCommand::Simple(ZshSimple {
+                assigns: vec![],
+                words: vec![],
+                redirs: vec![],
+            }),
+            next: None,
+            lineno: 0,
+            merge_stderr: false,
+        },
+        next: None,
+        flags: SublistFlags::default(),
     }
 }
 
@@ -1292,17 +1022,15 @@ fn cond_op_name(t: u32) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// Public entry: load .zwc + decode + render to canonical sexp
+// Public entry: load .zwc + decode into ZshProgram (parser AST type)
 // ---------------------------------------------------------------------------
 
-/// Decode the wordcode of a single function (or top-level script) into
-/// a `WcProgram` tree. Reuses `zwc.rs::ZwcFile::load` for file structure.
-/// Decode an entire `.zwc` file into typed `WcProgram`s.
-/// zshrs-original tooling — used by the parity harness to
-/// compare zsh's wordcode output against zshrs's parser. C zsh
-/// has no equivalent decoder; it just re-evaluates from
-/// wordcode.
-pub fn decode_zwc_file<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<(String, WcProgram)>> {
+/// Decode an entire `.zwc` file into typed `ZshProgram`s.
+/// zshrs-original tooling — used by the parity harness to compare
+/// zsh's wordcode output against zshrs's parser via the single
+/// `ast_sexp::ast_to_sexp` emitter. C zsh has no equivalent decoder;
+/// it just re-evaluates from wordcode.
+pub fn decode_zwc_file<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<(String, ZshProgram)>> {
     let zwc = ZwcFile::load(path)?;
     let mut out = Vec::new();
     let header_words = zwc.header.header_len as usize;
@@ -1326,387 +1054,17 @@ pub fn decode_zwc_file<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<(String, 
     Ok(out)
 }
 
-/// Convenience: load and decode the FIRST function (typical for a
-/// `zcompile out.zwc input.zsh` script-style dump where there's exactly
-/// one synthetic top-level function).
 /// Decode the first function out of a `.zwc` file.
 /// zshrs-original tooling — convenience for fixtures.
-pub fn decode_zwc_first<P: AsRef<Path>>(path: P) -> std::io::Result<Option<WcProgram>> {
+pub fn decode_zwc_first<P: AsRef<Path>>(path: P) -> std::io::Result<Option<ZshProgram>> {
     let all = decode_zwc_file(path)?;
     Ok(all.into_iter().next().map(|(_, p)| p))
-}
-
-// ---------------------------------------------------------------------------
-// Canonical sexp emitter — must produce IDENTICAL output to ast_sexp
-// ---------------------------------------------------------------------------
-
-/// Render a `WcProgram` as canonical sexp.
-/// zshrs-original — used by the parity harness so the wordcode-
-/// derived AST emits identical bytes to the parser-derived AST
-/// in `crate::ast_sexp`.
-pub fn wc_to_sexp(prog: &WcProgram) -> String {
-    let mut out = String::new();
-    emit_program(prog, &mut out);
-    out
-}
-
-fn emit_program(p: &WcProgram, out: &mut String) {
-    out.push_str("(Program");
-    for l in &p.lists {
-        out.push(' ');
-        emit_list(l, out);
-    }
-    out.push(')');
-}
-
-fn emit_list(l: &WcList, out: &mut String) {
-    out.push_str("(List ");
-    let s = match (l.flags.async_, l.flags.disown) {
-        (false, _) => "Sync",
-        (true, false) => "Async",
-        (true, true) => "Disown",
-    };
-    out.push_str(s);
-    out.push(' ');
-    emit_sublist(&l.sublist, out);
-    out.push(')');
-}
-
-fn emit_sublist(sl: &WcSublist, out: &mut String) {
-    out.push_str("(Sublist (");
-    let mut first = true;
-    if sl.flags.not {
-        out.push_str("Not");
-        first = false;
-    }
-    if sl.flags.coproc {
-        if !first {
-            out.push(' ');
-        }
-        out.push_str("Coproc");
-    }
-    out.push_str(") ");
-    emit_pipe(&sl.pipe, out);
-    if let Some((op, next)) = &sl.next {
-        out.push(' ');
-        out.push_str(match op {
-            WcSublistOp::And => "And",
-            WcSublistOp::Or => "Or",
-        });
-        out.push(' ');
-        emit_sublist(next, out);
-    }
-    out.push(')');
-}
-
-fn emit_pipe(p: &WcPipe, out: &mut String) {
-    out.push_str("(Pipe ");
-    emit_cmd(&p.cmd, out);
-    if let Some(next) = &p.next {
-        out.push_str(" Pipe ");
-        emit_pipe(next, out);
-    }
-    out.push(')');
-}
-
-fn emit_cmd(c: &WcCommand, out: &mut String) {
-    match c {
-        WcCommand::Simple(s) => emit_simple(s, out),
-        WcCommand::Subsh(p) => {
-            out.push_str("(Subsh ");
-            emit_program(p, out);
-            out.push(')');
-        }
-        WcCommand::Cursh(p) => {
-            out.push_str("(Cursh ");
-            emit_program(p, out);
-            out.push(')');
-        }
-        WcCommand::For(f) => {
-            let tag = if f.is_select { "Select" } else { "For" };
-            out.push('(');
-            out.push_str(tag);
-            out.push(' ');
-            emit_str(&f.var, out);
-            out.push(' ');
-            match &f.list {
-                WcForList::Words(ws) => {
-                    out.push_str("(Words");
-                    for w in ws {
-                        out.push(' ');
-                        emit_str(w, out);
-                    }
-                    out.push(')');
-                }
-                WcForList::CStyle { init, cond, step } => {
-                    out.push_str("(CStyle ");
-                    emit_str(init, out);
-                    out.push(' ');
-                    emit_str(cond, out);
-                    out.push(' ');
-                    emit_str(step, out);
-                    out.push(')');
-                }
-                WcForList::Positional => out.push_str("Positional"),
-            }
-            out.push(' ');
-            emit_program(&f.body, out);
-            out.push(')');
-        }
-        WcCommand::Case(c) => {
-            out.push_str("(Case ");
-            emit_str(&c.word, out);
-            for arm in &c.arms {
-                out.push_str(" (Arm (");
-                let mut first = true;
-                for p in &arm.patterns {
-                    if !first {
-                        out.push(' ');
-                    }
-                    emit_str(p, out);
-                    first = false;
-                }
-                out.push_str(") ");
-                out.push_str(match arm.terminator {
-                    WC_CASE_OR => "Break",
-                    WC_CASE_AND => "Continue",
-                    WC_CASE_TESTAND => "TestNext",
-                    _ => "Break",
-                });
-                out.push(' ');
-                emit_program(&arm.body, out);
-                out.push(')');
-            }
-            out.push(')');
-        }
-        WcCommand::If(i) => {
-            out.push_str("(If ");
-            emit_program(&i.cond, out);
-            out.push(' ');
-            emit_program(&i.then, out);
-            for (c, b) in &i.elif {
-                out.push_str(" (Elif ");
-                emit_program(c, out);
-                out.push(' ');
-                emit_program(b, out);
-                out.push(')');
-            }
-            if let Some(eb) = &i.else_ {
-                out.push_str(" (Else ");
-                emit_program(eb, out);
-                out.push(')');
-            }
-            out.push(')');
-        }
-        WcCommand::While(w) => {
-            out.push_str("(While ");
-            emit_program(&w.cond, out);
-            out.push(' ');
-            emit_program(&w.body, out);
-            out.push(')');
-        }
-        WcCommand::Until(w) => {
-            out.push_str("(Until ");
-            emit_program(&w.cond, out);
-            out.push(' ');
-            emit_program(&w.body, out);
-            out.push(')');
-        }
-        WcCommand::Repeat(r) => {
-            out.push_str("(Repeat ");
-            emit_str(&r.count, out);
-            out.push(' ');
-            emit_program(&r.body, out);
-            out.push(')');
-        }
-        WcCommand::FuncDef(f) => {
-            out.push_str("(FuncDef (");
-            let mut first = true;
-            for n in &f.names {
-                if !first {
-                    out.push(' ');
-                }
-                emit_str(n, out);
-                first = false;
-            }
-            out.push_str(") ");
-            emit_program(&f.body, out);
-            out.push(')');
-        }
-        WcCommand::Time(opt) => {
-            out.push_str("(Time");
-            if let Some(sl) = opt {
-                out.push(' ');
-                emit_sublist(sl, out);
-            }
-            out.push(')');
-        }
-        WcCommand::Cond(c) => {
-            out.push_str("(Cond ");
-            emit_cond(c, out);
-            out.push(')');
-        }
-        WcCommand::Arith(s) => {
-            out.push_str("(Arith ");
-            emit_str(s, out);
-            out.push(')');
-        }
-        WcCommand::Try(t) => {
-            out.push_str("(Try ");
-            emit_program(&t.try_block, out);
-            out.push(' ');
-            emit_program(&t.always, out);
-            out.push(')');
-        }
-        WcCommand::AutoFn => out.push_str("(AutoFn)"),
-    }
-}
-
-fn emit_cond(c: &WcCond, out: &mut String) {
-    match c {
-        WcCond::Not(inner) => {
-            out.push_str("(Not ");
-            emit_cond(inner, out);
-            out.push(')');
-        }
-        WcCond::And(a, b) => {
-            out.push_str("(And ");
-            emit_cond(a, out);
-            out.push(' ');
-            emit_cond(b, out);
-            out.push(')');
-        }
-        WcCond::Or(a, b) => {
-            out.push_str("(Or ");
-            emit_cond(a, out);
-            out.push(' ');
-            emit_cond(b, out);
-            out.push(')');
-        }
-        WcCond::Unary(op, x) => {
-            out.push_str("(Unary ");
-            emit_str(op, out);
-            out.push(' ');
-            emit_str(x, out);
-            out.push(')');
-        }
-        WcCond::Binary(x, op, y) => {
-            out.push_str("(Binary ");
-            emit_str(x, out);
-            out.push(' ');
-            emit_str(op, out);
-            out.push(' ');
-            emit_str(y, out);
-            out.push(')');
-        }
-    }
-}
-
-fn emit_simple(s: &WcSimple, out: &mut String) {
-    out.push_str("(Simple (Assigns");
-    for a in &s.assigns {
-        out.push(' ');
-        out.push('(');
-        out.push_str(if a.append { "Append " } else { "Set " });
-        emit_str(&a.name, out);
-        out.push(' ');
-        match &a.value {
-            WcAssignValue::Scalar(v) => {
-                out.push_str("(Scalar ");
-                emit_str(v, out);
-                out.push(')');
-            }
-            WcAssignValue::Array(vs) => {
-                out.push_str("(Array");
-                for v in vs {
-                    out.push(' ');
-                    emit_str(v, out);
-                }
-                out.push(')');
-            }
-        }
-        out.push(')');
-    }
-    out.push_str(") (Words");
-    for w in &s.words {
-        out.push(' ');
-        emit_str(w, out);
-    }
-    out.push_str(") (Redirs");
-    for r in &s.redirs {
-        out.push(' ');
-        emit_redir(r, out);
-    }
-    out.push_str("))");
-}
-
-fn emit_redir(r: &WcRedir, out: &mut String) {
-    out.push('(');
-    out.push_str(redir_tag(r.rtype));
-    out.push(' ');
-    out.push_str(&r.fd.to_string());
-    out.push(' ');
-    emit_str(&r.name, out);
-    if let Some(v) = &r.varid {
-        out.push(' ');
-        emit_str(v, out);
-    }
-    if let Some(h) = &r.heredoc {
-        out.push_str(" (Heredoc ");
-        emit_str(&h.terminator, out);
-        out.push(' ');
-        out.push_str(if h.quoted { "Quoted" } else { "Unquoted" });
-        out.push(' ');
-        emit_str(&h.content, out);
-        out.push(')');
-    }
-    out.push(')');
-}
-
-fn redir_tag(t: u32) -> &'static str {
-    match t {
-        REDIR_WRITE => "Write",
-        REDIR_WRITENOW => "Writenow",
-        REDIR_APP => "Append",
-        REDIR_APPNOW => "Appendnow",
-        REDIR_READ => "Read",
-        REDIR_READWRITE => "ReadWrite",
-        REDIR_HEREDOC => "Heredoc",
-        REDIR_HEREDOCDASH => "HeredocDash",
-        REDIR_HERESTR => "Herestr",
-        REDIR_MERGEIN => "MergeIn",
-        REDIR_MERGEOUT => "MergeOut",
-        REDIR_ERRWRITE => "ErrWrite",
-        REDIR_ERRWRITENOW => "ErrWritenow",
-        REDIR_ERRAPP => "ErrAppend",
-        REDIR_ERRAPPNOW => "ErrAppendnow",
-        REDIR_INPIPE => "InPipe",
-        REDIR_OUTPIPE => "OutPipe",
-        _ => "Write",
-    }
-}
-
-fn emit_str(s: &str, out: &mut String) {
-    out.push('"');
-    for b in s.bytes() {
-        match b {
-            b'\\' => out.push_str("\\\\"),
-            b'"' => out.push_str("\\\""),
-            b'\n' => out.push_str("\\n"),
-            b'\r' => out.push_str("\\r"),
-            b'\t' => out.push_str("\\t"),
-            0x20..=0x7e => out.push(b as char),
-            _ => {
-                let _ = write!(out, "\\x{:02x}", b);
-            }
-        }
-    }
-    out.push('"');
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extensions::ast_sexp::ast_to_sexp;
     use std::process::Command;
     use tempfile::TempDir;
 
@@ -1740,7 +1098,7 @@ mod tests {
         let prog = decode_zwc_first(&zwc)
             .expect("load")
             .expect("first function");
-        let s = wc_to_sexp(&prog);
-        assert!(s.contains(r#"(Words "echo" "hello")"#), "got: {}", s);
+        let s = ast_to_sexp(&prog);
+        assert!(s.contains(r#""echo""#) && s.contains(r#""hello""#), "got: {}", s);
     }
 }

@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use zsh::ast_sexp::ast_to_sexp;
-use zsh::zwc_decode::{decode_zwc_first, wc_to_sexp};
+use zsh::zwc_decode::decode_zwc_first;
 
 fn corpus_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/parity_corpus")
@@ -116,7 +116,7 @@ fn check_parity(src_path: &Path) -> Result<(), String> {
     let prog = decode_zwc_first(&zwc)
         .map_err(|e| format!("[{}] decode: {}", name, e))?
         .ok_or_else(|| format!("[{}] zwc had no functions", name))?;
-    let zsh_sexp = wc_to_sexp(&prog);
+    let zsh_sexp = ast_to_sexp(&prog);
 
     // zshrs side
     zsh::parse::parse_init(&src);
@@ -192,7 +192,7 @@ fn single_real() {
         ])
         .status();
     let prog = decode_zwc_first(&zwc).unwrap().unwrap();
-    let zsh_sexp = wc_to_sexp(&prog);
+    let zsh_sexp = ast_to_sexp(&prog);
     let zshrs_prog = { zsh::parse::parse_init(&src); zsh::parse::parse() }.expect("zshrs parse");
     let zshrs_sexp = ast_to_sexp(&zshrs_prog);
     eprintln!("=== source ({} bytes) ===\n{}", src.len(), src);
