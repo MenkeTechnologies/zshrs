@@ -56,6 +56,33 @@ use super::zle_main::Zle; use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD
 // See textobjects.rs:32 for the same `zmod.mult` pattern.
 
 // ZC_ char-class predicates — C macros expanded inline.
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::extensions::widget::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_refresh::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+
 #[inline] fn zc_iword(c: char) -> bool { c.is_alphanumeric() || c == '_' }
 #[inline] fn zc_ialnum(c: char) -> bool { c.is_alphanumeric() }
 #[inline] fn zc_ialpha(c: char) -> bool { c.is_alphabetic() }
@@ -67,12 +94,12 @@ use super::zle_main::Zle; use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD
 ///
 /// C signature: `int forwardword(char **args)`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn forwardword(zle: &mut Zle, args: &[String]) -> i32 {              // c:45
+pub fn forwardword(args: &[String]) -> i32 {              // c:45
     let n = if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_MULT != 0 { crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult } else { 1 };                                                  // c:45
     if n < 0 {                                                           // c:49
         let saved = n;
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = -n; crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_MULT;                                              // c:51
-        let ret = backwardword(zle, args);                               // c:52
+        let ret = backwardword(args);                               // c:52
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = saved; crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_MULT;                                           // c:53
         return ret;
     }
@@ -108,14 +135,14 @@ pub fn wordclass(x: char) -> i32 {                                       // c:74
 
 /// Port of `viforwardword(char **args)` from `Src/Zle/zle_word.c:82`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn viforwardword(zle: &mut Zle, args: &[String]) -> i32 {            // c:82
+pub fn viforwardword(args: &[String]) -> i32 {            // c:82
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     if n < 0 {                                                           // c:86
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = vibackwardword(zle, args);                             // c:89
+        let ret = vibackwardword(args);                             // c:89
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -141,14 +168,14 @@ pub fn viforwardword(zle: &mut Zle, args: &[String]) -> i32 {            // c:82
 
 /// Port of `viforwardblankword(char **args)` from `Src/Zle/zle_word.c:112`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn viforwardblankword(zle: &mut Zle, args: &[String]) -> i32 {       // c:112
+pub fn viforwardblankword(args: &[String]) -> i32 {       // c:112
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = vibackwardblankword(zle, args);
+        let ret = vibackwardblankword(args);
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -173,14 +200,14 @@ pub fn viforwardblankword(zle: &mut Zle, args: &[String]) -> i32 {       // c:11
 
 /// Port of `emacsforwardword(char **args)` from `Src/Zle/zle_word.c:140`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn emacsforwardword(zle: &mut Zle, args: &[String]) -> i32 {         // c:140
+pub fn emacsforwardword(args: &[String]) -> i32 {         // c:140
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     if n < 0 {                                                           // c:144
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = emacsbackwardword(zle, args);                          // c:147
+        let ret = emacsbackwardword(args);                          // c:147
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -201,14 +228,14 @@ pub fn emacsforwardword(zle: &mut Zle, args: &[String]) -> i32 {         // c:14
 
 /// Port of `viforwardblankwordend(char **args)` from `Src/Zle/zle_word.c:164`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn viforwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {    // c:164
+pub fn viforwardblankwordend(args: &[String]) -> i32 {    // c:164
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = vibackwardblankwordend(zle, args);
+        let ret = vibackwardblankwordend(args);
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -241,14 +268,14 @@ pub fn viforwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {    // c:16
 
 /// Port of `viforwardwordend(char **args)` from `Src/Zle/zle_word.c:198`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn viforwardwordend(zle: &mut Zle, args: &[String]) -> i32 {         // c:198
+pub fn viforwardwordend(args: &[String]) -> i32 {         // c:198
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = vibackwardwordend(zle, args);
+        let ret = vibackwardwordend(args);
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -286,14 +313,14 @@ pub fn viforwardwordend(zle: &mut Zle, args: &[String]) -> i32 {         // c:19
 
 /// Port of `backwardword(char **args)` from `Src/Zle/zle_word.c:240`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn backwardword(zle: &mut Zle, args: &[String]) -> i32 {             // c:240
+pub fn backwardword(args: &[String]) -> i32 {             // c:240
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     if n < 0 {                                                           // c:244
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = forwardword(zle, args);                                // c:247
+        let ret = forwardword(args);                                // c:247
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -317,14 +344,14 @@ pub fn backwardword(zle: &mut Zle, args: &[String]) -> i32 {             // c:24
 
 /// Port of `vibackwardword(char **args)` from `Src/Zle/zle_word.c:272`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn vibackwardword(zle: &mut Zle, args: &[String]) -> i32 {           // c:272
+pub fn vibackwardword(args: &[String]) -> i32 {           // c:272
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = viforwardword(zle, args);
+        let ret = viforwardword(args);
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -361,14 +388,14 @@ pub fn vibackwardword(zle: &mut Zle, args: &[String]) -> i32 {           // c:27
 
 /// Port of `vibackwardblankword(char **args)` from `Src/Zle/zle_word.c:313`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn vibackwardblankword(zle: &mut Zle, args: &[String]) -> i32 {      // c:313
+pub fn vibackwardblankword(args: &[String]) -> i32 {      // c:313
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = viforwardblankword(zle, args);
+        let ret = viforwardblankword(args);
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -395,14 +422,14 @@ pub fn vibackwardblankword(zle: &mut Zle, args: &[String]) -> i32 {      // c:31
 
 /// Port of `vibackwardwordend(char **args)` from `Src/Zle/zle_word.c:348`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn vibackwardwordend(zle: &mut Zle, args: &[String]) -> i32 {        // c:348
+pub fn vibackwardwordend(args: &[String]) -> i32 {        // c:348
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = viforwardwordend(zle, args);
+        let ret = viforwardwordend(args);
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -428,14 +455,14 @@ pub fn vibackwardwordend(zle: &mut Zle, args: &[String]) -> i32 {        // c:34
 
 /// Port of `vibackwardblankwordend(char **args)` from `Src/Zle/zle_word.c:375`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn vibackwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {   // c:375
+pub fn vibackwardblankwordend(args: &[String]) -> i32 {   // c:375
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = viforwardblankwordend(zle, args);
+        let ret = viforwardblankwordend(args);
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -455,14 +482,14 @@ pub fn vibackwardblankwordend(zle: &mut Zle, args: &[String]) -> i32 {   // c:37
 
 /// Port of `emacsbackwardword(char **args)` from `Src/Zle/zle_word.c:397`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn emacsbackwardword(zle: &mut Zle, args: &[String]) -> i32 {        // c:397
+pub fn emacsbackwardword(args: &[String]) -> i32 {        // c:397
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     if n < 0 {
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = emacsforwardword(zle, args);                           // c:404
+        let ret = emacsforwardword(args);                           // c:404
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -486,7 +513,7 @@ pub fn emacsbackwardword(zle: &mut Zle, args: &[String]) -> i32 {        // c:39
 
 /// Port of `backwarddeleteword(char **args)` from `Src/Zle/zle_word.c:429`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn backwarddeleteword(zle: &mut Zle, args: &[String]) -> i32 {       // c:429
+pub fn backwarddeleteword(args: &[String]) -> i32 {       // c:429
     let mut x = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);                                               // c:429
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
@@ -494,7 +521,7 @@ pub fn backwarddeleteword(zle: &mut Zle, args: &[String]) -> i32 {       // c:42
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = deleteword(zle, args);                                 // c:436
+        let ret = deleteword(args);                                 // c:436
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -514,14 +541,14 @@ pub fn backwarddeleteword(zle: &mut Zle, args: &[String]) -> i32 {       // c:42
         }
     }
     let ct = (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - x) as i32;
-    crate::ported::zle::zle_utils::backdel(zle, ct, /*CUT_RAW*/ 1);      // c:462
+    crate::ported::zle::zle_utils::backdel(ct, /*CUT_RAW*/ 1);      // c:462
     0
 }
 
 /// Port of `vibackwardkillword(UNUSED(char **args))` from `Src/Zle/zle_word.c:462`.
 // this taken from "vibackwardword"                                         // c:462
 /// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
-pub fn vibackwardkillword(zle: &mut Zle, _args: &[String]) -> i32 {      // c:462
+pub fn vibackwardkillword(_args: &[String]) -> i32 {      // c:462
     let mut x = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);                                               // c:462
     // c:464 — `lim = (viinsbegin > findbol()) ? viinsbegin : findbol();`
     // viinsbegin and findbol() not yet wired in zshrs; treat lim as 0
@@ -562,13 +589,13 @@ pub fn vibackwardkillword(zle: &mut Zle, _args: &[String]) -> i32 {      // c:46
     let ct = (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - x) as i32;
     // c:499 — `backkill(zlecs - x, CUT_FRONT|CUT_RAW);`
     // CUT_FRONT = 0x02, CUT_RAW = 0x04 in zle.h.
-    crate::ported::zle::zle_utils::backkill(zle, ct, 0x02 | 0x04);
+    crate::ported::zle::zle_utils::backkill(ct, 0x02 | 0x04);
     0
 }
 
 /// Port of `backwardkillword(char **args)` from `Src/Zle/zle_word.c:499`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn backwardkillword(zle: &mut Zle, args: &[String]) -> i32 {         // c:499
+pub fn backwardkillword(args: &[String]) -> i32 {         // c:499
     let mut x = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);                                               // c:499
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
@@ -576,7 +603,7 @@ pub fn backwardkillword(zle: &mut Zle, args: &[String]) -> i32 {         // c:49
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = killword(zle, args);                                   // c:507
+        let ret = killword(args);                                   // c:507
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -596,13 +623,13 @@ pub fn backwardkillword(zle: &mut Zle, args: &[String]) -> i32 {         // c:49
         }
     }
     let ct = (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - x) as i32;
-    crate::ported::zle::zle_utils::backkill(zle, ct, 0x02 | 0x04);       // c:533
+    crate::ported::zle::zle_utils::backkill(ct, 0x02 | 0x04);       // c:533
     0
 }
 
 /// Port of `upcaseword(UNUSED(char **args))` from `Src/Zle/zle_word.c:533`.
 /// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
-pub fn upcaseword(zle: &mut Zle, _args: &[String]) -> i32 {              // c:533
+pub fn upcaseword(_args: &[String]) -> i32 {              // c:533
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     let neg = n < 0;                                                     // c:536
@@ -626,7 +653,7 @@ pub fn upcaseword(zle: &mut Zle, _args: &[String]) -> i32 {              // c:53
 
 /// Port of `downcaseword(UNUSED(char **args))` from `Src/Zle/zle_word.c:555`.
 /// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
-pub fn downcaseword(zle: &mut Zle, _args: &[String]) -> i32 {            // c:555
+pub fn downcaseword(_args: &[String]) -> i32 {            // c:555
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     let neg = n < 0;
@@ -649,7 +676,7 @@ pub fn downcaseword(zle: &mut Zle, _args: &[String]) -> i32 {            // c:55
 
 /// Port of `capitalizeword(UNUSED(char **args))` from `Src/Zle/zle_word.c:577`.
 /// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
-pub fn capitalizeword(zle: &mut Zle, _args: &[String]) -> i32 {          // c:577
+pub fn capitalizeword(_args: &[String]) -> i32 {          // c:577
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     let neg = n < 0;
@@ -684,7 +711,7 @@ pub fn capitalizeword(zle: &mut Zle, _args: &[String]) -> i32 {          // c:57
 
 /// Port of `deleteword(char **args)` from `Src/Zle/zle_word.c:604`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn deleteword(zle: &mut Zle, args: &[String]) -> i32 {               // c:604
+pub fn deleteword(args: &[String]) -> i32 {               // c:604
     let mut x = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
@@ -692,7 +719,7 @@ pub fn deleteword(zle: &mut Zle, args: &[String]) -> i32 {               // c:60
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = backwarddeleteword(zle, args);                         // c:612
+        let ret = backwarddeleteword(args);                         // c:612
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -708,13 +735,13 @@ pub fn deleteword(zle: &mut Zle, args: &[String]) -> i32 {               // c:60
         }
     }
     let ct = (x - crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) as i32;
-    crate::ported::zle::zle_utils::foredel(zle, ct, /*CUT_RAW*/ 1);      // c:628
+    crate::ported::zle::zle_utils::foredel(ct, /*CUT_RAW*/ 1);      // c:628
     0
 }
 
 /// Port of `killword(char **args)` from `Src/Zle/zle_word.c:628`.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(args)
-pub fn killword(zle: &mut Zle, args: &[String]) -> i32 {                 // c:628
+pub fn killword(args: &[String]) -> i32 {                 // c:628
     let mut x = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
@@ -722,7 +749,7 @@ pub fn killword(zle: &mut Zle, args: &[String]) -> i32 {                 // c:62
         let saved = n;
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = -n; __g_zmod.flags |= MOD_MULT;
-        let ret = backwardkillword(zle, args);                           // c:636
+        let ret = backwardkillword(args);                           // c:636
         let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
         __g_zmod.mult = saved; __g_zmod.flags |= MOD_MULT;
         return ret;
@@ -738,13 +765,13 @@ pub fn killword(zle: &mut Zle, args: &[String]) -> i32 {                 // c:62
         }
     }
     let ct = (x - crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) as i32;
-    crate::ported::zle::zle_utils::forekill(zle, ct, /*CUT_RAW*/ 1);     // c:652
+    crate::ported::zle::zle_utils::forekill(ct, /*CUT_RAW*/ 1);     // c:652
     0
 }
 
 /// Port of `transposewords(UNUSED(char **args))` from `Src/Zle/zle_word.c:652`.
 /// WARNING: param names don't match C — Rust=(zle, _args) vs C=(args)
-pub fn transposewords(zle: &mut Zle, _args: &[String]) -> i32 {          // c:652
+pub fn transposewords(_args: &[String]) -> i32 {          // c:652
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     let neg = n < 0;
@@ -851,7 +878,7 @@ mod tests {
     #[test]
     fn forwardword_basic() {
         let mut z = line("foo bar baz");
-        forwardword(&mut z, &[]);
+        forwardword(&[]);
         // From cs=0 (on 'f'), skip 'foo' iword then ' ' non-iword,
         // landing on 'b' of 'bar' at index 4.
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 4);
@@ -863,7 +890,7 @@ mod tests {
     fn backwardword_lands_at_word_start() {
         let mut z = line("foo bar baz");
         crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
-        backwardword(&mut z, &[]);
+        backwardword(&[]);
         // From cs=11 (past 'z'), skip non-iword (none), then iword
         // 'baz' to land at index 8.
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 8);
@@ -873,7 +900,7 @@ mod tests {
     #[test]
     fn upcaseword_uppercases_next_word() {
         let mut z = line("foo bar");
-        upcaseword(&mut z, &[]);
+        upcaseword(&[]);
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "FOO bar");
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 3); // landed at end of 'FOO'
@@ -883,7 +910,7 @@ mod tests {
     #[test]
     fn downcaseword_lowercases_next_word() {
         let mut z = line("FOO Bar");
-        downcaseword(&mut z, &[]);
+        downcaseword(&[]);
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "foo Bar");
     }
@@ -893,7 +920,7 @@ mod tests {
     #[test]
     fn capitalizeword_first_only() {
         let mut z = line("foo bar");
-        capitalizeword(&mut z, &[]);
+        capitalizeword(&[]);
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "Foo bar");
     }
@@ -906,7 +933,7 @@ mod tests {
     #[test]
     fn deleteword_drops_next_word() {
         let mut z = line("foo bar baz");
-        deleteword(&mut z, &[]);
+        deleteword(&[]);
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, " bar baz");
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -918,7 +945,7 @@ mod tests {
     fn transposewords_swaps_pair() {
         let mut z = line("foo bar");
         crate::ported::zle::zle_main::ZLECS.store(5, std::sync::atomic::Ordering::SeqCst);  // mid-'bar'
-        transposewords(&mut z, &[]);
+        transposewords(&[]);
         let s: String = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "bar foo");
     }

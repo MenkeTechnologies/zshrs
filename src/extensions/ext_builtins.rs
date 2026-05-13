@@ -1521,7 +1521,6 @@ impl ShellExecutor {
     /// Modify completion options
     pub(crate) fn builtin_compopt(&mut self, args: &[String]) -> i32 {
         // Basic stub - just accept the options
-        let _ = args;
         0
     }
 
@@ -7622,7 +7621,6 @@ pub(crate) fn nocorrect(args: &[String], _redirects: &[Redirect]) -> i32 {
     // C zsh `nocorrect` is a precommand modifier handled in
     // `Src/exec.c`; the real port lives in the parser/compiler,
     // not as a builtin call.
-    let _ = args;
     0
 }
 

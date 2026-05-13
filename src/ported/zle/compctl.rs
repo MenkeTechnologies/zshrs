@@ -27,6 +27,8 @@ use std::sync::Mutex;
 // types (Compctlp/Patcomp/Compcond/Compctl + CompcondData) are
 // direct ports of the C structs declared in Src/Zle/compctl.h.
 use crate::ported::zle::compctl_h::{
+
+
     Compctl, Compcond, CompcondData, Patcomp, Compctlp,
     CC_FILES, CC_COMMPATH, CC_REMOVE, CC_OPTIONS, CC_VARS, CC_BINDINGS,
     CC_ARRAYS, CC_INTVARS, CC_SHFUNCS, CC_PARAMS, CC_ENVVARS, CC_JOBS,
@@ -41,6 +43,34 @@ use crate::ported::zle::compctl_h::{
 };
 use crate::ported::zle::comp_h::Cmlist;
 use std::os::unix::fs::PermissionsExt;
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::extensions::widget::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_refresh::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
 
 // =====================================================================
 // COMP_* — `compctl` operation flags from `Src/Zle/compctl.c:53-60`.

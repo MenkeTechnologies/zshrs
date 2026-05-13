@@ -21,8 +21,35 @@ use crate::ported::zle::zle_main::Zle;
 /// Returns 0 on success (target found, kill performed), 1 on
 /// failure (target not in buffer).
 /// WARNING: param names don't match C — Rust=(zle) vs C=(args)
-pub fn deltochar(zle: &mut Zle) -> i32 {                                 // c:38
-    let c = match zle.getfullchar(false) {                               // c:38 getfullchar(0)
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::extensions::widget::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_refresh::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+
+pub fn deltochar() -> i32 {                                 // c:38
+    let c = match getfullchar(false) {                               // c:38 getfullchar(0)
         Some(ch) => ch,
         None => return 1,
     };
@@ -47,7 +74,7 @@ pub fn deltochar(zle: &mut Zle) -> i32 {                                 // c:38
                 }
                 if n == 0 {                                              // c:53
                     let ct = (dest as i32) - (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) as i32);         // c:54 dest - zlecs
-                    crate::ported::zle::zle_utils::forekill(zle, ct, 0); // c:54 CUT_RAW
+                    crate::ported::zle::zle_utils::forekill(ct, 0); // c:54 CUT_RAW
                     ok += 1;                                             // c:55
                 }
             }
@@ -65,7 +92,7 @@ pub fn deltochar(zle: &mut Zle) -> i32 {                                 // c:38
                 if n == 0 {                                              // c:68
                     let zap_adj = if zap { 1 } else { 0 };               // c:70 trailing combining-char adjust
                     let ct = (crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) as i32) - (dest as i32) - zap_adj;
-                    crate::ported::zle::zle_utils::backkill(zle, ct, 0); // c:70 CUT_RAW|CUT_FRONT
+                    crate::ported::zle::zle_utils::backkill(ct, 0); // c:70 CUT_RAW|CUT_FRONT
                     ok += 1;                                             // c:71
                 }
                 if dest > 0 {                                            // c:90
