@@ -3439,16 +3439,34 @@ fn par_redir() -> Option<ZshRedir> {
         }
     };
 
-    // Heredoc body capture: when reading the terminator above, the
-    // lexer pushed a HereDoc to heredocs[]. Record the
-    // index so fill_heredoc_bodies() can wire content back after
-    // process_heredocs() has run.
+    // Heredoc terminator capture. C parse.c:2254-2317 par_redir builds
+    // a `struct heredocs` entry here for REDIR_HEREDOC[DASH]; zshrs
+    // pushes a HereDoc onto heredocs[] for process_heredocs (called
+    // by zshlex on the next NEWLIN) to fill in. Quoted terminators
+    // (`<<'EOF'` / `<<"EOF"` / `<<\EOF`) disable expansion in the
+    // body — Snull `\u{9d}` marks single-quote, Dnull `\u{9e}` marks
+    // double-quote, Bnull `\u{9f}` marks any backslash-escaped char.
     let heredoc_idx = if matches!(rtype, REDIR_HEREDOC | REDIR_HEREDOCDASH) {
-        if !heredocs_is_empty() {
-            Some(heredocs_len() - 1)
-        } else {
-            None
-        }
+        let strip_tabs = rtype == REDIR_HEREDOCDASH;
+        let quoted = name.contains('\u{9d}')
+            || name.contains('\u{9e}')
+            || name.contains('\u{9f}')
+            || name.starts_with('\'')
+            || name.starts_with('"');
+        let term = name
+            .chars()
+            .filter(|c| {
+                *c != '\'' && *c != '"' && *c != '\u{9d}' && *c != '\u{9e}' && *c != '\u{9f}'
+            })
+            .collect::<String>();
+        crate::ported::lex::heredocs_push(crate::ported::lex::HereDoc {
+            terminator: term,
+            strip_tabs,
+            content: String::new(),
+            quoted,
+            processed: false,
+        });
+        Some(heredocs_len() - 1)
     } else {
         None
     };
@@ -4246,8 +4264,12 @@ fn par_funcdef() -> Option<ZshCommand> {
             STRING_LEX => {
                 let _ts_s = tokstr()?;
                 let s = _ts_s.as_str();
-                if s == "{" {
-                    // Funcdef body opener — break, body-parser branch handles it.
+                // c:1702 — `if ((*tokstr == Inbrace || *tokstr == '{') && !tokstr[1])`.
+                // Body opener can be either the literal `{` (early-return
+                // path at lex.c:1141-1144 / lex.rs LX2_INBRACE cmdpos
+                // branch) or the Inbrace marker `\u{8f}` (lex.c:1420
+                // post-switch add(c) where c was rewritten via lextok2).
+                if s == "{" || s == "\u{8f}" {
                     break;
                 }
                 let first = s.chars().next();
@@ -4274,9 +4296,12 @@ fn par_funcdef() -> Option<ZshCommand> {
 
     skip_separators();
 
-    // Body opener: real Inbrace OR a String("{") (the lexer emits
-    // the latter after a String NAME — see comment above).
-    let body_opener_is_string_brace = tok() == STRING_LEX && tokstr_eq("{");
+    // Body opener: real Inbrace OR a String containing the literal `{`
+    // (early-return path) OR a String containing the Inbrace marker
+    // `\u{8f}` (bct++ path post-switch add). C parse.c:1702 handles
+    // both string forms via `*tokstr == Inbrace || *tokstr == '{'`.
+    let body_opener_is_string_brace =
+        tok() == STRING_LEX && (tokstr_eq("{") || tokstr_eq("\u{8f}"));
     if tok() == INBRACE_TOK || body_opener_is_string_brace {
         // Capture body_start BEFORE the lexer advances past the
         // first body token. After the previous zshlex consumed

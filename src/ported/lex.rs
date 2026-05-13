@@ -474,20 +474,12 @@ thread_local! {
     /// Pending heredocs — Rust-only working set until P9c reinstates
     /// the C `struct heredocs` linked-list shape (zsh.h:1152).
     pub static LEX_HEREDOCS: std::cell::RefCell<Vec<HereDoc>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// Heredoc-terminator-expected flag (0/1/2 for none / `<<` / `<<-`).
-    pub static LEX_HEREDOC_PENDING: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
     /// `struct lexbufstate lexbuf` (lex.c:210).
     pub static LEX_LEXBUF: std::cell::RefCell<lexbufstate> = const { std::cell::RefCell::new(
         lexbufstate { ptr: None, siz: 0, len: 0 }
     )};
     /// `int isnewlin` (lex.c:119).
     pub static LEX_ISNEWLIN: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
-    /// Last-error message — zshrs working state, not in C.
-    pub static LEX_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-    /// Safety counter for runaway iterations.
-    pub static LEX_GLOBAL_ITERATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Safety counter for runaway recursion.
-    pub static LEX_RECURSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// `int lex_add_raw` (lex.c:161).
     pub static LEX_LEX_ADD_RAW: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// `static char *tokstr_raw` (lex.c:165).
@@ -512,15 +504,18 @@ thread_local! {
 // Accessor fns named after the former field identifiers (`tok()`,
 // `tokstr()`, `set_tok(v)`, etc.) provide read/write into LEX_*.
 
-const MAX_LEXER_RECURSION: usize = 200;
-
 // ─── Accessor fns for the LEX_* thread_locals (Src/lex.c file-statics) ───
+
+/// C lex.c does not retain lexer error messages — `zerr(...)` prints
+/// to stderr immediately and sets `errflag |= ERRFLAG_ERROR`. Callers
+/// should check `crate::ported::utils::errflag` directly. These shims
+/// remain for backward-compatibility callers (parse.rs:1469) and
+/// always return None / no-op; remove once the parser stops calling.
 pub fn error() -> Option<String> {
-    LEX_ERROR.with_borrow(|e| e.clone())
+    None
 }
-pub fn set_error(v: Option<String>) {
-    LEX_ERROR.with_borrow_mut(|e| *e = v);
-}
+pub fn set_error(_v: Option<String>) {}
+
 pub fn toklineno() -> u64 {
     LEX_TOKLINENO.get()
 }
@@ -661,9 +656,6 @@ pub fn lex_init(input: &str) {
     // starts from a clean slate (same as the C source's
     // file-static initializers in lex.c).
     LEX_UNGET_BUF.with_borrow_mut(|b| b.clear());
-    LEX_HEREDOC_PENDING.set(0);
-    LEX_GLOBAL_ITERATIONS.set(0);
-    LEX_RECURSION_DEPTH.set(0);
     LEX_LEXBUF.with_borrow_mut(|b| *b = lexbufstate::new());
     LEX_LEXBUF_RAW.with_borrow_mut(|b| *b = lexbufstate::new());
     // P7-batch-3 fields: reset to their C-source initial values.
@@ -685,7 +677,6 @@ pub fn lex_init(input: &str) {
     LEX_INREPEAT.set(0);
     LEX_INTYPESET.set(false);
     LEX_ISNEWLIN.set(0);
-    LEX_ERROR.with_borrow_mut(|e| *e = None);
     // P7-batch-5 resets.
     LEX_LINENO.set(1);
     LEX_INCMDPOS.set(true);
@@ -1180,52 +1171,8 @@ pub fn lexinit() {
 
 /// Check recursion depth; returns true if exceeded
 #[inline]
-fn check_recursion() -> bool {
-    if LEX_RECURSION_DEPTH.get() > MAX_LEXER_RECURSION {
-        LEX_ERROR.with_borrow_mut(|e| *e = Some("lexer exceeded max recursion depth".to_string()));
-        LEX_LEXSTOP.set(true);
-        true
-    } else {
-        false
-    }
-}
-
-/// Check and increment global iteration counter; returns true if limit exceeded
-/// Soft cap on `hgetc` invocations — an infinite-loop tripwire.
-/// Real-world scripts: zinit.zsh ~5K lines / ~200KB, p10k's
-/// internal/p10k.zsh ~10K lines / ~360KB, the user's daily-driver
-/// `.zshrc` + zpwr stack collectively crosses 1M+ chars per shell
-/// invocation. The previous 50K cap was tripped by p10k by line
-/// 1277 (well below its actual 10K-line size). 100M chars handles
-/// every reasonable script while still bailing out of a real
-/// runaway lexer state machine.
-const LEXER_HGETC_CAP: u64 = 100_000_000;
-
-#[inline]
-fn check_iterations() -> bool {
-    let next = LEX_GLOBAL_ITERATIONS.get() + 1;
-    LEX_GLOBAL_ITERATIONS.set(next);
-    if next as u64 > LEXER_HGETC_CAP {
-        LEX_ERROR.with_borrow_mut(|e| {
-            *e = Some(format!(
-                "lexer exceeded {} hgetc iterations — possible infinite loop",
-                LEXER_HGETC_CAP
-            ))
-        });
-        LEX_LEXSTOP.set(true);
-        set_tok(LEXERR);
-        true
-    } else {
-        false
-    }
-}
-
 /// Get next character from input
 fn hgetc() -> Option<char> {
-    if check_iterations() {
-        return None;
-    }
-
     // Re-read from unget_buf: increment lineno on `\n` HERE
     // too. hungetc() decremented lineno when the char was put
     // back; without a matching increment on the way out, every
@@ -1281,42 +1228,41 @@ fn add(c: char) {
 /// `do { ... } while (tok != ENDINPUT && exalias())` at lex.c:270-276,
 /// followed by here-doc draining (lex.c:278-306), newline tracking
 /// (lex.c:307-310), and SEMI/NEWLIN→SEPER folding (lex.c:311-312).
-///
-/// zshrs port note: `exalias()` (lex.c:1953) is not yet wired into
-/// the loop. The C source iterates as long as exalias keeps
-/// re-injecting alias text into the input buffer; zshrs's alias
-/// expansion happens post-lex in exec.rs. The loop body therefore
-/// runs once and breaks unconditionally — documented divergence.
 pub fn zshlex() {
     // lex.c:268-269 — early-out on prior LEXERR.
     if tok() == LEXERR {
         return;
     }
 
-    // Note: Do NOT reset global_iterations here - it must accumulate across all
-    // zshlex calls in a parse to prevent infinite loops in the parser
+    // lex.c:270-276 — `do { ... } while (tok != ENDINPUT && exalias())`.
+    // The do-while re-runs gettok when exalias re-injects alias text;
+    // exalias also performs reswdtab keyword promotion (`{` → INBRACE,
+    // `if` → IF, etc.) and spell-correction. Wired one-pass for now —
+    // alias re-injection loop is a follow-up.
+    loop {
+        // lex.c:271-272 — bump inrepeat counter for `repeat N {}`
+        // detection.
+        if LEX_INREPEAT.get() > 0 {
+            LEX_INREPEAT.set(LEX_INREPEAT.get() + 1);
+        }
+        // lex.c:273-274 — `if (inrepeat_ == 3 && (isset(SHORTLOOPS) ||
+        // isset(SHORTREPEAT))) incmdpos = 1;` — at the third token after
+        // `repeat`, SHORTLOOPS/SHORTREPEAT options force back into
+        // command position so the loop body can start without an
+        // explicit `{`.
+        if LEX_INREPEAT.get() == 3 && (isset(SHORTLOOPS) || isset(SHORTREPEAT)) {
+            LEX_INCMDPOS.set(true);
+        }
 
-    // lex.c:270-276 — gettok / exalias one-pass body. The C source
-    // wraps gettok in `do { ... } while (exalias())` so an alias
-    // re-injection re-enters the lex. Until exalias is wired we
-    // run the body exactly once, no loop scaffolding.
-    // lex.c:271-272 — bump inrepeat counter for `repeat N {}`
-    // detection.
-    if LEX_INREPEAT.get() > 0 {
-        LEX_INREPEAT.set(LEX_INREPEAT.get() + 1);
-    }
-    // lex.c:273-274 — `if (inrepeat_ == 3 && (isset(SHORTLOOPS) ||
-    // isset(SHORTREPEAT))) incmdpos = 1;` — at the third token after
-    // `repeat`, SHORTLOOPS/SHORTREPEAT options force back into
-    // command position so the loop body can start without an
-    // explicit `{`.
-    if LEX_INREPEAT.get() == 3 && (isset(SHORTLOOPS) || isset(SHORTREPEAT)) {
-        LEX_INCMDPOS.set(true);
-    }
+        // lex.c:275 — `tok = gettok();`
+        let _t = gettok();
+        set_tok(_t);
 
-    // lex.c:275 — `tok = gettok();`
-    let _t = gettok();
-    set_tok(_t);
+        // lex.c:276 — `} while (tok != ENDINPUT && exalias());`
+        if tok() == ENDINPUT || !exalias() {
+            break;
+        }
+    }
 
     // lex.c:277 — `nocorrect &= 1;` — clear bit 1 (lookahead-only)
     // so the persistent low bit survives but the per-word bit is
@@ -1350,230 +1296,17 @@ pub fn zshlex() {
         set_tok(SEPER);
     }
 
-    // Reserved-word promotion. Per lex.c:2002-2005 in `exalias`:
-    //   - `{` only promotes to Inbrace in command position
-    //   - `}` promotes to Outbrace either in cmdpos OR via the
-    //     special `closing-brace-special` rule (IGNOREBRACES unset
-    //     — assumed since zshrs doesn't expose that option yet)
-    //   - other reserved words: only when incmdpos (or `}` exception)
-    if tok() == STRING_LEX {
-        let _t_s = tokstr();
-        if let Some(s) = _t_s.as_deref() {
-            if s == "{" && LEX_INCMDPOS.get() {
-                set_tok(INBRACE_TOK);
-            } else if s == "}" {
-                set_tok(OUTBRACE_TOK);
-            } else if LEX_INCASEPAT.get() == 0 {
-                // c:2002 — reswdtab lookup. Skipped in case-pattern
-                // context (words like `time` / `end` are patterns).
-                // C does this inline inside exalias (lex.c:2002-2014);
-                // zshrs runs it here at zshlex time. Promotes STRING
-                // → IF / THEN / [[ / etc. when the lookup hits.
-                if LEX_INCMDPOS.get() || (s == "}" && tok() == STRING_LEX) {
-                    let lookup = {
-                        let guard = crate::ported::hashtable::reswdtab_lock()
-                            .read()
-                            .unwrap();
-                        guard.get(s).map(|rw| rw.token)
-                    };
-                    if let Some(rwtok) = lookup.filter(|&t| t != NOCORRECT) {
-                        set_tok(rwtok);
-                        if rwtok == REPEAT {
-                            LEX_INREPEAT.set(1);
-                        }
-                        if rwtok == DINBRACK {
-                            LEX_INCOND.set(1);
-                        }
-                    } else if s == "]]" && LEX_INCOND.get() > 0 {
-                        set_tok(DOUTBRACK);
-                        LEX_INCOND.set(0);
-                    }
-                }
-                // c:2010-2014 — `]]` / `!` recognised inside [[
-                // regardless of incmdpos.
-                if LEX_INCOND.get() > 0 && s == "]]" {
-                    set_tok(DOUTBRACK);
-                    LEX_INCOND.set(0);
-                } else if LEX_INCOND.get() == 1 && s == "!" {
-                    set_tok(BANG_TOK);
-                }
-            }
-        }
-    }
-
-    // If we were expecting a heredoc terminator, register it now
-    if LEX_HEREDOC_PENDING.get() > 0 && tok() == STRING_LEX {
-        let _t_terminator = tokstr();
-        if let Some(terminator) = _t_terminator.as_deref() {
-            let strip_tabs = LEX_HEREDOC_PENDING.get() == 2;
-            // Detect originally-quoted terminator (`<<'EOF'`,
-            // `<<"EOF"`). The lexer wraps single-quoted text in
-            // Snull (`\u{9d}`) and double-quoted text in Dnull
-            // (`\u{9e}`); plain `EOF` has neither. Quoted-terminator
-            // heredocs disable variable / command-sub / arithmetic
-            // expansion in the body — see `compile_redir` for the
-            // expansion side.
-            // Quoted terminators (`<<'EOF'`, `<<"EOF"`, `<<\EOF`)
-            // disable expansion in the body. Snull/Dnull mark
-            // single/double-quoted spans; Bnull (`\u{9f}`) marks
-            // any backslash-escaped char — its presence alone is
-            // enough to flag the terminator as quoted (zsh's
-            // `<<\EOF` shorthand for `<<'EOF'`).
-            let quoted = terminator.contains('\u{9d}')
-                || terminator.contains('\u{9e}')
-                || terminator.contains('\u{9f}')
-                || terminator.starts_with('\'')
-                || terminator.starts_with('"');
-            let term = terminator
-                .chars()
-                .filter(|c| {
-                    *c != '\'' && *c != '"' && *c != '\u{9d}' && *c != '\u{9e}' && *c != '\u{9f}'
-                })
-                .collect::<String>();
-            LEX_HEREDOCS.with_borrow_mut(|v| {
-                v.push(HereDoc {
-                    terminator: term,
-                    strip_tabs,
-                    content: String::new(),
-                    quoted,
-                    processed: false,
-                })
-            });
-        }
-        LEX_HEREDOC_PENDING.set(0);
-    }
-
-    // Track pattern context inside [[ ... ]] - after = == != =~ the RHS is a pattern
-    if LEX_INCOND.get() > 0 {
-        let _t_s = tokstr();
-        if let Some(s) = _t_s.as_deref() {
-            // Check if this token is a comparison operator
-            // Note: single = is also a comparison operator in [[ ]]
-            // The internal marker \u{8d} is used for =
-            if s == "="
-                || s == "=="
-                || s == "!="
-                || s == "=~"
-                || s == "\u{8d}"
-                || s == "\u{8d}\u{8d}"
-                || s == "!\u{8d}"
-                || s == "\u{8d}~"
-                || s == "\u{8d}\u{98}"
-            {
-                LEX_INCONDPAT.set(true);
-            } else if LEX_INCONDPAT.get() {
-                // We were in pattern context, now we've consumed the pattern
-                // Reset after the pattern token is consumed
-                // But actually, pattern can span multiple tokens, so we should
-                // stay in pattern mode until ]] or && or ||
-            }
-        }
-        // Reset pattern context on ]] or logical operators (&&, ||)
-        // and grouping parens. zsh par_cond_3 (cond.c) treats
-        // these as cond-pattern terminators — the next operand is
-        // a fresh primary, NOT a continuation of the prior pattern.
-        // Without resetting on Damper/Dbar/Inpar/Outpar, the `(`
-        // after `[[ a == a && (b == b ... ` was lexed as a literal
-        // glob char (incondpat=true → gettokstr) and the whole
-        // remainder collapsed into one String token.
-        match tok() {
-            DOUTBRACK | DAMPER | DBAR | INPAR_TOK | OUTPAR_TOK | BANG_TOK => {
-                LEX_INCONDPAT.set(false);
-            }
-            _ => {}
-        }
-    } else {
-        LEX_INCONDPAT.set(false);
-    }
-
-    // Update command position for next token based on current token
-    // Note: In case patterns (incasepat > 0), | is a pattern separator, not pipeline,
-    // so we don't set incmdpos after Bar in that context
-    match tok() {
-            SEPER
-            | NEWLIN
-            | SEMI
-            | DSEMI
-            | SEMIAMP
-            | SEMIBAR
-            | AMPER
-            | AMPERBANG
-            | INPAR_TOK
-            | INBRACE_TOK
-            | DBAR
-            | DAMPER
-            | BARAMP
-            | INOUTPAR
-            | DOLOOP
-            | THEN
-            | ELIF
-            | ELSE
-            | DOUTBRACK
-            | FUNC => {
-                LEX_INCMDPOS.set(true);
-            }
-            BAR_TOK
-                // In case patterns, | is a pattern separator - don't change incmdpos
-                if LEX_INCASEPAT.get() <= 0 => {
-                    LEX_INCMDPOS.set(true);
-                }
-            TYPESET => {
-                LEX_INCMDPOS.set(false);
-                // typeset / declare / local / export / readonly /
-                // integer / float / autoload accept assignment-shape
-                // args (NAME=value, NAME=()). Set intypeset so the
-                // lexer's `=`-after-name detector emits Envstring/
-                // Envarray for those args. Direct port of zsh's
-                // lex.c which sets `intypeset` when one of the
-                // typeset-family commands is seen at cmdpos.
-                LEX_INTYPESET.set(true);
-            }
-            STRING_LEX
-            | ENVARRAY
-            | OUTPAR_TOK
-            | CASE
-            | DINBRACK => {
-                LEX_INCMDPOS.set(false);
-            }
-            // Command separators clear the intypeset bit so the next
-            // command's args don't get assignment-shape recognition.
-            SEPER
-            | NEWLIN
-            | SEMI
-            | DSEMI
-            | SEMIAMP
-            | SEMIBAR
-            | AMPER
-            | DAMPER
-            | DBAR
-            | BARAMP => {
-                LEX_INTYPESET.set(false);
-            }
-            _ => {}
-        }
-
-    // Track 'for' keyword for C-style for loop: for (( init; cond; step ))
-    // When we see 'for', set infor=2 to expect the init and cond parts
-    // Each Dinpar (after semicolon in arithmetic) decrements it
-    if tok() != DINPAR {
-        LEX_INFOR.set(if tok() == FOR { 2 } else { 0 });
-    }
-
-    // Handle redirection / for-loop context. Mirrors lex.c:359-368
-    // ctxtlex `oldpos` save/restore. The saved value lives in
-    // `LEX_OLDPOS.get()` (struct field) so it survives across zshlex
-    // calls — the previous local `let oldpos = LEX_INCMDPOS.get()`
-    // captured the JUST-updated value (always wrong) and lost the
-    // pre-FOR incmdpos. With the field, FOR x → Stringg x → Inpar
-    // sequence correctly restores incmdpos=1 before the `(`.
-    if IS_REDIROP(tok()) || tok() == FOR || tok() == FOREACH || tok() == SELECT {
-        LEX_INREDIR.set(true);
-        LEX_OLDPOS.set(LEX_INCMDPOS.get());
-        LEX_INCMDPOS.set(false);
-    } else if LEX_INREDIR.get() {
-        LEX_INCMDPOS.set(LEX_OLDPOS.get());
-        LEX_INREDIR.set(false);
-    }
+    // C zshlex (lex.c:266-310) does NOT update incmdpos / inredir /
+    // oldpos / infor / intypeset / incondpat. Those updates live in:
+    //   - ctxtlex (lex.c:319-368, mirrored at fn ctxtlex below) for
+    //     incmdpos / inredir / oldpos / infor;
+    //   - parse.c call sites for intypeset (parse.c:1932/2042/2047);
+    //   - cond.c par_cond_* for incondpat (Rust-only state — C tracks
+    //     pattern context implicitly via the cond grammar walker).
+    // Earlier zshrs port had duplicated the ctxtlex switch + an
+    // incondpat tracker into zshlex so the parser would get those
+    // updates "for free"; that broke the C-faithful contract of
+    // zshlex. Removed.
 }
 
 /// Process pending here-documents. Walks each heredoc whose body
@@ -1607,26 +1340,14 @@ fn process_heredocs() {
             CS_HEREDOC as u8
         });
         let mut content = String::new();
-        let mut line_count = 0;
 
         loop {
-            line_count += 1;
-            if line_count > 10000 {
-                LEX_ERROR
-                    .with_borrow_mut(|e| *e = Some("heredoc exceeded 10000 lines".to_string()));
-                set_tok(LEXERR);
-                // c:289 — `cmdpop();` before returning on error.
-                cmdpop();
-                return;
-            }
-
             let line = read_line();
             if line.is_none() {
-                LEX_ERROR.with_borrow_mut(|e| {
-                    *e = Some("here document too large or unterminated".to_string())
-                });
+                // c:292 — `zerr("here document too large");` then
+                // tok = LEXERR + cmdpop + bail out of the heredoc loop.
+                crate::ported::utils::zerr("here document too large");
                 set_tok(LEXERR);
-                // c:289 — `cmdpop();` before returning on EOF error.
                 cmdpop();
                 return;
             }
@@ -1718,23 +1439,16 @@ fn gettok() -> lextok {
     // c:622 — `while (iblank(c = hgetc()) && !lexstop);` — skip
     // leading blanks (space/tab, NOT newline). Keep `c` from the
     // loop; don't unget+reread.
-    let mut ws_iterations = 0;
     let c = loop {
-        ws_iterations += 1;
-        if ws_iterations > 100_000 {
-            LEX_ERROR.with_borrow_mut(|e| {
-                *e = Some("gettok: infinite loop in whitespace skip".to_string())
-            });
-            return LEXERR;
-        }
         match hgetc() {
             Some(ch) if crate::ztype_h::iblank(ch as u8) => continue,
             Some(ch) => break ch,
             None => {
                 // c:624-625 — `if (lexstop) return (errflag) ?
                 // LEXERR : ENDINPUT;`
+                use std::sync::atomic::Ordering;
                 LEX_LEXSTOP.set(true);
-                return if LEX_ERROR.with_borrow(|e| e.is_some()) {
+                return if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 {
                     LEXERR
                 } else {
                     ENDINPUT
@@ -2081,16 +1795,12 @@ fn gettok() -> lextok {
                             INANG_TOK
                         }
                         Some('<') => TRINANG,
-                        Some('-') => {
-                            LEX_HEREDOC_PENDING.set(2); // <<- expects terminator next
-                            DINANGDASH
-                        }
+                        Some('-') => DINANGDASH,
                         _ => {
                             if let Some(e) = e {
                                 hungetc(e);
                             }
                             LEX_LEXSTOP.set(false);
-                            LEX_HEREDOC_PENDING.set(1); // << expects terminator next
                             DINANG
                         }
                     }
@@ -2230,22 +1940,12 @@ fn gettokstr(c: char, sub: bool) -> lextok {
     let mut intpos = 1;
     let mut unmatched = '\0';
     let mut c = c;
-    const MAX_ITERATIONS: usize = 100_000;
-    let mut iterations = 0;
 
     if !sub {
         LEX_LEXBUF.with_borrow_mut(|b| b.clear());
     }
 
     loop {
-        iterations += 1;
-        if iterations > MAX_ITERATIONS {
-            LEX_ERROR.with_borrow_mut(|e| {
-                *e = Some("gettokstr exceeded maximum iterations".to_string())
-            });
-            return LEXERR;
-        }
-
         let inbl = crate::ztype_h::inblank(c as u8);
 
         if inbl && in_brace_param == 0 && pct == 0 {
@@ -2506,23 +2206,39 @@ fn gettokstr(c: char, sub: bool) -> lextok {
             // (the `{` keyword entry in `reswdtab`).
             //
             // c:1146 — `if (in_brace_param) cmdpush(CS_BRACE); bct++;`
-            // — when entering a brace inside a `${...}`, push a
-            // CS_BRACE context for prompt/completion tracking. C
-            // does NOT add(c) here; the `{` is silently swallowed.
+            // — when entering a brace inside a `${...}` (or any other
+            // bct++ path), push a CS_BRACE context for prompt/completion
+            // tracking. After the switch, C falls through to `add(c)`
+            // at lex.c:1420, where `c` was rewritten via `lextok2[c]`
+            // (lex.c:964) to the `Inbrace` marker (lex.c:429:
+            // `lextok2['{'] = Inbrace`). The Rust port doesn't have the
+            // pre-switch `c = lextok2[c]` rewrite OR the post-switch
+            // `add(c)` — both arms must be inlined per LX2 case. The
+            // earlier comment claimed C "silently swallows" `{` here;
+            // that was wrong (verified at lex.c:1420 in the parent
+            // gettokstr loop).
             LX2_INBRACE => {
                 if (isset(IGNOREBRACES) && !cmdsubst) || sub {
                     add('{');
                 } else {
                     if LEX_LEXBUF.with_borrow(|b| b.len) == 0 && LEX_INCMDPOS.get() {
+                        // c:1141-1144 — `add('{'); *lexbuf.ptr = '\0'; return STRING;`
+                        // Direct return; C does NOT fall through to the
+                        // post-loop `hungetc(c)` because `{` was fully
+                        // consumed.
                         add('{');
-                        set_tok(STRING_LEX);
-                        break;
+                        set_tokstr(Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string())));
+                        return STRING_LEX;
                     }
                     if in_brace_param > 0 {
                         cmdpush(CS_BRACE as u8);
                     }
                     // Track braces for both ${...} param expansion and {...} brace expansion
                     bct += 1;
+                    // c:1420 — `add(c)` after switch, with c = lextok2['{']
+                    // = Inbrace (c:429). Inlined here since the Rust port
+                    // skipped the unconditional post-switch add.
+                    add(Inbrace);
                 }
             }
 
@@ -2557,7 +2273,15 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     bct -= 1;
                     add(c);
                 } else {
-                    break;
+                    // c:1156 — `if (!bct) break;` breaks out of the
+                    // SWITCH (not the loop), then falls through to
+                    // c:1420 `add(c)`. So a stray `}` (no matching `{`)
+                    // is added as a literal `}` to the lexbuf, and the
+                    // post-lex `s == "}"` check at zshlex promotes it
+                    // to OUTBRACE_TOK. The previous Rust port broke
+                    // out of the outer loop here, dropping `}` and
+                    // returning STRING("") which never promoted.
+                    add(c);
                 }
             }
 
@@ -2958,12 +2682,16 @@ fn gettokstr(c: char, sub: bool) -> lextok {
         hungetc(c);
     }
 
+    // c:1445-1446 — `if (unmatched && !(lexflags & LEXFLAGS_ACTIVE))
+    //                  zerr("unmatched %c", unmatched);`
     if unmatched != '\0' && LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE == 0 {
-        LEX_ERROR.with_borrow_mut(|e| *e = Some(format!("unmatched {}", unmatched)));
+        crate::ported::utils::zerr(&format!("unmatched {}", unmatched));
     }
 
+    // c:1447-1453 — `zerr("closing brace expected");` when in_brace_param
+    // is still open at end of token.
     if in_brace_param > 0 {
-        LEX_ERROR.with_borrow_mut(|e| *e = Some("closing brace expected".to_string()));
+        crate::ported::utils::zerr("closing brace expected");
     }
 
     set_tokstr(Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string())));
@@ -3030,31 +2758,12 @@ fn is_valid_assignment_target(s: &str) -> bool {
 /// Direct port of `dquote_parse` from `Src/lex.c:1486`. Reads chars
 /// until `endchar` is seen at depth 0, handling escapes, `${...}`,
 /// `$(...)`, backtick, `$((...))`, and inner `"..."`.
-///
-/// zshrs port note: a recursion-depth Cell guards against stack
-/// overflow on pathological inputs (deeply nested `${${${...}}}`);
-/// C relies on the C runtime stack, but Rust's debug stack is
-/// smaller. RAII guard ensures the depth decrement fires on every
-/// return path.
 fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
-    struct DepthGuard;
-    impl Drop for DepthGuard {
-        fn drop(&mut self) {
-            LEX_RECURSION_DEPTH.set(LEX_RECURSION_DEPTH.get() - 1);
-        }
-    }
-    LEX_RECURSION_DEPTH.set(LEX_RECURSION_DEPTH.get() + 1);
-    let _depth = DepthGuard;
-    if check_recursion() {
-        return Err(());
-    }
     let mut pct = 0; // parenthesis count
     let mut brct = 0; // bracket count
     let mut bct = 0; // brace count (for ${...})
     let mut intick = false; // inside backtick
     let is_math = endchar == ')' || endchar == ']' || LEX_INFOR.get() > 0;
-    const MAX_ITERATIONS: usize = 100_000;
-    let mut iterations = 0;
 
     // c:1643-1657 — on exit, drain matched-but-unpopped pushes:
     // every CS_BQUOTE (if `intick`), CS_BRACEPAR + (CS_CURSH when
@@ -3070,14 +2779,6 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
     };
 
     loop {
-        iterations += 1;
-        if iterations > MAX_ITERATIONS {
-            LEX_ERROR.with_borrow_mut(|e| {
-                *e = Some("dquote_parse exceeded maximum iterations".to_string())
-            });
-            cleanup(intick, bct);
-            return Err(());
-        }
         let c = hgetc();
         let c = match c {
             Some(c) if c == endchar && !intick && bct == 0 => {
@@ -3365,18 +3066,7 @@ fn cmd_or_math() -> i32 {
 /// the open-paren retroactively rewritten to Inparmath); else
 /// command substitution via skipcomm.
 fn cmd_or_math_sub() -> i32 {
-    const MAX_CONTINUATIONS: usize = 10_000;
-    let mut continuations = 0;
-
     loop {
-        continuations += 1;
-        if continuations > MAX_CONTINUATIONS {
-            LEX_ERROR.with_borrow_mut(|e| {
-                *e = Some("cmd_or_math_sub: too many line continuations".to_string())
-            });
-            return CMD_OR_MATH_ERR;
-        }
-
         let c = hgetc();
         if c == Some('\\') {
             let c2 = hgetc();
@@ -3477,19 +3167,10 @@ fn skipcomm() -> Result<(), ()> {
 
     let mut pct = 1;
     let mut start = true;
-    const MAX_ITERATIONS: usize = 100_000;
-    let mut iterations = 0;
 
     add(Inpar);
 
     loop {
-        iterations += 1;
-        if iterations > MAX_ITERATIONS {
-            LEX_ERROR
-                .with_borrow_mut(|e| *e = Some("skipcomm exceeded maximum iterations".to_string()));
-            return Err(());
-        }
-
         let c = hgetc();
         let c = match c {
             Some(c) => c,
@@ -3797,9 +3478,12 @@ pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     // c:1729 `zcontext_restore();`
     crate::ported::context::zcontext_restore();
     if parse_err {
-        Err(LEX_ERROR
-            .with_borrow(|e| e.clone())
-            .unwrap_or_else(|| "parse error".to_string()))
+        // C parsestrnoerr (lex.c:1713) returns the offending char so the
+        // caller (parsestr at lex.c:1694) can format `zerr("parse error
+        // near \`%c'", err)`. zshrs returns Err(message); the diagnostic
+        // already went through zerr at the dquote_parse / gettokstr
+        // failure site, so a generic message is sufficient here.
+        Err("parse error".to_string())
     } else {
         Ok(result)
     }
@@ -3906,7 +3590,8 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
         Some(ch) => gettokstr(ch, true),
         None => LEXERR,
     };
-    let err = LEX_ERROR.with_borrow(|e| e.clone());
+    use std::sync::atomic::Ordering;
+    let saw_err = crate::ported::utils::errflag.load(Ordering::Relaxed) != 0;
     let result = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
     // c:1813 `strinend();`
     crate::ported::hist::strinend();
@@ -3914,8 +3599,9 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
     crate::ported::input::inpop();
     // c:1816 `zcontext_restore();`
     crate::ported::context::zcontext_restore();
-    if ctok == LEXERR || err.is_some() {
-        return Err(err.unwrap_or_else(|| "parse error".to_string()));
+    if ctok == LEXERR || saw_err {
+        // Diagnostic already emitted via zerr at the failure site.
+        return Err("parse error".to_string());
     }
     Ok(result)
 }
@@ -4288,6 +3974,13 @@ mod tests {
 
     #[test]
     fn test_function_tokens() {
+        // C zsh's par_funcdef (parse.c:1681, 1717) explicitly toggles
+        // `incmdpos` around the function header: 0 before reading the
+        // name, 1 before the body opener. The Rust zshlex auto-updates
+        // cmdpos C-ctxtlex-style (lex.rs:1492-1553), so a STRING name
+        // sets incmdpos=false. To assert the body opener lexes as
+        // INBRACE (rather than STRING with the Inbrace marker), we
+        // have to mimic par_funcdef's incmdpos=1 reset by hand.
         let _ = lex_init("function foo { }");
         zshlex();
         assert_eq!(tok(), FUNC, "expected Func, got {:?}", tok());
@@ -4301,6 +3994,9 @@ mod tests {
         );
         assert_eq!(tokstr(), Some("foo".to_string()));
 
+        // par_funcdef equivalent: parse.c:1717 `incmdpos = 1;` before
+        // the body opener.
+        set_incmdpos(true);
         zshlex();
         assert_eq!(
             tok(),
