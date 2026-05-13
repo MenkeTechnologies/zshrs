@@ -1120,3 +1120,13 @@ lookup_optletter
 setoption_by_letter
 install_emulation_defaults
 dash_string
+
+# Lazy-init accessors for ZLE-session statics whose initializer is not
+# const (arrays of Vec, History::new(2000), HighlightManager::new()).
+# zsh C uses static initializers in `Src/Zle/zle_main.c` / `zle_misc.c`
+# directly; Rust needs a OnceLock<Mutex<T>> wrapper with one accessor
+# call site per static (singleton accessors only).
+vibuf
+history
+vimarks
+highlight
