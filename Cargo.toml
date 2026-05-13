@@ -10,13 +10,6 @@ documentation = "https://menketechnologies.github.io/strykelang/zshrs.html"
 readme = "README.md"
 keywords = ["shell", "zsh", "bytecode", "terminal", "unix"]
 categories = ["command-line-utilities"]
-
-[workspace.package]
-version = "0.11.3"
-edition = "2021"
-license = "MIT"
-authors = ["MenkeTechnologies"]
-
 exclude = [
     "/tests/",
     "/test_data/",
@@ -30,6 +23,14 @@ exclude = [
     "/zshrs_dump.*",
     "/examples/"
 ]
+
+
+[workspace.package]
+version = "0.11.4"
+edition = "2021"
+license = "MIT"
+authors = ["MenkeTechnologies"]
+
 
 [lib]
 name = "zsh"

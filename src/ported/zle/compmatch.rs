@@ -1211,27 +1211,55 @@ pub fn bld_line(
     wlen: i32,
     _sfx: i32,
 ) -> i32 {
-    use crate::ported::zle::comp_h::CPAT_CHAR;
-    let _ = mword;
-    let _ = word;
+    use crate::ported::zle::comp_h::{CPAT_ANY, CPAT_CCLASS, CPAT_CHAR,
+        CPAT_EQUIV, CPAT_NCLASS};
 
-    // c:1772 — walk mp->line, emitting literal chars when CPAT_CHAR.
+    // c:1772 — walk mp->line, emitting a char per pattern entry based
+    // on its tp:
+    //   - CPAT_CHAR : the literal char from the pattern
+    //   - CPAT_ANY  : the corresponding char from `word`
+    //   - CPAT_CCLASS/NCLASS/EQUIV : the corresponding word char if
+    //     pattern_match1 accepts it (validate-then-emit). For EQUIV,
+    //     fall back to the word char as the "equivalent" since the
+    //     line-side cross-class lookup is substrate-blocked (see
+    //     pattern_match_equivalence's PP_LOWER/PP_UPPER lmtp gap).
+    let _ = mword;
+    let word_chars: Vec<char> = word.chars().collect();
     let mut consumed: i32 = 0;
-    let mut lpat = Some(&*mp.line.as_deref().unwrap());
+    let mut lpat = mp.line.as_deref();
     while let Some(p) = lpat {
-        if p.tp == CPAT_CHAR {
-            if let Some(ch) = char::from_u32(p.chr) {
-                line.push(ch);                                               // c:1798
-                consumed += 1;
-                if consumed >= wlen { break; }
+        if consumed >= wlen { break; }
+        let widx = consumed as usize;
+        match p.tp {
+            x if x == CPAT_CHAR => {                                         // c:1798
+                if let Some(ch) = char::from_u32(p.chr) {
+                    line.push(ch);
+                    consumed += 1;
+                }
             }
-        } else {
-            // Non-literal pattern entry — the full CPAT_EQUIV/CCLASS
-            // resolution path needs the bmatchers + pattern_match_restrict
-            // chain orchestration which is the 200-line body above.
-            // Without it we cannot synthesize a line char for this
-            // position; bail.
-            break;
+            x if x == CPAT_ANY => {                                          // c:1810
+                if let Some(&wch) = word_chars.get(widx) {
+                    line.push(wch);
+                    consumed += 1;
+                }
+            }
+            x if x == CPAT_CCLASS || x == CPAT_NCLASS || x == CPAT_EQUIV => { // c:1820
+                if let Some(&wch) = word_chars.get(widx) {
+                    // c:1830 — pattern_match1(p, wc, &mt) validates.
+                    let mut mt = 0i32;
+                    if pattern_match1(p, wch as u32, &mut mt) != 0 {
+                        line.push(wch);
+                        consumed += 1;
+                    } else {
+                        // Validation failed — bail so caller knows the
+                        // synthesis is incomplete.
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            _ => break,
         }
         lpat = p.next.as_deref();
     }
