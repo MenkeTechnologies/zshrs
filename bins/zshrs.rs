@@ -717,12 +717,34 @@ pub fn zshrs_main() {
         }
     }
 
-    // Filter out flags that don't affect -c / script dispatch
+    // Filter out flags that don't affect -c / script dispatch and reject
+    // unknown long options so typos (e.g. `--poop`, `--dump-wordgcode`)
+    // fail loudly instead of falling through to interactive shell startup.
+    //
+    // The filter must enumerate every long flag the binary recognizes —
+    // either to consume it here, or to pass it through for downstream
+    // detection. Long flags handled by earlier `return`-on-match blocks
+    // (--help/--version/--doctor/--daemon/--dump-*) never reach this loop.
+    // After `--`, all remaining tokens are positional.
     let args: Vec<String> = {
         let mut out: Vec<String> = Vec::new();
         let mut i = 0;
+        let mut saw_dashdash = false;
         while i < args.len() {
             let a = &args[i];
+            if saw_dashdash {
+                out.push(a.clone());
+                i += 1;
+                continue;
+            }
+            if a == "--" {
+                saw_dashdash = true;
+                out.push(a.clone());
+                i += 1;
+                continue;
+            }
+            // Long flags consumed here: don't propagate to downstream
+            // -c / script dispatch (their effect is captured earlier).
             if a == "--zsh-compat"
                 || a == "--zsh"
                 || a == "--bash"
@@ -741,6 +763,20 @@ pub fn zshrs_main() {
                 // both — already captured above.
                 i += 2;
                 continue;
+            }
+            // Long flags passed through for later detection: --login is
+            // checked downstream at the is_login site; --xtrace / --verbose
+            // are checked at the argv-scan sites.
+            if a == "--login" || a == "--xtrace" || a == "--verbose" {
+                out.push(a.clone());
+                i += 1;
+                continue;
+            }
+            // Any remaining `--*` is unknown. C zsh emits
+            // `zsh: no such option: <name>` (no leading dashes); match that.
+            if a.starts_with("--") {
+                eprintln!("zshrs: no such option: {}", &a[2..]);
+                std::process::exit(1);
             }
             out.push(a.clone());
             i += 1;
