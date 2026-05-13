@@ -890,6 +890,39 @@ mod tests {
         assert!(MATCHPARTS.get().unwrap().lock().unwrap().is_none());
         assert!(MATCHSUBS.get().unwrap().lock().unwrap().is_none());
     }
+
+    /// c:1736-1991 — bld_line with a CPAT_CHAR pattern emits the
+    /// pattern's literal char. wlen=1.
+    #[test]
+    fn bld_line_cpat_char_emits_literal() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let m = Cmatcher {
+            line: Some(Box::new(cpat_char('x' as u32))),
+            ..Default::default()
+        };
+        let mut line: Vec<char> = Vec::new();
+        let n = bld_line(&m, &mut line, "", "abc", 1, 0);
+        assert_eq!(n, 1);
+        assert_eq!(line, vec!['x']);
+    }
+
+    /// c:1810 — bld_line with a CPAT_ANY pattern emits the
+    /// corresponding char from `word`.
+    #[test]
+    fn bld_line_cpat_any_emits_word_char() {
+        use crate::ported::zle::comp_h::CPAT_ANY;
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let m = Cmatcher {
+            line: Some(Box::new(Cpattern {
+                tp: CPAT_ANY, ..Default::default()
+            })),
+            ..Default::default()
+        };
+        let mut line: Vec<char> = Vec::new();
+        let n = bld_line(&m, &mut line, "", "abc", 1, 0);
+        assert_eq!(n, 1);
+        assert_eq!(line, vec!['a'], "CPAT_ANY copies the word char");
+    }
 }
 
 /// Direct port of `mod_export void add_bmatchers(Cmatcher m)` from
