@@ -388,12 +388,15 @@ pub fn setup_(m: *const module) -> i32 {                                    // c
     match metadata("/dev/urandom") {                                         // c:251
         Ok(md) => {
             if !md.file_type().is_char_device() {                            // c:256
-                tracing::warn!(target: "random", "Error getting kernel random pool: not a char device");
+                // c:257 — `zwarn("Error getting kernel random pool: %m");`
+                crate::ported::utils::zwarn(
+                    "Error getting kernel random pool: not a char device");
                 return 1;
             }
         }
         Err(e) => {
-            tracing::warn!(target: "random", "Error getting kernel random pool: {}", e);
+            crate::ported::utils::zwarn(
+                &format!("Error getting kernel random pool: {}", e));
             return 1;
         }
     }
@@ -423,7 +426,9 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
             0
         }
         Err(e) => {
-            tracing::warn!(target: "random", "Could not access kernel random pool: {}", e);
+            // c:300 — `zwarn("Could not access kernel random pool: %m");`
+            crate::ported::utils::zwarn(
+                &format!("Could not access kernel random pool: {}", e));
             1                                                                // c:319
         }
     }

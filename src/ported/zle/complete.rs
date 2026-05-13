@@ -381,12 +381,31 @@ pub fn get_nmatches(pm: *mut crate::ported::zsh_h::param) -> i64 {          // c
     NMATCHES_GLOBAL.load(std::sync::atomic::Ordering::Relaxed)               // c:1408 nmatches
 }
 
-/// Direct port of `get_listlines(UNUSED(Param pm))` from `Src/Zle/complete.c:1408`.
-/// C body (c:1410): `return list_lines();` — the line-count of the
-/// list as it would render on the current terminal width.
+/// Direct port of `zlong get_listlines(UNUSED(Param pm))` from
+/// `Src/Zle/complete.c:1408`. C body: `return list_lines();` —
+/// the live line-count of the match list at current terminal width.
+/// The C implementation (compresult.c:1392) commits permmatches,
+/// swaps amatches↔pmatches, runs calclist(0), then returns
+/// `listdat.nlines`.
+///
+/// Rust port runs calclist on the current amatches (we don't yet
+/// have a separate permmatches swap), then reads `listdat.nlines`
+/// directly — same observable count for the common case where no
+/// permmatches commit is pending. Falls back to the cached
+/// COMPLISTLINES atomic when listdat isn't initialized.
 #[allow(unused_variables)]
 pub fn get_listlines(pm: *mut crate::ported::zsh_h::param) -> i64 {         // c:1408
-    COMPLISTLINES.load(std::sync::atomic::Ordering::Relaxed)                 // c:1415
+    // c:1410 — `return list_lines();`. Drive calclist so listdat
+    //          reflects the current match set.
+    let _ = crate::ported::zle::compresult::calclist(0);
+    let listdat = crate::ported::zle::compcore::listdat
+        .get()
+        .and_then(|m| m.lock().ok().map(|g| g.clone()));
+    if let Some(ld) = listdat {
+        return ld.nlines as i64;
+    }
+    // Pre-init fallback — atomic mirror set by other listdat writes.
+    COMPLISTLINES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Direct port of `set_complist(UNUSED(Param pm), char *v)` from `Src/Zle/complete.c:1415`.
@@ -407,47 +426,128 @@ pub fn get_complist(pm: *mut crate::ported::zsh_h::param) -> String {       // c
     lock_str(&COMPLIST).lock().map(|s| s.clone()).unwrap_or_default()        // c:1429
 }
 
-/// Direct port of `get_unambig(UNUSED(Param pm))` from `Src/Zle/complete.c:1429`.
-/// C body (c:1431): `return unambig_data(NULL, NULL, NULL);` — the
-/// unambiguous-prefix string of the current match set. Without
-/// active match state the entry returns the empty string matching
-/// C's behavior when `unambig_data` finds no current set.
+/// Direct port of `char *get_unambig(UNUSED(Param pm))` from
+/// `Src/Zle/complete.c:1429`. C body returns
+/// `unambig_data(NULL, NULL, NULL)` — the longest common prefix
+/// shared by every currently-active match. Rust port walks the
+/// live `amatches` chain, collects the `str` field of each visible
+/// match (skipping CMF_HIDE), and feeds the resulting Vec<String>
+/// to `unambig_data` which computes the LCP.
 #[allow(unused_variables)]
 pub fn get_unambig(pm: *mut crate::ported::zsh_h::param) -> String {        // c:1429
-    String::new()                                                            // c:1436
+    use std::sync::atomic::Ordering;
+    use crate::ported::zle::comp_h::CMF_HIDE;
+    let groups = crate::ported::zle::compcore::amatches
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock().ok().map(|g| g.clone()).unwrap_or_default();
+    let mut strs: Vec<String> = Vec::new();
+    for g in &groups {
+        for m in &g.matches {
+            if (m.flags & CMF_HIDE) != 0 { continue; }
+            if let Some(s) = m.str.as_deref() {
+                strs.push(s.to_string());
+            }
+        }
+    }
+    let _ = Ordering::Relaxed;
+    crate::ported::zle::compresult::unambig_data(&strs)
 }
 
-/// Direct port of `get_unambig_curs(UNUSED(Param pm))` from `Src/Zle/complete.c:1436`.
-/// C body (c:1438-1442): `unambig_data(&c, NULL, NULL); return c;` —
-/// cursor position within the unambiguous prefix.
+/// Direct port of `zlong get_unambig_curs(UNUSED(Param pm))` from
+/// `Src/Zle/complete.c:1436`. C body: `unambig_data(&c, NULL,
+/// NULL); return c;` — the cursor position within the unambiguous
+/// prefix string. With the Cline-tree cursor-tracking pipeline
+/// substrate-deferred, derive an equivalent from the LCP length
+/// (chars) which matches the simple-case where every match
+/// agrees up through that position.
 #[allow(unused_variables)]
 pub fn get_unambig_curs(pm: *mut crate::ported::zsh_h::param) -> i64 {      // c:1436
-    0                                                                        // c:1447
+    let prefix = get_unambig(std::ptr::null_mut());
+    prefix.chars().count() as i64
 }
 
-/// Direct port of `get_unambig_pos(UNUSED(Param pm))` from `Src/Zle/complete.c:1447`.
-/// C body (c:1449-1454): `unambig_data(NULL, &p, NULL); return p;` —
-/// the differ-marker string indicating where matches diverge.
+/// Direct port of `char *get_unambig_pos(UNUSED(Param pm))` from
+/// `Src/Zle/complete.c:1447`. C body: `unambig_data(NULL, &p, NULL);
+/// return p;` — the position-string showing where matches diverge
+/// (one space-separated number per CLF_DIFF Cline node).
+///
+/// Full Cline-tree position-tracking is substrate-deferred. Rust
+/// port emits the single-position simple case: `"<LCP_length>"` when
+/// the match set has any divergence past the common prefix, empty
+/// string when matches are identical or absent. This covers what
+/// the canonical `_complete_help` / `_oldlist_remembered` callers
+/// inspect via `${compstate[unambiguous_positions]}`.
 #[allow(unused_variables)]
 pub fn get_unambig_pos(pm: *mut crate::ported::zsh_h::param) -> String {    // c:1447
-    String::new()                                                            // c:1458
+    use crate::ported::zle::comp_h::CMF_HIDE;
+    let groups = crate::ported::zle::compcore::amatches
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock().ok().map(|g| g.clone()).unwrap_or_default();
+    let mut strs: Vec<String> = Vec::new();
+    for g in &groups {
+        for m in &g.matches {
+            if (m.flags & CMF_HIDE) != 0 { continue; }
+            if let Some(s) = m.str.as_deref() {
+                strs.push(s.to_string());
+            }
+        }
+    }
+    if strs.len() < 2 {
+        return String::new();
+    }
+    let lcp = crate::ported::zle::compresult::unambig_data(&strs);
+    // C `build_pos_string` joins position numbers with spaces. The
+    // simple-case single divergence emits just the LCP length.
+    let any_longer = strs.iter().any(|s| s.chars().count() > lcp.chars().count());
+    if any_longer {
+        format!("{}", lcp.chars().count())
+    } else {
+        String::new()
+    }
 }
 
-/// Direct port of `get_insert_pos(UNUSED(Param pm))` from `Src/Zle/complete.c:1458`.
-/// C body (c:1460-1465): `unambig_data(NULL, NULL, &p); return p;` —
-/// the cursor-insert position for the unambiguous prefix.
+/// Direct port of `char *get_insert_pos(UNUSED(Param pm))` from
+/// `Src/Zle/complete.c:1458`. C body: `unambig_data(NULL, NULL, &p);
+/// return p;` — the position-string for the unambiguous-prefix
+/// insert positions (where the cursor sits after the prefix is
+/// inserted, accounting for braces and original-string positions).
+///
+/// Full Cline-tracking deferred. Rust port emits the same simple
+/// single-position string `get_unambig_pos` produces — for the
+/// common no-brace case the insert position equals the divergence
+/// position (the LCP length).
 #[allow(unused_variables)]
 pub fn get_insert_pos(pm: *mut crate::ported::zsh_h::param) -> String {     // c:1458
-    String::new()                                                            // c:1469
+    get_unambig_pos(std::ptr::null_mut())
 }
 
-/// Direct port of `get_compqstack(UNUSED(Param pm))` from `Src/Zle/complete.c:1469`.
-/// C body (c:1472-1488): walks compqstack, decoding each quote-byte
-/// (one of `"`, `'`, `\\`, etc.) into a printable form. Static-link
-/// path returns the raw stack contents.
+/// Direct port of `char *get_compqstack(UNUSED(Param pm))` from
+/// `Src/Zle/complete.c:1469`. Walks the compqstack byte buffer and
+/// decodes each quote-state byte (QT_NONE/QT_SINGLE/QT_DOUBLE/
+/// QT_DOLLARS/QT_BACKTICK/QT_BACKSLASH) into its single-char
+/// printable form via `comp_quoting_string`. Was returning the raw
+/// QT_* byte stack which gave gibberish like `\x00\x01\x02` to
+/// callers reading `$compstate[quoting_stack]`.
 #[allow(unused_variables)]
 pub fn get_compqstack(pm: *mut crate::ported::zsh_h::param) -> String {     // c:1469
-    lock_str(&COMPQSTACK).lock().map(|s| s.clone()).unwrap_or_default()
+    // c:1473 — `if (!compqstack) return "";`
+    let stack = lock_str(&COMPQSTACK).lock()
+        .map(|s| s.clone()).unwrap_or_default();
+    if stack.is_empty() {
+        return String::new();
+    }
+    // c:1480-1485 — `for (cqp = compqstack; *cqp; cqp++)
+    //                  { str = comp_quoting_string(*cqp); *ptr++ = *str; }`
+    let mut out = String::with_capacity(stack.len());
+    for cqp in stack.chars() {
+        let cqp_byte = cqp as i32;
+        let s = crate::ported::zle::compcore::comp_quoting_string(cqp_byte);
+        // c:1483 — take only the first char of each printable form.
+        if let Some(first) = s.chars().next() {
+            out.push(first);
+        }
+    }
+    out
 }
 
 /// Direct port of `cond_psfix(char **a, int id)` from `Src/Zle/complete.c:1662`.
@@ -1035,14 +1135,226 @@ pub fn do_comp_vars(test: i32, mut na: i32, sa: &str,                        // 
 pub fn parse_cmatcher(name: &str, s: &str)                                   // c:242
     -> Option<Box<crate::ported::zle::comp_h::Cmatcher>>
 {
-    let _ = (name, s);
-    // c:246-410 — full parse loop:
-    //   for each comma-separated rule:
-    //     dispatch on rule[0] to set CMF_* flag bits
-    //     parse rule body via parse_pattern + parse_class
-    //     attach to chain; chain head returned at end
-    // Deferred until parse_pattern / parse_class are ported.
-    None                                                                     // c:410 NULL on parse fail
+    use crate::ported::zle::comp_h::{
+        CMF_INTER, CMF_LEFT, CMF_LINE, CMF_RIGHT, Cmatcher
+    };
+
+    if s.is_empty() {                                                        // c:249
+        return None;
+    }
+
+    let mut ret: Option<Box<Cmatcher>> = None;
+    let mut tail_ptr: *mut Option<Box<Cmatcher>> = &mut ret;
+    let mut rest = s;
+
+    while !rest.is_empty() {                                                 // c:251
+        // c:255 — `while (*s && inblank(*s)) s++;`
+        rest = rest.trim_start_matches(|c: char| c == ' ' || c == '\t');
+        if rest.is_empty() { break; }                                        // c:257
+
+        // c:259-285 — switch (*s) — rule-letter dispatch.
+        let c = rest.chars().next().unwrap();
+        let (fl, fl2) = match c {
+            'b' => (CMF_LEFT, CMF_INTER),                                    // c:262
+            'l' => (CMF_LEFT, 0),                                            // c:263
+            'e' => (CMF_RIGHT, CMF_INTER),                                   // c:264
+            'r' => (CMF_RIGHT, 0),                                           // c:265
+            'm' => (0, 0),                                                   // c:266
+            'B' => (CMF_LEFT | CMF_LINE, CMF_INTER),                         // c:267
+            'L' => (CMF_LEFT | CMF_LINE, 0),                                 // c:268
+            'E' => (CMF_RIGHT | CMF_LINE, CMF_INTER),                        // c:269
+            'R' => (CMF_RIGHT | CMF_LINE, 0),                                // c:270
+            'M' => (CMF_LINE, 0),                                            // c:271
+            'x' => (0, 0),                                                   // c:272
+            _ => {                                                           // c:280
+                if !name.is_empty() {
+                    crate::ported::utils::zwarnnam(name,
+                        &format!("unknown match specification character `{}'", c));
+                }
+                return None;                                                 // c:283 pcm_err
+            }
+        };
+
+        // c:288 — `if (s[1] != ':')` → missing-colon.
+        let mut chars = rest.chars();
+        chars.next();
+        if chars.clone().next() != Some(':') {
+            if !name.is_empty() {
+                crate::ported::utils::zwarnnam(name, "missing `:'");
+            }
+            return None;
+        }
+        chars.next(); // consume `:`
+
+        // c:294-303 — `x:` early-return.
+        if c == 'x' {
+            if let Some(next) = chars.clone().next() {
+                if next != ' ' && next != '\t' {
+                    if !name.is_empty() {
+                        crate::ported::utils::zwarnnam(name,
+                            "unexpected pattern following x: specification");
+                    }
+                    return None;
+                }
+            }
+            return ret;
+        }
+        rest = chars.as_str();
+
+        // c:297-313 — `(fl & CMF_LEFT) && !fl2` → parse left anchor.
+        let mut left: Option<Box<crate::ported::zle::comp_h::Cpattern>> = None;
+        let mut lal: i32 = 0;
+        let mut both: bool = false;
+        if (fl & CMF_LEFT) != 0 && fl2 == 0 {
+            let (lt, r2, l, err) = parse_pattern(name, rest, '|');           // c:298
+            if err { return None; }
+            left = lt;
+            lal  = l;
+            rest = r2;
+            // c:302 — `both = (*s && s[1] == '|')`.
+            let mut peek = rest.chars();
+            peek.next();
+            if peek.clone().next() == Some('|') {
+                both = true;
+                let mut adv = rest.chars();
+                adv.next();
+                rest = adv.as_str();
+            }
+            // c:305-313 — `if (!*s || !*++s)` → missing right anchor / line pattern.
+            if rest.len() <= 1 {
+                if !name.is_empty() {
+                    crate::ported::utils::zwarnnam(name,
+                        if both { "missing right anchor" } else { "missing line pattern" });
+                }
+                return None;
+            }
+            let mut adv = rest.chars();
+            adv.next();
+            rest = adv.as_str();
+        }
+
+        // c:317-319 — `line = parse_pattern(name, &s, &ll,
+        //                              (((fl & CMF_RIGHT) && !fl2) ? '|' : '='), &err);`
+        let line_end = if (fl & CMF_RIGHT) != 0 && fl2 == 0 { '|' } else { '=' };
+        let (mut line_pat, r2, mut ll, err) = parse_pattern(name, rest, line_end);
+        if err { return None; }
+        rest = r2;
+
+        // c:322 — `if (both) { right = line; ral = ll; line = NULL; ll = 0; }`
+        let (mut right, mut ral) = (None, 0i32);
+        if both {
+            right = line_pat;
+            ral = ll;
+            line_pat = None;
+            ll = 0;
+        }
+
+        // c:328-339 — anchor / `=` / `*` consume.
+        if (fl & CMF_RIGHT) != 0 && fl2 == 0 && rest.len() <= 1 {
+            if !name.is_empty() {
+                crate::ported::utils::zwarnnam(name, "missing right anchor");
+            }
+            return None;
+        }
+        if (fl & CMF_RIGHT) == 0 || fl2 != 0 {
+            if rest.is_empty() {
+                if !name.is_empty() {
+                    crate::ported::utils::zwarnnam(name, "missing word pattern");
+                }
+                return None;
+            }
+            let mut adv = rest.chars();
+            adv.next();
+            rest = adv.as_str();
+        }
+
+        // c:340-357 — RIGHT-side anchor parse.
+        if (fl & CMF_RIGHT) != 0 && fl2 == 0 {
+            if rest.chars().next() == Some('|') {
+                left = line_pat.take();
+                lal = ll;
+                ll = 0;
+                let mut adv = rest.chars();
+                adv.next();
+                rest = adv.as_str();
+            }
+            let (rt, r3, r_len, err) = parse_pattern(name, rest, '=');
+            if err { return None; }
+            right = rt;
+            ral = r_len;
+            rest = r3;
+            if rest.is_empty() {
+                if !name.is_empty() {
+                    crate::ported::utils::zwarnnam(name, "missing word pattern");
+                }
+                return None;
+            }
+            let mut adv = rest.chars();
+            adv.next();
+            rest = adv.as_str();
+        }
+
+        // c:359-379 — word pattern, with `*` and `**` sentinels.
+        let (word_pat, wl): (Option<Box<crate::ported::zle::comp_h::Cpattern>>, i32);
+        if rest.chars().next() == Some('*') {
+            if (fl & (CMF_LEFT | CMF_RIGHT)) == 0 {
+                if !name.is_empty() {
+                    crate::ported::utils::zwarnnam(name, "need anchor for `*'");
+                }
+                return None;
+            }
+            let mut adv = rest.chars();
+            adv.next();
+            rest = adv.as_str();
+            if rest.chars().next() == Some('*') {
+                let mut adv2 = rest.chars();
+                adv2.next();
+                rest = adv2.as_str();
+                word_pat = None;
+                wl = -2;
+            } else {
+                word_pat = None;
+                wl = -1;
+            }
+        } else {
+            let (w, r4, w_len, err) = parse_pattern(name, rest, '\0');
+            if err { return None; }
+            if w.is_none() && line_pat.is_none() {
+                if !name.is_empty() {
+                    crate::ported::utils::zwarnnam(name,
+                        "need non-empty word or line pattern");
+                }
+                return None;
+            }
+            word_pat = w;
+            wl = w_len;
+            rest = r4;
+        }
+
+        // c:383-394 — allocate Cmatcher node.
+        let node = Box::new(Cmatcher {
+            refc: 0,
+            next: None,
+            flags: fl | fl2,
+            line: line_pat,
+            llen: ll,
+            word: word_pat,
+            wlen: wl,
+            left,
+            lalen: lal,
+            right,
+            ralen: ral,
+        });
+
+        // c:395-400 — link into chain via tail.
+        unsafe {
+            *tail_ptr = Some(node);
+            if let Some(boxed) = (*tail_ptr).as_mut() {
+                tail_ptr = &mut boxed.next as *mut _;
+            }
+        }
+    }
+    ret
 }
 
 /// Direct port of `parse_class(Cpattern p, char *iptr)` from `Src/Zle/complete.c:480`.
@@ -1059,6 +1371,106 @@ pub fn parse_cmatcher(name: &str, s: &str)                                   // 
 /// "consumed nothing, parse failed") so the caller can detect the
 /// stub state and skip emitting the matcher.
 /// WARNING: param names don't match C — Rust=(_p) vs C=(p, iptr)
+/// Direct port of `Cpattern parse_pattern(char *name, char **sp,
+/// int *lp, char e, int *err)` from `Src/Zle/complete.c:418`.
+/// Walks `*sp` building a Cpattern chain. Stops at end-char `e`
+/// (or whitespace if `e == 0`). For each char-position:
+///   - `[` / `{` → call `parse_class` for `[class]` / `{equiv}`
+///   - `?` → CPAT_ANY
+///   - `*` / `(` / `)` / `=` → error (invalid in matcher patterns)
+///   - `\` + char → escape, emit next char as CPAT_CHAR
+///   - else → CPAT_CHAR
+///
+/// Returns `(chain_head, new_sp, length, err)`. Error sets `err=true`
+/// and chain is None; caller bubbles up.
+/// WARNING: signature change — C returns Cpattern + writes through
+/// sp/lp/err; Rust returns the tuple.
+pub fn parse_pattern<'a>(name: &str, s: &'a str, end: char)                  // c:418
+    -> (Option<Box<crate::ported::zle::comp_h::Cpattern>>, &'a str, i32, bool)
+{
+    use crate::ported::zle::comp_h::{Cpattern, CPAT_ANY, CPAT_CHAR};
+    let mut ret: Option<Box<Cpattern>> = None;
+    let mut tail_ptr: *mut Option<Box<Cpattern>> = &mut ret;
+    let mut rest = s;
+    let mut len = 0i32;
+
+    // c:430 — `while (*s && (e ? (*s != e) : !inblank(*s)))`.
+    loop {
+        let next_ch = match rest.chars().next() {
+            Some(c) => c,
+            None => break,
+        };
+        if end != '\0' {
+            if next_ch == end { break; }
+        } else if next_ch == ' ' || next_ch == '\t' {
+            break;
+        }
+
+        // c:432 — `n = hcalloc(sizeof(*n)); n->next = NULL;`
+        let mut node = Box::new(Cpattern::default());
+
+        if next_ch == '[' || next_ch == '{' {                                // c:435
+            // c:436 — `s = parse_class(n, s);`.
+            //          Rust parse_class already advances past the
+            //          close bracket internally (returns slice AFTER
+            //          `]`/`}`), so we don't re-advance here. C's
+            //          `s++` at c:442 is for the C parse_class which
+            //          leaves s pointing AT the close bracket.
+            //          Unterminated → parse_class returns empty input;
+            //          treat as error.
+            let before_len = rest.len();
+            rest = parse_class(&mut node, rest);
+            if rest.len() == before_len {
+                // parse_class didn't advance — unterminated.
+                if !name.is_empty() {
+                    crate::ported::utils::zwarnnam(name,
+                        "unterminated character class");
+                }
+                return (None, rest, 0, true);
+            }
+        } else if next_ch == '?' {                                           // c:443
+            node.tp = CPAT_ANY;
+            let mut it = rest.chars();
+            it.next();
+            rest = it.as_str();
+        } else if matches!(next_ch, '*' | '(' | ')' | '=') {                 // c:446
+            if !name.is_empty() {
+                crate::ported::utils::zwarnnam(name,
+                    &format!("invalid pattern character `{}'", next_ch));
+            }
+            return (None, rest, 0, true);
+        } else {                                                             // c:451
+            // c:452 — `if (*s == '\\' && s[1]) s++;` skip backslash escape.
+            if next_ch == '\\' {
+                let mut it = rest.chars();
+                it.next();
+                if it.clone().next().is_some() {
+                    rest = it.as_str();
+                }
+            }
+            // c:455-461 — `inlen = MB_METACHARLENCONV(...); inchar = ...;
+            //              n->tp = CPAT_CHAR; n->u.chr = inchar; s += inlen;`
+            let ch = rest.chars().next().unwrap();
+            node.tp = CPAT_CHAR;
+            node.chr = ch as u32;
+            let mut it = rest.chars();
+            it.next();
+            rest = it.as_str();
+        }
+
+        // c:463-467 — link node into chain via tail.
+        unsafe {
+            *tail_ptr = Some(node);
+            // Advance tail to the new node's `.next` slot.
+            if let Some(boxed) = (*tail_ptr).as_mut() {
+                tail_ptr = &mut boxed.next as *mut _;
+            }
+        }
+        len += 1;
+    }
+    (ret, rest, len, false)
+}
+
 pub fn parse_class<'a>(p: &mut crate::ported::zle::comp_h::Cpattern,         // c:480
                        iptr: &'a str) -> &'a str {
     use crate::ported::zle::comp_h::{CPAT_CCLASS, CPAT_EQUIV, CPAT_NCLASS};
@@ -1086,7 +1498,8 @@ pub fn parse_class<'a>(p: &mut crate::ported::zle::comp_h::Cpattern,         // 
             p.tp = CPAT_CCLASS;
         }
     } else {
-        endchar = b'}';
+        endchar = 0x7d; // ASCII close-brace; avoid b'<close-brace>' so
+                        // the build.rs brace-scanner doesn't miscount.
         p.tp = CPAT_EQUIV;
     }
 
@@ -1178,4 +1591,300 @@ pub fn parse_class<'a>(p: &mut crate::ported::zle::comp_h::Cpattern,         // 
     // c:565 — `return iptr;` — input ptr now past the close-bracket.
     let consumed = (i + 1).min(bytes.len());
     &iptr[consumed..]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::zle::comp_h::{CPAT_CCLASS, CPAT_EQUIV, CPAT_NCLASS, Cpattern};
+
+    #[test]
+    fn classes_basic_cclass() {
+        // c:485 — `[abc]` → CCLASS, str holds "abc".
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut p = Cpattern::default();
+        let rest = parse_class(&mut p, "[abc]rest");
+        assert_eq!(p.tp, CPAT_CCLASS);
+        assert_eq!(p.str.as_deref(), Some("abc"));
+        assert_eq!(rest, "rest");
+    }
+
+    #[test]
+    fn classes_negated_cclass_via_bang() {
+        // c:490 — `[!abc]` → NCLASS.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut p = Cpattern::default();
+        let _ = parse_class(&mut p, "[!abc]");
+        assert_eq!(p.tp, CPAT_NCLASS);
+    }
+
+    #[test]
+    fn classes_negated_cclass_via_caret() {
+        // c:490 — `[^abc]` → NCLASS.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut p = Cpattern::default();
+        let _ = parse_class(&mut p, "[^abc]");
+        assert_eq!(p.tp, CPAT_NCLASS);
+    }
+
+    #[test]
+    fn classes_equiv_braces() {
+        // c:498 — `{abc}` → EQUIV.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut p = Cpattern::default();
+        let _ = parse_class(&mut p, "{abc}");
+        assert_eq!(p.tp, CPAT_EQUIV);
+    }
+
+    #[test]
+    fn classes_range_consumes_input() {
+        // c:537 — `[a-z]rest` → parses 5 chars, returns "rest".
+        //          The PP_RANGE-encoded body isn't directly checked
+        //          here because Cpattern.str is currently
+        //          Option<String> and metafied tokens (0x83-prefix
+        //          byte sequences) don't round-trip through UTF-8.
+        //          Re-add a byte-level check once Cpattern.str moves
+        //          to a Vec<u8>-backed storage.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut p = Cpattern::default();
+        let rest = parse_class(&mut p, "[a-z]rest");
+        assert_eq!(p.tp, CPAT_CCLASS);
+        assert_eq!(rest, "rest");
+        assert!(p.str.is_some());
+    }
+
+    #[test]
+    fn cmatcher_empty_input_returns_none() {
+        // c:249 — `if (!*s) return NULL;`
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert!(parse_cmatcher("", "").is_none());
+    }
+
+    #[test]
+    fn cmatcher_x_early_return() {
+        // c:294-303 — `x:` is the "match anything" sentinel; valid
+        //              spec, returns the (currently empty) chain.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert!(parse_cmatcher("", "x:").is_none());
+    }
+
+    #[test]
+    fn cmatcher_unknown_letter_errors() {
+        // c:280-283 — unknown rule-letter → return None (pcm_err).
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // "q" isn't in the dispatch table.
+        assert!(parse_cmatcher("", "q:abc").is_none());
+    }
+
+    #[test]
+    fn cmatcher_missing_colon_errors() {
+        // c:288-291 — second char must be `:`.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert!(parse_cmatcher("", "rabc").is_none());
+    }
+
+    #[test]
+    fn cmatcher_x_with_trailing_pattern_errors() {
+        // c:296-301 — `x:foo` is malformed; `x:` must be alone.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert!(parse_cmatcher("", "x:foo").is_none());
+    }
+
+    #[test]
+    fn cmatcher_valid_letters_dont_panic() {
+        // All recognized letters parse through without panicking.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        for c in ['b', 'l', 'e', 'r', 'm', 'B', 'L', 'E', 'R', 'M'] {
+            let spec = format!("{}:body", c);
+            let _ = parse_cmatcher("", &spec);
+        }
+    }
+
+    #[test]
+    fn cmatcher_m_rule_emits_cmatcher() {
+        // c:266 — `m:word=replacement` plain match.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let r = parse_cmatcher("", "m:foo=bar");
+        assert!(r.is_some(), "m: rule should produce a Cmatcher");
+        let cm = r.unwrap();
+        assert_eq!(cm.flags, 0);                                            // c:266 fl=0
+        assert_eq!(cm.llen, 3);                                             // "foo"
+        assert_eq!(cm.wlen, 3);                                             // "bar"
+        assert!(cm.line.is_some());
+        assert!(cm.word.is_some());
+        assert!(cm.left.is_none());
+        assert!(cm.right.is_none());
+    }
+
+    #[test]
+    fn cmatcher_r_rule_emits_anchored_cmatcher() {
+        // c:265 — `r:left|right=word` with both anchors. The first
+        //          pattern becomes the left anchor (promoted at
+        //          c:341-346), the second the right anchor.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let r = parse_cmatcher("", "r:abc|xy=def");
+        assert!(r.is_some(), "r: rule should produce a Cmatcher");
+        let cm = r.unwrap();
+        use crate::ported::zle::comp_h::CMF_RIGHT;
+        assert_eq!(cm.flags, CMF_RIGHT);
+        assert_eq!(cm.lalen, 3);                                            // left = "abc"
+        assert_eq!(cm.ralen, 2);                                            // right = "xy"
+        assert_eq!(cm.wlen, 3);                                             // word = "def"
+        assert!(cm.left.is_some());
+        assert!(cm.right.is_some());
+    }
+
+    #[test]
+    fn cmatcher_l_rule_emits_left_anchor() {
+        // c:263 — `l:left|line=word` left anchor.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let r = parse_cmatcher("", "l:ab|cd=ef");
+        assert!(r.is_some(), "l: rule should produce a Cmatcher");
+        let cm = r.unwrap();
+        use crate::ported::zle::comp_h::CMF_LEFT;
+        assert_eq!(cm.flags, CMF_LEFT);
+        assert!(cm.left.is_some());
+        assert_eq!(cm.lalen, 2);
+        assert_eq!(cm.llen, 2);
+        assert_eq!(cm.wlen, 2);
+    }
+
+    #[test]
+    fn cmatcher_star_word_with_anchor() {
+        // c:359-370 — `r:|=*` matches any word, requires anchor.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let r = parse_cmatcher("", "r:|=*");
+        assert!(r.is_some(), "r:|=* should produce a Cmatcher");
+        let cm = r.unwrap();
+        assert_eq!(cm.wlen, -1);                                            // c:370 single `*`
+        assert!(cm.word.is_none());
+    }
+
+    #[test]
+    fn cmatcher_double_star_word() {
+        // c:366-368 — `r:|=**` matches any (greedy) word.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let r = parse_cmatcher("", "r:|=**");
+        assert!(r.is_some());
+        let cm = r.unwrap();
+        assert_eq!(cm.wlen, -2);                                            // c:368 double `**`
+    }
+
+    #[test]
+    fn cmatcher_star_without_anchor_errors() {
+        // c:360-364 — `m:=*` (no anchor) errors.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let r = parse_cmatcher("", "m:=*");
+        assert!(r.is_none(), "*-without-anchor should error");
+    }
+
+    #[test]
+    fn cmatcher_chain_multiple_rules() {
+        // c:251-401 — multiple rules separated by whitespace chain.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let r = parse_cmatcher("", "m:foo=bar m:baz=qux");
+        assert!(r.is_some());
+        let head = r.unwrap();
+        assert!(head.next.is_some(), "second rule should be linked");
+    }
+
+    #[test]
+    fn pattern_single_char_emits_cpat_char() {
+        // c:451-461 — single non-special char → CPAT_CHAR node.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let (chain, rest, len, err) = parse_pattern("", "abc", '\0');
+        assert!(!err);
+        assert_eq!(len, 3);
+        assert_eq!(rest, ""); // consumed everything (no end-char, no whitespace)
+        // Walk chain and verify 3 CPAT_CHAR nodes.
+        use crate::ported::zle::comp_h::CPAT_CHAR;
+        let mut count = 0;
+        let mut cur = chain.as_deref();
+        while let Some(n) = cur {
+            assert_eq!(n.tp, CPAT_CHAR);
+            count += 1;
+            cur = n.next.as_deref();
+        }
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn pattern_question_mark_is_cpat_any() {
+        // c:443 — `?` → CPAT_ANY.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let (chain, _, len, err) = parse_pattern("", "?", '\0');
+        assert!(!err);
+        assert_eq!(len, 1);
+        use crate::ported::zle::comp_h::CPAT_ANY;
+        assert_eq!(chain.as_ref().unwrap().tp, CPAT_ANY);
+    }
+
+    #[test]
+    fn pattern_invalid_chars_error() {
+        // c:446-449 — `*`/`(`/`)`/`=` → error.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        for c in ['*', '(', ')', '='] {
+            let s = format!("{}", c);
+            let (chain, _, _, err) = parse_pattern("", &s, '\0');
+            assert!(err, "char {} should error", c);
+            assert!(chain.is_none());
+        }
+    }
+
+    #[test]
+    fn pattern_backslash_escapes_next() {
+        // c:452 — `\\X` consumes the backslash and emits X as CPAT_CHAR.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let (chain, _, len, err) = parse_pattern("", r"\*", '\0');
+        assert!(!err);
+        assert_eq!(len, 1);
+        use crate::ported::zle::comp_h::CPAT_CHAR;
+        let n = chain.as_ref().unwrap();
+        assert_eq!(n.tp, CPAT_CHAR);
+        assert_eq!(n.chr, '*' as u32);
+    }
+
+    #[test]
+    fn pattern_stops_at_end_char() {
+        // c:430 — `*s != e` gate.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let (_, rest, len, err) = parse_pattern("", "ab=cd", '=');
+        assert!(!err);
+        assert_eq!(len, 2);
+        assert_eq!(rest, "=cd");
+    }
+
+    #[test]
+    fn pattern_stops_at_whitespace_when_no_end_char() {
+        // c:430 — `e==0` → !inblank.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let (_, rest, len, err) = parse_pattern("", "ab cd", '\0');
+        assert!(!err);
+        assert_eq!(len, 2);
+        assert_eq!(rest, " cd");
+    }
+
+    #[test]
+    fn pattern_bracket_class_routes_to_parse_class() {
+        // c:435 — `[abc]` dispatches to parse_class. With no end-char
+        //          parse_pattern continues into the trailing chars as
+        //          CPAT_CHAR nodes, so `[abc]xy` → class + x + y = 3.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let (chain, rest, len, err) = parse_pattern("", "[abc]xy=q", '=');
+        assert!(!err);
+        assert_eq!(len, 3);
+        assert_eq!(rest, "=q");
+        // chain head is the class node.
+        use crate::ported::zle::comp_h::CPAT_CCLASS;
+        assert_eq!(chain.as_ref().unwrap().tp, CPAT_CCLASS);
+    }
+
+    #[test]
+    fn classes_unterminated_returns_eos() {
+        // c:504 — unterminated class → returns input-end.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let mut p = Cpattern::default();
+        let rest = parse_class(&mut p, "[abc");
+        assert_eq!(rest, "");
+    }
 }

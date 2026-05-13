@@ -648,6 +648,67 @@ pub fn zshrs_main() {
         return;
     }
 
+    // --dump-tokens / --dump-ast / --dump-wordcode: print the lex
+    // token stream, the parser's AST as S-expression, or the
+    // compiled wordcode buffer. Source is either inline `-c CODE`
+    // (when args[2] == "-c") or a file path.
+    if args.len() >= 3 && (args[1] == "--dump-tokens"
+        || args[1] == "--dump-ast"
+        || args[1] == "--dump-wordcode")
+    {
+        let mode = args[1].clone();
+        let src: String = if args[2] == "-c" && args.len() >= 4 {
+            args[3].clone()
+        } else {
+            match std::fs::read_to_string(&args[2]) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("zshrs: {}: {}", args[2], e);
+                    std::process::exit(1);
+                }
+            }
+        };
+
+        // Initialise lexer + parser context for this source.
+        zsh::ported::parse::parse_init(&src);
+
+        match mode.as_str() {
+            "--dump-tokens" => {
+                // Walk lex tokens one at a time. zshlex() consumes
+                // through ENDINPUT; each iteration leaves the
+                // current token in tok()/tokstr().
+                loop {
+                    zsh::ported::lex::zshlex();
+                    let t = zsh::ported::lex::tok();
+                    let s = zsh::ported::lex::tokstr().unwrap_or_default();
+                    println!("{:?}\t{}", t, s);
+                    if t == zsh::ported::lex::lextok::ENDINPUT {
+                        break;
+                    }
+                }
+            }
+            "--dump-ast" => {
+                let prog = zsh::ported::parse::parse();
+                println!("{}", zsh::extensions::ast_sexp::ast_to_sexp(&prog));
+            }
+            "--dump-wordcode" => {
+                let prog = zsh::ported::parse::parse();
+                // The parser's wordcode emission writes into
+                // `parse_stack.ecbuf`. ZshProgram itself holds the
+                // AST; we read the ecbuf via the parse-stack
+                // snapshot or print "(no wordcode)" if emission
+                // isn't wired for this construct yet.
+                let bytes = zsh::extensions::compile_zsh::ast_to_wordcode(&prog);
+                println!("# wordcode: {} u32 words", bytes.len());
+                for (i, w) in bytes.iter().enumerate() {
+                    println!("  [{:04}] 0x{:08x}", i, w);
+                }
+            }
+            _ => unreachable!(),
+        }
+        return;
+    }
+
     // Extract flags before filtering: -x (xtrace), -f (no rcs), -v (verbose)
     let enable_xtrace = args.iter().any(|a| a == "-x");
     let enable_verbose = args.iter().any(|a| a == "-v");
