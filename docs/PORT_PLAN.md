@@ -12,7 +12,7 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
 
 ---
 
-## Progress Summary (updated 2026-05-10)
+## Progress Summary (updated 2026-05-12)
 
 | Phase | Total Items | Done | Remaining |
 |-------|-------------|------|-----------|
@@ -21,8 +21,23 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
 | Phase 3 — Bucket-2 shared holders | 11 | 11 | 0 |
 | Phase 4 — Daemon image holders | 5 | 0 | 5 |
 | Phase 5 — Test invariants | 3 | 3 | 0 |
+| Phase 6 — ShellExecutor field dissolution | ~57 | 13 | ~44 |
 
 **Phase 2 remaining structs to dissolve:** none
+
+**Phase 6 in flight (2026-05-12):** the `pub struct ShellExecutor` at
+`src/exec.rs:345` is the next bag-of-globals to dissolve. It aggregates
+57 fields that should each map to a canonical zsh C global. Recent
+deletions (most-recent first): `autoload_pending`, `options`,
+`cmd_stack`, `hook_functions`, `command_hash`, `named_dirs`,
+`readonly_vars`, `dir_stack`, `last_subst`/`sub_flags`/
+`in_paramsubst_nest`/`zftp`/`style_table` (5 in one commit),
+`expanding_aliases`. Each field deletion routes callers to the
+canonical zsh global (e.g. `paramtab`, `cmdnamtab`, `OPTS_LIVE`,
+`prompt::CMDSTACK`, `aliastab`). Pattern matches the dissolved `Zle`
+struct work: identify the canonical C-equivalent, migrate callers,
+delete the field. Same anti-pattern (Rule 1 violation: bag-of-globals
+with no `struct executor` in C).
 
 **Phase 2 final-batch dissolutions (verified 2026-05-12):**
 - `init.rs` `ShellState` — verified absent via `grep -rn 'struct
@@ -134,7 +149,23 @@ touching tests. No new external dep (no `serial_test` crate). Both
 helpers allowlisted with WARNING-form rationale (C is single-
 threaded, no C counterpart).
 
-**compctl.rs Mutex count:** 37 statics still using `Mutex` (Phase 1 target: 16)
+**compctl.rs Mutex count (verified 2026-05-12):** 35 `Mutex<...>` usages
+in `src/ported/zle/compctl.rs` (down from 37). 18 listed in the
+bucket-1 conversion table are now `thread_local!` per Phase 1; the
+remaining 35 cover bucket-2 holders (CMATCHER/COMPCTL_TAB/PATCOMPS) +
+several per-evaluator statics that haven't been re-classified yet
+(ZLEMETALL, ZLEMETALINE, NOERRS, NOALIASES, INSTRING, INBACKT, AUTOQ,
+COMPQSTACK, QIPRE, QISUF, etc.). Re-classification is bucket-by-
+bucket follow-up work, not blocking.
+
+**Outstanding build break (pre-existing, not from Phase 1–6):** the
+`clean lex` commit `674fc48d19` left `src/ported/lex.rs` with an
+unclosed delimiter (rustc reports `error: this file contains an
+unclosed delimiter` at line 4610, pointing at `fn dquote_parse` at
+line 3096). Build also fails the drift gate: `parsestr_inner` at
+`lex.rs:3895` has no C counterpart per `tests/data/ported_fn_allowlist
+.txt`. Both must be fixed before `cargo build --lib` will succeed.
+Neither is a Phase 1–6 regression — the file shipped broken.
 
 ---
 
@@ -911,6 +942,53 @@ files below describe the bucket invariant they guard.
 - [x] `cargo test --test shared_state_visible --test
       per_evaluator_isolation` green (7 total: 4 + 3 — 2026-05-12)
 - [x] `python3 scripts/gen_port_report.py` — refreshed
+
+### Phase 6 — `ShellExecutor` field dissolution (in flight)
+
+`src/exec.rs:345 pub struct ShellExecutor` aggregates 57 fields, most
+of which duplicate canonical zsh C globals already ported elsewhere.
+Each duplicate is a Rule 1 violation: there is no `struct executor`
+in zsh's C source — the equivalent state lives as file-statics across
+`Src/exec.c`, `Src/init.c`, `Src/options.c`, `Src/hashtable.c`,
+`Src/prompt.c`, etc. The campaign deletes one field per commit,
+migrates every caller to the canonical zsh global, and removes the
+duplicate.
+
+**Landed deletions (most-recent first, 13 fields):**
+
+| Commit | Field | Routed to |
+|---|---|---|
+| `4795fe80e0` | `autoload_pending` | canonical `shfunctab` + `PM_UNDEFINED` bit (`Src/exec.c:5215`) |
+| `b4f541669c` | `options` (60+ callers) | `OPTS_LIVE` via `opt_state_get/_set/_unset/_snapshot/_len` |
+| `3eef6194dc` | `cmd_stack` | `prompt::CMDSTACK` TLS via `cmdpush/cmdpop` (`Src/prompt.c:1620,1631`) |
+| `2cae06a55e` | `hook_functions` | `<hook>_functions` paramtab arrays (zsh `add-zsh-hook` idiom) |
+| `cf1f12f883` | `command_hash` (never-populated dup) | `cmdnamtab_lock` |
+| `ef6b21eae2` | `named_dirs` | `nameddirtab` Mutex in `src/ported/hashnameddir.rs` |
+| `7e5576e07b` | `readonly_vars` (never-populated dup) | `PM_READONLY` flag bit |
+| `dea3bcbf26` | `dir_stack` | `DIRSTACK` Mutex in `modules/parameter.rs` (`Src/builtin.c:1456`) |
+| `a6e4066678` | `last_subst` / `sub_flags` / `in_paramsubst_nest` / `zftp` / `style_table` (5 fields) | `IN_PARAMSUBST_NEST` TLS + canonical statics |
+| `a88ca67867` | `expanding_aliases` (fake HashSet) | `alias.inuse` bump/clear at `fusevm_bridge.rs` call sites |
+
+**Remaining fields (~44):** including `scriptname`, `scriptfilename`,
+`loop_signal`, `subshell_snapshots`, `inline_env_stack`,
+`current_command_glob_failed`, `jobs`, `fpath`, `zwc_cache`,
+`history`, plus ~34 others. Each requires audit: (a) does the
+canonical zsh global exist? (b) if yes, migrate callers + delete.
+(c) if no, keep + cite the C file-static it represents.
+
+**Per-deletion discipline:**
+1. Identify the canonical zsh C global (file-static or hash table).
+2. Verify the canonical Rust holder exists (`paramtab`, `cmdnamtab`,
+   `OPTS_LIVE`, `prompt::CMDSTACK`, `aliastab`, etc.).
+3. Migrate every caller of `executor.<field>` to the canonical
+   accessor.
+4. Delete the field from `ShellExecutor`.
+5. Commit citing the C source line.
+
+**End of Phase 6:** the `pub struct ShellExecutor` shrinks to fields
+that genuinely have no canonical zsh global (or are zshrs-specific
+extensions explicitly outside zsh's design — e.g. `zwc_cache`).
+Document each surviving field's justification inline.
 
 ---
 
