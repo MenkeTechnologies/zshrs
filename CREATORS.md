@@ -36,6 +36,13 @@ grants. Inventions that future shells should inherit:
 
 - The compiled-shell architecture itself (parse to bytecode,
   cache, JIT hot blocks) instead of re-parsing on every command.
+- **Zsh grammar introspection to stdout:** the first shell to emit,
+  in canonical diffable formats, zsh’s **lexer token stream**,
+  **wordcode (`Eprog`) layout**, and a **structured parser AST**
+  (S-expression) — via the `zshrs` binary (`--dump-tokens`,
+  `--dump-wordcode`, `--dump-ast`) and the matching `zshrs_dump`
+  loadable module (`dumptokens`, `dumpwordcode`). Stock zsh does
+  not ship this trio as a user-facing pipeline.
 - The 90/10 daemon / shell work split — singleton daemon owns
   every mutation, thin shell clients are stateless and
   forkable, no shared writers.

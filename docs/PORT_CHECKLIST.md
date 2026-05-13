@@ -85,12 +85,12 @@ isn't ticked until ALL of them pass.
 
 ---
 
-## Status Summary (updated 2026-05-10)
+## Status Summary (updated 2026-05-13)
 
 **Codebase metrics:**
-- `src/ported/`: 187k lines, 89 files (FROZEN)
-- `// c:NNN` citations: subst.rs (2428), builtin.rs (1650), zsh_h.rs (681), module.rs (364)
-- `/// Port of` citations: params.rs (173), zsh_h.rs (118), utils.rs (96)
+- `src/ported/`: 81,020 lines, 66 files (tracked `git ls-files 'src/ported/**/*.rs'`)
+- `// c:NNN` citations: subst.rs (2000), builtin.rs (1957), zsh_h.rs (690), module.rs (342)
+- `/// Port of` citations: params.rs (171), zsh_h.rs (119), utils.rs (186)
 
 **ADHOC warnings still present (should be deleted/ported):**
 | File | Count |
@@ -103,7 +103,7 @@ isn't ticked until ALL of them pass.
 | `modules/pcre.rs` | 1 |
 | `modules/watch.rs` | 1 |
 
-**Build status:** Compiles clean (49 style warnings).
+**Build status:** `cargo build` clean (dev profile).
 
 **In-flight work:** Adding `// c:NNN` line citations to jobs.rs, module.rs, params.rs, modules/parameter.rs.
 

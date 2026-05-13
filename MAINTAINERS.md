@@ -179,7 +179,8 @@ architecture, the daemon / shell 90/10 split, the AOP-intercept
 recorder, the single-directory rule, the session-persistent
 supervised job runner with ptmx attach, the cross-shell
 pub/sub + named-lock builtins, the auto-derived OpenAPI
-surface) under the MIT grant. The point of shipping these
+surface, zsh lexer / wordcode / AST introspection to stdout via
+`zshrs` and `zshrs_dump`) under the MIT grant. The point of shipping these
 inventions is for them to spread.
 
 **Attribution expectation:** ports must credit zshrs as the

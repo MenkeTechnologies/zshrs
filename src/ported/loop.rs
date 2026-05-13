@@ -178,14 +178,13 @@ mod tests {
 }
 
 // ===========================================================
-// Tree-walker control-flow dispatch entries.
+// C `Src/loop.c` — wordcode VM helpers for control flow.
 //
-// In zsh these seven functions are bytecode-tree walkers — each
-// consumes a `Wordcode`/`Estate` cursor and recursively invokes
-// `execlist()` for nested clauses. They run during the legacy
-// `tree_walker` execution path.
+// In C zsh, these seven functions run as part of the wordcode VM in
+// `Src/exec.c`: each consumes an `Estate` / wordcode cursor (not a
+// separate AST interpreter in the parser).
 //
-// zshrs replaces the tree walker entirely with fusevm bytecode
+// zshrs lowers shell constructs to fusevm bytecode
 // (see `tree_walker_absent.rs` / `no_tree_walker_dispatch.rs`
 // invariant tests), so these entries exist to satisfy ABI/name
 // parity. The actual control-flow lowering happens in the
@@ -194,9 +193,8 @@ mod tests {
 // becomes a fusevm `Op`.
 // ===========================================================
 
-// The seven entries below are zsh's tree-walker dispatch handlers
-// from `Src/loop.c`. zshrs replaces the tree walker entirely with
-// fusevm bytecode — every `for`/`while`/`if`/`case`/`select`/
+// The seven entries below are zsh's `Src/loop.c` wordcode VM hooks.
+// zshrs lowers shell constructs to fusevm bytecode — every `for`/`while`/`if`/`case`/`select`/
 // `repeat`/`try` AST node lowers to a fusevm Op in
 // `src/extensions/compile_zsh.rs`. These entries exist purely for
 // C-name parity (drift gate enforces every Rust fn maps to a C fn).
@@ -219,7 +217,7 @@ mod tests {
 //   exectry    → compile_zsh.rs::compile_try
 
 /// Port of `execfor(Estate state, int do_exec)` from `Src/loop.c:50`. See module-level note:
-/// fusevm bytecode replaces the tree walker; this entry is
+/// zshrs does not call this from production; fusevm lowers `for` in compile_zsh.rs. This entry is
 /// `unreachable!()` to crash if regressed.
 /// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
 pub fn execfor(_do_exec: i32) -> i32 {                                   // c:50

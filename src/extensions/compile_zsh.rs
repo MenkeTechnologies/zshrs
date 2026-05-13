@@ -2,9 +2,13 @@
 //!
 //! **zshrs-original infrastructure — no C source counterpart.** C
 //! zsh has `Src/parse.c::bld_eprog()` (line 547) which serializes
-//! a parsed AST into wordcode + strings for `.zwc` cache files,
-//! but those wordcode words are walked by `Src/exec.c::exectree()`
-//! (around `execfuncs[]` line 268) at runtime — the C source has\n//! no separate bytecode VM. zshrs introduces a fusevm bytecode\n//! layer between parser and executor: the AST gets compiled once\n//! into typed bytecode ops (with compile-time word decomposition,\n//! tilde / glob / param-expansion classification), and the\n//! fusevm Cranelift JIT can then specialize hot paths.\n//!
+//! a parsed program into wordcode + strings for `.zwc` caches;
+//! `Src/exec.c::exectree()` / `execfuncs[]` (around line 268) runs that
+//! wordcode on zsh's native **wordcode VM** (`Estate` over the buffer).
+//! zshrs compiles the same AST to **fusevm** bytecode instead (typed ops,
+//! compile-time word decomposition, tilde/glob/param classification);
+//! the fusevm Cranelift JIT can specialize hot paths.
+//!
 //! Consumes the 4-tier port grammar (`ZshProgram → ZshList →
 //! ZshSublist → ZshPipe → ZshCommand`) and emits fusevm bytecode.
 //! The ported parser is the single source of truth for parsing;

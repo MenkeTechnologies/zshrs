@@ -431,7 +431,7 @@ pub fn get_complist(pm: *mut crate::ported::zsh_h::param) -> String {       // c
 /// `unambig_data(NULL, NULL, NULL)` — the longest common prefix
 /// shared by every currently-active match. Rust port walks the
 /// live `amatches` chain, collects the `str` field of each visible
-/// match (skipping CMF_HIDE), and feeds the resulting Vec<String>
+/// match (skipping CMF_HIDE), and feeds the resulting `Vec<String>`
 /// to `unambig_data` which computes the LCP.
 #[allow(unused_variables)]
 pub fn get_unambig(pm: *mut crate::ported::zsh_h::param) -> String {        // c:1429

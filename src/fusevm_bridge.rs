@@ -1,8 +1,9 @@
 //! fusevm bytecode-VM bridge for ShellExecutor.
 //!
-//! **Extension** — has no Src/exec.c counterpart. C zsh uses a
-//! tree-walking interpreter (`Src/exec.c::execlist`). zshrs compiles
-//! the parsed AST to fusevm bytecode and runs it on a stack VM; this
+//! **Extension** — has no Src/exec.c counterpart. C zsh's `Src/exec.c::execlist`
+//! (and related routines) implement the native **wordcode VM** that executes
+//! compiler output from `parse.c`. zshrs compiles the parsed AST to fusevm
+//! bytecode and runs it on a stack VM; this
 //! file holds the bridge between fusevm's `ShellHost` trait and our
 //! `ShellExecutor` state, the thread-local executor pointer, all
 //! `BUILTIN_*` opcode constants, and the giant `register_builtins`
@@ -417,8 +418,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // BUILTIN_EXEC / BUILTIN_COMMAND / BUILTIN_BUILTIN wires deleted
     // along with their handler stubs in src/exec.rs. The opcodes were
     // never emitted by the fusevm compiler (zero `Op::CallBuiltin(...)`
-    // references) — leftover from the deleted `Src/exec.c` tree-walker
-    // port. When `command` / `exec` / `builtin` land as canonical
+    // references) — leftover from the deleted pre-fusevm `Src/exec.c` port.
+    // When `command` / `exec` / `builtin` land as canonical
     // ports in `src/ported/builtin.rs` (`Src/builtin.c:4017 bin_command`,
     // `:6052 bin_exec`, etc.), wire them here through `execbuiltin`.
 
@@ -474,7 +475,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // History
     // BUILTIN_HISTORY / BUILTIN_R wires deleted with their stubs.
     // Opcodes never emitted by the fusevm compiler (dead since the
-    // tree-walker port was replaced). `bin_fc` stays — it's wired to
+    // pre-fusevm executor port was replaced). `bin_fc` stays — it's wired to
     // the canonical port at `src/ported/builtin.rs`.
     vm.register_builtin(BUILTIN_FC, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -4689,7 +4690,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     // Brace expansion. Routes through executor.xpandbraces (already
-    // implemented for the tree-walker era). Returns Value::Array.
+    // implemented for the pre-fusevm executor). Returns Value::Array.
     vm.register_builtin(BUILTIN_WORD_SPLIT, |vm, _argc| {
         let s = vm.pop().to_str();
         let ifs = with_executor(|exec| {
@@ -8762,8 +8763,8 @@ impl fusevm::ShellHost for ZshrsHost {
         // bridge both call into it so the logic is in exactly one
         // place — mirroring C's "every read goes through getsparam"
         // architecture. fuseVM bytecode triggers this bridge when
-        // the VM hits a PARAM opcode, equivalent to C's tree-walker
-        // hitting a `${...}` AST node.
+        // the VM hits a PARAM opcode, equivalent to C's wordcode VM
+        // resolving a parameter read during `exec.c` execution.
         //
         // Modifier handling: the `_modifier` / `_args` parameters
         // are populated by the bytecode compiler but applied by
