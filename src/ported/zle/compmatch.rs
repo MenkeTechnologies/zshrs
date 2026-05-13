@@ -591,6 +591,141 @@ pub fn match_str(                                                            // 
     iw
 }
 
+/// Direct port of `static int match_parts(char *l, char *w, int n,
+///                                          int part)` from
+/// `Src/Zle/compmatch.c:1092-1108`. Tests whether the first `n` bytes
+/// of `l` match the first `n` bytes of `w` using the active mstack
+/// matcher chain. C truncates both strings to length n with `'\0'`
+/// (saving/restoring the boundary bytes); Rust takes slices.
+pub fn match_parts(l: &str, w: &str, n: i32, part: i32) -> i32 {             // c:1092
+    let ln = (n as usize).min(l.len());
+    let wn = (n as usize).min(w.len());
+    let l_slice = &l[..ln];
+    let w_slice = &w[..wn];
+    // c:1101 — match_str(l, w, NULL, 0, NULL, 0, 1, part).
+    match_str(l_slice, w_slice, None, 0, None, 0, 1, part)
+}
+
+/// Direct port of `mod_export char *comp_match(char *pfx, char *sfx,
+///                                               char *w, Patprog cp,
+///                                               Cline *clp, int qu,
+///                                               Brinfo *bpl, int bcp,
+///                                               Brinfo *bsl, int bcs,
+///                                               int *exact)`
+/// from `Src/Zle/compmatch.c:1123-1257`. Applies the matcher chain to
+/// candidate `w` against prefix `pfx` and suffix `sfx`. Returns the
+/// matched string on success, None on no match. Writes the Cline
+/// structure into `clp`, the "is exact match" flag into `exact`.
+#[allow(clippy::too_many_arguments)]
+pub fn comp_match(                                                           // c:1123
+    pfx: &str, sfx: &str, w: &str,
+    cp: Option<&crate::ported::pattern::Patprog>,
+    clp: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
+    qu: i32,
+    _bpl: Option<&mut Option<Box<crate::ported::zle::zle_h::brinfo>>>,
+    bcp: i32,
+    _bsl: Option<&mut Option<Box<crate::ported::zle::zle_h::brinfo>>>,
+    bcs: i32,
+    exact: &mut i32,
+) -> Option<String>
+{
+    use crate::ported::pattern::pattry;
+    use crate::ported::glob::{remnulargs, tokenize};
+    use crate::ported::lex::{parse_subst_string, untokenize};
+    use crate::ported::utils::set_noerrs;
+    use crate::ported::zle::compcore::{multiquote, tildequote, useqbr};
+    use std::sync::atomic::Ordering;
+
+    let r: String;
+    if let Some(prog) = cp {                                                 // c:1129
+        // c:1129-1167 — globcomplete pattern path.
+        r = w.to_string();
+        let teststr: String = if qu == 0 {                                   // c:1135
+            // c:1145-1153 — unquote a copy then pattry against the prog.
+            let mut t = r.clone();
+            tokenize(&mut t);
+            set_noerrs(1);
+            let parsed = parse_subst_string(&t).ok();
+            set_noerrs(0);
+            if let Some(p) = parsed {
+                let mut p = p;
+                remnulargs(&mut p);
+                untokenize(&p)
+            } else {
+                r.clone()
+            }
+        } else {
+            r.clone()
+        };
+        if !pattry(prog, &teststr) {                                         // c:1157
+            return None;
+        }
+        let r_final = if qu == 2 { tildequote(&r, 0) }                       // c:1160
+                      else { multiquote(&r, if qu != 0 { 0 } else { 1 }) };
+        // c:1164-1166 — build a Cline chain from the matched word.
+        let wl = w.len() as i32;
+        let lc = bld_parts(w, wl, wl, None, None);
+        if let Some(out) = clp { *out = lc; }
+        *exact = 0;                                                          // c:1167
+        return Some(r_final);
+    }
+
+    // c:1169 — mstack-driven path.
+    let w_quoted = if qu == 2 { tildequote(w, 0) }                           // c:1172
+                   else { multiquote(w, if qu != 0 { 0 } else { 1 }) };
+    let wl = w_quoted.len() as i32;
+
+    // c:1177 — useqbr = qu.
+    useqbr.store(qu, Ordering::Relaxed);
+
+    let mut rpl: i32 = 0;
+    let mpl = match_str(pfx, &w_quoted, None, bcp, Some(&mut rpl), 0, 0, 0); // c:1178
+    if mpl < 0 {
+        return None;
+    }
+
+    if !sfx.is_empty() {                                                     // c:1181
+        // c:1182-1232 — also match suffix; combine prefix+suffix Cline.
+        let mut rsl: i32 = 0;
+        let suffix_start = (mpl as usize).min(w_quoted.len());
+        let suffix_part = &w_quoted[suffix_start..];
+        let msl = match_str(sfx, suffix_part, None, bcs, Some(&mut rsl), 1, 0, 0);
+        if msl < 0 {
+            return None;                                                     // c:1204
+        }
+        // c:1220 — add_match_str for the middle and saved prefix.
+        let middle_len = (wl - rpl - rsl).max(0) as usize;
+        let middle_start = (rpl as usize).min(w_quoted.len());
+        let middle = &w_quoted[middle_start..middle_start + middle_len.min(w_quoted.len() - middle_start)];
+        // c:1223 — bld_parts on the middle portion.
+        let mid_lc = bld_parts(middle, (wl - rpl - rsl).max(0),
+                               (mpl - rpl) + (msl - rsl), None, None);
+        if let Some(out) = clp { *out = mid_lc; }
+
+        // c:1245-1251 — exact-match test.
+        let pl = pfx.len();
+        *exact = if w_quoted.len() >= pl
+            && w_quoted.starts_with(pfx)
+            && w_quoted[pl..].ends_with(sfx)
+        { 1 } else { 0 };
+    } else {                                                                 // c:1233
+        // c:1235-1239 — prefix-only path.
+        let after_pfx_start = (rpl as usize).min(w_quoted.len());
+        let after_pfx = &w_quoted[after_pfx_start..];
+        let pli = bld_parts(after_pfx, (wl - rpl).max(0), mpl - rpl, None, None);
+        if let Some(out) = clp { *out = pli; }
+
+        // c:1251 — exact = !strcmp(pfx, w).
+        *exact = if pfx == w_quoted.as_str() { 1 } else { 0 };
+    }
+
+    // c:1241 — r = dupstring(matchbuf ? matchbuf : "").
+    r = MATCHBUF.get()
+        .and_then(|m| m.lock().ok().map(|g| g.clone()))
+        .unwrap_or_default();
+    let r = if r.is_empty() { w_quoted } else { r };
+    Some(r)
+}
 
 /// Direct port of `mod_export convchar_t pattern_match_equivalence(
 ///                    Cpattern lp, convchar_t wind, int wmtp,
@@ -1082,6 +1217,41 @@ mod tests {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let r = match_str("abc", "abc", None, 0, None, 0, 0, 0);
         assert_eq!(r, 3, "full literal match returns iw=3");
+    }
+
+    /// c:1092-1108 — match_parts truncates both strings to n bytes,
+    /// then defers to match_str with test=1. With identical first 3
+    /// bytes "abc" of "abcXYZ" vs "abcdef", returns iw=3.
+    #[test]
+    fn match_parts_truncates_and_matches() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        if let Ok(mut g) = crate::ported::zle::compcore::mstack
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+        {
+            *g = None;
+        }
+        let r = match_parts("abcXYZ", "abcdef", 3, 0);
+        assert_eq!(r, 3, "first 3 chars match exactly");
+    }
+
+    /// c:1251 — comp_match with pfx=w (exact equal) sets *exact=1.
+    /// Empty sfx, qu=0 (no quoting needed), no Patprog.
+    #[test]
+    fn comp_match_exact_prefix_match() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        if let Ok(mut g) = crate::ported::zle::compcore::mstack
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+        {
+            *g = None;
+        }
+        let mut clp: Option<Box<crate::ported::zle::comp_h::Cline>> = None;
+        let mut exact = 99i32;
+        let r = comp_match("hello", "", "hello", None,
+                           Some(&mut clp), 0, None, 0, None, 0, &mut exact);
+        assert!(r.is_some(), "literal prefix match succeeds");
+        assert_eq!(exact, 1, "pfx == w → exact=1");
     }
 
     /// c:546-1080 — match_str with diverging prefix returns -1 when

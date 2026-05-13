@@ -2330,25 +2330,30 @@ pub fn addmatches(dat: &mut crate::ported::zle::comp_h::Cadata,              // 
                 &ms, sl, -1, None, None);
             isexact = 0;
         } else {                                                             // c:2535
-            // c:2535-2546 — matcher-driven mode. Real C calls comp_match
-            // which internally runs match_str. With match_str returning
-            // -1 for non-trivial matchers, we conservatively accept the
-            // candidate as-is when prefix/suffix match literally; reject
-            // otherwise.
-            let l_ok = word.starts_with(lpre.as_str()) || lpre.is_empty();
-            let r_ok = word.ends_with(lsuf.as_str()) || lsuf.is_empty();
-            if !l_ok || !r_ok {
-                continue 'cand;                                              // c:2541-2545 reject
+            // c:2535-2546 — matcher-driven mode via comp_match.
+            let qu = if (dat.aflags & CAF_QUOTE) != 0 { 0 }
+                     else if dat.ppre.is_some()
+                         || (dat.flags & 0x0001/*CMF_FILE*/) == 0 { 1 }
+                     else { 2 };
+            let mut lc_out: Option<Box<crate::ported::zle::comp_h::Cline>> = None;
+            let mut isexact_out = 0i32;
+            // c:2535 — comp_match(lpre, lsuf, s, cp, &lc, qu, &bpl, bcp,
+            //          &bsl, bcs, &isexact).
+            match crate::ported::zle::compmatch::comp_match(
+                &lpre, &lsuf, word, None,
+                Some(&mut lc_out), qu,
+                None, 0, None, 0,
+                &mut isexact_out,
+            ) {
+                Some(matched) => {
+                    ms = matched;
+                    _lc = lc_out;
+                    isexact = isexact_out;
+                }
+                None => {
+                    continue 'cand;                                          // c:2541-2545 reject
+                }
             }
-            ms = if (dat.aflags & CAF_QUOTE) != 0 {
-                word.clone()
-            } else {
-                multiquote(word, 0)
-            };
-            let sl = ms.len() as i32;
-            _lc = crate::ported::zle::compmatch::bld_parts(
-                &ms, sl, -1, None, None);
-            isexact = if word == lpre.as_str() { 1 } else { 0 };
         }
 
         if doadd {                                                            // c:2547
