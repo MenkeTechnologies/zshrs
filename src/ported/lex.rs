@@ -89,9 +89,143 @@ pub use super::zsh_h::{
 // `super::zsh_h`. Do NOT wrap them in Rust enums here — the wrapper
 // is a fake abstraction (no C counterpart).
 //
-// LX1_* / LX2_* — flat `#define`s in `Src/lex.c:371-405`. When the
-// lexer's `gettok` body is faithfully ported it will reference those
-// numeric values directly; no Rust enum wrapper needed.
+// LX1_* / LX2_* — flat `#define`s in `Src/lex.c:371-405`. The
+// lexer's `gettok` body uses these as the action table for the
+// first / second-tier character dispatch.
+
+/// `#define LX1_BKSLASH 0` (Src/lex.c:371).
+pub const LX1_BKSLASH: u8 = 0;
+/// `#define LX1_COMMENT 1` (Src/lex.c:372).
+pub const LX1_COMMENT: u8 = 1;
+/// `#define LX1_NEWLIN 2` (Src/lex.c:373).
+pub const LX1_NEWLIN: u8 = 2;
+/// `#define LX1_SEMI 3` (Src/lex.c:374).
+pub const LX1_SEMI: u8 = 3;
+/// `#define LX1_AMPER 5` (Src/lex.c:375).
+pub const LX1_AMPER: u8 = 5;
+/// `#define LX1_BAR 6` (Src/lex.c:376).
+pub const LX1_BAR: u8 = 6;
+/// `#define LX1_INPAR 7` (Src/lex.c:377).
+pub const LX1_INPAR: u8 = 7;
+/// `#define LX1_OUTPAR 8` (Src/lex.c:378).
+pub const LX1_OUTPAR: u8 = 8;
+/// `#define LX1_INANG 13` (Src/lex.c:379).
+pub const LX1_INANG: u8 = 13;
+/// `#define LX1_OUTANG 14` (Src/lex.c:380).
+pub const LX1_OUTANG: u8 = 14;
+/// `#define LX1_OTHER 15` (Src/lex.c:381).
+pub const LX1_OTHER: u8 = 15;
+
+/// `#define LX2_BREAK 0` (Src/lex.c:383).
+pub const LX2_BREAK: u8 = 0;
+/// `#define LX2_OUTPAR 1` (Src/lex.c:384).
+pub const LX2_OUTPAR: u8 = 1;
+/// `#define LX2_BAR 2` (Src/lex.c:385).
+pub const LX2_BAR: u8 = 2;
+/// `#define LX2_STRING 3` (Src/lex.c:386).
+pub const LX2_STRING: u8 = 3;
+/// `#define LX2_INBRACK 4` (Src/lex.c:387).
+pub const LX2_INBRACK: u8 = 4;
+/// `#define LX2_OUTBRACK 5` (Src/lex.c:388).
+pub const LX2_OUTBRACK: u8 = 5;
+/// `#define LX2_TILDE 6` (Src/lex.c:389).
+pub const LX2_TILDE: u8 = 6;
+/// `#define LX2_INPAR 7` (Src/lex.c:390).
+pub const LX2_INPAR: u8 = 7;
+/// `#define LX2_INBRACE 8` (Src/lex.c:391).
+pub const LX2_INBRACE: u8 = 8;
+/// `#define LX2_OUTBRACE 9` (Src/lex.c:392).
+pub const LX2_OUTBRACE: u8 = 9;
+/// `#define LX2_OUTANG 10` (Src/lex.c:393).
+pub const LX2_OUTANG: u8 = 10;
+/// `#define LX2_INANG 11` (Src/lex.c:394).
+pub const LX2_INANG: u8 = 11;
+/// `#define LX2_EQUALS 12` (Src/lex.c:395).
+pub const LX2_EQUALS: u8 = 12;
+/// `#define LX2_BKSLASH 13` (Src/lex.c:396).
+pub const LX2_BKSLASH: u8 = 13;
+/// `#define LX2_QUOTE 14` (Src/lex.c:397).
+pub const LX2_QUOTE: u8 = 14;
+/// `#define LX2_DQUOTE 15` (Src/lex.c:398).
+pub const LX2_DQUOTE: u8 = 15;
+/// `#define LX2_BQUOTE 16` (Src/lex.c:399).
+pub const LX2_BQUOTE: u8 = 16;
+/// `#define LX2_COMMA 17` (Src/lex.c:400).
+pub const LX2_COMMA: u8 = 17;
+/// `#define LX2_DASH 18` (Src/lex.c:401).
+pub const LX2_DASH: u8 = 18;
+/// `#define LX2_BANG 19` (Src/lex.c:402).
+pub const LX2_BANG: u8 = 19;
+/// `#define LX2_OTHER 20` (Src/lex.c:403).
+pub const LX2_OTHER: u8 = 20;
+/// `#define LX2_META 21` (Src/lex.c:404).
+pub const LX2_META: u8 = 21;
+
+/// `static unsigned char lexact1[256]` from `Src/lex.c:406`. Per-byte
+/// action table for the first-tier dispatch in `gettok`. Init'd by
+/// `initlextabs()`.
+pub static LEXACT1: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> =
+    std::sync::OnceLock::new();
+/// `static unsigned char lexact2[256]` from `Src/lex.c:406`. Per-byte
+/// action table for the second-tier dispatch in `gettokstr`.
+pub static LEXACT2: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> =
+    std::sync::OnceLock::new();
+/// `static unsigned char lextok2[256]` from `Src/lex.c:406`. Per-byte
+/// token-character map: maps `*` → `Star`, `?` → `Quest`, etc.
+pub static LEXTOK2: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> =
+    std::sync::OnceLock::new();
+
+/// Port of `void initlextabs(void)` from `Src/lex.c:410`. Builds the
+/// three byte-keyed action tables the lexer dispatches on.
+///
+/// `lexact1` — char → `LX1_*` action for the top-level `gettok`
+/// dispatch. Default `LX1_OTHER`; the 14 chars in `"\\q\n;!&|(){}[]<>"`
+/// get table-index actions in order.
+///
+/// `lexact2` — char → `LX2_*` action for `gettokstr`'s in-word
+/// dispatch. Default `LX2_OTHER`; the 21 chars in
+/// `";)|$[]~({}><=\\\\\'\"\`,-!"` map by index, plus `&` → `LX2_BREAK`
+/// and the Meta byte → `LX2_META`.
+///
+/// `lextok2` — char → byte-token. Identity except for the 8 magic
+/// chars that need byte-token replacement (`*`/`?`/`{`/`[`/`$`/`~`/
+/// `#`/`^` → Star/Quest/Inbrace/Inbrack/Stringg/Tilde/Pound/Hat).
+pub fn initlextabs() {                                                       // c:410
+    use crate::ported::zsh_h::{Hat, Inbrace, Inbrack, META, Pound, Quest, Star, Stringg, Tilde};
+    let a1 = LEXACT1.get_or_init(|| std::sync::Mutex::new([0u8; 256]));
+    let a2 = LEXACT2.get_or_init(|| std::sync::Mutex::new([0u8; 256]));
+    let t2 = LEXTOK2.get_or_init(|| std::sync::Mutex::new([0u8; 256]));
+    let mut a1 = a1.lock().unwrap();
+    let mut a2 = a2.lock().unwrap();
+    let mut t2 = t2.lock().unwrap();
+    // c:413-417 — seed defaults.
+    for i in 0..256 {
+        a1[i] = LX1_OTHER;
+        a2[i] = LX2_OTHER;
+        t2[i] = i as u8;
+    }
+    // c:418-419 — overwrite indexed punctuation.
+    let lx1 = b"\\q\n;!&|(){}[]<>";
+    for (i, &c) in lx1.iter().enumerate() {
+        a1[c as usize] = i as u8;
+    }
+    let lx2 = b";)|$[]~({}><=\\'\"`,-!";
+    for (i, &c) in lx2.iter().enumerate() {
+        a2[c as usize] = i as u8;
+    }
+    // c:422-423 — special overrides.
+    a2[b'&' as usize] = LX2_BREAK;
+    a2[META as usize] = LX2_META;
+    // c:424-431 — byte-token map for the 8 magic chars.
+    t2[b'*' as usize] = Star as u8;
+    t2[b'?' as usize] = Quest as u8;
+    t2[b'{' as usize] = Inbrace as u8;
+    t2[b'[' as usize] = Inbrack as u8;
+    t2[b'$' as usize] = Stringg as u8;
+    t2[b'~' as usize] = Tilde as u8;
+    t2[b'#' as usize] = Pound as u8;
+    t2[b'^' as usize] = Hat as u8;
+}
 
 // SPECCHARS / PATCHARS — port of `Src/zsh.h:228, 232`. Use
 // `super::zsh_h::{SPECCHARS, PATCHARS}` directly; no duplicate here.
@@ -2255,7 +2389,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     }
                     // >(...)
                     add(OutangProc);
-                    if skip_command_sub().is_err() {
+                    if skipcomm().is_err() {
                         peek = LEXERR;
                         break;
                     }
@@ -2287,7 +2421,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     }
                     // <(...)
                     add(Inang);
-                    if skip_command_sub().is_err() {
+                    if skipcomm().is_err() {
                         peek = LEXERR;
                         break;
                     }
@@ -2302,7 +2436,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         let e = hgetc();
                         if e == Some('(') {
                             add(Equals);
-                            if skip_command_sub().is_err() {
+                            if skipcomm().is_err() {
                                 peek = LEXERR;
                                 break;
                             }
@@ -2812,7 +2946,7 @@ fn cmd_or_math() -> i32 {
         }
         hungetc('(');
         LEX_LEXSTOP.set(false);
-        return if skip_command_sub().is_err() {
+        return if skipcomm().is_err() {
             CMD_OR_MATH_ERR
         } else {
             CMD_OR_MATH_CMD
@@ -2840,7 +2974,7 @@ fn cmd_or_math() -> i32 {
     }
     hungetc('(');
 
-    if skip_command_sub().is_err() {
+    if skipcomm().is_err() {
         CMD_OR_MATH_ERR
     } else {
         CMD_OR_MATH_CMD
@@ -2852,7 +2986,7 @@ fn cmd_or_math() -> i32 {
 /// the next char to discriminate: a leading `(` plus successful
 /// math parse via `cmd_or_math` → arithmetic substitution (with
 /// the open-paren retroactively rewritten to Inparmath); else
-/// command substitution via skip_command_sub.
+/// command substitution via skipcomm.
 fn cmd_or_math_sub() -> i32 {
     const MAX_CONTINUATIONS: usize = 10_000;
     let mut continuations = 0;
@@ -2875,7 +3009,7 @@ fn cmd_or_math_sub() -> i32 {
                 }
                 hungetc('\\');
                 LEX_LEXSTOP.set(false);
-                return if skip_command_sub().is_err() {
+                return if skipcomm().is_err() {
                     CMD_OR_MATH_ERR
                 } else {
                     CMD_OR_MATH_CMD
@@ -2918,7 +3052,7 @@ fn cmd_or_math_sub() -> i32 {
             LEX_LEXSTOP.set(false);
         }
 
-        return if skip_command_sub().is_err() {
+        return if skipcomm().is_err() {
             CMD_OR_MATH_ERR
         } else {
             CMD_OR_MATH_CMD
@@ -2938,7 +3072,7 @@ fn cmd_or_math_sub() -> i32 {
 /// throw-away parse. zshrs's standalone walker tracks paren
 /// depth directly without re-entering the parser. Same
 /// invariant: stops at the matching `)`.
-fn skip_command_sub() -> Result<(), ()> {
+fn skipcomm() -> Result<(), ()> {
     let mut pct = 1;
     let mut start = true;
     const MAX_ITERATIONS: usize = 100_000;
@@ -2950,7 +3084,7 @@ fn skip_command_sub() -> Result<(), ()> {
         iterations += 1;
         if iterations > MAX_ITERATIONS {
             LEX_ERROR.with_borrow_mut(|e| {
-                *e = Some("skip_command_sub exceeded maximum iterations".to_string())
+                *e = Some("skipcomm exceeded maximum iterations".to_string())
             });
             return Err(());
         }

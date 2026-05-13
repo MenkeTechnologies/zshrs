@@ -859,6 +859,11 @@ expand_glob_alternation
 mv_rename
 mv_symlink
 mv_link
+# lex.rs Rust-only helpers — C zsh inlines these at every call site
+# of untokenize/getkeystring/etc. Each is documented inline in lex.rs.
+untokenize_preserve_quotes
+getkeystring_dollar_quote
+tokens_to_printable
 # read_cond_num — AST-walker helper to pull a numeric literal from
 # the current lex position. C parser inlines this via `atoi(tokstr)`
 # everywhere; the Rust helper exists to localize the i64-parse
