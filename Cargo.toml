@@ -10,11 +10,13 @@ documentation = "https://menketechnologies.github.io/strykelang/zshrs.html"
 readme = "README.md"
 keywords = ["shell", "zsh", "bytecode", "terminal", "unix"]
 categories = ["command-line-utilities"]
-# Strip test scaffolding from the published crate. `cargo package` /
-# `cargo publish` excludes any path matching these globs; the local
-# checkout keeps them so `cargo test` still works. Removes ~1650
-# files (test_data + tests + test_corpus + every *parity* harness)
-# from the published tarball.
+
+[workspace.package]
+version = "0.11.3"
+edition = "2021"
+license = "MIT"
+authors = ["MenkeTechnologies"]
+
 exclude = [
     "/tests/",
     "/test_data/",
@@ -24,6 +26,8 @@ exclude = [
     "/scripts/",
     "/bench/",
     "/fish/",
+    "/completions/",
+    "/zshrs_dump.*",
     "/examples/"
 ]
 
@@ -147,11 +151,6 @@ base64 = "0.22"
 [workspace]
 members = [".", "compsys", "daemon"]
 
-[workspace.package]
-version = "0.11.2"
-edition = "2021"
-license = "MIT"
-authors = ["MenkeTechnologies"]
 
 # Single source of truth for inter-crate path-dep versions. Updated by
 # `scripts/bp.sh` together with `[workspace.package].version` above so a
