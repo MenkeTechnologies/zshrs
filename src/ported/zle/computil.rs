@@ -1209,6 +1209,89 @@ mod tests {
         };
         freecvdef(Some(Box::new(d)));
     }
+
+    /// c:1196 — `_arguments '-foo[only foo]' '*:file:_files'`. Verify
+    /// that the option-name xor list contains the spec name, that
+    /// nopts/ndopts reflect the option type (CAO_NEXT here), and that
+    /// the rest arg lands on `rest` with type CAA_REST.
+    #[test]
+    fn parse_cadef_simple_opt_and_rest() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::utils::inittyptab();
+        let args = vec![
+            String::from(""),             // adpre/adsuf split (no %d)
+            String::from("-foo[only foo]"),
+            String::from("*:file:_files"),
+        ];
+        let def = parse_cadef("_arguments", &args).expect("cadef built");
+        let opt = def.opts.as_deref().expect("opt linked");
+        assert_eq!(opt.name.as_deref(), Some("-foo"));
+        assert_eq!(opt.descr.as_deref(), Some("only foo"));
+        assert_eq!(opt.r#type, CAO_NEXT);
+        // c:1462-1468 — non-multi option appends its own name to xor.
+        let xor = opt.xor.as_ref().expect("xor list");
+        assert!(xor.iter().any(|s| s == "-foo"), "xor must include -foo: {:?}", xor);
+
+        let rest = def.rest.as_deref().expect("rest linked");
+        assert_eq!(rest.r#type, CAA_REST);
+        assert_eq!(rest.descr.as_deref(), Some("file"));
+        assert_eq!(rest.action.as_deref(), Some("_files"));
+    }
+
+    /// c:1617-1661 — numbered positional argument `1:cmd:_commands` lands
+    /// on `def.args` with the right slot (num=0 because anum is `1`
+    /// then `arg->num = anum - 1`).
+    #[test]
+    fn parse_cadef_numbered_positional_arg() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::utils::inittyptab();
+        let args = vec![
+            String::from(""),
+            String::from("1:cmd:_commands"),
+        ];
+        let def = parse_cadef("_arguments", &args).expect("cadef built");
+        let pos = def.args.as_deref().expect("positional arg linked");
+        assert_eq!(pos.num, 1);
+        assert_eq!(pos.r#type, CAA_NORMAL);
+        assert_eq!(pos.descr.as_deref(), Some("cmd"));
+        assert_eq!(pos.action.as_deref(), Some("_commands"));
+        assert_eq!(pos.direct, 1, "explicit numbering sets direct=1");
+    }
+
+    /// c:1647-1656 — duplicate numbered argument must error out and
+    /// return None (the cadef cache miss path picks this up).
+    #[test]
+    fn parse_cadef_doubled_arg_errors() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::utils::inittyptab();
+        let args = vec![
+            String::from(""),
+            String::from("1:a:_a"),
+            String::from("1:b:_b"),
+        ];
+        let def = parse_cadef("_arguments", &args);
+        assert!(def.is_none(), "duplicate arg num=1 must reject");
+    }
+
+    /// c:1335-1370 — `(opt-x opt-y)-foo[descr]` builds a 3-element
+    /// xor list `[opt-x, opt-y, -foo]` (the option's own name gets
+    /// added at the end via c:1462-1468).
+    #[test]
+    fn parse_cadef_xor_list_populated() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::utils::inittyptab();
+        let args = vec![
+            String::from(""),
+            String::from("(opt-x opt-y)-foo[descr]"),
+        ];
+        let def = parse_cadef("_arguments", &args).expect("cadef built");
+        let opt = def.opts.as_deref().expect("opt linked");
+        let xor = opt.xor.as_ref().expect("xor list");
+        assert_eq!(xor.len(), 3, "xor: {:?}", xor);
+        assert_eq!(xor[0], "opt-x");
+        assert_eq!(xor[1], "opt-y");
+        assert_eq!(xor[2], "-foo");
+    }
 }
 
 // ===========================================================
@@ -1862,18 +1945,78 @@ pub fn get_cadef(nam: &str, args: &[String]) -> i32 {                       // c
     0                                                                        // c:1693 miss
 }
 
-/// Direct port of the header section of `static Cadef parse_cadef(
-/// char *nam, char **args)` from `Src/Zle/computil.c:1196-1269`.
-///
-/// Parses the leading auto-description (first arg up to `%d`) and
-/// the `-s/-A/-S/-M` flag block, then allocates the cadef via
-/// `alloc_cadef`. The 400+ line spec-list loop (c:1275-1660) that
-/// fills in opts/args/rest from each `_arguments` spec entry is a
-/// separate substrate port — this header alone is enough for
-/// `get_cadef` to start populating its cache slot with a partially-
-/// hydrated cadef whose flags/single/match/nonarg/defs fields
-/// reflect the caller's `args` vector.
-pub fn parse_cadef(_nam: &str, args: &[String]) -> Option<Box<cadef>> {     // c:1196
+/// Direct port of `static Caarg parse_caarg(int mult, int type, int num,
+///                                          int opt, char *oname, char **def,
+///                                          char *set)` from
+/// `Src/Zle/computil.c:1099-1144`. Parses one `:descr[:action]`
+/// fragment of an `_arguments` spec into a freshly-allocated caarg.
+/// On return, `*idx` points at the first byte of `bytes` not consumed
+/// (either the separator `:` for `mult=1` or `bytes.len()` for
+/// `mult=0` rest specs).
+pub fn parse_caarg(mult: i32, atype: i32, num: i32, opt: i32,                // c:1099
+                   oname: Option<&str>, bytes: &[u8], idx: &mut usize,
+                   set: Option<&str>) -> Box<caarg> {
+    let mut ret = Box::new(caarg::default());
+    ret.num = num;                                                           // c:1109
+    ret.min = num - opt;                                                     // c:1110
+    ret.r#type = atype;                                                      // c:1111
+    ret.opt = oname.map(|s| s.to_string());                                  // c:1112
+    ret.direct = 0;                                                          // c:1113
+    ret.gsname = set.map(|s| s.to_string());                                 // c:1114
+
+    let n = bytes.len();
+
+    // c:1118-1120 — scan description up to the next `:` (escaped `\:` skipped).
+    let d_start = *idx;
+    while *idx < n && bytes[*idx] != b':' {
+        if bytes[*idx] == b'\\' && *idx + 1 < n {
+            *idx += 1;
+        }
+        *idx += 1;
+    }
+    let has_sav = *idx < n;
+    let descr_slice = &bytes[d_start..*idx];
+    let descr_str = std::str::from_utf8(descr_slice).unwrap_or("");
+    ret.descr = Some(rembslashcolon(descr_str));                             // c:1123
+
+    if has_sav {                                                             // c:1127
+        if mult != 0 {                                                       // c:1128
+            // c:1129-1136 — `*p == ':'` start, scan to next `:` or NUL.
+            *idx += 1;
+            let a_start = *idx;
+            while *idx < n && bytes[*idx] != b':' {
+                if bytes[*idx] == b'\\' && *idx + 1 < n {
+                    *idx += 1;
+                }
+                *idx += 1;
+            }
+            let action_slice = &bytes[a_start..*idx];
+            let action_str = std::str::from_utf8(action_slice).unwrap_or("");
+            ret.action = Some(rembslashcolon(action_str));                   // c:1134
+        } else {                                                             // c:1137
+            // c:1138 — `ret->action = ztrdup(rembslashcolon(p + 1))`.
+            let action_slice = &bytes[*idx + 1..];
+            let action_str = std::str::from_utf8(action_slice).unwrap_or("");
+            ret.action = Some(rembslashcolon(action_str));
+            *idx = n;
+        }
+    } else {                                                                 // c:1139
+        ret.action = Some(String::new());                                    // c:1140
+    }
+    // c:1141 — `*def = p`. Caller reads `bytes[*idx]` to decide whether to
+    // continue scanning more `:` fragments.
+
+    ret
+}
+
+/// Direct port of `static Cadef parse_cadef(char *nam, char **args)` from
+/// `Src/Zle/computil.c:1196-1666`. Parses the leading auto-description
+/// (first arg up to `%d`), the `-s/-A/-S/-M` flag block, then the
+/// main spec-list loop that fills opts/args/rest from each remaining
+/// `_arguments` spec entry.
+pub fn parse_cadef(nam: &str, args: &[String]) -> Option<Box<cadef>> {      // c:1196
+    use crate::ported::ztype_h::{iblank, idigit, inblank};
+
     if args.is_empty() {
         return None;                                                         // c:1262 `!*args`
     }
@@ -1882,16 +2025,32 @@ pub fn parse_cadef(_nam: &str, args: &[String]) -> Option<Box<cadef>> {     // c
     let mut idx = 0usize;
     let mut single: i32 = 0;
     let mut flags: i32 = 0;
-    let mut match_spec: &str = "r:|[_-]=* r:|=*";                            // c:1200 default match
+    let mut match_spec: String = "r:|[_-]=* r:|=*".to_string();              // c:1200
     let mut nonarg: Option<String> = None;
 
-    // c:1208 — strip optional `%d` auto-description split from args[0].
-    // The leading text up to `%d` is `adpre`, the trailing text is
-    // `adsuf`; neither is stored on cadef directly — they get woven
-    // into description templating during _arguments completion. The
-    // header port simply skips over them so the flag parse below sees
-    // a clean args[1..] window.
-    idx += 1;                                                                // c:1220 args++ (past args[0])
+    // c:1208-1216 — split args[0] on `%d` into (adpre, adsuf). Used at
+    // c:1543-1554 to auto-derive option descriptions.
+    let (adpre, adsuf): (Option<String>, Option<String>) = {
+        let first = args[0].as_bytes();
+        let mut split_at: Option<usize> = None;
+        let mut i = 0usize;
+        while i + 1 < first.len() {
+            if first[i] == b'%' && first[i + 1] == b'd' {
+                split_at = Some(i);
+                break;
+            }
+            i += 1;
+        }
+        if let Some(at) = split_at {
+            let pre = String::from_utf8_lossy(&first[..at]).into_owned();
+            let suf = String::from_utf8_lossy(&first[at + 2..]).into_owned();
+            (Some(pre), Some(suf))
+        } else {
+            (None, None)
+        }
+    };
+
+    idx += 1;                                                                // c:1220 args++
 
     // c:1221-1259 — `-s/-A/-S/-M[arg]` flag block.
     while idx < args.len() {
@@ -1900,44 +2059,32 @@ pub fn parse_cadef(_nam: &str, args: &[String]) -> Option<Box<cadef>> {     // c
         if bytes.len() < 2 || bytes[0] != b'-' {                             // c:1221
             break;
         }
-        // c:1222-1227 — scan flag-cluster bytes; `M`/`A` terminate the
-        // cluster (their value follows), `s`/`S` are pure flags. Any
-        // other byte aborts the flag-block parse.
         let cluster = &bytes[1..];
         let mut ok = true;
-        let mut consumed_value = false;
         for (i, &c) in cluster.iter().enumerate() {
             match c {
                 b's' => single = 1,                                          // c:1233
                 b'S' => flags |= CDF_SEP,                                    // c:1235
                 b'A' => {                                                    // c:1237
-                    if i + 1 < cluster.len() {                               // c:1238 inline value
+                    if i + 1 < cluster.len() {                               // c:1238
                         nonarg = Some(String::from_utf8_lossy(&cluster[i + 1..]).into_owned());
-                    } else if idx + 1 < args.len() {                         // c:1241 separate arg
+                    } else if idx + 1 < args.len() {                         // c:1241
                         nonarg = Some(args[idx + 1].clone());
                         idx += 1;
                     } else {
                         ok = false;
                     }
-                    consumed_value = true;
                     break;
                 }
                 b'M' => {                                                    // c:1245
-                    if i + 1 < cluster.len() {                               // c:1246 inline value
-                        match_spec = std::str::from_utf8(&cluster[i + 1..])
-                            .unwrap_or("r:|[_-]=* r:|=*");
-                        // The slice's lifetime borrows from args[idx],
-                        // which lives at least until we exit the loop.
-                        // Clone into a String binding outside this fn
-                        // would be needed for storage, but alloc_cadef
-                        // makes its own copy below.
-                    } else if idx + 1 < args.len() {                         // c:1249 separate arg
-                        match_spec = &args[idx + 1];
+                    if i + 1 < cluster.len() {                               // c:1246
+                        match_spec = String::from_utf8_lossy(&cluster[i + 1..]).into_owned();
+                    } else if idx + 1 < args.len() {                         // c:1249
+                        match_spec = args[idx + 1].clone();
                         idx += 1;
                     } else {
                         ok = false;
                     }
-                    consumed_value = true;
                     break;
                 }
                 _ => {
@@ -1947,42 +2094,643 @@ pub fn parse_cadef(_nam: &str, args: &[String]) -> Option<Box<cadef>> {     // c
             }
         }
         if !ok {
-            break;                                                           // c:1230 abort flag block
+            break;                                                           // c:1230
         }
-        let _ = consumed_value;
-        idx += 1;                                                            // c:1258 args++
+        idx += 1;                                                            // c:1258
     }
 
-    // c:1260 — `if (*args && !strcmp(*args, ":")) args++;` — skip `:`.
-    if idx < args.len() && args[idx] == ":" {
+    if idx < args.len() && args[idx] == ":" {                                // c:1260
         idx += 1;
     }
-    // c:1262 — `if (!*args) return NULL;` — empty after flag block.
-    if idx >= args.len() {
+    if idx >= args.len() {                                                   // c:1262
         return None;
     }
 
-    // c:1265 — `if (nonarg) tokenize(nonarg);` — pattern-token marker
-    // substitution. The Rust port stores the raw string; tokenize is a
-    // pattern-compile step run on demand inside the matcher path.
+    // c:1266 — `tokenize(nonarg = dupstring(nonarg))`. The Rust matcher
+    // path lazily tokenizes on use; the stored bytes are the spec text.
 
-    // c:1269 — `alloc_cadef(orig_args, single, match, nonarg, flags)`.
-    let def = alloc_cadef(
+    // c:1269 — `all = ret = alloc_cadef(orig_args, single, match, nonarg, flags)`.
+    let first_def = alloc_cadef(
         Some(orig_args),
         single,
-        match_spec,
+        &match_spec,
         nonarg.as_deref(),
         flags,
     );
 
-    // c:1275-1660 — main spec-list loop (~400 lines) populates
-    // def->opts / def->args / def->rest from each remaining args[idx..]
-    // entry. Not yet ported — opts/args/rest stay None, which means
-    // the cached cadef's option-name matchers don't fire. The cache
-    // shell is real and observable; the spec-list body is the next
-    // substrate chunk.
+    // ---- spec-list loop state (c:1271-1273) ----
+    // `sets` accumulates each Cadef in `snext` order; per-set opts/args/rest
+    // are collected in parallel Vecs and linked into the cadef at the end.
+    let mut sets: Vec<Box<cadef>> = vec![first_def];
+    let mut opts_per_set: Vec<Vec<Box<caopt>>> = vec![Vec::new()];
+    let mut args_per_set: Vec<Vec<Box<caarg>>> = vec![Vec::new()];
+    let mut rest_per_set: Vec<Option<Box<caarg>>> = vec![None];
 
-    Some(def)
+    let sargs = idx;                                                         // c:1271 saved set-start
+    let mut anum: i32 = 1;                                                   // c:1203
+    let mut doset: Option<String> = None;
+    let mut axor: Option<String> = None;
+    let mut curset: Option<usize> = None;                                    // c:1201
+    let mut pendset: Option<usize> = None;
+    let mut foreignset = false;
+
+    // c:1275 — `for (; *args || pendset; args++)`.
+    'outer: loop {
+        // c:1276 — `if (!*args)` start a fresh set (restart from sargs).
+        if idx >= args.len() {
+            if pendset.is_none() {
+                break 'outer;
+            }
+            // c:1278-1286 — set_cadef_opts on current; alloc new cadef as snext.
+            {
+                let cur = sets.last_mut().unwrap();
+                let cur_args = args_per_set.last_mut().unwrap();
+                // Link the args list into cur so set_cadef_opts can walk it.
+                let mut head: Option<Box<caarg>> = None;
+                for arg_box in cur_args.drain(..).rev() {
+                    let mut a = arg_box;
+                    a.next = head;
+                    head = Some(a);
+                }
+                cur.args = head;
+                set_cadef_opts(cur);                                          // c:1280
+                // Stash args back as a Vec for the rest of the loop. We need
+                // both forms; the linked list will be rebuilt at the end.
+                let mut walk = cur.args.take();
+                while let Some(mut node) = walk {
+                    walk = node.next.take();
+                    cur_args.push(node);
+                }
+            }
+            idx = sargs;                                                     // c:1278
+            doset = None;                                                    // c:1279
+            sets.push(alloc_cadef(None, single, &match_spec,                  // c:1281
+                                  nonarg.as_deref(), flags));
+            opts_per_set.push(Vec::new());
+            args_per_set.push(Vec::new());
+            rest_per_set.push(None);
+            anum = 1;                                                        // c:1283
+            foreignset = false;                                              // c:1284
+            curset = pendset;                                                // c:1285
+            pendset = None;                                                  // c:1286
+        }
+
+        let arg = &args[idx];
+        let arg_bytes = arg.as_bytes();
+
+        // c:1288 — `args[0][0] == '-' && !args[0][1] && args[1]` — set marker.
+        if arg_bytes == b"-" && idx + 1 < args.len() {
+            if curset.is_some() && curset != Some(idx) {                     // c:1289
+                foreignset = true;
+                if pendset.is_none() && Some(idx) > curset {                 // c:1290
+                    pendset = Some(idx);
+                }
+                idx += 1;                                                    // c:1292 ++args
+            } else {                                                         // c:1293
+                foreignset = false;
+                idx += 1;
+                let p_str = &args[idx];                                      // c:1295 char *p = *++args
+                let pb = p_str.as_bytes();
+                let l = pb.len().saturating_sub(1);
+                // c:1298 — `if (*p == '(' && p[l] == ')')` strip parens for axor.
+                let (set_name, ax) = if !pb.is_empty()
+                    && pb[0] == b'(' && pb[l] == b')'
+                {
+                    let inner = String::from_utf8_lossy(&pb[1..l]).into_owned();
+                    (inner.clone(), Some(inner))
+                } else {
+                    (p_str.clone(), None)
+                };
+                axor = ax;
+                if set_name.is_empty() {                                     // c:1302
+                    zwarnnam(nam, "empty set name");
+                    return None;
+                }
+                let new_set = crate::ported::string::tricat(&set_name, "-", "");// c:1307
+                doset = Some(new_set.clone());
+                {
+                    let cur = sets.last_mut().unwrap();
+                    cur.set = Some(new_set);
+                }
+                curset = Some(idx);                                          // c:1308
+            }
+            idx += 1;
+            continue;                                                        // c:1310
+        }
+
+        // c:1311 — `args[0][0] == '+' && !args[0][1] && args[1]` — group marker.
+        if arg_bytes == b"+" && idx + 1 < args.len() {
+            foreignset = false;                                              // c:1315
+            idx += 1;
+            let p_str = &args[idx];                                          // c:1316
+            let pb = p_str.as_bytes();
+            let l = pb.len().saturating_sub(1);
+            let (group_name, ax) = if !pb.is_empty()
+                && pb[0] == b'(' && pb[l] == b')'
+            {
+                let inner = String::from_utf8_lossy(&pb[1..l]).into_owned();
+                (inner.clone(), Some(inner))
+            } else {
+                (p_str.clone(), None)
+            };
+            axor = ax;
+            if group_name.is_empty() {                                       // c:1322
+                zwarnnam(nam, "empty group name");
+                return None;
+            }
+            doset = Some(crate::ported::string::tricat(&group_name, "-", ""));// c:1327
+            idx += 1;
+            continue;                                                        // c:1328
+        }
+
+        // c:1329 — `if (foreignset) continue` — skip specs for other sets.
+        if foreignset {
+            idx += 1;
+            continue;
+        }
+
+        // c:1331 — parse one spec entry.
+        let bytes = arg_bytes;
+        let mut p = 0usize;
+        let mut xnum: i32 = 0;                                               // c:1332
+        let mut not_flag = false;
+        if p < bytes.len() && bytes[p] == b'!' {                             // c:1333
+            not_flag = true;
+            p += 1;
+        }
+
+        let mut xor: Option<Vec<String>> = None;
+        if p < bytes.len() && bytes[p] == b'(' {                             // c:1335 xor list
+            let mut list: Vec<String> = Vec::new();
+            // c:1342-1354 — collect words inside parens.
+            let mut bad = false;
+            'paren: loop {
+                if p >= bytes.len() || bytes[p] == b')' { break; }
+                p += 1;                                                       // c:1343 p++
+                while p < bytes.len() && inblank(bytes[p]) { p += 1; }        // c:1343 inblank skip
+                if p >= bytes.len() { bad = true; break 'paren; }
+                if bytes[p] == b')' { break 'paren; }
+                let q = p;
+                p += 1;
+                while p < bytes.len() && bytes[p] != b')' && !inblank(bytes[p]) {
+                    p += 1;
+                }
+                if p >= bytes.len() { bad = true; break 'paren; }            // c:1349
+                let word = String::from_utf8_lossy(&bytes[q..p]).into_owned();
+                list.push(word);
+                xnum += 1;                                                    // c:1353
+            }
+            if bad || p >= bytes.len() || bytes[p] != b')' {                  // c:1356
+                zwarnnam(nam, &format!("invalid argument: {}", arg));
+                return None;
+            }
+            if doset.is_some() && axor.is_some() {                            // c:1361
+                xnum += 1;
+                list.push(axor.clone().unwrap());                             // c:1366-1367
+            }
+            xor = Some(list);
+            p += 1;                                                           // c:1370
+        } else if doset.is_some() && axor.is_some() {                        // c:1371
+            xnum = 1;
+            xor = Some(vec![axor.clone().unwrap()]);
+        }
+
+        // c:1379 — option spec OR rest-arg OR normal-arg.
+        let is_opt = p < bytes.len() && (
+            bytes[p] == b'-' || bytes[p] == b'+'
+            || (bytes[p] == b'*' && p + 1 < bytes.len()
+                && (bytes[p + 1] == b'-' || bytes[p + 1] == b'+'))
+        );
+
+        if is_opt {
+            // ---- c:1381-1580 option spec branch ----
+            // The `rec:` goto loop handles `-+`/`+-` duplication by
+            // parsing the same spec twice with name[0] flipped between
+            // `-` and `+`.
+            let mut again_iter = 0i32;                                       // c:1384
+            let mut againp_start: Option<usize> = None;
+            let mut p_state = p;
+            let mut xor_state = xor;
+            let mut xnum_state = xnum;
+
+            'rec: loop {
+                let mut multi = false;                                       // c:1390
+                if p_state < bytes.len() && bytes[p_state] == b'*' {
+                    multi = true;
+                    p_state += 1;
+                }
+
+                let mut name_start: usize;
+                let mut name_buf: Vec<u8>;
+                let need_flip = p_state + 2 < bytes.len()
+                    && ((bytes[p_state] == b'-' && bytes[p_state + 1] == b'+')
+                        || (bytes[p_state] == b'+' && bytes[p_state + 1] == b'-'))
+                    && bytes[p_state + 2] != b':'
+                    && bytes[p_state + 2] != b'['
+                    && bytes[p_state + 2] != b'='
+                    && bytes[p_state + 2] != b'-'
+                    && bytes[p_state + 2] != b'+';
+
+                if need_flip {                                               // c:1393
+                    if again_iter == 0 {
+                        againp_start = Some(p_state);
+                    }
+                    name_start = p_state + 1;
+                    name_buf = bytes[name_start..].to_vec();
+                    if !name_buf.is_empty() {
+                        name_buf[0] = if again_iter != 0 { b'-' } else { b'+' };
+                    }
+                    again_iter += 1;
+                    p_state = name_start;
+                } else {                                                     // c:1404
+                    name_start = p_state;
+                    name_buf = bytes[name_start..].to_vec();
+                    if p_state + 1 < bytes.len()
+                        && bytes[p_state] == b'-' && bytes[p_state + 1] == b'-'
+                    {
+                        p_state += 1;                                        // c:1407 skip 2nd '-'
+                    }
+                }
+
+                if p_state + 1 >= bytes.len() {                              // c:1409
+                    zwarnnam(nam, &format!("invalid argument: {}", arg));
+                    return None;
+                }
+
+                // c:1416-1422 — skip option name body up to type byte.
+                let mut np = p_state - name_start + 1;
+                let nlen = name_buf.len();
+                while np < nlen
+                    && name_buf[np] != b':'
+                    && name_buf[np] != b'['
+                    && !((name_buf[np] == b'-' || name_buf[np] == b'+')
+                         && np + 1 < nlen
+                         && (name_buf[np + 1] == b':' || name_buf[np + 1] == b'['))
+                    && !(name_buf[np] == b'='
+                         && np + 1 < nlen
+                         && (name_buf[np + 1] == b':'
+                             || name_buf[np + 1] == b'['
+                             || name_buf[np + 1] == b'-'))
+                {
+                    if name_buf[np] == b'\\' && np + 1 < nlen {
+                        np += 1;
+                    }
+                    np += 1;
+                }
+
+                let mut c_byte = if np < nlen { name_buf[np] } else { 0 };
+                let opt_name_slice = &name_buf[..np];
+                let opt_name = String::from_utf8_lossy(opt_name_slice).into_owned();
+
+                let mut otype = CAO_NEXT;                                    // c:1384
+                if c_byte == b'-' {                                          // c:1427
+                    otype = CAO_DIRECT;
+                    np += 1;
+                    c_byte = if np < nlen { name_buf[np] } else { 0 };
+                } else if c_byte == b'+' {                                   // c:1430
+                    otype = CAO_ODIRECT;
+                    np += 1;
+                    c_byte = if np < nlen { name_buf[np] } else { 0 };
+                } else if c_byte == b'=' {                                   // c:1433
+                    otype = CAO_OEQUAL;
+                    np += 1;
+                    c_byte = if np < nlen { name_buf[np] } else { 0 };
+                    if c_byte == b'-' {
+                        otype = CAO_EQUAL;                                   // c:1436
+                        np += 1;
+                        c_byte = if np < nlen { name_buf[np] } else { 0 };
+                    }
+                }
+
+                // c:1441 — optional `[descr]`.
+                let mut descr_str: Option<String> = None;
+                if c_byte == b'[' {                                          // c:1441
+                    np += 1;
+                    let d_start = np;
+                    while np < nlen && name_buf[np] != b']' {
+                        if name_buf[np] == b'\\' && np + 1 < nlen { np += 1; }
+                        np += 1;
+                    }
+                    if np >= nlen {                                          // c:1446
+                        zwarnnam(nam, &format!("invalid option definition: {}", arg));
+                        return None;
+                    }
+                    let d_slice = &name_buf[d_start..np];
+                    descr_str = Some(String::from_utf8_lossy(d_slice).into_owned());
+                    np += 1;
+                    c_byte = if np < nlen { name_buf[np] } else { 0 };
+                }
+
+                if c_byte != 0 && c_byte != b':' {                           // c:1456
+                    zwarnnam(nam, &format!("invalid option definition: {}", arg));
+                    return None;
+                }
+
+                // c:1461 — add option name to xor list if not `*-...`.
+                let clean_name = rembslashcolon(&opt_name);
+                if !multi {
+                    let xv = xor_state.get_or_insert_with(Vec::new);
+                    if xv.len() <= xnum_state as usize {
+                        xv.resize(xnum_state as usize + 1, String::new());
+                    }
+                    xv[xnum_state as usize] = clean_name.clone();
+                }
+
+                // c:1470-1531 — argument loop for `:descr:action[:...]`.
+                let mut oargs: Vec<Box<caarg>> = Vec::new();
+                if c_byte == b':' {
+                    let mut oanum: i32 = 1;                                   // c:1473
+                    let mut onum: i32 = 0;
+                    while c_byte == b':' {                                    // c:1479
+                        let mut rest = 0;
+                        let mut end_str: Option<String> = None;
+                        np += 1;                                              // c:1484 *++p
+                        let atype: i32;
+                        c_byte = if np < nlen { name_buf[np] } else { 0 };
+                        if c_byte == b':' {                                   // c:1485
+                            atype = CAA_OPT;
+                            np += 1;
+                        } else if c_byte == b'*' {                            // c:1487
+                            np += 1;
+                            if np < nlen && name_buf[np] != b':' {            // c:1488
+                                let end_start = np;
+                                while np < nlen && name_buf[np] != b':' {
+                                    if name_buf[np] == b'\\' && np + 1 < nlen {
+                                        np += 1;
+                                    }
+                                    np += 1;
+                                }
+                                let e_slice = &name_buf[end_start..np];
+                                end_str = Some(String::from_utf8_lossy(e_slice).into_owned());
+                            }
+                            if np >= nlen || name_buf[np] != b':' {           // c:1500
+                                zwarnnam(nam, &format!("invalid option definition: {}", arg));
+                                return None;
+                            }
+                            np += 1;                                          // c:1507 *++p
+                            if np < nlen && name_buf[np] == b':' {            // c:1508
+                                np += 1;
+                                if np < nlen && name_buf[np] == b':' {        // c:1509
+                                    atype = CAA_RREST;
+                                    np += 1;
+                                } else {
+                                    atype = CAA_RARGS;
+                                }
+                            } else {
+                                atype = CAA_REST;
+                            }
+                            rest = 1;
+                        } else {
+                            atype = CAA_NORMAL;
+                        }
+
+                        // c:1521 — parse_caarg.
+                        let mut oarg = parse_caarg(
+                            if rest != 0 { 0 } else { 1 },
+                            atype, oanum, onum,
+                            Some(&clean_name),
+                            &name_buf, &mut np,
+                            doset.as_deref(),
+                        );
+                        oanum += 1;
+                        if atype == CAA_OPT { onum += 1; }                    // c:1524
+                        if let Some(end) = end_str {
+                            oarg.end = Some(end);                             // c:1526
+                        }
+                        oargs.push(oarg);
+
+                        if rest != 0 { break; }                               // c:1528
+                        c_byte = if np < nlen { name_buf[np] } else { 0 };    // c:1530
+                    }
+                }
+
+                // c:1534 — build the caopt.
+                let mut opt_box = Box::new(caopt::default());
+                opt_box.gsname = doset.clone();                               // c:1539
+                opt_box.name = Some(clean_name.clone());                      // c:1540
+                opt_box.descr = if let Some(d) = descr_str.clone() {          // c:1542
+                    Some(d)
+                } else if adpre.is_some() && oargs.len() == 1 {               // c:1543
+                    let first_arg = &oargs[0];
+                    let d_field = first_arg.descr.as_deref().unwrap_or("");
+                    let has_visible = d_field.bytes().any(|b| !iblank(b));
+                    if has_visible {                                          // c:1550
+                        Some(crate::ported::string::tricat(
+                            adpre.as_deref().unwrap_or(""),
+                            d_field,
+                            adsuf.as_deref().unwrap_or(""),
+                        ))
+                    } else {
+                        None                                                  // c:1553
+                    }
+                } else {
+                    None
+                };
+                let xor_clone = if again_iter == 1 {                          // c:1556
+                    xor_state.clone()
+                } else {
+                    xor_state.take()
+                };
+                opt_box.xor = xor_clone;
+                opt_box.r#type = otype;                                       // c:1557
+                opt_box.not = if not_flag { 1 } else { 0 };                   // c:1560
+
+                // Link in the arg list.
+                let mut head: Option<Box<caarg>> = None;
+                for a in oargs.into_iter().rev() {
+                    let mut a = a;
+                    a.next = head;
+                    head = Some(a);
+                }
+                opt_box.args = head;
+
+                {
+                    let cur = sets.last_mut().unwrap();
+                    opt_box.num = cur.nopts;
+                    cur.nopts += 1;                                           // c:1559
+                    if otype == CAO_DIRECT || otype == CAO_EQUAL {            // c:1562
+                        cur.ndopts += 1;
+                    } else if otype == CAO_ODIRECT || otype == CAO_OEQUAL {   // c:1564
+                        cur.nodopts += 1;
+                    }
+                    // c:1571 — single-letter lookup table.
+                    if single != 0 {
+                        let nb = clean_name.as_bytes();
+                        if nb.len() == 2 && nb[1] != b'-' {
+                            let sidx = single_index(nb[0], nb[1]);
+                            if sidx >= 0 {
+                                if let Some(ref mut s) = cur.single {
+                                    if (sidx as usize) < s.len() {
+                                        s[sidx as usize] = Some(Box::new(
+                                            caopt {
+                                                next: None,
+                                                name: opt_box.name.clone(),
+                                                descr: opt_box.descr.clone(),
+                                                xor: opt_box.xor.clone(),
+                                                r#type: opt_box.r#type,
+                                                args: None,
+                                                active: 0,
+                                                num: opt_box.num,
+                                                gsname: opt_box.gsname.clone(),
+                                                not: opt_box.not,
+                                            }
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                opts_per_set.last_mut().unwrap().push(opt_box);
+
+                if again_iter == 1 {                                          // c:1576
+                    if let Some(start) = againp_start {
+                        p_state = start;
+                        xnum_state = xnum;                                    // restore
+                        xor_state = xor_state.clone();
+                        continue 'rec;
+                    }
+                }
+                break 'rec;
+            }
+        } else if p < bytes.len() && bytes[p] == b'*' {
+            // ---- c:1581-1607 rest-arg branch ----
+            if not_flag {                                                    // c:1586
+                idx += 1;
+                continue;
+            }
+            p += 1;                                                          // c:1589 *++p
+            if p >= bytes.len() || bytes[p] != b':' {
+                zwarnnam(nam, &format!("invalid rest argument definition: {}", arg));
+                return None;
+            }
+            if rest_per_set.last().unwrap().is_some() {                       // c:1594
+                zwarnnam(nam, &format!("doubled rest argument definition: {}", arg));
+                return None;
+            }
+            let mut atype = CAA_REST;                                        // c:1584
+            p += 1;                                                          // c:1599 *++p
+            if p < bytes.len() && bytes[p] == b':' {                         // c:1599
+                p += 1;
+                if p < bytes.len() && bytes[p] == b':' {                     // c:1600
+                    atype = CAA_RREST;
+                    p += 1;
+                } else {
+                    atype = CAA_RARGS;
+                }
+            }
+            let mut rarg = parse_caarg(0, atype, -1, 0, None, bytes, &mut p,
+                                        doset.as_deref());                    // c:1606
+            rarg.xor = xor;                                                  // c:1607
+            *rest_per_set.last_mut().unwrap() = Some(rarg);
+        } else {
+            // ---- c:1608-1661 normal-arg branch ----
+            if not_flag {                                                    // c:1614
+                idx += 1;
+                continue;
+            }
+            let mut direct = 0;                                              // c:1611
+            if p < bytes.len() && idigit(bytes[p]) {                         // c:1617
+                direct = 1;
+                let mut num: i32 = 0;
+                while p < bytes.len() && idigit(bytes[p]) {
+                    num = num * 10 + (bytes[p] - b'0') as i32;
+                    p += 1;
+                }
+                anum = num + 1;                                              // c:1624
+            } else {
+                anum += 1;                                                   // c:1627
+            }
+            if p >= bytes.len() || bytes[p] != b':' {                        // c:1629
+                zwarnnam(nam, &format!("invalid argument: {}", arg));
+                return None;
+            }
+            let mut atype = CAA_NORMAL;
+            p += 1;                                                          // c:1636 *++p
+            if p < bytes.len() && bytes[p] == b':' {                         // c:1636
+                atype = CAA_OPT;
+                p += 1;
+            }
+            let mut narg = parse_caarg(0, atype, anum - 1, 0, None,
+                                        bytes, &mut p, doset.as_deref());     // c:1641
+            narg.xor = xor;                                                  // c:1642
+            narg.direct = direct;                                            // c:1643
+
+            // c:1647-1661 — sorted insert by num.
+            let target = anum - 1;
+            let cur_args = args_per_set.last_mut().unwrap();
+            let mut insert_at = cur_args.len();
+            for (i, existing) in cur_args.iter().enumerate() {
+                if existing.num >= target {
+                    insert_at = i;
+                    break;
+                }
+            }
+            if insert_at < cur_args.len() && cur_args[insert_at].num == target {
+                zwarnnam(nam, &format!("doubled argument definition: {}", arg));
+                return None;
+            }
+            cur_args.insert(insert_at, narg);
+        }
+
+        idx += 1;
+    }
+
+    // c:1664 — final set_cadef_opts on the last set.
+    {
+        let last_idx = sets.len() - 1;
+        let cur = &mut sets[last_idx];
+        let cur_args = &mut args_per_set[last_idx];
+        let mut head: Option<Box<caarg>> = None;
+        for a in cur_args.drain(..).rev() {
+            let mut a = a;
+            a.next = head;
+            head = Some(a);
+        }
+        cur.args = head;
+        set_cadef_opts(cur);
+    }
+
+    // ---- finalize: link opts/args/rest per set, then snext-chain ----
+    let n_sets = sets.len();
+    for i in 0..n_sets {
+        // opts — append order.
+        let mut head: Option<Box<caopt>> = None;
+        for o in opts_per_set[i].drain(..).rev() {
+            let mut o = o;
+            o.next = head;
+            head = Some(o);
+        }
+        sets[i].opts = head;
+        // args was already linked in the per-set finalize step above for
+        // every set except possibly the last (which is now done). Walk
+        // any still-present Vec entries into the linked list for safety.
+        if !args_per_set[i].is_empty() {
+            let mut head: Option<Box<caarg>> = None;
+            for a in args_per_set[i].drain(..).rev() {
+                let mut a = a;
+                a.next = head;
+                head = Some(a);
+            }
+            sets[i].args = head;
+        }
+        sets[i].rest = rest_per_set[i].take();
+    }
+
+    // c:1281 — snext chain links each subsequent set off the head.
+    while sets.len() > 1 {
+        let tail = sets.pop().unwrap();
+        let prev = sets.last_mut().unwrap();
+        // Walk to the end of the snext chain on prev and attach tail.
+        let mut cursor: &mut Option<Box<cadef>> = &mut prev.snext;
+        while cursor.is_some() {
+            cursor = &mut cursor.as_mut().unwrap().snext;
+        }
+        *cursor = Some(tail);
+    }
+
+    Some(sets.pop().unwrap())
 }
 
 /// Port of `get_cvdef(char *nam, char **args)` from Src/Zle/computil.c:3154.
