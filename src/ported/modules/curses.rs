@@ -43,6 +43,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::ported::zsh_h::{features as features_t, module};
 use crate::ported::utils::{zerrnam, zwarnnam};
+use std::io::Read;
 
 // =====================================================================
 // Port of `enum zc_win_flags` from `Src/Modules/curses.c:54`.
@@ -1472,7 +1473,6 @@ pub(crate) fn bin_zcurses(nam: &str, args: &[String],
 fn read_key_sequence(want_keypad: bool, _timeout_ms: i32) -> Option<(String, i32)> {
     #[cfg(unix)]
     {
-        use std::io::Read;
         let mut buf = [0u8; 1];
         let n = io::stdin().read(&mut buf).ok()?;
         if n == 0 {

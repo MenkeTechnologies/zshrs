@@ -24,6 +24,7 @@
 #![allow(clippy::needless_return)]
 
 use crate::utils::zwarnnam;
+use std::cell::UnsafeCell;
 
 /// True on platforms whose `setregid()` does not reset the saved gid.
 /// Mirrors `#define BROKEN_SETREGID` under `#ifdef __NetBSD__`.
@@ -202,7 +203,6 @@ fn set(e: libc::c_int) {
                 target_os = "netbsd",
             )))]
             {
-                use std::cell::UnsafeCell;
                 thread_local! {
                     static ERRNO: UnsafeCell<libc::c_int> = const { UnsafeCell::new(0) };
                 }

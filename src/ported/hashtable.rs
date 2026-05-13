@@ -20,6 +20,8 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::os::unix::fs::PermissionsExt;
+use crate::ported::zsh_h::{BANG_TOK, DINBRACK, INBRACE_TOK, OUTBRACE_TOK, CASE, COPROC, DOLOOP, DONE, ELIF, ELSE, ZEND, ESAC, FI, FOR, FOREACH, FUNC, IF, NOCORRECT, REPEAT, SELECT, THEN, TIME, UNTIL, WHILE, TYPESET, };
 
 
 /// Generic hash function (zsh's hasher)
@@ -301,7 +303,6 @@ impl cmdnam_table {
                 // Inline of the deleted is_executable helper.
                 #[cfg(unix)]
                 {
-                    use std::os::unix::fs::PermissionsExt;
                     path.metadata()
                         .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
                         .unwrap_or(false)
@@ -564,12 +565,6 @@ impl reswd_table {
         // Direct port of `static struct reswd reswds[]` at
         // Src/hashtable.c:1076-1108. Token IDs are the lextok
         // constants from zsh_h.rs (zsh.h:345-371).
-        use crate::ported::zsh_h::{
-            BANG_TOK, DINBRACK, INBRACE_TOK, OUTBRACE_TOK, CASE, COPROC,
-            DOLOOP, DONE, ELIF, ELSE, ZEND, ESAC, FI, FOR, FOREACH, FUNC,
-            IF, NOCORRECT, REPEAT, SELECT, THEN, TIME, UNTIL, WHILE,
-            TYPESET,
-        };
         let words: [(&str, i32); 31] = [                                     // c:1076
             ("!",         BANG_TOK),                                         // c:1077
             ("[[",        DINBRACK),                                         // c:1078

@@ -13,6 +13,8 @@ use super::zle_main::Zle;
 // callers (`src/ported/prompt.rs`, `src/ported/modules/hlgroup.rs`)
 // keep their existing import paths working.
 pub use crate::zle_refresh_state::{RefreshElement, RefreshState, TextAttr, VideoBuffer};
+use HighlightCategory as HC;
+use crate::ported::zsh_h::TXT_MULTIWORD_MASK;
 
 impl Zle {
     /// Main refresh function — redraws the line.
@@ -432,7 +434,6 @@ fn match_colour(name: &str) -> Option<u8> {
 /// — direct ports of zle_refresh.c:395-402.
 /// WARNING: param names don't match C — Rust=(manager, atrs) vs C=()
 pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
-    use HighlightCategory as HC;
 
     let mut seen = std::collections::HashSet::new();
     for entry in atrs {
@@ -707,7 +708,6 @@ mod tests {
 /// for code paths that probe it directly.
 pub fn addmultiword(base: &mut crate::ported::zle::zle_h::REFRESH_ELEMENT,   // c:913
                      _tptr: &[char], _ichars: usize) {
-    use crate::ported::zsh_h::TXT_MULTIWORD_MASK;
     // c:917-920 — base->atr |= TXT_MULTIWORD_MASK so the renderer
     // path that reads mwbuf knows to dereference. zshrs's
     // REFRESH_ELEMENT stores only `chr: REFRESH_CHAR + atr` — the
@@ -978,7 +978,6 @@ pub fn ZR_strncmp(                                                           // 
     newwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
     len: usize,
 ) -> i32 {
-    use crate::ported::zsh_h::TXT_MULTIWORD_MASK;
     let mut i = 0;
     while i < len {                                                          // c:123 while (len--)
         if i >= oldwstr.len() || i >= newwstr.len() {

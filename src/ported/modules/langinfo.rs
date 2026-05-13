@@ -12,6 +12,7 @@
 /// Each entry pairs with the parallel `nl_vals[]` array of `nl_item`
 /// integer keys. Used by `liitem()` for name→item lookup and by
 /// `scanlanginfo()` to enumerate every entry.
+use std::ffi::CStr;
 pub static NL_NAMES: &[&str] = &[                                         // c:65 nl_names
     "CODESET", "D_T_FMT", "D_FMT", "T_FMT",
     "RADIXCHAR", "THOUSEP", "YESEXPR", "NOEXPR", "CRNCYSTR",
@@ -120,7 +121,6 @@ pub fn liitem(name: &str) -> Option<i32> {                                  // c
 #[cfg(unix)]
 /// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
 pub fn getlanginfo(name: &str) -> Option<String> {                       // c:396
-    use std::ffi::CStr;
     // c:403-404 — `nameu = dupstring(name); unmetafy(nameu, &len);`
     let mut buf = name.as_bytes().to_vec();                              // c:403
     crate::ported::utils::unmetafy(&mut buf);                            // c:404

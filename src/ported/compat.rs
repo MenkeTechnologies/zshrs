@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 // `crate::ported::zsh_system_h::timespec` (Src/zsh_system.h:245).
 
 use crate::ported::zsh_system_h::timespec;
+use std::os::unix::fs::MetadataExt;
 
 /// Provide clock time with nanoseconds.
 ///
@@ -202,7 +203,6 @@ pub fn zgetdir(d: Option<&mut crate::ported::zsh_h::dirsav>) -> Option<String> {
 
     #[cfg(unix)]
     if let Some(dirsav) = d {
-        use std::os::unix::fs::MetadataExt;
         if let Ok(meta) = fs::metadata(&cwd) {
             dirsav.ino = meta.ino();
             dirsav.dev = meta.dev();

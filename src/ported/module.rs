@@ -19,6 +19,7 @@ use once_cell::sync::Lazy;
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::mathfunc;
 use crate::zsh_h::module;
+use crate::ported::zsh_h::OPT_ISSET;
 
 /// Port of `MathFunc mathfuncs;` from `Src/module.c:1258` — the
 /// global head of the linked list of math functions. Both
@@ -1051,8 +1052,6 @@ pub fn bin_zmodload(nam: &str, args: &[String],                              // 
                     ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     let mut table = MODULESTAB.lock().unwrap();
     let table = &mut *table;
-    use crate::ported::zsh_h::OPT_ISSET;
-    use crate::ported::utils::zwarnnam;
 
     let ops_bcpf = OPT_ISSET(ops, b'b') || OPT_ISSET(ops, b'c')              // c:2443
                 || OPT_ISSET(ops, b'p') || OPT_ISSET(ops, b'f');

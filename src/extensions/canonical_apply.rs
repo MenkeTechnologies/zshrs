@@ -39,6 +39,7 @@ use std::path::PathBuf;
 use crate::daemon::paths::CachePaths;
 use crate::daemon::shard::{list_shards, read_canonical_shard, CanonicalShard};
 use crate::exec::{AutoloadFlags, ShellExecutor, zstyle_entry};
+use crate::zle::{zle, KeymapName};
 
 /// Read the latest recorder shard and apply its canonical state to
 /// the executor. Returns total rows applied (`0` if no shard or
@@ -230,7 +231,6 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     // src/exec.rs); strip that prefix and dispatch to the right
     // keymap. Default = Main.
     {
-        use crate::zle::{zle, KeymapName};
         let mut zle_state = zle();
         for (keyseq, value) in shard.bindkeys {
             let (keymap, widget) = parse_bindkey_value(&value);
@@ -291,7 +291,6 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     // gave; the widget invocation path looks it up at execution
     // time so re-installing the name+body string is enough.
     if let Some(zle_widgets) = shard.extras.get("zle") {
-        use crate::zle::zle;
         let mut zle_state = zle();
         for (name, body) in zle_widgets {
             zle_state.user_widgets.insert(name.clone(), body.clone());
@@ -342,7 +341,6 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
 /// the recorder writes back into the two arguments
 /// `bindkey` (Src/Zle/zle_keymap.c) takes at the C builtin layer.
 fn parse_bindkey_value(value: &str) -> (crate::zle::KeymapName, &str) {
-    use crate::zle::KeymapName;
     if let Some(rest) = value.strip_prefix('[') {
         if let Some(close_idx) = rest.find(']') {
             let keymap_str = &rest[..close_idx];

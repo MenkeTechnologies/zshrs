@@ -21,6 +21,7 @@
 //! constants + the queueing-API call shape.
 
 use std::sync::atomic::{AtomicI32, Ordering};
+use crate::ported::signals::{queue_front, queue_rear, signal_queue, signal_mask_queue};
 
 // ---------------------------------------------------------------------------
 // Pseudo-signal indexes (c:34-46).
@@ -311,7 +312,6 @@ pub fn queue_signal_level() -> i32 {                                     // c:12
 #[inline]
 #[allow(non_snake_case)]
 pub fn run_queued_signals() {                                            // c:78
-    use crate::ported::signals::{queue_front, queue_rear, signal_queue, signal_mask_queue};
     loop {
         let f = queue_front.load(Ordering::SeqCst);
         let r = queue_rear.load(Ordering::SeqCst);

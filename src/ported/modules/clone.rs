@@ -18,6 +18,8 @@ use std::sync::atomic::{AtomicI32, Ordering};
 
 use crate::ported::utils::{unmetafy, zerrnam, zwarnnam};
 use crate::ported::zsh_h::{module, options};
+use std::ffi::CString;
+use std::os::unix::io::RawFd;
 
 // =====================================================================
 // External C globals from other Src/*.c files. Mirrored as atomic /
@@ -55,8 +57,6 @@ pub static ttystrname: Mutex<String> = Mutex::new(String::new());
 #[cfg(unix)]
 #[allow(unused_variables)]
 pub fn bin_clone(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { // c:44
-    use std::ffi::CString;
-    use std::os::unix::io::RawFd;
 
     // c:46 — `int ttyfd, pid, cttyfd;`
     let ttyfd: RawFd;

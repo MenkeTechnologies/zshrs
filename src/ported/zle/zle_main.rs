@@ -23,6 +23,8 @@ use std::time::{Duration, Instant};
 use super::zle_keymap::{Keymap, KeymapManager};
 use super::zle_thingy::Thingy;
 use super::widget::{Widget, WidgetFlags};
+use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG_SAFE, PM_SCALAR, PM_ARRAY, PM_HASHED};
+use std::sync::atomic::Ordering;
 
 /// ZLE character type - always char in Rust (Unicode native)
 pub type ZleChar = char;
@@ -559,7 +561,6 @@ impl Zle {
             // `isatty + tcgetattr(ICANON)` and return None instead of
             // blocking; only honour the C-faithful blocking read when
             // we know the descriptor is in raw mode.
-            use std::os::unix::io::AsRawFd;
             let fd = io::stdin().as_raw_fd();
             let is_tty = unsafe { libc::isatty(fd) } == 1;
             let in_raw_mode = if is_tty {
@@ -586,7 +587,6 @@ impl Zle {
 
     /// Try to read a byte non-blocking
     fn try_read_byte(&self, buf: &mut [u8]) -> io::Result<bool> {
-        use std::os::unix::io::AsRawFd;
 
         let mut fds = [libc::pollfd {
             fd: io::stdin().as_raw_fd(),
@@ -1306,8 +1306,6 @@ impl Zle {
 /// WARNING: param names don't match C — Rust=(name, args, _func) vs C=(name, args, ops, func)
 pub fn bin_vared(name: &str, args: &[String],                                // c:1678
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG_SAFE, PM_SCALAR, PM_ARRAY, PM_HASHED};
-    use crate::ported::utils::zwarnnam;
     let mut type_: u32 = PM_SCALAR;                                          // c:1685
     // c:1691 — `if ((interact && unset(USEZLE)) || !strcmp(term, "emacs"))`.
     let term = std::env::var("TERM").unwrap_or_default();
@@ -1674,7 +1672,6 @@ pub fn breakread(fd: i32, buf: &mut [u8], n: usize) -> isize {               // 
 /// return 0;
 /// ```
 pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {            // c:2312
-    use std::sync::atomic::Ordering;
     // c:2314 — refuse to unload while ZLE is active.
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
         return 1;
@@ -1856,7 +1853,6 @@ pub fn recursiveedit(args: &mut Zle) -> i32 {                                 //
     //                       errflag = done = eofsent = 0; return locerror`.
     // zlecore needs the editor mainloop substrate; we faithfully
     // bump/decrement zle_recursive and reset errflag/done.
-    use std::sync::atomic::Ordering;
     crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     // c:1984-1986 — `redrawhook(); zrefresh(); zlecore()`. Deferred.
     crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
@@ -1974,7 +1970,6 @@ pub fn ungetbytes_unmeta(zle: &mut Zle, s: &[u8]) {                          // 
 /// the `ZLE_RESET_NEEDED` flag so the next `Zle::zlecore` tick
 /// reads it and triggers `Zle::reexpandprompt + redisplay`.
 pub fn zle_resetprompt() {                                                   // c:2058
-    use std::sync::atomic::Ordering;
     // c:2060 — `reexpandprompt()`. Flag drives the deferred re-expand
     // in Zle::zlecore (reads ZLE_RESET_NEEDED + clears it).
     ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
@@ -2088,7 +2083,6 @@ pub static WATCH_FDS: std::sync::Mutex<Vec<super::zle_h::watch_fd>> =        // 
 /// param scope that `zlebeforetrap` pushed (if zle is active).
 /// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
 pub fn zleaftertrap() -> i32 {                                               // c:2114
-    use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2116
         crate::ported::params::endparamscope();                              // c:2117
     }
@@ -2112,7 +2106,6 @@ pub fn zleaftertrap() -> i32 {                                               // 
 /// zle is active).
 /// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
 pub fn zlebeforetrap() -> i32 {                                              // c:2104
-    use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2106
         // c:2107 — `startparamscope()`. Push a param scope so trap
         // function locals don't leak into the outer shell state.

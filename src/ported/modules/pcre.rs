@@ -6,6 +6,8 @@
 use regex::Regex;
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::options;
+use crate::ported::zsh_h::OPT_ISSET;
+use crate::ported::zsh_h::{OPT_ARG, OPT_HASARG};
 
 /// Port of `CPCRE_PLAIN` from `Src/Modules/pcre.c:34`. Default
 /// pattern-flavour id passed to `cond_pcre_match` (the `-pcre-match`
@@ -46,7 +48,6 @@ thread_local! {
 /// `pcre_pattern`. Option bits read from `ops` via OPT_ISSET.
 #[allow(unused_variables)]
 pub fn bin_pcre_compile(nam: &str, args: &[String], ops: &options, func: i32) -> i32 { // c:70
-    use crate::ported::zsh_h::OPT_ISSET;
     // c:72-76 — locals at function top.
     let mut pcre_opts: u32 = 0;                                              // c:72
     let target_len: i32;                                                     // c:73
@@ -119,7 +120,6 @@ pub fn bin_pcre_study(nam: &str, args: &[String], ops: &options, func: i32) -> i
 /// WARNING: param names don't match C — Rust=() vs C=(nam, args, ops, func)
 pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) // c:328
     -> (i32, Option<String>, Vec<Option<String>>) {
-    use crate::ported::zsh_h::{OPT_ARG, OPT_HASARG, OPT_ISSET};
     // c:330-341 — locals at function top.
     let ret: i32;                                                            // c:330
     let _c: u8 = 0;                                                          // c:330

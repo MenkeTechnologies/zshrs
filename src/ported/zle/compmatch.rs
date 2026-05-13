@@ -52,11 +52,22 @@
 /// (same `tp` + same `str` for class types or same `chr` for
 /// CPAT_CHAR). Used by `cmatchers_same` to dedupe matcher specs.
 /// WARNING: param names don't match C — Rust=(b) vs C=(a, b)
+use crate::ported::zle::comp_h::{CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS};
+use crate::ported::zle::comp_h::{CMF_LEFT, CMF_RIGHT};
+use crate::ported::zle::comp_h::{CLF_LINE, CLF_SUF};
+use crate::ported::zle::comp_h::CLF_MATCHED;
+use crate::ported::zsh_h::{PP_LOWER, PP_UPPER};
+use crate::ported::zle::zle_h::{ZC_tolower, ZC_toupper};
+use crate::ported::zle::comp_h::{Cmatcher, Cmlist};
+use crate::ported::zle::comp_h::{Cline, CLF_NEW};
+use crate::ported::zle::comp_h::CMF_LINE;
+use crate::ported::zle::comp_h::CLF_JOIN;
+use crate::ported::zle::comp_h::CLF_MISS;
+use crate::ported::zle::comp_h::CPAT_ANY;
 pub fn cpatterns_same(                                                       // c:44
     mut a: Option<&crate::ported::zle::comp_h::Cpattern>,
     mut b: Option<&crate::ported::zle::comp_h::Cpattern>,
 ) -> bool {                                                                  // c:42
-    use crate::ported::zle::comp_h::{CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS};
     while let Some(ap) = a {                                                 // c:46 while (a)
         let bp = match b {                                                   // c:47
             None => return false,                                            // c:48 if(!b) return 0
@@ -111,7 +122,6 @@ pub fn cmatchers_same(                                                       // 
     a: &crate::ported::zle::comp_h::Cmatcher,
     b: &crate::ported::zle::comp_h::Cmatcher,
 ) -> bool {                                                                  // c:82
-    use crate::ported::zle::comp_h::{CMF_LEFT, CMF_RIGHT};
     // c:86 — `a == b` short-circuit (pointer identity). Rust uses
     // `std::ptr::eq` for the same effect.
     if std::ptr::eq(a, b) {
@@ -169,7 +179,6 @@ pub fn cmatchers_same(                                                       // 
 /// ```
 /// Total visual length of one Cline plus its prefix/suffix sub-lists.
 pub fn cline_sublen(l: &crate::ported::zle::comp_h::Cline) -> i32 {          // c:219
-    use crate::ported::zle::comp_h::{CLF_LINE, CLF_SUF};
     // c:221 — `len = (CLF_LINE ? llen : wlen)`.
     let mut len: i32 = if (l.flags & CLF_LINE) != 0 { l.llen } else { l.wlen };
     // c:223 — `if (olen && !((CLF_SUF ? suffix : prefix))) len += olen`.
@@ -240,7 +249,6 @@ pub fn cline_setlens(l: &mut Option<Box<crate::ported::zle::comp_h::Cline>>, bot
 /// Set `CLF_MATCHED` on every Cline reachable through next/prefix/
 /// suffix from `p`.
 pub fn cline_matched(p: &mut Option<Box<crate::ported::zle::comp_h::Cline>>) {  // c:254
-    use crate::ported::zle::comp_h::CLF_MATCHED;
     let mut cur = p.as_deref_mut();
     while let Some(node) = cur {                                             // c:256 while (p)
         node.flags |= CLF_MATCHED;                                           // c:257
@@ -467,8 +475,6 @@ pub fn pattern_match_equivalence(
     lp: &crate::ported::zle::comp_h::Cpattern,                               // c:1316
     wind: u32, wmtp: i32, wchr: u32,
 ) -> u32 {
-    use crate::ported::zsh_h::{PP_LOWER, PP_UPPER};
-    use crate::ported::zle::zle_h::{ZC_tolower, ZC_toupper};
 
     // c:1324 — PATMATCHINDEX(lp->u.str, wind-1, &lchr, &lmtp).
     // Walk lp.str's encoded char-range descriptor finding the
@@ -851,7 +857,6 @@ mod tests {
 /// `bmatchers` Cmlist. Original chain head is appended after the new
 /// entries so the final list is `[new_entries..., old_bmatchers...]`.
 pub fn add_bmatchers(m: Option<&crate::ported::zle::comp_h::Cmatcher>) {     // c:101
-    use crate::ported::zle::comp_h::{Cmatcher, Cmlist, CMF_RIGHT};
 
     let old = {                                                              // c:104 Cmlist old = bmatchers
         let cell = crate::ported::zle::compcore::bmatchers
@@ -919,7 +924,6 @@ pub fn add_match_part(
     s: &str, sl: i32,
     osl: i32, sfx: i32,
 ) {
-    use crate::ported::zle::comp_h::{Cline, CMF_LEFT, CLF_NEW, CLF_SUF};
 
     // c:382 — `if (l && !strncmp(l, w, wl)) l = NULL` — drop redundant anchor.
     let l_eff: Option<String> = match l {
@@ -1045,7 +1049,6 @@ pub static MATCHLASTPART: std::sync::OnceLock<std::sync::Mutex<Option<Box<crate:
 pub fn add_match_str(m: Option<&crate::ported::zle::comp_h::Cmatcher>,        // c:327
                      l: &str, w: &str, mut wl: i32, sfx: i32)
 {
-    use crate::ported::zle::comp_h::CMF_LINE;
 
     // c:332-334 — `if (m && (m->flags & CMF_LINE)) { wl = m->llen; w = l; }`.
     let (eff_w_owned, eff_w): (String, &str) = match m {
@@ -1089,7 +1092,6 @@ pub fn add_match_sub(
     m: Option<&crate::ported::zle::comp_h::Cmatcher>,                        // c:446
     l: Option<&str>, ll: i32, w: Option<&str>, wl: i32,
 ) {
-    use crate::ported::zle::comp_h::{Cline, CLF_NEW};
 
     // c:450-453 — `if (m && (m->flags & CMF_LINE)) { wl = m->llen; w = l; }`.
     let (eff_w, eff_wl) = match m {
@@ -1163,7 +1165,6 @@ pub fn bld_line(
     wlen: i32,
     _sfx: i32,
 ) -> i32 {
-    use crate::ported::zle::comp_h::CPAT_CHAR;
     let _ = mword;
     let _ = word;
 
@@ -1204,7 +1205,6 @@ pub fn bld_parts(
     lp: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
     lprem: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
 ) -> Option<Box<crate::ported::zle::comp_h::Cline>> {
-    use crate::ported::zle::comp_h::{Cline, CLF_NEW};
 
     let bytes = str.as_bytes();
     let total: usize = (len as usize).min(bytes.len());
@@ -1297,7 +1297,6 @@ pub struct cmdata {                                                          // 
 /// node when its `len` runs to zero; returns 1 when the chain is
 /// exhausted, 0 otherwise.
 pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {                      // c:2152
-    use crate::ported::zle::comp_h::CLF_LINE;
 
     if md.len != 0 { return 0; }                                             // c:2155
     let next = match md.cl.as_deref() {                                      // c:2158
@@ -1342,7 +1341,6 @@ pub fn check_cmdata(md: &mut cmdata, sfx: i32) -> i32 {                      // 
 pub fn cmp_anchors(o: &mut crate::ported::zle::comp_h::Cline,                // c:2107
                    n: &crate::ported::zle::comp_h::Cline,
                    join: i32) -> i32 {
-    use crate::ported::zle::comp_h::{CLF_JOIN, CLF_LINE};
     // Inline `!strncmp(a, b, n)` predicate from C.
     let strncmp_eq = |a: &Option<String>, b: &Option<String>, n: usize| -> bool {
         match (a, b) {
@@ -1406,7 +1404,6 @@ pub fn get_cline(l: Option<String>, ll: i32, w: Option<String>, wl: i32,    // c
                  o: Option<String>, ol: i32, fl: i32)
     -> Box<crate::ported::zle::comp_h::Cline>
 {
-    use crate::ported::zle::comp_h::Cline;
     Box::new(Cline {
         next:   None,                                                        // c:156
         line:   l,                                                           // c:157
@@ -1456,7 +1453,6 @@ pub fn join_clines(o: i32, n: i32) -> i32 {                                  // 
 pub fn join_mid(o: &mut crate::ported::zle::comp_h::Cline,                   // c:2608
                 n: &mut crate::ported::zle::comp_h::Cline)
 {
-    use crate::ported::zle::comp_h::CLF_JOIN;
 
     if (o.flags & CLF_JOIN) != 0 {                                           // c:2611
         // c:2616 — `join_psfx(o, n, NULL, &nr, 0)`.
@@ -1538,7 +1534,6 @@ pub fn join_psfx(
     nrest: Option<&mut Option<Box<crate::ported::zle::comp_h::Cline>>>,
     sfx: i32,
 ) {
-    use crate::ported::zle::comp_h::CLF_MISS;
 
     let (oref, nref) = if sfx != 0 {                                         // c:2452
         (ot.suffix.clone(), nt.suffix.clone())
@@ -1676,7 +1671,6 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str)               // 
 pub fn join_sub(md: &mut cmdata, str: &str, len: i32, mlen: &mut i32,       // c:2212
                 sfx: i32, join: i32) -> Option<Box<crate::ported::zle::comp_h::Cline>>
 {
-    use crate::ported::zle::comp_h::CLF_JOIN;
 
     // c:2214 — `if (!check_cmdata(md, sfx))`. Refill md from next
     // Cline; bail when chain exhausted.
@@ -1797,9 +1791,6 @@ pub fn pattern_match(
     wp: Option<&crate::ported::zle::comp_h::Cpattern>,
     ws: &str,
 ) -> i32 {
-    use crate::ported::zle::comp_h::CPAT_ANY;
-    use crate::ported::zsh_h::{PP_LOWER, PP_UPPER};
-    use crate::ported::zle::zle_h::ZC_tolower;
 
     let (mut p_cur, mut wp_cur) = (p, wp);                                   // c:1551 walking p / wp
     let mut s_bytes = s.chars().peekable();
@@ -1863,9 +1854,6 @@ pub fn pattern_match_restrict(
     prestrict: Option<&crate::ported::zle::comp_h::Cpattern>,
     new_line: &mut Vec<char>,
 ) -> i32 {
-    use crate::ported::zle::comp_h::{CPAT_ANY, CPAT_CHAR, CPAT_EQUIV};
-    use crate::ported::zsh_h::{PP_LOWER, PP_UPPER};
-    use crate::ported::zle::zle_h::ZC_tolower;
 
     let mut p_cur = p;
     let mut wp_cur = wp;
@@ -1977,7 +1965,6 @@ pub fn pattern_match_restrict(
 pub fn pattern_match1(p: &crate::ported::zle::comp_h::Cpattern,              // c:1269
                       c: u32, mtp: &mut i32) -> u32
 {
-    use crate::ported::zle::comp_h::{CPAT_ANY, CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS};
     *mtp = 0;                                                                // c:1273
     match p.tp {                                                             // c:1274
         x if x == CPAT_CCLASS => {                                           // c:1275
@@ -2165,7 +2152,6 @@ pub fn sub_match(md: &mut cmdata, str: &str, len: i32, sfx: i32) -> i32 {   // c
 /// of `md` back into the previous cline node so it can be revisited
 /// on a different match path.
 pub fn undo_cmdata(md: &cmdata, sfx: i32) -> Option<Box<crate::ported::zle::comp_h::Cline>> { // c:2188
-    use crate::ported::zle::comp_h::CLF_LINE;
     let mut r = md.pcl.as_deref().cloned()?;                                 // c:2189 r = md->pcl
 
     if md.line != 0 {                                                        // c:2191

@@ -18,6 +18,9 @@
 
 use std::collections::HashMap;
 use crate::ported::utils::{quotedzputs, zwarnnam};
+use crate::ported::zle::complete::INCOMPFUNC;
+use crate::ported::zle::complete::COMPQSTACK;
+use crate::ported::zsh_h::OPT_ISSET;
 
 // =====================================================================
 // CRT_* — `_describe` row-type discriminator from `computil.c:79-83`.
@@ -1191,8 +1194,6 @@ pub fn arrcontains(a: &[String], s: &str, colon: bool) -> i32 {              // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args)
 pub fn bin_comparguments(nam: &str, args: &[String],                         // c:2585
                          _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
-    use crate::ported::zle::complete::INCOMPFUNC;
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:2616
         zwarnnam(nam, "can only be called from completion function");
         return 1;
@@ -1212,8 +1213,6 @@ pub fn bin_comparguments(nam: &str, args: &[String],                         // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(d, more)
 pub fn bin_compdescribe(nam: &str, args: &[String],                          // c:846
                         _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
-    use crate::ported::zle::complete::INCOMPFUNC;
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3452
         zwarnnam(nam, "can only be called from completion function");
         return 1;
@@ -1236,8 +1235,6 @@ pub fn bin_compdescribe(nam: &str, args: &[String],                          // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=()
 pub fn bin_compfiles(nam: &str, args: &[String],                             // c:4970
                      _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
-    use crate::ported::zle::complete::INCOMPFUNC;
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:4949
         zwarnnam(nam, "can only be called from completion function");
         return 1;
@@ -1256,8 +1253,6 @@ pub fn bin_compfiles(nam: &str, args: &[String],                             // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_compgroups(nam: &str, args: &[String],                            // c:5073
                       _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
-    use crate::ported::zle::complete::INCOMPFUNC;
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:5078
         zwarnnam(nam, "can only be called from completion function");
         return 1;
@@ -1589,7 +1584,6 @@ pub fn cleanup_() -> i32 {                                                   // 
 
 /// Port of `comp_quote(char *str, int prefix)` from Src/Zle/computil.c:3662.
 pub fn comp_quote(str: &str, prefix: i32) -> String {                          // c:3662
-    use crate::ported::zle::complete::COMPQSTACK;
     // c:3667 — `x = (prefix && *str == '=')`.
     let (s_eff, x) = if prefix != 0 && str.starts_with('=') {                  // c:3667
         ("x".to_string() + &str[1..], true)                                    // c:3668
@@ -1778,9 +1772,6 @@ pub fn settags(level: i32, tags: &[String]) {                                // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_compquote(nam: &str, args: &[String],                             // c:3679
                      ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
-    use crate::ported::zsh_h::OPT_ISSET;
-    use crate::ported::zle::complete::{INCOMPFUNC, COMPQSTACK};
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3686
         zwarnnam(nam, "can only be called from completion function");        // c:3687
         return 1;                                                            // c:3688
@@ -1808,8 +1799,6 @@ pub fn bin_compquote(nam: &str, args: &[String],                             // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_comptags(nam: &str, args: &[String],                              // c:3831
                     _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
-    use crate::ported::zle::complete::INCOMPFUNC;
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3838
         zwarnnam(nam, "can only be called from completion function");        // c:3839
         return 1;                                                            // c:3840
@@ -1834,8 +1823,6 @@ pub fn bin_comptags(nam: &str, args: &[String],                              // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_comptry(nam: &str, args: &[String],                               // c:3961
                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
-    use crate::ported::zle::complete::INCOMPFUNC;
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3968
         zwarnnam(nam, "can only be called from completion function");        // c:3969
         return 1;                                                            // c:3970
@@ -1854,8 +1841,6 @@ pub fn bin_comptry(nam: &str, args: &[String],                               // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_compvalues(nam: &str, args: &[String],                            // c:3475
                       _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
-    use crate::ported::zle::complete::INCOMPFUNC;
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:3482
         zwarnnam(nam, "can only be called from completion function");        // c:3483
         return 1;                                                            // c:3484

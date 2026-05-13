@@ -39,6 +39,7 @@
 
 use crate::zwc::{wc_code, wc_data, ZwcFile};
 use std::path::Path;
+use std::fmt::Write;
 
 // ---------------------------------------------------------------------------
 // Opcode constants — `zsh.h:888-909`
@@ -1696,7 +1697,6 @@ fn emit_str(s: &str, out: &mut String) {
             b'\t' => out.push_str("\\t"),
             0x20..=0x7e => out.push(b as char),
             _ => {
-                use std::fmt::Write;
                 let _ = write!(out, "\\x{:02x}", b);
             }
         }

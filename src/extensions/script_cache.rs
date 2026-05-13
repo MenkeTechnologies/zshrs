@@ -48,6 +48,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use memmap2::Mmap;
 use parking_lot::Mutex;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+use std::os::unix::fs::MetadataExt;
 
 /// Magic header bytes — fail-fast if a wrong-format file is mmap'd.
 /// "ZRSC" little-endian.
@@ -396,7 +397,6 @@ fn format_local_ts(secs: i64) -> String {
 }
 
 pub fn file_mtime(path: &Path) -> Option<(i64, i64)> {
-    use std::os::unix::fs::MetadataExt;
     let meta = std::fs::metadata(path).ok()?;
     Some((meta.mtime(), meta.mtime_nsec()))
 }

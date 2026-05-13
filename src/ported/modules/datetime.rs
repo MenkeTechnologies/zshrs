@@ -18,6 +18,7 @@
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use crate::ported::utils::zwarnnam;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
 
 /// Port of `getcurrentsecs(UNUSED(Param pm))` from `Src/Modules/datetime.c:206`.
 /// Returns the current epoch seconds — backs `$EPOCHSECONDS`.
@@ -119,7 +120,6 @@ pub fn reverse_strftime(nam: &str, argv: &[&str],                            // 
 /// WARNING: param names don't match C — Rust=(nam, argv, _func) vs C=(nam, argv, ops, func)
 pub fn output_strftime(nam: &str, argv: &[&str],                             // c:99
                        ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // c:107 — `if (OPT_ISSET(ops,'s'))`
     let scalar: Option<&str> = if OPT_ISSET(ops, b's') {
         Some(OPT_ARG(ops, b's').unwrap_or(""))

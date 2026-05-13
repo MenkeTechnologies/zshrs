@@ -21,6 +21,10 @@
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::io::Write as _;
+use std::io::Read;
+use std::io::Write;
+use std::io::{Seek, SeekFrom};
 
 /// SQLite-backed history engine.
 /// Replaces the in-memory `histent` doubly-linked list +
@@ -323,7 +327,6 @@ impl HistoryEngine {
                 r.get::<_, String>(2)?,
             ))
         })?;
-        use std::io::Write as _;
         let file = std::fs::OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -550,7 +553,6 @@ fn legacy_db_path() -> Option<PathBuf> {
 /// flat text file. Errors / short files / unknown content all return
 /// false (safe default — leave unknown content alone).
 fn is_sqlite_file(path: &std::path::Path) -> bool {
-    use std::io::Read;
     let mut f = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(_) => return false,
@@ -579,7 +581,6 @@ fn format_text_line(ts: i64, duration_secs: i64, command: &str) -> String {
 
 /// Append one line to `$ZSHRS_HOME/zshrs_history`.
 fn append_text_line(ts: i64, duration_secs: i64, command: &str) -> std::io::Result<()> {
-    use std::io::Write;
     let path = HistoryEngine::text_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok();
@@ -599,7 +600,6 @@ fn append_text_line(ts: i64, duration_secs: i64, command: &str) -> std::io::Resu
 /// trailing record's tail bytes (`max_tail` cap) — anything older
 /// stays untouched on disk.
 fn rewrite_last_text_line(ts: i64, duration_secs: i64, command: &str) -> std::io::Result<()> {
-    use std::io::{Read, Seek, SeekFrom, Write};
     let path = HistoryEngine::text_path();
     let mut f = std::fs::OpenOptions::new().read(true).write(true).open(&path)?;
     let len = f.metadata()?.len();

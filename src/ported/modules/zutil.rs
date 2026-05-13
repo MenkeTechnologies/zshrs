@@ -11,6 +11,9 @@ use crate::ported::utils::zwarnnam;
 use indexmap::IndexMap;
 use regex::Regex;
 use std::collections::HashMap;
+use crate::ported::zsh_h::OPT_ISSET;
+use std::io::Write;
+use crate::ported::zsh_h::{Param, hashnode, param, PM_ARRAY};
 
 // =====================================================================
 // ZOF_* — `zparseopts` flag bits, `Src/Modules/zutil.c:1531-1538`.
@@ -752,8 +755,6 @@ mod tests {
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_zregexparse(nam: &str, args: &[String],                            // c:1486
                        ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
-    use crate::ported::utils::zwarnnam;
     if args.len() < 3 {
         zwarnnam(nam, "not enough arguments");
         return 1;
@@ -821,9 +822,6 @@ pub fn bin_zregexparse(nam: &str, args: &[String],                            //
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_zstyle(nam: &str, args: &[String],                                 // c:487
                   ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
-    use crate::ported::utils::zwarnnam;
-    use std::io::Write;
 
     // c:495-540 — flag dispatch backed by the global zstyletab.
     if args.is_empty() {                                                     // c:495
@@ -1027,7 +1025,6 @@ pub fn bin_zstyle(nam: &str, args: &[String],                                 //
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_zparseopts(nam: &str, args: &[String],                             // c:1738
                       _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
 
     #[derive(Clone)]
     struct Desc {
@@ -1494,7 +1491,6 @@ pub fn bin_zformat(nam: &str, args: &[String],                                //
             // since the canonical params::setaparam takes HashMap refs and
             // the executor isn't threaded into bin_zformat.
             if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-                use crate::ported::zsh_h::{Param, hashnode, param, PM_ARRAY};
                 let pm: Param = Box::new(param {
                     node: hashnode {
                         next: None,
@@ -1915,7 +1911,6 @@ pub fn prependactions(acts: &mut Vec<String>, branches: &mut Vec<String>) {   //
 /// `zstyle -L` / basic-list output for one style entry.
 #[allow(non_snake_case)]
 pub fn printstylenode(hn: HashNode, printflags: i32) {                        // c:184
-    use std::io::Write;
     // c:186 — Style s = (Style)hn; HashNode/Style differ in Rust;
     // walk the canonical zstyletab by style name instead.
     let nam: String = hn.nam.clone();

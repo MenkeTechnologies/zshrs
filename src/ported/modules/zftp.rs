@@ -12,6 +12,8 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
+use std::sync::atomic::Ordering;
+use std::os::unix::io::AsRawFd;
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/zftp.c`.
@@ -836,7 +838,6 @@ fn parse_pasv_response(msg: &str) -> io::Result<(String, u16)> {                
 /// Port of `zfopendata(char *name, union tcp_sockaddr *zdsockp, int *is_passivep)` from `Src/Modules/zftp.c:859`.
 /// WARNING: param names don't match C — Rust=(name) vs C=(name, zdsockp, is_passivep)
 pub fn zfopendata(name: &str) -> (i32, bool) {                                  // c:859
-    use std::sync::atomic::Ordering;
     // c:862-865 — error if neither SNDP nor PASV preference is set.
     let prefs = zfprefs.load(Ordering::Relaxed);                                // c:862
     if (prefs & (ZFPF_SNDP | ZFPF_PASV)) == 0 {                                 // c:863
@@ -878,7 +879,6 @@ pub fn zfopendata(name: &str) -> (i32, bool) {                                  
                     return (1, false);
                 }
             };
-            use std::os::unix::io::AsRawFd;
             let dfd_raw = stream.as_raw_fd();
             // Keep the stream alive past this fn so the fd stays open;
             // the session owns the fd via `dfd`.
@@ -935,7 +935,6 @@ pub fn zfopendata(name: &str) -> (i32, bool) {                                  
         return (1, false);                                                      // c:1019
     }
     // c:1029 — store listening fd as dfd; caller does accept().
-    use std::os::unix::io::AsRawFd;
     let lfd = listener.as_raw_fd();
     std::mem::forget(listener);
     if let Ok(mut state) = zftp_state().lock() {
@@ -1837,7 +1836,6 @@ pub fn zfargstring(cmd: &str, args: &[&str]) -> String {
 /// hook, reset zfclosing+zfdrrrring tidy-up flags.
 #[allow(non_snake_case)]
 pub fn zfclose(leaveparams: i32) {                                            // c:2711
-    use std::sync::atomic::Ordering;
     // c:2715-2716 — early-return when no live control connection.
     let alive = zftp_state().lock().ok()
         .and_then(|s| s.get_session(None).map(|sess| sess.control.is_some()))
@@ -2044,7 +2042,6 @@ pub fn zfgetdata(name: &str, rest: &str, cmd: &str, getsize: i32) -> i32 {    //
 /// one line of input.
 #[allow(non_snake_case)]
 pub fn zfgetinfo(prompt: &str, noecho: i32) -> Option<String> {              // c:1999
-    use std::io::{BufRead, Write};
     // c:2001-2006 — locals.
     let mut resettty: i32 = 0;                                                // c:2001
     let mut instr = String::new();                                            // c:2005 char instr[256]
@@ -2110,7 +2107,6 @@ pub fn zfgetinfo(prompt: &str, noecho: i32) -> Option<String> {              // 
 /// IAC command escapes and SIGALRM-driven timeout.
 #[allow(non_snake_case)]
 pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {             // c:571
-    use std::io::Read;
     // c:573-575 — locals at function top (Rule 5).
     let mut ch: i32;                                                          // c:573 int ch
     let mut added: i32 = 0;                                                   // c:573 added
@@ -2197,7 +2193,6 @@ pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {             //
                         cmdbuf[2] = ch as u8;                                 // c:646
                         // c:647 — write_loop(zfsess->control->fd, cmdbuf, 3);
                         if let Some(ctrl) = sess.control.as_mut() {
-                            use std::io::Write;
                             let _ = ctrl.write_all(&cmdbuf);
                         }
                         continue 'main;                                       // c:648
@@ -2212,7 +2207,6 @@ pub fn zfgetline(ln: &mut [u8], lnsize: i32, tmout: i32) -> i32 {             //
                         cmdbuf[1] = 252;                                      // c:655 WONT
                         cmdbuf[2] = ch as u8;                                 // c:656
                         if let Some(ctrl) = sess.control.as_mut() {
-                            use std::io::Write;
                             let _ = ctrl.write_all(&cmdbuf);
                         }
                         continue 'main;                                       // c:658
@@ -2380,7 +2374,6 @@ pub fn zfgetmsg() -> i32 {                                                    //
 
     // c:777-778 — fflush(stderr);
     if printing != 0 {
-        use std::io::Write;
         let _ = std::io::stderr().flush();
     }
 
@@ -2510,7 +2503,6 @@ pub static zfread_eof: std::sync::atomic::AtomicI32 =                         //
 /// until a real data block or end-of-record (ZFHD_EOFB) arrives.
 #[allow(non_snake_case)]
 pub fn zfread_block(fd: i32, bf: &mut [u8], sz: libc::off_t, tmout: i32) -> i32 { // c:1359
-    use std::sync::atomic::Ordering;
     // c:1361-1364 — locals at fn top.
     let mut n: i32;                                                           // c:1361 int n
     let mut hdr = zfheader { flags: 0, bytes: [0u8; 2] };                     // c:1362
@@ -2593,7 +2585,6 @@ pub fn zfread_block(fd: i32, bf: &mut [u8], sz: libc::off_t, tmout: i32) -> i32 
 /// reply via zfgetmsg.
 #[allow(non_snake_case)]
 pub fn zfsendcmd(cmd: &str) -> i32 {                                          // c:825
-    use std::io::Write;
     // c:832 — int ret, tmout;
     let ret: isize;
     let tmout: i32;
@@ -2658,7 +2649,6 @@ pub fn zfsendcmd(cmd: &str) -> i32 {                                          //
 /// progress callback, and the abort/SYNCH sequence on error.
 #[allow(non_snake_case)]
 pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) -> i32 { // c:1456
-    use std::sync::atomic::Ordering;
     // c:1458-1459 — buffer sizes.
     const ZF_BUFSIZE: usize = 32768;
     const ZF_ASCSIZE: usize = ZF_BUFSIZE / 2;
@@ -2869,7 +2859,6 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
         // c:1651-1652 — send IAC IP IAC + SYNCH OOB on control connection.
         if let Ok(state) = zftp_state().lock() {
             if let Some(sess) = state.get_session(None) {
-                use std::os::unix::io::AsRawFd;
                 if let Some(ref ctrl) = sess.control {
                     let cfd = ctrl.as_raw_fd();
                     unsafe {
@@ -3065,8 +3054,6 @@ pub fn zfstats(fnam: &str, remote: i32,                                       //
 /// ZFTP_HOST/PORT/IP/MODE params, and chains to `zftp_login()` when
 /// extra args are present.
 pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {                // c:1690
-    use std::net::ToSocketAddrs;
-    use std::sync::atomic::Ordering;
     let mut port: i32 = -1;                                                     // c:1698 port = -1
     let portnam: String;                                                        // c:1695 portnam = "ftp"
     let hostnam: String;                                                        // c:1696 hostnam
@@ -3225,7 +3212,6 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {                
     ZCFINISH.store(0, Ordering::Relaxed);                                       // c:1894
 
     // c:1903-1904 — F_SETFD/FD_CLOEXEC on the fd.
-    use std::os::fd::AsRawFd;
     let fd = stream.as_raw_fd();
     unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC); }
 
@@ -3301,7 +3287,6 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {                
 /// pull current directory via `zfgetcwd()`.
 #[allow(unused_variables)]
 pub fn zftp_login(name: &str, args: &[&str], flags: i32) -> i32 {              // c:2118
-    use std::sync::atomic::Ordering;
     let mut ucmd: String;                                                       // c:2120 char *ucmd
     let mut passwd: Option<String> = None;                                      // c:2120 *passwd = NULL
     let mut acct: Option<String> = None;                                        // c:2120 *acct = NULL
@@ -3472,8 +3457,6 @@ pub fn zftp_login(name: &str, args: &[&str], flags: i32) -> i32 {              /
 /// C: list, clear ("-"), or set the current session's `userparams` array.
 #[allow(unused_variables)]
 pub fn zftp_params(name: &str, args: &[&str], flags: i32) -> i32 {            // c:2064
-    use std::io::Write;
-    use std::sync::atomic::Ordering;
     let prompts: [&str; 4] = ["Host: ", "User: ", "Password: ", "Account: "];   // c:2067
     // c:2071-2083 — no args: print current userparams (mask the password slot).
     if args.is_empty() {                                                        // c:2071 !*args
@@ -3555,7 +3538,6 @@ pub fn zftp_test(name: &str, args: &[&str], flags: i32) -> i32 {            // c
     let control_fd = zftp_state().lock().ok().and_then(|s| {
         s.get_session(None).and_then(|sess| {
             sess.control.as_ref().map(|c| {
-                use std::os::unix::io::AsRawFd;
                 c.as_raw_fd()
             })
         })
@@ -3595,7 +3577,6 @@ pub fn zftp_dir(name: &str, args: &[&str], flags: i32) -> i32 {                 
     ret = zfgetdata(name, "", &cmd, 0);
     // c:2332 zsfree(cmd) — Rust Drop.
     if ret != 0 { return 1; }                                                   // c:2332-2322
-    use std::io::Write;
     let _ = std::io::stdout().flush();                                          // c:2332
     zfsenddata(name, 1, 0, 0)                                                   // c:2332
 }
@@ -3627,7 +3608,6 @@ pub fn zftp_cd(name: &str, args: &[&str], flags: i32) -> i32 {                 /
 /// pick the type from the flag; otherwise read from `args[0]`. With no
 /// args, print the current type.
 pub fn zftp_type(name: &str, args: &[&str], flags: i32) -> i32 {                // c:2426
-    use std::io::Write;
     let mut tbuf: [u8; 2] = [b'A', 0];                                          // c:2428 char tbuf[2] = "A"
     let nt: u8;                                                                 // c:2428 char nt
     let str: &str;                                                             // c:2428 char *str
@@ -3671,7 +3651,6 @@ pub fn zftp_type(name: &str, args: &[&str], flags: i32) -> i32 {                
 /// C: set stream-mode (S=stream, B=block). With no arg, print current.
 #[allow(unused_variables)]
 pub fn zftp_mode(name: &str, args: &[&str], flags: i32) -> i32 {               // c:2464
-    use std::io::Write;
     let str: &str;
     let nt: u8;                                                                 // c:2467 int nt
 
@@ -3709,7 +3688,6 @@ pub fn zftp_mode(name: &str, args: &[&str], flags: i32) -> i32 {               /
 /// Port of `zftp_local(UNUSED(char *name), char **args, int flags)` from `Src/Modules/zftp.c:2491`.
 #[allow(unused_variables)]
 pub fn zftp_local(name: &str, args: &[&str], flags: i32) -> i32 {              // c:2491
-    use std::io::Write;
     let more = args.len() > 1;                                                  // c:2493 more = !!args[1]
     let mut ret: i32 = 0;                                                       // c:2493 ret = 0
     let dofd = args.is_empty();                                                 // c:2493 dofd = !*args
@@ -3745,7 +3723,6 @@ pub fn zftp_local(name: &str, args: &[&str], flags: i32) -> i32 {              /
 
 /// Port of `zftp_getput(char *name, char **args, int flags)` from `Src/Modules/zftp.c:2544`.
 pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {              // c:2544
-    use std::io::Write;
     let mut ret: i32 = 0;                                                       // c:2546 ret = 0
     let recv = (flags & ZFTP_RECV) != 0;                                        // c:2546 recv
     let mut getsize: i32 = 0;                                                   // c:2546 getsize = 0

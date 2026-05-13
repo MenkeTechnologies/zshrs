@@ -16,6 +16,8 @@
 
 use crate::ported::utils::zwarnnam;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicI32, Ordering};
+use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
 
 /// Serialises every call into libtermcap. C `Src/Modules/termcap.c`
 /// uses `tgetent(3)` / `tgetflag(3)` / `tgetnum(3)` / `tgetstr(3)`
@@ -78,7 +80,6 @@ unsafe extern "C" {
 /// Initialize libtermcap's database for `$TERM`. Returns true on success.
 /// C call site: `tgetent(NULL, term)` (zsh.h-compatible portable form).
 fn ensure_termcap_loaded() -> bool {
-    use std::sync::atomic::{AtomicI32, Ordering};
     // 0 = uninit, 1 = ok, -1 = failed. Cache the libtermcap state for
     // the lifetime of the process, matching libtermcap's own behavior.
     static STATE: AtomicI32 = AtomicI32::new(0);
@@ -137,8 +138,6 @@ pub fn ztgetflag(s: &str) -> i32 {                                       // c:54
 /// C signature: `static int bin_echotc(char *name, char **argv, Options ops, int func)`.
 /// WARNING: param names don't match C — Rust=(name, argv, _ops) vs C=(name, argv, ops, func)
 pub fn bin_echotc(name: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 { // c:80
-    use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
-    use std::sync::atomic::Ordering;
     const TERM_BAD: i32 = 1 << 1;
     if argv.is_empty() {                                                  // c:85
         zwarnnam(name, "missing argument");

@@ -21,6 +21,9 @@ use crate::ported::modules::tcp_h::tcp_session;
 use crate::ported::modules::tcp_h::ZTCP_LISTEN;
 use crate::ported::modules::tcp_h::ZTCP_INBOUND;
 use crate::ported::modules::tcp_h::ZTCP_ZFTP;
+use std::net::ToSocketAddrs;
+use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
+use crate::ported::utils::{zwarnnam, zerrnam};
 
 impl Default for tcp_sockaddr {
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
@@ -106,7 +109,6 @@ pub fn zsh_gethostbyname2(name: &str, af: i32) -> Vec<[u8; 4]> {         // c:14
     // it falls back to gethostbyname(name). The relevant payload is
     // the `h_addr_list` array of in_addr/in6_addr bytes. For the
     // current AF_INET-only call path we return 4-byte records.
-    use std::net::ToSocketAddrs;
     let mut out = Vec::new();
     if af == libc::AF_INET {                                             // c:148
         if let Ok(iter) = format!("{}:0", name).to_socket_addrs() {
@@ -338,8 +340,6 @@ pub fn tcp_connect(sess: TcpSessionHandle, addr: &[u8; 4], d_port: u16) -> i32 {
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_ztcp(nam: &str, args: &[String],                                  // c:342
                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 { // c:342
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
-    use crate::ported::utils::{zwarnnam, zerrnam};
 
     let mut err: i32 = 1;                                                // c:344
     let destport: u16;                                                   // c:344

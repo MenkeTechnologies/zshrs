@@ -17,6 +17,14 @@ use std::fs::{self, Metadata};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::ported::sort::zstrcmp;
+use crate::ported::utils::{init_dirsav, restoredir, lchdir};
+use std::path::Component;
+use crate::ported::zsh_h::{SUB_END, SUB_LONG};
+use crate::ported::zsh_h::{Bar, Comma, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outbrack, Outpar, Pound, Quest, Star, Tilde};
+use crate::ported::zsh_h::Bnullkeep;
+use std::process::Command;
+use crate::ported::options::opt_state_get;
 #[allow(unused_imports)]
 use crate::ported::exec::{
     self,
@@ -296,7 +304,6 @@ pub fn gmatchcmp(                                                            // 
         let follow = (key & GS_LINKED) != 0;
         let key_unshifted = if follow { key >> GS_SHIFT } else { key };
         let cmp = if key_unshifted == GS_NAME {                              // c:945
-            use crate::ported::sort::zstrcmp;
             zstrcmp(&a.name, &b.name,
                     if numeric_sort { crate::zsh_h::SORTIT_NUMERICALLY as u32 } else { 0 })
         } else if key_unshifted == GS_DEPTH {                                // c:949
@@ -1028,7 +1035,6 @@ fn scanner(state: &mut globdata, components: &[PatternComponent], depth: usize) 
 ///   - the discovered match path likewise exceeds PATH_MAX and `lchdir` fails (c:608-610)
 ///   - `restoredir` fails at the end of the walk (c:696-697)
 fn scan_pattern(state: &mut globdata, base: &str, pattern: &str, rest: &[PatternComponent], depth: usize) { // c:580
-    use crate::ported::utils::{init_dirsav, restoredir, lchdir};
     let pbcwdsav = state.pathbufcwd;                                         // c:504
     let mut ds = init_dirsav();                                              // c:510
     let path_max = crate::ported::zsh_system_h::PATH_MAX;
@@ -2177,7 +2183,6 @@ fn modifier_command(s: &str) -> String {
             if meta.is_file() {
                 #[cfg(unix)]
                 {
-                    use std::os::unix::fs::PermissionsExt;
                     if meta.permissions().mode() & 0o111 != 0 {
                         return candidate.to_string_lossy().to_string();
                     }
@@ -2428,7 +2433,6 @@ pub fn split_qualifier(pattern: &str) -> (&str, Option<&str>) {
 /// output. Rust's `read_dir(".")` yields `entry.path()` like `./foo` while
 /// `read_dir("foo")` yields `foo/bar` — zsh prints the latter shape for both.
 fn glob_emit_path(path: &std::path::Path) -> String {
-    use std::path::Component;
     match path.components().next() {
         Some(Component::Prefix(_) | Component::RootDir) => path.to_string_lossy().to_string(),
         None => ".".to_string(),
@@ -2767,7 +2771,6 @@ pub fn get_match_ret(imd: &imatchdata, b: usize, e: usize) -> String {
 /// Port of `compgetmatch(char *pat, int *flp, char **replstrp)` from `Src/glob.c:2650`.
 /// WARNING: param names don't match C — Rust=(pat) vs C=(pat, flp, replstrp)
 pub fn compgetmatch(pat: &str) -> Option<(String, i32)> {
-    use crate::ported::zsh_h::{SUB_END, SUB_LONG};
     // C uses local bits `SUB_START` (anchor at head) / `SUB_END`
     // (anchor at tail) / `SUB_LONG` (`##`/`%%` doubled = longest).
     // `SUB_START` is `0x1000` in zsh.h:1993.
@@ -2801,7 +2804,6 @@ pub fn compgetmatch(pat: &str) -> Option<(String, i32)> {
 /// ${var/pat/repl}, ${var//pat/repl}
 /// Port of `getmatch(char **sp, char *pat, int fl, int n, char *replstr)` from `Src/glob.c:2710`.
 pub fn getmatch(sp: &str, pat: &str, fl: i32, n: i32, replstr: Option<&str>) -> String {
-    use crate::ported::zsh_h::{SUB_END, SUB_LONG};
     const SUB_START: i32 = 0x1000;
     let anchored_start = (fl & SUB_START) != 0;
     let anchored_end = (fl & SUB_END) != 0;
@@ -2962,10 +2964,6 @@ pub fn set_pat_end(p: &str, null_me: usize) -> String {
 /// Tokenize a glob pattern in place — port of `tokenize(char *s)` from
 /// `Src/glob.c:3548` (which calls `zshtokenize(s, 0)`).
 pub fn tokenize(s: &mut String) {
-    use crate::ported::zsh_h::{
-        Bar, Comma, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outbrack, Outpar, Pound, Quest, Star,
-        Tilde,
-    };
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
@@ -3006,7 +3004,6 @@ pub fn tokenize(s: &mut String) {
 /// byte tokens — `shtokenize` is `zshtokenize(s, ZSHTOK_SUBST | ...)`
 /// at `Src/glob.c:3565`.
 pub fn shtokenize(s: &mut String) {
-    use crate::ported::zsh_h::{Inbrack, Outbrack, Quest, Star};
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
@@ -3056,10 +3053,6 @@ pub fn shtokenize(s: &mut String) {
 /// Tokenize with zsh-specific flags. Port of `zshtokenize(char *s, int flags)`
 /// from `Src/glob.c:3575` — mutates `s` in place.
 pub fn zshtokenize(s: &mut String, extended_glob: bool, sh_glob: bool) {
-    use crate::ported::zsh_h::{
-        Bar, Comma, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outbrack, Outpar, Pound, Quest, Star,
-        Tilde,
-    };
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
@@ -3098,7 +3091,6 @@ pub fn zshtokenize(s: &mut String, extended_glob: bool, sh_glob: bool) {
 /// Port of `remnulargs(char *s)` from `Src/glob.c:3649` — strip
 /// `Bnullkeep` (`\0xa0`) markers from a string. Mutates in place.
 pub fn remnulargs(s: &mut String) {
-    use crate::ported::zsh_h::Bnullkeep;
     s.retain(|c| c != '\0' && c != Bnullkeep);
 }
 
@@ -3260,7 +3252,6 @@ pub fn bracechardots(s: &str) -> Option<(char, char, i32)> {
 /// Port of `glob_exec_string(char **sp)` from `Src/glob.c:1085`.
 /// WARNING: param names don't match C — Rust=(cmd, filename) vs C=(sp)
 pub fn glob_exec_string(cmd: &str, filename: &str) -> Option<String> {
-    use std::process::Command;
 
     // Replace $REPLY or {} with filename
     let cmd = cmd.replace("$REPLY", filename).replace("{}", filename);
@@ -3278,7 +3269,6 @@ pub fn glob_exec_string(cmd: &str, filename: &str) -> Option<String> {
 /// Port of `qualsheval(char *name, UNUSED(struct stat *buf), UNUSED(off_t days), char *str)` from `Src/glob.c:3907`.
 /// WARNING: param names don't match C — Rust=(filename, expr) vs C=(name, buf, days, str)
 pub fn qualsheval(filename: &str, expr: &str) -> bool {
-    use std::process::Command;
 
     // Set REPLY to filename and evaluate expression
     let script = format!("REPLY='{}'; {}", filename.replace("'", "'\\''"), expr);
@@ -3762,7 +3752,6 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {             // c
 /// `globdots` from the canonical option store (`opt_state_get`) so
 /// behavior tracks `setopt …` toggles without needing an executor.
 pub fn glob_path(pattern: &str) -> Vec<String> {                             // c:1214
-    use crate::ported::options::opt_state_get;
     let opt = |n: &str, default: bool| opt_state_get(n).unwrap_or(default);
     // Read option state directly — matches C's per-callsite
     // `isset(NULLGLOB)` / `isset(EXTENDEDGLOB)` reads (Src/glob.c).

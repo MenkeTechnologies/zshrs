@@ -8,6 +8,7 @@
 
 use std::io::{self, Read, Write};
 use std::time::Duration;
+use std::sync::atomic::Ordering;
 
 // `TermCapabilities` deleted — Rust-only struct with no C
 // counterpart. The C source publishes discovered capabilities by
@@ -216,7 +217,6 @@ pub fn system_clipget(clip: char) -> Option<String> {                        // 
 /// outside the editor's local kill ring.
 /// WARNING: param names don't match C — Rust=(data) vs C=(clip, content, clen)
 pub fn system_clipput(data: &str) -> String {
-    use std::io::Write;
     let mut buf = Vec::new();
     {
         let encoder = base64_encode(data.as_bytes());
@@ -553,7 +553,6 @@ pub fn handle_paste(seq: &str, len: usize) -> String {                       // 
 /// `\e]133;D\e\\` (end output). Gated on the `integration:output`
 /// extension toggle.
 pub fn mark_output(start: bool) {                                            // c:759
-    use std::sync::atomic::Ordering;
     const START: &[u8] = b"\x1b]133;C\x1b\\";                                // c:761
     const END:   &[u8] = b"\x1b]133;D\x1b\\";                                // c:762
     if extension_enabled("integration") {                                    // c:763

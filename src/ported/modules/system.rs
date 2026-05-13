@@ -27,6 +27,7 @@ use crate::ported::exec::ShellExecutor;
 use crate::ported::math::{mnumber, MN_INTEGER, MN_FLOAT};
 use crate::ported::params::{setiparam, setsparam, setiparam_no_convert};
 use crate::ported::utils::{isident, metafy, unmeta, zwarnnam, zclose, movefd};
+use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
 
 const SYSREAD_BUFSIZE: usize = 8192;                                     // c:45
 
@@ -61,7 +62,6 @@ pub fn getposint(instr: &str, nam: &str) -> i32 {                        // c:45
 #[allow(unused_variables)]
 pub fn bin_sysread(nam: &str, args: &[String],                               // c:72
                    ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // c:74 — `int infd = 0, outfd = -1, bufsize = SYSREAD_BUFSIZE, count;`
     let mut infd: i32 = 0;                                                    // c:74
     let mut outfd: i32 = -1;                                                  // c:74
@@ -224,7 +224,6 @@ pub fn bin_sysread(nam: &str, args: &[String],                               // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_syswrite(nam: &str, args: &[String],                              // c:238
                     ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // c:240-241 — `int outfd = 1, len, count, totcount;
     //              char *countvar = NULL;`
     let mut outfd: i32 = 1;                                                   // c:240
@@ -296,7 +295,6 @@ pub fn bin_syswrite(nam: &str, args: &[String],                              // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_sysopen(nam: &str, args: &[String],                               // c:319
                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // c:321-323 — `int read = OPT_ISSET(ops, 'r');` etc.
     let read_flag   = OPT_ISSET(ops, b'r');                                   // c:321
     let write_flag  = OPT_ISSET(ops, b'w');                                   // c:322
@@ -459,7 +457,6 @@ pub fn bin_sysopen(nam: &str, args: &[String],                               // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_sysseek(nam: &str, args: &[String],                               // c:433
                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // c:435 — `int w = SEEK_SET, fd = 0;`
     let mut w: i32 = libc::SEEK_SET;                                          // c:435
     let mut fd: i32 = 0;                                                      // c:435
@@ -540,7 +537,6 @@ pub fn math_systell(name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_syserror(nam: &str, args: &[String],                              // c:494
                     ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // c:496-497 — `int num = 0; char *errvar = NULL, *msg, *pfx = "", *str;`
     let mut num: i32 = 0;
     let mut errvar: Option<String> = None;

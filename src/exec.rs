@@ -27,6 +27,40 @@ use compsys::cache::CompsysCache;
 use compsys::CompInitResult;
 use parking_lot::Mutex;
 use std::collections::HashSet;
+use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+use std::sync::atomic::Ordering;
+use crate::ported::parse::ECBUF;
+use crate::ported::zsh_h::{wc_code, wc_data, WC_END, WC_LIST};
+use crate::ported::zsh_h::WC_SUBLIST;
+use crate::ported::zsh_h::WC_PIPE;
+use crate::ported::zsh_h::{WC_ARITH, WC_CASE, WC_COND, WC_CURSH, WC_FOR, WC_FUNCDEF, WC_IF, WC_REPEAT, WC_SELECT, WC_SIMPLE, WC_SUBSH, WC_TIMED, WC_TRY, WC_WHILE, };
+use crate::ported::zsh_h::{WC_FOR_LIST, WC_FOR_SKIP, WC_FOR_TYPE};
+use crate::ported::zsh_h::{WC_CASE_SKIP, WC_CASE_TYPE};
+use crate::ported::builtin::RETFLAG;
+use crate::ported::zsh_h::{WC_IF_SKIP, WC_IF_TYPE};
+use crate::ported::builtin::{BREAKS, CONTFLAG, LOOPS};
+use crate::ported::zsh_h::{WC_WHILE_SKIP, WC_WHILE_TYPE};
+use crate::ported::math::mathevali;
+use crate::ported::parse::ecgetstr_wordcode;
+use crate::ported::subst::singsub;
+use crate::ported::zsh_h::WC_REPEAT_SKIP;
+use crate::ported::parse::ecgetstr_wordcode as ecgetstr;
+use std::fs;
+use std::os::unix::io::FromRawFd;
+use std::io::Read;
+use std::ffi::CString;
+use std::os::unix::ffi::OsStrExt;
+use crate::ported::zsh_h::{options, MAX_OPS};
+use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_ARRAY, PM_HASHED, PM_LOWER, PM_UPPER, PM_READONLY, PM_EXPORTED, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z};
+use std::ffi::CStr;
+use crate::zle::zle;
+use std::time::{SystemTime, UNIX_EPOCH};
+use walkdir::WalkDir;
+use std::os::unix::fs::FileTypeExt;
+use std::os::unix::fs::PermissionsExt;
+use std::sync::atomic::AtomicI32;
+use crate::ported::modules::parameter::*;
+use crate::ported::zsh_h::PM_UNDEFINED;
 
 // Backward-compat re-exports for free fns recently relocated to their
 // canonical-C-file Rust modules. Existing call-sites in this file (and
@@ -215,7 +249,7 @@ use crate::zwc::ZwcFile;
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::env;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -1242,7 +1276,6 @@ impl ShellExecutor {
     /// Execute a script file with bytecode caching — skips lex+parse+compile on cache hit.
     /// Bytecode is stored in rkyv keyed by (path, mtime).
     pub fn execute_script_file(&mut self, file_path: &str) -> Result<i32, String> {
-        use std::path::Path;
 
         let path = Path::new(file_path);
         let abs_path = path
@@ -1291,8 +1324,6 @@ impl ShellExecutor {
         // fresh syntax error vs an inherited one. Direct port of
         // Src/init.c source()'s `errflag &= ~ERRFLAG_ERROR;` before
         // `parse_event(ENDINPUT)` and the post-parse errflag check.
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use std::sync::atomic::Ordering;
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
         crate::ported::parse::parse_init(&content);
@@ -1347,7 +1378,6 @@ impl ShellExecutor {
     /// This stub establishes the entry point and proves the consumer
     /// can walk a buffer P9c emitted into.
     pub fn exec_wordcode(&mut self) -> i32 {
-        use crate::ported::parse::ECBUF;
         let buf = ECBUF.with_borrow(|b| b.clone());
         let (status, _next) = self.exec_list_wordcode(&buf, 0);
         self.set_last_status(status);
@@ -1360,7 +1390,6 @@ impl ShellExecutor {
     /// implementation handles fork/wait + signal-trap dispatch.
     /// Returns (last_status, pc_after_walk).
     pub fn exec_list_wordcode(&mut self, buf: &[u32], mut pc: usize) -> (i32, usize) {
-        use crate::ported::zsh_h::{wc_code, wc_data, WC_END, WC_LIST};
         let mut last_status: i32 = 0;
         while pc < buf.len() {
             let code = wc_code(buf[pc]);
@@ -1386,7 +1415,6 @@ impl ShellExecutor {
     /// P9d stub: direct port of `execsublist` from
     /// `Src/exec.c:1672-1810`. Walks WC_SUBLIST + pipeline payload.
     pub fn exec_sublist_wordcode(&mut self, buf: &[u32], mut pc: usize) -> (i32, usize) {
-        use crate::ported::zsh_h::{wc_code, wc_data, WC_SUBLIST};
         let mut last_status: i32 = 0;
         if pc < buf.len() && wc_code(buf[pc]) == WC_SUBLIST {
             let header = buf[pc];
@@ -1402,7 +1430,6 @@ impl ShellExecutor {
     /// P9d stub: direct port of `execpline` from
     /// `Src/exec.c:1812-1980`. Walks WC_PIPE chain + cmd payloads.
     pub fn exec_pline_wordcode(&mut self, buf: &[u32], mut pc: usize) -> (i32, usize) {
-        use crate::ported::zsh_h::{wc_code, wc_data, WC_PIPE};
         let mut last_status: i32 = 0;
         if pc < buf.len() && wc_code(buf[pc]) == WC_PIPE {
             let header = buf[pc];
@@ -1419,10 +1446,6 @@ impl ShellExecutor {
     /// `Src/exec.c:2700-3700`. Reads the cmd header (WC_SIMPLE /
     /// WC_SUBSH / WC_FOR / WC_CASE / ...) and dispatches accordingly.
     pub fn exec_cmd_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
-        use crate::ported::zsh_h::{
-            wc_code, WC_ARITH, WC_CASE, WC_COND, WC_CURSH, WC_FOR, WC_FUNCDEF, WC_IF, WC_REPEAT,
-            WC_SELECT, WC_SIMPLE, WC_SUBSH, WC_TIMED, WC_TRY, WC_WHILE,
-        };
         if pc >= buf.len() {
             return (0, pc);
         }
@@ -1450,7 +1473,6 @@ impl ShellExecutor {
     /// type (PPARAM / LIST / COND), iterates body via recursive
     /// exec_list_wordcode calls.
     pub fn exec_for_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
-        use crate::ported::zsh_h::{WC_FOR_LIST, WC_FOR_SKIP, WC_FOR_TYPE};
         if pc >= buf.len() {
             return (0, pc);
         }
@@ -1480,7 +1502,6 @@ impl ShellExecutor {
     /// P9d: direct port of `execcase(Estate state, int do_exec)` from `Src/exec.c:1492-1550`.
     /// Reads WC_CASE_TYPE + WC_CASE_SKIP, walks pattern arms.
     pub fn exec_case_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
-        use crate::ported::zsh_h::{WC_CASE_SKIP, WC_CASE_TYPE};
         if pc >= buf.len() {
             return (0, pc);
         }
@@ -1506,10 +1527,6 @@ impl ShellExecutor {
     /// Returns lastval = status of the run branch, or 0 if no branch
     /// matched.
     pub fn exec_if_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
-        use crate::ported::builtin::RETFLAG;
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use crate::ported::zsh_h::{wc_code, WC_IF, WC_IF_SKIP, WC_IF_TYPE};
-        use std::sync::atomic::Ordering;
         if pc >= buf.len() {
             return (0, pc);
         }
@@ -1570,10 +1587,6 @@ impl ShellExecutor {
     /// Loops {exec cond; check status XOR isuntil; exec body; check
     /// breaks/contflag/retflag/errflag} until termination.
     pub fn exec_while_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
-        use crate::ported::builtin::{BREAKS, CONTFLAG, LOOPS, RETFLAG};
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use crate::ported::zsh_h::{WC_WHILE_SKIP, WC_WHILE_TYPE};
-        use std::sync::atomic::Ordering;
         if pc >= buf.len() {
             return (0, pc);
         }
@@ -1661,13 +1674,6 @@ impl ShellExecutor {
     ///   }
     ///   loops--;
     pub fn exec_repeat_wordcode(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
-        use crate::ported::builtin::{BREAKS, CONTFLAG, LOOPS, RETFLAG};
-        use crate::ported::math::mathevali;
-        use crate::ported::parse::ecgetstr_wordcode;
-        use crate::ported::subst::singsub;
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use crate::ported::zsh_h::WC_REPEAT_SKIP;
-        use std::sync::atomic::Ordering;
         if pc >= buf.len() {
             return (0, pc);
         }
@@ -1750,7 +1756,6 @@ impl ShellExecutor {
     /// payload. Each real production-specific exec_* will replace its
     /// call to this with the form-specific logic.
     fn skip_form(&mut self, buf: &[u32], pc: usize) -> (i32, usize) {
-        use crate::ported::zsh_h::wc_data;
         if pc >= buf.len() {
             return (0, pc);
         }
@@ -1764,8 +1769,6 @@ impl ShellExecutor {
     /// Real implementation handles assignments + redirections inline
     /// from the same wordcode; this minimal version pulls just words.
     pub fn exec_simple_wordcode(&mut self, buf: &[u32], mut pc: usize) -> (i32, usize) {
-        use crate::ported::parse::ecgetstr_wordcode as ecgetstr;
-        use crate::ported::zsh_h::{wc_code, wc_data, WC_SIMPLE};
         let mut last_status: i32 = 0;
         if pc < buf.len() && wc_code(buf[pc]) == WC_SIMPLE {
             let header = buf[pc];
@@ -1828,8 +1831,6 @@ impl ShellExecutor {
         // Save & clear errflag around the parse so a fresh syntax
         // error is distinguishable from one already in flight. Mirrors
         // Src/init.c loop()'s pre-parse `errflag &= ~ERRFLAG_ERROR;`.
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use std::sync::atomic::Ordering;
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
         crate::ported::parse::parse_init(script);
@@ -2180,8 +2181,6 @@ impl ShellExecutor {
         // parse. Process-sub argv extraction silently bails on syntax
         // errors (matches zsh's behavior when the inner command can't
         // be parsed).
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use std::sync::atomic::Ordering;
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
         crate::ported::parse::parse_init(cmd_str);
@@ -2213,8 +2212,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn run_process_sub_in(&mut self, cmd_str: &str) -> String {
-        use std::fs;
-        use std::process::Stdio;
 
         // Phase 2: parse via parse_init+parse. Extract the first Simple cmd's
         // words (untokenized), pre-expand to argv strings, spawn.
@@ -2256,8 +2253,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn run_process_sub_out(&mut self, cmd_str: &str) -> String {
-        use std::fs;
-        use std::process::Stdio;
 
         let words = self.simple_cmd_words(cmd_str);
 
@@ -2387,8 +2382,6 @@ impl ShellExecutor {
         // Mirror Src/init.c errflag save/clear/check pattern around
         // the nested parse so an inner syntax error doesn't bleed into
         // the outer execution.
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use std::sync::atomic::Ordering;
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
         crate::ported::parse::parse_init(cmd_str);
@@ -2443,7 +2436,6 @@ impl ShellExecutor {
 
         // Flush any buffered Rust-side stdout so it reaches the pipe
         // before we restore.
-        use std::io::Write;
         let _ = io::stdout().flush();
 
         // Restore stdout and read what was captured.
@@ -2451,10 +2443,8 @@ impl ShellExecutor {
             libc::dup2(saved_stdout, libc::STDOUT_FILENO);
             libc::close(saved_stdout);
         }
-        use std::os::unix::io::FromRawFd;
         let read_file = unsafe { std::fs::File::from_raw_fd(read_fd) };
         let mut output = String::new();
-        use std::io::Read;
         let _ = std::io::BufReader::new(read_file).read_to_string(&mut output);
 
         // POSIX: trailing newlines stripped from cmd-sub result.
@@ -2716,8 +2706,6 @@ impl ShellExecutor {
     /// Execute a command in the current process (exec family)
     /// Port of zexecve(char *pth, char **argv, char **newenvp) from exec.c
     pub fn zexecve(&self, cmd: &str, args: &[String]) -> ! {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
 
         let c_cmd = CString::new(cmd).expect("CString::new failed");
 
@@ -2873,7 +2861,6 @@ pub enum BuiltinType {
 #[allow(unused_variables, dead_code)]
 impl ShellExecutor {
     fn _empty_ops() -> crate::ported::zsh_h::options {
-        use crate::ported::zsh_h::{options, MAX_OPS};
         options { ind: [0u8; MAX_OPS], args: Vec::new(),
                   argscount: 0, argsalloc: 0 }
     }
@@ -2894,7 +2881,6 @@ impl ShellExecutor {
         // The caller's argv is the full builtin command line, e.g.
         // `["zcompile", "-t", "/path/file.zwc"]`. Parse option chars
         // into an `options` ind[] bitmap and pass positionals.
-        use crate::ported::zsh_h::{options, MAX_OPS};
         let mut ops = options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),
@@ -3577,9 +3563,6 @@ impl crate::ported::exec::ShellExecutor {
                 // PM_EFLOAT → "float", PM_HASHED → "association",
                 // PM_ARRAY → "array", scalar default. Append PM_LOWER
                 // / PM_UPPER / PM_READONLY / PM_EXPORTED suffixes.
-                use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT,
-                    PM_ARRAY, PM_HASHED, PM_LOWER, PM_UPPER, PM_READONLY,
-                    PM_EXPORTED, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z};
                 let flags = self.param_flags(key) as u32;
                 if flags != 0 || self.array(key).is_some() || self.assoc(key).is_some() {
                     let base = if flags & PM_INTEGER != 0 { "integer" }
@@ -3639,7 +3622,6 @@ impl crate::ported::exec::ShellExecutor {
             "userdirs" => {
                 #[cfg(unix)]
                 {
-                    use std::ffi::{CStr, CString};
                     if key == "@" || key == "*" {
                         let mut homes: Vec<String> = Vec::new();
                         unsafe {
@@ -3678,7 +3660,6 @@ impl crate::ported::exec::ShellExecutor {
             "usergroups" => {
                 #[cfg(unix)]
                 {
-                    use std::ffi::{CStr, CString};
                     if key == "@" || key == "*" {
                         let mut gids: Vec<String> = Vec::new();
                         unsafe {
@@ -4023,7 +4004,6 @@ impl crate::ported::exec::ShellExecutor {
             // Distinguishes builtin vs user-defined so
             // ${(t)widgets[name]} works.
             "widgets" => {
-                use crate::zle::zle;
                 let zle = zle();
                 if key == "@" || key == "*" {
                     let mut names: Vec<&str> = zle.list_widgets();
@@ -4295,7 +4275,6 @@ impl crate::ported::exec::ShellExecutor {
                 // expansion. We use process+nano for a cheap, OS-portable
                 // source — not cryptographically secure, but matches zsh's
                 // "noise" semantics.
-                use std::time::{SystemTime, UNIX_EPOCH};
                 let nanos = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.subsec_nanos() as u64)
@@ -4308,7 +4287,6 @@ impl crate::ported::exec::ShellExecutor {
                 // Seconds since shell start. We approximate via the
                 // tracked `shell_start_time` if present; otherwise 0.
                 crate::ported::params::getsparam("SECONDS").unwrap_or_else(|| {
-                    use std::time::{SystemTime, UNIX_EPOCH};
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .map(|d| d.as_secs())
@@ -4321,7 +4299,6 @@ impl crate::ported::exec::ShellExecutor {
                 })
             }
             "EPOCHSECONDS" => {
-                use std::time::{SystemTime, UNIX_EPOCH};
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_secs().to_string())
@@ -4330,7 +4307,6 @@ impl crate::ported::exec::ShellExecutor {
             "EPOCHREALTIME" => {
                 // zsh/datetime: fractional seconds since the epoch with
                 // microsecond resolution. Format: SECS.UUUUUU.
-                use std::time::{SystemTime, UNIX_EPOCH};
                 match SystemTime::now().duration_since(UNIX_EPOCH) {
                     Ok(d) => format!("{}.{:06}", d.as_secs(), d.subsec_micros()),
                     Err(_) => "0.000000".to_string(),
@@ -4367,7 +4343,6 @@ impl crate::ported::exec::ShellExecutor {
                 let path_str = path.to_string_lossy().into_owned();
                 match std::fs::metadata(&path_str) {
                     Ok(meta) => {
-                        use std::time::SystemTime;
                         if let Ok(atime) = meta.accessed() {
                             let now = SystemTime::now();
                             let idle = now.duration_since(atime).unwrap_or_default();
@@ -5422,7 +5397,6 @@ impl crate::ported::exec::ShellExecutor {
     /// running on a pool thread via walkdir.  Results merge via channel.
     /// This is why `echo **/*.rs` will be 5-10x faster than zsh.
     pub(crate) fn expand_glob_parallel(&self, pattern: &str, dotglob: bool, nocaseglob: bool) -> Vec<String> {
-        use walkdir::WalkDir;
 
         // Split pattern at the first **/ into (base_dir, file_glob)
         // e.g. "src/**/*.rs" → ("src", "*.rs")
@@ -5893,7 +5867,6 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 '=' => {
                     // Sockets
-                    use std::os::unix::fs::FileTypeExt;
                     result.retain(|f| {
                         let is_socket = meta_cache
                             .get(f)
@@ -5910,7 +5883,6 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 'p' => {
                     // Named pipes (FIFOs)
-                    use std::os::unix::fs::FileTypeExt;
                     result.retain(|f| {
                         let is_fifo = meta_cache
                             .get(f)
@@ -5927,7 +5899,6 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 '*' => {
                     // Executable files
-                    use std::os::unix::fs::PermissionsExt;
                     result.retain(|f| {
                         let is_exec = meta_cache
                             .get(f)
@@ -5944,7 +5915,6 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 '%' => {
                     // Device files
-                    use std::os::unix::fs::FileTypeExt;
                     let next = chars.peek().copied();
                     result.retain(|f| {
                         let is_device = meta_cache
@@ -6066,7 +6036,6 @@ impl crate::ported::exec::ShellExecutor {
                         }
                     }
                     let target: u64 = num_str.parse().unwrap_or(0);
-                    use std::os::unix::fs::MetadataExt;
                     result.retain(|f| {
                         let nlink = meta_cache
                             .get(f)
@@ -6160,7 +6129,6 @@ impl crate::ported::exec::ShellExecutor {
                     // Owned by effective UID
                     let euid = unsafe { libc::geteuid() };
                     result.retain(|f| {
-                        use std::os::unix::fs::MetadataExt;
                         let is_owned = meta_cache
                             .get(f)
                             .and_then(|(m, _)| m.as_ref())
@@ -6178,7 +6146,6 @@ impl crate::ported::exec::ShellExecutor {
                     // Owned by effective GID
                     let egid = unsafe { libc::getegid() };
                     result.retain(|f| {
-                        use std::os::unix::fs::MetadataExt;
                         let is_owned = meta_cache
                             .get(f)
                             .and_then(|(m, _)| m.as_ref())
@@ -6243,7 +6210,6 @@ impl crate::ported::exec::ShellExecutor {
                                 .get(f)
                                 .and_then(|(m, _)| m.as_ref())
                                 .map(|m| {
-                                    use std::os::unix::fs::MetadataExt;
                                     std::time::UNIX_EPOCH
                                         + std::time::Duration::from_secs(m.ctime() as u64)
                                 })
@@ -6374,7 +6340,6 @@ impl crate::ported::exec::ShellExecutor {
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_secs() as i64)
                         .unwrap_or(0);
-                    use std::os::unix::fs::MetadataExt;
                     result.retain(|f| {
                         let m = match meta_cache.get(f).and_then(|(m, _)| m.as_ref()) {
                             Some(m) => m,
@@ -6410,7 +6375,6 @@ impl crate::ported::exec::ShellExecutor {
         // port of zsh/Src/glob.c:355,372 — output emit consults
         // gf_markdirs / gf_listtypes set by case 'M' / case 'T'.
         if mark_dirs || list_types {
-            use std::os::unix::fs::PermissionsExt;
             result = result
                 .into_iter()
                 .map(|p| {
@@ -6457,7 +6421,6 @@ impl crate::ported::exec::ShellExecutor {
         // serial path. This is Rust-runtime concern, not a C
         // construct, so the check stays here in `exec_shims.rs`.
         let in_forked_child = {
-            use std::sync::atomic::{AtomicI32, Ordering};
             static MAIN_PID: AtomicI32 = AtomicI32::new(0);
             let mut main = MAIN_PID.load(Ordering::Relaxed);
             if main == 0 {
@@ -6523,7 +6486,6 @@ impl crate::ported::exec::ShellExecutor {
         negate: bool,
         meta_cache: &HashMap<String, (Option<std::fs::Metadata>, Option<std::fs::Metadata>)>,
     ) -> Vec<String> {
-        use std::os::unix::fs::PermissionsExt;
         files
             .into_iter()
             .filter(|f| {
@@ -6643,7 +6605,6 @@ impl crate::ported::exec::ShellExecutor {
     /// bin_echotc; the canonical port now calls libcurses tigetstr/
     /// tigetnum/tigetflag + tparm directly per the C source.
     pub(crate) fn bin_echoti(&mut self, args: &[String]) -> i32 {
-        use crate::ported::zsh_h::{options, MAX_OPS};
         let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                             argscount: 0, argsalloc: 0 };
         crate::ported::modules::terminfo::bin_echoti("echoti", args, &ops, 0)
@@ -6741,7 +6702,6 @@ thread_local! {
 }
 
 pub fn scan_magic_assoc_keys(name: &str) -> Option<Vec<String>> {
-    use crate::ported::modules::parameter::*;
     fn collect<F: FnOnce(Option<crate::ported::zsh_h::ScanFunc>, i32)>(scan: F)
         -> Vec<String>
     {
@@ -7395,7 +7355,6 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
 /// Port of `loadautofn(Shfunc shf, int fksh, int autol, int current_fpath)` from `Src/exec.c:5682`.
 pub fn loadautofn(shf: *mut crate::ported::zsh_h::shfunc,                        // c:5682 (Src/exec.c)
               _ks: i32, test_only: i32, _ignore_loaddir: i32) -> i32 {
-    use crate::ported::zsh_h::PM_UNDEFINED;
     if shf.is_null() {
         return 1;
     }

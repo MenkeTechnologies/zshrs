@@ -21,6 +21,7 @@
 //! the canonical port of zsh.h; consumers `use` them from here.
 
 use std::sync::atomic::AtomicI32;
+use std::sync::atomic::Ordering;
 
 // =============================================================================
 // 1. Integer type aliases (zsh.h:30-92).
@@ -1804,7 +1805,6 @@ pub fn SHELL_EMULATION() -> i32 {                                            // 
 #[inline]
 #[allow(non_snake_case)]
 pub fn IN_EVAL_TRAP() -> bool {                                              // c:2962
-    use std::sync::atomic::Ordering;
     crate::ported::signals::intrap.load(Ordering::Relaxed) != 0
         && crate::ported::signals::trapisfunc.load(Ordering::Relaxed) == 0
         && crate::ported::signals::traplocallevel.load(Ordering::Relaxed)

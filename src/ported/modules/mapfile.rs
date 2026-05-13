@@ -20,6 +20,9 @@
 use crate::ported::utils::{metafy, unmeta, zwarn};
 use std::fs::OpenOptions;
 use std::io;
+use std::io::Write;
+use std::os::unix::fs::MetadataExt;
+use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 
@@ -96,7 +99,6 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:68
         //       while (len--) putc(*value++, fout);
         //       fclose(fout);
         //   }
-        use std::io::Write;
         if let Ok(mut fout) = OpenOptions::new().write(true).create(true).truncate(true)
                               .open(&name_unmeta)
         {
@@ -139,7 +141,6 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:68
 /// `fclose`. Used on platforms without mmap.
 #[cfg(not(unix))]
 pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {           // c:68
-    use std::io::Write;
     if readonly { return; }                                              // c:87 readonly skip
     let name_unmeta = unmeta(name);
     let value_unmeta = unmeta(value);
@@ -209,8 +210,6 @@ pub fn setpmmapfiles(entries: &[(String, String)], readonly: bool) {     // c:14
 /// `char *` (NULL on failure); Rust port returns `Option<String>`.
 #[cfg(unix)]
 pub fn get_contents(fname: &str) -> Option<String> {                     // c:167
-    use std::os::unix::fs::MetadataExt;
-    use std::io::Read;
     // c:177 — `unmetafy(fname = ztrdup(fname), &fd);`
     let fname_unmeta = unmeta(fname);
 
