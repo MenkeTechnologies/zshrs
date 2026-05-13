@@ -81,28 +81,28 @@ pub unsafe fn setresgid(rgid: libc::gid_t, egid: libc::gid_t, sgid: libc::gid_t)
     let mut saved_errno: libc::c_int;
 
     if rgid != sgid {
-        Errno::set(libc::ENOSYS);
+        errno_set(libc::ENOSYS);
         return -1;
     }
 
     if have_native_setregid() && !broken_setregid() {
         if libc::setregid(rgid, egid) < 0 {
-            saved_errno = Errno::get();
-            zwarnnam("setregid", &format!("to gid {}: {}", rgid as i64, Errno::str(saved_errno)));
-            Errno::set(saved_errno);
+            saved_errno = errno_get();
+            zwarnnam("setregid", &format!("to gid {}: {}", rgid as i64, errno_str(saved_errno)));
+            errno_set(saved_errno);
             ret = -1;
         }
     } else {
         if libc::setegid(egid) < 0 {
-            saved_errno = Errno::get();
-            zwarnnam("setegid", &format!("to gid {}: {}", egid as i64, Errno::str(saved_errno)));
-            Errno::set(saved_errno);
+            saved_errno = errno_get();
+            zwarnnam("setegid", &format!("to gid {}: {}", egid as i64, errno_str(saved_errno)));
+            errno_set(saved_errno);
             ret = -1;
         }
         if libc::setgid(rgid) < 0 {
-            saved_errno = Errno::get();
-            zwarnnam("setgid", &format!("to gid {}: {}", rgid as i64, Errno::str(saved_errno)));
-            Errno::set(saved_errno);
+            saved_errno = errno_get();
+            zwarnnam("setgid", &format!("to gid {}: {}", rgid as i64, errno_str(saved_errno)));
+            errno_set(saved_errno);
             ret = -1;
         }
     }
@@ -126,59 +126,54 @@ pub unsafe fn setresuid(ruid: libc::uid_t, euid: libc::uid_t, suid: libc::uid_t)
     let mut saved_errno: libc::c_int;
 
     if ruid != suid {
-        Errno::set(libc::ENOSYS);
+        errno_set(libc::ENOSYS);
         return -1;
     }
 
     if have_native_setreuid() && !broken_setreuid() {
         if libc::setreuid(ruid, euid) < 0 {
-            saved_errno = Errno::get();
-            zwarnnam("setreuid", &format!("to uid {}: {}", ruid as i64, Errno::str(saved_errno)));
-            Errno::set(saved_errno);
+            saved_errno = errno_get();
+            zwarnnam("setreuid", &format!("to uid {}: {}", ruid as i64, errno_str(saved_errno)));
+            errno_set(saved_errno);
             ret = -1;
         }
     } else {
         if !seteuid_breaks_setuid() {
             if libc::seteuid(euid) < 0 {
-                saved_errno = Errno::get();
-                zwarnnam("seteuid", &format!("to uid {}: {}", euid as i64, Errno::str(saved_errno)));
-                Errno::set(saved_errno);
+                saved_errno = errno_get();
+                zwarnnam("seteuid", &format!("to uid {}: {}", euid as i64, errno_str(saved_errno)));
+                errno_set(saved_errno);
                 ret = -1;
             }
         }
         if libc::setuid(ruid) < 0 {
-            saved_errno = Errno::get();
-            zwarnnam("setuid", &format!("to uid {}: {}", ruid as i64, Errno::str(saved_errno)));
-            Errno::set(saved_errno);
+            saved_errno = errno_get();
+            zwarnnam("setuid", &format!("to uid {}: {}", ruid as i64, errno_str(saved_errno)));
+            errno_set(saved_errno);
             ret = -1;
         }
     }
     ret
 }
 
-/// Namespace for the platform-specific errno reads/writes the
-/// openssh-derived setresuid/setresgid shims need. zsh C uses the raw
-/// `errno` macro directly (since it's a thread-local int via libc); Rust
-/// has to dispatch per-platform because there's no portable mutable
-/// errno accessor in std.
+// WARNING: NOT IN OPENSSH_BSD_SETRES_ID.C — Rust-only errno-read
+// helper. C reads `errno` (thread-local int via libc) directly; Rust
+// has no portable mutable errno accessor in `std`, so this fn wraps
+// `std::io::Error::last_os_error().raw_os_error()`.
 #[cfg(unix)]
-struct Errno;
-
-#[cfg(unix)]
-impl Errno {
-
 #[inline]
-fn get() -> libc::c_int {
+fn errno_get() -> libc::c_int {
     std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
 }
 
+// WARNING: NOT IN OPENSSH_BSD_SETRES_ID.C — Rust-only errno-write
+// helper; see `errno_get` above. libc exposes `__errno_location()`
+// on Linux, `__error()` on macOS/BSD; this fn dispatches per
+// target_os to get the right thread-local accessor. Exotic targets
+// fall back to a Rust thread_local; callers re-read via `errno_get()`.
+#[cfg(unix)]
 #[inline]
-fn set(e: libc::c_int) {
-    // libc exposes `__errno_location()` on Linux, `__error()` on
-    // macOS/BSD. Pick the right thread-local accessor per platform
-    // and write the value directly. The raw fallback uses a Rust
-    // thread-local for exotic targets — callers re-read via
-    // `errno()` which queries `std::io::Error::last_os_error()`.
+fn errno_set(e: libc::c_int) {
     unsafe {
         let p: *mut libc::c_int = {
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -213,12 +208,14 @@ fn set(e: libc::c_int) {
     }
 }
 
+// WARNING: NOT IN OPENSSH_BSD_SETRES_ID.C — Rust-only error-string
+// formatter. C uses `strerror(errno)` directly; Rust uses
+// `std::io::Error::from_raw_os_error(e).to_string()`.
+#[cfg(unix)]
 #[inline]
-fn str(e: libc::c_int) -> String {
+fn errno_str(e: libc::c_int) -> String {
     std::io::Error::from_raw_os_error(e).to_string()
 }
-
-}  // impl Errno
 
 #[cfg(test)]
 mod tests {
@@ -232,7 +229,7 @@ mod tests {
         unsafe {
             let r = setresgid(1, 2, 3);
             assert_eq!(r, -1);
-            assert_eq!(Errno::get(), libc::ENOSYS);
+            assert_eq!(errno_get(), libc::ENOSYS);
         }
     }
 
@@ -243,7 +240,7 @@ mod tests {
         unsafe {
             let r = setresuid(1, 2, 3);
             assert_eq!(r, -1);
-            assert_eq!(Errno::get(), libc::ENOSYS);
+            assert_eq!(errno_get(), libc::ENOSYS);
         }
     }
 
