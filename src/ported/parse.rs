@@ -21,7 +21,8 @@ use super::zsh_h::{
     COND_OR, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ,
     CSHJUNKIELOOPS,
     EC_DUP, EC_NODUP, EF_HEAP, EF_REAL, EXECOPT, IGNOREBRACES, IS_DASH, MULTIFUNCDEF, OPT_ISSET,
-    PM_UNDEFINED, POSIXBUILTINS, REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP,
+    PM_UNDEFINED, POSIXBUILTINS, REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW,
+    REDIR_FROM_HEREDOC_MASK, REDIR_VARID_MASK, REDIR_ERRAPP,
     REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HEREDOCDASH,
     REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ,
     REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW, SHORTLOOPS, SHORTREPEAT, WCB_COND, WCB_SIMPLE,
@@ -2790,8 +2791,13 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
     let mut sr: i32 = 0;
     let mut assignments = false;
 
-    // c:1843 — `r = ecused;`
-    let _r = ECUSED.get();
+    // c:1843 — `r = ecused;` — saves the offset where redirs get
+    // INSERTED (via ecispace). Each redir shifts later words DOWN
+    // by ncodes, so the SIMPLE placeholder at `p` (set later) must
+    // also bump by ncodes when a redir lands. C uses `&r` to pass
+    // the cursor by reference; Rust uses a mutable local + manual
+    // bumps after each par_redir_wordcode call.
+    let mut r: usize = ECUSED.get() as usize;
 
     // c:1844-1919 — pre-cmd loop: NOCORRECT, ENVSTRING (scalar
     // assigns), ENVARRAY (array assigns), IS_REDIROP. Loops until
@@ -2929,14 +2935,18 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 assignments = true;
             }
             t if IS_REDIROP(t) => {
-                // c:1900-1904
+                // c:1900-1904 — `*cmplx = c = 1; nr += par_redir(&r,
+                // NULL); continue;`. The wordcode-emitting redir is
+                // distinct from the AST par_redir — it INSERTS
+                // WCB_REDIR + fd + ecstrcode(name) at offset `r`
+                // via ecispace, shifting any later words down.
                 cmplx_set(true);
-                if par_redir().is_some() {
-                    nr += 3;
-                } else {
+                let added = par_redir_wordcode(&mut r);
+                if added == 0 {
                     break;
                 }
-                continue; // c:1904 `continue;` — skip the zshlex below
+                nr += added;
+                continue;
             }
             _ => break,
         }
@@ -2950,7 +2960,7 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
     }
 
     // c:1923 — `p = ecadd(WCB_SIMPLE(0));`
-    let p = ecadd(WCB_SIMPLE(0));
+    let mut p = ecadd(WCB_SIMPLE(0));
 
     // c:1924-2105 — main words loop.
     loop {
@@ -2970,11 +2980,18 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 zshlex();
             }
             t if IS_REDIROP(t) => {
-                // c:1999-2010
+                // c:1999-2010 — `nrediradd = par_redir(&r, NULL);
+                // p += nrediradd; if (ppost) ppost += nrediradd;
+                // sr += nrediradd;` — every redir insert at `r`
+                // shifts the WCB_SIMPLE placeholder DOWN by ncodes,
+                // so `p` must bump in lockstep.
                 cmplx_set(true);
-                if par_redir().is_some() {
-                    sr += 3;
+                let added = par_redir_wordcode(&mut r);
+                if added == 0 {
+                    break;
                 }
+                p += added as usize;
+                sr += added;
             }
             _ => break,
         }
@@ -3001,6 +3018,141 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
 /// (matches C's call shape at parse.c:1054 `par_simple(cmplx, nr)`).
 pub fn par_simple_wordcode() {
     par_simple_wordcode_impl(0);
+}
+
+/// Port of `par_redir(int *rp, char *idstring)` from
+/// `Src/parse.c:2229-2345` — the wordcode-emitting variant that
+/// pushes WCB_REDIR + fd + ecstrcode(name) into ECBUF. Distinct
+/// from the AST `par_redir` (parse.rs:3771) which builds a
+/// ZshRedir struct for the AST executor pipeline.
+///
+/// Returns the number of wordcodes added (3 for the basic shape,
+/// 4 with idstring, 5 for HEREDOC[DASH] which carries the
+/// terminator strings inline). Returns 0 on parse error.
+fn par_redir_wordcode(rp: &mut usize) -> i32 {
+    let cur = tok();
+    let rtype: i32 = match cur {
+        OUTANG_TOK => REDIR_WRITE,
+        OUTANGBANG => REDIR_WRITENOW,
+        DOUTANG => REDIR_APP,
+        DOUTANGBANG => REDIR_APPNOW,
+        INANG_TOK => REDIR_READ,
+        INOUTANG => REDIR_READWRITE,
+        DINANG => REDIR_HEREDOC,
+        DINANGDASH => REDIR_HEREDOCDASH,
+        TRINANG => REDIR_HERESTR,
+        INANGAMP => REDIR_MERGEIN,
+        OUTANGAMP => REDIR_MERGEOUT,
+        AMPOUTANG => REDIR_ERRWRITE,
+        OUTANGAMPBANG => REDIR_ERRWRITENOW,
+        DOUTANGAMP => REDIR_ERRAPP,
+        DOUTANGAMPBANG => REDIR_ERRAPPNOW,
+        _ => return 0,
+    };
+    let fd1 = if tokfd() >= 0 {
+        tokfd()
+    } else if matches!(
+        rtype,
+        REDIR_READ
+            | REDIR_READWRITE
+            | REDIR_MERGEIN
+            | REDIR_HEREDOC
+            | REDIR_HEREDOCDASH
+            | REDIR_HERESTR
+    ) {
+        0
+    } else {
+        1
+    };
+    // c:2234-2245 — save+force incmdpos=0 / nocorrect=1 (when not
+    // INANG/INOUTANG) around the zshlex that consumes the target
+    // word.
+    let oldcmdpos = incmdpos();
+    set_incmdpos(false);
+    let oldnc = nocorrect();
+    if cur != INANG_TOK && cur != INOUTANG {
+        set_nocorrect(1);
+    }
+    zshlex();
+    if tok() != STRING_LEX && tok() != ENVSTRING {
+        set_incmdpos(oldcmdpos);
+        set_nocorrect(oldnc);
+        error("expected word after redirection");
+        return 0;
+    }
+    let name = tokstr().unwrap_or_default();
+    set_incmdpos(oldcmdpos);
+    set_nocorrect(oldnc);
+
+    // c:2249-2300 — HEREDOC / HEREDOCDASH carry extra words (here
+    // string + terminator + munged terminator). The C source
+    // emits 5 words and registers a struct heredocs entry that
+    // setheredoc patches later. Stub for now: emit the basic
+    // 3-word shape so wordcode parity at least sees WC_REDIR.
+    // TODO: full heredoc registration + 5-word emission.
+    let _ = (REDIR_FROM_HEREDOC_MASK, REDIR_VARID_MASK);
+
+    // c:2302-2321 — proc-subst rewriting: detect `>(`/`<(` in the
+    // target word's first 2 chars and rewrite REDIR_WRITE/READ to
+    // REDIR_OUTPIPE/INPIPE. The detection compares the FIRST char
+    // of the unmetafied tokstr against the marker bytes.
+    let mut rtype = rtype;
+    let nbytes: Vec<char> = name.chars().collect();
+    let two = |i: usize| -> Option<(char, char)> {
+        if i + 1 < nbytes.len() {
+            Some((nbytes[i], nbytes[i + 1]))
+        } else {
+            None
+        }
+    };
+    if let Some((c0, c1)) = two(0) {
+        match rtype {
+            x if x == REDIR_WRITE || x == REDIR_WRITENOW => {
+                if c0 == '\u{96}' /* OutangProc */ && c1 == '\u{88}' /* Inpar */ {
+                    rtype = REDIR_OUTPIPE;
+                } else if c0 == '\u{94}' /* Inang */ && c1 == '\u{88}' {
+                    error("invalid redirection: < before >");
+                    return 0;
+                }
+            }
+            x if x == REDIR_READ => {
+                if c0 == '\u{94}' && c1 == '\u{88}' {
+                    rtype = REDIR_INPIPE;
+                } else if c0 == '\u{96}' && c1 == '\u{88}' {
+                    error("invalid redirection: > before <");
+                    return 0;
+                }
+            }
+            x if x == REDIR_READWRITE => {
+                if c0 == '\u{94}' && c1 == '\u{88}' {
+                    rtype = REDIR_INPIPE;
+                } else if c0 == '\u{96}' && c1 == '\u{88}' {
+                    rtype = REDIR_OUTPIPE;
+                }
+            }
+            _ => {}
+        }
+    }
+    zshlex();
+
+    // c:2326-2333 — emit WCB_REDIR + fd + ecstrcode(name) at the
+    // CALLER's `r` cursor (NOT at ecused). ecispace shifts later
+    // words DOWN to make space; the caller bumps its `p` (SIMPLE
+    // placeholder offset) to compensate. 3-word basic shape;
+    // idstring (`{var}>file`) form not yet wired here.
+    let ncodes: usize = 3;
+    let r = *rp;
+    ecispace(r, ncodes);
+    let coded = ecstrcode(&name);
+    ECBUF.with_borrow_mut(|b| {
+        if r + 2 < b.len() {
+            b[r] = WCB_REDIR(rtype as wordcode);
+            b[r + 1] = fd1 as wordcode;
+            b[r + 2] = coded;
+        }
+    });
+    *rp += ncodes; // c:2280 `*rp = r + ncodes;`
+    ncodes as i32
 }
 
 /// Parse a program (list of lists)
