@@ -428,6 +428,7 @@ pub const CUT_YANK:    i32 = 1 << 3;   /* vi yank: use register 0 instead of 1-9
 
 /// Port of `struct change` from `Src/Zle/zle.h:284-295`. The undo
 /// log is a doubly-linked list of these entries.
+#[derive(Clone, Debug)]
 pub struct change {                                                          // c:284
     /// previous adjacent change.
     pub prev: Option<Box<change>>,                                           // c:285

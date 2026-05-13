@@ -987,7 +987,7 @@ fn checkalias(lextext: &str) -> bool {
             // following word.
             if !LEX_LEXSTOP.get() {
                 if let Some(c) = peek() {
-                    if !is_blank(c) {
+                    if !crate::ztype_h::iblank(c as u8) {
                         crate::ported::input::inpush(" ", crate::ported::zsh_h::INP_ALIAS, None);
                     }
                 }
@@ -1310,59 +1310,6 @@ fn add(c: char) {
     LEX_LEXBUF.with_borrow_mut(|b| b.add(c));
 }
 
-/// Check if character is blank (space or tab)
-fn is_blank(c: char) -> bool {
-    c == ' ' || c == '\t'
-}
-
-/// Peek for a zsh numeric range glob shape after a `<`: returns the
-/// captured `N*-M*>` (everything *after* the leading `<`) when the
-/// upcoming chars match `[0-9]*-[0-9]*>` exactly. Otherwise returns
-/// None and leaves the input untouched.
-fn try_numeric_range_glob() -> Option<String> {
-    let mut buf: Vec<char> = Vec::new();
-    // optional leading digits
-    loop {
-        match hgetc() {
-            Some(c) if c.is_ascii_digit() => buf.push(c),
-            Some(c) => {
-                buf.push(c);
-                break;
-            }
-            None => break,
-        }
-    }
-    // last char in buf must be '-' for the range form
-    if buf.last() != Some(&'-') {
-        for c in buf.iter().rev() {
-            hungetc(*c);
-        }
-        return None;
-    }
-    // optional trailing digits
-    loop {
-        match hgetc() {
-            Some(c) if c.is_ascii_digit() => buf.push(c),
-            Some(c) => {
-                buf.push(c);
-                break;
-            }
-            None => break,
-        }
-    }
-    if buf.last() != Some(&'>') {
-        for c in buf.iter().rev() {
-            hungetc(*c);
-        }
-        return None;
-    }
-    Some(buf.into_iter().collect())
-}
-
-/// Check if character is blank (including other whitespace except newline)
-fn is_inblank(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\x0b' | '\x0c' | '\r')
-}
 
 /// Check if character is a digit
 fn is_digit(c: char) -> bool {
@@ -1791,7 +1738,7 @@ fn gettok() -> lextok {
             return LEXERR;
         }
         match hgetc() {
-            Some(ch) if is_blank(ch) => continue,
+            Some(ch) if crate::ztype_h::iblank(ch as u8) => continue,
             Some(ch) => break ch,
             None => {
                 // c:624-625 — `if (lexstop) return (errflag) ?
@@ -2329,7 +2276,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
             return LEXERR;
         }
 
-        let inbl = is_inblank(c);
+        let inbl = crate::ztype_h::inblank(c as u8);
 
         if inbl && in_brace_param == 0 && pct == 0 {
             // Whitespace outside brace param ends token
@@ -2668,14 +2615,29 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 // In pattern context (incondpat), < is literal
                 if in_brace_param > 0 || sub || LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
                     add(c);
-                } else if let Some(range_chars) = try_numeric_range_glob() {
-                    // zsh numeric range glob `<N-M>`, `<->`, `<N->`,
-                    // `<-M>`. When `<` mid-word matches that exact
-                    // shape, swallow it into the word instead of
-                    // breaking out for redirection.
+                } else if {
+                    // c:1201 — `if(isnumglob()) { add(Inang); while
+                    // ((c = hgetc()) != '>') add(c); c = Outang; }`.
+                    // Our `isnumglob(input, pos)` scans the static
+                    // input slice rather than consuming via hgetc, so
+                    // we snapshot the input from the current pos. The
+                    // unget buffer (line-continuation push-backs etc.)
+                    // isn't consulted here — the range glob is a
+                    // word-internal shape so the unget buf is empty in
+                    // practice at this site.
+                    let lookahead = LEX_INPUT.with_borrow(|s| {
+                        s[LEX_POS.get()..].to_string()
+                    });
+                    isnumglob(&lookahead, 0)
+                } {
+                    // c:1203-1206 — read `[0-9]*-[0-9]*>` swallow into
+                    // the word, emit `<…>` as a range glob.
                     add(c);
-                    for ch in range_chars.chars() {
+                    while let Some(ch) = hgetc() {
                         add(ch);
+                        if ch == '>' {
+                            break;
+                        }
                     }
                 } else {
                     let e = hgetc();
@@ -3105,7 +3067,6 @@ fn dquote_parse(endchar: char, sub: bool) -> Result<(), ()> {
     if check_recursion() {
         return Err(());
     }
-    {
     let mut pct = 0; // parenthesis count
     let mut brct = 0; // bracket count
     let mut bct = 0; // brace count (for ${...})
@@ -3557,7 +3518,7 @@ fn skipcomm() -> Result<(), ()> {
             }
         };
 
-        let iswhite = is_inblank(c);
+        let iswhite = crate::ztype_h::inblank(c as u8);
 
         match c {
             '(' => {
@@ -3873,26 +3834,6 @@ pub fn isnumglob(input: &str, pos: usize) -> bool {
 /// recursively; the runtime handles them at expansion time.
 /// Port of `parsestrnoerr(char **s)` from `Src/lex.c:1713`.
 pub fn parsestrnoerr(s: &str) -> Result<String, String> {
-    parsestr_inner(s)
-}
-
-/// Tokenize a string as if in double quotes (error-reporting variant).
-///
-/// Direct port of zsh/Src/lex.c:1694 `parsestr`. C source:
-/// `if ((err = parsestrnoerr(s))) { untokenize(*s); ... zerr("parse
-/// error near `%c'", err); tok = LEXERR; }`. zshrs's wrapper
-/// returns the same Result and lets the caller emit the diagnostic.
-///
-/// Both `parsestr` and `parsestrnoerr` share the inner walker; the
-/// only difference in C is whether errors trigger `zerr`. zshrs
-/// returns `Err(msg)` from both — the caller decides whether to
-/// surface the diagnostic.
-pub fn parsestr(s: &str) -> Result<String, String> {
-    parsestr_inner(s)
-}
-
-/// Shared body for parsestr / parsestrnoerr.
-fn parsestr_inner(s: &str) -> Result<String, String> {
     let mut result = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
@@ -3942,6 +3883,16 @@ fn parsestr_inner(s: &str) -> Result<String, String> {
     }
 
     Ok(result)
+}
+
+/// Tokenize a string as if in double quotes (error-reporting variant).
+/// Direct port of `parsestr(char **s)` from `Src/lex.c:1694`. C
+/// source: `if ((err = parsestrnoerr(s))) { untokenize(*s); ...
+/// zerr("parse error near `%c'", err); tok = LEXERR; }`. zshrs's
+/// wrapper preserves the Result and lets the caller emit the
+/// diagnostic.
+pub fn parsestr(s: &str) -> Result<String, String> {
+    parsestrnoerr(s)
 }
 
 /// Parse a subscript in string s. Return the position after the
