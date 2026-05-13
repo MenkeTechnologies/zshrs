@@ -872,11 +872,6 @@ lexact1_get
 lexact2_get
 lextok2_get
 ensure_tabs_inited
-# lex_initial_other — char-specific fallthrough from the LX1_OTHER
-# arm of `lex_initial`. zshrs needs `{`/`}`/`[`/`]` handling at the
-# top level for `[[ ]]` / `{}` empty-block recognition; C handles
-# these inside `gettokstr` via the lexact2[] table.
-lex_initial_other
 # read_cond_num — AST-walker helper to pull a numeric literal from
 # the current lex position. C parser inlines this via `atoi(tokstr)`
 # everywhere; the Rust helper exists to localize the i64-parse
@@ -975,14 +970,14 @@ try_numeric_range_glob
 is_inblank
 process_heredocs
 read_line
-lex_arith
 lex_initial
 is_valid_assignment_target
 dquote_parse_inner
 untokenize_char
 check_alias
-inject_alias_text
 take_raw_buf
+register_heredoc
+check_reserved_word
 
 # parse.rs Rust-only heredoc / inoutpar resolution — zsh's parser
 # patches heredoc bodies directly into the wordcode buffer

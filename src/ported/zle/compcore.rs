@@ -58,6 +58,10 @@ pub static ZLEMETACS: AtomicI32 = AtomicI32::new(0);                         // 
 /// Port of `mod_export int zlemetall` from `Src/lex.c:104`. Length
 /// of the metafied line.
 pub static ZLEMETALL: AtomicI32 = AtomicI32::new(0);                         // lex.c:104
+/// Port of `mod_export int addedx` from `Src/lex.c:115`. Non-zero
+/// while a dummy `x` cursor marker is in the line being lexed
+/// (so completion can capture the partial word at the cursor).
+pub static ADDEDX: AtomicI32 = AtomicI32::new(0);                            // lex.c:115
 
 /// Port of `mod_export char *zlemetaline` from `Src/lex.c:103`. The
 /// metafied edit buffer for the current ZLE session — `foredel`,
