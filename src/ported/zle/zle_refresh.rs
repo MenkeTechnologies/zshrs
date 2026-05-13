@@ -4,7 +4,6 @@
 
 use std::io::{self, Write};
 
-use super::zle_main::Zle;
 
 // TextAttr / RefreshElement / VideoBuffer / RefreshState moved to
 // `src/extensions/zle_refresh_state.rs` — they are Rust-only
@@ -16,7 +15,6 @@ pub use crate::zle_refresh_state::{RefreshElement, RefreshState, TextAttr, Video
 use HighlightCategory as HC;
 use crate::ported::zsh_h::TXT_MULTIWORD_MASK;
 
-impl Zle {
     /// Main refresh function — redraws the line.
     /// Port of `zrefresh()` from Src/Zle/zle_refresh.c. The C source paints
     /// a full virtual-screen diff against the previous frame; this Rust
@@ -27,14 +25,41 @@ impl Zle {
     ///     `region_active` to paint mark..zlecs in standout),
     ///   * RPS1 / right-prompt rendering at the right margin
     ///     (zle_refresh.c `put_rpromptbuf` path).
-    pub fn zrefresh(&mut self) {                                             // c:975
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::extensions::widget::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+
+    pub fn zrefresh() {                                             // c:975
         let stdout = io::stdout();
         let mut handle = stdout.lock();
 
         let (cols, _rows) = (crate::ported::utils::adjustcolumns(), crate::ported::utils::adjustlines());
 
-        let prompt = self.prompt().to_string();
-        let rprompt = self.rprompt().to_string();
+        let prompt = prompt().to_string();
+        let rprompt = rprompt().to_string();
         let cursor = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
 
         let prompt_width = countprompt(&prompt);
@@ -57,7 +82,7 @@ impl Zle {
 
         // Compose the per-buffer-char attribute overlay before paint, so
         // we don't have to re-walk the highlight list per char during write.
-        let attrs = self.compute_render_attrs();
+        let attrs = compute_render_attrs();
 
         let _ = write!(handle, "\r\x1b[K");
 
@@ -104,8 +129,8 @@ impl Zle {
 
         // Walk the buffer chars from buffer_start, applying overlay attrs.
         let mut current_attr: Option<TextAttr> = None;
-        for (written, (idx, ch)) in self
-            .zleline
+        let line_snapshot = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().clone();
+        for (written, (idx, ch)) in line_snapshot
             .iter()
             .enumerate()
             .skip(buffer_start)
@@ -154,15 +179,14 @@ impl Zle {
     /// here so `v` selects visibly without callers having to push a
     /// region themselves — matching zle_refresh.c's auto-promotion of
     /// `region_active` into a paintable highlight.
-    pub fn compute_render_attrs(&self) -> Vec<Option<TextAttr>> {
+    pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
         let buf_len = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len();
         let mut attrs: Vec<Option<TextAttr>> = vec![None; buf_len];
 
         // Visual-region attr: prefer the user's `region:` setting from
         // $zle_highlight (populated by zle_set_highlight); fall back to
         // standout per zsh's default at zle_refresh.c:397.
-        let visual_attr = self
-            .highlight
+        let visual_attr = crate::ported::zle::zle_main::highlight().lock().unwrap()
             .category_attrs
             .get(&HighlightCategory::Region)
             .copied()
@@ -194,37 +218,37 @@ impl Zle {
     }
 
     /// Full screen refresh - clears and redraws everything
-    pub fn full_refresh(&mut self) -> io::Result<()> {
+    pub fn full_refresh() -> io::Result<()> {
         print!("\x1b[2J\x1b[H");
-        self.zrefresh();
+        zrefresh();
         io::stdout().flush()
     }
 
     /// Partial refresh (optimize for minimal updates)
-    pub fn partial_refresh(&mut self) -> io::Result<()> {
-        self.zrefresh();
+    pub fn partial_refresh() -> io::Result<()> {
+        zrefresh();
         io::stdout().flush()
     }
 
     /// Clear the screen
     /// Port of clearscreen(UNUSED(char **args)) from zle_refresh.c
-    pub fn clearscreen(&mut self) {                                          // c:2366
+    pub fn clearscreen() {                                          // c:2366
         print!("\x1b[2J\x1b[H");
         let _ = io::stdout().flush();
-        self.zrefresh();
+        zrefresh();
     }
 
     /// Redisplay the current line
     /// Port of redisplay(UNUSED(char **args)) from zle_refresh.c
-    pub fn redisplay(&mut self) {                                            // c:2377
-        self.zrefresh();
+    pub fn redisplay() {                                            // c:2377
+        zrefresh();
     }
 
     // move the cursor to line ln (relative to the prompt line),            // c:2105
     // absolute column cl; update vln, vcs - video line and column          // c:2105
     /// Move cursor to position
     /// Port of moveto(int ln, int cl) from zle_refresh.c
-    pub fn moveto(&mut self, row: usize, col: usize) {                       // c:2105
+    pub fn moveto(row: usize, col: usize) {                       // c:2105
         // ANSI escape: ESC [ row ; col H (1-indexed)
         print!("\x1b[{};{}H", row + 1, col + 1);
         let _ = io::stdout().flush();
@@ -232,7 +256,7 @@ impl Zle {
 
     /// Move cursor down
     /// Port of tc_downcurs(int ct) from zle_refresh.c  
-    pub fn tc_downcurs(&mut self, count: usize) {
+    pub fn tc_downcurs(count: usize) {
         if count > 0 {
             print!("\x1b[{}B", count);
             let _ = io::stdout().flush();
@@ -241,7 +265,7 @@ impl Zle {
 
     /// Move cursor right
     /// Port of tc_rightcurs(int ct) from zle_refresh.c
-    pub fn tc_rightcurs(&mut self, count: usize) {
+    pub fn tc_rightcurs(count: usize) {
         if count > 0 {
             print!("\x1b[{}C", count);
             let _ = io::stdout().flush();
@@ -250,7 +274,7 @@ impl Zle {
 
     /// Scroll window up
     /// Port of scrollwindow(int tline) from zle_refresh.c
-    pub fn scrollwindow(&mut self, lines: i32) {
+    pub fn scrollwindow(lines: i32) {
         if lines > 0 {
             // Scroll up
             print!("\x1b[{}S", lines);
@@ -263,28 +287,28 @@ impl Zle {
 
     /// Single line refresh
     /// Port of singlerefresh(ZLE_STRING_T tmpline, int tmpll, int tmpcs) from zle_refresh.c
-    pub fn singlerefresh(&mut self) {                                        // c:2397
-        self.zrefresh();
+    pub fn singlerefresh() {                                        // c:2397
+        zrefresh();
     }
 
     /// Refresh a single line
     /// Port of refreshline(int ln) from zle_refresh.c
-    pub fn refreshline(&mut self, _line: usize) {
-        self.zrefresh();
+    pub fn refreshline(_line: usize) {
+        zrefresh();
     }
 
     /// Write a wide character
     /// Port of zwcputc(const REFRESH_ELEMENT *c) from zle_refresh.c
-    pub fn zwcputc(&self, c: char) {
+    pub fn zwcputc(c: char) {
         print!("{}", c);
     }
 
     /// Write a string of wide characters
     /// Port of zwcwrite(const REFRESH_STRING s, size_t i) from zle_refresh.c
-    pub fn zwcwrite(&self, s: &str) {
+    pub fn zwcwrite(s: &str) {
         print!("{}", s);
     }
-}
+
 
 /// Calculate visible width of a prompt string — port of `countprompt()`
 /// from Src/prompt.c:1140. The C function counts cells while skipping
@@ -507,6 +531,7 @@ mod tests {
 
     #[test]
     fn test_countprompt() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(countprompt("hello"), 5);
         assert_eq!(countprompt("\x1b[31mhello\x1b[0m"), 5);
         assert_eq!(countprompt("日本語"), 6); // 3 chars, 2 width each
@@ -514,6 +539,7 @@ mod tests {
 
     #[test]
     fn test_video_buffer() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut buf = VideoBuffer::new(80, 24);
         assert_eq!(buf.cols, 80);
         assert_eq!(buf.rows, 24);
@@ -527,6 +553,7 @@ mod tests {
 
     #[test]
     fn test_refresh_state() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut state = RefreshState::new();
         assert!(state.old_video.is_some());
         assert!(state.new_video.is_some());
@@ -538,19 +565,19 @@ mod tests {
 
     #[test]
     fn compute_render_attrs_empty_buffer_yields_empty_overlay() {
-        let zle = Zle::new();
-        assert!(zle.compute_render_attrs().is_empty());
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert!(compute_render_attrs().is_empty());
     }
 
     #[test]
     fn compute_render_attrs_visual_mode_paints_mark_to_cursor_in_standout() {
-        let mut zle = Zle::new();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(2, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(7, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst); // charwise visual
-        let attrs = zle.compute_render_attrs();
+        let attrs = compute_render_attrs();
         assert_eq!(attrs.len(), 11);
         // [0..2) and [7..11) are unstyled.
         for slot in attrs.iter().take(2) {
@@ -568,13 +595,13 @@ mod tests {
 
     #[test]
     fn compute_render_attrs_visual_mode_handles_reverse_mark_order() {
-        let mut zle = Zle::new();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcdef".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::REGION_ACTIVE.store(2, std::sync::atomic::Ordering::SeqCst); // linewise — same swap behavior
-        let attrs = zle.compute_render_attrs();
+        let attrs = compute_render_attrs();
         // Range collapses to (1..5).
         assert!(attrs[0].is_none());
         for slot in attrs.iter().take(5).skip(1) {
@@ -585,6 +612,7 @@ mod tests {
 
     #[test]
     fn match_highlight_handles_combined_attrs() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let attr = match_highlight("bold,fg=red,underline");
         assert!(attr.bold);
         assert!(attr.underline);
@@ -593,6 +621,7 @@ mod tests {
 
     #[test]
     fn match_highlight_named_and_numeric_colors() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(match_highlight("fg=cyan").fg_color, Some(6));
         assert_eq!(match_highlight("bg=42").bg_color, Some(42));
         // Out-of-range numeric → ignored (parse fails for u8).
@@ -601,6 +630,7 @@ mod tests {
 
     #[test]
     fn match_highlight_negation_clears_attr() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let attr = match_highlight("bold,nobold,underline");
         assert!(!attr.bold);
         assert!(attr.underline);
@@ -608,6 +638,7 @@ mod tests {
 
     #[test]
     fn match_highlight_none_resets_everything() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let attr = match_highlight("bold,fg=red,none,underline");
         // After `none` the only thing surviving is the trailing `underline`.
         assert!(!attr.bold);
@@ -617,6 +648,7 @@ mod tests {
 
     #[test]
     fn zle_set_highlight_populates_categories_and_defaults() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut mgr = HighlightManager::new();
         let entries = ["region:fg=red,bold", "isearch:fg=blue"];
         zle_set_highlight(&mut mgr, &entries);
@@ -635,6 +667,7 @@ mod tests {
 
     #[test]
     fn zle_set_highlight_none_clears_every_slot() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut mgr = HighlightManager::new();
         zle_set_highlight(&mut mgr, &["none"]);
         for cat in [
@@ -650,17 +683,18 @@ mod tests {
 
     #[test]
     fn compute_render_attrs_visual_uses_zle_highlight_region_attr() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // When the user sets `zle_highlight=(region:fg=red,bold)` via
         // zle_set_highlight, vi visual-mode should paint the region
         // with that attr instead of the default standout.
-        let mut zle = Zle::new();
+        crate::ported::zle::zle_main::zle_reset();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcde".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(1, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::ZLECS.store(4, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);
-        zle_set_highlight(&mut zle.highlight, &["region:fg=red,bold"]);
-        let attrs = zle.compute_render_attrs();
+        zle_set_highlight(&mut crate::ported::zle::zle_main::highlight().lock().unwrap(), &["region:fg=red,bold"]);
+        let attrs = compute_render_attrs();
         for slot in attrs.iter().take(4).skip(1) {
             let a = slot.expect("region painted");
             assert!(a.bold);
@@ -672,7 +706,7 @@ mod tests {
 
     #[test]
     fn compute_render_attrs_explicit_regions_override_default() {
-        let mut zle = Zle::new();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcde".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         let custom = TextAttr {
@@ -680,9 +714,9 @@ mod tests {
             fg_color: Some(1),
             ..TextAttr::default()
         };
-        zle.highlight
+        crate::ported::zle::zle_main::highlight().lock().unwrap()
             .set_region_highlight(1, 4, custom);
-        let attrs = zle.compute_render_attrs();
+        let attrs = compute_render_attrs();
         assert!(attrs[0].is_none());
         for slot in attrs.iter().take(4).skip(1) {
             let a = slot.expect("custom");
@@ -1254,6 +1288,7 @@ mod zr_tests {
 
     #[test]
     fn zr_memset_fills_slice() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:88-89 — `while (len--) *dst++ = rc`.
         let mut buf = [REFRESH_ELEMENT::default(); 4];
         let fill = re('x', 0);
@@ -1267,6 +1302,7 @@ mod zr_tests {
 
     #[test]
     fn zr_memset_clamps_to_dst_len() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut buf = [REFRESH_ELEMENT::default(); 2];
         let fill = re('y', 0);
         ZR_memset(&mut buf, fill, 99);  // len > dst.len()
@@ -1276,6 +1312,7 @@ mod zr_tests {
 
     #[test]
     fn zr_strlen_counts_to_nul() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:106 — `while (wstr++->chr != ZWC('\0')) len++`.
         let s = [re('h', 0), re('i', 0), re('\0', 0)];
         assert_eq!(ZR_strlen(&s), 2);
@@ -1283,12 +1320,14 @@ mod zr_tests {
 
     #[test]
     fn zr_strlen_empty_starts_with_nul() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let s = [re('\0', 0)];
         assert_eq!(ZR_strlen(&s), 0);
     }
 
     #[test]
     fn zr_strcpy_copies_through_nul() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:97 — `while ((*dst++ = *src++).chr != ZWC('\0'))`. NUL
         // included in copy.
         let src = [re('a', 0), re('b', 0), re('\0', 0)];
@@ -1301,6 +1340,7 @@ mod zr_tests {
 
     #[test]
     fn zr_strncmp_equal_strings() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:127 — pair-equal in chr+atr: returns 0.
         let a = [re('h', 0), re('i', 0)];
         let b = [re('h', 0), re('i', 0)];
@@ -1309,6 +1349,7 @@ mod zr_tests {
 
     #[test]
     fn zr_strncmp_diff_chr_returns_1() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = [re('h', 0), re('i', 0)];
         let b = [re('h', 0), re('o', 0)];
         // c:127 — `if (!ZR_equal(...)) return 1`.
@@ -1317,6 +1358,7 @@ mod zr_tests {
 
     #[test]
     fn zr_strncmp_diff_atr_returns_1() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:127 — atr is part of equality.
         let a = [re('h', 0)];
         let b = [re('h', TXTBOLDFACE)];
@@ -1325,6 +1367,7 @@ mod zr_tests {
 
     #[test]
     fn zr_strncmp_early_nul_old() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:124-126 — old has NUL → return !equal.
         let a = [re('\0', 0)];
         let b = [re('x', 0)];
@@ -1336,6 +1379,7 @@ mod zr_tests {
 
     #[test]
     fn zr_strncmp_multiword_mask_skips_nul_check() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:124 — `(!(oldwstr->atr & TXT_MULTIWORD_MASK) && !oldwstr->chr)`.
         // If atr has MULTIWORD set, chr=='\0' is NOT a NUL terminator.
         let a = [re('\0', TXT_MULTIWORD_MASK)];
@@ -1348,6 +1392,7 @@ mod zr_tests {
 
     #[test]
     fn zr_equal_same_returns_true() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = re('a', 0);
         assert!(ZR_equal(a, a));
         let b = re('b', 0);
@@ -1356,6 +1401,7 @@ mod zr_tests {
 
     #[test]
     fn zr_memcpy_copies_n_elements() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut dst = [re('\0', 0); 5];
         let src = [re('a', 0), re('b', 0), re('c', 0), re('d', 0), re('e', 0)];
         ZR_memcpy(&mut dst, &src, 3);
@@ -1367,6 +1413,7 @@ mod zr_tests {
 
     #[test]
     fn ellipsis_sizes_match_table_lengths() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(ZR_END_ELLIPSIS_SIZE, 6);
         assert_eq!(ZR_MID_ELLIPSIS1_SIZE, 6);
         assert_eq!(ZR_MID_ELLIPSIS2_SIZE, 2);
@@ -1375,11 +1422,13 @@ mod zr_tests {
 
     #[test]
     fn def_mwbuf_alloc_is_32() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(DEF_MWBUF_ALLOC, 32);
     }
 
     #[test]
     fn tc_costs_handle_negative() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(tcinscost(-1), 0);
         assert_eq!(tcdelcost(-1), 0);
         assert_eq!(tcinscost(5), 5);
@@ -1388,6 +1437,7 @@ mod zr_tests {
 
     #[test]
     fn rparams_default_zeros_all_fields() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let r = rparams::default();
         assert_eq!(r.canscroll, 0);
         assert_eq!(r.ln, 0);

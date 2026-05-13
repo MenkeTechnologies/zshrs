@@ -3,11 +3,37 @@
 //! Three C functions, zero structs/enums. The Rust port matches:
 //! three free fns over a `&mut Zle`, no Rust-only types.
 
-use super::zle_main::Zle;
 use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
 
 /// Port of `blankwordclass(ZLE_CHAR_T x)` from `Src/Zle/textobjects.c:34`. The
 /// vi blank-word class predicate. Returns 0 for blanks, 1 otherwise.
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::extensions::widget::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_refresh::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+
 pub fn blankwordclass(x: char) -> i32 {                                  // c:34
     // C: `return (ZC_iblank(x) ? 0 : 1);`
     if x == ' ' || x == '\t' { 0 } else { 1 }                            // c:36
@@ -29,7 +55,7 @@ pub fn blankwordclass(x: char) -> i32 {                                  // c:34
 /// with the flag clear, which is the only state the cursor-
 /// adjustment needs to handle (the `range`-set branch only fires
 /// from inside `getvirange`, which has its own copy).
-pub fn selectword(zle: &mut Zle) -> i32 {                                // c:41
+pub fn selectword() -> i32 {                                // c:41
     let mut n: i32 = if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_MULT != 0 {   // c:41 zmult
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult
     } else {
@@ -262,7 +288,7 @@ pub fn selectword(zle: &mut Zle) -> i32 {                                // c:41
     let virangeflag = crate::ported::zle::zle_vi::VIRANGEFLAG
         .load(std::sync::atomic::Ordering::Relaxed) != 0;
     if !virangeflag {                                                    // c:196
-        if !zle.in_vi_cmd_mode() {                                       // c:197
+        if !in_vi_cmd_mode() {                                       // c:197
             crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);                                       // c:198
         } else if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) != 0 && crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) {               // c:199
             crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);                                              // c:200 DECCS
@@ -286,7 +312,7 @@ pub fn selectword(zle: &mut Zle) -> i32 {                                // c:41
 /// that handles only the simple case (no quoting, no expansion, no
 /// here-docs). Returns 1 when `n` is out of range matching C
 /// (textobjects.c:225).
-pub fn selectargument(zle: &mut Zle) -> i32 {                            // c:212
+pub fn selectargument() -> i32 {                            // c:212
     let n: i32 = if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_MULT != 0 {
         crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult                                                    // c:222 zmult
     } else {
@@ -295,7 +321,7 @@ pub fn selectargument(zle: &mut Zle) -> i32 {                            // c:21
     if n < 1 || (2 * n as usize) > crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) + 1 {                       // c:225
         return 1;
     }
-    if !zle.in_vi_cmd_mode() {                                           // c:228
+    if !in_vi_cmd_mode() {                                           // c:228
         crate::ported::zle::zle_main::REGION_ACTIVE.store(1, std::sync::atomic::Ordering::SeqCst);                                           // c:229
         crate::ported::zle::zle_main::MARK.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);                                            // c:230
     }
@@ -323,7 +349,7 @@ pub fn selectargument(zle: &mut Zle) -> i32 {                            // c:21
         .unwrap_or(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst));
     crate::ported::zle::zle_main::MARK.store(s, std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLECS.store(e, std::sync::atomic::Ordering::SeqCst);
-    if zle.in_vi_cmd_mode() && crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+    if in_vi_cmd_mode() && crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
         crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
     0

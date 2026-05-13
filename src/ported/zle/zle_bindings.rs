@@ -23,6 +23,35 @@ use super::zle_thingy::Thingy;
 /// The C version mutates a buffer in place + writes length via out
 /// pointer; this Rust port returns a fresh `Vec<u8>`.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, len, how, misc)
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::extensions::widget::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_refresh::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+
 pub fn getkeystring(s: &str) -> Vec<u8> {                                    // c:utils.c:6915
     let mut result = Vec::new();
     let mut chars = s.chars().peekable();
@@ -214,6 +243,7 @@ mod tests {
 
     #[test]
     fn bindkey_returns_false_for_unknown_keymap() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::createkeymapnamtab();
         crate::ported::zle::zle_keymap::default_bindings();
         let mut km = KeymapManager;
@@ -222,6 +252,7 @@ mod tests {
 
     #[test]
     fn bindkey_then_unbind_round_trips_through_emacs_keymap() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::createkeymapnamtab();
         crate::ported::zle::zle_keymap::default_bindings();
         let mut km = KeymapManager;

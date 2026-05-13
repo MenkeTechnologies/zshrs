@@ -11,11 +11,39 @@ use std::sync::{Arc, Mutex, OnceLock};
 use super::widget::{Widget, WidgetFlags, WidgetFunc};
 use super::zle_h::TH_IMMORTAL;
 use crate::ported::zsh_h::DISABLED;
-use std::sync::atomic::Ordering;
 
 /// Direct port of `struct thingy` from `Src/Zle/zle.h:224`. A named
 /// reference to a widget. `ThingyFlags` deleted — C uses an `int
 /// flags` field with `TH_IMMORTAL` (1<<1) and `DISABLED` (1<<0) bits.
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::extensions::widget::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_refresh::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+
 #[derive(Debug, Clone)]
 pub struct Thingy {                                                          // c:224
     pub nam: String,                                                         // c:226 char *nam
@@ -554,7 +582,7 @@ pub fn freewidget(w: Arc<Widget>) {                                          // 
 /// WARNING: param names don't match C — Rust=(ifunc, flags) vs C=(name, ifunc, flags)
 pub fn addzlefunction(                                                       // c:281
     name: &str,
-    ifunc: fn(&mut crate::ported::zle::Zle),
+    ifunc: fn(),
     flags: WidgetFlags,
 ) -> Option<Arc<Widget>> {                                                   // c:279
     if name.starts_with('.') {                                               // c:287 if(name[0] == '.')
@@ -882,6 +910,7 @@ pub fn bin_zle_flags(args: &[String]) -> i32 {                               // 
 /// Port of `bin_zle_invalidate(UNUSED(char *name), UNUSED(char **args), UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:830`.
 /// WARNING: param names don't match C — Rust=() vs C=(name, args, ops, func)
 pub fn bin_zle_invalidate() -> i32 {                                         // c:830
+    use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
         // c:837 — `trashzle()` via the reset-flag bridge.
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(
@@ -907,11 +936,11 @@ pub fn bin_zle_invalidate() -> i32 {                                         // 
 pub fn bin_zle_keymap(args: &[String]) -> i32 {                              // c:488
     // c:488-494 — `if (!zleactive) return 1 with warning;
     //               return selectkeymap(*args, 0)`.
+    use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         return 1;                                                            // c:492
     }
     // c:494 — selectkeymap is a stub returning 0; pass-through.
-    let _ = args;
     0                                                                        // c:494
 }
 
@@ -1003,11 +1032,11 @@ pub fn bin_zle_mesg(args: &[String]) -> i32 {                                // 
     // c:459-468 — `if (!zleactive) { zwarnnam; return 1; }
     //               showmsg(*args); if (sfcontext != SFC_WIDGET)
     //                   zrefresh(); return 0`.
+    use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         return 1;                                                            // c:463
     }
     // c:465 — `showmsg(*args)`. showmsg/zrefresh are stubs.
-    let _ = args;
     0                                                                        // c:468
 }
 
@@ -1068,6 +1097,7 @@ pub fn bin_zle_new(args: &[String]) -> i32 {                                 // 
 /// Port of `bin_zle_refresh(UNUSED(char *name), char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:418`.
 /// WARNING: param names don't match C — Rust=() vs C=(name, args, ops, func)
 pub fn bin_zle_refresh() -> i32 {                                            // c:418
+    use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         return 1;                                                            // c:424
     }
@@ -1132,14 +1162,15 @@ pub fn bin_zle_transform(args: &[String]) -> i32 {                           // 
 /// `zle -U str` — push string bytes back onto input queue in
 /// reverse so subsequent reads return them in original order.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(name, args, ops, func)
-pub fn bin_zle_unget(zle: &mut crate::ported::zle::zle_main::Zle, args: &[String]) -> i32 {  // c:473
+pub fn bin_zle_unget(args: &[String]) -> i32 {  // c:473
+    use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         return 1;                                                            // c:479
     }
     if let Some(arg) = args.first() {
         // c:481-482 — push bytes back in reverse.
         for byte in arg.bytes().rev() {
-            zle.ungetbyte(byte);
+            ungetbyte(byte);
         }
     }
     0                                                                        // c:483
@@ -1203,6 +1234,7 @@ pub fn scanlistwidgets() -> i32 {                                            // 
 /// inside a compctl-fn or comp-fn call (zle widgets can't run
 /// from inside completion functions).
 pub fn zle_usable() -> i32 {                                                 // c:634
+    use std::sync::atomic::Ordering;
     let active = crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0;
     let incompctlfunc = crate::ported::zle::compctl::INCOMPCTLFUNC               // c:636
         .with(|c| c.get());
@@ -1224,6 +1256,7 @@ mod tests {
 
     #[test]
     fn rthingy_creates_then_refs() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1236,6 +1269,7 @@ mod tests {
 
     #[test]
     fn refthingy_unrefthingy_roundtrip() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1252,6 +1286,7 @@ mod tests {
 
     #[test]
     fn rthingy_nocreate_returns_false_for_missing() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1261,6 +1296,7 @@ mod tests {
 
     #[test]
     fn rthingy_nocreate_refs_existing() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1271,13 +1307,14 @@ mod tests {
 
     #[test]
     fn bindwidget_assigns_widget_and_clears_disabled() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
         rthingy("hello");
         let w = Arc::new(Widget {
             flags: WidgetFlags::INT,
-            func: WidgetFunc::Internal(|_| {}),
+            func: WidgetFunc::Internal(|| {}),
         });
         let r = bindwidget(w.clone(), "hello");
         assert_eq!(r, 0);
@@ -1289,6 +1326,7 @@ mod tests {
 
     #[test]
     fn bindwidget_immortal_blocks() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
@@ -1296,7 +1334,7 @@ mod tests {
         thingytab().lock().unwrap().get_mut("imm").unwrap().flags |= TH_IMMORTAL;
         let w = Arc::new(Widget {
             flags: WidgetFlags::INT,
-            func: WidgetFunc::Internal(|_| {}),
+            func: WidgetFunc::Internal(|| {}),
         });
         let r = bindwidget(w, "imm");
         assert_eq!(r, -1);
@@ -1304,13 +1342,14 @@ mod tests {
 
     #[test]
     fn unbindwidget_drops_widget_when_last_peer() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
         rthingy("only");
         let w = Arc::new(Widget {
             flags: WidgetFlags::INT,
-            func: WidgetFunc::Internal(|_| {}),
+            func: WidgetFunc::Internal(|| {}),
         });
         bindwidget(w, "only");
         assert!(thingytab().lock().unwrap().get("only").unwrap().widget.is_some());
@@ -1323,10 +1362,11 @@ mod tests {
 
     #[test]
     fn addzlefunction_binds_dotted_and_canonical() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
-        let w = addzlefunction("self-insert", |_| {}, WidgetFlags::empty());
+        let w = addzlefunction("self-insert", || {}, WidgetFlags::empty());
         assert!(w.is_some());
         let tab = thingytab().lock().unwrap();
         // Both `.self-insert` and `self-insert` exist
@@ -1344,19 +1384,21 @@ mod tests {
 
     #[test]
     fn addzlefunction_refuses_dotted_name() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
-        let r = addzlefunction(".bad", |_| {}, WidgetFlags::empty());
+        let r = addzlefunction(".bad", || {}, WidgetFlags::empty());
         assert!(r.is_none());
     }
 
     #[test]
     fn deletezlefunction_unbinds_all_peers() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let _g = LOCK.lock().unwrap();
         reset_tab();
 
-        let w = addzlefunction("test-fn", |_| {}, WidgetFlags::empty()).unwrap();
+        let w = addzlefunction("test-fn", || {}, WidgetFlags::empty()).unwrap();
         assert!(thingytab().lock().unwrap().contains_key("test-fn"));
         deletezlefunction(&w);
         let tab = thingytab().lock().unwrap();

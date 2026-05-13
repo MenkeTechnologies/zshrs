@@ -17,6 +17,35 @@ use std::collections::HashMap;
 /// matched here verbatim so shell scripts that grep `$widgets`
 /// keep working.
 /// WARNING: param names don't match C — Rust=(name, is_user, is_completion) vs C=(w)
+
+// --- AUTO: cross-zle hoisted-fn use glob ---
+#[allow(unused_imports)]
+use crate::extensions::widget::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_main::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_misc::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_hist::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_move::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_word::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_params::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_vi::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_utils::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_refresh::*;
+#[allow(unused_imports)]
+use crate::ported::zle::zle_tricky::*;
+#[allow(unused_imports)]
+use crate::ported::zle::textobjects::*;
+#[allow(unused_imports)]
+use crate::ported::zle::deltochar::*;
+
 pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String { // c:37
     if is_completion {
         format!("completion:{}", name)
@@ -275,6 +304,7 @@ mod tests {
 
     #[test]
     fn test_widgetstr() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(widgetstr("self-insert", false, false), "builtin");
         assert_eq!(widgetstr("my-widget", true, false), "user:my-widget");
         assert_eq!(widgetstr("my-comp", false, true), "completion:my-comp");
@@ -282,6 +312,7 @@ mod tests {
 
     #[test]
     fn test_getpmwidgets() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let user = HashMap::new();
         let comp = HashMap::new();
         let widgets = getpmwidgets(&["accept-line", "backward-char"], &user, &comp);
@@ -291,6 +322,7 @@ mod tests {
 
     #[test]
     fn test_keymapsgetfn() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let keymaps = keymapsgetfn(DEFAULT_KEYMAPS);
         assert!(keymaps.contains(&"emacs".to_string()));
         assert!(keymaps.contains(&"vicmd".to_string()));
@@ -298,6 +330,7 @@ mod tests {
 
     #[test]
     fn test_builtin_widget_count() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // zsh has ~160 builtin widgets
         assert!(BUILTIN_WIDGETS.len() > 150);
     }
