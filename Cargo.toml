@@ -16,14 +16,15 @@ categories = ["command-line-utilities"]
 # files (test_data + tests + test_corpus + every *parity* harness)
 # from the published tarball.
 exclude = [
-    "tests/**",
-    "test_data/**",
-    "test_corpus/**",
+    "/tests/",
+    "/test_data/",
+    "/test_corpus/",
     "**/*parity*",
-    "docs/**",
-    "scripts/**",
-    "bench/**",
-    "fish/**",
+    "/docs/",
+    "/scripts/",
+    "/bench/",
+    "/fish/",
+    "/examples/"
 ]
 
 [lib]
@@ -147,7 +148,7 @@ base64 = "0.22"
 members = [".", "compsys", "daemon"]
 
 [workspace.package]
-version = "0.11.1"
+version = "0.11.2"
 edition = "2021"
 license = "MIT"
 authors = ["MenkeTechnologies"]
@@ -157,8 +158,8 @@ authors = ["MenkeTechnologies"]
 # single `bp.sh <new-version>` run touches one file. Members reference
 # these via `compsys.workspace = true` etc.
 [workspace.dependencies]
-compsys = { path = "compsys", version = "0.11.1" }
-zshrs-daemon = { path = "daemon", version = "0.11.1" }
+compsys = { path = "compsys", version = "0.11.2" }
+zshrs-daemon = { path = "daemon", version = "0.11.2" }
 
 [profile.release]
 opt-level = 3
