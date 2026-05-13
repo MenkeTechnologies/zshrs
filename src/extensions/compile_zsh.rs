@@ -23,6 +23,13 @@ use crate::parse::{
 use fusevm::op::Op;
 use fusevm::{ChunkBuilder, Value};
 use std::collections::HashMap;
+use crate::ported::zsh_h::{REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP, REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ, REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW};
+use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+use std::sync::atomic::Ordering;
+use crate::parse::ForList;
+use crate::parse::CaseTerm;
+use crate::parse::ZshCond;
+use fusevm::op::file_test;
 
 /// AST → fusevm bytecode compiler.
 /// zshrs-original. Closest C analog is `bld_eprog()` from\n/// Src/parse.c:547 which emits wordcode for `.zwc` files; the\n/// difference is that this compiler emits typed VM ops the JIT can\n/// then specialize, rather than wordcode the runtime walks.
@@ -997,12 +1004,6 @@ impl ZshCompiler {
 
     /// Translate a ZshRedir → fusevm Redirect/HereDoc/HereString op.
     fn compile_redir(&mut self, redir: &crate::parse::ZshRedir) {
-        use crate::ported::zsh_h::{
-            REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP, REDIR_ERRAPPNOW, REDIR_ERRWRITE,
-            REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE,
-            REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ, REDIR_READWRITE, REDIR_WRITE,
-            REDIR_WRITENOW,
-        };
         // Default fd: stdin for read-side redirects, stdout for write-side.
         let fd_default: u8 = match redir.rtype {
             REDIR_READ
@@ -1669,8 +1670,6 @@ impl ZshCompiler {
             let inner = &untoked[2..untoked.len() - 1];
             // Mirror Src/init.c errflag save/clear/check around the
             // process-sub inner parse.
-            use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-            use std::sync::atomic::Ordering;
             let saved_errflag = errflag.load(Ordering::Relaxed);
             errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
             crate::ported::parse::parse_init(inner);
@@ -2984,7 +2983,6 @@ impl ZshCompiler {
     }
 
     fn compile_for(&mut self, f: &crate::parse::ZshFor) {
-        use crate::parse::ForList;
         if f.is_select {
             self.compile_select(f);
             return;
@@ -3016,7 +3014,6 @@ impl ZshCompiler {
     }
 
     fn compile_select(&mut self, f: &crate::parse::ZshFor) {
-        use crate::parse::ForList;
         // Build the body sub-chunk so RUN_SELECT can run it per pick.
         let mut sub = ZshCompiler::new();
         sub.compile_program(&f.body);
@@ -3359,7 +3356,6 @@ impl ZshCompiler {
     }
 
     fn compile_case(&mut self, c: &crate::parse::ZshCase) {
-        use crate::parse::CaseTerm;
         // cmdstack: direct port of Src/loop.c:615 `cmdpush(CS_CASE);`
         // wrapping the whole case statement.
         self.emit_cmd_push(crate::ported::zsh_h::CS_CASE as u8);
@@ -3593,7 +3589,6 @@ impl ZshCompiler {
     }
 
     fn compile_cond(&mut self, c: &crate::parse::ZshCond) {
-        use crate::parse::ZshCond;
         // xtrace: emit `[[ ... ]]` text BEFORE pushing CS_COND so
         // the trace line itself is NOT labeled "cond" (zsh: only
         // nested commands inside the cond see the cond context).
@@ -3648,7 +3643,6 @@ impl ZshCompiler {
     }
 
     fn emit_cond_trace_runtime_inner(&mut self, c: &crate::parse::ZshCond) {
-        use crate::parse::ZshCond;
         let push_lit = |s: &mut Self, text: &str| {
             let idx = s.builder.add_constant(Value::str(text));
             s.builder.emit(Op::LoadConst(idx), 0);
@@ -3706,7 +3700,6 @@ impl ZshCompiler {
     }
 
     fn compile_cond_expr(&mut self, c: &crate::parse::ZshCond) {
-        use crate::parse::ZshCond;
         match c {
             ZshCond::Not(inner) => {
                 self.compile_cond_expr(inner);
@@ -3872,7 +3865,6 @@ impl ZshCompiler {
     }
 
     fn emit_file_test(&mut self, op: &str) {
-        use fusevm::op::file_test;
         let test_byte: u8 = match op {
             "-e" | "-a" => file_test::EXISTS,
             "-f" => file_test::IS_FILE,
@@ -6022,7 +6014,6 @@ fn has_unquoted_expansion(s: &str) -> bool {
 /// xtrerr before evaluation. Untokenize each operand so lexer
 /// META markers don't leak into the trace.
 fn render_cond(c: &crate::parse::ZshCond) -> String {
-    use crate::parse::ZshCond;
     fn untok(s: &str) -> String {
         crate::lex::untokenize(s)
     }

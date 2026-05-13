@@ -20,6 +20,12 @@ use std::process::Child;
 use std::time::{Duration, Instant};
 
 use crate::ported::utils::zwarnnam;
+use std::os::unix::process::ExitStatusExt;
+use crate::ported::signals::{signal_block, signal_setmask};
+use std::sync::atomic::Ordering;
+use crate::ported::zsh_h::OPT_ISSET;
+use crate::ported::hashtable_h::{BIN_FG, BIN_BG, BIN_JOBS};
+use crate::ported::signals_h::{signal_default, signal_ignore};
 
 /// Job status flags. `i32` to match C's `int stat` field on
 /// `struct job` (`Src/zsh.h:1062`).
@@ -376,7 +382,6 @@ pub static PIPESTATS: OnceLock<Mutex<[i32; MAX_PIPESTATS]>> = OnceLock::new();
 pub fn get_clktck() -> i64 {                                                 // c:721
     #[cfg(unix)]
     {
-        use std::sync::OnceLock;
         static CLKTCK: OnceLock<i64> = OnceLock::new();                      // c:723
         // fetch clock ticks per second from                                 // c:727
         // sysconf only the first time                                       // c:728
@@ -563,7 +568,6 @@ pub static bgstatus_count: std::sync::atomic::AtomicI64 =                    // 
 pub fn waitforpid(pid: i32) -> Option<i32> {                                 // c:1627
     #[cfg(unix)]
     {
-        use std::os::unix::process::ExitStatusExt;
         loop {
             let mut status: i32 = 0;
             let result = unsafe { libc::waitpid(pid, &mut status, 0) };
@@ -951,7 +955,6 @@ pub fn init_jobs(argv: &[String], envp: &[String]) -> crate::exec_jobs::JobTable
 #[cfg(unix)]
 /// Port of `acquire_pgrp` from `Src/jobs.c:3222`.
 pub fn acquire_pgrp() -> bool {                                              // c:3222
-    use crate::ported::signals::{signal_block, signal_setmask};
     let mypid = unsafe { libc::getpid() };
     let mut mypgrp = unsafe { libc::getpgrp() };                             // c:3227 GETPGRP()
     if mypgrp < 0 {
@@ -1875,7 +1878,6 @@ pub fn clearoldjobtab() {
 /// `_SC_CHILD_MAX`, evicting oldest on overflow, then appends a
 /// new `bgstatus { pid, status }` entry.
 pub fn addbgstatus(pid: i32, status_val: i32) {                              // c:2325
-    use std::sync::atomic::Ordering;
     // c:2370 — `if (bgstatus_count == max_child)` cap + eviction.
     let max_child = unsafe { libc::sysconf(libc::_SC_CHILD_MAX) };
     let cap = if max_child > 0 { max_child as i64 } else { 1024 };
@@ -1903,7 +1905,6 @@ pub fn addbgstatus(pid: i32, status_val: i32) {                              // 
 /// Walks the global `bgstatus_list` for `pid`; if found, removes
 /// the entry and returns its status.
 pub fn getbgstatus(pid: i32) -> Option<i32> {                                // c:2397
-    use std::sync::atomic::Ordering;
     if let Ok(mut list) = bgstatus_list.lock() {
         if let Some(idx) = list.iter().position(|b| b.pid == pid) {          // c:2402-2406
             let status = list[idx].status;
@@ -2012,9 +2013,6 @@ pub fn release_pgrp() {                                                      // 
 ///     C signature lands and future port work can fill the body.
 pub fn bin_fg(name: &str, argv: &[String],                                   // c:2421
               ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
-    use crate::ported::utils::zwarnnam;
-    use crate::ported::hashtable_h::{BIN_FG, BIN_BG, BIN_JOBS};
     let _ofunc = func;                                                       // c:2424
 
     // c:2425-2452 — `-Z`: rename the running process. Used by
@@ -2229,7 +2227,6 @@ pub fn bin_fg(name: &str, argv: &[String],                                   // 
 /// WARNING: param names don't match C — Rust=(nam, argv, _func) vs C=(nam, argv, ops, func)
 pub fn bin_kill(nam: &str, argv: &[String],                                  // c:2772
                 _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
     let mut sig: i32 = libc::SIGTERM;                                        // c:2774
     let mut returnval: i32 = 0;                                              // c:2775
     let mut got_sig = false;                                                 // c:2780
@@ -2483,9 +2480,6 @@ pub fn bin_kill(nam: &str, argv: &[String],                                  // 
 /// WARNING: param names don't match C — Rust=(name, _argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_suspend(name: &str, _argv: &[String],                             // c:3170
                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
-    use crate::ported::utils::zwarnnam;
-    use crate::ported::signals_h::{signal_default, signal_ignore};
 
     // c:3173 — `if (islogin && !OPT_ISSET(ops,'f'))`. islogin is a C
     // global set when zsh's argv[0] starts with `-`. Static-link path:

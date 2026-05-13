@@ -5,6 +5,15 @@
 //! Special parameters that expose ZLE state to shell scripts
 
 use super::zle_main::Zle;
+use crate::ported::zle::zle_misc::{POSTDISPLAY, PREDISPLAY};
+use std::sync::Mutex;
+use crate::ported::zsh_h::{ZLCON_LINE_CONT, ZLCON_SELECT, ZLCON_VARED};
+use std::sync::atomic::Ordering;
+use crate::ported::zle::zle_misc::PREVIOUS_ABORTED_SEARCH;
+use crate::ported::zle::zle_misc::PREVIOUS_SEARCH;
+use crate::ported::zle::widget::{WidgetFlags, WidgetFunc};
+use crate::ported::zle::compcore::{ZLECS, ZLELINE, ZMULT};
+use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
 
 // `pub mod names` removed — Rust-fabricated namespace wrapping
 // string literals. C source uses bare `"BUFFER"`/`"CURSOR"`/etc.
@@ -201,8 +210,6 @@ impl Zle {
 
 /// Port of `free_prepostdisplay()` from Src/Zle/zle_params.c:914.
 pub fn free_prepostdisplay() {                                               // c:914
-    use crate::ported::zle::zle_misc::{POSTDISPLAY, PREDISPLAY};
-    use std::sync::Mutex;
     // c:916-917 — `if (predisplaylen) set_prepost(&predisplay, &predisplaylen, NULL)`.
     PREDISPLAY.get_or_init(|| Mutex::new(String::new())).lock().unwrap().clear();
     // c:918-919 — same for postdisplay.
@@ -211,7 +218,6 @@ pub fn free_prepostdisplay() {                                               // 
 
 /// Port of `get_context(UNUSED(Param pm))` from Src/Zle/zle_params.c:942.
 pub fn get_context(pm: &crate::ported::zle::zle_main::Zle) -> &'static str {  // c:942
-    use crate::ported::zsh_h::{ZLCON_LINE_CONT, ZLCON_SELECT, ZLCON_VARED};
     // c:944-958 — switch on zlecontext → "cont" / "select" / "vared" / "line".
     match crate::ported::zle::zle_main::ZLECONTEXT.load(std::sync::atomic::Ordering::SeqCst) {
         x if x == ZLCON_LINE_CONT => "cont",                                  // c:945-946
@@ -231,21 +237,18 @@ pub fn get_histno(pm: &crate::ported::zle::zle_main::Zle) -> i64 {          // c
 /// Port of `get_isearchmatchactive(UNUSED(Param pm))` from Src/Zle/zle_params.c:591.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_isearchmatchactive() -> i64 {                                     // c:591
-    use std::sync::atomic::Ordering;
     crate::ported::zle::zle_hist::ISEARCH_ACTIVE.load(Ordering::Relaxed) as i64  // c:577
 }
 
 /// Port of `get_isearchmatchend(UNUSED(Param pm))` from Src/Zle/zle_params.c:584.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_isearchmatchend() -> i64 {                                        // c:584
-    use std::sync::atomic::Ordering;
     crate::ported::zle::zle_hist::ISEARCH_ENDPOS.load(Ordering::Relaxed) as i64  // c:577
 }
 
 /// Port of `get_isearchmatchstart(UNUSED(Param pm))` from Src/Zle/zle_params.c:577.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_isearchmatchstart() -> i64 {                                      // c:577
-    use std::sync::atomic::Ordering;
     crate::ported::zle::zle_hist::ISEARCH_STARTPOS.load(Ordering::Relaxed) as i64  // c:579
 }
 
@@ -277,8 +280,6 @@ pub fn get_killring(pm: &crate::ported::zle::zle_main::Zle) -> Vec<String> {  //
 /// Port of `get_lasearch(UNUSED(Param pm))` from Src/Zle/zle_params.c:924.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_lasearch() -> String {                                            // c:924
-    use crate::ported::zle::zle_misc::PREVIOUS_ABORTED_SEARCH;
-    use std::sync::Mutex;
     // c:933-928 — `previous_aborted_search ? : ""`.
     PREVIOUS_ABORTED_SEARCH.get_or_init(|| Mutex::new(String::new()))
         .lock().unwrap().clone()
@@ -287,8 +288,6 @@ pub fn get_lasearch() -> String {                                            // 
 /// Port of `get_lsearch(UNUSED(Param pm))` from Src/Zle/zle_params.c:933.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_lsearch() -> String {                                             // c:933
-    use crate::ported::zle::zle_misc::PREVIOUS_SEARCH;
-    use std::sync::Mutex;
     // c:935-937 — `previous_search ? : ""`.
     PREVIOUS_SEARCH.get_or_init(|| Mutex::new(String::new()))
         .lock().unwrap().clone()
@@ -303,8 +302,6 @@ pub fn get_lwidget(pm: &crate::ported::zle::zle_main::Zle) -> String {      // c
 /// Port of `get_postdisplay(UNUSED(Param pm))` from Src/Zle/zle_params.c:907.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_postdisplay() -> String {                                         // c:907
-    use crate::ported::zle::zle_misc::POSTDISPLAY;
-    use std::sync::Mutex;
     // c:909 — `return get_prepost(postdisplay, postdisplaylen)` →
     // zlelineasstring(...). Return the raw String.
     POSTDISPLAY.get_or_init(|| Mutex::new(String::new()))
@@ -325,8 +322,6 @@ pub fn get_prebuffer(pm: &crate::ported::zle::zle_main::Zle) -> String {    // c
 /// Port of `get_predisplay(UNUSED(Param pm))` from Src/Zle/zle_params.c:893.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_predisplay() -> String {                                          // c:893
-    use crate::ported::zle::zle_misc::PREDISPLAY;
-    use std::sync::Mutex;
     PREDISPLAY.get_or_init(|| Mutex::new(String::new()))
         .lock().unwrap().clone()
 }
@@ -401,7 +396,6 @@ pub fn get_registers(ht: &crate::ported::zle::zle_main::Zle, name: &str) -> Opti
 /// active auto-removable suffix.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_suffixactive() -> i64 {                                           // c:612
-    use std::sync::atomic::Ordering;
     crate::ported::zle::zle_misc::SUFFIXLEN.load(Ordering::Relaxed) as i64   // c:614 return suffixlen
 }
 
@@ -430,7 +424,6 @@ pub fn get_suffixend(pm: &crate::ported::zle::zle_main::Zle) -> i64 {       // c
 /// `$SUFFIX_START` getter — start byte of the active suffix
 /// (cursor minus suffix length).
 pub fn get_suffixstart(pm: &crate::ported::zle::zle_main::Zle) -> i64 {     // c:598
-    use std::sync::atomic::Ordering;
     let suffixlen = crate::ported::zle::zle_misc::SUFFIXLEN.load(Ordering::Relaxed);
     (pm.zlecs as i64) - (suffixlen as i64)                                  // c:600 zlecs - suffixlen
 }
@@ -443,7 +436,6 @@ pub fn get_widget(pm: &crate::ported::zle::zle_main::Zle) -> String {       // c
 
 /// Port of `get_widgetfunc(UNUSED(Param pm))` from Src/Zle/zle_params.c:421.
 pub fn get_widgetfunc(pm: &crate::ported::zle::zle_main::Zle) -> String {   // c:421
-    use crate::ported::zle::widget::{WidgetFlags, WidgetFunc};
     // c:423-430 — read bindk->widget. C union dispatches:
     //   WIDGET_INT  → ".internal"  (c:426-427)
     //   WIDGET_NCOMP → comp.func   (c:428-429)
@@ -467,7 +459,6 @@ pub fn get_widgetfunc(pm: &crate::ported::zle::zle_main::Zle) -> String {   // c
 
 /// Port of `get_widgetstyle(UNUSED(Param pm))` from Src/Zle/zle_params.c:435.
 pub fn get_widgetstyle(pm: &crate::ported::zle::zle_main::Zle) -> String {  // c:435
-    use crate::ported::zle::widget::WidgetFlags;
     // c:437-444 — read bindk->widget. INT → ".internal"; NCOMP →
     // comp.wid (the underlying widget name); else "".
     let Some(t) = pm.bindk.as_ref() else {
@@ -487,7 +478,6 @@ pub fn get_widgetstyle(pm: &crate::ported::zle::zle_main::Zle) -> String {  // c
 /// Port of `get_yankactive(UNUSED(Param pm))` from Src/Zle/zle_params.c:556.
 pub fn get_yankactive(pm: &crate::ported::zle::zle_main::Zle) -> i64 {      // c:556
     // c:549 — `return !!(lastcmd & ZLE_YANK) + !!(lastcmd & ZLE_YANKAFTER)`.
-    use crate::ported::zle::widget::WidgetFlags;
     let _ = pm;
     let last = WidgetFlags::from_bits_truncate(
         crate::ported::zle::zle_main::LASTCMD.load(std::sync::atomic::Ordering::SeqCst),
@@ -524,7 +514,6 @@ pub fn get_yankstart(pm: &crate::ported::zle::zle_main::Zle) -> i64 {       // c
 /// $BUFFER it goes through the canonical paramtab write path
 /// that already exists.
 pub fn makezleparams(_ro: i32) {                                             // c:194
-    use crate::ported::zle::compcore::{ZLECS, ZLELINE, ZMULT};
 
     let line = ZLELINE.get_or_init(|| std::sync::Mutex::new(String::new()))
         .lock().map(|g| g.clone()).unwrap_or_default();
@@ -587,7 +576,6 @@ pub fn set_killring(pm: &mut crate::ported::zle::zle_main::Zle, x: Option<&[Stri
 
 /// Port of `set_numeric(UNUSED(Param pm), zlong x)` from Src/Zle/zle_params.c:477.
 pub fn set_numeric(pm: &mut crate::ported::zle::zle_main::Zle, x: i64) {   // c:477
-    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // c:479 — `zmult = x`. zmult is zmod.mult.
     pm.zmod.mult = x as i32;
     // c:480 — `zmod.flags = MOD_MULT`. Replaces the whole flags
@@ -598,8 +586,6 @@ pub fn set_numeric(pm: &mut crate::ported::zle::zle_main::Zle, x: i64) {   // c:
 /// Port of `set_postdisplay(UNUSED(Param pm), char *x)` from Src/Zle/zle_params.c:900.
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn set_postdisplay(x: Option<&str>) {                                    // c:900
-    use crate::ported::zle::zle_misc::POSTDISPLAY;
-    use std::sync::Mutex;
     let g = POSTDISPLAY.get_or_init(|| Mutex::new(String::new()));
     let mut buf = g.lock().unwrap();
     buf.clear();
@@ -611,8 +597,6 @@ pub fn set_postdisplay(x: Option<&str>) {                                    // 
 /// Port of `set_predisplay(UNUSED(Param pm), char *x)` from Src/Zle/zle_params.c:886.
 /// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
 pub fn set_predisplay(x: Option<&str>) {                                     // c:886
-    use crate::ported::zle::zle_misc::PREDISPLAY;
-    use std::sync::Mutex;
     let g = PREDISPLAY.get_or_init(|| Mutex::new(String::new()));
     let mut buf = g.lock().unwrap();
     buf.clear();
@@ -739,7 +723,6 @@ pub fn unset_killring(pm: &mut crate::ported::zle::zle_main::Zle, exp: i32) {  /
 /// vtable hook upstream — this fn just performs the zmod side.
 /// Port of `unset_numeric(Param pm, int exp)` from `Src/Zle/zle_params.c:492`.
 pub fn unset_numeric(pm: &mut crate::ported::zle::zle_main::Zle, exp: i32) { // c:492
-    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     if exp != 0 {                                                            // c:494
         pm.zmod.flags = 0;                             // c:496
         pm.zmod.mult = 1;                                                   // c:497

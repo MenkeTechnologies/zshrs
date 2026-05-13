@@ -9,6 +9,10 @@
 
 use crate::ported::utils::zwarnnam;
 use std::sync::{Mutex, OnceLock};
+use std::io::Read;
+use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
+use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::PermissionsExt;
 
 // =====================================================================
 // BIN_* / MV_* constants — `Src/Modules/files.c:170-178`.
@@ -37,7 +41,6 @@ pub const BIN_CHGRP: i32 = 1;                                                // 
 /// C body (c:43-46): read one char from stdin; consume the rest of
 /// the line; return 1 for `y`/`Y`, 0 otherwise.
 pub fn ask() -> i32 {                                                        // c:41
-    use std::io::Read;
     let mut buf = [0u8; 1];
     let stdin = std::io::stdin();
     let mut handle = stdin.lock();
@@ -82,7 +85,6 @@ pub fn bin_sync(_nam: &str, _args: &[String],                                // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_mkdir(nam: &str, args: &[String],                                 // c:63
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     let oumask = unsafe { libc::umask(0) };                                  // c:65
     let mut mode: u32 = 0o777 & !(oumask as u32);                            // c:66
     let mut err = 0i32;
@@ -134,7 +136,6 @@ pub fn bin_mkdir(nam: &str, args: &[String],                                 // 
 /// C body (c:120-141): retry up to 8 times if EEXIST + p && stat
 /// shows existing entry is itself a directory.
 pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {            // c:115
-    use std::os::unix::fs::DirBuilderExt;
     let mut n = 8;                                                           // c:120
     let mut last_err: i32 = 0;
     while n > 0 {                                                            // c:122
@@ -234,7 +235,6 @@ pub fn mv_link(p: &std::ffi::CStr, q: &std::ffi::CStr) -> i32 {
 /// WARNING: param names don't match C — Rust=(nam, args, func) vs C=(nam, args, ops, func)
 pub fn bin_ln(nam: &str, args: &[String],                                    // c:200
               ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
     let movefn: MoveFunc;
     let mut flags: i32;
     let mut err = 0i32;
@@ -360,7 +360,6 @@ pub fn domove(nam: &str, movefn: MoveFunc, p: &str, q: &str, flags: i32) -> i32 
                     cq.map(|c| libc::access(c.as_ptr(), libc::W_OK))
                         .unwrap_or(-1) != 0
                 } {
-            use std::os::unix::fs::PermissionsExt;
             let mode = qmeta.permissions().mode() & 0o7777;
             eprint!("{}: replace `{}', overriding mode {:04o}? ", nam, q, mode); // c:337-340
             if ask() == 0 {                                                  // c:342
@@ -553,7 +552,6 @@ pub fn rm_leaf(arg: &str, rp: &str, sp: Option<&std::fs::Metadata>,          // 
                         crp.map(|c| libc::access(c.as_ptr(), libc::W_OK))
                             .unwrap_or(-1) != 0
                     } {
-                use std::os::unix::fs::PermissionsExt;
                 let mode = meta.permissions().mode() & 0o7777;
                 eprint!("{}: remove `{}', overriding mode {:04o}? ",
                     rmm.nam, arg, mode);                                     // c:574-579
@@ -597,7 +595,6 @@ pub fn rm_dirpost(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,      // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_rm(nam: &str, args: &[String],                                    // c:616
               ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
     let rmm = rmmagic {
         nam,                                                                 // c:621
         opt_force:     if OPT_ISSET(ops, b'f') { 1 } else { 0 },             // c:622
@@ -649,7 +646,6 @@ pub fn chmod_dochmod(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_chmod(nam: &str, args: &[String],                                 // c:655
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
     if args.is_empty() {
         zwarnnam(nam, "missing mode");
         return 1;
@@ -741,7 +737,6 @@ pub fn getnumeric(p: &str, errp: &mut i32) -> u64 {                          // 
 /// WARNING: param names don't match C — Rust=(nam, args, func) vs C=(nam, args, ops, func)
 pub fn bin_chown(nam: &str, args: &[String],                                 // c:725
                  ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
     if args.is_empty() {
         zwarnnam(nam, "missing argument");
         return 1;

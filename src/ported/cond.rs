@@ -29,6 +29,8 @@ use crate::ported::zsh_h::{
     COND_AND, COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NOT, COND_NT,
     COND_OR, COND_OT, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ,
 };
+use std::os::unix::io::FromRawFd;
+use std::io::Write;
 
 // C-style i32 return codes from `evalcond` (mirroring cond.c:70):
 //   0 — condition true
@@ -321,7 +323,6 @@ pub fn doaccess(s: &str, c: i32) -> i32 {                                    // 
 pub fn getstat(s: &str) -> Option<Metadata> {                                // c:452
     if let Some(rest) = s.strip_prefix("/dev/fd/") {
         if let Ok(fd) = rest.parse::<i32>() {
-            use std::os::unix::io::FromRawFd;
             let f = unsafe { std::fs::File::from_raw_fd(libc::dup(fd)) };
             return f.metadata().ok();
         }
@@ -407,7 +408,6 @@ pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {         // c
 /// for binary, prefix for unary). Used only when the `XTRACE`
 /// option is enabled and a third-party module supplies a cond.
 pub fn tracemodcond(name: &str, args: &[String], inf: bool) {                // c:563
-    use std::io::Write;
     let stderr = std::io::stderr();
     let mut out = stderr.lock();
     if inf {

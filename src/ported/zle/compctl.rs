@@ -39,6 +39,8 @@ use crate::ported::zle::compctl_h::{
     CCT_CURSUF, CCT_CURPRE, CCT_CURSUB, CCT_CURSUBC, CCT_NUMWORDS,
     CCT_RANGESTR, CCT_RANGEPAT, CCT_QUOTE,
 };
+use crate::ported::zle::comp_h::Cmlist;
+use std::os::unix::fs::PermissionsExt;
 
 // =====================================================================
 // COMP_* — `compctl` operation flags from `Src/Zle/compctl.c:53-60`.
@@ -178,7 +180,6 @@ pub(crate) fn freecompcond(_cc: Compcond) {
 pub(crate) fn cpcmlist(                                                      // c:291
     mut l: Option<&crate::ported::zle::comp_h::Cmlist>,
 ) -> Option<Box<crate::ported::zle::comp_h::Cmlist>> {
-    use crate::ported::zle::comp_h::Cmlist;
     let mut head: Option<Box<Cmlist>> = None;                                // c:293 r = NULL
     let mut tail_ref: *mut Option<Box<Cmlist>> = &mut head;
     while let Some(src) = l {                                                // c:295 while (l)
@@ -206,7 +207,6 @@ pub(crate) fn cpcmlist(                                                      // 
 /// spec, builds a fresh Cmlist chain, frees the old CMATCHER and
 /// installs the new one via cpcmlist.
 pub(crate) fn set_gmatcher(name: &str, argv: &[String]) -> i32 {             // c:311
-    use crate::ported::zle::comp_h::Cmlist;
     let mut head: Option<Box<Cmlist>> = None;                                // c:314 l = NULL
     let mut tail_ref: *mut Option<Box<Cmlist>> = &mut head;
     for word in argv {                                                       // c:317 while (*argv)
@@ -1635,7 +1635,6 @@ pub(crate) fn gen_matches_files(dirs: bool, execs: bool, all: bool) {
         if execs {
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
                 let mode = meta.permissions().mode();
                 if mode & 0o111 == 0 || meta.is_dir() {
                     continue;
@@ -1963,7 +1962,6 @@ pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
         // accept (matches C behavior when no evalcompcond hook
         // bound).
         let accept = if let Some(ref cond) = cc.cond {
-            use crate::ported::zle::compctl_h::{CCT_POS, CCT_NUMWORDS};
             let cs = crate::ported::zle::compcore::ZLECS
                 .load(std::sync::atomic::Ordering::Relaxed);
             let total = crate::ported::params::getiparam("CURRENT") as i32;

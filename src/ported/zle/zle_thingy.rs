@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use super::widget::{Widget, WidgetFlags, WidgetFunc};
 use super::zle_h::TH_IMMORTAL;
 use crate::ported::zsh_h::DISABLED;
+use std::sync::atomic::Ordering;
 
 /// Direct port of `struct thingy` from `Src/Zle/zle.h:224`. A named
 /// reference to a widget. `ThingyFlags` deleted — C uses an `int
@@ -881,7 +882,6 @@ pub fn bin_zle_flags(args: &[String]) -> i32 {                               // 
 /// Port of `bin_zle_invalidate(UNUSED(char *name), UNUSED(char **args), UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:830`.
 /// WARNING: param names don't match C — Rust=() vs C=(name, args, ops, func)
 pub fn bin_zle_invalidate() -> i32 {                                         // c:830
-    use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
         // c:837 — `trashzle()` via the reset-flag bridge.
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(
@@ -907,7 +907,6 @@ pub fn bin_zle_invalidate() -> i32 {                                         // 
 pub fn bin_zle_keymap(args: &[String]) -> i32 {                              // c:488
     // c:488-494 — `if (!zleactive) return 1 with warning;
     //               return selectkeymap(*args, 0)`.
-    use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         return 1;                                                            // c:492
     }
@@ -1004,7 +1003,6 @@ pub fn bin_zle_mesg(args: &[String]) -> i32 {                                // 
     // c:459-468 — `if (!zleactive) { zwarnnam; return 1; }
     //               showmsg(*args); if (sfcontext != SFC_WIDGET)
     //                   zrefresh(); return 0`.
-    use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         return 1;                                                            // c:463
     }
@@ -1070,7 +1068,6 @@ pub fn bin_zle_new(args: &[String]) -> i32 {                                 // 
 /// Port of `bin_zle_refresh(UNUSED(char *name), char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:418`.
 /// WARNING: param names don't match C — Rust=() vs C=(name, args, ops, func)
 pub fn bin_zle_refresh() -> i32 {                                            // c:418
-    use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         return 1;                                                            // c:424
     }
@@ -1136,7 +1133,6 @@ pub fn bin_zle_transform(args: &[String]) -> i32 {                           // 
 /// reverse so subsequent reads return them in original order.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(name, args, ops, func)
 pub fn bin_zle_unget(zle: &mut crate::ported::zle::zle_main::Zle, args: &[String]) -> i32 {  // c:473
-    use std::sync::atomic::Ordering;
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         return 1;                                                            // c:479
     }
@@ -1207,7 +1203,6 @@ pub fn scanlistwidgets() -> i32 {                                            // 
 /// inside a compctl-fn or comp-fn call (zle widgets can't run
 /// from inside completion functions).
 pub fn zle_usable() -> i32 {                                                 // c:634
-    use std::sync::atomic::Ordering;
     let active = crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0;
     let incompctlfunc = crate::ported::zle::compctl::INCOMPCTLFUNC               // c:636
         .with(|c| c.get());

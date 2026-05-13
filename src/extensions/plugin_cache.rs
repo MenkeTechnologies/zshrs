@@ -25,6 +25,10 @@ use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::os::unix::fs::MetadataExt;
+use crate::ported::zsh_h::PM_UNDEFINED;
+use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+use std::sync::atomic::Ordering;
 #[allow(unused_imports)]
 use crate::ported::exec::ShellExecutor;
 
@@ -51,7 +55,6 @@ pub(crate) struct PluginSnapshot {
 /// metadata can't be read (extremely rare — usually only if the
 /// binary was deleted out from under us mid-run).
 fn current_binary_mtime() -> Option<i64> {
-    use std::os::unix::fs::MetadataExt;
     static BIN_MTIME: OnceLock<Option<i64>> = OnceLock::new();
     *BIN_MTIME.get_or_init(|| {
         let exe = std::env::current_exe().ok()?;
@@ -677,7 +680,6 @@ impl PluginCache {
     /// Run a full compaudit against fpath directories, using cache where valid.
     /// Returns list of insecure directories (empty = all secure).
     pub fn compaudit_cached(&self, fpath: &[std::path::PathBuf]) -> Vec<String> {
-        use std::os::unix::fs::MetadataExt;
 
         let euid = unsafe { libc::geteuid() };
         let mut insecure = Vec::new();
@@ -740,7 +742,6 @@ impl PluginCache {
     /// Check if a directory's permissions are secure.
     /// Insecure = world-writable or group-writable AND not owned by root or EUID.
     fn check_dir_security(meta: &std::fs::Metadata, euid: u32) -> bool {
-        use std::os::unix::fs::MetadataExt;
         let mode = meta.mode();
         let uid = meta.uid();
 
@@ -759,7 +760,6 @@ impl PluginCache {
 
 /// Get mtime from file metadata as (secs, nsecs).
 pub fn file_mtime(path: &Path) -> Option<(i64, i64)> {
-    use std::os::unix::fs::MetadataExt;
     let meta = std::fs::metadata(path).ok()?;
     Some((meta.mtime(), meta.mtime_nsec()))
 }
@@ -879,7 +879,6 @@ impl crate::ported::exec::ShellExecutor {
             autoloads: {
                 // Walk canonical shfunctab for autoload-pending entries
                 // (PM_UNDEFINED set). Snapshot is keyed by function name.
-                use crate::ported::zsh_h::PM_UNDEFINED;
                 crate::ported::hashtable::shfunctab_lock().read().ok()
                     .map(|t| t.iter()
                         .filter(|(_, shf)| (shf.node.flags as u32 & PM_UNDEFINED) != 0)
@@ -891,7 +890,6 @@ impl crate::ported::exec::ShellExecutor {
     }
     /// Compute the delta between current state and a previous snapshot.
     pub(crate) fn diff_state(&self, snap: &PluginSnapshot) -> crate::plugin_cache::PluginDelta {
-        use crate::plugin_cache::{AliasKind, PluginDelta};
         let mut delta = PluginDelta::default();
 
         // Walk every HashMap in sorted-key order so the resulting
@@ -1061,7 +1059,6 @@ impl crate::ported::exec::ShellExecutor {
         }
 
         // New autoloads — read PM_UNDEFINED entries from canonical shfunctab.
-        use crate::ported::zsh_h::PM_UNDEFINED;
         let current_autoloads: Vec<String> = crate::ported::hashtable::shfunctab_lock()
             .read().ok()
             .map(|t| t.iter()
@@ -1083,7 +1080,6 @@ impl crate::ported::exec::ShellExecutor {
     }
     /// Replay a cached plugin delta into the executor state.
     pub(crate) fn replay_plugin_delta(&mut self, delta: &crate::plugin_cache::PluginDelta) {
-        use crate::plugin_cache::AliasKind;
 
         // Aliases
         for (name, value, kind) in &delta.aliases {
@@ -1188,8 +1184,6 @@ impl crate::ported::exec::ShellExecutor {
         // Plugin cache replay: each bincode blob is a ShellCommand AST.
         // Replay each function's source text through parse_init + parse + ZshCompiler.
         // Delta format: name → UTF-8 source bytes (no AST round-trip needed).
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use std::sync::atomic::Ordering;
         for (name, bytes) in &delta.functions {
             let Ok(source) = std::str::from_utf8(bytes) else {
                 continue;

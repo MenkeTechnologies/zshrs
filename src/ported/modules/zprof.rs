@@ -16,6 +16,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::OPT_ISSET;
 
 // ---------------------------------------------------------------------------
 // Structs (port of c:36-64).
@@ -209,7 +210,6 @@ pub fn cmpparcs(a: &Parc, b: &Parc) -> std::cmp::Ordering {              // c:13
 /// WARNING: param names don't match C — Rust=(_nam, _args, _func) vs C=(nam, args, ops, func)
 pub fn bin_zprof(_nam: &str, _args: &[String],                               // c:139
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
     // c:140 — `if (OPT_ISSET(ops,'c'))`
     let opt_c = OPT_ISSET(ops, b'c');
 

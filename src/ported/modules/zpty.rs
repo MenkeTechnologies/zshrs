@@ -6,6 +6,9 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::io::{self, Read, Write};
 use std::os::unix::io::RawFd;
+use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
+use std::os::unix::io::IntoRawFd;
+use std::process::Command;
 
 /// Port of `READ_MAX` from `Src/Modules/zpty.c:44`. Maximum bytes
 /// to read at once from a pty's master end (1 MB).
@@ -205,7 +208,6 @@ pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {            // c
 /// WARNING: param names don't match C — Rust=(_nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_zpty(_nam: &str, args: &[String],                                 // c:773
                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
     // Per C: branches dispatch on OPT_ISSET(ops, 'X') directly. No
     // aggregator struct — Rule D forbids `*Options` bags.
     let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -777,8 +779,6 @@ pub fn ptyhook(cmds: &mut HashMap<String, ptycmd>) -> i32 {                     
 /// child-init contract. Returns 0 on success, 1 on failure.
 pub fn newptycmd(cmds: &mut HashMap<String, ptycmd>, _nam: &str, pname: &str,                // c:310
                  args: &[String], echo: bool, nblock: bool) -> i32 {     // c:310
-    use std::os::unix::io::IntoRawFd;
-    use std::process::Command;
     if args.is_empty() { return 1; }
     let cmd_path = &args[0];
     let cmd_args = &args[1..];

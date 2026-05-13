@@ -1121,7 +1121,6 @@ pub fn vibackwarddeletechar(args: &mut crate::ported::zle::zle_main::Zle) -> i32
 /// }
 /// ```
 pub fn vicapslockpanic() -> i32 {                                            // c:1002
-    use std::sync::atomic::Ordering;
     // c:1004 — clearlist = 1.
     crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);
     // c:1005 — zbeep().
@@ -1230,7 +1229,6 @@ pub fn vidigitorbeginningofline(args: &mut crate::ported::zle::zle_main::Zle) ->
     // C body: `if (zmod.flags & MOD_TMULT) return digitargument(args);
     //          else { removesuffix(); invalidatelist();
     //                 return vibeginningofline(args); }`.
-    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     if args.zmod.flags & MOD_TMULT != 0 {
         return crate::ported::zle::zle_misc::digitargument(args);
     }
@@ -1491,7 +1489,6 @@ pub fn visetbuffer(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {     //
     // C body: read one char as the vi buffer name (a-z or 1-9 or '"');
     //         set zmod.vibuf for the next yank/cut. Without vigetkey
     //         interactive read, use lastchar.
-    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     let c = (crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) & 0xff) as u8;
     let idx: i32 = if c.is_ascii_digit() {
         (c - b'0') as i32 + 26

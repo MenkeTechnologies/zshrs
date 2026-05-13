@@ -42,6 +42,8 @@ use crate::zsh_h::{
 // `crate::ported::zsh_h::sortelt` (port of `struct sortelt` at
 // `Src/zsh.h:3013-3028`); this file no longer carries a duplicate.
 use crate::ported::zsh_h::sortelt;
+use libc;
+use std::ffi::CString;
 
 /// Port of `zstrcmp(const char *as, const char *bs, int sortflags)` from `Src/sort.c:191`.
 ///
@@ -175,8 +177,6 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {              // 
         let c = {
             #[cfg(unix)]
             {
-                use libc;
-                use std::ffi::CString;
                 let cstr_head = |s: &str| -> CString {
                     let bs = s.as_bytes();
                     let n = bs.iter().position(|&x| x == 0).unwrap_or(bs.len());

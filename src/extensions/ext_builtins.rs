@@ -18,6 +18,27 @@ use std::env;
 use crate::ported::exec::ShellExecutor;
 use crate::ported::exec::*;
 use crate::parse::Redirect;
+use crate::ported::zsh_h::PM_UNDEFINED;
+use std::process::{Command, Stdio};
+use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+use std::sync::atomic::Ordering;
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::collections::VecDeque;
+use std::fs::OpenOptions;
+use std::path::Component::*;
+use rand::seq::SliceRandom;
+use std::path::Path;
+use std::ffi::CStr;
+use std::ffi::CString;
+use std::collections::BTreeMap;
+use sha2::{Digest, Sha256};
+use std::net::ToSocketAddrs;
+use std::time::{SystemTime, UNIX_EPOCH};
+use rand::Rng;
+use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::PermissionsExt;
+use std::io::Read as IoRead;
+use std::os::unix::fs::MetadataExt;
 
 impl ShellExecutor {
 
@@ -137,7 +158,6 @@ impl ShellExecutor {
         }
         println!("  functions:   {} loaded", self.function_names().len());
         // Count canonical shfunctab entries with PM_UNDEFINED set.
-        use crate::ported::zsh_h::PM_UNDEFINED;
         let autoload_count = crate::ported::hashtable::shfunctab_lock().read()
             .map(|t| t.iter().filter(|(_, shf)| (shf.node.flags as u32 & PM_UNDEFINED) != 0).count())
             .unwrap_or(0);
@@ -571,7 +591,6 @@ impl ShellExecutor {
             // Route through bin_zprof -c so the C-faithful clear path
             // resets CALLS/NCALLS/ARCS/NARCS uniformly (zprof.c:141-147).
             {
-                use crate::ported::zsh_h::{options, MAX_OPS};
                 let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                                         argscount: 0, argsalloc: 0 };
                 ops.ind[b'c' as usize] = 1;
@@ -589,7 +608,6 @@ impl ShellExecutor {
                 println!("{}", dim("no profile data"));
             } else {
                 {
-                use crate::ported::zsh_h::{options, MAX_OPS};
                 let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                                     argscount: 0, argsalloc: 0 };
                 crate::zprof::bin_zprof("profile", &[], &ops, 0);
@@ -624,7 +642,6 @@ impl ShellExecutor {
         // Reset zprof state through the C-faithful -c path so the
         // module-level CALLS/NCALLS/ARCS/NARCS tables start fresh.
         {
-                use crate::ported::zsh_h::{options, MAX_OPS};
                 let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                                         argscount: 0, argsalloc: 0 };
                 ops.ind[b'c' as usize] = 1;
@@ -663,7 +680,6 @@ impl ShellExecutor {
         if crate::zprof::NCALLS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
             println!("{}", bold("function breakdown"));
             {
-                use crate::ported::zsh_h::{options, MAX_OPS};
                 let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                                     argscount: 0, argsalloc: 0 };
                 crate::zprof::bin_zprof("profile", &[], &ops, 0);
@@ -866,7 +882,6 @@ impl ShellExecutor {
 
         pool.submit(move || {
             // Execute in a subprocess to capture stdout
-            use std::process::{Command, Stdio};
             let output = Command::new("sh")
                 .args(["-c", &code])
                 .stdout(Stdio::piped())
@@ -954,8 +969,6 @@ impl ShellExecutor {
         // Compile template once, execute for each item on VM — no forks
         let mut results: Vec<(i32, String)> = Vec::with_capacity(items.len());
 
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use std::sync::atomic::Ordering;
         for item in items {
             let cmd = template.replace("{}", item);
             // Phase 2 migration: parse_init + parse + ZshCompiler.
@@ -1021,8 +1034,6 @@ impl ShellExecutor {
         let items = &args[1..];
 
         // Compile and run on VM — no forks. parse_init+parse + ZshCompiler.
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use std::sync::atomic::Ordering;
         for item in items {
             let cmd = template.replace("{}", item);
             // Mirror Src/init.c errflag save/clear/check around parse.
@@ -1071,8 +1082,6 @@ impl ShellExecutor {
 
         // Compile and run on VM — no forks, fire-and-forget style.
         // parse_init+parse + ZshCompiler.
-        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-        use std::sync::atomic::Ordering;
         let mut any_fail = false;
 
         for item in items {
@@ -1152,7 +1161,6 @@ impl ShellExecutor {
         for cmd in &commands {
             let cmd = cmd.clone();
             let rx = self.worker_pool.submit_with_result(move || {
-                use std::process::{Command, Stdio};
                 Command::new("sh")
                     .args(["-c", &cmd])
                     .stdout(Stdio::inherit())
@@ -1682,8 +1690,6 @@ impl ShellExecutor {
                                         };
                                         let mut batch: std::collections::HashMap<String, Vec<u8>> =
                                             std::collections::HashMap::with_capacity(bodies.len());
-                                        use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-                                        use std::sync::atomic::Ordering;
                                         for (name, body) in &bodies {
                                             // Mirror Src/init.c errflag save/clear/check around parse.
                                             let saved_errflag = errflag.load(Ordering::Relaxed);
@@ -1793,8 +1799,6 @@ impl ShellExecutor {
             let mut all_entries: std::collections::HashMap<String, Vec<u8>> =
                 std::collections::HashMap::with_capacity(result.files.len());
 
-            use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-            use std::sync::atomic::Ordering;
             for file in &result.files {
                 if let Some(ref body) = file.body {
                     // Mirror Src/init.c errflag save/clear/check around parse.
@@ -1973,7 +1977,6 @@ impl ShellExecutor {
         // coreutils cat(1) port: adds -E (show $ at line end),
         // -T (show TAB as ^I), -A (= -vET), -b (number nonempty),
         // -s (squeeze blank lines), -v (show non-printing as ^X).
-        use std::io::{self, BufRead, BufReader, Read, Write};
 
         let mut number_all = false;
         let mut number_nonempty = false;
@@ -2161,7 +2164,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn builtin_head(&self, args: &[String]) -> i32 {
-        use std::io::{BufRead, BufReader, Read, Write};
 
         // -n N: keep first N lines. -n -N: keep all BUT the last N
         // lines (coreutils extension). Negative is encoded by a
@@ -2354,8 +2356,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn builtin_tail(&self, args: &[String]) -> i32 {
-        use std::collections::VecDeque;
-        use std::io::{BufRead, BufReader, Read};
 
         let mut lines = 10usize;
         // Some(N) when -c N was given — switches to byte-count mode.
@@ -2479,7 +2479,6 @@ impl ShellExecutor {
                 let mut buf = Vec::new();
                 let _ = reader.read_to_end(&mut buf);
                 let s = start.saturating_sub(1).min(buf.len());
-                use std::io::Write;
                 let stdout = std::io::stdout();
                 let _ = stdout.lock().write_all(&buf[s..]);
                 continue;
@@ -2492,7 +2491,6 @@ impl ShellExecutor {
                 let mut buf = Vec::new();
                 let _ = reader.read_to_end(&mut buf);
                 let start = buf.len().saturating_sub(n);
-                use std::io::Write;
                 let stdout = std::io::stdout();
                 let _ = stdout.lock().write_all(&buf[start..]);
                 continue;
@@ -2524,7 +2522,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn builtin_wc(&self, args: &[String]) -> i32 {
-        use std::io::{BufRead, BufReader};
 
         let mut count_lines = false;
         let mut count_words = false;
@@ -2808,7 +2805,6 @@ impl ShellExecutor {
         // (copy times from REF). -d / -t / -h are accepted but
         // not yet honored — they need date-string parsing through
         // reverse_strftime.
-        use std::fs::OpenOptions;
 
         if args.is_empty() {
             eprintln!("touch: missing file operand");
@@ -2947,7 +2943,6 @@ impl ShellExecutor {
                 std::env::current_dir().unwrap_or_default()
             };
             for comp in p.components() {
-                use std::path::Component::*;
                 match comp {
                     Prefix(_) | RootDir => abs.push(comp.as_os_str()),
                     CurDir => {}
@@ -2986,7 +2981,6 @@ impl ShellExecutor {
         // coreutils sort(1) port — adds case-fold (-f), field
         // selection (-k N), custom separator (-t C) on top of the
         // existing -n / -r / -u handling.
-        use std::io::{BufRead, BufReader};
 
         let mut reverse = false;
         let mut numeric = false;
@@ -3087,7 +3081,6 @@ impl ShellExecutor {
         let mut lines: Vec<String> = Vec::new();
         if zero_term {
             // Read raw bytes, split on NUL.
-            use std::io::Read;
             let mut buf = Vec::new();
             if files.is_empty() {
                 let _ = std::io::stdin().read_to_end(&mut buf);
@@ -3307,7 +3300,6 @@ impl ShellExecutor {
             // keyed by an MD5 of the line, but a Fisher-Yates with
             // thread_rng is the standard approximation used by
             // sort-port crates.
-            use rand::seq::SliceRandom;
             let mut rng = rand::thread_rng();
             lines.shuffle(&mut rng);
         } else {
@@ -3329,7 +3321,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn builtin_find(&self, args: &[String]) -> i32 {
-        use std::path::Path;
 
         let mut paths: Vec<&str> = Vec::new();
         let mut name_pattern: Option<&str> = None;
@@ -3433,7 +3424,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn builtin_uniq(&self, args: &[String]) -> i32 {
-        use std::io::{BufRead, BufReader};
 
         let mut count = false;
         let mut repeated = false;
@@ -3537,7 +3527,6 @@ impl ShellExecutor {
         // -z: treat NUL as record separator. Otherwise BufRead::lines
         // splits on \n.
         if zero_term {
-            use std::io::Read;
             let mut buf = Vec::new();
             let mut reader = reader;
             let _ = reader.read_to_end(&mut buf);
@@ -3579,7 +3568,6 @@ impl ShellExecutor {
     pub(crate) fn builtin_cut(&self, args: &[String]) -> i32 {
         // coreutils cut(1) port: parses -d / -f / -c / -b ranges
         // including N-M, N-, -M shorthand and comma-lists.
-        use std::io::{BufRead, BufReader};
 
         #[derive(Copy, Clone)]
         enum Mode {
@@ -3755,7 +3743,6 @@ impl ShellExecutor {
         };
 
         if zero_term {
-            use std::io::Read;
             let mut buf = Vec::new();
             let mut reader = reader;
             let _ = reader.read_to_end(&mut buf);
@@ -3774,7 +3761,6 @@ impl ShellExecutor {
     }
 
     pub(crate) fn builtin_tr(&self, args: &[String]) -> i32 {
-        use std::io::Read;
 
         if args.is_empty() {
             eprintln!("tr: missing operand");
@@ -4205,7 +4191,6 @@ impl ShellExecutor {
         // each line by chars (codepoint-correct, not bytes). One
         // bad file emits an error and continues with the rest;
         // returns 1 if any file failed.
-        use std::io::{BufRead, BufReader};
 
         // util-linux rev has no flags. Reject any \`-\`-prefixed arg
         // that isn't \`-\` (stdin) or \`--\` (end-of-options).
@@ -4254,7 +4239,6 @@ impl ShellExecutor {
         // named file in 8 KB chunks so 'tail -f log | tee out' works
         // — was buffering everything until EOF, which never arrives
         // for streaming sources.
-        use std::io::{Read, Write};
 
         let mut append = false;
         let mut ignore_int = false;
@@ -4383,7 +4367,6 @@ impl ShellExecutor {
     /// paste(1). Default delim is TAB; -d cycles through the
     /// supplied delimiter chars.
     pub(crate) fn builtin_paste(&self, args: &[String]) -> i32 {
-        use std::io::{BufRead, BufReader};
         let mut delims: Vec<char> = vec!['\t'];
         let mut serial = false;
         let mut files: Vec<&str> = Vec::new();
@@ -4478,7 +4461,6 @@ impl ShellExecutor {
     /// fold [-w WIDTH] [-s] [-b] [FILE...] — wrap input lines.
     /// coreutils fold(1).
     pub(crate) fn builtin_fold(&self, args: &[String]) -> i32 {
-        use std::io::{BufRead, BufReader};
         let mut width: usize = 80;
         let mut break_at_space = false;
         let mut count_bytes = false;
@@ -4570,8 +4552,6 @@ impl ShellExecutor {
     /// shuf [-n N] [-i LO-HI] [-e [STR...]] [FILE] — random
     /// permutation. coreutils shuf(1).
     pub(crate) fn builtin_shuf(&self, args: &[String]) -> i32 {
-        use rand::seq::SliceRandom;
-        use std::io::{BufRead, BufReader};
         let mut count: Option<usize> = None;
         let mut input_range: Option<(i64, i64)> = None;
         let mut echo_args: Option<Vec<String>> = None;
@@ -4649,7 +4629,6 @@ impl ShellExecutor {
     /// effective user; with args, prints "USER : group1 group2 ..."
     /// per user.
     pub(crate) fn builtin_groups(&self, args: &[String]) -> i32 {
-        use std::ffi::CStr;
         // Validate flags.
         let mut users: Vec<&str> = Vec::new();
         for arg in args {
@@ -4784,7 +4763,6 @@ impl ShellExecutor {
         let name = match std::env::var("USER") {
             Ok(u) if !u.is_empty() => u,
             _ => {
-                use std::ffi::CStr;
                 let euid = unsafe { libc::geteuid() };
                 let pw = unsafe { libc::getpwuid(euid) };
                 if !pw.is_null() {
@@ -5324,7 +5302,6 @@ impl ShellExecutor {
     /// minus umask). Each FIFO is created independently; failures
     /// are reported per-file and the others continue.
     pub(crate) fn builtin_mkfifo(&self, args: &[String]) -> i32 {
-        use std::ffi::CString;
         let mut mode: libc::mode_t = 0o666;
         let mut files: Vec<&str> = Vec::new();
         let mut iter = args.iter();
@@ -5389,8 +5366,6 @@ impl ShellExecutor {
     /// program continues with that node treated as a leaf. Reads
     /// stdin when no file is given or `-`.
     pub(crate) fn builtin_tsort(&self, args: &[String]) -> i32 {
-        use std::collections::BTreeMap;
-        use std::io::{BufRead, BufReader};
         let file: Option<&str> = args
             .iter()
             .find(|a| !a.starts_with('-') || a.as_str() == "-")
@@ -5482,7 +5457,6 @@ impl ShellExecutor {
     /// Output: `<sum> <512-byte-blocks> [name]` (BSD) or
     ///         `<sum> <kbytes> [name]` (SysV).
     pub(crate) fn builtin_sum(&self, args: &[String]) -> i32 {
-        use std::io::Read;
         let mut sysv = false;
         let mut files: Vec<&str> = Vec::new();
         for arg in args {
@@ -5563,7 +5537,6 @@ impl ShellExecutor {
     /// stdin (filename column omitted in that case, per coreutils).
     /// Polynomial: 0x04C11DB7, init 0, length appended (POSIX).
     pub(crate) fn builtin_cksum(&self, args: &[String]) -> i32 {
-        use std::io::Read;
         // POSIX cksum table, generated for polynomial 0x04C11DB7 with
         // bits processed MSB-first. Built once at runtime per call;
         // a const table would be ~1KB but the runtime cost of building
@@ -5636,7 +5609,6 @@ impl ShellExecutor {
     /// Coreutils factor(1). Format: `N: p1 p2 p3 ...`. Reads stdin
     /// if no args. Negative numbers and zero are rejected.
     pub(crate) fn builtin_factor(&self, args: &[String]) -> i32 {
-        use std::io::BufRead;
         let factor_line = |line: &str| {
             for tok in line.split_whitespace() {
                 let n: u64 = match tok.parse() {
@@ -5699,7 +5671,6 @@ impl ShellExecutor {
     /// collation; comm performs a streaming merge-compare and is
     /// undefined-behavior on unsorted input (matches coreutils).
     pub(crate) fn builtin_comm(&self, args: &[String]) -> i32 {
-        use std::io::{BufRead, BufReader};
         let mut suppress1 = false;
         let mut suppress2 = false;
         let mut suppress3 = false;
@@ -5817,7 +5788,6 @@ impl ShellExecutor {
     /// tac [FILE...] — concatenate files, reverse line order.
     /// coreutils tac(1).
     pub(crate) fn builtin_tac(&self, args: &[String]) -> i32 {
-        use std::io::{BufRead, BufReader};
         // tac in coreutils accepts -b (before) / -r (regex separator)
         // / -s (separator). Most usage is positional-only. Validate
         // unknown flags rather than silent-drop.
@@ -5871,7 +5841,6 @@ impl ShellExecutor {
     /// expand [-t TAB] [FILE...] — convert tabs to spaces.
     /// coreutils expand(1).
     pub(crate) fn builtin_expand(&self, args: &[String]) -> i32 {
-        use std::io::{BufRead, BufReader};
         // Default tab stop 8.
         let mut tabs: Vec<usize> = vec![8];
         let mut files: Vec<&str> = Vec::new();
@@ -5963,7 +5932,6 @@ impl ShellExecutor {
     /// run of spaces (not just leading); without -a only leading
     /// runs collapse.
     pub(crate) fn builtin_unexpand(&self, args: &[String]) -> i32 {
-        use std::io::{BufRead, BufReader};
         let mut tabstop: usize = 8;
         let mut all_runs = false;
         let mut files: Vec<&str> = Vec::new();
@@ -6062,8 +6030,6 @@ impl ShellExecutor {
     /// sha256sum [FILE...] — write SHA-256 of each file (or stdin
     /// when no FILE / '-'). coreutils-style 'HEX  PATH' output.
     pub(crate) fn builtin_sha256sum(&self, args: &[String]) -> i32 {
-        use sha2::{Digest, Sha256};
-        use std::io::Read;
         // Validate flags: silent-drop accepted any unknown -X. coreutils
         // sha256sum specifically supports -b/-t/--binary/--text (we
         // accept them as no-ops since output format is identical), -
@@ -6137,7 +6103,6 @@ impl ShellExecutor {
     /// base64(1) without --wrap (defaults to 76-char wrap on
     /// encode; 0 disables).
     pub(crate) fn builtin_base64(&self, args: &[String]) -> i32 {
-        use std::io::Read;
         const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         let mut decode = false;
         let mut wrap: usize = 76;
@@ -6218,7 +6183,6 @@ impl ShellExecutor {
                 out.push((buf[0] << 2) | (buf[1] >> 4));
                 out.push((buf[1] << 4) | (buf[2] >> 2));
             }
-            use std::io::Write;
             let _ = std::io::stdout().write_all(&out);
         } else {
             let mut out = String::with_capacity(input.len() * 4 / 3 + 4);
@@ -6528,7 +6492,6 @@ impl ShellExecutor {
     /// yes(1). Honors SIGPIPE: when stdout is piped and the consumer
     /// closes, the write fails and we exit 0 silently.
     pub(crate) fn builtin_yes(&self, args: &[String]) -> i32 {
-        use std::io::Write;
         // coreutils yes: \`yes --help\` / \`yes --version\` print
         // help/version and exit when --help/--version is the sole
         // arg. With multiple args (\`yes --help foo\`), --help is
@@ -6570,7 +6533,6 @@ impl ShellExecutor {
     /// nl [-b STYLE] [FILE...] — number lines. Direct port of
     /// coreutils nl(1) for the most-used flag set.
     pub(crate) fn builtin_nl(&self, args: &[String]) -> i32 {
-        use std::io::{BufRead, BufReader};
         // -b a: number all lines.  -b t: number non-empty (default).
         let mut style = 't';
         let mut start = 1i64;
@@ -6769,7 +6731,6 @@ impl ShellExecutor {
                 return 1;
             }
         }
-        use std::ffi::CStr;
         let euid = unsafe { libc::geteuid() };
         unsafe {
             let pw = libc::getpwuid(euid);
@@ -6788,7 +6749,6 @@ impl ShellExecutor {
     pub(crate) fn builtin_id(&self, args: &[String]) -> i32 {
         // coreutils id(1) port: -u/-g/-G with -n name modifier, plus
         // the default 'uid=N(name) gid=N(name) groups=...' form.
-        use std::ffi::CStr;
 
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
@@ -6998,7 +6958,6 @@ impl ShellExecutor {
             // Resolve the hostname via getaddrinfo and print the
             // first IPv4/IPv6 result. Same approach as
             // hostname(1)'s -i.
-            use std::net::ToSocketAddrs;
             if let Ok(mut addrs) = (host.as_str(), 0u16).to_socket_addrs() {
                 if let Some(a) = addrs.next() {
                     println!("{}", a.ip());
@@ -7133,7 +7092,6 @@ impl ShellExecutor {
         // FILE), -R / --rfc-2822, -I / --iso-8601. -d (parse arbitrary
         // date string) is partially handled — only +<seconds> /
         // @<seconds> Unix-time forms; full date-string parser not yet.
-        use std::time::{SystemTime, UNIX_EPOCH};
 
         let mut utc = false;
         let mut format: Option<String> = None;
@@ -7231,7 +7189,6 @@ impl ShellExecutor {
         // 'XXXXXX' run with a random a-z0-9 suffix, retries on
         // collision (real mktemp uses O_EXCL so two parallel
         // mktemp(1) invocations don't pick the same name).
-        use rand::Rng;
 
         let mut dir = false;
         let mut want_tmpdir_flag = false;
@@ -7328,7 +7285,6 @@ impl ShellExecutor {
         for _ in 0..100 {
             let path = try_path(make_name(base));
             if dir {
-                use std::os::unix::fs::DirBuilderExt;
                 let result = std::fs::DirBuilder::new().mode(0o700).create(&path);
                 match result {
                     Ok(_) => {
@@ -7351,7 +7307,6 @@ impl ShellExecutor {
                         // Lock down to 0600 to match mktemp.
                         #[cfg(unix)]
                         {
-                            use std::os::unix::fs::PermissionsExt;
                             let _ = std::fs::set_permissions(
                                 &path,
                                 std::fs::Permissions::from_mode(0o600),
@@ -7470,7 +7425,6 @@ pub(crate) fn readarray(args: &[String]) -> i32 {
     // Direct port of bash's read_builtin_array_loadable. zsh has no
     // direct equivalent (use `read -A`), but plugin code that
     // toggles between bash/zsh frequently calls this.
-    use std::io::Read as IoRead;
 
     let mut array_name = "MAPFILE".to_string();
     let mut delimiter: u8 = b'\n';
@@ -7822,7 +7776,6 @@ pub(crate) fn cp_impl(args: &[String]) -> i32 {
         // mode bits, but timestamps and uid/gid require explicit
         // chown(2) + utimensat(2) syscalls.
         if preserve {
-            use std::os::unix::fs::MetadataExt;
             if let Ok(meta) = std::fs::metadata(src) {
                 let dest_c = std::ffi::CString::new(dest.as_bytes()).ok();
                 if let Some(c) = dest_c {

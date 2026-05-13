@@ -12,6 +12,24 @@ use crate::ported::zsh_h::{
     isset, opt_name, AUTONAMEDIRS, BEEP, MULTIBYTE, POSIXIDENTIFIERS,
     PRINTEIGHTBIT, XTRACE,
 };
+use std::sync::atomic::Ordering;
+use crate::ported::zsh_h::{QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS};
+use crate::ported::zsh_h::{QT_BACKTICK, QT_SINGLE_OPTIONAL, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL};
+use std::os::unix::io::RawFd;
+use std::time::UNIX_EPOCH;
+use libc::{S_IRGRP, S_IROTH, S_IRUSR, S_ISGID, S_ISUID, S_ISVTX, S_IWGRP, S_IWOTH, S_IWUSR, S_IXGRP, S_IXOTH, S_IXUSR};
+use std::io::Read;
+use crate::ported::ztype_h::{TYPTAB, TYPTAB_FLAGS, ZTF_INIT, ICNTRL, IDIGIT, IALNUM, IWORD, IIDENT, IUSER, IALPHA, IBLANK, INBLANK};
+use std::os::unix::fs::PermissionsExt;
+use crate::ported::zsh_h::{hashnode, nameddir, ND_NOABBREV, ND_USERNAME};
+use crate::ported::ztype_h::{ISPECIAL, ZTF_SP_COMMA};
+use std::os::unix::fs::MetadataExt;
+use crate::ported::ztype_h::ZTF_BANGCHAR;
+use crate::ported::ztype_h::ISEP;
+use std::ffi::CString;
+use crate::ported::zsh_h::{EMULATE_KSH, EMULATE_SH, EMULATION};
+use std::sync::Mutex;
+use std::sync::atomic::AtomicI64;
 
 /// Script name for error messages
 pub static mut SCRIPT_NAME: Option<String> = None;
@@ -221,7 +239,6 @@ pub fn set_shinstdin(v: bool) {
 /// ```
 /// WARNING: param names don't match C — Rust=(cmd, msg) vs C=(cmd, fmt, ap)
 fn zwarning(cmd: Option<&str>, msg: &str) {
-    use std::io::Write;
     // C: if (isatty(2)) zleentry(ZLE_CMD_TRASH);
     // ZLE trash-line is pending the zle_main.c port; skip without
     // affecting the error-emission path.
@@ -286,7 +303,6 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
 /// ```
 /// WARNING: param names don't match C — Rust=(msg) vs C=()
 pub fn zerr(msg: &str) {                                                     // c:173
-    use std::sync::atomic::Ordering;
     let noerrs = *noerrs_lock().lock().unwrap();
     if errflag.load(Ordering::Relaxed) != 0 || noerrs != 0 {                 // c:175
         if noerrs < 2 {                                                      // c:176
@@ -307,7 +323,6 @@ pub fn zerr(msg: &str) {                                                     // 
 /// ```
 /// WARNING: param names don't match C — Rust=(cmd, msg) vs C=(cmd)
 pub fn zerrnam(cmd: &str, msg: &str) {                                       // c:194
-    use std::sync::atomic::Ordering;
     let noerrs = *noerrs_lock().lock().unwrap();
     if errflag.load(Ordering::Relaxed) != 0 || noerrs != 0 {                 // c:196
         return;
@@ -324,7 +339,6 @@ pub fn zerrnam(cmd: &str, msg: &str) {                                       // 
 /// ```
 /// WARNING: param names don't match C — Rust=(msg) vs C=()
 pub fn zwarn(msg: &str) {                                                    // c:214
-    use std::sync::atomic::Ordering;
     let noerrs = *noerrs_lock().lock().unwrap();
     if errflag.load(Ordering::Relaxed) != 0 || noerrs != 0 {                 // c:216
         return;
@@ -340,7 +354,6 @@ pub fn zwarn(msg: &str) {                                                    // 
 /// ```
 /// WARNING: param names don't match C — Rust=(cmd, msg) vs C=(cmd)
 pub fn zwarnnam(cmd: &str, msg: &str) {                                      // c:231
-    use std::sync::atomic::Ordering;
     let noerrs = *noerrs_lock().lock().unwrap();
     if errflag.load(Ordering::Relaxed) != 0 || noerrs != 0 {                 // c:233
         return;
@@ -533,7 +546,6 @@ pub fn adjustlines() -> usize {                                             // c
 /// `(q)`=`QT_BACKSLASH`, `(qq)`=`QT_SINGLE`, `(qqq)`=`QT_DOUBLE`,
 /// `(qqqq+)`=`QT_DOLLARS`.
 pub fn qflag_quotetype(count: u32) -> i32 {
-    use crate::ported::zsh_h::{QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS};
     match count {
         0 => QT_NONE,
         1 => QT_BACKSLASH,
@@ -590,10 +602,6 @@ fn ispecial(c: char) -> bool {
 /// re-emission.
 /// WARNING: param names don't match C — Rust=(s, quote_type) vs C=(s, instring)
 pub fn quotestring(s: &str, quote_type: i32) -> String {                     // c:6141
-    use crate::ported::zsh_h::{
-        QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS, QT_BACKTICK,
-        QT_SINGLE_OPTIONAL, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL,
-    };
     if s.is_empty() {
         return if quote_type == QT_NONE {
             String::new()
@@ -897,7 +905,6 @@ pub fn setblock_fd(fd: i32, blocking: bool) -> bool {                        // 
 pub fn read_poll(fd: i32, timeout_us: i64) -> bool {                         // c:2645
     #[cfg(unix)]
     {
-        use std::os::unix::io::RawFd;
         let mut fds = [libc::pollfd {
             fd: fd as RawFd,
             events: libc::POLLIN,
@@ -1393,7 +1400,6 @@ pub fn imeta(c: char) -> bool {
 /// Port of `ztrftime(char *buf, int bufsize, char *fmt, struct tm *tm, long nsec)` from `Src/utils.c:3337`.
 /// WARNING: param names don't match C — Rust=(fmt, time) vs C=(buf, bufsize, fmt, tm, nsec)
 pub fn ztrftime(fmt: &str, time: std::time::SystemTime) -> String {
-    use std::time::UNIX_EPOCH;
 
     let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
     let secs = duration.as_secs() as i64;
@@ -1681,7 +1687,6 @@ pub fn zbeep() {                                                             // 
         let (decoded, _) = getkeystring(&zbeep);                             // c:4111
         #[cfg(unix)]
         {
-            use std::sync::atomic::Ordering;
             let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
             if shtty != -1 {
                 let _ = write_loop(shtty, decoded.as_bytes());               // c:4112
@@ -1694,7 +1699,6 @@ pub fn zbeep() {                                                             // 
     } else if isset(crate::ported::zsh_h::BEEP) {// c:4113
         #[cfg(unix)]
         {
-            use std::sync::atomic::Ordering;
             let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
             if shtty != -1 {
                 let _ = write_loop(shtty, b"\x07");                          // c:4114
@@ -1730,10 +1734,6 @@ pub fn zbeep() {                                                             // 
 /// ```
 pub fn mode_to_octal(mode: u32) -> i32 {
     #[cfg(unix)]
-    use libc::{
-        S_IRGRP, S_IROTH, S_IRUSR, S_ISGID, S_ISUID, S_ISVTX, S_IWGRP, S_IWOTH, S_IWUSR, S_IXGRP,
-        S_IXOTH, S_IXUSR,
-    };
     #[cfg(not(unix))]
     {
         // No POSIX permission bits on non-Unix; fall back to a
@@ -1822,7 +1822,6 @@ pub fn getquery(prompt: &str, valid_chars: &str) -> Option<char> {
     let mut buf = [0u8; 1];
     #[cfg(unix)]
     {
-        use std::io::Read;
         if std::io::stdin().read_exact(&mut buf).is_ok() {
             let c = buf[0] as char;
             if valid_chars.is_empty() || valid_chars.contains(c) {
@@ -1839,7 +1838,6 @@ pub fn getquery(prompt: &str, valid_chars: &str) -> Option<char> {
 pub fn read1char() -> Option<char> {
     #[cfg(unix)]
     {
-        use std::io::Read;
         let mut buf = [0u8; 1];
         if std::io::stdin().read_exact(&mut buf).is_ok() {
             return Some(buf[0] as char);
@@ -2185,11 +2183,6 @@ pub fn itype_end(s: &str, allow_digits_start: bool) -> usize {
 /// the `ifs` global; the remaining Meta/IFS marks are skipped until
 /// those land. Idempotent — safe to call multiple times.
 pub fn inittyptab() {                                                    // utils.c:4155
-    use crate::ported::ztype_h::{
-        TYPTAB, TYPTAB_FLAGS, ZTF_INIT,
-        ICNTRL, IDIGIT, IALNUM, IWORD, IIDENT, IUSER, IALPHA,
-        IBLANK, INBLANK,
-    };
 
     // c:4160 — `if (!(typtab_flags & ZTF_INIT))` one-off init.
     {
@@ -2536,7 +2529,6 @@ static ATTACHTTY_EP: std::sync::atomic::AtomicI32 =
 /// failure (matching the C source's recursion + `opts[MONITOR]=0` path).
 #[cfg(unix)]
 pub fn attachtty(pgrp: i32) {                                                // c:4775
-    use std::sync::atomic::Ordering;
 
     if !(crate::ported::zsh_h::jobbing() && crate::ported::zsh_h::interact()) {
         return;                                                              // c:4779
@@ -2561,7 +2553,6 @@ pub fn attachtty(pgrp: i32) {                                                // 
             if errno_val != libc::ENOTTY {                                   // c:4795
                 zwarn(&format!("can't set tty pgrp: {}",                     // c:4797
                     std::io::Error::from_raw_os_error(errno_val)));
-                use std::io::Write;
                 let _ = std::io::stderr().flush();                           // c:4798
             }
             crate::ported::options::opt_state_set("monitor", false);         // c:4815 opts[MONITOR]=0
@@ -2577,7 +2568,6 @@ pub fn attachtty(pgrp: i32) {                                                // 
 /// Port of `pid_t gettygrp(void)` from Src/utils.c:4815.
 #[cfg(unix)]
 pub fn gettygrp() -> i32 {                                                   // c:4815
-    use std::sync::atomic::Ordering;
     let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     if shtty == -1 {                                                         // c:4819
         return -1;                                                           // c:4820
@@ -2709,7 +2699,6 @@ pub fn pathprog(prog: &str) -> Option<PathBuf> {
             // Inline of the deleted is_executable helper.
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
                 if let Ok(meta) = std::fs::metadata(&full_path) {
                     if meta.is_file() && meta.permissions().mode() & 0o111 != 0 {
                         return Some(full_path);
@@ -2736,7 +2725,6 @@ pub fn pathprog(prog: &str) -> Option<PathBuf> {
 /// stdout. The Rust port writes via `print!` to mirror C's
 /// `printf`/`zputs(stdout)` calls.
 pub fn print_if_link(s: &str, all: bool) {                                   // c:985
-    use std::io::Write;
     if !s.starts_with('/') {                                                 // c:987
         return;
     }
@@ -2850,7 +2838,6 @@ pub fn finddir(path: &str) -> Option<String> {                              // c
 /// trailing-slash trim, and PWD/OLDPWD ND_NOABBREV stamp are all
 /// preserved. Routes through `crate::ported::hashnameddir`.
 pub fn adduserdir(name: &str, dir: &str, flags: i32, always: bool) {        // c:1187
-    use crate::ported::zsh_h::{hashnode, nameddir, ND_NOABBREV, ND_USERNAME};
 
     if !crate::ported::zsh_h::interact() { return; }                         // c:1193
     if let Ok(t) = crate::ported::hashnameddir::nameddirtab().lock() {
@@ -2962,7 +2949,6 @@ pub fn checkmailpath(paths: &[String]) -> Vec<String> {
 /// silent return when SHTTY == -1).
 #[cfg(unix)]
 pub fn gettyinfo() -> Option<libc::termios> {                                // c:1746
-    use std::sync::atomic::Ordering;
     let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     if shtty == -1 {                                                         // c:1755
         return None;
@@ -2976,7 +2962,6 @@ pub fn gettyinfo() -> Option<libc::termios> {                                // 
 /// retry; no-op when SHTTY is closed.
 #[cfg(unix)]
 pub fn settyinfo(ti: &libc::termios) -> bool {                               // c:1778
-    use std::sync::atomic::Ordering;
     let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
     if shtty == -1 {                                                         // c:1787
         return false;
@@ -3344,7 +3329,6 @@ pub fn noquery(purge: bool) -> i32 {                                         // 
     let mut val: libc::c_int = 0;                                            // c:2992
     #[cfg(unix)]
     {
-        use std::sync::atomic::Ordering;
         let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);      // c:2999
         if shtty == -1 {
             return 0;
@@ -3408,7 +3392,6 @@ pub fn getshfunc(nam: &str) -> Option<String> {
 /// global typtab — used by glob/extended-glob to flag `,`
 /// (KSH_GLOB) as a metacharacter.
 pub fn makecommaspecial(yesno: bool) {                                       // c:4270
-    use crate::ported::ztype_h::{ISPECIAL, TYPTAB, TYPTAB_FLAGS, ZTF_SP_COMMA};
     let mut flags = TYPTAB_FLAGS.lock().unwrap();
     let mut tab = TYPTAB.lock().unwrap();
     if yesno {                                                               // c:4272
@@ -3674,7 +3657,6 @@ pub fn dquotedztrdup(s: &str) -> String {
 /// returned `bool` — different shape from C, missed the dirfd /
 /// level / dev / ino fields entirely.
 pub fn restoredir(d: &mut crate::ported::zsh_h::dirsav) -> i32 {
-    use std::os::unix::fs::MetadataExt;
 
     // C: if (d->dirname && *d->dirname == '/') return chdir(d->dirname);
     if let Some(name) = d.dirname.as_ref() {
@@ -4395,7 +4377,6 @@ pub fn ztrftimebuf(bufsizeptr: &mut i32, decr: i32) -> i32 {
 pub fn subst_string_by_func(func_name: &str, arg1: Option<&str>, orig: &str)
     -> Option<Vec<String>>                                                   // c:4017
 {
-    use std::sync::atomic::Ordering;
     let osc = crate::ported::builtin::SFCONTEXT.load(Ordering::Relaxed);     // c:4019
     let osm = crate::ported::builtin::STOPMSG.load(Ordering::Relaxed);
     let old_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
@@ -4435,8 +4416,6 @@ pub fn subst_string_by_func(func_name: &str, arg1: Option<&str>, orig: &str)
 /// always clears; when nonzero, sets only if `ZTF_BANGCHAR` was
 /// stored by `inittyptab` (i.e. BANGHIST is on).
 pub fn makebangspecial(yesno: bool) {                                        // c:4283
-    use crate::ported::ztype_h::{ISPECIAL, TYPTAB, TYPTAB_FLAGS, ZTF_BANGCHAR};
-    use std::sync::atomic::Ordering;
     let bc = crate::ported::hist::bangchar.load(Ordering::SeqCst) as usize;
     if bc == 0 || bc >= 256 {
         return;
@@ -4479,7 +4458,6 @@ pub fn wcsiblank(wc: char) -> bool {
 /// route through Unicode predicates that mirror the C `iswalnum`
 /// fallback at line 4346.
 pub fn wcsitype(c: char, itype: u32) -> bool {                               // c:4321
-    use crate::ported::ztype_h::{TYPTAB, IIDENT, IWORD, IALNUM, ISEP};
     if !isset(crate::ported::zsh_h::MULTIBYTE) { // c:4327
         if (c as u32) < 256 {
             let tab = TYPTAB.lock().unwrap();
@@ -4852,7 +4830,6 @@ pub fn nicedupstring(s: &str) -> String {
 /// blocks=Σ messages, atime=newest, mtime=newest. When the path is
 /// a plain file, leaves the native `stat(2)` result in `*st`.
 pub fn mailstat(path: &str, st: &mut libc::stat) -> i32 {                    // c:7685
-    use std::ffi::CString;
     let c_path = match CString::new(path) {
         Ok(c) => c,
         Err(_) => return -1,
@@ -5096,7 +5073,6 @@ pub(crate) fn bufferwords(s: &str) -> Vec<String> {
 /// same dev+inode as ".", and must contain no `.` or `..` components.
 /// When this returns false, callers should fall back to `getcwd()`.
 pub(crate) fn ispwd(pwd: &str) -> bool {
-    use std::os::unix::fs::MetadataExt;
     if !pwd.starts_with('/') {
         return false;
     }
@@ -5205,7 +5181,6 @@ pub(crate) fn quotedzputs(s: &str) -> String {
 /// with the per-line/per-arg fprintf — same shape mirrored at the two
 /// zshrs call sites in fusevm_bridge.rs (BUILTIN_XTRACE_LINE / ARGS).
 pub(crate) fn printprompt4() {
-    use crate::ported::zsh_h::{isset, XTRACE, EMULATE_KSH, EMULATE_SH, EMULATION};
     // c:utils.c:1720 — `if (!isset(XTRACE)) return;`. C tests
     // `xtrerr` first then conditionally; the read-the-option early-
     // return path is equivalent for our purposes since we don't ship
@@ -5303,7 +5278,6 @@ pub(crate) fn zexpandtabs(
 /// the Rust port uses an `OnceLock` keyed on uid for the same
 /// invalidate-on-uid-change behaviour.
 pub fn get_username() -> String {
-    use std::sync::Mutex;
     static CACHE: Mutex<Option<(u32, String)>> = Mutex::new(None);
 
     let current_uid = unsafe { libc::getuid() };
@@ -5430,7 +5404,6 @@ pub fn callhookfunc(name: &str, args: Option<&[String]>, arrayp: bool) -> i32 {
 /// + `precmd_functions` array, the `periodic` hook on its
 /// PERIOD-second cadence, and walks the prepromptfns registry.
 pub fn preprompt() {
-    use std::sync::atomic::{AtomicI64, Ordering};
     static LAST_PERIODIC: AtomicI64 = AtomicI64::new(0);
 
     callhookfunc("precmd", None, true);
@@ -5608,7 +5581,6 @@ pub fn is_mb_niceformat(s: &str) -> bool {
 /// (the `itok()` range) are skipped just as the C source does.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, stream)
 pub fn zputs(s: &str) -> std::io::Result<()> {
-    use std::io::Write;
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {

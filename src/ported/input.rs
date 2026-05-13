@@ -18,6 +18,7 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, Read};
+use std::io::Write;
 
 // Size of buffer for non-interactive command input                        // c:127
 /// Size of the shell input buffer
@@ -448,7 +449,6 @@ pub fn ingetptr() -> String {                                                // 
 /// it to stderr, push onto the input stack.
 /// WARNING: param names don't match C — Rust=(filename) vs C=(fn)
 pub fn stuff(filename: &str) -> i32 {                                        // c:647
-    use std::io::Write;
     let buf = match std::fs::read_to_string(filename) {
         Ok(b) => b,
         Err(_) => return 1,

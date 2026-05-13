@@ -38,6 +38,24 @@ use std::io::Write;
 
 use std::cell::{Cell, RefCell};
 use crate::socket::bin_zsocket;
+use fusevm::shell_builtins::*;
+use fusevm::Value;
+use crate::ported::zsh_h::{options, MAX_OPS};
+use std::io::BufRead;
+use crate::zle::zle;
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::cmp::Ordering;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::time::Instant;
+use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::FileTypeExt;
+use std::io::Write as _;
+use std::os::unix::io::AsRawFd;
+use std::ffi::CString;
+use std::io::Read;
+use std::os::unix::io::IntoRawFd;
+use fusevm::op::redirect_op as r;
 
 thread_local! {
     /// Mirror of C zsh's `doneps4` local in execcmd_exec
@@ -151,8 +169,6 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
 
 /// Register all zsh builtins with the VM.
 pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
-    use fusevm::shell_builtins::*;
-    use fusevm::Value;
 
     // Macro for builtins that user functions are allowed to shadow.
     // zsh dispatch order is alias → function → builtin; without the
@@ -486,7 +502,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let args = pop_args(vm, argc);
         // Canonical bin_setopt per options.c:580 — `isun` discriminant
         // flips the action polarity; setopt → 0, unsetopt → 1.
-        use crate::ported::zsh_h::{options, MAX_OPS};
         let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                             argscount: 0, argsalloc: 0 };
         let status = crate::ported::options::bin_setopt(
@@ -496,7 +511,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_UNSETOPT, |vm, argc| {
         let args = pop_args(vm, argc);
-        use crate::ported::zsh_h::{options, MAX_OPS};
         let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                             argscount: 0, argsalloc: 0 };
         let status = crate::ported::options::bin_setopt(
@@ -781,7 +795,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_SYNC, |vm, argc| {
         let args = pop_args(vm, argc);
         // Canonical bin_sync per files.c:53 — `sync(); return 0;`.
-        use crate::ported::zsh_h::{options, MAX_OPS};
         let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                             argscount: 0, argsalloc: 0 };
         let status = crate::ported::modules::files::bin_sync(
@@ -801,7 +814,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Canonical bin_strftime takes (nam, argv, ops, func) per
         // Src/Modules/datetime.c:187. Adapt &[String] → &[&str] +
         // empty options inline (datetime parses no flags).
-        use crate::ported::zsh_h::{options, MAX_OPS};
         let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                             argscount: 0, argsalloc: 0 };
         let argv: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -951,7 +963,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let args = pop_args(vm, argc);
         // bin_zprof now takes the canonical C signature
         // (name, args, ops, func) per Src/Modules/zprof.c:139.
-        use crate::ported::zsh_h::{options, MAX_OPS};
         let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                                 argscount: 0, argsalloc: 0 };
         if args.iter().any(|a| a == "-c") { ops.ind[b'c' as usize] = 1; }
@@ -1117,7 +1128,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     register_builtins(&mut stage_vm);
                     let _ = stage_vm.run();
                     // Flush any buffered output before exiting
-                    use std::io::Write;
                     let _ = std::io::stdout().flush();
                     let _ = std::io::stderr().flush();
                     std::process::exit(stage_vm.last_status);
@@ -1158,7 +1168,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             register_builtins(&mut stage_vm);
             stage_vm.set_shell_host(Box::new(ZshrsHost));
             let _ = stage_vm.run();
-            use std::io::Write;
             let _ = std::io::stdout().flush();
             let _ = std::io::stderr().flush();
             stage_vm.last_status
@@ -1511,7 +1520,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // follow-up.
     //WARNING FAKE AND MUST BE DELETED
     vm.register_builtin(BUILTIN_RUN_SELECT, |vm, argc| {
-        use std::io::{BufRead, Write};
 
         if argc < 2 {
             return Value::Status(1);
@@ -2041,7 +2049,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // zleparameter.c widgets_*. Mirrors the
                     // magic_assoc_lookup path so both lookup sites
                     // agree.
-                    use crate::zle::zle;
                     let zle = zle();
                     if let Some(target) = zle.get_widget(idx) {
                         if target == idx {
@@ -2109,7 +2116,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // clock_gettime(CLOCK_REALTIME). Direct port of
                     // the `epochtimegetfn` accessor in
                     // Src/Modules/datetime.c (struct gsu_array).
-                    use std::time::{SystemTime, UNIX_EPOCH};
                     let (secs, nsecs) = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .map(|d| (d.as_secs() as i64, d.subsec_nanos() as i64))
@@ -4241,7 +4247,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // numeric sort).
                     let signed = chars.contains(&'-');
                     fn natural_cmp(a: &str, b: &str, signed: bool) -> std::cmp::Ordering {
-                        use std::cmp::Ordering;
                         if signed {
                             // Strip a leading sign and compare numerically
                             // when both look like signed integers. Falls
@@ -4826,8 +4831,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         // Filter by predicates that require stat
         matches.retain(|path| {
-            use std::fs;
-            use std::os::unix::fs::PermissionsExt;
             // zsh's `-` modifier in glob qualifiers (`*(-.)`) means
             // "follow symlinks before applying the test". Without
             // `-`, `(.)` uses lstat (skipping symlinks even when
@@ -4937,7 +4940,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             matches = matches
                 .into_iter()
                 .map(|p| {
-                    use std::os::unix::fs::PermissionsExt;
                     let meta = match std::fs::symlink_metadata(&p) {
                         Ok(m) => m,
                         Err(_) => return p,
@@ -5668,7 +5670,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // the sub-chunk runs in-process (no fork). Output format matches
     // `time simple-cmd` (already implemented elsewhere via exectime).
     vm.register_builtin(BUILTIN_TIME_SUBLIST, |vm, _argc| {
-        use std::time::Instant;
         let sub_idx = vm.pop().to_int() as usize;
         let chunk_opt = vm.chunk.sub_chunks.get(sub_idx).cloned();
         let Some(chunk) = chunk_opt else {
@@ -6280,7 +6281,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // (follows symlinks the way zsh's -ef does) and compares (dev, inode).
     // Returns false on any I/O error (path missing, permission denied, etc.).
     vm.register_builtin(BUILTIN_SAME_FILE, |vm, _argc| {
-        use std::os::unix::fs::MetadataExt;
         let b = vm.pop().to_str();
         let a = vm.pop().to_str();
         let same = match (std::fs::metadata(&a), std::fs::metadata(&b)) {
@@ -6292,7 +6292,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     // `[[ -c path ]]` — character device.
     vm.register_builtin(BUILTIN_IS_CHARDEV, |vm, _argc| {
-        use std::os::unix::fs::FileTypeExt;
         let path = vm.pop().to_str();
         let result = std::fs::metadata(&path)
             .map(|m| m.file_type().is_char_device())
@@ -6301,7 +6300,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
     // `[[ -b path ]]` — block device.
     vm.register_builtin(BUILTIN_IS_BLOCKDEV, |vm, _argc| {
-        use std::os::unix::fs::FileTypeExt;
         let path = vm.pop().to_str();
         let result = std::fs::metadata(&path)
             .map(|m| m.file_type().is_block_device())
@@ -6310,7 +6308,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
     // `[[ -p path ]]` — FIFO (named pipe).
     vm.register_builtin(BUILTIN_IS_FIFO, |vm, _argc| {
-        use std::os::unix::fs::FileTypeExt;
         let path = vm.pop().to_str();
         let result = std::fs::metadata(&path)
             .map(|m| m.file_type().is_fifo())
@@ -6319,7 +6316,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
     // `[[ -S path ]]` — socket.
     vm.register_builtin(BUILTIN_IS_SOCKET, |vm, _argc| {
-        use std::os::unix::fs::FileTypeExt;
         let path = vm.pop().to_str();
         let result = std::fs::symlink_metadata(&path)
             .map(|m| m.file_type().is_socket())
@@ -6329,7 +6325,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     // `[[ -k path ]]` / `-u` / `-g` — sticky / setuid / setgid bit.
     vm.register_builtin(BUILTIN_HAS_STICKY, |vm, _argc| {
-        use std::os::unix::fs::PermissionsExt;
         let path = vm.pop().to_str();
         let result = std::fs::metadata(&path)
             .map(|m| m.permissions().mode() & libc::S_ISVTX as u32 != 0)
@@ -6337,7 +6332,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Bool(result)
     });
     vm.register_builtin(BUILTIN_HAS_SETUID, |vm, _argc| {
-        use std::os::unix::fs::PermissionsExt;
         let path = vm.pop().to_str();
         let result = std::fs::metadata(&path)
             .map(|m| m.permissions().mode() & libc::S_ISUID as u32 != 0)
@@ -6345,7 +6339,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Bool(result)
     });
     vm.register_builtin(BUILTIN_HAS_SETGID, |vm, _argc| {
-        use std::os::unix::fs::PermissionsExt;
         let path = vm.pop().to_str();
         let result = std::fs::metadata(&path)
             .map(|m| m.permissions().mode() & libc::S_ISGID as u32 != 0)
@@ -6353,7 +6346,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Bool(result)
     });
     vm.register_builtin(BUILTIN_OWNED_BY_USER, |vm, _argc| {
-        use std::os::unix::fs::MetadataExt;
         let path = vm.pop().to_str();
         let euid = unsafe { libc::geteuid() };
         let result = std::fs::metadata(&path)
@@ -6362,7 +6354,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Bool(result)
     });
     vm.register_builtin(BUILTIN_OWNED_BY_GROUP, |vm, _argc| {
-        use std::os::unix::fs::MetadataExt;
         let path = vm.pop().to_str();
         let egid = unsafe { libc::getegid() };
         let result = std::fs::metadata(&path)
@@ -6379,7 +6370,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // true, which a strict `mtime > atime` check missed for newly
     // created files where both stamps are identical.
     vm.register_builtin(BUILTIN_FILE_MODIFIED_SINCE_ACCESS, |vm, _argc| {
-        use std::os::unix::fs::MetadataExt;
         let path = vm.pop().to_str();
         let result = std::fs::metadata(&path)
             .map(|m| m.atime() <= m.mtime())
@@ -8864,8 +8854,6 @@ impl fusevm::ShellHost for ZshrsHost {
         // simpler and avoids the thread-local-executor limitation that
         // spawned threads can't see. Common consumers (`diff`, `cat`,
         // `comm`) read the file once anyway.
-        use std::io::Write as _;
-        use std::os::unix::io::AsRawFd;
         let fifo_path = format!(
             "/tmp/zshrs_psub_{}_{}",
             std::process::id(),
@@ -8901,8 +8889,6 @@ impl fusevm::ShellHost for ZshrsHost {
         // writes to. Create a real named pipe, fork a child that
         // dup2s the read end onto stdin and runs the sub-chunk; return
         // the FIFO path to the parent so it writes there.
-        use std::ffi::CString;
-        use std::os::unix::io::AsRawFd;
         let fifo_path = format!(
             "/tmp/zshrs_psub_out_{}_{}",
             std::process::id(),
@@ -9128,7 +9114,6 @@ impl fusevm::ShellHost for ZshrsHost {
         // capturing stdout. The current executor remains active via the
         // thread-local — the nested VM uses CallBuiltin to dispatch shell
         // ops back through `with_executor`.
-        use std::io::Read;
         let (read_end, write_end) = match os_pipe::pipe() {
             Ok(p) => p,
             Err(_) => return String::new(),
@@ -9516,7 +9501,6 @@ impl crate::ported::exec::ShellExecutor {
         target: &str,
         redirect_failed: &mut bool,
     ) -> bool {
-        use std::os::unix::io::IntoRawFd;
         match result {
             Ok(file) => {
                 let new_fd = file.into_raw_fd();
@@ -9552,8 +9536,6 @@ impl crate::ported::exec::ShellExecutor {
     }
 
     pub fn host_apply_redirect(&mut self, fd: u8, op_byte: u8, target: &str) {
-        use fusevm::op::redirect_op as r;
-        use std::os::unix::io::IntoRawFd;
         // `&>` / `&>>` always target both fd 1 and fd 2 regardless of the
         // fd byte the parser supplied (the lexer's tokfd clamp makes the
         // raw value unreliable for these forms).
@@ -9739,7 +9721,6 @@ impl crate::ported::exec::ShellExecutor {
     /// and closes it (so the consumer sees EOF after the body). A thread is
     /// needed because writing could block on a finite pipe buffer.
     pub fn host_set_pending_stdin(&mut self, content: String) {
-        use std::io::Write;
         let (read_end, write_end) = match os_pipe::pipe() {
             Ok(p) => p,
             Err(_) => return,
@@ -9813,7 +9794,6 @@ impl crate::ported::exec::ShellExecutor {
                 // crate::ported::modules::socket::bin_zsocket whose
                 // signature matches C `bin_zsocket(nam, args, ops,
                 // func)` exactly.
-                use crate::ported::zsh_h::{options, MAX_OPS};
                 let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                                         argscount: 0, argsalloc: 0 };
                 let mut positional: Vec<String> = Vec::new();
@@ -9857,7 +9837,6 @@ impl crate::ported::exec::ShellExecutor {
                 // bin_private now takes the canonical C signature
                 // (name, args, ops, func, assigns) per Src/Modules/
                 // param_private.c:217.
-                use crate::ported::zsh_h::{options, MAX_OPS};
                 let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                                         argscount: 0, argsalloc: 0 };
                 let mut assigns: Vec<(String, String)> = Vec::new();
@@ -9899,7 +9878,6 @@ impl crate::ported::exec::ShellExecutor {
                 // (nam, args, ops, func); the C source parses its
                 // own option string inline, so an empty Options is
                 // sufficient at this call site.
-                use crate::ported::zsh_h::{options, MAX_OPS};
                 let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                                     argscount: 0, argsalloc: 0 };
                 return crate::ported::modules::zselect::bin_zselect(
@@ -9916,7 +9894,6 @@ impl crate::ported::exec::ShellExecutor {
             "chgrp" => {
                 // Canonical bin_chown per files.c:725 with func=BIN_CHGRP
                 // per the bintab entry at c:805. BUILTIN spec "hRs".
-                use crate::ported::zsh_h::{options, MAX_OPS};
                 let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                                         argscount: 0, argsalloc: 0 };
                 let mut positional: Vec<String> = Vec::new();
@@ -9976,7 +9953,6 @@ impl crate::ported::exec::ShellExecutor {
             // free-fn port of Src/Modules/files.c, parsing the BUILTIN
             // optstr inline since the framework doesn't pre-parse.
             "zf_mkdir" | "mkdir" => {
-                use crate::ported::zsh_h::{options, MAX_OPS};
                 let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                                         argscount: 0, argsalloc: 0 };
                 let mut positional: Vec<String> = Vec::new();
@@ -10018,7 +9994,6 @@ impl crate::ported::exec::ShellExecutor {
                     cmd, &positional, &ops, 0);
             }
             "zf_rm" => {
-                use crate::ported::zsh_h::{options, MAX_OPS};
                 let mut ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                                         argscount: 0, argsalloc: 0 };
                 let mut positional: Vec<String> = Vec::new();
@@ -10045,7 +10020,6 @@ impl crate::ported::exec::ShellExecutor {
                     "zf_rm", &positional, &ops, 0);
             }
             "zf_rmdir" => {
-                use crate::ported::zsh_h::{options, MAX_OPS};
                 let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                                     argscount: 0, argsalloc: 0 };
                 return crate::ported::modules::files::bin_rmdir(
@@ -10065,7 +10039,6 @@ impl crate::ported::exec::ShellExecutor {
             "zstat" => {
                 // bin_stat now takes the canonical C signature
                 // (name, args, ops, func) per Src/Modules/stat.c:368.
-                use crate::ported::zsh_h::{options, MAX_OPS};
                 let ops = options { ind: [0u8; MAX_OPS], args: Vec::new(),
                                     argscount: 0, argsalloc: 0 };
                 return crate::modules::stat::bin_stat("zstat", &rest_vec, &ops, 0);

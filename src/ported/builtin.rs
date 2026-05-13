@@ -24,6 +24,33 @@
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
+use crate::ported::zsh_h::{PRINT_WHENCE_WORD, PRINT_WHENCE_CSH};
+use crate::ported::zsh_h::EMULATE_ZSH;
+use crate::ported::zsh_h::{options, MAX_OPS, XTRACE, BINF_KEEPNUM, ERRFLAG_ERROR};
+use crate::ported::modules::parameter::DIRSTACK;
+use std::sync::atomic::Ordering;
+use crate::ported::zsh_h::{OPT_HASARG, OPT_ARG, PM_INTEGER, PM_EFLOAT, PM_FFLOAT};
+use crate::ported::zsh_h::{PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z};
+use crate::ported::zsh_h::{OPT_MINUS, OPT_ISSET, PM_UNDEFINED};
+use crate::ported::zsh_h::PM_LOADDIR;
+use crate::ported::zsh_h::MFF_STR;
+use crate::ported::zsh_h::{PM_ABSPATH_USED, FS_FUNC};
+use crate::ported::zsh_h::eprog;
+use crate::ported::zsh_h::{STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED};
+use std::io::Read;
+use crate::ported::zsh_h::{OPT_PLUS, PM_UNALIASED, PM_TAGGED, PM_TAGGED_LOCAL, PM_WARNNESTED, PM_ZSHSTORED, PM_KSHSTORED, PM_CUR_FPATH};
+use crate::ported::math::{matheval, mnumber, MN_INTEGER};
+use crate::ported::utils::{getkeystring, getkeystring_with, quotedzputs, GETKEYS_PRINT};
+use crate::ported::zsh_h::HIST_FOREIGN;
+use crate::ported::zsh_h::{HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS};
+use crate::ported::zsh_h::{EMULATION, TYPESET_OPTSTR, PM_HASHED, PM_HIDEVAL, PM_LOWER, PM_UPPER, PM_TIED, PM_LOCAL, PM_NAMEREF, PM_READONLY, PM_ARRAY, PRINT_TYPESET, PRINT_LINE, PRINT_TYPE, PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_WITH_NAMESPACE, EMULATE_KSH};
+use crate::ported::zsh_h::{PRINT_WHENCE_VERBOSE, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_FUNCDEF, PRINT_LIST};
+use crate::ported::math::mathevali;
+use crate::ported::zsh_h::DISABLED;
+use crate::ported::zsh_h::nameddir;
+use crate::ported::zsh_h::{ALIAS_GLOBAL, ALIAS_SUFFIX};
+use crate::ported::hashtable::{aliastab_lock, sufaliastab_lock, Alias};
+use crate::ported::zsh_h::{EMULATE_CSH, EMULATE_SH};
 
 // === Imports needed by the methods moved from exec.rs (below) ===
 #[allow(unused_imports)]
@@ -379,7 +406,6 @@ bitflags::bitflags! {
 /// WARNING: param names don't match C — Rust=(hn) vs C=(hn, printflags)
 pub fn printbuiltinnode(hn: *mut crate::ported::zsh_h::hashnode,             // c:174
                         printflags: i32) {
-    use crate::ported::zsh_h::{PRINT_WHENCE_WORD, PRINT_WHENCE_CSH};
     if hn.is_null() { return; }
     let bn = unsafe { &*hn };
     if (printflags & PRINT_WHENCE_WORD as i32) != 0 {                        // c:179
@@ -418,7 +444,6 @@ pub fn freebuiltinnode(hn: *mut crate::ported::zsh_h::hashnode) {            // 
 /// }
 /// ```
 pub fn init_builtins() {                                                     // c:212
-    use crate::ported::zsh_h::EMULATE_ZSH;
     // c:214 — `if (!EMULATION(EMULATE_ZSH))`. EMULATION reads the
     // canonical `emulation` global directly per zsh.h:2347.
     if !crate::ported::zsh_h::EMULATION(EMULATE_ZSH) {                       // c:214
@@ -473,10 +498,6 @@ pub fn new_optarg(ops: &mut crate::ported::zsh_h::options) -> i32 {          // 
 /// through to the plain handler.
 pub fn execbuiltin(args: Vec<String>, assigns: Vec<crate::ported::zsh_h::asgment>, // c:250
                    bn: *mut crate::ported::zsh_h::builtin) -> i32 {
-    use crate::ported::zsh_h::{options, MAX_OPS, XTRACE, isset,
-        BINF_PLUSOPTS, BINF_KEEPNUM, BINF_SKIPDASH, BINF_DASHDASHVALID,
-        BINF_SKIPINVALID, BINF_PRINTOPTS, BINF_HANDLES_OPTS,
-        ERRFLAG_ERROR};
     if bn.is_null() {
         return 1;
     }
@@ -802,9 +823,6 @@ pub fn set_pwd_env() {                                                       // 
 /// WARNING: param names don't match C — Rust=() vs C=(nam, argv, hard, func)
 pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32)       // c:865
                    -> Option<String> {
-    use crate::ported::modules::parameter::DIRSTACK;
-    use std::sync::atomic::Ordering;
-    use crate::ported::builtin::{BIN_PUSHD, BIN_POPD};
 
     if argv.is_empty() {                                                     // c:872
         // c:873-875 — popd needs at least 2 stack entries.
@@ -990,7 +1008,6 @@ pub fn printdirstack() {                                                     // 
         }
     }
     // c:1283-1287 — `for (node = firstnode(dirstack); ...)`
-    use crate::ported::modules::parameter::DIRSTACK;
     if let Ok(d) = DIRSTACK.lock() {
         for entry in d.iter() {
             print!(" {}", entry);                                            // c:1297
@@ -1121,7 +1138,6 @@ pub fn getasg(argvp: &mut Vec<String>,                                       // 
 pub fn typeset_setbase(name: &str, pm: *mut crate::ported::zsh_h::param,     // c:1961
                        ops: &crate::ported::zsh_h::options,
                        on: i32, always: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_HASARG, OPT_ARG, PM_INTEGER, PM_EFLOAT, PM_FFLOAT};
     // c:1964 — `char *arg = NULL;`
     let mut arg: Option<&str> = None;                                        // c:1964
     let on_u = on as u32;
@@ -1174,7 +1190,6 @@ pub fn typeset_setbase(name: &str, pm: *mut crate::ported::zsh_h::param,     // 
 pub fn typeset_setwidth(name: &str, pm: *mut crate::ported::zsh_h::param,    // c:1997
                         ops: &crate::ported::zsh_h::options,
                         on: i32, always: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_HASARG, OPT_ARG, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z};
     // c:2000 — `char *arg = NULL;`
     let mut arg: Option<&str> = None;                                        // c:2000
     let on_u = on as u32;
@@ -1236,7 +1251,6 @@ pub fn typeset_single(_cname: &str, _pname: &str,                            // 
 /// WARNING: param names don't match C — Rust=(shf, name, func) vs C=(shf, name, ops, func)
 pub fn eval_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,     // c:3166
                      ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_MINUS, OPT_ISSET, PM_UNDEFINED};
     if shf.is_null() { return 1; }
     let shf_mut = unsafe { &mut *shf };
     // c:3168-3169 — `if (!(shf->node.flags & PM_UNDEFINED)) return 1;`
@@ -1279,7 +1293,6 @@ pub fn eval_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,     // 
 /// WARNING: param names don't match C — Rust=(shf, name, func) vs C=(shf, name, ops, func)
 pub fn check_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,    // c:3193
                       ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, PM_UNDEFINED, PM_LOADDIR};
     // c:3196-3199 — `if (OPT_ISSET(ops,'X')) return eval_autoload(...);`
     if OPT_ISSET(ops, b'X') {                                                // c:3196
         return eval_autoload(shf, name, ops, func);                          // c:3197
@@ -1349,7 +1362,6 @@ pub fn check_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,    // 
 /// C: `static void listusermathfunc(MathFunc p)` — emit a `functions -M`
 ///   row for one user math function with arg counts and module name.
 pub fn listusermathfunc(p: &crate::ported::zsh_h::mathfunc) {                // c:3243
-    use crate::ported::zsh_h::MFF_STR;
     // c:3247-3257 — pick `showargs` 0..3 based on module/min/max presence.
     let mut showargs: i32 = if p.module.is_some() {                          // c:3249
         3
@@ -1395,7 +1407,6 @@ pub fn listusermathfunc(p: &crate::ported::zsh_h::mathfunc) {                // 
 /// WARNING: param names don't match C — Rust=(shf) vs C=(shf, funcname)
 pub fn add_autoload_function(shf: *mut crate::ported::zsh_h::shfunc,         // c:3278
                              funcname: &str) {
-    use crate::ported::zsh_h::{PM_UNDEFINED, PM_LOADDIR, PM_ABSPATH_USED, FS_FUNC};
     if shf.is_null() || funcname.is_empty() { return; }
     let shf_ref = unsafe { &mut *shf };
 
@@ -1494,7 +1505,6 @@ pub fn shfunctab_table() -> &'static std::sync::Mutex<std::collections::HashMap<
 /// C: `Eprog mkautofn(Shfunc shf)` — synthesize a 5-wordcode body that
 ///   re-fires the autoload mechanism when first called.
 pub fn mkautofn(shf: *mut crate::ported::zsh_h::shfunc) -> *mut crate::ported::zsh_h::eprog { // c:3790
-    use crate::ported::zsh_h::eprog;
     // c:3793-3810 — alloc Eprog with 5 wordcode slots, set p->shf, p->npats=0,
     // p->nref=1 (permanent). Static-link path: synthesize a Box<eprog> that
     // satisfies the autoload trampoline contract.
@@ -1555,8 +1565,6 @@ pub fn bin_false(_name: &str, _argv: &[String],                              // 
 ///   running (when CHECKRUNNINGJOBS is set) or STAT_STOPPED, emit
 ///   "you have running/stopped jobs" + set `stopmsg = 1`.
 pub fn checkjobs() {                                                         // c:5899
-    use std::sync::atomic::Ordering;
-    use crate::ported::zsh_h::{STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED};
     let checkrunning = crate::ported::zsh_h::isset(crate::ported::options::optlookup("checkrunningjobs"));
     let thisjob = THISJOB.load(Ordering::Relaxed);
     let maxjob  = MAXJOB.load(Ordering::Relaxed);
@@ -1654,7 +1662,6 @@ pub static LASTVAL: std::sync::atomic::AtomicI32 =
 ///   value, fire EXIT trap unless already exiting, then realexit.
 #[allow(unused_variables)]
 pub fn zexit(val: i32, from_where: i32) {                                   // c:5977
-    use std::sync::atomic::Ordering;
     // c:5985 — `exit_val = val;`
     EXIT_VAL.store(val, Ordering::Relaxed);                                  // c:5985
     // c:5987 — `if (shell_exiting == -1) { retflag = 1; breaks = loops; return; }`
@@ -1688,7 +1695,6 @@ pub fn eval(argv: &[String]) -> i32 {                                        // 
 /// C: `static int zread(int izle, int *readchar, long izle_timeout)` —
 ///   read one byte from stdin (or via ZLE), respecting timeout.
 pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {      // c:7134
-    use std::io::Read;
     if izle != 0 {                                                           // c:7140
         // c:7141-7144 — zleentry(ZLE_CMD_GET_KEY, izle_timeout, NULL, &c);
         // Static-link path: ZLE bridge lives in src/ported/zle/*; until
@@ -1717,7 +1723,6 @@ pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {      // 
 ///   from `testargs` into `tok`/`tokstr`. Maps `-o`→DBAR, `-a`→DAMPER,
 ///   `!`→Bang, `(`→Inpar, `)`→Outpar, otherwise STRING.
 pub fn testlex() {                                                           // c:7200
-    use std::sync::atomic::Ordering;
     // c:7203 — `if (tok == LEXERR) return;`
     if TEST_TOK.load(Ordering::Relaxed) == TEST_LEXERR {                     // c:7203
         return;
@@ -1797,11 +1802,6 @@ pub fn bin_notavail(nam: &str, _argv: &[String],                             // 
 /// WARNING: param names don't match C — Rust=(name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_functions(name: &str, argv: &[String],                            // c:3342
                      ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{
-        OPT_PLUS, OPT_MINUS, OPT_ISSET, OPT_HASARG, OPT_ARG,
-        PM_UNDEFINED, PM_UNALIASED, PM_TAGGED, PM_TAGGED_LOCAL,
-        PM_WARNNESTED, PM_ZSHSTORED, PM_KSHSTORED, PM_CUR_FPATH,
-    };
     // c:3346-3347 — `int returnval = 0; int on = 0, off = 0, pflags = 0,
     //                roff, expand = 0;`
     let mut returnval: i32 = 0;                                              // c:3346
@@ -2421,8 +2421,6 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
 // cd, chdir, pushd, popd                                                   // c:796
 pub fn bin_cd(nam: &str, argv: &[String],                                    // c:840
               ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
-    use std::sync::atomic::Ordering;
 
     // c:844 — `doprintdir = (doprintdir == -1);`
     let prev = DOPRINTDIR.load(Ordering::Relaxed);
@@ -2513,7 +2511,6 @@ pub static CHASINGLINKS: std::sync::atomic::AtomicI32 =
 /// WARNING: param names don't match C — Rust=(_name, _argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_pwd(_name: &str, _argv: &[String],                                // c:728
                ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
     let chaselinks = crate::ported::zsh_h::isset(crate::ported::options::optlookup("chaselinks"));
     // c:730-731 — `if (OPT_ISSET(ops,'r') || OPT_ISSET(ops,'P') ||
     //               (isset(CHASELINKS) && !OPT_ISSET(ops,'L')))`
@@ -2538,7 +2535,6 @@ pub fn bin_pwd(_name: &str, _argv: &[String],                                // 
 /// WARNING: param names don't match C — Rust=(name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_shift(name: &str, argv: &[String],                                // c:5593
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
     let mut num: i32 = 1;                                                    // c:5595
     let mut ret: i32 = 0;                                                    // c:5595
     let mut idx = 0usize;
@@ -2632,7 +2628,6 @@ pub static PPARAMS: std::sync::Mutex<Vec<String>> =
 /// WARNING: param names don't match C — Rust=(_name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_let(_name: &str, argv: &[String],                                 // c:7469
                _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::math::{matheval, mnumber, MN_INTEGER};
     // c:7472 — `mnumber val = zero_mnumber;`
     let mut val: mnumber = mnumber { l: 0, d: 0.0, type_: MN_INTEGER };                               // c:7472
     let mut had_error = false;
@@ -2703,7 +2698,6 @@ pub fn bin_eval(_name: &str, argv: &[String],                                // 
 /// WARNING: param names don't match C — Rust=(_name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_getopts(_name: &str, argv: &[String],                             // c:5672
                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use std::sync::atomic::Ordering;
     if argv.len() < 2 { return 1; }
     // c:5675 — `char *optstr = unmetafy(*argv++, &lenoptstr); char *var = *argv++;`
     let optstr_full = argv[0].clone();
@@ -2879,8 +2873,6 @@ pub static OPTCIND: std::sync::atomic::AtomicI32 =
 /// WARNING: param names don't match C — Rust=(name, args, _func) vs C=(name, args, ops, func)
 pub fn bin_read(name: &str, args: &[String],                                 // c:6412
                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_HASARG, OPT_ARG};
-    use std::io::Read;
     let args = args.to_vec();
     let mut nchars: i32 = 1;                                                 // c:6415
 
@@ -3045,8 +3037,6 @@ pub fn bin_read(name: &str, args: &[String],                                 // 
 /// WARNING: param names don't match C — Rust=(name, args, func) vs C=(name, args, ops, func)
 pub fn bin_print(name: &str, args: &[String],                                // c:4587
                  ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_HASARG, OPT_ARG};
-    use crate::ported::builtin::{BIN_ECHO, BIN_PRINTF};
     let nonewline = OPT_ISSET(ops, b'n');                                    // c:4595
     let raw = OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'R');                  // c:4596
     let one_per_line = OPT_ISSET(ops, b'l');                                 // c:4597
@@ -3144,8 +3134,6 @@ pub fn bin_print(name: &str, args: &[String],                                // 
 /// elaborate (width/precision/flag chars/%b/%q/etc.); this is the
 /// minimal subset that covers the common script patterns.
 fn printf_format(fmt: &str, args: &[String]) -> String {
-    use crate::ported::utils::{getkeystring, getkeystring_with, quotedzputs,
-        GETKEYS_PRINT};
     // c:Src/builtin.c:4711 — `fmt = getkeystring(fmt, &flen, ...,
     // GETKEYS_PRINTF_FMT, ...);`. The format string is first run
     // through getkeystring to interpret backslash escapes (`\n`,
@@ -3346,16 +3334,11 @@ fn parse_width_prec(spec: &str) -> (bool, usize, Option<usize>) {
 /// WARNING: param names don't match C — Rust=(nam, argv, func) vs C=(nam, argv, ops, func)
 pub fn bin_fc(nam: &str, argv: &[String],                                    // c:1426
               ops: &mut crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::{
-        OPT_ISSET, OPT_HASARG, OPT_ARG, HIST_FOREIGN,
-    };
     let mut argv = argv.to_vec();
     let mut first: i64 = -1;
     let mut last: i64 = -1;
     let mut asgf: Vec<(String, String)> = Vec::new();
 
-    use crate::ported::zsh_h::{HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS};
-    use std::sync::atomic::Ordering;
 
     // c:1441-1481 — `-p` push history stack.
     if OPT_ISSET(ops, b'p') {                                                // c:1441
@@ -3621,16 +3604,6 @@ pub fn bin_fc(nam: &str, argv: &[String],                                    // 
 /// WARNING: param names don't match C — Rust=(name, argv, func) vs C=(name, argv, assigns, ops, func)
 pub fn bin_typeset(name: &str, argv: &[String],                              // c:2655
                    ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::{
-        OPT_ISSET, OPT_PLUS, OPT_MINUS, OPT_HASARG, OPT_ARG, EMULATION,
-        TYPESET_OPTSTR,
-        PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_LEFT,
-        PM_RIGHT_B, PM_RIGHT_Z, PM_HIDEVAL, PM_LOWER, PM_UPPER,
-        PM_TIED, PM_LOCAL, PM_NAMEREF, PM_READONLY, PM_ARRAY,
-        PRINT_TYPESET, PRINT_LINE, PRINT_TYPE, PRINT_NAMEONLY,
-        PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_WITH_NAMESPACE,
-        EMULATE_KSH,
-    };
 
     // PFA-SMR aspect: bin_typeset is the C dispatch site for
     // typeset/declare/integer/float/local/export/readonly/private —
@@ -4024,10 +3997,6 @@ pub fn bin_typeset(name: &str, argv: &[String],                              // 
 /// WARNING: param names don't match C — Rust=(nam, argv, func) vs C=(nam, argv, ops, func)
 pub fn bin_whence(nam: &str, argv: &[String],                                // c:3975
                   ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG,
-        PRINT_WHENCE_WORD, PRINT_WHENCE_CSH, PRINT_WHENCE_VERBOSE,
-        PRINT_WHENCE_SIMPLE, PRINT_WHENCE_FUNCDEF, PRINT_LIST};
-    use crate::ported::builtin::BIN_COMMAND;
     let mut returnval: i32 = 0;
     let mut printflags: i32 = 0;
     let mut informed: i32 = 0;
@@ -4399,8 +4368,6 @@ pub fn findcmd(name: &str, _docopy: i32, _default_path: i32) -> Option<String> {
 /// WARNING: param names don't match C — Rust=(_name, _argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_ttyctl(_name: &str, _argv: &[String],                             // c:7454
                   ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
-    use std::sync::atomic::Ordering;
     if OPT_ISSET(ops, b'f') {                                                // c:7456
         TTYFROZEN.store(1, Ordering::Relaxed);                               // c:7457
     } else if OPT_ISSET(ops, b'u') {                                         // c:7458
@@ -4424,8 +4391,6 @@ pub static TTYFROZEN: std::sync::atomic::AtomicI32 =
 /// WARNING: param names don't match C — Rust=(name, argv, func) vs C=(name, argv, ops, func)
 pub fn bin_break(name: &str, argv: &[String],                                // c:5809
                  _ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::math::mathevali;
-    use std::sync::atomic::Ordering;
     // BIN_BREAK/CONTINUE/RETURN/EXIT/LOGOUT live at the top of this file
     // (c:5707-5712 in Src/builtin.c via the BUILTIN(...) table).
     // c:5811 — `int num = lastval, nump = 0, implicit;`
@@ -4612,7 +4577,6 @@ pub fn bin_test(name: &str, argv: &[String],                                 // 
 /// WARNING: param names don't match C — Rust=(name, argv, func) vs C=(name, argv, ops, func)
 pub fn bin_unset(name: &str, argv: &[String],                                // c:3818
                  ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
     let mut returnval = 0i32;                                                // c:3823
     let mut match_count = 0i32;                                              // c:3823
 
@@ -4867,7 +4831,6 @@ fn getsigidx(name: &str) -> i32 {
 /// WARNING: param names don't match C — Rust=(name, argv, func) vs C=(name, argv, ops, func)
 pub fn bin_enable(name: &str, argv: &[String],                               // c:517
                   ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, DISABLED};
     enum Tab { Builtin, Shfunc, Reswd, Alias, SufAlias }
     let mut returnval = 0i32;                                                // c:524
     let mut match_count = 0i32;                                              // c:524
@@ -5024,7 +4987,6 @@ fn pat_enables(_name: &str, argv: &[String], _on: bool) -> i32 {
 /// WARNING: param names don't match C — Rust=(name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_hash(name: &str, argv: &[String],                                 // c:4234
                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, PRINT_LIST};
     let mut returnval = 0i32;                                                // c:4239
     let mut printflags = 0i32;                                               // c:4240
     let dir_mode = OPT_ISSET(ops, b'd');                                     // c:4242
@@ -5135,7 +5097,6 @@ pub fn bin_hash(name: &str, argv: &[String],                                 // 
                     returnval = 1;                                           // c:4308
                     continue;                                                // c:4309
                 }
-                use crate::ported::zsh_h::{hashnode, nameddir};
                 let nd = nameddir {
                     node: hashnode { next: None, nam: n.to_string(), flags: 0 },
                     dir: v.to_string(),
@@ -5199,7 +5160,6 @@ pub fn bin_hash(name: &str, argv: &[String],                                 // 
 /// WARNING: param names don't match C — Rust=(name, argv, func) vs C=(name, argv, ops, func)
 pub fn bin_unhash(name: &str, argv: &[String],                               // c:4346
                   ops: &crate::ported::zsh_h::options, func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
     let mut returnval = 0i32;                                                // c:4351
     let mut all = 0i32;                                                      // c:4351
     let mut match_count = 0i32;                                              // c:4351
@@ -5334,12 +5294,6 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
 /// WARNING: param names don't match C — Rust=(name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_alias(name: &str, argv: &[String],                                // c:4450
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{
-        OPT_ISSET, OPT_PLUS,
-        ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED,
-        PRINT_LIST, PRINT_NAMEONLY,
-    };
-    use crate::ported::hashtable::{aliastab_lock, sufaliastab_lock, Alias};
     let mut returnval = 0i32;                                                // c:4455
     let mut flags1 = 0u32;                                                   // c:4456
     let mut flags2 = DISABLED as u32;                                        // c:4456
@@ -5487,7 +5441,6 @@ pub fn bin_alias(name: &str, argv: &[String],                                // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_umask(nam: &str, args: &[String],                                 // c:7491
                  ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
     // c:7497-7500 — read current umask.
     crate::ported::mem::queue_signals();                                     // c:7497
     let mut um: u32 = unsafe { libc::umask(0o777) } as u32;                  // c:7498
@@ -5606,7 +5559,6 @@ pub fn bin_umask(nam: &str, args: &[String],                                 // 
 /// WARNING: param names don't match C — Rust=(nam, argv, _func) vs C=(nam, argv, ops, func)
 pub fn bin_emulate(nam: &str, argv: &[String],                               // c:6232
                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, EMULATE_CSH, EMULATE_KSH, EMULATE_SH};
     let opt_l = OPT_ISSET(ops, b'l');                                        // c:6236
     let opt_l_arg = OPT_ISSET(ops, b'L');                                    // c:6234
     let opt_r = OPT_ISSET(ops, b'R');                                        // c:6235
@@ -5712,8 +5664,6 @@ pub fn bin_emulate(nam: &str, argv: &[String],                               // 
 /// WARNING: param names don't match C — Rust=(_name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_dirs(_name: &str, argv: &[String],                                // c:749
                 ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
-    use crate::ported::modules::parameter::DIRSTACK;
     crate::ported::mem::queue_signals();                                     // c:753
     // c:755-756 — list mode: no args & no -c, OR -v / -p.
     if (argv.is_empty() && !OPT_ISSET(ops, b'c'))                            // c:755
@@ -5916,7 +5866,6 @@ pub fn bin_dot(name: &str, argv: &[String],                                  // 
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
 pub fn bin_set(nam: &str, args: &[String],                                   // c:601
                _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{EMULATE_ZSH, EMULATION};
 
     // PFA-SMR aspect: emit setopt/unsetopt events for the POSIX
     // `set -o NAME` / `set +o NAME` form. This is the third option

@@ -35,6 +35,7 @@ use crate::ported::zsh_h::{
     eprog, funcwrap, module, param, EMULATE_KSH, EMULATION,
     PM_LOCAL, PM_NAMEREF, PM_READONLY, PM_UNSET,
 };
+use crate::ported::zsh_h::{PM_NAMEREF as PMN, PARAMDEF};
 
 // =====================================================================
 // /* Implementing "namespace" requires creating a new keword.  Hrm. */ c:34
@@ -451,7 +452,6 @@ pub fn cleanup_(m: *const module) -> i32 {
 
     // c:116-131 — `static struct paramdef partab[]` inlined here
     // because Rust statics can't hold String-typed paramdef.name.
-    use crate::ported::zsh_h::{PM_NAMEREF as PMN, PM_READONLY, PARAMDEF};
     let partab: [crate::ported::zsh_h::paramdef; 9] = [
         PARAMDEF(".sh.edchar",    (PM_SCALAR | PM_SPECIAL) as i32, 0, 0),                  // c:117
         PARAMDEF(".sh.edmode",    (PM_SCALAR | PM_READONLY | PM_SPECIAL) as i32, 0, 0),    // c:119

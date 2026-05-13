@@ -6,6 +6,9 @@
 //! Move cursor left, checking for combining characters                     // c:129
 
 use super::zle_main::Zle;
+use std::sync::atomic::Ordering;
+use crate::ported::zle::zle_misc::{VFINDCHAR, VFINDDIR, TAILADD};
+use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
 
 impl Zle {
     /// Move cursor to the start of the current logical line.
@@ -569,8 +572,6 @@ pub fn viendofline(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {     //
 /// Port of `vifindchar(int repeat, char **args)` from Src/Zle/zle_move.c:787.
 /// WARNING: param names don't match C — Rust=(zle, repeat) vs C=(repeat, args)
 pub fn vifindchar(zle: &mut crate::ported::zle::zle_main::Zle, repeat: i32) -> i32 {  // c:787
-    use std::sync::atomic::Ordering;
-    use crate::ported::zle::zle_misc::{VFINDCHAR, VFINDDIR, TAILADD};
     let vfind = VFINDCHAR.load(Ordering::Relaxed);
     let vdir = VFINDDIR.load(Ordering::Relaxed);
     let tail = TAILADD.load(Ordering::Relaxed);
@@ -629,8 +630,6 @@ pub fn vifindchar(zle: &mut crate::ported::zle::zle_main::Zle, repeat: i32) -> i
 
 /// Port of `vifindnextchar(char **args)` from Src/Zle/zle_move.c:739.
 pub fn vifindnextchar(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:739
-    use std::sync::atomic::Ordering;
-    use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
     // C body (c:740-746): `if ((vfindchar = vigetkey()) != ZLEEOF) {
     //                    vfinddir=1; tailadd=0; return vifindchar(0,args); }
     //                    return 1`.
@@ -646,8 +645,6 @@ pub fn vifindnextchar(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {  //
 
 /// Port of `vifindnextcharskip(char **args)` from Src/Zle/zle_move.c:763.
 pub fn vifindnextcharskip(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:763
-    use std::sync::atomic::Ordering;
-    use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
     // C body (c:764-770): vfinddir=1, tailadd=-1 (land just before).
     let c = crate::ported::zle::zle_vi::vigetkey(args);
     if c < 0 { return 1; }
@@ -659,8 +656,6 @@ pub fn vifindnextcharskip(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {
 
 /// Port of `vifindprevchar(char **args)` from Src/Zle/zle_move.c:751.
 pub fn vifindprevchar(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:751
-    use std::sync::atomic::Ordering;
-    use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
     // C body (c:752-758): same as vifindnextchar but vfinddir=-1.
     let c = crate::ported::zle::zle_vi::vigetkey(args);
     if c < 0 { return 1; }
@@ -672,8 +667,6 @@ pub fn vifindprevchar(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {  //
 
 /// Port of `vifindprevcharskip(char **args)` from Src/Zle/zle_move.c:775.
 pub fn vifindprevcharskip(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:775
-    use std::sync::atomic::Ordering;
-    use crate::ported::zle::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
     // C body (c:776-782): vfinddir=-1, tailadd=1 (land just after).
     let c = crate::ported::zle::zle_vi::vigetkey(args);
     if c < 0 { return 1; }
@@ -887,8 +880,6 @@ pub fn virepeatfind(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {    //
 
 /// Port of `virevrepeatfind(char **args)` from Src/Zle/zle_move.c:842.
 pub fn virevrepeatfind(args: &mut crate::ported::zle::zle_main::Zle) -> i32 { // c:842
-    use std::sync::atomic::Ordering;
-    use crate::ported::zle::zle_misc::{TAILADD, VFINDDIR};
     // c:846-851 — `if (zmult < 0) { zmult = -zmult; ret = vifindchar(1);
     //                              zmult = -zmult; return ret }`.
     if args.zmod.mult < 0 {
@@ -922,7 +913,6 @@ pub fn visetmark(zle: &mut crate::ported::zle::zle_main::Zle, ch: char) -> i32 {
 
 /// Port of `visuallinemode(UNUSED(char **args))` from Src/Zle/zle_move.c:540.
 pub fn visuallinemode(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {  // c:540
-    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // c:542-547 — `if (virangeflag) { prefixflag = 1; flags &= ~CHAR;
     //                                  flags |= LINE; return 0 }`.
     match args.region_active {                                                // c:548
@@ -940,7 +930,6 @@ pub fn visuallinemode(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {  //
 
 /// Port of `visualmode(UNUSED(char **args))` from Src/Zle/zle_move.c:516.
 pub fn visualmode(args: &mut crate::ported::zle::zle_main::Zle) -> i32 {      // c:516
-    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // c:518-523 — `if (virangeflag) { prefixflag = 1; flags &= ~LINE;
     //                                  flags |= CHAR; return 0 }`.
     //              No virangeflag tracker yet; skip.

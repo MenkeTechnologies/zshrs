@@ -32,6 +32,7 @@ use crate::parse::{
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
+use std::io::Write;
 
 const FD_MAGIC: u32 = 0x04050607;
 const FD_OMAGIC: u32 = 0x07060504; // Other byte order
@@ -442,7 +443,6 @@ impl ZwcBuilder {
     /// Note: This writes a simplified format that stores raw source code
     /// rather than compiled wordcode. The loader handles both formats.
     pub fn write<P: AsRef<std::path::Path>>(&self, path: P) -> io::Result<()> {
-        use std::io::Write;
 
         let mut file = std::fs::File::create(path)?;
 

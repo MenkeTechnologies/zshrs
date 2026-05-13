@@ -4,6 +4,12 @@
 //! random number generation.
 
 use std::io;
+use std::fs::File;
+use std::io::Read;
+use std::fs::metadata;
+use std::os::unix::fs::FileTypeExt;
+use std::os::fd::IntoRawFd;
+use std::sync::atomic::Ordering;
 
 /// Buffer size for pre-loading random integers
 // buffer to pre-load integers for SRANDOM to lessen the context switches  // c:49
@@ -171,8 +177,6 @@ pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // 
 /// Port of `getrandom_buffer(void *buf, size_t len)` from `Src/Modules/random.c:62`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn getrandom_buffer(m: &mut [u8]) -> io::Result<()> {                  // c:62
-    use std::fs::File;
-    use std::io::Read;
 
     let mut file = File::open("/dev/urandom")?;
     file.read_exact(m)?;
@@ -405,8 +409,6 @@ pub static RANDFD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::
 pub fn setup_(m: *const module) -> i32 {                                    // c:243
     // c:243-261 — USE_URANDOM block: stat /dev/urandom; verify
     //              S_ISCHR. We probe via std::fs::metadata + file_type().
-    use std::fs::metadata;
-    use std::os::unix::fs::FileTypeExt;
     match metadata("/dev/urandom") {                                         // c:251
         Ok(md) => {
             if !md.file_type().is_char_device() {                            // c:256
@@ -438,8 +440,6 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
 pub fn boot_(m: *const module) -> i32 {                                     // c:282
     // c:282-308 — USE_URANDOM block: open(/dev/urandom, O_RDONLY),
     //              movefd, addmodulefd to track the fd.
-    use std::os::fd::IntoRawFd;
-    use std::sync::atomic::Ordering;
     match std::fs::OpenOptions::new().read(true).open("/dev/urandom") {      // c:295
         Ok(f) => {
             let fd = f.into_raw_fd();                                        // c:312
@@ -462,7 +462,6 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:319
     // c:319-324 — USE_URANDOM block: `if (randfd >= 0) zclose(randfd)`.
-    use std::sync::atomic::Ordering;
     let fd = RANDFD.swap(-1, Ordering::SeqCst);
     if fd >= 0 {
         unsafe { libc::close(fd) };                                          // c:323 zclose

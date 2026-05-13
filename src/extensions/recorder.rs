@@ -2,6 +2,7 @@
 #![cfg(feature = "recorder")]
 #[allow(unused_imports)]
 use crate::ported::exec::ShellExecutor;
+use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_EXPORTED, PM_READONLY, PM_UNIQUE, };
 
 // ===========================================================
 // Methods moved verbatim from src/ported/exec.rs because their
@@ -22,9 +23,6 @@ impl crate::ported::exec::ShellExecutor {
         // Shape: assoc > array > existing var-attrs declared shape > scalar default.
         // Shape + modifiers — read PM_* bits directly from canonical
         // paramtab (mirrors C's `pm->node.flags & PM_*` checks).
-        use crate::ported::zsh_h::{
-            PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_EXPORTED, PM_READONLY, PM_UNIQUE,
-        };
         let flags = self.param_flags(name) as u32;
         if self.has_assoc(name) {
             a.set(crate::recorder::ParamAttrs::ASSOC);

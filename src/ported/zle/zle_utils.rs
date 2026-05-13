@@ -19,6 +19,12 @@
 //! - Position save/restore: zle_save_positions, zle_restore_positions
 
 use super::zle_main::{Zle, ZleChar, ZleString};
+use crate::ported::zle::zle_h::CUT_RAW;
+use crate::ported::zle::zle_h::CUT_FRONT;
+use crate::ported::zle::zle_h::{CH_NEXT, CH_PREV};
+use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+use std::sync::atomic::Ordering;
+use crate::ported::zle::zle_misc::SUFFIXLEN;
 
 impl Zle {
     /// Insert string at cursor position
@@ -248,7 +254,6 @@ impl Zle {
     /// is a bitmask of `CUT_*` (zle.h:271-281). Returns 0 on success,
     /// non-zero when the kill failed.
     pub fn foredel(&mut self, n: i32, flags: i32) -> i32 {                   // c:1105
-        use crate::ported::zle::zle_h::CUT_RAW;
         let count = (n as usize).min(self.zlell - self.zlecs);
         if count == 0 { return 0; }
         // c:1107-1115 — CUT_RAW skips cut-buffer staging; without it
@@ -269,7 +274,6 @@ impl Zle {
     /// Direct port of `mod_export int backdel(int n, int flags)` from
     /// `Src/Zle/zle_utils.c:1084`. Delete `n` chars backward.
     pub fn backdel(&mut self, n: i32, flags: i32) -> i32 {                   // c:1084
-        use crate::ported::zle::zle_h::CUT_RAW;
         let count = (n as usize).min(self.zlecs);
         if count == 0 { return 0; }
         if flags & CUT_RAW == 0 {
@@ -362,7 +366,6 @@ impl Zle {
             return;
         }
 
-        use crate::ported::zle::zle_h::CUT_FRONT;
         let text: ZleString = self.zleline[start..end].to_vec();
 
         // c:1017 — `if (flags & (CUT_FRONT|CUT_REPLACE))` pushes onto
@@ -861,7 +864,6 @@ impl Zle {
 /// inserts `ch->ins` at the same position, and updates `zlecs`.
 /// Returns 1 if there are more changes to apply (CH_NEXT), else 0.
 pub fn applychange(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) -> i32 { // c:1678
-    use crate::ported::zle::zle_h::{CH_NEXT, CH_PREV};
     let idx = ch as usize;
     if idx >= zle.undo_stack.len() { return 0; }
     let change = zle.undo_stack[idx].clone();
@@ -956,7 +958,6 @@ pub fn cut(zle: &mut crate::ported::zle::zle_main::Zle, i: i32,              // 
 /// WARNING: param names don't match C — Rust=(zle, txt) vs C=(line, ct, flags)
 pub fn cuttext(zle: &mut crate::ported::zle::zle_main::Zle, txt: &[char],    // c:946
                dir: i32) {
-    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
     // C body c:948-1043 — pushes `txt` into vibuf[zmod.vibuf] when
     //                     MOD_VIBUF is set, else front of killring.
     //                     CUT_APPEND/CUT_REPLACE flag handling skipped
@@ -1145,8 +1146,6 @@ pub fn handlesuffix(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) -> i32 
     // C body c:1417-1444 — peeks the next byte; if SUFFIXLEN is set
     //                      and the byte is in the suffix's noinsert
     //                      set, drop the suffix; else keep + insert.
-    use std::sync::atomic::Ordering;
-    use crate::ported::zle::zle_misc::SUFFIXLEN;
     let _ = (c, zle);
     let len = SUFFIXLEN.load(Ordering::SeqCst);
     if len > 0 {
@@ -1169,7 +1168,6 @@ pub fn initundo() {                                                          // 
 /// since `vistartchange+1` form a single undo step (atomic vi
 /// insert-mode group). Resets `vistartchange = u64::MAX` (C's -1).
 pub fn mergeundo(zle: &mut crate::ported::zle::zle_main::Zle) {              // c:1733
-    use crate::ported::zle::zle_h::{CH_NEXT, CH_PREV};
     // c:1735-1742 — walk current->prev while changeno > vistartchange+1.
     if zle.cur_change == 0 { return; }
     let mut current = zle.cur_change - 1;                                    // c:1735 prev
@@ -1188,7 +1186,6 @@ pub fn mergeundo(zle: &mut crate::ported::zle::zle_main::Zle) {              // 
 /// from `zle.cur_change` calling `applychange` on each; returns 0
 /// on success, 1 when nothing to redo.
 pub fn redo(zle: &mut crate::ported::zle::zle_main::Zle) -> i32 {            // c:1661
-    use crate::ported::zle::zle_h::{CH_NEXT, CH_PREV};
     loop {
         if zle.cur_change >= zle.undo_stack.len() { return 1; }              // c:1664
         let cur_idx = zle.cur_change;
@@ -1328,7 +1325,6 @@ pub fn stringaszleline(s: &str) -> Vec<char> {                               // 
 /// `ch->ins` at `ch->off` and re-inserts `ch->del`.
 /// WARNING: param names don't match C — Rust=(zle, ch) vs C=(ch)
 pub fn unapplychange(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) -> i32 { // c:1634
-    use crate::ported::zle::zle_h::{CH_NEXT, CH_PREV};
     let idx = ch as usize;
     if idx >= zle.undo_stack.len() { return 0; }
     let change = zle.undo_stack[idx].clone();
@@ -1359,7 +1355,6 @@ pub fn unapplychange(zle: &mut crate::ported::zle::zle_main::Zle, ch: i32) -> i3
 /// "single step") or at `undo_limitno`. Returns 0 on success,
 /// 1 when nothing left to undo.
 pub fn undo(zle: &mut crate::ported::zle::zle_main::Zle, args: &[String]) -> i32 { // c:1601
-    use crate::ported::zle::zle_h::{CH_NEXT, CH_PREV};
     let last_change: i64 = if !args.is_empty() {                             // c:1605
         args[0].parse().unwrap_or(-1)
     } else {

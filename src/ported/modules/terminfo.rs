@@ -17,6 +17,8 @@
 //! matching zsh's `PM_UNSET` fallback (terminfo.c:165-168).
 
 use crate::ported::utils::zwarnnam;
+use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
+use std::sync::atomic::Ordering;
 
 // FFI bindings to the system ncurses terminfo interface. Direct
 // port of the call sites in `zsh/Src/Modules/terminfo.c`. macOS
@@ -45,8 +47,6 @@ extern "C" {
 /// WARNING: param names don't match C — Rust=(name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_echoti(name: &str, argv: &[String],                               // c:64
                   _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
-    use std::sync::atomic::Ordering;
     const TERM_BAD: i32 = 1 << 1;
 
     if argv.is_empty() {
@@ -147,9 +147,6 @@ pub fn bin_echoti(name: &str, argv: &[String],                               // 
 /// per-module init function shape.
 /// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
 pub fn getterminfo(name: &str) -> Option<String> {                       // c:135
-    use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
-    use std::sync::OnceLock;
-    use std::sync::atomic::Ordering;
     const TERM_BAD: i32 = 1 << 1;
 
     // c:142 — `if (termflags & TERM_BAD) return NULL;`
@@ -322,13 +319,10 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 /// model the ScanFunc callback shape; iteration order matches C.
 /// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
 pub fn scanterminfo() -> Vec<(String, String)> {                         // c:177
-    use std::sync::OnceLock;
     let mut out = Vec::new();
 
     // c:152-153 — `if (termflags & TERM_BAD) return;`. The full
     // termflag check at getterminfo's entry mirrors here too.
-    use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
-    use std::sync::atomic::Ordering;
     const TERM_BAD: i32 = 1 << 1;
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 { return out; }
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {

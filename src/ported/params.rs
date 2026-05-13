@@ -17,6 +17,12 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use crate::ported::zsh_h::{
     gsu_array, gsu_float, gsu_hash, gsu_integer, gsu_scalar
 };
+use crate::ported::zsh_h::VALFLAG_SUBST;
+use crate::ported::zsh_h::{Param, hashnode, isset as isset_opt};
+use fusevm::Value;
+use crate::ported::zsh_h::Marker;
+use crate::ported::zsh_h::{SCANPM_ISVAR_AT, SCANPM_NONAMEREF};
+use crate::ported::zsh_h::SCANPM_WANTINDEX;
 
 #[allow(unused_imports)]
 use crate::ported::zsh_h::{
@@ -938,9 +944,6 @@ pub fn getintvalue(v: Option<&mut crate::ported::zsh_h::value>) -> i64 {
 /// (`pm->gsu.s->getfn(pm)`). Then PM_LEFT/PM_RIGHT_B/PM_RIGHT_Z
 /// padding when VALFLAG_SUBST is set.
 pub fn getstrvalue(v: Option<&mut crate::ported::zsh_h::value>) -> String {
-    use crate::ported::zsh_h::{
-        PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, VALFLAG_SUBST,
-    };
 
     let v = match v { Some(v) => v, None => return String::new() };
     // c:2344-2348 — `if (VALFLAG_INV && !PM_HASHED) return sprintf("%d", v->start)`.
@@ -1249,9 +1252,6 @@ pub fn setaparam(name: &str, val: Vec<String>)                              // c
 pub fn assignsparam(s: &str, val: &str, flags: i32)                          // c:3193
     -> Option<crate::ported::zsh_h::Param>
 {
-    use crate::ported::zsh_h::{
-        Param, hashnode, param, ALLEXPORT, isset as isset_opt,
-    };
 
     // c:3203 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
     if !isident(s) {
@@ -1489,10 +1489,6 @@ pub fn assignaparam(
     val: Vec<String>,
     flags: i32,
 ) -> Option<crate::ported::zsh_h::Param> {                                   // c:3357
-    use crate::ported::zsh_h::{
-        ASSPM_AUGMENT, PM_ARRAY, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER,
-        PM_NAMEREF, PM_SPECIAL, PM_UNIQUE, PM_UNSET,
-    };
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
         crate::ported::utils::zerr(&format!("not an identifier: {}", name));
@@ -1564,10 +1560,6 @@ pub fn assignaparam(
 pub fn sethparam(name: &str, val: Vec<String>)                              // c:3602
     -> Option<crate::ported::zsh_h::Param>
 {
-    use crate::ported::zsh_h::{
-        PM_ARRAY, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF,
-        PM_SPECIAL,
-    };
 
     // c:3611-3615 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
@@ -2177,9 +2169,6 @@ pub fn getarrvalue(arr: &[String], start: i64, end: i64) -> Vec<String> {
 /// after assign (c:2966-2967), VALFLAG_INV + !KSHARRAYS off-by-one
 /// (c:2938-2942).
 pub fn setarrvalue(v: &mut crate::ported::zsh_h::value, val: Vec<String>) {  // c:2895
-    use crate::ported::zsh_h::{
-        PM_HASHED, PM_READONLY, PM_TYPE, VALFLAG_EMPTY,
-    };
 
     let pm = match v.pm.as_mut() { Some(p) => p, None => return };
 
@@ -3075,7 +3064,6 @@ pub(crate) fn getarg<'a>(
     //   `k`: keymatch+rev=1 → match KEYS, return VALUE of first match
     //   `K`: keymatch+rev+down=1 → match KEYS, return ALL matching VALUEs
     if let Some(map) = assoc {
-        use fusevm::Value;
         let exact = flags.contains('e');
         let key_match = flags.contains('k') || flags.contains('K');
         let return_index = flags.contains('i') || flags.contains('I');
@@ -3155,7 +3143,6 @@ pub(crate) fn getarg<'a>(
     // `for (r = 1 + beg, p = ta + beg; *p; r++, p++) if (pprog &&
     // pattry(pprog, *p)) return r`.
     if let Some(arr) = arr {
-        use fusevm::Value;
         // C params.c:1761-1797 — `(w)N` / `(f)N` word-mode arm.
         // `getstrvalue(v)` joins the array; `sepsplit` re-splits by
         // sep (`f` → "\n", `w` → IFS-default whitespace, `s:SEP:`
@@ -3295,7 +3282,6 @@ pub(crate) fn getarg<'a>(
     // word is returned. Pattern-search variants on scalars share
     // the c:1798-1980 char-search arm which is not yet ported.
     if let Some(s) = scalar {
-        use fusevm::Value;
         if flags.contains('w') || flags.contains('f') {
             if let Ok(n) = pat.parse::<i64>() {
                 let sep_chars: &[char] = if flags.contains('f') {
@@ -3851,7 +3837,6 @@ pub fn setsecondstype(                                                       // 
     on: i32,
     off: i32,
 ) -> i32 {
-    use crate::ported::zsh_h::{PM_EFLOAT, PM_FFLOAT, PM_INTEGER, PM_TYPE};
     // c:4632 — `int newflags = (pm->flags | on) & ~off`.
     let newflags = (pm.node.flags | on) & !off;
     // c:4633 — `int tp = PM_TYPE(newflags)`.
@@ -4086,7 +4071,6 @@ pub fn terminfodirssetfn(x: String) {
 ///   `if (unset(INTERACTIVE) || !*term) termflags |= TERM_UNKNOWN;
 ///    else init_term();`
 pub fn term_reinit_from_pm() {                                               // c:5163
-    use std::sync::atomic::Ordering;
     // c:5167 — `if (unset(INTERACTIVE) || !*term) termflags |= TERM_UNKNOWN;`
     let interactive = crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
     let term = term_lock().lock().map(|s| s.clone()).unwrap_or_default();
@@ -4464,7 +4448,6 @@ pub fn delenvvalue(name: &str) {                                             // 
 /// paramtab. The return type changes from `void` to `i32` so
 /// callers can chain it; 0 = success, 1 = zputenv failed.
 pub fn addenv(name: &str, value: &str) -> i32 {                              // c:5448
-    use crate::ported::zsh_h::PM_EXPORTED;
 
     // c:5463 — `newenv = mkenvstr(pm->nam, value, pm->flags)`.
     let flags = {
@@ -4609,9 +4592,6 @@ pub fn split_env_string(env: &str) -> Option<(String, String)> {             // 
 ///      `((struct tieddata *)pm->u.data)->joinchar` (c:5314-5318).
 ///   6. `addenv(pm, t ? zjoin(t, joinchar, 1) : "")` (c:5319).
 pub fn arrfixenv(s: &str, t: Option<&[String]>) {                            // c:5285
-    use crate::ported::zsh_h::{
-        ALLEXPORT, PM_DEFAULTED, PM_EXPORTED, PM_HASHELEM, PM_SPECIAL,
-    };
 
     // c:5291 — `if (t == path) cmdnamtab->emptytable(cmdnamtab)`.
     // PATH change invalidates the command-name cache.
@@ -4946,7 +4926,6 @@ pub fn arrhashsetfn(                                                         // 
     val: Vec<String>,
     _flags: i32,
 ) {
-    use crate::ported::zsh_h::Marker;
 
     // c:4124-4127 — count non-Marker entries.
     let alen: usize = val
@@ -5085,7 +5064,6 @@ pub fn tiedarrgetfn(pm: &crate::ported::zsh_h::param) -> Vec<String> {
 /// the joinchar field on the C-side tieddata wasn't ported to the
 /// Rust Param struct yet).
 pub fn tiedarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) { // c:4357
-    use crate::ported::zsh_h::{PM_DEFAULTED, PM_UNIQUE};
 
     // c:4361-4368 — free old / clear PM_DEFAULTED on tied counterpart.
     if pm.u_arr.is_none() {
@@ -5137,7 +5115,6 @@ pub fn tiedarrsetfn(pm: &mut crate::ported::zsh_h::param, x: Option<String>) { /
 ///   pm->flags &= ~PM_TIED;                  // c:4393
 ///   pm->flags |= PM_UNSET;                  // c:4393
 pub fn tiedarrunsetfn(pm: &mut crate::ported::zsh_h::param, _exp: i32) {     // c:4393
-    use crate::ported::zsh_h::{PM_TIED, PM_UNSET};
     // c:4400 — invoke the scalar setfn with NULL (frees backing array).
     tiedarrsetfn(pm, None);
     // c:4401-4403 — drop tieddata.
@@ -5681,7 +5658,6 @@ fn dontimport(flags: i32) -> i32 {                                           // 
 ///   The rest of the C body (ALLEXPORT toggle, set_pwd_env,
 ///   signals[] build with SIGRTMIN..MAX) is fully wired below.
 pub fn createparamtable() {                                                  // c:817
-    use crate::ported::zsh_h::{PM_EXPORTED, PM_SPECIAL, PM_UNSET};
 
     // c:835 — `paramtab = realparamtab = newparamtable(151, "paramtab")`.
     let _ = paramtab();
@@ -6072,7 +6048,6 @@ pub fn createparamtable() {                                                  // 
 pub fn createspecialhash(name: &str, flags: i32)                             // c:1182
     -> Option<crate::ported::zsh_h::Param>
 {
-    use crate::ported::zsh_h::{PM_HASHED, PM_SPECIAL};
 
     // c:1186 — `createparam(name, PM_SPECIAL|PM_HASHED|flags)`.
     let mut pm = createparam(name, (PM_SPECIAL | PM_HASHED) as i32 | flags)?;
@@ -6390,7 +6365,6 @@ pub fn freeparamnode(mut _hn: crate::ported::zsh_h::Param) {                 // 
 pub fn getparamnode(ht: &crate::ported::zsh_h::HashTable, nam: &str)         // c:570
     -> Option<crate::ported::zsh_h::Param>
 {
-    use crate::ported::zsh_h::PM_UNSET;
     // c:572 — `pm = loadparamnode(ht, gethashnode2(ht, nam), nam)`.
     let pm = paramtab().read().unwrap().get(nam).cloned();
     let pm = loadparamnode(ht, pm, nam);
@@ -6440,10 +6414,6 @@ pub fn fetchvalue<'a>(                                                       // 
     bracks: i32,
     scanflags: i32,
 ) -> Option<&'a mut crate::ported::zsh_h::value> {
-    use crate::ported::zsh_h::{
-        PM_ARRAY, PM_DECLARED, PM_HASHED, PM_NAMEREF, PM_TYPE, PM_UNSET,
-        SCANPM_ARRONLY, SCANPM_ISVAR_AT, SCANPM_NONAMEREF,
-    };
 
     let s = *pptr;
     let bytes = s.as_bytes();
@@ -6595,10 +6565,6 @@ pub fn fetchvalue<'a>(                                                       // 
 ///     `[(I)pat]` route through getarg's separate dispatcher
 ///     because the Rust getarg has a different signature from C.
 pub fn getindex(pptr: &mut &str, v: &mut crate::ported::zsh_h::value, scanflags: i32) -> i32 { // c:2001
-    use crate::ported::zsh_h::{
-        SCANPM_ISVAR_AT, SCANPM_KEYMATCH, SCANPM_MATCHKEY, SCANPM_MATCHMANY,
-        SCANPM_MATCHVAL, SCANPM_WANTINDEX, VALFLAG_EMPTY, VALFLAG_INV,
-    };
 
     let s = *pptr;
     // c:2006 — `*s++ = '['`. Caller asserts s[0] is '[' (or its
@@ -6810,7 +6776,6 @@ pub fn loadparamnode(                                                        // 
     pm: Option<crate::ported::zsh_h::Param>,
     nam: &str,
 ) -> Option<crate::ported::zsh_h::Param> {
-    use crate::ported::zsh_h::PM_AUTOLOAD;
 
     // c:546 — `if (pm && (pm->flags & PM_AUTOLOAD) && pm->u.str)`.
     let (level, modname) = match &pm {
@@ -6914,9 +6879,6 @@ pub fn newparamtable(size: i32, name: &str)
 /// Port of `paramvalarr(HashTable ht, int flags)` from `Src/params.c:689`.
 #[allow(unused_variables)]
 pub fn paramvalarr(ht: &crate::ported::zsh_h::HashTable, flags: i32) -> Vec<String> {  // c:689
-    use crate::ported::zsh_h::{
-        PM_HASHELEM, PM_UNSET, SCANPM_WANTINDEX, SCANPM_WANTKEYS, SCANPM_WANTVALS,
-    };
 
     let flags_u = flags as u32;
     let want_keys = (flags_u & SCANPM_WANTKEYS) != 0;
@@ -7384,7 +7346,6 @@ pub fn scanparamvals(                                                        // 
     pm: &mut crate::ported::zsh_h::param,
     flags: i32,
 ) {
-    use std::sync::atomic::Ordering;
     let f = flags as u32;
     if NUMPARAMVALS.load(Ordering::Relaxed) != 0
         && (f & SCANPM_MATCHMANY) == 0

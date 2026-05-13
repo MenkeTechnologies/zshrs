@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::zle_thingy::Thingy;
+use std::io::Write;
 
 // =====================================================================
 // Flag constants — `Src/Zle/zle_keymap.c:62/83/114-115`.
@@ -1127,7 +1128,6 @@ pub fn addkeybuf(zle: &mut crate::ported::zle::zle_main::Zle, c: i32) {      // 
 /// old Arc (preserves C's "all sharing names see the change"
 /// semantic).
 pub fn bin_bindkey_bind(name: &str, args: &[String], func: char) -> i32 {    // c:999
-    use crate::ported::zle::zle_thingy::Thingy;
 
     let Some(old_arc) = openkeymap(name) else { return 1; };                 // c:1002
     // c:1003-1011 — bind seq+target pairs need even argv count
@@ -1239,7 +1239,6 @@ pub fn bin_bindkey_link(args: &[String]) -> i32 {                            // 
 /// named keymap as a `bindkey -K kmname <seq> <command>` line on
 /// stdout, matching the C output format.
 pub fn bin_bindkey_list(name: &str, _ops: &[String]) -> i32 {                // c:1094
-    use std::io::Write;
     let Some(km) = openkeymap(name) else { return 1; };                      // c:1098
     let mut stdout = std::io::stdout().lock();
 

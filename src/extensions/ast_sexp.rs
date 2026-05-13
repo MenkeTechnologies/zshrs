@@ -54,6 +54,7 @@ use crate::ported::zsh_h::{
     REDIR_HEREDOC, REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT,
     REDIR_OUTPIPE, REDIR_READ, REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW,
 };
+use std::fmt::Write;
 
 /// Convert a parsed `ZshProgram` to canonical sexp.
 /// zshrs-original — no C counterpart. The closest C analog is
@@ -458,7 +459,6 @@ fn emit_str(s: &str, out: &mut String) {
             b'\t' => out.push_str("\\t"),
             0x20..=0x7e => out.push(b as char),
             _ => {
-                use std::fmt::Write;
                 let _ = write!(out, "\\x{:02x}", b);
             }
         }

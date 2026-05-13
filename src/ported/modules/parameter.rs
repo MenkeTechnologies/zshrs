@@ -15,6 +15,10 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use crate::ported::zsh_h::{PM_AUTOLOAD, PM_ARRAY, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER, };
+use crate::ported::zsh_h::{SCANPM_WANTVALS, SCANPM_MATCHVAL, SCANPM_WANTKEYS};
+use crate::ported::zsh_h::{nameddir, hashnode};
+use crate::ported::zsh_h::ND_USERNAME;
 
 /// Port of `struct pardef` from `Src/Modules/parameter.c:2179`. The
 /// per-magic-assoc parameter spec table — one entry per
@@ -69,12 +73,6 @@ pub struct pardef {                                                          // 
 /// C: `static char *paramtypestr(Param pm)` — render a parameter's
 /// type and modifier flags as the `typeset -p` flag string.
 pub fn paramtypestr(pm: &crate::ported::zsh_h::param) -> String {            // c:43
-    use crate::ported::zsh_h::{
-        PM_AUTOLOAD, PM_ARRAY, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED,
-        PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF,
-        PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SCALAR, PM_SPECIAL,
-        PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER,
-    };
 
     let f: u32 = pm.node.flags as u32;                                       // c:46
 
@@ -249,7 +247,6 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 #[allow(non_snake_case)]
 pub fn assignaliasdefs(pm: *mut crate::ported::zsh_h::param,                 // c:1867
                        flags: i32) {
-    use crate::ported::zsh_h::{PM_SCALAR, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED};
     if !pm.is_null() {
         unsafe { (*pm).node.flags = PM_SCALAR as i32; }                      // c:1869
     }
@@ -470,7 +467,6 @@ use crate::ported::zsh_h::{ALIAS_GLOBAL, DISABLED};
 /// WARNING: param names don't match C — Rust=(_alht, _ht, flags) vs C=(alht, ht, name, flags)
 pub fn getalias(_alht: *mut HashTable, _ht: *mut HashTable,                  // c:1901
                 name: &str, flags: i32) -> Option<Param> {
-    use crate::ported::zsh_h::{PM_UNSET, PM_SPECIAL, ALIAS_SUFFIX};
     let table = if (flags & ALIAS_SUFFIX) != 0 {
         crate::ported::hashtable::sufaliastab_lock()
     } else {
@@ -523,7 +519,6 @@ pub fn getalias(_alht: *mut HashTable, _ht: *mut HashTable,                  // 
 #[allow(non_snake_case)]
 pub fn getbuiltin(_ht: *mut HashTable, name: &str, _dis: i32)                // c:775
                   -> Option<Param> {
-    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
     // c:784 — builtintab[name] lookup. Static-link path: the BUILTINS
     // table in builtin.rs is the canonical source. Disabled-flag
     // tracking isn't yet wired; until it is, the `dis` arm collapses
@@ -568,7 +563,6 @@ pub fn getbuiltin(_ht: *mut HashTable, name: &str, _dis: i32)                // 
 /// WARNING: param names don't match C — Rust=() vs C=(ht, name, dis)
 pub fn getfunction(_ht: *mut HashTable, name: &str, _dis: i32)               // c:389
                    -> Option<Param> {
-    use crate::ported::zsh_h::{PM_SCALAR, PM_UNSET, PM_SPECIAL};
     let g = crate::ported::hashtable::shfunctab_lock().read().ok()?;
     let entry = g.get(name);                                                 // c:399 shfunctab[name]
     let (value, found) = if let Some(shf) = entry {
@@ -607,7 +601,6 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, _dis: i32)               // 
 /// WARNING: param names don't match C — Rust=() vs C=(ht, name, dis)
 pub fn getfunction_source(_ht: *mut HashTable, name: &str, _dis: i32)        // c:537
                           -> Option<Param> {
-    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
     let g = crate::ported::hashtable::shfunctab_lock().read().ok()?;
     let entry = g.get(name);
     let (value, found) = if let Some(shf) = entry {                          // c:545
@@ -664,7 +657,6 @@ pub fn getpmbuiltin(ht: *mut HashTable, name: &str) -> Option<Param> {       // 
 /// Port of `getpmcommand(UNUSED(HashTable ht), const char *name)` from `Src/Modules/parameter.c:213`.
 #[allow(unused_variables)]
 pub fn getpmcommand(ht: *mut HashTable, name: &str) -> Option<Param> {      // c:213
-    use crate::ported::zsh_h::{PM_SCALAR, PM_UNSET, PM_SPECIAL};
     let g = crate::ported::hashtable::cmdnamtab_lock().read().ok()?;
     let entry = g.get(name);                                                 // c:218 cmdnamtab->getnode
     let (value, found) = if let Some(cmd) = entry {                          // c:227
@@ -779,7 +771,6 @@ pub fn getpmgalias(ht: *mut HashTable, name: &str) -> Option<Param> {        // 
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn getpmhistory(ht: *mut HashTable, name: &str) -> Option<Param> {      // c:1156
-    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
     let num: i64 = name.parse().ok()?;                                       // c:1159 quietgetn
     let value = crate::ported::hist::quietgethist(num)                       // c:1184
         .map(|e| e.node.nam.clone());
@@ -845,7 +836,6 @@ pub fn getpmmodule(ht: *mut HashTable, name: &str) -> Option<Param> {       // c
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn getpmnameddir(ht: *mut HashTable, name: &str) -> Option<Param> {     // c:1597
-    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
     let cname = std::ffi::CString::new(name).ok()?;
     let pwd = unsafe { libc::getpwnam(cname.as_ptr()) };                     // c:1611
     let (value, found) = if !pwd.is_null() {
@@ -894,7 +884,6 @@ pub fn getpmnameddir(ht: *mut HashTable, name: &str) -> Option<Param> {     // c
 /// PM_SCALAR | PM_READONLY | PM_UNSET | PM_SPECIAL Param with empty
 /// `u.str`.
 fn make_empty_special_pm(name: &str) -> Param {
-    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
     Box::new(crate::ported::zsh_h::param {
         node: crate::ported::zsh_h::hashnode {
             next: None, nam: name.to_string(),
@@ -913,7 +902,6 @@ fn make_empty_special_pm(name: &str) -> Param {
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn getpmoption(ht: *mut HashTable, name: &str) -> Option<Param> {       // c:988
-    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
     // c:991-1010 — synth Param: u.str = (isset(opt)) ? "on" : "off".
     // Static-link path: there is no global Options accessor inside
     // src/ported/ (intentionally — Options state is held by the
@@ -952,7 +940,6 @@ pub fn getpmoption(ht: *mut HashTable, name: &str) -> Option<Param> {       // c
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn getpmparameter(ht: *mut HashTable, name: &str) -> Option<Param> {    // c:99
-    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
     // Static-link path: paramtab isn't a globally-accessible table
     // in Rust; the executor owns var/array/assoc maps. Probe the
     // env-var bridge as the closest stand-in: present → "scalar"
@@ -1002,7 +989,6 @@ pub fn getpmsalias(ht: *mut HashTable, name: &str) -> Option<Param> {        // 
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn getpmuserdir(ht: *mut HashTable, name: &str) -> Option<Param> {      // c:1646
-    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
     // c:1651 — `nameddirtab->filltable(nameddirtab);` populates the
     // nameddir table from /etc/passwd. Static-link path: query
     // getpwnam(3) directly; same data source.
@@ -1037,7 +1023,6 @@ pub fn getpmuserdir(ht: *mut HashTable, name: &str) -> Option<Param> {      // c
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn getpmusergroups(ht: *mut HashTable, name: &str) -> Option<Param> {   // c:2102
-    use crate::ported::zsh_h::{PM_SCALAR, PM_READONLY, PM_UNSET, PM_SPECIAL};
     // c:2106 — `Groupset gs = get_all_groups();` then walk gs->array
     // matching name → gid. Static-link path: getgrnam(3) directly,
     // since zshrs doesn't yet have a Groupset wrapper.
@@ -1300,8 +1285,6 @@ pub fn scanpmbuiltins(ht: *mut HashTable, func: Option<ScanFunc>,            // 
 /// WARNING: param names don't match C — Rust=(_ht, func) vs C=(ht, func, flags)
 pub fn scanpmcommands(_ht: *mut HashTable, func: Option<ScanFunc>,           // c:245
                       flags: i32) {
-    use crate::ported::zsh_h::{PM_SCALAR, SCANPM_WANTVALS,
-                               SCANPM_MATCHVAL, SCANPM_WANTKEYS};
     // c:253 — `if (isset(HASHLISTALL)) cmdnamtab->filltable(...)`. The
     // filltable variant scans $PATH and inserts every executable into
     // cmdnamtab; without HASHLISTALL only previously-hashed entries
@@ -1858,7 +1841,6 @@ pub fn setpmnameddir(pm: Param, value: String) {                             // 
     // signature takes owned String so NULL is unreachable; we keep the
     // else branch only. Empty string still creates an entry per C
     // semantics (`!value` is only true for the NULL pointer).
-    use crate::ported::zsh_h::{nameddir, hashnode};
     let nd = nameddir {                                                       // c:1524 zshcalloc
         node: hashnode {                                                      // c:1526 flags = 0
             next: None,
@@ -1878,7 +1860,6 @@ pub fn setpmnameddir(pm: Param, value: String) {                             // 
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn setpmnameddirs(pm: Param, ht: *mut HashTable) {                      // c:1544
-    use crate::ported::zsh_h::{nameddir, hashnode, ND_USERNAME};
     // c:1546-1547 — locals at function top (C: `int i; HashNode hn, next, hd;`).
     let mut i: i32;                                                          // c:1546 int i
     let mut hn: Option<crate::ported::zsh_h::HashNode>;                      // c:1547 HashNode hn

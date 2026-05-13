@@ -16,6 +16,7 @@
 
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{module, options};
+use std::ffi::{CStr, CString};
 
 // =====================================================================
 // libcap FFI — declared in `<sys/capability.h>` (libcap), not libc.
@@ -52,7 +53,6 @@ mod ffi {
 #[cfg(all(target_os = "linux", feature = "libcap"))]
 /// WARNING: param names don't match C — Rust=(argv, _ops, _func) vs C=(nam, argv, ops, func)
 pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 { // c:36
-    use std::ffi::{CStr, CString};
 
     let mut ret = 0;
     if let Some(arg0) = argv.first() {
@@ -131,7 +131,6 @@ pub(crate) fn bin_cap(nam: &str, _argv: &[String], _ops: &options, _func: i32) -
 #[cfg(all(target_os = "linux", feature = "libcap"))]
 /// WARNING: param names don't match C — Rust=(argv, _ops, _func) vs C=(nam, argv, ops, func)
 pub(crate) fn bin_getcap(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
-    use std::ffi::{CStr, CString};
 
     let mut ret = 0;
     // C: do { ... } while(*++argv);
@@ -188,7 +187,6 @@ pub(crate) fn bin_getcap(nam: &str, _argv: &[String], _ops: &options, _func: i32
 #[cfg(all(target_os = "linux", feature = "libcap"))]
 /// WARNING: param names don't match C — Rust=(argv, _ops, _func) vs C=(nam, argv, ops, func)
 pub(crate) fn bin_setcap(nam: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
-    use std::ffi::CString;
 
     let mut ret = 0;
     let cap_str = match argv.first() {

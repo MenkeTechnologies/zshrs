@@ -32,6 +32,8 @@
 //! lookup is no-op until `pm->gsu.s` is a real vtable pointer.
 
 use crate::ported::utils::zwarnnam;
+use crate::ported::zsh_h::OPT_ISSET;
+use std::sync::atomic::Ordering;
 
 /// Port of `struct gsu_closure` from `Src/Modules/param_private.c:34`.
 /// Wraps a copy of the original GSU table (one variant per param type)
@@ -565,8 +567,6 @@ pub fn pph_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
 pub fn bin_private(nam: &str, args: &[String],                               // c:217
                    ops: &mut crate::ported::zsh_h::options, func: i32,
                    assigns: &mut Vec<(String, String)>) -> i32 {
-    use crate::ported::zsh_h::OPT_ISSET;
-    use std::sync::atomic::Ordering;
     // c:220 — `int from_typeset = 1;`
     let mut from_typeset: i32 = 1;                                            // c:220
     // c:221 — `int ofake = fakelevel;`

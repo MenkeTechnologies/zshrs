@@ -32,6 +32,12 @@ use crate::ported::zle::comp_h::{
     CGF_UNIQALL, CGF_UNIQCON, CMF_DELETE, CMF_DISPLINE, CMF_FMULT, CMF_MULT, CMF_NOLIST,
     CMF_PACKED, CMF_PARBR, CMF_PARNEST, CMF_ROWS,
 };
+use crate::ported::zle::complete::{COMPIPREFIX, COMPPREFIX, COMPSUFFIX};
+use crate::ported::zle::zle_tricky::{MENUCMP, USEMENU};
+use crate::ported::zle::complete::COMPLIST;
+use crate::ported::zle::zle_tricky::{USEGLOB, WOULDINSTAB};
+use crate::ported::zsh_h::{Dnull, Equals, Hat, Inbrack, Inpar, Outpar, Pound, Qstring, Quest, Snull, Star, Tilde};
+use crate::ported::zle::comp_h::{CAF_ALL, CAF_MATSORT, CAF_NOSORT, CAF_NUMSORT, CAF_QUOTE, CAF_REVSORT, CAF_UNIQALL, CAF_UNIQCON};
 
 // =====================================================================
 // Extern globals — declared in other C files, mirrored here per
@@ -394,7 +400,6 @@ pub fn ctokenize(p: &str) -> String {                                        // 
 /// Port of `mod_export char *comp_str(int *ipl, int *pl, int untok)`
 /// from compcore.c:1402.
 pub fn comp_str(untok: bool) -> (String, i32, i32) {                         // c:1403
-    use crate::ported::zle::complete::{COMPIPREFIX, COMPPREFIX, COMPSUFFIX};
     let mut p = COMPPREFIX.get_or_init(|| Mutex::new(String::new()))         // c:1405
         .lock().unwrap().clone();
     let mut s = COMPSUFFIX.get_or_init(|| Mutex::new(String::new()))         // c:1406
@@ -507,7 +512,6 @@ pub fn tildequote(s: &str, ign: i32) -> String {                             // 
 /// Port of `int before_complete(Hookdef dummy, int *lst)` from
 /// compcore.c:461.
 pub fn before_complete(lst: &mut i32) -> i32 {                               // c:461
-    use crate::ported::zle::zle_tricky::{MENUCMP, USEMENU};
     let _ = lst;
     OLDMENUCMP.store(MENUCMP.load(Ordering::Relaxed), Ordering::Relaxed);    // c:463
     if startauto.load(Ordering::Relaxed) != 0 {                              // c:503
@@ -523,7 +527,6 @@ pub fn before_complete(lst: &mut i32) -> i32 {                               // 
 /// Port of `int after_complete(Hookdef dummy, int *dat)` from
 /// compcore.c:503.
 pub fn after_complete(_dat: &mut [i32]) -> i32 {                             // c:503
-    use crate::ported::zle::zle_tricky::MENUCMP;
     let _menucmp = MENUCMP.load(Ordering::Relaxed);
     let _oldmenucmp = OLDMENUCMP.load(Ordering::Relaxed);
     0                                                                        // c:535
@@ -632,7 +635,6 @@ pub fn addmatch(str: &str, flags: i32, disp: Option<&str>, line: bool) {    // c
     // c:2049-2051 — inline read of `complist` parameter, parse `packed`/
     // `rows` substrings into CMF_PACKED/CMF_ROWS flag bits.
     let complist_extra = {
-        use crate::ported::zle::complete::COMPLIST;
         let s = COMPLIST.get_or_init(|| Mutex::new(String::new()))
             .lock().map(|g| g.clone()).unwrap_or_default();
         let packed = if s.contains("packed") { CMF_PACKED } else { 0 };      // c:2050
@@ -859,7 +861,6 @@ pub fn freematches(_g: Vec<Cmgroup>) {                                       // 
 /// state reset → `makecomplist` → dispatch to `do_ambiguous` /
 /// `do_single` / `do_allmatches` per result count.
 pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {                 // c:287
-    use crate::ported::zle::zle_tricky::{USEGLOB, WOULDINSTAB};
 
     let osl = crate::ported::zle::zle_refresh::SHOWINGLIST.load(Ordering::Relaxed);                                            // c:289
     let mut ret: i32 = 0;                                                    // c:289
@@ -1305,7 +1306,6 @@ fn lastpostbr_set(s: &str) {                                                  //
 /// (`comprpms`/`compkpms`) + result-readback is stubbed locally
 /// per PORT.md Rule 9 until `params.c` substrate lands.
 pub fn callcompfunc(s: &str, fn_name: &str) {                                // c:544
-    use crate::ported::zle::zle_tricky::USEGLOB;
 
     if fn_name.is_empty() { return; }                                        // c:552 getshfunc(NULL)
     let _lv  = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);                                               // c:548 int lv = lastval
@@ -1439,10 +1439,6 @@ fn set_compstate_str(key: &str, val: &str) {                                  //
 /// `parpre`/`parflags`/`mflags`/`wb`/`we`/`offs` (when `set`).
 /// Returns `None` when there's no parameter expression at the cursor.
 pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {        // c:1113
-    use crate::ported::zsh_h::{
-        Bnull, Dnull, Equals, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outpar, Pound,
-        Qstring, Quest, Snull, Star, Stringg, Tilde,
-    };
 
     // c:1117-1118 — zsfree(parpre); parpre = NULL.
     if let Ok(mut g) = parpre.get_or_init(|| Mutex::new(String::new())).lock() {
@@ -1848,9 +1844,6 @@ static LEXSAVE_DEPTH: AtomicI32 = AtomicI32::new(0);                         // 
 pub fn addmatches(dat: &mut crate::ported::zle::comp_h::Cadata,              // c:2080
                   argv: &[String]) -> i32
 {
-    use crate::ported::zle::comp_h::{CAF_ALL, CAF_MATSORT, CAF_NOSORT,
-                                      CAF_NUMSORT, CAF_QUOTE, CAF_REVSORT,
-                                      CAF_UNIQALL, CAF_UNIQCON};
 
     let _nm = mnum.load(Ordering::Relaxed);                                  // c:2095 nm
 

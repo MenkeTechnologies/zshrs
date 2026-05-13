@@ -51,6 +51,12 @@
 use crate::ported::exec::{
     cached_regex, slice_array_zero_based, slice_positionals,
 };
+use crate::ported::zsh_h::{hashnode, param, Param, PM_ARRAY};
+use crate::ported::zsh_h::PM_HASHED;
+use std::sync::atomic::AtomicUsize;
+use crate::ported::modules::parameter::*;
+use crate::ported::zsh_h::{PM_INTEGER, PM_EFLOAT, PM_FFLOAT, PM_READONLY, PM_EXPORTED, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z, PM_UPPER, PM_LOWER, PM_HIDE, PM_HIDEVAL, PM_TAGGED, PM_UNIQUE};
+use std::ffi::CString;
 // `subst.rs` does NOT reach into `ShellExecutor` — every shell-state
 // read/write goes through the canonical C-named accessor (paramtab,
 // hashtable, options globals, etc.). Command-substitution `$(...)`
@@ -418,7 +424,6 @@ fn arrays_contains(name: &str) -> bool {
 /// Insert / replace an array parameter. Writes through the
 /// canonical paramtab as a `PM_ARRAY` entry.
 fn arrays_insert(name: String, value: Vec<String>) {
-    use crate::ported::zsh_h::{hashnode, param, Param, PM_ARRAY};
     let mut tab = match crate::ported::params::paramtab().write() {
         Ok(t) => t,
         Err(_) => return,
@@ -469,7 +474,6 @@ fn exec_assignaparam(name: &str, parts: Vec<String>) {
 /// argument follows the C `sethparam` convention: alternating
 /// key, value, key, value (`Src/params.c:3602`).
 fn exec_sethparam(name: &str, parts: Vec<String>) {
-    use crate::ported::zsh_h::{hashnode, param, Param, PM_HASHED};
     let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
     let mut it = parts.into_iter();
     while let (Some(k), Some(v)) = (it.next(), it.next()) {
@@ -2321,7 +2325,6 @@ pub fn paramsubst(
                     // Generate a stable per-call temp name. We use a
                     // process-local counter; cleanup happens at end of
                     // paramsubst (state.arrays.remove).
-                    use std::sync::atomic::{AtomicUsize, Ordering};
                     static SEQ: AtomicUsize = AtomicUsize::new(0);
                     let n = SEQ.fetch_add(1, Ordering::Relaxed);
                     let temp = format!("__subexp_arr_{}", n);
@@ -2593,7 +2596,6 @@ pub fn paramsubst(
                 // dispatch by calling the per-array `getpm<X>` ports.
                 // Each C fn returns a freshly-built `Param`; the
                 // value lives in `u_str`.
-                use crate::ported::modules::parameter::*;
                 let nul = std::ptr::null_mut();
                 let is_splice = sub == "@" || sub == "*";
                 let pm: Option<crate::ported::zsh_h::Param> = if is_splice {
@@ -3883,12 +3885,6 @@ pub fn paramsubst(
             value = crate::ported::params::paramtab().read()
                 .ok()
                 .and_then(|tab| tab.get(&var_name).map(|pm| {
-                    use crate::ported::zsh_h::{
-                        PM_ARRAY, PM_HASHED, PM_INTEGER, PM_EFLOAT, PM_FFLOAT,
-                        PM_READONLY, PM_EXPORTED, PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z,
-                        PM_UPPER, PM_LOWER, PM_HIDE, PM_HIDEVAL, PM_TAGGED,
-                        PM_UNIQUE,
-                    };
                     let f = pm.node.flags as u32;
                     let base = if f & PM_HASHED != 0 { "association" }
                           else if f & PM_ARRAY != 0 { "array" }
@@ -5089,7 +5085,6 @@ pub fn paramsubst(
                 // c:1625 — magic-assoc per-key lookup via the
                 // partab[] dispatch (Src/Modules/parameter.c:2234).
                 // See companion dispatch at the braced-form site.
-                use crate::ported::modules::parameter::*;
                 let nul = std::ptr::null_mut();
                 let pm: Option<crate::ported::zsh_h::Param> = if sub == "@" || sub == "*" {
                     None
@@ -5573,7 +5568,6 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> { // c:737
                 return Some(format!("{}{}", path, suffix));
             }
             // libc getpwnam — cstring -> pw_dir
-            use std::ffi::CString;
             if let Ok(cname) = CString::new(user.clone()) {
                 unsafe {
                     let pw = libc::getpwnam(cname.as_ptr());

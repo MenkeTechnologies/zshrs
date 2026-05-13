@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::io::BufRead;
 use std::time::{SystemTime, UNIX_EPOCH};
+use chrono::{Local, TimeZone};
 
 #[cfg(unix)]
 use std::ffi::CStr;
@@ -301,34 +302,29 @@ pub fn watch3ary(entry: &libc::utmpx, logged_in: bool, fmt: &str) -> String { //
                     'M' => result.push_str(&host),
                     't' | '@' => {
                         // c:319-320 — strftime(buf2, sizeof(buf2), "%l:%M%p", tm);
-                        use chrono::{Local, TimeZone};
                         if let Some(dt) = Local.timestamp_opt(time, 0).single() {
                             result.push_str(&dt.format("%l:%M%p").to_string());
                         }
                     }
                     'T' => {
                         // c:323-324 — strftime(buf2, sizeof(buf2), "%H:%M", tm);
-                        use chrono::{Local, TimeZone};
                         if let Some(dt) = Local.timestamp_opt(time, 0).single() {
                             result.push_str(&dt.format("%H:%M").to_string());
                         }
                     }
                     'w' => {
                         // c:327-328 — strftime(buf2, sizeof(buf2), "%a %e", tm);
-                        use chrono::{Local, TimeZone};
                         if let Some(dt) = Local.timestamp_opt(time, 0).single() {
                             result.push_str(&dt.format("%a %e").to_string());
                         }
                     }
                     'W' => {
                         // c:331-332 — strftime(buf2, sizeof(buf2), "%m/%d/%y", tm);
-                        use chrono::{Local, TimeZone};
                         if let Some(dt) = Local.timestamp_opt(time, 0).single() {
                             result.push_str(&dt.format("%m/%d/%y").to_string());
                         }
                     }
                     'D' => {
-                        use chrono::{Local, TimeZone};
                         if chars.peek() == Some(&'{') {
                             chars.next();
                             let mut custom_fmt = String::new();

@@ -16,6 +16,7 @@
 //! that support the executor's loop implementation.
 
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::io::Write;
 
 /// Number of nested loops.
 /// Port of the global `loops` counter from Src/loop.c — every
@@ -63,7 +64,6 @@ static BREAK_LEVEL: AtomicI32 = AtomicI32::new(0);
 /// source's terminal-width auto-detection.
 /// WARNING: param names don't match C — Rust=(items, start) vs C=(l, start)
 pub fn selectlist(items: &[&str], start: usize) -> usize {              // c:347
-    use std::io::Write;
     let mut stderr = std::io::stderr().lock();
 
     // c:351 — zleentry(ZLE_CMD_TRASH); — flush ZLE redraw state.

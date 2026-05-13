@@ -31,6 +31,13 @@
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicI32, AtomicI64};
+use crate::ported::zle::comp_h::Cmatcher;
+use crate::ported::zle::comp_h::{Cpattern, CPAT_CCLASS, CPAT_NCLASS, CPAT_EQUIV, CPAT_CHAR};
+use crate::ported::zle::comp_h::CAF_MATSORT;
+use crate::ported::zsh_h::{PM_TYPE, PM_SCALAR, PM_ARRAY, PM_HASHED};
+use crate::ported::utils::zwarnnam;
+use std::sync::atomic::Ordering;
+use crate::ported::pattern::{patcompile, pattry};
 
 // =====================================================================
 // Cmlist / Cmatcher / Cpattern allocators + freers — Src/Zle/complete.c.
@@ -108,7 +115,6 @@ pub fn freecpattern(p: Option<Box<crate::ported::zle::comp_h::Cpattern>>) {  // 
 pub fn cpcmatcher(m: Option<&crate::ported::zle::comp_h::Cmatcher>)          // c:155
     -> Option<Box<crate::ported::zle::comp_h::Cmatcher>>                     // c:155
 {
-    use crate::ported::zle::comp_h::Cmatcher;
     let mut head: Option<Box<Cmatcher>> = None;                              // c:158
     let mut tail_ref: *mut Option<Box<Cmatcher>> = &mut head;
     let mut cur = m;
@@ -146,8 +152,6 @@ pub fn cpcmatcher(m: Option<&crate::ported::zle::comp_h::Cmatcher>)          // 
 pub fn cp_cpattern_element(o: &crate::ported::zle::comp_h::Cpattern)         // c:187
     -> Box<crate::ported::zle::comp_h::Cpattern>
 {
-    use crate::ported::zle::comp_h::{Cpattern, CPAT_CCLASS, CPAT_NCLASS,
-                                       CPAT_EQUIV, CPAT_CHAR};
     let mut n = Cpattern::default();                                         // c:189 zalloc
     n.next = None;                                                           // c:191
     n.tp = o.tp;                                                             // c:193
@@ -169,7 +173,6 @@ pub fn cp_cpattern_element(o: &crate::ported::zle::comp_h::Cpattern)         // 
 pub fn cpcpattern(o: Option<&crate::ported::zle::comp_h::Cpattern>)
     -> Option<Box<crate::ported::zle::comp_h::Cpattern>>                     // c:218
 {
-    use crate::ported::zle::comp_h::Cpattern;
     let mut head: Option<Box<Cpattern>> = None;                              // c:222
     let mut tail_ref: *mut Option<Box<Cpattern>> = &mut head;
     let mut cur = o;
@@ -483,7 +486,6 @@ static ORDEROPTS: &[OrderOpt] = &[                                           // 
 /// receiving the accumulated CAF_* bitmask. Returns 0 on success,
 /// -1 on bad name.
 pub fn parse_ordering(arg: &str, flags: &mut Option<i32>) -> i32 {           // c:573
-    use crate::ported::zle::comp_h::CAF_MATSORT;
     let mut fl = 0i32;                                                       // c:575
     for opt_token in arg.split(',') {                                        // c:578-583
         // c:585-590 — walk orderopts[] in reverse, longest-match first.
@@ -590,7 +592,6 @@ pub fn makecompparams() {                                                    // 
 /// its inner hashtable + nulls out the global compkpms entries.
 /// Always nulls out the matching comprpms slot.
 pub fn compunsetfn(pm: *mut crate::ported::zsh_h::param, exp: i32) {         // c:1489
-    use crate::ported::zsh_h::{PM_TYPE, PM_SCALAR, PM_ARRAY, PM_HASHED};
     if pm.is_null() { return; }
     if exp != 0 {                                                            // c:1492
         // c:1494/1497/1500 — switch on PM_TYPE(pm->node.flags).
@@ -681,7 +682,6 @@ pub fn cond_range(a: &[String], id: i32) -> i32 {                            // 
 /// WARNING: param names don't match C — Rust=(name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_compadd(name: &str, argv: &[String],                              // c:603
                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
     if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {          // c:608
         zwarnnam(name, "can only be called from completion function");       // c:609
         return 1;                                                            // c:610
@@ -724,7 +724,6 @@ pub fn bin_compadd(name: &str, argv: &[String],                              // 
 /// WARNING: param names don't match C — Rust=(name, argv, _func) vs C=(name, argv, ops, func)
 pub fn bin_compset(name: &str, argv: &[String],                              // c:1137
                    _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
     let mut test = 0i32;                                                     // c:1141
     let mut na = 0i32;
     let mut nb;
@@ -833,8 +832,6 @@ pub fn bin_compset(name: &str, argv: &[String],                              // 
 /// WARNING: param names don't match C — Rust=(test, na, sa, sb, mod_) vs C=(test, na, sa, nb, sb, mod)
 pub fn do_comp_vars(test: i32, mut na: i32, sa: &str,                        // c:935
                     mut nb: i32, sb: &str, mod_: i32) -> i32 {
-    use std::sync::atomic::Ordering;
-    use crate::ported::pattern::{patcompile, pattry};
     match test {                                                             // c:937
         CVT_RANGENUM => {                                                    // c:938
             let words = COMPWORDS.get()

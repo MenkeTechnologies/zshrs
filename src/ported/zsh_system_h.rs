@@ -45,6 +45,7 @@
 /// Port of `#define PATH_MAX` from `Src/zsh_system.h:298`. Maximum
 /// path length. C falls back to MAXPATHLEN, _POSIX_PATH_MAX, then
 /// 1024; the Rust port uses libc's PATH_MAX.
+use std::os::unix::fs::MetadataExt;
 pub const PATH_MAX: usize = libc::PATH_MAX as usize;                     // c:298
 
 /// Port of `#define ZSH_INITIAL_OPEN_MAX` from `Src/zsh_system.h:307`.
@@ -416,7 +417,6 @@ pub fn GET_ST_MTIME_NSEC(st: &std::fs::Metadata) -> u32 {                // c:88
 pub fn GET_ST_CTIME_NSEC(st: &std::fs::Metadata) -> u32 {                // c:892
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
         st.ctime_nsec() as u32
     }
     #[cfg(not(unix))]

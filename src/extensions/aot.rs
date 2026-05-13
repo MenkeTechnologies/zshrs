@@ -53,6 +53,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::os::unix::fs::PermissionsExt;
 
 /// 8-byte trailer magic.
 pub const AOT_MAGIC: &[u8; 8] = b"ZSHRSAOT";
@@ -222,7 +223,6 @@ pub fn try_load_embedded(exe: &Path) -> Option<EmbeddedFiles> {
 
 #[cfg(unix)]
 fn set_executable(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
     if let Ok(meta) = fs::metadata(path) {
         let mut p = meta.permissions();
         p.set_mode(p.mode() | 0o111);

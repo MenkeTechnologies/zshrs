@@ -20,6 +20,7 @@
 use std::sync::atomic::AtomicI32;
 
 use super::zle_main::{Zle, ZleString};
+use std::sync::atomic::Ordering;
 
 // =====================================================================
 // Isearch globals — `Src/Zle/zle_hist.c:1078`.
@@ -863,7 +864,6 @@ pub fn beginningofhistory(args: &mut Zle) -> i32 {                            //
 /// Port of `doisearch(char **args, int dir, int pattern)` from Src/Zle/zle_hist.c:1082.
 /// WARNING: param names don't match C — Rust=(zle, dir) vs C=(args, dir, pattern)
 pub fn doisearch(zle: &mut Zle, dir: i32) -> i32 {                           // c:1082
-    use std::sync::atomic::Ordering;
     // C body c:1090-1730 — full incremental-search loop reads keys
     //                      via getkeycmd, mutates sbuf, repaints
     //                      status via tracing. Without that loop the

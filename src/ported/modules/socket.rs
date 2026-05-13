@@ -9,9 +9,9 @@
 /// C signature matches exactly: `static int bin_zsocket(char *nam,
 /// char **args, Options ops, UNUSED(int func))`.
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
+use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG, FDT_UNUSED, FDT_EXTERNAL};
 pub fn bin_zsocket(nam: &str, args: &[String],                           // c:57
                    ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
-    use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG, FDT_UNUSED, FDT_EXTERNAL};
     let mut soun: libc::sockaddr_un = unsafe { std::mem::zeroed() };
     let mut sfd: i32;
     let mut err: i32 = 1;                                                // c:60

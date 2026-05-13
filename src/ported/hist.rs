@@ -17,6 +17,9 @@ use crate::zsh_h::{
     INCAPPENDHISTORY, INCAPPENDHISTORYTIME, INTERACTIVE,
     SHAREHISTORY, SHINSTDIN,
 };
+use std::io::Write;
+use std::os::unix::io::AsRawFd;
+use std::path::Component::*;
 // =========================================================================
 // File-scope globals from hist.c
 // =========================================================================
@@ -845,7 +848,6 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {                                    // 
         if (flag & (HISTFLAG_DONE | HISTFLAG_RECALL)) == HISTFLAG_DONE {     // c:1557
             // zputs(ptr, shout); fputc('\n', shout); fflush(shout);         // c:1558-1560
             print!("{}\n", ptr);
-            use std::io::Write;
             let _ = std::io::stdout().flush();
         }
         if (flag & HISTFLAG_RECALL) != 0 {                                   // c:1562
@@ -1046,7 +1048,6 @@ pub fn unlockhistfile(path: &str) {
 pub fn flockhistfile(path: &str) -> i32 {
     #[cfg(unix)]
     {
-        use std::os::unix::io::AsRawFd;
         if let Ok(file) = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -1147,7 +1148,6 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {     // 
 
 /// Port of `void savehistfile(char *fn, int err, int writeflags)` from Src/hist.c:2922.
 pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {               // c:2922
-    use std::io::Write;
     let path: String = match fn_path {
         Some(p) => p.to_string(),
         None => match resolve_histfile() {
@@ -1408,7 +1408,6 @@ fn convamps(out: &str, in_pattern: &str) -> String {
 
 /// Port of `char *casemodify(char *str, int how)` from Src/hist.c:2196.
 pub fn casemodify(s: &str, how: i32) -> String {                              // c:2196
-    use crate::ported::zsh_h::{CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE, CASMOD_UPPER};
     let mut result = String::with_capacity(s.len());
     let mut nextupper = true;
     for c in s.chars() {
@@ -1748,7 +1747,6 @@ pub fn apply_history_modifiers(val: &str, modifiers: &str) -> String {
                     };
                     let mut parts: Vec<String> = Vec::new();
                     for comp in joined.components() {
-                        use std::path::Component::*;
                         match comp {
                             CurDir => {}
                             ParentDir => {

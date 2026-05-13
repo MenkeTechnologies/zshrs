@@ -11,6 +11,10 @@
 use std::collections::HashMap;
 use std::sync::atomic::AtomicI32;
 use crate::ported::utils::zwarnnam;
+use crate::ported::zsh_h::EMULATE_FULLY;
+use crate::ported::zsh_h::{APPENDHISTORY, BANGHIST, CHASELINKS, GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS, IGNOREBRACES, MAILWARNING, PROMPTSUBST, SHINSTDIN, SINGLECOMMAND, };
+use crate::ported::zsh_h::OPT_SIZE;
+use crate::ported::zsh_h as zh;
 
 /// Port of `mod_export int emulation;` from `Src/options.c:36`.
 /// Current emulation bitmap; one of EMULATE_ZSH / EMULATE_KSH /
@@ -942,7 +946,6 @@ pub fn setemulate(name: &str, fully: i32) {                                  // 
 /// happens in the caller (`emulate()` and `bin_emulate -L`).
 pub fn installemulation(new_emulation: i32,
                         new_opts: &mut std::collections::HashMap<String, bool>) { // c:523
-    use crate::ported::zsh_h::EMULATE_FULLY;
     // c:525 — `setemulate_emulation = new_emulation;`
     SETEMULATE_EMULATION
         .store(new_emulation, std::sync::atomic::Ordering::Relaxed);         // c:525
@@ -1002,10 +1005,6 @@ pub fn setoption(hn: &str, value: i32) -> i32 {
 /// (`braceexpand` → `-IGNOREBRACES`, `log` → `-HISTNOFUNCTIONS`,
 /// etc.). Returns `OPT_INVALID` when the name is unknown.
 pub fn optlookup(name: &str) -> i32 {                                        // c:684
-    use crate::ported::zsh_h::{
-        APPENDHISTORY, BANGHIST, CHASELINKS, GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS,
-        IGNOREBRACES, MAILWARNING, PROMPTSUBST, SHINSTDIN, SINGLECOMMAND,
-    };
 
     // c:689 — `s = t = dupstring(name);`
     // c:691-705 — strip `_` + lowercase.
@@ -1077,7 +1076,6 @@ pub fn optlookupc(c: char) -> i32 {                                          // 
 /// arms; this fn walks `0..OPT_SIZE` and matches the first idx that
 /// names to `name`.
 fn optno_by_name(name: &str) -> Option<i32> {
-    use crate::ported::zsh_h::OPT_SIZE;
     for idx in 1..OPT_SIZE {
         if index_to_name(idx) == Some(name) {
             return Some(idx);
@@ -1200,7 +1198,6 @@ pub fn dosetopt(optno: i32, mut value: i32, _force: i32) -> i32 {            // 
 ///     option changes that affect lexer/expansion
 pub fn bin_setopt(nam: &str, args: &[String],                                // c:580
                   _ops: &crate::ported::zsh_h::options, isun: i32) -> i32 {
-    use crate::ported::utils::zwarnnam;
     let mut retval = 0i32;
     let mut match_glob = false;                                              // c:582
     let mut idx = 0usize;
@@ -1561,7 +1558,6 @@ pub fn list_emulate_options(cmdopts: &std::collections::HashMap<String, bool>,
 /// implicit in the order of `OPT_*` enum entries paired with the
 /// `optns[]` array. This match collapses both into one lookup.
 fn index_to_name(idx: i32) -> Option<&'static str> {
-    use crate::ported::zsh_h as zh;
     let i = idx.unsigned_abs() as i32;
     Some(match i {
         x if x == zh::ALIASESOPT          => "aliases",

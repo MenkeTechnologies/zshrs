@@ -3073,7 +3073,6 @@ fn par_funcdef() -> Option<ZshCommand> {
                 }
                 crate::ported::lex::zshlex();
             }
-            use std::sync::atomic::{AtomicUsize, Ordering};
             static ANON_COUNTER: AtomicUsize = AtomicUsize::new(0);
             let n = ANON_COUNTER.fetch_add(1, Ordering::Relaxed);
             let name = format!("_zshrs_anon_kw_{}", n);
