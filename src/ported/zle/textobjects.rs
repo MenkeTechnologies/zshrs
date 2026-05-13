@@ -50,9 +50,9 @@ pub fn blankwordclass(x: char) -> i32 {                                  // c:34
 ///
 /// `virangeflag` is a `Src/Zle/zle_vi.c:36` file-global. The
 /// cursor-adjustment arm at `c:196-203` reads it. zshrs sets the
-/// flag during the live `vi`-operator-pending key-read loop on
-/// the Zle struct; standalone widget invocation reaches this fn
-/// with the flag clear, which is the only state the cursor-
+/// flag during the live `vi`-operator-pending key-read loop in the
+/// ZLE file-scope statics; standalone widget invocation reaches this
+/// fn with the flag clear, which is the only state the cursor-
 /// adjustment needs to handle (the `range`-set branch only fires
 /// from inside `getvirange`, which has its own copy).
 pub fn selectword() -> i32 {                                // c:41

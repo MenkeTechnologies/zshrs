@@ -337,9 +337,9 @@ impl ZleManager {
     /// Look up a widget name and report whether dispatch would succeed.
     /// Stub for the dispatch portion of `execzlefunc()` at
     /// Src/Zle/zle_main.c:1420; the actual run-the-widget machinery
-    /// lives on `Zle::execute_widget` (which has the lastcol/lastcmd
-    /// bookkeeping) and the `widget_*` function table. This method is
-    /// kept on ZleManager for callers querying availability.
+    /// is the free `execute_widget` fn (zle_main.rs) plus the
+    /// `widget_*` function table. This method is kept on ZleManager
+    /// for callers querying availability.
     pub fn execute_widget(
         &mut self,
         name: &str,

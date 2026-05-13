@@ -154,7 +154,7 @@ pub fn insert_str(s: &str) {
     /// looks up `vibuf[zmod.vibuf]` (the vi `"a..z` register table),
     /// uses `cutbuf` for the unnamed buffer, and inserts at zlecs (or
     /// zlecs+1 for `after=true`). zshrs models the 36-slot vibuf array
-    /// directly on Zle::vibuf.
+    /// as the file-scope `VIBUF` static (zle_main.rs).
     pub fn paste_from_buffer(buf: usize, after: bool) {
         if buf <  vibuf().lock().unwrap().len() {
             let text =  vibuf().lock().unwrap()[buf].clone();
@@ -182,13 +182,13 @@ pub fn unmetafy(s: &str) -> String {
 // Note: dead `UndoEntry`/`UndoState`/`apply_undo_entry` aggregates
 // removed per PORT_PLAN Phase 2. They were a Rust-only invention
 // with zero references across the codebase. The canonical undo
-// machinery lives directly on `Zle` (`undo_stack: Vec<change>`,
-// `changeno`, `cur_change`, `undo_changeno`, `undo_limitno` —
-// declared in zle_main.rs) and the canonical port methods are:
+// machinery lives in file-scope statics (`UNDO_STACK: Mutex<Vec<change>>`,
+// `CHANGENO`, `CURCHANGE`, `UNDO_CHANGENO`, `UNDO_LIMITNO` —
+// declared in zle_main.rs) and the canonical port fns are:
 //
-//   Zle::mkundoent       — port of mkundoent (zle_utils.c)
-//   Zle::apply_change    — port of applychange (zle_utils.c:1633)
-//   Zle::unapply_change  — port of unapplychange (zle_utils.c:1677)
+//   mkundoent       — port of mkundoent (zle_utils.c)
+//   apply_change    — port of applychange (zle_utils.c:1633)
+//   unapply_change  — port of unapplychange (zle_utils.c:1677)
 //
 // C source's bag-of-statics that the canonical methods touch:
 //

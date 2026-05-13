@@ -132,7 +132,7 @@ pub const T_THINGY_NAMES: &[&str] = &[
 /// Port of `invicmdmode()` macro from zle.h:324.
 /// `#define invicmdmode() (!strcmp(curkeymapname, "vicmd"))`.
 /// True when the current keymap is the vi command-mode keymap.
-/// The Rust `Zle::in_vi_cmd_mode()` method (zle_main.rs:815) is the
+/// The Rust `in_vi_cmd_mode()` free fn (zle_main.rs:815) is the
 /// state-bound counterpart; this free-fn uses the global keymap name.
 #[inline] pub fn invicmdmode(curkeymapname: &str) -> bool {                  // c:324
     curkeymapname == "vicmd"

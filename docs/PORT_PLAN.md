@@ -93,46 +93,46 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
   `histline`, `searchstr`, `have_edits`, `hist_skip_flags`). Full
   unification with `crate::ported::hist::hist_ring` deferred.
 
-**Zle struct field cascade (started; runs in parallel to Phase 2):**
+**Zle struct cascade — COMPLETE (2026-05-12, 6 commits):**
 
-| Field migrated | New file-scope static | C source |
+The field-bearing `pub struct Zle { ~50 fields }` is fully dissolved.
+All fields migrated to file-scope statics matching the C source's
+file-`static`s (bucket 1 per the rule above). Methods hoisted to
+free fns. `pub struct Zle;` unit marker and `impl Default for Zle`
+deleted. `Zle::new()` replaced with free `zle_reset()`. All 556 zle
+tests pass under both serial and parallel cargo test.
+
+| Phase | Commit | What landed |
 |---|---|---|
-| `done` | `DONE: AtomicI32` (zle_misc.rs) | `int done` zle_main.c:79 |
-| `resetneeded` | `ZLE_RESET_NEEDED: AtomicI32` (zle_main.rs) | `int resetneeded` zle_main.c |
-| `lastchar` | `LASTCHAR: AtomicI32` (compcore.rs) | `int lastchar` zle_main.c |
-| `lastchar_wide` | `LASTCHAR_WIDE: AtomicI32` (zle_main.rs) | `int lastchar_wide` zle_main.c |
-| `lastchar_wide_valid` | `LASTCHAR_WIDE_VALID: AtomicI32` (zle_main.rs) | `int lastchar_wide_valid` zle_main.c |
-| `vi_last_find_char/_dir/_tail` | `VFINDCHAR/VFINDDIR/TAILADD` (zle_misc.rs) | `int vfindchar` zle_move.c:734-735 |
-| `insmode` | `INSMODE: AtomicI32` (zle_main.rs) | `int insmode` zle_main.c:124 |
-| `eofchar` | `EOFCHAR: AtomicI32` (zle_main.rs) | `int eofchar` zle_main.c |
-| `eofsent` | `EOFSENT: AtomicI32` (zle_main.rs) | `int eofsent` zle_main.c |
-| `keytimeout` | `KEYTIMEOUT: AtomicU64` (zle_main.rs) | `time_t keytimeout` zle_main.c |
-| `prefixflag` | `PREFIXFLAG: AtomicI32` (zle_main.rs) | `int prefixflag` zle_main.c |
-| `zle_recursive` | `ZLE_RECURSIVE: AtomicI32` (zle_main.rs) | `int zle_recursive` zle_main.c |
-| `zlereadflags` | `ZLEREADFLAGS: AtomicI32` (zle_main.rs) | `int zlereadflags` zle_main.c |
-| `zlecontext` | `ZLECONTEXT: AtomicI32` (zle_main.rs) | `int zlecontext` zle_main.c |
-| `lastcmd` | `LASTCMD: AtomicU32` (zle_main.rs) | `int lastcmd` zle_main.c:145 |
-| `incompctlfunc` | `INCOMPCTLFUNC: AtomicI32` (compctl.rs) — unified | (existing) |
+| Field migration | `6c2707de7c` | 50 statics added, ~4,100 call sites rewritten |
+| Method hoist | `20125871ea` | 213 impl-Zle methods → free fns; 42 duplicates deduped |
+| Test compile | `f63f23717c` | restored real bodies for uplineorhistory/downlineorhistory |
+| Unit-marker delete | `c1da1e0bd1` | `pub struct Zle;` + `impl Default` + `Zle::new()` (193 callers) |
+| Test serialise + OOB fix | `c5d59d305d` | `zle_test_setup()` helper, 19 OOB loop reorders, vi_yank_whole_line N-line fix |
 
-**Future-wire Zle fields (kept; reserved for upcoming subsystems):**
+The full static list (all 50 + the 16 already-migrated): `ZLELINE`,
+`ZLECS`, `ZLELL`, `MARK`, `LBINDK`, `BINDK`, `ZMOD`, `STATUSLINE`,
+`STACKHIST`, `STACKCS`, `VISTARTCHANGE`, `UNDO_STACK`, `CHANGENO`,
+`KUNGETBUF`, `BAUD`, `COMPWIDGET`, `HASCOMPMOD`, `TTYFD`, `LPROMPT`,
+`RPROMPT`, `PRE_ZLE_STATUS`, `VIBUF`, `KILLRING`, `KILLRINGMAX`,
+`YANKLAST`, `NEG_ARG`, `MULT`, `HISTORY`, `LASTCOL`, `BUFSTACK`,
+`VICHGBUF`, `SRCH_STR`, `LASTLINE`, `LASTLL`, `LASTCS`, `CURCHANGE`,
+`UNDO_CHANGENO`, `UNDO_LIMITNO`, `VIINSBEGIN`, `YANKB`, `YANKE`,
+`YANKCS`, `KCT`, `VIMARKS`, `REGION_ACTIVE`, `PENDING_HOOKS`,
+`RAW_LP`, `RAW_RP`, `HIGHLIGHT` — plus the prior batch
+(`DONE`/`ZLE_RESET_NEEDED`/`LASTCHAR`/`LASTCHAR_WIDE`/
+`LASTCHAR_WIDE_VALID`/`VFINDCHAR`/`VFINDDIR`/`TAILADD`/`INSMODE`/
+`EOFCHAR`/`EOFSENT`/`KEYTIMEOUT`/`PREFIXFLAG`/`ZLE_RECURSIVE`/
+`ZLEREADFLAGS`/`ZLECONTEXT`/`LASTCMD`/`INCOMPCTLFUNC`). Every static
+carries a `/// Port of <C decl> from Src/Zle/<file>.c:<line>` doc
+comment per PORT.md Rule 2.
 
-`statusline` (zle_main.c `char *statusline`), `baud` (zle_main.c
-termcap), `pre_zle_status` (zle_main.c lastval shadow), `watch_fds`
-(zle_main.c `bin_zle -F` registry), `compwidget` (zle_tricky.c
-new-style `compctl -K`), `hascompmod` (zle_tricky.c module guard) —
-each is a real C global. **Do NOT delete these on dead-code grounds**;
-they reserve the slot until their subsystem ports land.
-
-**Zle struct fields remaining for migration (have C-global analogs):**
-
-`zleline`/`zlecs`/`zlell` (the big three — 200+ sites each), `mark`,
-`lbindk`/`bindk` (Option<Thingy>; needs Mutex<Option<Thingy>>), `zmod`
-(struct), `stackhist`/`stackcs`, `vistartchange`, `undo_stack`,
-`changeno`, `unget_buf` (`kungetbuf`), `vibuf` (`vibuf[36]`),
-`killring`/`killringmax`, `mult`, `lastcol`, `bufstack`, `vi_chg_buf`
-(`vichgbuf`), `srch_str`, `last_line`/`last_ll`/`last_cs`. Per-field
-migration each carries the same rule: only if a real C global exists,
-and only as a true state-of-truth unification (no dual state).
+Test serialisation: `ZLE_TEST_LOCK: Mutex<()>` + `zle_test_setup()`
+helper in zle_main.rs. Tests acquire the guard for their body's
+lifetime so cargo's parallel runner effectively serialises ZLE-
+touching tests. No new external dep (no `serial_test` crate). Both
+helpers allowlisted with WARNING-form rationale (C is single-
+threaded, no C counterpart).
 
 **compctl.rs Mutex count:** 37 statics still using `Mutex` (Phase 1 target: 16)
 

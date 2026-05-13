@@ -10,11 +10,11 @@ use super::zle_main::{ZleChar};
 // ---------------------------------------------------------------------------
 // Rust-only word-motion helpers used by the widget_* fns below and by
 // `zle_vi.rs`. These were originally defined in `src/ported/zle/zle_word.rs`
-// alongside Rust-only `find_word_start`/`find_word_end` impls on `Zle`,
-// but the strict-rules cleanup of zle_word.rs deleted them (rule 1
-// forbids Rust-only types/methods in `src/ported/`). Relocated here
-// (an extension file outside the drift gate's scan path) until the
-// callers are themselves rewritten to use the C-faithful per-widget
+// alongside `find_word_start`/`find_word_end` (Rust-only convenience
+// fns), but the strict-rules cleanup of zle_word.rs deleted them
+// (rule 1 forbids Rust-only types/fns in `src/ported/`). Relocated
+// here (an extension file outside the drift gate's scan path) until
+// the callers are themselves rewritten to use the C-faithful per-widget
 // fns (`emacsforwardword`, `vibackwardword`, etc.) directly.
 // ---------------------------------------------------------------------------
 
@@ -474,8 +474,8 @@ fn acceptline(name: &str) -> (fn(), WidgetFlags) {
         "pound-insert" => (widget_pound_insert, WidgetFlags::empty()),
         "vi-pound-insert" => (widget_pound_insert, WidgetFlags::empty()),
 
-        // Case changes — bodies in this file delegate to the existing
-        // capitalize/down/upcase methods on Zle (Src/Zle/zle_misc.c).
+        // Case changes — bodies in this file delegate to the
+        // capitalize/down/upcase free fns (Src/Zle/zle_misc.c ports).
         "capitalize-word" => (widget_capitalize_word, WidgetFlags::empty()),
         "down-case-word" => (widget_down_case_word, WidgetFlags::empty()),
         "up-case-word" => (widget_up_case_word, WidgetFlags::empty()),
@@ -516,8 +516,8 @@ fn acceptline(name: &str) -> (fn(), WidgetFlags) {
         "kill-region" => (widget_kill_region, WidgetFlags::KILL | WidgetFlags::KEEPSUFFIX),
         "kill-buffer" => (widget_kill_buffer, WidgetFlags::KILL | WidgetFlags::KEEPSUFFIX),
 
-        // Vi mark widgets — bodies in this file delegate to the existing
-        // Zle::vi_set_mark / Zle::vi_goto_mark methods (Src/Zle/zle_move.c).
+        // Vi mark widgets — bodies in this file delegate to the
+        // `vi_set_mark` / `vi_goto_mark` free fns (Src/Zle/zle_move.c).
         "vi-set-mark" => (widget_vi_set_mark_widget, WidgetFlags::empty()),
         "vi-goto-mark" => (widget_vi_goto_mark_widget, WidgetFlags::empty()),
         "vi-goto-mark-line" => (widget_vi_goto_mark_line_widget, WidgetFlags::empty()),
@@ -1335,8 +1335,8 @@ fn widget_transpose_chars() {
 
 fn widget_clear_screen() {
     // Port of clearscreen(UNUSED(char **args)) from Src/Zle/zle_refresh.c. Routes through
-    // the existing Zle::clearscreen helper which emits the CSI clear +
-    // home, then forces a refresh on the next zlecore iteration.
+    // the `clearscreen` free fn which emits the CSI clear + home,
+    // then forces a refresh on the next zlecore iteration.
     clearscreen();
 }
 
@@ -2083,7 +2083,7 @@ fn parse_digit_in_base(b: u8, base: i32) -> i32 {
 // =============================================================================
 // Section: misc widget ports added after the initial table — every widget
 // body in this section cites the C source it ports. Bodies may delegate to
-// existing Zle methods or inline the small ones; either way the docstring
+// existing free fns or inline the small ones; either way the docstring
 // pins the Src/Zle/*.c origin.
 // =============================================================================
 
@@ -2138,8 +2138,9 @@ fn widget_visual_line_mode() {
 }
 
 fn widget_capitalize_word() {
-    // Port of capitalizeword(UNUSED(char **args)) from Src/Zle/zle_misc.c. Method already
-    // exists on Zle; this is the dispatch entry.
+    // Port of capitalizeword(UNUSED(char **args)) from Src/Zle/zle_misc.c.
+    // `capitalize_word` is the free fn that does the work; this is the
+    // dispatch entry.
     capitalize_word();
 }
 
@@ -2452,8 +2453,8 @@ fn widget_push_line() {
 }
 
 fn widget_describe_key_briefly() {
-    // Port of describekeybriefly(UNUSED(char **args)) from Src/Zle/zle_thingy.c. Existing
-    // method on Zle handles the input read + lookup loop.
+    // Port of describekeybriefly(UNUSED(char **args)) from Src/Zle/zle_thingy.c.
+    // The `describe_key_briefly` free fn handles the input read + lookup loop.
     describe_key_briefly();
 }
 
@@ -2539,8 +2540,8 @@ fn widget_kill_buffer() {
 
 fn widget_vi_set_mark_widget() {
     // Port of visetmark(UNUSED(char **args)) from Src/Zle/zle_move.c:872. Reads the next
-    // char as the mark name and stores it in vi_marks via the existing
-    // Zle::vi_set_mark method.
+    // char as the mark name and stores it in vi_marks via the
+    // `vi_set_mark` free fn.
     if let Some(c) = getfullchar(false) {
         vi_set_mark(c);
     }
@@ -2571,8 +2572,8 @@ fn widget_vi_goto_mark_line_widget() {
 }
 
 fn widget_vi_match_bracket() {
-    // Port of vimatchbracket(UNUSED(char **args)) from Src/Zle/zle_vi.c. Method already
-    // exists on Zle via vi_match_bracket.
+    // Port of vimatchbracket(UNUSED(char **args)) from Src/Zle/zle_vi.c. The
+    // `vi_match_bracket` free fn does the work.
     vi_match_bracket();
 }
 
@@ -2729,8 +2730,8 @@ fn widget_neg_argument() {
 }
 
 fn widget_recursive_edit() {
-    // Port of recursiveedit(UNUSED(char **args)) from Src/Zle/zle_main.c. Method already
-    // exists on Zle via recursive_edit.
+    // Port of recursiveedit(UNUSED(char **args)) from Src/Zle/zle_main.c. The
+    // `recursive_edit` free fn does the work.
     let _ = recursive_edit();
 }
 
@@ -3168,7 +3169,7 @@ fn widget_vi_backward_blank_word_end() {
 fn widget_select_in_word() {
     // Port of selectinword() from Src/Zle/textobjects.c. Sets a region
     // containing the inner word at the cursor — different from
-    // Zle::find_word_start (which is a backward-motion helper); here we
+    // the `find_word_start` free fn (which is a backward-motion helper); here we
     // expand around the cursor while characters share the iword class.
     let n = crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst);
     let pos = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst).min(n);
