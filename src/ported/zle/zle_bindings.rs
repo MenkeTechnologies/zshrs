@@ -243,6 +243,7 @@ mod tests {
 
     #[test]
     fn bindkey_returns_false_for_unknown_keymap() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::createkeymapnamtab();
         crate::ported::zle::zle_keymap::default_bindings();
         let mut km = KeymapManager;
@@ -251,6 +252,7 @@ mod tests {
 
     #[test]
     fn bindkey_then_unbind_round_trips_through_emacs_keymap() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         crate::ported::zle::zle_keymap::createkeymapnamtab();
         crate::ported::zle::zle_keymap::default_bindings();
         let mut km = KeymapManager;

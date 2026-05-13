@@ -281,6 +281,7 @@ mod tests {
     /// Verifies CCT_* values per c:76-89.
     #[test]
     fn cct_constants_correct() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CCT_UNUSED, 0);
         assert_eq!(CCT_POS, 1);
         assert_eq!(CCT_CURSTR, 2);
@@ -291,6 +292,7 @@ mod tests {
     /// non-overlapping.
     #[test]
     fn cc_primary_mask_bits_distinct() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let all = CC_FILES | CC_COMMPATH | CC_REMOVE | CC_OPTIONS
                 | CC_VARS | CC_BINDINGS | CC_ARRAYS | CC_INTVARS
                 | CC_SHFUNCS | CC_PARAMS | CC_ENVVARS | CC_JOBS
@@ -305,6 +307,7 @@ mod tests {
     /// Verifies the secondary mask values per c:152-158.
     #[test]
     fn cc_secondary_mask_values() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(CC_NOSORT, 1);
         assert_eq!(CC_XORCONT, 2);
         assert_eq!(CC_UNIQALL, 1 << 6);
@@ -314,6 +317,7 @@ mod tests {
     /// the C convention of `(Compctl) calloc(1, sizeof(...))`.
     #[test]
     fn compctl_default_zeros_fields() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let cc = Compctl::default();
         assert_eq!(cc.refc, 0);
         assert!(cc.next.is_none());
@@ -328,6 +332,7 @@ mod tests {
     /// Verifies Compcond Default starts in CCT_UNUSED state.
     #[test]
     fn compcond_default_is_unused() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let c = Compcond::default();
         assert_eq!(c.typ, CCT_UNUSED);
         assert!(matches!(c.u, CompcondData::Unused));
@@ -337,6 +342,7 @@ mod tests {
     /// dispatch per c:58-73.
     #[test]
     fn compcond_data_variants() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let r = CompcondData::R { a: vec![0, 1], b: vec![2, 3] };
         if let CompcondData::R { a, b } = r {
             assert_eq!(a, vec![0, 1]);

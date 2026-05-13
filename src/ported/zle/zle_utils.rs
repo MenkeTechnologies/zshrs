@@ -455,7 +455,7 @@ mod tests_hooks {
 
     #[test]
     fn call_hook_queues_for_host_dispatch() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         call_hook("zle-line-init", None);
         call_hook("zle-keymap-select", Some("vicmd"));
         let drained = drain_hooks();
@@ -471,7 +471,7 @@ mod tests_hooks {
 
     #[test]
     fn redrawhook_queues_pre_redraw_hook() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         redrawhook();
         let drained = drain_hooks();
         assert_eq!(drained, vec![("zle-line-pre-redraw".to_string(), None)]);
@@ -479,7 +479,7 @@ mod tests_hooks {
 
     #[test]
     fn reexpandprompt_re_runs_expansion_against_raw_templates() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Set raw templates that don't reference dynamic state, so the
         // expansion is idempotent and easy to assert. %% expands to a
         // single literal '%' per zsh prompt rules.
@@ -498,6 +498,7 @@ mod tests_bindkey_format {
 
     #[test]
     fn bind_ztrdup_emits_caret_form_for_control_chars() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Ctrl-A → "^A". Mirrors zsh's bindkey -L line for `bindkey '^A'`.
         assert_eq!(bindztrdup(b"\x01"), "^A");
         // Ctrl-_ → "^_".
@@ -508,6 +509,7 @@ mod tests_bindkey_format {
 
     #[test]
     fn bind_ztrdup_escapes_backslash_and_caret() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // '\\' → "\\\\" (escaped per C source's `c == '\\'` branch).
         assert_eq!(bindztrdup(b"\\"), "\\\\");
         // '^' → "\\^".
@@ -516,12 +518,14 @@ mod tests_bindkey_format {
 
     #[test]
     fn bind_ztrdup_handles_high_bit_as_meta() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // Byte with bit-7 set → "\\M-X" prefix. \\xC1 = M-A.
         assert_eq!(bindztrdup(b"\xC1"), "\\M-A");
     }
 
     #[test]
     fn printbind_caret_form_matches_describe_key_output() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // `^A`-style display form (distinct from bindkey's escape form).
         assert_eq!(printbind(b"\x01"), "^A");
         assert_eq!(printbind(b"\x1b"), "^[");
@@ -1387,6 +1391,7 @@ mod findbol_findeol_tests {
 
     #[test]
     fn findbol_no_newline_returns_zero() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1162 — walks back to start when no '\n' encountered.
         let z = zle_with("hello world", 7);
         assert_eq!(findbol(), 0);
@@ -1394,6 +1399,7 @@ mod findbol_findeol_tests {
 
     #[test]
     fn findbol_finds_preceding_newline() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1162 — `zleline[x-1] != '\n'` exits loop when prev char IS '\n'.
         // For "abc\ndef\nghi" with cursor at 9 (the 'h' in 'ghi'):
         // walks back to 8 (after the second '\n'), returns 8.
@@ -1403,12 +1409,14 @@ mod findbol_findeol_tests {
 
     #[test]
     fn findbol_at_start_returns_zero() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let z = zle_with("anything", 0);
         assert_eq!(findbol(), 0);
     }
 
     #[test]
     fn findeol_no_newline_returns_end() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1173 — walks forward to zlell when no '\n' encountered.
         let z = zle_with("hello world", 0);
         assert_eq!(findeol(), 11);
@@ -1416,6 +1424,7 @@ mod findbol_findeol_tests {
 
     #[test]
     fn findeol_finds_next_newline() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1173 — `zleline[x] != '\n'` exits when current char IS '\n'.
         // For "abc\ndef" cursor at 0: walks 0→1→2→3 (which is '\n'), returns 3.
         let z = zle_with("abc\ndef", 0);
@@ -1424,12 +1433,14 @@ mod findbol_findeol_tests {
 
     #[test]
     fn findeol_at_end_returns_zlell() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let z = zle_with("hello", 5);
         assert_eq!(findeol(), 5);
     }
 
     #[test]
     fn findline_returns_bol_eol_pair() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1182-1183 — both findbol and findeol from the same cursor.
         // "abc\ndef\nghi" cursor at 5 (the 'e' in 'def'):
         //   findbol → 4 (after first '\n')

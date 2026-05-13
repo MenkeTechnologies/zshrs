@@ -430,6 +430,7 @@ mod tests {
 
     #[test]
     fn test_unambig_data() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(unambig_data(&["foobar".into(), "foobaz".into()]), "fooba");
         assert_eq!(unambig_data(&["abc".into()]), "abc");
         assert_eq!(unambig_data(&[]), "");
@@ -437,6 +438,7 @@ mod tests {
 
     #[test]
     fn test_instmatch() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let (result, cursor) = instmatch("git co", 6, 4, 6, "commit");
         assert_eq!(result, "git commit");
         assert_eq!(cursor, 10);
@@ -444,6 +446,7 @@ mod tests {
 
     #[test]
     fn test_do_single() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let (result, cursor) = do_single("git co", 6, 4, 6, "commit", true);
         assert_eq!(result, "git commit ");
         assert_eq!(cursor, 11);
@@ -451,6 +454,7 @@ mod tests {
 
     #[test]
     fn test_do_menucmp() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let matches = vec!["commit".into(), "checkout".into(), "cherry-pick".into()];
         let (next, word) = do_menucmp(&matches, 0, true);
         assert_eq!(next, 1);
@@ -463,6 +467,7 @@ mod tests {
 
     #[test]
     fn test_valid_match() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(valid_match("foobar", "foo", ""));
         assert!(valid_match("foobar", "foo", "bar"));
         assert!(!valid_match("foobar", "baz", ""));
@@ -470,18 +475,21 @@ mod tests {
 
     #[test]
     fn test_build_pos_string() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(build_pos_string(0, 10), "1/10");
         assert_eq!(build_pos_string(9, 10), "10/10");
     }
 
     #[test]
     fn test_list_lines() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(list_lines(&vec!["a".into(); 10], 3), 4);
         assert_eq!(list_lines(&vec!["a".into(); 6], 3), 2);
     }
 
     #[test]
     fn comp_mod_positive() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1366-1369 — positive: decrement then % m.
         assert_eq!(comp_mod(1, 5), 0);   // (1-1) % 5 = 0
         assert_eq!(comp_mod(3, 5), 2);   // (3-1) % 5 = 2
@@ -491,6 +499,7 @@ mod tests {
 
     #[test]
     fn comp_mod_zero_branches_negative() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1366 — `if (v >= 0) v--;` so 0 → -1 → falls into else.
         // c:1370-1373 — wrap by adding m until non-negative.
         assert_eq!(comp_mod(0, 5), 4);   // 0→-1→+5=4
@@ -501,6 +510,7 @@ mod tests {
 
     #[test]
     fn comp_list_sets_onlyexpl() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         use std::sync::atomic::Ordering;
         use crate::ported::zle::compcore::onlyexpl;
         // c:1473 — `(strstr(v,"expl")?1:0) | (strstr(v,"messages")?2:0)`.
@@ -518,6 +528,7 @@ mod tests {
 
     #[test]
     fn skipnolist_skips_hide_and_nolist() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::zle::comp_h::{Cmatch, CMF_HIDE, CMF_NOLIST};
         let mut a = Cmatch::default(); a.flags = CMF_NOLIST;
         let mut b = Cmatch::default(); b.flags = CMF_HIDE;
@@ -529,6 +540,7 @@ mod tests {
 
     #[test]
     fn skipnolist_showall_keeps_nolist() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::zle::comp_h::{Cmatch, CMF_NOLIST};
         let mut a = Cmatch::default(); a.flags = CMF_NOLIST;
         let v = vec![a];
@@ -538,6 +550,7 @@ mod tests {
 
     #[test]
     fn skipnolist_skips_disp_displine() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::zle::comp_h::{Cmatch, CMF_DISPLINE};
         let mut a = Cmatch::default();
         a.disp = Some("display".into());

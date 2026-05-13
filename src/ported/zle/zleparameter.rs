@@ -304,6 +304,7 @@ mod tests {
 
     #[test]
     fn test_widgetstr() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(widgetstr("self-insert", false, false), "builtin");
         assert_eq!(widgetstr("my-widget", true, false), "user:my-widget");
         assert_eq!(widgetstr("my-comp", false, true), "completion:my-comp");
@@ -311,6 +312,7 @@ mod tests {
 
     #[test]
     fn test_getpmwidgets() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let user = HashMap::new();
         let comp = HashMap::new();
         let widgets = getpmwidgets(&["accept-line", "backward-char"], &user, &comp);
@@ -320,6 +322,7 @@ mod tests {
 
     #[test]
     fn test_keymapsgetfn() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let keymaps = keymapsgetfn(DEFAULT_KEYMAPS);
         assert!(keymaps.contains(&"emacs".to_string()));
         assert!(keymaps.contains(&"vicmd".to_string()));
@@ -327,6 +330,7 @@ mod tests {
 
     #[test]
     fn test_builtin_widget_count() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // zsh has ~160 builtin widgets
         assert!(BUILTIN_WIDGETS.len() > 150);
     }

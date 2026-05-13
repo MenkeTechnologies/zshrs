@@ -242,6 +242,7 @@ mod tests {
 
     #[test]
     fn test_pfxlen() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(pfxlen("hello", "help"), 3);
         assert_eq!(pfxlen("abc", "xyz"), 0);
         assert_eq!(pfxlen("test", "test"), 4);
@@ -249,12 +250,14 @@ mod tests {
 
     #[test]
     fn test_sfxlen() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(sfxlen("testing", "running"), 3);
         assert_eq!(sfxlen("abc", "xyz"), 0);
     }
 
     #[test]
     fn test_has_real_token() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(has_real_token("$HOME"));
         assert!(has_real_token("*.txt"));
         assert!(!has_real_token("hello"));
@@ -265,18 +268,21 @@ mod tests {
 
     #[test]
     fn dupstrspace_appends_space() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:954 — len + 1 + 1 NUL: "hello" → "hello "
         assert_eq!(dupstrspace("hello"), "hello ");
     }
 
     #[test]
     fn dupstrspace_empty_input() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:954 — empty input → just a single space
         assert_eq!(dupstrspace(""), " ");
     }
 
     #[test]
     fn freebrinfo_drops_chain() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::zle::zle_h::brinfo;
         // c:1015 — Box drop cascades through `next`.
         let head = Some(Box::new(brinfo {
@@ -300,6 +306,7 @@ mod tests {
 
     #[test]
     fn dupbrinfo_clones_chain() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         use crate::ported::zle::zle_h::brinfo;
         // Build a 3-node chain: A → B → C.
         let src = Box::new(brinfo {
@@ -343,6 +350,7 @@ mod tests {
 
     #[test]
     fn dupbrinfo_empty_returns_none() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:1037 — `while (p)` never enters; ret stays NULL.
         let (head, last) = dupbrinfo(None);
         assert!(head.is_none());
@@ -351,6 +359,7 @@ mod tests {
 
     #[test]
     fn spellword_zeroes_globals_returns_docomplete() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         use std::sync::atomic::Ordering;
         // Pre-set non-zero so the c:263 reset is observable.
         USEMENU.store(99, Ordering::SeqCst);

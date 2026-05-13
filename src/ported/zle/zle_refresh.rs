@@ -531,6 +531,7 @@ mod tests {
 
     #[test]
     fn test_countprompt() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(countprompt("hello"), 5);
         assert_eq!(countprompt("\x1b[31mhello\x1b[0m"), 5);
         assert_eq!(countprompt("日本語"), 6); // 3 chars, 2 width each
@@ -538,6 +539,7 @@ mod tests {
 
     #[test]
     fn test_video_buffer() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut buf = VideoBuffer::new(80, 24);
         assert_eq!(buf.cols, 80);
         assert_eq!(buf.rows, 24);
@@ -551,6 +553,7 @@ mod tests {
 
     #[test]
     fn test_refresh_state() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut state = RefreshState::new();
         assert!(state.old_video.is_some());
         assert!(state.new_video.is_some());
@@ -562,13 +565,13 @@ mod tests {
 
     #[test]
     fn compute_render_attrs_empty_buffer_yields_empty_overlay() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert!(compute_render_attrs().is_empty());
     }
 
     #[test]
     fn compute_render_attrs_visual_mode_paints_mark_to_cursor_in_standout() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "hello world".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(2, std::sync::atomic::Ordering::SeqCst);
@@ -592,7 +595,7 @@ mod tests {
 
     #[test]
     fn compute_render_attrs_visual_mode_handles_reverse_mark_order() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcdef".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(6, std::sync::atomic::Ordering::SeqCst);
         crate::ported::zle::zle_main::MARK.store(5, std::sync::atomic::Ordering::SeqCst);
@@ -609,6 +612,7 @@ mod tests {
 
     #[test]
     fn match_highlight_handles_combined_attrs() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let attr = match_highlight("bold,fg=red,underline");
         assert!(attr.bold);
         assert!(attr.underline);
@@ -617,6 +621,7 @@ mod tests {
 
     #[test]
     fn match_highlight_named_and_numeric_colors() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(match_highlight("fg=cyan").fg_color, Some(6));
         assert_eq!(match_highlight("bg=42").bg_color, Some(42));
         // Out-of-range numeric → ignored (parse fails for u8).
@@ -625,6 +630,7 @@ mod tests {
 
     #[test]
     fn match_highlight_negation_clears_attr() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let attr = match_highlight("bold,nobold,underline");
         assert!(!attr.bold);
         assert!(attr.underline);
@@ -632,6 +638,7 @@ mod tests {
 
     #[test]
     fn match_highlight_none_resets_everything() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let attr = match_highlight("bold,fg=red,none,underline");
         // After `none` the only thing surviving is the trailing `underline`.
         assert!(!attr.bold);
@@ -641,6 +648,7 @@ mod tests {
 
     #[test]
     fn zle_set_highlight_populates_categories_and_defaults() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut mgr = HighlightManager::new();
         let entries = ["region:fg=red,bold", "isearch:fg=blue"];
         zle_set_highlight(&mut mgr, &entries);
@@ -659,6 +667,7 @@ mod tests {
 
     #[test]
     fn zle_set_highlight_none_clears_every_slot() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut mgr = HighlightManager::new();
         zle_set_highlight(&mut mgr, &["none"]);
         for cat in [
@@ -674,6 +683,7 @@ mod tests {
 
     #[test]
     fn compute_render_attrs_visual_uses_zle_highlight_region_attr() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // When the user sets `zle_highlight=(region:fg=red,bold)` via
         // zle_set_highlight, vi visual-mode should paint the region
         // with that attr instead of the default standout.
@@ -696,7 +706,7 @@ mod tests {
 
     #[test]
     fn compute_render_attrs_explicit_regions_override_default() {
-        crate::ported::zle::zle_main::zle_reset();
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abcde".chars().collect();
         crate::ported::zle::zle_main::ZLELL.store(5, std::sync::atomic::Ordering::SeqCst);
         let custom = TextAttr {
@@ -1278,6 +1288,7 @@ mod zr_tests {
 
     #[test]
     fn zr_memset_fills_slice() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:88-89 — `while (len--) *dst++ = rc`.
         let mut buf = [REFRESH_ELEMENT::default(); 4];
         let fill = re('x', 0);
@@ -1291,6 +1302,7 @@ mod zr_tests {
 
     #[test]
     fn zr_memset_clamps_to_dst_len() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut buf = [REFRESH_ELEMENT::default(); 2];
         let fill = re('y', 0);
         ZR_memset(&mut buf, fill, 99);  // len > dst.len()
@@ -1300,6 +1312,7 @@ mod zr_tests {
 
     #[test]
     fn zr_strlen_counts_to_nul() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:106 — `while (wstr++->chr != ZWC('\0')) len++`.
         let s = [re('h', 0), re('i', 0), re('\0', 0)];
         assert_eq!(ZR_strlen(&s), 2);
@@ -1307,12 +1320,14 @@ mod zr_tests {
 
     #[test]
     fn zr_strlen_empty_starts_with_nul() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let s = [re('\0', 0)];
         assert_eq!(ZR_strlen(&s), 0);
     }
 
     #[test]
     fn zr_strcpy_copies_through_nul() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:97 — `while ((*dst++ = *src++).chr != ZWC('\0'))`. NUL
         // included in copy.
         let src = [re('a', 0), re('b', 0), re('\0', 0)];
@@ -1325,6 +1340,7 @@ mod zr_tests {
 
     #[test]
     fn zr_strncmp_equal_strings() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:127 — pair-equal in chr+atr: returns 0.
         let a = [re('h', 0), re('i', 0)];
         let b = [re('h', 0), re('i', 0)];
@@ -1333,6 +1349,7 @@ mod zr_tests {
 
     #[test]
     fn zr_strncmp_diff_chr_returns_1() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = [re('h', 0), re('i', 0)];
         let b = [re('h', 0), re('o', 0)];
         // c:127 — `if (!ZR_equal(...)) return 1`.
@@ -1341,6 +1358,7 @@ mod zr_tests {
 
     #[test]
     fn zr_strncmp_diff_atr_returns_1() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:127 — atr is part of equality.
         let a = [re('h', 0)];
         let b = [re('h', TXTBOLDFACE)];
@@ -1349,6 +1367,7 @@ mod zr_tests {
 
     #[test]
     fn zr_strncmp_early_nul_old() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:124-126 — old has NUL → return !equal.
         let a = [re('\0', 0)];
         let b = [re('x', 0)];
@@ -1360,6 +1379,7 @@ mod zr_tests {
 
     #[test]
     fn zr_strncmp_multiword_mask_skips_nul_check() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:124 — `(!(oldwstr->atr & TXT_MULTIWORD_MASK) && !oldwstr->chr)`.
         // If atr has MULTIWORD set, chr=='\0' is NOT a NUL terminator.
         let a = [re('\0', TXT_MULTIWORD_MASK)];
@@ -1372,6 +1392,7 @@ mod zr_tests {
 
     #[test]
     fn zr_equal_same_returns_true() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let a = re('a', 0);
         assert!(ZR_equal(a, a));
         let b = re('b', 0);
@@ -1380,6 +1401,7 @@ mod zr_tests {
 
     #[test]
     fn zr_memcpy_copies_n_elements() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut dst = [re('\0', 0); 5];
         let src = [re('a', 0), re('b', 0), re('c', 0), re('d', 0), re('e', 0)];
         ZR_memcpy(&mut dst, &src, 3);
@@ -1391,6 +1413,7 @@ mod zr_tests {
 
     #[test]
     fn ellipsis_sizes_match_table_lengths() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(ZR_END_ELLIPSIS_SIZE, 6);
         assert_eq!(ZR_MID_ELLIPSIS1_SIZE, 6);
         assert_eq!(ZR_MID_ELLIPSIS2_SIZE, 2);
@@ -1399,11 +1422,13 @@ mod zr_tests {
 
     #[test]
     fn def_mwbuf_alloc_is_32() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(DEF_MWBUF_ALLOC, 32);
     }
 
     #[test]
     fn tc_costs_handle_negative() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         assert_eq!(tcinscost(-1), 0);
         assert_eq!(tcdelcost(-1), 0);
         assert_eq!(tcinscost(5), 5);
@@ -1412,6 +1437,7 @@ mod zr_tests {
 
     #[test]
     fn rparams_default_zeros_all_fields() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let r = rparams::default();
         assert_eq!(r.canscroll, 0);
         assert_eq!(r.ln, 0);

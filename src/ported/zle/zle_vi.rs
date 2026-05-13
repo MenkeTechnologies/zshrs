@@ -564,8 +564,7 @@ pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // 
                 // First non-blank — `vifirstnonblank` in zle_move.c:862.
                 let bol = findbol();
                 let mut p = bol;
-                while { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[p]; p < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && __c.is_whitespace()
-                    && __c != '\n' } {
+                while p < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[p]; __c.is_whitespace() && __c != '\n' } {
                     p += 1;
                 }
                 p
@@ -678,7 +677,7 @@ pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // 
             crate::ported::zle::zle_main::LASTCOL.store(-1, std::sync::atomic::Ordering::SeqCst);
             let bol = findbol();
             let mut p = bol;
-            while { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[p]; p < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && __c.is_whitespace() && __c != '\n' } {
+            while p < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) && { let __c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[p]; __c.is_whitespace() && __c != '\n' } {
                 p += 1;
             }
             crate::ported::zle::zle_main::ZLECS.store(p, std::sync::atomic::Ordering::SeqCst);
@@ -760,6 +759,7 @@ mod tests {
 
     #[test]
     fn vi_find_char_inner_lands_on_target_forward() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("abcdef", 0);
         VFINDCHAR.store('d' as i32, Ordering::SeqCst);
         VFINDDIR.store(1, Ordering::SeqCst);
@@ -770,6 +770,7 @@ mod tests {
 
     #[test]
     fn vi_find_char_inner_skip_stops_one_short_forward() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("abcdef", 0);
         VFINDCHAR.store('d' as i32, Ordering::SeqCst);
         VFINDDIR.store(1, Ordering::SeqCst);
@@ -780,6 +781,7 @@ mod tests {
 
     #[test]
     fn vi_find_char_inner_lands_on_target_backward() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("abcdef", 5);
         VFINDCHAR.store('b' as i32, Ordering::SeqCst);
         VFINDDIR.store(-1, Ordering::SeqCst);
@@ -790,6 +792,7 @@ mod tests {
 
     #[test]
     fn vi_find_char_inner_returns_1_and_restores_when_missing() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("abcdef", 0);
         VFINDCHAR.store('z' as i32, Ordering::SeqCst);
         VFINDDIR.store(1, Ordering::SeqCst);
@@ -800,6 +803,7 @@ mod tests {
 
     #[test]
     fn vi_find_char_inner_stops_at_newline() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("abc\ndef", 0);
         VFINDCHAR.store('e' as i32, Ordering::SeqCst);
         VFINDDIR.store(1, Ordering::SeqCst);
@@ -811,6 +815,7 @@ mod tests {
 
     #[test]
     fn vi_repeat_find_walks_to_next_match_in_same_direction() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("a-b-c-d", 0);
         VFINDCHAR.store('-' as i32, Ordering::SeqCst);
         VFINDDIR.store(1, Ordering::SeqCst);
@@ -828,6 +833,7 @@ mod tests {
 
     #[test]
     fn vi_set_and_goto_named_mark_round_trip() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("hello world", 6);
         vi_set_mark('a');
         crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -837,6 +843,7 @@ mod tests {
 
     #[test]
     fn vi_goto_mark_records_implicit_last_position() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("0123456789", 4);
         vi_set_mark('m');
         crate::ported::zle::zle_main::ZLECS.store(9, std::sync::atomic::Ordering::SeqCst);
@@ -848,6 +855,7 @@ mod tests {
 
     #[test]
     fn vi_set_mark_ignores_invalid_names() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("abc", 1);
         vi_set_mark('A'); // uppercase not allowed
         vi_set_mark('1'); // digit not allowed
@@ -863,6 +871,7 @@ mod tests {
 
     #[test]
     fn vi_get_range_dd_selects_whole_current_line() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("aaa\nbbb\nccc", 4); // cursor on 'b' line
         feed("d");
         let (s, e, line) = vi_get_range('d').expect("range");
@@ -873,6 +882,7 @@ mod tests {
 
     #[test]
     fn vi_get_range_dw_selects_to_word_end() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("hello world", 0);
         feed("w");
         let (s, e, line) = vi_get_range('d').expect("range");
@@ -885,6 +895,7 @@ mod tests {
 
     #[test]
     fn vi_get_range_d_dollar_selects_to_eol() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("foo bar baz", 4);
         feed("$");
         let (s, e, _) = vi_get_range('d').expect("range");
@@ -894,6 +905,7 @@ mod tests {
 
     #[test]
     fn vi_delete_op_dw_removes_first_word() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("hello world", 0);
         feed("w");
         assert_eq!(vi_delete_op(), 0);
@@ -907,6 +919,7 @@ mod tests {
 
     #[test]
     fn vi_yank_op_y_dollar_copies_without_removing() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("foo bar", 4);
         feed("$");
         assert_eq!(vi_yank_op(), 0);
@@ -921,6 +934,7 @@ mod tests {
 
     #[test]
     fn vi_change_op_cw_removes_word_and_clears_pending_change() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("foo bar", 0);
         feed("w");
         assert_eq!(vi_change_op(), 0);
@@ -933,6 +947,7 @@ mod tests {
 
     #[test]
     fn vi_visual_mode_toggles_charwise() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("abcd", 2);
         assert_eq!(crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst), 0);
         vi_visual_mode();
@@ -944,6 +959,7 @@ mod tests {
 
     #[test]
     fn vi_visual_line_mode_toggles_linewise_and_swaps_with_charwise() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("abcd", 0);
         vi_visual_line_mode();
         assert_eq!(crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst), 2);
@@ -960,6 +976,7 @@ mod tests {
 
     #[test]
     fn vi_deactivate_region_clears_active_state() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("abcd", 0);
         crate::ported::zle::zle_main::REGION_ACTIVE.store(2, std::sync::atomic::Ordering::SeqCst);
         vi_deactivate_region();
@@ -968,6 +985,7 @@ mod tests {
 
     #[test]
     fn vi_record_change_appends_to_replay_buffer() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("", 0);
         vi_start_change_recording();
         vi_record_change(b'd');
@@ -979,6 +997,7 @@ mod tests {
 
     #[test]
     fn vi_get_range_unknown_motion_returns_none() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("abc", 0);
         feed("Z"); // no motion mapped to Z
         assert!(vi_get_range('d').is_none());
@@ -986,6 +1005,7 @@ mod tests {
 
     #[test]
     fn vi_undo_reverses_a_recorded_change() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("", 0);
         setlastline();
         *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "abc".chars().collect();
@@ -998,6 +1018,7 @@ mod tests {
 
     #[test]
     fn vi_rev_repeat_find_walks_back() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with("a-b-c-d", 0);
         VFINDCHAR.store('-' as i32, Ordering::SeqCst);
         VFINDDIR.store(1, Ordering::SeqCst);
