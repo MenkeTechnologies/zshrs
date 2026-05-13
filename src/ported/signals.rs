@@ -1047,15 +1047,55 @@ pub fn handletrap(sig: i32) -> i32 {                                         // 
 /// the executor when the call site lands; for now the wrapper
 /// flips `intrap`/`in_exit_trap` so observers see the correct
 /// scope state.
+/// Direct port of `void dotrap(int sig)` from `Src/signals.c:1245`.
+/// Dispatches the trap registered for `sig`:
+///   - ZSIG_FUNC: invoke the `TRAPxxx` shell function from shfunctab
+///     via `doshfunc` with the signal number as the single arg.
+///   - else: execute the eprog in `siglists[sig]` via fusevm
+///     dispatch when wired (currently no-op pending VM bridge for
+///     eprog).
+/// Maintains `intrap` / `in_exit_trap` flags around the call so
+/// observers (the `exit` builtin, the `zexit` driver) can branch on
+/// whether we're inside an EXIT-trap callback.
 pub fn dotrap(sig: i32) -> i32 {                                             // c:1245
     let trapped = sigtrapped.lock()
         .ok()
         .and_then(|g| g.get(sig as usize).copied())
         .unwrap_or(0);
+    // c:1259 — `if ((sigtrapped[sig] & ZSIG_IGNORED) || !funcprog || errflag) return;`
+    if trapped & ZSIG_IGNORED != 0 { return 0; }
     if trapped & (ZSIG_TRAPPED | ZSIG_FUNC) == 0 { return 0; }
+    if crate::ported::utils::errflag.load(Ordering::Relaxed) != 0 { return 0; }
+
     intrap.store(1, Ordering::SeqCst);
     if sig == SIGEXIT {
         in_exit_trap.store(1, Ordering::SeqCst);
+    }
+
+    // c:1251 — `if (sigtrapped[sig] & ZSIG_FUNC)` → run TRAPxxx shfunc.
+    if trapped & ZSIG_FUNC != 0 {
+        let signame = crate::ported::signals::getsigname(sig);
+        let trap_fn = format!("TRAP{}", signame);
+        if crate::ported::utils::getshfunc(&trap_fn).is_some() {
+            // c:1252-1255 — `dotrapargs(sig, sigtrapped+sig, funcprog)`.
+            //              Drives the shfunc with `$1 = sig`. With the
+            //              executor not directly callable from this
+            //              signal-handler context, route through the
+            //              canonical `crate::exec::doshfunc` entry which
+            //              handles the arg+env+local-scope wrap.
+            let args = vec![sig.to_string()];
+            let _ = crate::fusevm_bridge::with_executor(|exec| {
+                exec.dispatch_function_call(&trap_fn, &args).unwrap_or(0)
+            });
+        }
+    }
+    // c:1268 — non-FUNC `siglists[sig]` eprog branch. Without an
+    //          eprog→executor bridge yet, leave the eprog dispatch
+    //          deferred; the FUNC branch above covers `trap '...' EXIT`
+    //          style assignments which install through `settrap` as
+    //          ZSIG_FUNC via the canonical fusevm AST→shfunc compile.
+
+    if sig == SIGEXIT {
         in_exit_trap.store(0, Ordering::SeqCst);
     }
     intrap.store(0, Ordering::SeqCst);
