@@ -37,99 +37,29 @@ use std::io::Write;
 const FD_MAGIC: u32 = 0x04050607;
 const FD_OMAGIC: u32 = 0x07060504; // Other byte order
 const FD_PRELEN: usize = 12;
-
-// Word code types (5 bits)
-pub const WC_END: u32 = 0;
-pub const WC_LIST: u32 = 1;
-pub const WC_SUBLIST: u32 = 2;
-pub const WC_PIPE: u32 = 3;
-pub const WC_REDIR: u32 = 4;
-pub const WC_ASSIGN: u32 = 5;
-pub const WC_SIMPLE: u32 = 6;
-pub const WC_TYPESET: u32 = 7;
-pub const WC_SUBSH: u32 = 8;
-pub const WC_CURSH: u32 = 9;
-pub const WC_TIMED: u32 = 10;
-pub const WC_FUNCDEF: u32 = 11;
-pub const WC_FOR: u32 = 12;
-pub const WC_SELECT: u32 = 13;
-pub const WC_WHILE: u32 = 14;
-pub const WC_REPEAT: u32 = 15;
-pub const WC_CASE: u32 = 16;
-pub const WC_IF: u32 = 17;
-pub const WC_COND: u32 = 18;
-pub const WC_ARITH: u32 = 19;
-pub const WC_AUTOFN: u32 = 20;
-pub const WC_TRY: u32 = 21;
-
-// List flags
-pub const Z_END: u32 = 1 << 4;
-pub const Z_SIMPLE: u32 = 1 << 5;
-pub const WC_LIST_FREE: u32 = 6;
-
-// Sublist types
-pub const WC_SUBLIST_END: u32 = 0;
-pub const WC_SUBLIST_AND: u32 = 1;
-pub const WC_SUBLIST_OR: u32 = 2;
-pub const WC_SUBLIST_COPROC: u32 = 4;
-pub const WC_SUBLIST_NOT: u32 = 8;
-pub const WC_SUBLIST_SIMPLE: u32 = 16;
-pub const WC_SUBLIST_FREE: u32 = 5;
-
-// Pipe types
-pub const WC_PIPE_END: u32 = 0;
-pub const WC_PIPE_MID: u32 = 1;
-
-// For types
-pub const WC_FOR_PPARAM: u32 = 0;
-pub const WC_FOR_LIST: u32 = 1;
-pub const WC_FOR_COND: u32 = 2;
-
-// While types
-pub const WC_WHILE_WHILE: u32 = 0;
-pub const WC_WHILE_UNTIL: u32 = 1;
-
-// Case types
-pub const WC_CASE_HEAD: u32 = 0;
-pub const WC_CASE_OR: u32 = 1;
-pub const WC_CASE_AND: u32 = 2;
-pub const WC_CASE_TESTAND: u32 = 3;
-pub const WC_CASE_FREE: u32 = 3;
-
-// If types
-pub const WC_IF_HEAD: u32 = 0;
-pub const WC_IF_IF: u32 = 1;
-pub const WC_IF_ELIF: u32 = 2;
-pub const WC_IF_ELSE: u32 = 3;
-
-pub const WC_CODEBITS: u32 = 5;
-
-// Zsh tokens (from zsh.h)
-const Pound: u8 = 0x84;
-const STRING: u8 = 0x85; // $ for variables
-const Hat: u8 = 0x86; // ^
-const Star: u8 = 0x87; // *
-const Inpar: u8 = 0x88; // (
-const Outpar: u8 = 0x8a; // )
-const Qstring: u8 = 0x8c; // $ in double quotes
-const Equals: u8 = 0x8d; // =
-const Bar: u8 = 0x8e; // |
-const Inbrace: u8 = 0x8f; // {
-const Outbrace: u8 = 0x90; // }
-const Inbrack: u8 = 0x91; // [
-const Outbrack: u8 = 0x92; // ]
-const Tick: u8 = 0x93; // `
-const Inang: u8 = 0x94; // <
-const Outang: u8 = 0x95; // >
-const Quest: u8 = 0x97; // ?
-const Tilde: u8 = 0x98; // ~
-const Comma: u8 = 0x9a; // ,
-const Dash: u8 = 0x9b; // - (only in patterns; zsh.h:182)
-const Bang: u8 = 0x9c; // ! (only in patterns; zsh.h:183)
-const Snull: u8 = 0x9d; // ' bslashquote marker
-const Dnull: u8 = 0x9e; // " bslashquote marker
-const Bnull: u8 = 0x9f; // \ backslash marker
-const Nularg: u8 = 0xa1; // empty argument marker
+use crate::ported::zsh_h::{
+    WC_END, WC_LIST, WC_SUBLIST, WC_PIPE, WC_REDIR, WC_ASSIGN, WC_SIMPLE, WC_TYPESET,
+    WC_SUBSH, WC_CURSH, WC_TIMED, WC_FUNCDEF, WC_FOR, WC_SELECT, WC_WHILE, WC_REPEAT,
+    WC_CASE, WC_IF, WC_COND, WC_ARITH, WC_AUTOFN, WC_TRY,
+    WC_LIST_FREE, WC_SUBLIST_FREE, WC_CASE_FREE,
+    WC_SUBLIST_END, WC_SUBLIST_AND, WC_SUBLIST_OR, WC_SUBLIST_COPROC, WC_SUBLIST_NOT,
+    WC_SUBLIST_SIMPLE,
+    WC_PIPE_END, WC_PIPE_MID,
+    WC_ASSIGN_SCALAR, WC_ASSIGN_ARRAY, WC_ASSIGN_INC,
+    WC_FOR_PPARAM, WC_FOR_LIST, WC_FOR_COND,
+    WC_SELECT_PPARAM, WC_SELECT_LIST,
+    WC_WHILE_WHILE, WC_WHILE_UNTIL,
+    WC_CODEBITS,
+    WC_CASE_HEAD, WC_CASE_OR, WC_CASE_AND, WC_CASE_TESTAND,
+    WC_IF_HEAD, WC_IF_IF, WC_IF_ELIF, WC_IF_ELSE,
+    Pound, Hat, Star, Inpar, Outpar, Equals, Bar, Inbrace, Outbrace, Inbrack,
+    Stringg, Outbrack, Tick, Inang, Outang, Quest, Tilde, Comma, Dash, Bang,
+    Snull, Dnull, Bnull, Nularg,
+};
+// Z_END / Z_SIMPLE in zsh_h are i32 (matching C `int` for these flag bits).
+// Rebind to u32 for bitwise ops against `wordcode` data.
+const Z_END: u32 = crate::ported::zsh_h::Z_END as u32;
+const Z_SIMPLE: u32 = crate::ported::zsh_h::Z_SIMPLE as u32;
 
 /// Untokenize a zsh tokenized string back to shell syntax
 pub(crate) fn untokenize(bytes: &[u8]) -> String {
@@ -138,9 +68,13 @@ pub(crate) fn untokenize(bytes: &[u8]) -> String {
 
     while i < bytes.len() {
         let b = bytes[i];
-        match b {
+        // Token constants in zsh_h are `char` (Unicode \u{84}..\u{a1}).
+        // Tokenized strings encode them as the same byte value, so widen
+        // the byte to char for the match.
+        let c = b as char;
+        match c {
             Pound => result.push('#'),
-            STRING | Qstring => result.push('$'),
+            Stringg => result.push('$'),
             Hat => result.push('^'),
             Star => result.push('*'),
             Inpar => result.push('('),
@@ -162,12 +96,12 @@ pub(crate) fn untokenize(bytes: &[u8]) -> String {
             Snull | Dnull | Bnull | Nularg => {
                 // Skip null markers
             }
-            0x89 => result.push_str("(("), // Inparmath
-            0x8b => result.push_str("))"), // Outparmath
+            '\u{89}' => result.push_str("(("), // Inparmath
+            '\u{8b}' => result.push_str("))"), // Outparmath
             _ if b >= 0x80 => {
                 // Unknown token, skip or try to represent
             }
-            _ => result.push(b as char),
+            _ => result.push(c),
         }
         i += 1;
     }
