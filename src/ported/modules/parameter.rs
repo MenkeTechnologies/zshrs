@@ -118,8 +118,6 @@ mod paramtypestr_tests {
         hashnode, param, PM_ARRAY, PM_EXPORTED, PM_SCALAR, PM_UNSET,
     };
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/parameter.c`.
     fn make_pm(flags: u32, level: i32) -> param {
         param {
             node: hashnode { next: None, nam: String::new(), flags: flags as i32 },
@@ -130,8 +128,6 @@ mod paramtypestr_tests {
         }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/parameter.c`.
     /// Mirrors Src/Modules/parameter.c:43-95 — switch on
     /// `PM_TYPE(pm->node.flags)` then dyncat'd modifier chain.
     #[test]
@@ -878,8 +874,8 @@ pub fn getpmnameddir(ht: *mut HashTable, name: &str) -> Option<Param> {     // c
 // nameddirtab via passwd) — those compose their value inline. !!!
 // =====================================================================
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/parameter.c`.
+/// WARNING: NOT IN PARAMETER.C — Rust-only `Param` constructor helper; C uses raw struct init
+/// (equivalent C logic at Src/Modules/parameter.c:882).
 /// !!! RUST-ONLY HELPER — see WARNING block above. Synthesises a
 /// PM_SCALAR | PM_READONLY | PM_UNSET | PM_SPECIAL Param with empty
 /// `u.str`.
@@ -2121,8 +2117,10 @@ use crate::zsh_h::HASHED;
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/parameter.c`.
+// WARNING: NOT IN PARAMETER.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -2142,14 +2140,18 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/parameter.c`.
+// WARNING: NOT IN PARAMETER.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["p:aliases".to_string(), "p:builtins".to_string(), "p:commands".to_string(), "p:dirstack".to_string(), "p:dis_aliases".to_string(), "p:dis_builtins".to_string(), "p:dis_functions".to_string(), "p:dis_functions_source".to_string(), "p:dis_galiases".to_string(), "p:dis_patchars".to_string(), "p:dis_reswords".to_string(), "p:dis_saliases".to_string(), "p:funcfiletrace".to_string(), "p:funcsourcetrace".to_string(), "p:funcstack".to_string(), "p:functions".to_string(), "p:functions_source".to_string(), "p:functrace".to_string(), "p:galiases".to_string(), "p:history".to_string(), "p:historywords".to_string(), "p:jobdirs".to_string(), "p:jobstates".to_string(), "p:jobtexts".to_string(), "p:modules".to_string(), "p:nameddirs".to_string(), "p:options".to_string(), "p:parameters".to_string(), "p:patchars".to_string(), "p:reswords".to_string(), "p:saliases".to_string(), "p:userdirs".to_string(), "p:usergroups".to_string()]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/parameter.c`.
+// WARNING: NOT IN PARAMETER.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -2161,8 +2163,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/parameter.c`.
+// WARNING: NOT IN PARAMETER.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

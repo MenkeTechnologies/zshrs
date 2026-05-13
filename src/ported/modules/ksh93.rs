@@ -502,8 +502,10 @@ fn module_features() -> &'static Mutex<features_t> {
 }
 
 // Local descriptor stub mirroring the C bintab + partab.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/ksh93.c`.
+// WARNING: NOT IN KSH93.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec![
         "b:nameref".to_string(),
@@ -519,8 +521,10 @@ fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     ]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/ksh93.c`.
+// WARNING: NOT IN KSH93.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -532,8 +536,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/ksh93.c`.
+// WARNING: NOT IN KSH93.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -618,8 +624,6 @@ fn isset(_opt: i32) -> bool { false }
 mod tests {
     use super::*;
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/ksh93.c`.
     /// Verifies `ksh93_wrapper` returns 1 in the !EMULATE_KSH branch
     /// (c:149-150) when `emulation` global is 0 (default).
     #[test]
@@ -633,8 +637,6 @@ mod tests {
         assert_eq!(rc, 1);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/ksh93.c`.
     /// Verifies `ksh93_wrapper` runs the full body (and still returns 1
     /// per c:227) when EMULATE_KSH is set on the `emulation` global.
     /// Body relies on stubbed externals so it can't validate the
@@ -655,8 +657,6 @@ mod tests {
         emulation.store(saved, Ordering::SeqCst);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/ksh93.c`.
     /// Verifies `matchgetfn` returns empty Vec when `match` array is
     /// unset and KSHARRAYS is off (c:86 NULL branch).
     #[test]
@@ -665,16 +665,12 @@ mod tests {
         assert!(v.is_empty());
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/ksh93.c`.
     /// Verifies `edcharsetfn` is a no-op (c:56 `;`).
     #[test]
     fn edcharsetfn_noop() {
         edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/ksh93.c`.
     /// Verifies all module loaders return 0.
     #[test]
     fn module_loaders_return_zero() {

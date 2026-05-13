@@ -321,8 +321,6 @@ pub fn finish_(m: *const module) -> i32 {                               // c:218
 mod tests {
     use super::*;
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
     /// `convertattr("bold", false)` emits `\e[1m` per Src/prompt.c
     /// attribute table.
     #[test]
@@ -330,8 +328,6 @@ mod tests {
         assert_eq!(convertattr("bold", false), "\x1b[1m");
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
     /// `convertattr("bold,underline", false)` chains the two
     /// `\e[Nm` escapes.
     #[test]
@@ -341,8 +337,6 @@ mod tests {
         assert!(s.contains("\x1b[4m"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
     /// `convertattr("fg=red", false)` emits `\e[31m`.
     #[test]
     fn convertattr_fg_red_escape() {
@@ -350,16 +344,12 @@ mod tests {
         assert!(s.contains("\x1b[31m"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
     /// SGR-mode `convertattr("bold", true)` returns `"1"`.
     #[test]
     fn convertattr_sgr_bold() {
         assert_eq!(convertattr("bold", true), "1");
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
     /// SGR-mode chains: `convertattr("bold,underline", true)` →
     /// `"1;4"`.
     #[test]
@@ -369,16 +359,12 @@ mod tests {
         assert!(s.contains('4'));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
     /// SGR-mode empty input returns `"0"` per c:67-70 fallback.
     #[test]
     fn convertattr_sgr_empty_returns_zero() {
         assert_eq!(convertattr("", true), "0");
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
     /// 256-colour spec `fg=196` emits `\e[38;5;196m`.
     #[test]
     fn convertattr_256_color() {
@@ -386,8 +372,6 @@ mod tests {
         assert!(s.contains("\x1b[38;5;196m"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
     /// Truecolor spec `fg=#ff0000` emits `\e[38;2;255;0;0m`.
     #[test]
     fn convertattr_truecolor() {
@@ -395,8 +379,6 @@ mod tests {
         assert!(s.contains("\x1b[38;2;255;0;0m"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
     /// SGR-mode 256-colour: `fg=196` → `38;5;196`.
     #[test]
     fn convertattr_sgr_256_color() {
@@ -404,8 +386,6 @@ mod tests {
         assert!(s.contains("38;5;196"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
     /// SGR-mode truecolor: `fg=#00ff00` → `38;2;0;255;0`.
     #[test]
     fn convertattr_sgr_truecolor() {
@@ -413,8 +393,6 @@ mod tests {
         assert!(s.contains("38;2;0;255;0"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
     /// `getgroup` returns None until the magic-assoc dispatch is
     /// wired (c:99-103 PM_UNSET branch).
     #[test]
@@ -423,8 +401,6 @@ mod tests {
         assert_eq!(getgroup("any", true), None);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/hlgroup.c`.
     /// `scangroup` returns empty until paramtable wiring lands
     /// (c:124-125 early exit).
     #[test]
@@ -439,8 +415,10 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/hlgroup.c`.
+// WARNING: NOT IN HLGROUP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -460,14 +438,18 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/hlgroup.c`.
+// WARNING: NOT IN HLGROUP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["p:.zle.esc".to_string(), "p:.zle.sgr".to_string()]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/hlgroup.c`.
+// WARNING: NOT IN HLGROUP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -479,8 +461,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/hlgroup.c`.
+// WARNING: NOT IN HLGROUP.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,

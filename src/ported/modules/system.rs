@@ -1131,8 +1131,6 @@ mod tests {
     use std::io::Write as _;
     use tempfile::TempDir;
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
     /// Verifies `getposint` parses non-negative ints and rejects
     /// negatives + trailing garbage per c:51.
     #[test]
@@ -1157,8 +1155,6 @@ mod tests {
             &["nosuchfeature".to_string()], &ops, 0), 1);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
     /// Verifies `bin_zsystem_supports` arg-count guards (c:784-791).
     #[test]
     fn bin_zsystem_supports_arg_count() {
@@ -1168,8 +1164,6 @@ mod tests {
             &["a".to_string(), "b".to_string()], &ops, 0), 255);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
     /// Verifies `bin_zsystem` dispatches to the right subcommand
     /// (c:809/811/814).
     #[test]
@@ -1182,8 +1176,6 @@ mod tests {
         assert_eq!(bin_zsystem("zsystem", &[], &ops, 0), 1);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
     /// Verifies `errnosgetfn` returns the dup'd table (c:835).
     #[test]
     fn errnosgetfn_returns_table() {
@@ -1204,8 +1196,6 @@ mod tests {
         assert!(fillpmsysparams("nonsense").is_none());
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
     /// Verifies `getpmsysparams` proxies through fillpmsysparams
     /// (c:878).
     #[test]
@@ -1214,8 +1204,6 @@ mod tests {
         assert!(getpmsysparams("nonsense").is_none());
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
     /// Verifies `scanpmsysparams` yields all three known keys
     /// (c:889-894).
     #[test]
@@ -1227,8 +1215,6 @@ mod tests {
         assert!(names.contains(&"procsubstpid"));
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
     fn empty_ops() -> crate::ported::zsh_h::options {
         use crate::ported::zsh_h::{options, MAX_OPS};
         options { ind: [0u8; MAX_OPS], args: Vec::new(),
@@ -1250,8 +1236,6 @@ mod tests {
         ops
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
     /// Verifies `bin_syserror` writes message to errvar with prefix
     /// (c:533-536).
     #[test]
@@ -1267,8 +1251,6 @@ mod tests {
         assert!(val.starts_with("PFX:"), "expected PFX: prefix, got {:?}", val);
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
     /// Verifies `bin_syserror` returns 2 for unknown errno name
     /// (c:527-528).
     #[test]
@@ -1322,8 +1304,6 @@ mod tests {
         unsafe { libc::close(fd); }
     }
 
-    /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-    /// of any function in `Src/Modules/system.c`.
     /// Verifies `math_systell` returns lseek(SEEK_CUR) (c:478).
     #[test]
     #[cfg(unix)]
@@ -1350,8 +1330,10 @@ use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/system.c`.
+// WARNING: NOT IN SYSTEM.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn module_features() -> &'static Mutex<features_t> {
     MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
         bn_list: None,
@@ -1371,14 +1353,18 @@ fn module_features() -> &'static Mutex<features_t> {
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
 // fields the Rust port doesn't carry. The hardcoded descriptor
 // list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/system.c`.
+// WARNING: NOT IN SYSTEM.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
     vec!["b:syserror".to_string(), "b:sysread".to_string(), "b:syswrite".to_string(), "b:sysopen".to_string(), "b:sysseek".to_string(), "b:zsystem".to_string(), "f:systell".to_string(), "p:errnos".to_string(), "p:sysparams".to_string()]
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/system.c`.
+// WARNING: NOT IN SYSTEM.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
     _f: &Mutex<features_t>,
@@ -1390,8 +1376,10 @@ fn handlefeatures(
     0
 }
 
-/// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
-/// of any function in `Src/Modules/system.c`.
+// WARNING: NOT IN SYSTEM.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn setfeatureenables(
     _m: *const module,
     _f: &Mutex<features_t>,
