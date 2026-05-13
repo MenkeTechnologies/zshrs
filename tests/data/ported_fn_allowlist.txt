@@ -965,14 +965,10 @@ apply_history_modifiers
 # into the canonical `gettok` body when that is fully ported.
 check_recursion
 check_iterations
-is_blank
-try_numeric_range_glob
-is_inblank
 process_heredocs
 read_line
 lex_initial
 is_valid_assignment_target
-dquote_parse_inner
 untokenize_char
 check_alias
 take_raw_buf

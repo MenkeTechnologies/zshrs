@@ -51,6 +51,7 @@ use crate::ported::zle::zle_tricky::*;
 use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
+use crate::zle::zle_h::{change, modifier};
 
 pub type ZleChar = char;
 
@@ -78,22 +79,6 @@ pub const ZLEEOF: ZleInt = -1;
 // `Zle.zlecontext` is now `i32` matching C's `int zlecontext`
 // (zle_main.c:163).
 
-/// modifier state for commands.
-/// Layout mirrors `struct modifier` in Src/Zle/zle.h. The Default impl
-/// matches `initmodifier()` from Src/Zle/zle_main.c:1604 — mult=1,
-/// tmult=1, base=10 — so a fresh modifier behaves like the result of
-/// initmodifier() rather than the all-zero Rust derive default.
-/// Direct port of `struct modifier` from `Src/Zle/zle.h:245-251`.
-/// Command modifier prefixes — `zmod` reads/writes this.
-#[derive(Debug, Clone)]
-#[allow(non_camel_case_types)]
-pub struct modifier {                                                        // c:245
-    pub flags: i32,                                                          // c:246 int flags
-    pub mult: i32,                                                           // c:247 int mult
-    pub tmult: i32,                                                          // c:248 int tmult
-    pub vibuf: i32,                                                          // c:249 int vibuf
-    pub base: i32,                                                           // c:250 int base
-}
 
 impl Default for modifier {
     fn default() -> Self {
@@ -119,19 +104,6 @@ use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL,
 /// Undo change record. `ChangeFlags` bitflags wrapper deleted —
 /// C uses bare `int flags` with `CH_NEXT` (1<<0) and `CH_PREV`
 /// (1<<1) bits (zle.h:297-298, ported in zle_h.rs as i32).
-#[derive(Debug, Clone)]
-#[allow(non_camel_case_types)]
-pub struct change {                                                          // c:284
-    pub flags: i32,                                                          // c:286 int flags
-    pub hist: i32,                                                           // c:287 zlong hist
-    pub off: usize,                                                          // c:288 int off
-    pub del: ZleString,                                                      // c:289 ZLE_STRING_T del
-    pub ins: ZleString,                                                      // c:290 ZLE_STRING_T ins
-    pub old_cs: usize,                                                       // c:291 int old_cs
-    pub new_cs: usize,                                                       // c:292 int new_cs
-    pub changeno: u64,                                                       // c:293 zlong changeno
-}
-
 // `WatchFd` deleted — duplicate of `struct watch_fd` already legit-
 // ported at zle_h.rs:781 (Src/Zle/zle.h:572). The Rust port uses
 // `super::zle_h::watch_fd` directly.
