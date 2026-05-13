@@ -1118,6 +1118,7 @@ par_cond_wordcode
 par_cursh_wordcode
 par_for_wordcode
 par_funcdef_wordcode
+par_redir_wordcode
 par_if_wordcode
 par_repeat_wordcode
 par_select_wordcode

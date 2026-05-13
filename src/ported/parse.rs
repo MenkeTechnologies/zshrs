@@ -2519,12 +2519,28 @@ pub fn par_repeat_wordcode() {
 /// Port of `par_funcdef(int *cmplx)` from `Src/parse.c:1672-1786`.
 pub fn par_funcdef_wordcode() {
     let p = ecadd(0);
+    // c:1681-1683 — `nocorrect = 1; incmdpos = 0; zshlex();` —
+    // set BEFORE the zshlex past `function`, so the next-token
+    // lex doesn't promote `{` to INBRACE_TOK or recognise reswds.
+    set_nocorrect(1);
+    set_incmdpos(false);
     zshlex();
     let np = ecadd(0);
     let mut n = 0u32;
-    set_incmdpos(false);
+    // c:1701-1709 — names loop. C special-cases `tokstr[0] ==
+    // Inbrace || tokstr[0] == '{'` to break out and set tok =
+    // INBRACE, since a bare `{` at incmdpos=0 lexes as STRING
+    // but should still open the funcdef body. Without this,
+    // `function f { ... }` swallowed the `{` as a name and the
+    // body never started.
     while tok() == STRING_LEX {
-        ecstr(&tokstr().unwrap_or_default());
+        let s = tokstr().unwrap_or_default();
+        let bytes = s.as_bytes();
+        if bytes.len() == 1 && (bytes[0] == b'{' || s == "\u{8f}") {
+            set_tok(INBRACE_TOK);
+            break;
+        }
+        ecstr(&s);
         n += 1;
         zshlex();
     }
@@ -2533,6 +2549,9 @@ pub fn par_funcdef_wordcode() {
             b[np] = n;
         }
     });
+    // c:1715-1716 — `nocorrect = 0; incmdpos = 1;` — restore
+    // before the body parse.
+    set_nocorrect(0);
     set_incmdpos(true);
     if tok() == INOUTPAR {
         zshlex();
