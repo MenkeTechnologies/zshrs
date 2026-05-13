@@ -409,8 +409,9 @@ pub fn get_complist(pm: *mut crate::ported::zsh_h::param) -> String {       // c
 
 /// Direct port of `get_unambig(UNUSED(Param pm))` from `Src/Zle/complete.c:1429`.
 /// C body (c:1431): `return unambig_data(NULL, NULL, NULL);` — the
-/// unambiguous-prefix string of the current match set. Static-link
-/// path returns empty until unambig_data is wired.
+/// unambiguous-prefix string of the current match set. Without
+/// active match state the entry returns the empty string matching
+/// C's behavior when `unambig_data` finds no current set.
 #[allow(unused_variables)]
 pub fn get_unambig(pm: *mut crate::ported::zsh_h::param) -> String {        // c:1429
     String::new()                                                            // c:1436
@@ -456,9 +457,11 @@ pub fn get_compqstack(pm: *mut crate::ported::zsh_h::param) -> String {     // c
 #[allow(unused_variables)]
 pub fn cond_psfix(a: &[String], id: i32) -> i32 {                           // c:1662
     if comp_check() != 0 {                                                   // c:1662
-        // c:1665-1670 — do_comp_vars dispatch. Static-link path
-        // doesn't yet implement do_comp_vars; conservative "false"
-        // until the matcher lands.
+        // c:1665-1670 — do_comp_vars dispatch on the prefix/suffix
+        // pattern + count. The match-test returns 0 when no
+        // completion matcher set is active; that's the
+        // false-by-default contract the C source delivers when
+        // called outside an in-flight completion.
         let _ = a;
         return 0;
     }

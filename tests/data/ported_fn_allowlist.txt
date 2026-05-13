@@ -158,6 +158,13 @@ checksched_thunk
 listwidgets
 getwidgettarget
 
+# zle_bindings.rs — `iwidget_lookup()` is the Rust-side dispatch
+# for the C `widgets[]` static table at `Src/Zle/zle_bindings.c:55`
+# (generated from `iwidgets.list` via the W() macro). C uses a
+# table indexed by `z_*` enum constants; Rust uses a match
+# statement keyed by widget-name string. Same semantics.
+iwidget_lookup
+
 # widget.rs — `find_word_start` / `find_word_end` are vi word-motion
 # helpers extracted from the bodies of vi-* widgets in
 # `Src/Zle/zle_vi.c`. C inlines the same logic at each widget body;
@@ -167,6 +174,12 @@ getwidgettarget
 # helpers above.
 find_word_start
 find_word_end
+
+# zle_vi.rs — `vimark_slot` is a Rust-only helper that converts vi
+# mark name characters (`a..z`, `'`, `` ` ``) into VIMARKS array
+# indices. C inlines the same `name - 'a'` arithmetic at each call
+# site (zle_vi.c:872, zle_vi.c:887). Factored out for clarity.
+vimark_slot
 
 # curses.rs — Rust-only helpers in the faithful port of
 # Src/Modules/curses.c. C dereferences libncurses globals directly

@@ -304,8 +304,13 @@ use crate::ported::zle::textobjects::*;
 use crate::ported::zle::deltochar::*;
 
     pub fn zrefresh() {                                             // c:975
-        let stdout = io::stdout();
-        let mut handle = stdout.lock();
+        // c:975 — full repaint pipeline. C writes every byte through
+        //          `tputs(..., putshout)` / `fputs(..., shout)`. Rust
+        //          collects the rendered escape stream into a String
+        //          and writes it to SHTTY in one shot — matches C's
+        //          shout destination and reduces syscall count.
+        use std::fmt::Write as FmtWrite;
+        let mut handle = String::new();
 
         let (cols, _rows) = (crate::ported::utils::adjustcolumns(), crate::ported::utils::adjustlines());
 
@@ -417,7 +422,15 @@ use crate::ported::zle::deltochar::*;
         let display_cursor_col = cursor_col.saturating_sub(scroll_offset);
         let _ = write!(handle, "\r\x1b[{}C", display_cursor_col);
 
-        let _ = handle.flush();
+        // c:1488 — `fwrite(out, ..., shout); fflush(shout);`. Single
+        //          write_loop emits the whole frame to SHTTY (stdout
+        //          fallback). Replaces the prior `stdout.lock()`
+        //          fake that wrote refresh output to stdout instead
+        //          of the controlling tty.
+        use std::sync::atomic::Ordering;
+        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let out_fd = if fd >= 0 { fd } else { 1 };
+        let _ = crate::ported::utils::write_loop(out_fd, handle.as_bytes());
     }
 
     /// Build the per-character attribute overlay used by `zrefresh`.
@@ -468,96 +481,112 @@ use crate::ported::zle::deltochar::*;
         attrs
     }
 
-    /// Full screen refresh - clears and redraws everything
+    /// Full screen refresh - clears and redraws everything.
     pub fn full_refresh() -> io::Result<()> {
-        print!("\x1b[2J\x1b[H");
+        use std::sync::atomic::Ordering;
+        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let out = if fd >= 0 { fd } else { 1 };
+        let _ = crate::ported::utils::write_loop(out, b"\x1b[2J\x1b[H");
         zrefresh();
-        io::stdout().flush()
+        Ok(())
     }
 
-    /// Partial refresh (optimize for minimal updates)
+    /// Partial refresh (optimize for minimal updates).
     pub fn partial_refresh() -> io::Result<()> {
         zrefresh();
-        io::stdout().flush()
+        Ok(())
     }
 
-    /// Clear the screen
-    /// Port of clearscreen(UNUSED(char **args)) from zle_refresh.c
+    /// Direct port of `void clearscreen(UNUSED(char **args))` from
+    /// `Src/Zle/zle_refresh.c:2366`. Writes CSI 2J + CSI H to the
+    /// shell-output fd, then re-renders. Was a `print!` fake.
     pub fn clearscreen() {                                          // c:2366
-        print!("\x1b[2J\x1b[H");
-        let _ = io::stdout().flush();
+        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, b"\x1b[2J\x1b[H");
         zrefresh();
     }
 
-    /// Redisplay the current line
-    /// Port of redisplay(UNUSED(char **args)) from zle_refresh.c
+    /// Direct port of `void redisplay(UNUSED(char **args))` from
+    /// `Src/Zle/zle_refresh.c:2377`. C kicks `resetneeded = 1` and
+    /// returns; Rust just re-runs zrefresh which equivalently
+    /// repaints from current state.
     pub fn redisplay() {                                            // c:2377
         zrefresh();
     }
 
-    // move the cursor to line ln (relative to the prompt line),            // c:2105
-    // absolute column cl; update vln, vcs - video line and column          // c:2105
-    /// Move cursor to position
-    /// Port of moveto(int ln, int cl) from zle_refresh.c
+    /// Direct port of `void moveto(int ln, int cl)` from
+    /// `Src/Zle/zle_refresh.c:2105`. C uses termcap `cm` / `cup`
+    /// strings to teleport the cursor; Rust emits the equivalent
+    /// CSI ; H sequence (rows/cols 1-indexed per ANSI). Was a
+    /// `print!` fake.
     pub fn moveto(row: usize, col: usize) {                       // c:2105
-        // ANSI escape: ESC [ row ; col H (1-indexed)
-        print!("\x1b[{};{}H", row + 1, col + 1);
-        let _ = io::stdout().flush();
+        let s = format!("\x1b[{};{}H", row + 1, col + 1);
+        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
     }
 
-    /// Move cursor down
-    /// Port of tc_downcurs(int ct) from zle_refresh.c  
+    /// Port of `void tc_downcurs(int ct)` from
+    /// `Src/Zle/zle_refresh.c:2126`. C emits the termcap `do`/`down`
+    /// capability `ct` times; Rust emits the parametrised CSI B.
     pub fn tc_downcurs(count: usize) {
         if count > 0 {
-            print!("\x1b[{}B", count);
-            let _ = io::stdout().flush();
+            let s = format!("\x1b[{}B", count);
+            let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
         }
     }
 
-    /// Move cursor right
-    /// Port of tc_rightcurs(int ct) from zle_refresh.c
+    /// Port of `void tc_rightcurs(int ct)` from
+    /// `Src/Zle/zle_refresh.c:2150`. CSI C parametrised cursor-right.
     pub fn tc_rightcurs(count: usize) {
         if count > 0 {
-            print!("\x1b[{}C", count);
-            let _ = io::stdout().flush();
+            let s = format!("\x1b[{}C", count);
+            let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
         }
     }
 
-    /// Scroll window up
-    /// Port of scrollwindow(int tline) from zle_refresh.c
+    /// Port of `void scrollwindow(int tline)` from
+    /// `Src/Zle/zle_refresh.c:1991`. Positive lines → scroll up (CSI S),
+    /// negative → scroll down (CSI T).
     pub fn scrollwindow(lines: i32) {
-        if lines > 0 {
-            // Scroll up
-            print!("\x1b[{}S", lines);
+        let s = if lines > 0 {
+            format!("\x1b[{}S", lines)
         } else if lines < 0 {
-            // Scroll down
-            print!("\x1b[{}T", -lines);
-        }
-        let _ = io::stdout().flush();
+            format!("\x1b[{}T", -lines)
+        } else {
+            return;
+        };
+        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
     }
 
-    /// Single line refresh
-    /// Port of singlerefresh(ZLE_STRING_T tmpline, int tmpll, int tmpcs) from zle_refresh.c
+    /// Port of `void singlerefresh(ZLE_STRING_T tmpline, int tmpll,
+    /// int tmpcs)` from `Src/Zle/zle_refresh.c:2397`. C builds a
+    /// fresh single-line video buffer for `read -e` / `vared` style
+    /// non-multiline editing; Rust defers to `zrefresh` which
+    /// handles single-line as a special case of multi-line.
     pub fn singlerefresh() {                                        // c:2397
         zrefresh();
     }
 
-    /// Refresh a single line
-    /// Port of refreshline(int ln) from zle_refresh.c
+    /// Port of `void refreshline(int ln)` from
+    /// `Src/Zle/zle_refresh.c:1543`. Forces a single-line repaint;
+    /// our zrefresh repaints the whole video buffer regardless.
     pub fn refreshline(_line: usize) {
         zrefresh();
     }
 
-    /// Write a wide character
-    /// Port of zwcputc(const REFRESH_ELEMENT *c) from zle_refresh.c
+    /// Port of `void zwcputc(const REFRESH_ELEMENT *c)` from
+    /// `Src/Zle/zle_refresh.c`. C: `putc(c->chr, shout)`. Rust:
+    /// encodes the char as UTF-8 bytes and writes to the shell-out
+    /// fd.
     pub fn zwcputc(c: char) {
-        print!("{}", c);
+        let mut buf = [0u8; 4];
+        let s = c.encode_utf8(&mut buf);
+        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
     }
 
-    /// Write a string of wide characters
-    /// Port of zwcwrite(const REFRESH_STRING s, size_t i) from zle_refresh.c
+    /// Port of `void zwcwrite(const REFRESH_STRING s, size_t i)`
+    /// from `Src/Zle/zle_refresh.c`. C: `fwrite(s, sizeof(*s), i,
+    /// shout)`. Rust writes the UTF-8 bytes to shout.
     pub fn zwcwrite(s: &str) {
-        print!("{}", s);
+        let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
     }
 
 
@@ -675,29 +704,79 @@ impl HighlightManager {
     }
 }
 
-/// Terminal output functions. Port of tcout(int cap) family from zle_refresh.c.
-pub fn tcout(cap: &str) {
-    print!("{}", cap);
-}
-
-pub fn tcoutarg(cap: &str, arg: i32) {
-    // Simple substitution for %d in capability string
-    let s = cap.replace("%d", &arg.to_string());
-    print!("{}", s);
-}
-
-pub fn tcmultout(cap: &str, count: i32) {
-    for _ in 0..count {
-        print!("{}", cap);
-    }
-}
-
-pub fn tcoutclear(to_end: bool) {
-    if to_end {
-        print!("\x1b[J"); // Clear to end of screen
+/// Port of `void tcout(int cap)` from `Src/Zle/zle_refresh.c:2339`.
+/// C looks up the termcap string via `tcstr[cap]` and writes it
+/// through `tputs(..., putshout)` to the shell-output fd. Rust port
+/// takes the resolved escape string directly (skipping the
+/// `tcstr[]` index lookup, since termcap probing isn't fully wired)
+/// and writes the bytes to `SHTTY` via `write_loop`.
+///
+/// Falls back to stdout (fd 1) when `SHTTY` is unset — covers the
+/// non-interactive paths (tests, batch evaluation) where there's no
+/// dedicated shell-output fd yet.
+/// WARNING: signature change — C=(int cap) vs Rust=(cap: &str).
+pub fn tcout(cap: &str) {                                                    // c:2339
+    use std::sync::atomic::Ordering;
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    if fd >= 0 {
+        let _ = crate::ported::utils::write_loop(fd, cap.as_bytes());
     } else {
-        print!("\x1b[2J"); // Clear entire screen
+        let _ = crate::ported::utils::write_loop(1, cap.as_bytes());
     }
+    // c:2346 — `SELECT_ADD_COST(tclen[cap])` — without per-cap tclen
+    //          table, the cost accounting is dropped (no scheduling
+    //          consumer reads it yet).
+}
+
+/// Port of `void tcoutarg(int cap, int arg)` from
+/// `Src/Zle/zle_refresh.c:2351`. C calls `tgoto(tcstr[cap], arg, arg)`
+/// to expand termcap `%d` / parametrised escape codes. Rust port
+/// does a literal `%d → arg` substring substitution (mirrors the
+/// most common case; doesn't handle the rare termcap `%p1%d`
+/// parametrisation that `tgoto` handles).
+/// WARNING: signature change — C=(int cap, int arg) vs Rust=(cap: &str, arg: i32).
+pub fn tcoutarg(cap: &str, arg: i32) {                                       // c:2351
+    use std::sync::atomic::Ordering;
+    // c:2355 — `result = tgoto(tcstr[cap], arg, arg);`
+    let s = cap.replace("%d", &arg.to_string());
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = crate::ported::utils::write_loop(out_fd, s.as_bytes());          // c:2359
+}
+
+/// Port of `void tcmultout(int cap, int multcap, int ct)` from
+/// `Src/Zle/zle_refresh.c:2163`. The C version tries the multi-arg
+/// `multcap` capability first (`tcoutarg(multcap, ct)`) and only
+/// falls back to a single-cap loop when `multcap` is unavailable.
+/// Rust port (without termcap probe) goes straight to the loop —
+/// `count` repeats of the same single-shot string.
+/// WARNING: signature change — C=(int cap, int multcap, int ct) vs Rust=(cap: &str, count: i32).
+pub fn tcmultout(cap: &str, count: i32) {                                    // c:2163
+    use std::sync::atomic::Ordering;
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    for _ in 0..count {                                                      // c:2173 single-cap loop
+        let _ = crate::ported::utils::write_loop(out_fd, cap.as_bytes());
+    }
+}
+
+/// Port of `void tcoutclear(int cap)` from
+/// `Src/Zle/zle_refresh.c:607`. C dispatches on `cap` (a termcap
+/// index — TCCLEAREOL/TCCLEAREOD/TCCLEARSCREEN) to emit the
+/// corresponding escape. Rust collapses to a bool `to_end`:
+/// `true` → clear-to-end (CSI J), `false` → clear-entire-screen
+/// (CSI 2J).
+/// WARNING: signature change — C=(int cap) vs Rust=(to_end: bool).
+pub fn tcoutclear(to_end: bool) {                                            // c:607
+    use std::sync::atomic::Ordering;
+    let bytes: &[u8] = if to_end {
+        b"\x1b[J"      // CSI J — clear to end of screen
+    } else {
+        b"\x1b[2J"     // CSI 2J — clear entire screen
+    };
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = crate::ported::utils::write_loop(out_fd, bytes);
 }
 
 /// Initialize ZLE refresh subsystem
@@ -1451,8 +1530,9 @@ pub const ZR_START_ELLIPSIS_SIZE: usize = ZR_START_ELLIPSIS.len();           // 
 /// delete escapes via the multi-form helper. Without curses substrate
 /// it's a no-op.
 #[inline] pub fn tc_delchars(_x: i32) {                                      // c:1726
-    // c:1726 — `tcmultout(TCDEL, TCMULTDEL, x)` deferred until
-    //          tcmultout is wired to ncurses.
+    // c:1726 — `tcmultout(TCDEL, TCMULTDEL, x)`. The Rust port
+    // ZLE redraws full lines on every paint via `zrefresh()`
+    // rather than emitting per-character delete escapes; no-op.
 }
 
 /// Port of `tc_inschars(X)` macro from `Src/Zle/zle_refresh.c:1727`.

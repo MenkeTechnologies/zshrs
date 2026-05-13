@@ -664,6 +664,117 @@ mod tests {
     }
 
     #[test]
+    fn uphistory_skips_consecutive_dupes_when_histignoredups_set() {
+        // c:235-237 — `nodups = isset(HISTIGNOREDUPS)` is passed
+        //              through to zle_goto_hist as skipdups. With
+        //              HISTIGNOREDUPS on and the current line equal
+        //              to the previous entry, up should walk past it.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _zle = zle_with_history(&["unique", "dup", "dup"]);
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "dup".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(
+            "dup".len(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        crate::ported::zle::zle_main::history().lock().unwrap().cursor = 3; // sentinel
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 1;
+
+        // Turn HISTIGNOREDUPS on so the skipdups path fires.
+        crate::ported::options::opt_state_set("histignoredups", true);
+
+        let rc = super::uphistory();
+        assert_eq!(rc, 0);
+        assert_eq!(
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(),
+            "unique",
+            "with HISTIGNOREDUPS on, up must skip the 'dup' twins and land on 'unique'"
+        );
+        crate::ported::options::opt_state_set("histignoredups", false);
+    }
+
+    #[test]
+    fn uphistory_returns_1_on_exhaustion_when_histbeep_set() {
+        // c:236-237 — `if (!zle_goto_hist(...) && isset(HISTBEEP))
+        //              return 1;`
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _zle = zle_with_history(&["only"]);
+        // Already at entry 0; trying to go up further is exhausted.
+        crate::ported::zle::zle_main::history().lock().unwrap().cursor = 0;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 1;
+
+        crate::ported::options::opt_state_set("histbeep", true);
+        let rc = super::uphistory();
+        assert_eq!(rc, 1, "exhausted up + HISTBEEP must return 1 (beep signal)");
+        crate::ported::options::opt_state_set("histbeep", false);
+    }
+
+    #[test]
+    fn uphistory_returns_0_on_exhaustion_without_histbeep() {
+        // c:236-237 — exhausted but no HISTBEEP → return 0.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _zle = zle_with_history(&["only"]);
+        crate::ported::zle::zle_main::history().lock().unwrap().cursor = 0;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = 1;
+
+        crate::ported::options::opt_state_set("histbeep", false);
+        let rc = super::uphistory();
+        assert_eq!(rc, 0, "exhausted up + !HISTBEEP must return 0");
+    }
+
+    #[test]
+    fn beginningofhistory_fills_buffer_from_oldest_entry() {
+        // c:584 — must drive cursor to entry 0 AND refill the buffer
+        //          (was a fake that only set cursor=0 without buffer fill).
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _zle = zle_with_history(&["alpha", "bravo", "charlie"]);
+        crate::ported::zle::zle_main::history().lock().unwrap().cursor = 3; // sentinel
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "draft".chars().collect();
+
+        let rc = super::beginningofhistory();
+        assert_eq!(rc, 0, "successful move returns 0");
+        assert_eq!(
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(),
+            "alpha",
+            "buffer must hold the oldest entry"
+        );
+        assert_eq!(
+            crate::ported::zle::zle_main::history().lock().unwrap().cursor,
+            0,
+            "cursor must land on entry 0"
+        );
+    }
+
+    #[test]
+    fn endofhistory_fills_buffer_with_saved_live_line() {
+        // c:604 — drives back to sentinel; saved_line (if any) restores.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _zle = zle_with_history(&["one", "two"]);
+        // Compose a live draft, then walk up to "two", then back via endofhistory.
+        *crate::ported::zle::zle_main::ZLELINE.lock().unwrap() = "myDraft".chars().collect();
+        crate::ported::zle::zle_main::ZLELL.store(
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        crate::ported::zle::zle_main::history().lock().unwrap().cursor = 2; // sentinel
+
+        // Up once → "two" (saves "myDraft" into saved_line).
+        assert!(zle_goto_hist(-1, false));
+        assert_eq!(
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(),
+            "two"
+        );
+
+        // endofhistory drives back to sentinel → restores "myDraft".
+        let rc = super::endofhistory();
+        assert_eq!(rc, 0);
+        assert_eq!(
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().iter().collect::<String>(),
+            "myDraft",
+            "saved live buffer must be restored at sentinel"
+        );
+    }
+
+    #[test]
     fn zle_goto_hist_walks_backwards_then_forwards() {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         let mut zle = zle_with_history(&["echo a", "echo b", "echo c"]);
@@ -927,12 +1038,27 @@ pub fn beginningofbufferorhistory() -> i32 {                    // c:573
     }
 }
 
-/// Port of `beginningofhistory(UNUSED(char **args))` from Src/Zle/zle_hist.c:584.
+/// Direct port of `int beginningofhistory(UNUSED(char **args))` from
+/// `Src/Zle/zle_hist.c:584`. Drives history to its oldest entry via
+/// `zle_goto_hist(firsthist(), 0, 0)`, then refills the ZLE buffer
+/// from that entry. Beeps and returns 1 when the move fails (no
+/// older history to visit) and `HISTBEEP` is on.
 pub fn beginningofhistory() -> i32 {                            // c:584
-    // C body (c:586-589): `if (!zle_goto_hist(firsthist(), 0, 0) &&
-    //                    isset(HISTBEEP)) return 1; return 0`.
-    crate::ported::zle::zle_main::history().lock().unwrap().cursor = 0;
-    0
+    use std::sync::atomic::Ordering;
+    use crate::ported::zsh_h::HISTBEEP;
+
+    // c:586 — `zle_goto_hist(firsthist(), 0, 0)`. The Rust History
+    //          method is delta-based; compute the delta to drive
+    //          cursor to entry 0 from wherever it currently sits.
+    let cur = crate::ported::zle::zle_main::history().lock().unwrap().cursor as i32;
+    let delta = 0 - cur;
+    let moved = zle_goto_hist(delta, false);
+
+    // c:587-588 — `if (!moved && isset(HISTBEEP)) return 1;`.
+    if !moved && crate::ported::zsh_h::isset(HISTBEEP) {
+        return 1;
+    }
+    0                                                            // c:589
 }
 
 /// Port of `doisearch(char **args, int dir, int pattern)` from Src/Zle/zle_hist.c:1082.
@@ -957,18 +1083,21 @@ pub fn doisearch(dir: i32) -> i32 {                           // c:1082
     r
 }
 
-/// Port of `downhistory(UNUSED(char **args))` from Src/Zle/zle_hist.c:434.
+/// Direct port of `int downhistory(UNUSED(char **args))` from
+/// `Src/Zle/zle_hist.c:434`. Walks history forward by `zmult`,
+/// honoring `HISTIGNOREDUPS` (passed to `zle_goto_hist` as
+/// `skipdups`) and beeping on exhaustion if `HISTBEEP` is set.
 pub fn downhistory() -> i32 {                                   // c:434
-    // C body (c:435-440): `nodups = isset(HISTIGNOREDUPS); if
-    //                    (!zle_goto_hist(histline, zmult, nodups) &&
-    //                    isset(HISTBEEP)) return 1; return 0`.
-    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult.max(1);
-    for _ in 0..n {
-        if crate::ported::zle::zle_main::history().lock().unwrap().down().is_none() {
-            return 1;
-        }
+    use crate::ported::zsh_h::{HISTBEEP, HISTIGNOREDUPS, isset};
+    // c:436 — `int nodups = isset(HISTIGNOREDUPS);`
+    let nodups = isset(HISTIGNOREDUPS);
+    let zmult = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult.max(1);
+    // c:437-438 — `if (!zle_goto_hist(histline, zmult, nodups) &&
+    //              isset(HISTBEEP)) return 1;`
+    if !zle_goto_hist(zmult, nodups) && isset(HISTBEEP) {
+        return 1;
     }
-    0
+    0                                                            // c:439
 }
 
 /// Port of `downlineorhistory(char **args)` from Src/Zle/zle_hist.c:370.
@@ -1026,12 +1155,22 @@ pub fn endofbufferorhistory() -> i32 {                          // c:593
     }
 }
 
-/// Port of `endofhistory()` from Src/Zle/zle_hist.c:604.
+/// Direct port of `int endofhistory(UNUSED(char **args))` from
+/// `Src/Zle/zle_hist.c:604`. Drives history to `curhist` (the
+/// live-buffer sentinel just past the last entry) via
+/// `zle_goto_hist`. Always returns 0 — even when the move fails;
+/// being on the live buffer is the natural "end" state regardless.
 pub fn endofhistory() -> i32 {                                  // c:604
-    // C body (c:606): `zle_goto_hist(curhist, 0, 0); return 0`. Reset
-    //                cursor to live-buffer sentinel (just past last entry).
-    crate::ported::zle::zle_main::history().lock().unwrap().cursor = crate::ported::zle::zle_main::history().lock().unwrap().entries.len();
-    0
+    // c:606 — `zle_goto_hist(curhist, 0, 0)`. Compute delta from
+    //          current cursor to the live-buffer sentinel index
+    //          (== entries.len()).
+    let (cur, end): (i32, i32) = {
+        let h = crate::ported::zle::zle_main::history().lock().unwrap();
+        (h.cursor as i32, h.entries.len() as i32)
+    };
+    let delta = end - cur;
+    let _ = zle_goto_hist(delta, false);
+    0                                                            // c:607
 }
 
 /// `struct isrch_spot` — port of `Src/Zle/zle_hist.c:954-963`.
@@ -1405,17 +1544,21 @@ pub fn setlocalhistory() -> i32 {                               // c:794
     0
 }
 
-/// Port of `uphistory(UNUSED(char **args))` from Src/Zle/zle_hist.c:233.
+/// Direct port of `int uphistory(UNUSED(char **args))` from
+/// `Src/Zle/zle_hist.c:233`. Walks history backward by `zmult`,
+/// honoring `HISTIGNOREDUPS` (passed to `zle_goto_hist` as
+/// `skipdups`) and beeping on exhaustion if `HISTBEEP` is set.
 pub fn uphistory() -> i32 {                                     // c:233
-    // C body (c:234-239): same as downhistory but `-zmult`. Walk
-    //                    backward through History entries.
-    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult.max(1);
-    for _ in 0..n {
-        if crate::ported::zle::zle_main::history().lock().unwrap().up().is_none() {
-            return 1;
-        }
+    use crate::ported::zsh_h::{HISTBEEP, HISTIGNOREDUPS, isset};
+    // c:235 — `int nodups = isset(HISTIGNOREDUPS);`
+    let nodups = isset(HISTIGNOREDUPS);
+    let zmult = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult.max(1);
+    // c:236-237 — `if (!zle_goto_hist(histline, -zmult, nodups) &&
+    //              isset(HISTBEEP)) return 1;`
+    if !zle_goto_hist(-zmult, nodups) && isset(HISTBEEP) {
+        return 1;
     }
-    0
+    0                                                            // c:238
 }
 
 /// Port of `uplineorhistory(char **args)` from Src/Zle/zle_hist.c:282.

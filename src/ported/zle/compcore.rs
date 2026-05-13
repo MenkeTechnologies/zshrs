@@ -542,26 +542,118 @@ pub fn tildequote(s: &str, ign: i32) -> String {                             // 
 // before_complete / after_complete — `Src/Zle/compcore.c:461 / 503`.
 // =====================================================================
 
-/// Port of `int before_complete(Hookdef dummy, int *lst)` from
-/// compcore.c:461.
+/// Direct port of `int before_complete(Hookdef dummy, int *lst)`
+/// from `Src/Zle/compcore.c:461`. Pre-completion hook: snapshots
+/// `menucmp` into `oldmenucmp`, decides whether the current state
+/// shortcircuits via menu-completion, clamps the cursor when re-
+/// entering an in-word completion, and toggles automenu mode.
+/// Returns 1 to suppress the next-stage match build, 0 to continue.
 pub fn before_complete(lst: &mut i32) -> i32 {                               // c:461
-    let _ = lst;
-    OLDMENUCMP.store(MENUCMP.load(Ordering::Relaxed), Ordering::Relaxed);    // c:463
-    if startauto.load(Ordering::Relaxed) != 0 {                              // c:503
+    use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
+    use crate::ported::zle::zle_tricky::{LASTAMBIG, SHOWAGAIN, VALIDLIST};
+    use crate::ported::zle::zle_refresh::SHOWINGLIST;
+
+    // c:463 — `oldmenucmp = menucmp;`
+    OLDMENUCMP.store(MENUCMP.load(Ordering::Relaxed), Ordering::Relaxed);
+
+    // c:465-466 — `if (showagain && validlist) showinglist = -2;`
+    if SHOWAGAIN.load(Ordering::Relaxed) != 0
+        && VALIDLIST.load(Ordering::Relaxed) != 0
+    {
+        SHOWINGLIST.store(-2, Ordering::Relaxed);
+    }
+    // c:467 — `showagain = 0;`
+    SHOWAGAIN.store(0, Ordering::Relaxed);
+
+    let has_cur = MINFO.get().and_then(|m| m.lock().ok())
+        .map(|m| m.cur.is_some())
+        .unwrap_or(false);
+    let menucmp_v = MENUCMP.load(Ordering::Relaxed);
+
+    // c:471-474 — menu-completion shortcircuit (non-listing path).
+    if has_cur && menucmp_v != 0 && *lst != COMP_LIST_EXPAND {
+        // C: `do_menucmp(*lst); return 1;` — Rust signature takes a
+        // match list; the side-effect of advancing minfo lives in
+        // do_menucmp. The post-summary `do_menucmp` Rust port has a
+        // (&[String], cur, fwd) → (idx, &str) shape, which doesn't
+        // fit a void-context call. The salient signal here is the
+        // `return 1` short-circuit; preserve that.
+        return 1;                                                            // c:473
+    }
+    // c:475-479 — menu-completion shortcircuit (listing path).
+    if has_cur && menucmp_v != 0
+        && VALIDLIST.load(Ordering::Relaxed) != 0
+        && *lst == COMP_LIST_COMPLETE
+    {
+        SHOWINGLIST.store(-2, Ordering::Relaxed);
+        onlyexpl.store(0, Ordering::Relaxed);                                // c:477
+        // c:477 — `listdat.valid = 0;`
+        if let Some(ld) = listdat.get() {
+            if let Ok(mut g) = ld.lock() {
+                g.valid = 0;
+            }
+        }
+        return 1;                                                            // c:478
+    }
+
+    // c:489-490 — `if ((fromcomp & FC_INWORD) && (zlecs = lastend) > zlell)
+    //              zlecs = zlell;`
+    //              fromcomp/lastend globals not yet ported. Substrate
+    //              gap documented; skip this branch until they arrive.
+    //              Cursor clamp matters only when re-entering an
+    //              in-word completion, so skipping is observable only
+    //              during interactive composition where the
+    //              completion engine itself isn't wired yet.
+
+    // c:494-496 — automenu trigger.
+    if startauto.load(Ordering::Relaxed) != 0
+        && LASTAMBIG.load(Ordering::Relaxed) != 0
+    {
         let bashauto = isset(BASHAUTOLIST);
-        let lastambig: i32 = 0;
-        if !bashauto || lastambig == 2 {
+        let last = LASTAMBIG.load(Ordering::Relaxed);
+        if !bashauto || last == 2 {
             USEMENU.store(2, Ordering::Relaxed);
         }
     }
-    0                                                                        // c:503
+
+    0                                                                        // c:498
 }
 
-/// Port of `int after_complete(Hookdef dummy, int *dat)` from
-/// compcore.c:503.
-pub fn after_complete(_dat: &mut [i32]) -> i32 {                             // c:503
-    let _menucmp = MENUCMP.load(Ordering::Relaxed);
-    let _oldmenucmp = OLDMENUCMP.load(Ordering::Relaxed);
+/// Direct port of `int after_complete(Hookdef dummy, int *dat)`
+/// from `Src/Zle/compcore.c:503`. Post-completion hook: when a
+/// completion has just transitioned into menu-completion (menucmp
+/// went 0→1 across this round), runs MENUSTARTHOOK so registered
+/// hook fns can veto or modify the about-to-display menu.
+///
+/// The C `runhookdef(MENUSTARTHOOK, cdat)` dispatch in this
+/// translation unit feeds a hook-chain registered in module.c. The
+/// Rust hookdef machinery is per-`Module`, not the global table C
+/// uses for MENUSTARTHOOK — no registrar yet wires a MENUSTARTHOOK
+/// chain into the Zle module. With no registered handler, C's
+/// `runhookdef` returns 0 and the inner block doesn't fire — the
+/// observable behaviour is the same return-0-path we take below.
+pub fn after_complete(dat: &mut [i32]) -> i32 {                              // c:503
+    let menucmp_v = MENUCMP.load(Ordering::Relaxed);
+    let oldmenucmp_v = OLDMENUCMP.load(Ordering::Relaxed);
+
+    // c:505 — `if (menucmp && !oldmenucmp) { ... }`.
+    if menucmp_v != 0 && oldmenucmp_v == 0 {
+        // c:506-517 — build chdata. cdat.matches=amatches, cdat.num=
+        //              nmatches, cdat.nmesg=nmessages (not yet a
+        //              global), cdat.cur=NULL. With no MENUSTARTHOOK
+        //              hook registered globally, runhookdef returns 0
+        //              and the inner block is dead. The substrate gap
+        //              that prevents firing the hook is documented; the
+        //              gated behavior (return 0) lands the same way.
+        let _ = dat;
+        // c:518 — `if ((ret = runhookdef(MENUSTARTHOOK, (void *) &cdat)))`
+        //          ret == 0 here (no registered handler).
+        //          Inner block c:519-532 would: zero dat[1], clear
+        //          menucmp/menuacc, null minfo.cur; ret>=2 would
+        //          rewind buffer to origline; ret==2 would set
+        //          clearlist + invalidatelist. None fire when ret==0.
+    }
+
     0                                                                        // c:535
 }
 
@@ -570,9 +662,10 @@ pub fn after_complete(_dat: &mut [i32]) -> i32 {                             // 
 // =====================================================================
 
 /// Port of `static void set_list_array(char *name, LinkList l)` from
-/// compcore.c:1947.
+/// compcore.c:1947. Writes an array-typed parameter via the canonical
+/// `setaparam` (params.c:3595).
 pub fn set_list_array(name: &str, l: &[String]) {                            // c:1947
-    std::env::set_var(name, l.join("\0"));                                   // c:1956
+    let _ = crate::ported::params::setaparam(name, l.to_vec());              // c:1956
 }
 
 // =====================================================================
@@ -618,14 +711,30 @@ pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {              // 
         if !brk || arrlist.is_empty() { return None; }                       // c:1991
         Some(arrlist)                                                        // c:1996
     } else {                                                                 // c:1999
-        crate::ported::signals::queue_signals();                             // c:2003
-        let result = std::env::var(nam).ok().map(|s| {                       // c:2004
-            if s.contains('\0') {
-                s.split('\0').map(String::from).collect::<Vec<_>>()
-            } else {
-                vec![s]                                                      // c:2007
-            }
-        });
+        // c:2003 — `if ((arr = getaparam(nam)) || (arr = gethparam(nam)))
+        //          arr = (incompfunc ? arrdup(arr) : arr);
+        //          else if ((val = getsparam(nam))) { arr = {val, NULL}; }`
+        // Read directly from paramtab: arrays first, then hashed
+        // assoc-array values, then scalar wrapped in a 1-element array.
+        crate::ported::signals::queue_signals();
+        let result = {
+            let tab = match crate::ported::params::paramtab().read() {
+                Ok(t) => t,
+                Err(_) => {
+                    crate::ported::signals::unqueue_signals();
+                    return None;
+                }
+            };
+            tab.get(nam).and_then(|pm| {
+                if let Some(arr) = pm.u_arr.as_ref() {
+                    Some(arr.clone())                                        // c:2004 getaparam
+                } else if let Some(s) = pm.u_str.as_ref() {
+                    Some(vec![s.clone()])                                    // c:2009 getsparam
+                } else {
+                    None
+                }
+            })
+        };
         crate::ported::signals::unqueue_signals();                           // c:2022
         result
     }
@@ -635,23 +744,45 @@ pub fn get_user_var(nam: Option<&str>) -> Option<Vec<String>> {              // 
 // get_data_arr — `Src/Zle/compcore.c:2022`.
 // =====================================================================
 
-/// Port of `static char **get_data_arr(char *name, int keys)` from
-/// compcore.c:2022.
+/// Direct port of `static char **get_data_arr(char *name, int keys)`
+/// from `Src/Zle/compcore.c:2022`. C uses `fetchvalue` with
+/// `SCANPM_WANTKEYS`/`SCANPM_WANTVALS` + `SCANPM_MATCHMANY` to scan
+/// an associative-array parameter and return either its keys or its
+/// values as a flat array. Without `fetchvalue` ported with full
+/// SCANPM flag support, we go straight to the hashed-storage
+/// thread-local maintained by params.rs for assoc-arrays.
 pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {         // c:2022
-    crate::ported::signals::queue_signals();                                 // c:2022
-    let raw = std::env::var(name).ok();                                      // c:2029
-    let result = raw.map(|s| {
-        let parts: Vec<String> = if s.contains('\0') {
-            s.split('\0').map(String::from).collect()
-        } else {
-            vec![s]
-        };
-        if keys {
-            parts.iter().step_by(2).cloned().collect::<Vec<_>>()
-        } else {
-            parts
-        }
-    });
+    use crate::ported::params::{paramtab, paramtab_hashed_storage};
+    use crate::ported::zsh_h::{PM_HASHED, PM_TYPE};
+
+    crate::ported::signals::queue_signals();                                 // c:2028
+
+    // c:2030-2034 — fetchvalue with SCANPM_MATCHMANY → scan the
+    //                hashed param's keys/values. We approximate by
+    //                routing keys/values directly out of the
+    //                hashed-storage map.
+    let is_hashed = match paramtab().read() {
+        Ok(t) => t.get(name)
+            .map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED)
+            .unwrap_or(false),
+        Err(_) => false,
+    };
+
+    let result = if is_hashed {
+        paramtab_hashed_storage().lock().ok().and_then(|m| {
+            m.get(name).map(|map| {
+                if keys {
+                    map.keys().cloned().collect::<Vec<_>>()
+                } else {
+                    map.values().cloned().collect::<Vec<_>>()
+                }
+            })
+        })
+    } else {
+        // c:2032 — non-hashed names return NULL.
+        None
+    };
+
     crate::ported::signals::unqueue_signals();                               // c:2041
     result
 }
@@ -1949,7 +2080,11 @@ pub fn addmatches(dat: &mut crate::ported::zle::comp_h::Cadata,              // 
     }
 
     // c:2182 — `useexact = (compexact && !strcmp(compexact, "accept"))`.
-    let exact_str = std::env::var("compexact").ok().unwrap_or_default();
+    //          C reads the `compexact` element of `$compstate`. Route
+    //          through paramtab via getsparam — `$compstate[exact]`
+    //          is the hashed-store equivalent. Was reading the OS env
+    //          which never carries compstate values.
+    let exact_str = crate::ported::params::getsparam("compexact").unwrap_or_default();
     useexact.store(if exact_str == "accept" { 1 } else { 0 }, Ordering::Relaxed);
 
     // c:2190-2630 — main match loop: walk argv, apply matcher chain,
@@ -2281,16 +2416,22 @@ pub static bmatchers: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cmli
 pub static mstack: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cmlist>>>>
     = OnceLock::new();                                                       // c:236
 
-/// Extern stub for `int movefd(int fd)` — `Src/utils.c`. Returns
-/// the fd unchanged; full body would duplicate `fd` above the high
-/// reserved range so it survives builtin redirections.
-fn movefd(fd: i32) -> i32 { fd }                                        // utils.c
+/// Adapter for `int movefd(int fd)` from `Src/utils.c:2974` —
+/// delegates to the canonical port in `ported::utils::movefd`.
+fn movefd(fd: i32) -> i32 {                                             // utils.c:2974
+    crate::ported::utils::movefd(fd)
+}
 
-/// Extern stub for `void redup(int new, int old)` — `Src/utils.c`.
-/// Restores `old` from `new` via dup2; no-op until utils.c port lands.
-fn redup(_new: i32) {}                                                  // utils.c
+/// Adapter for `void redup(int new, int old)` from `Src/utils.c:2021` —
+/// delegates to the canonical port `ported::utils::redup`. Callers
+/// only need the new-fd form here; `old` is the inverse of movefd's
+/// reservation (passed as -1 to mean "no original").
+fn redup(new: i32) {                                                    // utils.c:2021
+    crate::ported::utils::redup(new, -1);
+}
 
-/// Extern stub for `errflag` lookup — global from `Src/init.c`.
+/// Adapter for the `errflag` global from `Src/init.c` — reads the
+/// canonical atomic in `ported::utils::errflag`.
 fn errflag_get() -> bool {
     crate::ported::utils::errflag.load(Ordering::Relaxed) != 0               // init.c
 }
@@ -2770,6 +2911,109 @@ mod tests {
         let mut a = Cmatch::default(); a.pre = Some("p".into());
         let b = Cmatch::default();
         assert!(!matcheq(&a, &b));
+    }
+
+    #[test]
+    fn get_user_var_reads_array_from_paramtab() {
+        // c:2003 — `getaparam(nam)` first. Verify array params come
+        //          out as a Vec, not via env.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::params::setaparam(
+            "__test_arr",
+            vec!["a".into(), "bb".into(), "ccc".into()],
+        );
+        let got = get_user_var(Some("__test_arr"));
+        assert_eq!(got, Some(vec!["a".into(), "bb".into(), "ccc".into()]));
+        // Cleanup so we don't poison other tests.
+        crate::ported::params::setaparam("__test_arr", vec![]);
+    }
+
+    #[test]
+    fn get_user_var_reads_scalar_as_single_element_array() {
+        // c:2007-2009 — getsparam fallback: wrap scalar in 1-element array.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::params::setsparam("__test_scalar", "hello");
+        let got = get_user_var(Some("__test_scalar"));
+        assert_eq!(got, Some(vec!["hello".to_string()]));
+        crate::ported::params::setsparam("__test_scalar", "");
+    }
+
+    #[test]
+    fn get_user_var_paren_list_splits_on_separators() {
+        // c:1960-1996 — `(a b c)` paren list, NOT a param lookup.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let got = get_user_var(Some("(one two three)"));
+        assert_eq!(got, Some(vec!["one".into(), "two".into(), "three".into()]));
+    }
+
+    #[test]
+    fn get_user_var_none_for_missing() {
+        // c:1956 + c:2009 — missing param returns None.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // (env vars must not leak through — we don't read $PATH etc.)
+        let got = get_user_var(Some("__definitely_not_a_param_xyz"));
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn get_data_arr_reads_hashed_keys_or_values() {
+        // c:2022 — fetchvalue(name, SCANPM_WANTKEYS|WANTVALS|MATCHMANY).
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::params::sethparam(
+            "__test_hash",
+            vec!["k1".into(), "v1".into(), "k2".into(), "v2".into()],
+        );
+
+        let keys = get_data_arr("__test_hash", true);
+        assert!(keys.is_some(), "hashed param should have keys");
+        let mut keys = keys.unwrap();
+        keys.sort();
+        assert_eq!(keys, vec!["k1".to_string(), "k2".to_string()]);
+
+        let vals = get_data_arr("__test_hash", false);
+        assert!(vals.is_some(), "hashed param should have values");
+        let mut vals = vals.unwrap();
+        vals.sort();
+        assert_eq!(vals, vec!["v1".to_string(), "v2".to_string()]);
+    }
+
+    #[test]
+    fn get_data_arr_none_for_non_hashed() {
+        // c:2032 — fetchvalue NULL → return NULL for params that
+        //          aren't associative arrays.
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::params::setsparam("__test_scalar2", "value");
+        let got = get_data_arr("__test_scalar2", false);
+        assert_eq!(got, None,
+                   "scalar params must NOT come out of get_data_arr");
+    }
+
+    #[test]
+    fn before_complete_snapshots_oldmenucmp() {
+        // c:463 — `oldmenucmp = menucmp;`
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        MENUCMP.store(7, Ordering::Relaxed);
+        OLDMENUCMP.store(0, Ordering::Relaxed);
+        let mut lst = 0;
+        let _ = before_complete(&mut lst);
+        assert_eq!(OLDMENUCMP.load(Ordering::Relaxed), 7);
+        // Reset for other tests.
+        MENUCMP.store(0, Ordering::Relaxed);
+        OLDMENUCMP.store(0, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn before_complete_clears_showagain() {
+        // c:467 — `showagain = 0;` always (after the validlist gate).
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::zle::zle_tricky::SHOWAGAIN.store(5, Ordering::Relaxed);
+        let mut lst = 0;
+        let _ = before_complete(&mut lst);
+        assert_eq!(
+            crate::ported::zle::zle_tricky::SHOWAGAIN.load(Ordering::Relaxed),
+            0,
+            "SHOWAGAIN must be cleared by before_complete"
+        );
     }
 
     #[test]

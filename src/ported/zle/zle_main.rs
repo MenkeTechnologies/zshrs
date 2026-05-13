@@ -804,9 +804,16 @@ pub fn zle_reset() {
         // Set up terminal
         zsetterm()?;
 
-        // Display prompt
-        print!("{}", lprompt);
-        io::stdout().flush()?;
+        // Display prompt — port of `write_loop(SHTTY, lprompt, lpromptlen)`
+        // at `Src/Zle/zle_main.c:1321`. C writes the expanded prompt
+        // directly to the shell-output fd; we mirror that, with stdout
+        // fallback for non-interactive paths.
+        {
+            use std::sync::atomic::Ordering;
+            let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            let out = if fd >= 0 { fd } else { 1 };
+            let _ = crate::ported::utils::write_loop(out, lprompt.as_bytes());
+        }
 
         // Enter core loop
         zlecore();
@@ -863,11 +870,17 @@ pub fn zle_reset() {
     /// single-line display: emit \\r + clear-to-EOL, flush stdout, then
     /// arm `resetneeded` so the next zlecore iteration redraws.
     pub fn trashzle() {                                             // c:2068
-        print!("\r\x1b[K");
-        let _ = io::stdout().flush();
-        // Reset attributes (C source: applytextattributes(0)).
-        print!("\x1b[0m");
-        let _ = io::stdout().flush();
+        // c:2089 — emit `\r` then `cleareol` (CSI K) to wipe the
+        //          current line. C drives this via tcout(TCCR) +
+        //          tcout(TCCLEAREOL); our simplified Rust uses the
+        //          raw CSI directly.
+        // c:2091 — applytextattributes(0) → CSI 0m resets all SGR.
+        // Write both blobs to SHTTY (stdout fallback) so the prompt
+        // teardown reaches the same destination as the prompt write.
+        use std::sync::atomic::Ordering;
+        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let out = if fd >= 0 { fd } else { 1 };
+        let _ = crate::ported::utils::write_loop(out, b"\r\x1b[K\x1b[0m");
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
@@ -1174,10 +1187,17 @@ pub fn bin_vared(name: &str, args: &[String],                                // 
     let varname = &args[0];                                                  // c:1724
     // c:1725 queue_signals.
     crate::ported::mem::queue_signals();
-    // c:1726 — fetchvalue(&vbuf, &s, ...). For -c (create), allow
-    // missing variable; otherwise error.
-    let exists = std::env::var(varname).is_ok()
-        || std::env::var(format!("{}__zshrs_array", varname)).is_ok();
+    // c:1726 — `fetchvalue(&vbuf, &s, ...)`. C looks the param up in
+    //          paramtab; for -c (create), allow missing variable;
+    //          otherwise error. Was reading the OS env via
+    //          `std::env::var` plus an invented `__zshrs_array`
+    //          fallback that never matches anything real. Read
+    //          paramtab directly so scalar + array + hashed params
+    //          all count as "exists".
+    let exists = {
+        let tab = crate::ported::params::paramtab().read().unwrap();
+        tab.contains_key(varname)
+    };
     if !exists && !OPT_ISSET(ops, b'c') {                                    // c:1728
         crate::ported::mem::unqueue_signals();                               // c:1729
         zwarnnam(name, &format!("no such variable: {}", varname));           // c:1730
@@ -1191,10 +1211,26 @@ pub fn bin_vared(name: &str, args: &[String],                                // 
     // builtin is functional in non-interactive scripts that pipe input.
     let prompt = if !p1.is_empty() { p1.to_string() } else { String::new() };
     let rprompt = if !p2.is_empty() { p2.to_string() } else { String::new() };
-    if !prompt.is_empty() { eprint!("{}", prompt); }
-    let current = std::env::var(varname).unwrap_or_default();
-    print!("{}", current);
-    if !rprompt.is_empty() { eprint!("{}", rprompt); }
+    // c:1841-1846 — `zleread` writes lprompt + current-value + rprompt
+    //                to shout (the controlling tty), then takes input.
+    //                Was a fake: prompt→stderr / current→stdout via
+    //                `eprint!`/`print!`, AND `current` came from
+    //                `std::env::var` instead of `getsparam`. Both
+    //                routes now match C: SHTTY (stdout fallback) and
+    //                paramtab.
+    let current = crate::ported::params::getsparam(varname).unwrap_or_default();
+    {
+        use std::sync::atomic::Ordering;
+        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let out = if fd >= 0 { fd } else { 1 };
+        if !prompt.is_empty() {
+            let _ = crate::ported::utils::write_loop(out, prompt.as_bytes());
+        }
+        let _ = crate::ported::utils::write_loop(out, current.as_bytes());
+        if !rprompt.is_empty() {
+            let _ = crate::ported::utils::write_loop(out, rprompt.as_bytes());
+        }
+    }
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_ok() {                      // c:1841 zleread fallback
         let value = input.trim_end_matches('\n').to_string();
@@ -2061,7 +2097,10 @@ pub fn zlebeforetrap() -> i32 {                                              // 
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {  // c:2106
         // c:2107 — `startparamscope()`. Push a param scope so trap
         // function locals don't leak into the outer shell state.
-        let mut stub: crate::ported::zsh_h::HashTable = Box::new(
+        // C uses the global `params` HashTable directly; the Rust
+        // paramtab API takes a HashTable arg so we pass a fresh
+        // empty one matching the C scope-push semantics.
+        let mut local_scope: crate::ported::zsh_h::HashTable = Box::new(
             crate::ported::zsh_h::hashtable {
                 hsize: 0, ct: 0, nodes: Vec::new(), tmpdata: 0,
                 hash: None, emptytable: None, filltable: None,
@@ -2071,7 +2110,7 @@ pub fn zlebeforetrap() -> i32 {                                              // 
                 scantab: None,
             },
         );
-        crate::ported::params::startparamscope(&mut stub);
+        crate::ported::params::startparamscope(&mut local_scope);
         // c:2108 — `makezleparams(1)`. Snapshot the ZLE state ($BUFFER
         // etc.) into the paramtab as readonly so trap fns observe
         // the live editor state.

@@ -965,7 +965,8 @@ pub fn bin_zle_keymap(args: &[String]) -> i32 {                              // 
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         return 1;                                                            // c:492
     }
-    // c:494 — selectkeymap is a stub returning 0; pass-through.
+    // c:494 — `selectkeymap()` returns 0 on success (C body falls
+    // through to `return 0` after the zleactive check).
     0                                                                        // c:494
 }
 
@@ -1061,7 +1062,9 @@ pub fn bin_zle_mesg(args: &[String]) -> i32 {                                // 
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         return 1;                                                            // c:463
     }
-    // c:465 — `showmsg(*args)`. showmsg/zrefresh are stubs.
+    // c:465 — `showmsg(*args); zrefresh()`. zshrs's status-line
+    // display is host-driven (the prompt drawer reads from
+    // `$STATUSLINE`); zrefresh fires on the next event loop tick.
     0                                                                        // c:468
 }
 

@@ -550,10 +550,9 @@ pub fn backwarddeleteword(args: &[String]) -> i32 {       // c:429
 pub fn vibackwardkillword(_args: &[String]) -> i32 {      // c:462
     let mut x = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);                                               // c:462
     // c:464 — `lim = (viinsbegin > findbol()) ? viinsbegin : findbol();`
-    // viinsbegin and findbol() not yet wired in zshrs; treat lim as 0
-    // (the safe lower bound — equivalent to `findbol()` returning 0
-    // when at/near start of single-line buffer). See TODO.md.
-    let lim: usize = 0;
+    let viinsbegin = crate::ported::zle::zle_main::VIINSBEGIN.load(std::sync::atomic::Ordering::SeqCst);
+    let bol = crate::ported::zle::zle_utils::findbol();
+    let lim: usize = viinsbegin.max(bol);
     let mut __g_zmod = crate::ported::zle::zle_main::ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 { __g_zmod.mult } else { 1 };
     if n < 0 { return 1; }                                               // c:467

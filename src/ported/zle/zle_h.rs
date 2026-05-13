@@ -369,13 +369,17 @@ impl widget {
         widget { flags: flags | WIDGET_INT, first: None, u: WidgetImpl::Internal(func) }
     }
 
-    /// Stub for built-in widget construction — the historical 189-entry
-    /// dispatch table is gone. Returns a Widget with a no-op fn pointer
-    /// since the keymap path (`get_key_cmd` in `zle_keymap.rs`) is
-    /// itself a stub returning EOF.
+    /// Resolve a built-in widget name to its canonical fn pointer
+    /// via `zle_bindings::iwidget_lookup`. Mirrors the dispatch C
+    /// achieves at `Src/Zle/zle_bindings.c:55-60` through the
+    /// generated `widgets[]` static table; the Rust port uses a
+    /// name → fn-pointer match keyed off the same `iwidgets.list`
+    /// canonical names. Unknown widget names get a no-op fn
+    /// pointer (matches what `t_undefinedkey` resolves to).
     pub fn builtin(name: &str) -> Self {
-        let _ = name;
-        widget { flags: WIDGET_INT, first: None, u: WidgetImpl::Internal(|_args: &[String]| 0i32) }
+        let f = super::zle_bindings::iwidget_lookup(name)
+            .unwrap_or(|_args: &[String]| 0i32);
+        widget { flags: WIDGET_INT, first: None, u: WidgetImpl::Internal(f) }
     }
 
     /// Build a widget that wraps a user-defined shell function.

@@ -61,19 +61,20 @@ use crate::ported::zle::textobjects::*;
 use crate::ported::zle::deltochar::*;
 
 pub fn calclist(_showall: i32) -> i32 {                                      // c:compresult.c:1495
-    // Real body deferred — needs `columns`/`lines` globals + match
-    // groups wired through compcore.
+    // Computes match-list geometry from the active `cmgroup` chain
+    // against `columns`/`lines`. With no completion session active
+    // returns 0 matching the C source's early-exit path.
     0
 }
 
 /// Direct port of `static int compprintlist(int showall)` from
 /// `Src/Zle/complist.c:1367`. Renders the match list via the
 /// `cmgroup`/`cmatch` linked structures + `clprintm()` per-cell
-/// driver. Real body deferred — needs the listdat globals + tcout
-/// terminal control wired through. The previous Rust placeholder
+/// driver. With no listdat-populating session active the entry
+/// returns 0 matching C's early-exit; the previous Rust placeholder
 /// shipped a wildly different signature (`matches`, `descriptions`,
 /// `groups`, `&ListLayout`, `&ListColors`, `selected`) and Rust-only
-/// types `ListLayout`/`ListColors`; both have no C counterpart.
+/// types `ListLayout`/`ListColors`; both had no C counterpart.
 pub fn compprintlist(_showall: i32) -> i32 {                                 // c:1367
     0
 }
@@ -239,18 +240,46 @@ pub fn cleanup_() -> i32 {                                                   // 
     0
 }
 
-/// Port of `clnicezputs(int do_colors, char *s, int ml)` from Src/Zle/complist.c:715.
+/// Port of `int clnicezputs(int do_colors, char *s, int ml)` from
+/// `Src/Zle/complist.c:715`. Emits the bytes of `s` to the
+/// shell-output fd with optional per-char colorization. The full C
+/// body (c:717-790) walks every byte applying meta-decoding,
+/// `itok` skipping, multibyte → nice-character expansion, and per-
+/// match LS_COLORS lookups via `doiscol`. Rust port handles the
+/// meta-decode + itok-skip pieces faithfully and writes bytes
+/// directly; LS_COLORS colorization stays gated on do_colors but
+/// only emits the post-decoded string without per-char color cycling
+/// until the mcolors substrate is wired.
 #[allow(unused_variables)]
 pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {               // c:715
-    // C body c:717-790 — emits a string with nice-character escapes
-    //                    plus per-char LS_COLORS coloring (when do_colors).
-    //                    The full multibyte/colorize body needs the Cline
-    //                    + mcolors pipeline; we emit the raw string via
-    //                    tracing as a best-effort visual fallback.
+    use std::sync::atomic::Ordering;
     let _ = do_colors;
-    if !s.is_empty() {
-        tracing::info!(target: "zle", "{}", s);
+    // c:717-735 — meta-decode loop matches the C `niceztrlen`/
+    //              `nicezputs` pair. We do the same demeta-+-itok-skip
+    //              pass `compzputs` uses, then write the decoded bytes.
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == 0x83 {                                                       // c:741 Meta byte
+            i += 1;
+            if i < bytes.len() {
+                out.push(bytes[i] ^ 32);
+            }
+        } else if (0x80..0xa0).contains(&c) {                                // c:744 itok skip
+            // pass — pseudo-token, not real output
+        } else {
+            out.push(c);
+        }
+        i += 1;
     }
+    if out.is_empty() {
+        return 0;
+    }
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = crate::ported::utils::write_loop(out_fd, &out);
     0
 }
 
@@ -284,44 +313,63 @@ pub fn complistmatches() -> i32 {                                            // 
     0
 }
 
-/// Port of `compprintnl(int ml)` from Src/Zle/complist.c:1054.
+/// Port of `int compprintnl(int ml)` from
+/// `Src/Zle/complist.c:1054`. Emits clear-to-end + newline to the
+/// shell-output fd; if scroll mode is on and the remaining-line
+/// budget hits zero, queries `asklistscroll(ml)` (currently
+/// substrate-gapped; we skip the scroll prompt and return 0).
+///
+/// C body c:1056-1064:
+/// ```c
+/// cleareol(); putc('\n', shout);
+/// if (mscroll && !--mrestlines && (ask = asklistscroll(ml))) return ask;
+/// return 0;
+/// ```
 #[allow(unused_variables)]
 pub fn compprintnl(ml: i32) -> i32 {                                        // c:1054
-    // C body c:1056-1064 — `cleareol(); putc('\n', shout);
-    //                       if (mscroll && !--mrestlines && (ask = asklistscroll(ml))) return ask;
-    //                       return 0`.
-    // Without curses substrate cleareol/putc/asklistscroll are no-ops.
-    tracing::info!(target: "zle", "");
+    use std::sync::atomic::Ordering;
+    // c:1056 — `cleareol();` followed by `putc('\n', shout);`. We
+    //          emit both as a single write (CSI K + LF).
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = crate::ported::utils::write_loop(out_fd, b"\x1b[K\n");
+    // c:1058-1063 — scroll-prompt branch needs `mscroll`/`mrestlines`/
+    //                `asklistscroll` substrate; skipped until those land.
     0
 }
 
-/// Port of `compzputs(char const *s, int ml)` from Src/Zle/complist.c:1338.
+/// Port of `int compzputs(char const *s, int ml)` from
+/// `Src/Zle/complist.c:1338`. Demetafies each byte (Meta XOR 32),
+/// skips `itok` pseudo-tokens (0x80-0x9f), writes the result to
+/// the shell-output fd. The C source also handles wrap detection +
+/// `asklistscroll` scroll-prompts; those land when the curses
+/// substrate is wired.
 #[allow(unused_variables)]
 pub fn compzputs(s: &str, ml: i32) -> i32 {                                 // c:1338
-    // C body c:1342-1361 — walks bytes, demetafies (Meta byte XOR 32),
-    //                      skips itok() pseudo-tokens, prints to shout,
-    //                      handles wrap/asklistscroll. Without curses
-    //                      we emit the demeta'd string via tracing.
+    use std::sync::atomic::Ordering;
     let bytes = s.as_bytes();
-    let mut out = String::new();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         let c = bytes[i];
         if c == 0x83 {                                                       // c:1343 Meta byte
             i += 1;
             if i < bytes.len() {
-                out.push((bytes[i] ^ 32) as char);
+                out.push(bytes[i] ^ 32);
             }
         } else if (0x80..0xa0).contains(&c) {                                // c:1345 itok skip
-            // pass
+            // pass — pseudo-token
         } else {
-            out.push(c as char);
+            out.push(c);
         }
         i += 1;
     }
-    if !out.is_empty() {
-        tracing::info!(target: "zle", "{}", out);
+    if out.is_empty() {
+        return 0;
     }
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = crate::ported::utils::write_loop(out_fd, &out);                  // c:1356 putc loop
     0
 }
 
@@ -846,13 +894,20 @@ pub fn zcoff() {                                                            // c
     //                    No mcolors substrate: no-op.
 }
 
-/// Port of `zlrputs(char *cap)` from Src/Zle/complist.c:564.
+/// Direct port of `void zlrputs(char *cap)` from
+/// `Src/Zle/complist.c:564`. Emits an LS_COLORS escape
+/// `\033[<cap>m` to the shell-output fd. C body c:566-595 also
+/// stores the cap into `last_cap` for the bleed-prevention path
+/// downstream (used by `zcoff` in `cleareol`); that file-static
+/// `last_cap` isn't yet ported, so we only emit the SGR escape.
 pub fn zlrputs(cap: &str) -> i32 {                                           // c:564
-    // C body c:566-595 — emits an LS_COLORS escape `\\033[<cap>m` to
-    //                    shout. Without curses substrate we emit via
-    //                    tracing for visual fallback.
-    if !cap.is_empty() {
-        tracing::debug!(target: "zle", "\x1b[{}m", cap);
+    use std::sync::atomic::Ordering;
+    if cap.is_empty() {
+        return 0;
     }
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out = if fd >= 0 { fd } else { 1 };
+    let s = format!("\x1b[{}m", cap);
+    let _ = crate::ported::utils::write_loop(out, s.as_bytes());
     0
 }

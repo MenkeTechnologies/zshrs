@@ -307,10 +307,17 @@ pub fn unmetafy(s: &str) -> String {
         } else {
             c.to_ascii_lowercase()
         };
-        // Echo the response (mirrors zwcputc at zle_utils.c:1229).
+        // Echo the response — port of `zwcputc(&zr_n, NULL);` at
+        // `Src/Zle/zle_utils.c:1229`. C writes a single char to
+        // `shout`; we write the UTF-8 bytes to SHTTY (stdout fallback
+        // for non-interactive paths).
         if resolved != '\n' {
-            print!("{}", resolved);
-            let _ = std::io::Write::flush(&mut std::io::stdout());
+            use std::sync::atomic::Ordering;
+            let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            let out = if fd >= 0 { fd } else { 1 };
+            let mut buf = [0u8; 4];
+            let s = resolved.encode_utf8(&mut buf);
+            let _ = crate::ported::utils::write_loop(out, s.as_bytes());
         }
         resolved == 'y'
     }
@@ -350,8 +357,9 @@ pub struct zle_position {                                                    // 
     pub mk: usize,
     /// `int ll` — c:601, saved line length.
     pub ll: usize,
-    // `struct zle_region *regions` (c:604) deferred until
-    // region_highlights port lands.
+    // `struct zle_region *regions` (c:604) — region_highlights
+    // are persisted separately through `zle_refresh::HighlightManager`;
+    // not snapshotted in the position-save record.
 }
 
 /// Position save/restore
@@ -605,10 +613,13 @@ mod tests_bindkey_format {
     }
 
     // register pending changes in the undo system                            // c:1488
-    /// Pre-widget hook. Port of `handleundo` (zle_utils.c) — currently a thin
-    /// stub since `mkundoent` runs after each widget; the C version uses it to
-    /// flush in-flight `nextchanges` chains, which our one-change-per-widget
-    /// model doesn't need.
+    /// Pre-widget hook. Port of `handleundo` (zle_utils.c) — the
+    /// Rust port collapses to `setlastline()` because zshrs uses a
+    /// one-change-per-widget model. C's `handleundo` body
+    /// (zle_utils.c:1488) flushes the in-flight `nextchanges`
+    /// chain that accumulates across multi-key vi operations; that
+    /// chain is unnecessary when each widget produces exactly one
+    /// undo entry via `mkundoent` post-call.
     pub fn handleundo() {                                            // c:1488
         setlastline();
     }
@@ -1108,12 +1119,19 @@ pub fn shiftchars(to: i32, cnt: i32) { // c:846
      ZLELL.store( ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
 }
 
-/// Port of `showmsg(char const *msg)` from Src/Zle/zle_utils.c:1303.
+/// Direct port of `void showmsg(char const *msg)` from
+/// `Src/Zle/zle_utils.c:1303`. Writes `msg` followed by a newline to
+/// the shell-output fd. The full C body (c:1305-1402) handles
+/// metafied input + nice-character expansion + per-byte color
+/// (mcolors) which need substrate not yet wired; the visible-byte
+/// stream is the same in the un-colored common case where `msg` is
+/// already plain ASCII.
 pub fn showmsg(msg: &str) {                                                  // c:1303
-    // C body c:1305-1402 — prints msg below the prompt with cursor
-    //                      position save/restore. Without curses
-    //                      substrate we emit via tracing.
-    tracing::info!(target: "zle", "{}", msg);
+    use std::sync::atomic::Ordering;
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out = if fd >= 0 { fd } else { 2 };
+    let _ = crate::ported::utils::write_loop(out, msg.as_bytes());
+    let _ = crate::ported::utils::write_loop(out, b"\n");
 }
 
 /// Port of `sizeline(int sz)` from Src/Zle/zle_utils.c:67.
