@@ -693,7 +693,7 @@ mod tests_bindkey_format {
             return 1;
         }
         let prev_idx =  CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) - 1;
-        if  UNDO_STACK.lock().unwrap()[prev_idx].changeno <=  UNDO_LIMITNO.load(std::sync::atomic::Ordering::SeqCst) {
+        if  UNDO_STACK.lock().unwrap()[prev_idx].changeno <=  UNDO_LIMITNO.load(std::sync::atomic::Ordering::SeqCst) as i64 {
             return 1;
         }
         if unapply_change(prev_idx) {
@@ -1040,7 +1040,7 @@ pub fn mergeundo() {              // c:1733
     if  CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) == 0 { return; }
     let mut current =  CURCHANGE.load(std::sync::atomic::Ordering::SeqCst) - 1;                                    // c:1735 prev
     while current > 0
-        &&  UNDO_STACK.lock().unwrap()[current].changeno >  VISTARTCHANGE.load(std::sync::atomic::Ordering::SeqCst) + 1
+        &&  UNDO_STACK.lock().unwrap()[current].changeno >  VISTARTCHANGE.load(std::sync::atomic::Ordering::SeqCst) as i64 + 1
     {
          UNDO_STACK.lock().unwrap()[current].flags |= CH_PREV;                  // c:1740
          UNDO_STACK.lock().unwrap()[current - 1].flags |= CH_NEXT;              // c:1741

@@ -967,13 +967,8 @@ check_recursion
 check_iterations
 process_heredocs
 read_line
-lex_initial
 is_valid_assignment_target
-untokenize_char
 check_alias
-take_raw_buf
-register_heredoc
-check_reserved_word
 
 # parse.rs Rust-only heredoc / inoutpar resolution — zsh's parser
 # patches heredoc bodies directly into the wordcode buffer
