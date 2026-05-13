@@ -500,30 +500,46 @@ pub fn dowatch(current_user: &str) -> Vec<(libc::utmpx, bool)> {            // c
     result
 }
 
-/// Log builtin - force immediate watch check
-/// `log` builtin entry point.
-/// Port of `bin_log(UNUSED(char *nam), UNUSED(char **argv), UNUSED(Options ops), UNUSED(int func))` from Src/Modules/watch.c:659 — emits the
-/// last seen watch events using the user's `$WATCHFMT` (or the
-/// supplied override).
-/// WARNING: param names don't match C — Rust=(current_user, fmt) vs C=(nam, argv, ops, func)
-pub fn bin_log(current_user: &str, fmt: Option<&str>) -> String {            // c:659
-    let fmt_str = fmt
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            crate::ported::params::getsparam("WATCHFMT").unwrap_or_else(|| DEFAULT_WATCHFMT.to_string())
-        });
+/// Port of `bin_log(UNUSED(char *nam), UNUSED(char **argv),
+/// UNUSED(Options ops), UNUSED(int func))` from
+/// `Src/Modules/watch.c:659`.
+///
+/// C body (under WATCH_STRUCT_UTMP):
+/// ```c
+/// if (!watch) return 1;
+/// if (wtab) free(wtab);
+/// wtab = (WATCH_STRUCT_UTMP *)zalloc(1);
+/// wtabsz = 0;
+/// lastutmpcheck = 0;
+/// dowatch();
+/// return 0;
+/// ```
+/// — clear the watch table + lastutmpcheck so the next preprompt
+/// hook re-emits the full watch list using `$WATCHFMT`. Returns 1
+/// when `$watch` is empty (nothing to refresh) per c:661.
+pub fn bin_log(_name: &str, _argv: &[String],                                // c:659
+               _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
+    // c:661 — `if (!watch) return 1;`. C `watch` is the global
+    // array tied to $watch/$WATCH via partab GSU. zshrs reads it
+    // through `$WATCH` (the colon-separated scalar tie that
+    // c:716-718 hooks to colonarr_gsu) — an empty/unset value
+    // matches the C `!watch` early-out.
+    let watch_set = crate::ported::params::getsparam("WATCH")
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    if !watch_set {
+        return 1;
+    }
+    // c:663-667 — `if (wtab) free(wtab); wtab = zalloc(1); wtabsz = 0;
+    //              lastutmpcheck = 0;`
     WTAB.with(|t| t.borrow_mut().clear());
     LASTUTMPCHECK.with(|t| t.set(0));
-
-    let events = dowatch(current_user);
-    let mut output = String::new();
-
-    for (entry, logged_in) in events {
-        output.push_str(&watch3ary(&entry, logged_in, &fmt_str));
-        output.push('\n');
-    }
-
-    output
+    // c:668 — `dowatch();` — the standalone driver. zshrs's dowatch
+    // takes the current-user name; resolve via $USER.
+    let current_user = crate::ported::params::getsparam("USER")
+        .unwrap_or_default();
+    let _ = dowatch(&current_user);
+    0
 }
 
 #[cfg(test)]
@@ -632,10 +648,25 @@ mod tests {
 // static struct features module_features                            c:700 (watch.c)
 // =====================================================================
 
-use crate::ported::zsh_h::module;
+use crate::ported::zsh_h::{module, builtin};
+use crate::ported::builtin::BUILTIN;
 
-// `bintab` — port of `static struct builtin bintab[]` (watch.c).
-
+/// Port of `static struct builtin bintab[]` from `Src/Modules/watch.c:693`:
+/// ```c
+/// static struct builtin bintab[] = {
+///     BUILTIN("log", 0, bin_log, 0, 0, 0, NULL, NULL),
+/// };
+/// ```
+/// Exposed so `crate::ported::builtin::createbuiltintable` can fold
+/// the watch-module entries into the live `builtintab` at startup
+/// (zshrs auto-loads all modules so the per-module bintabs become
+/// part of the core table). `disable log` in `/etc/zshrc` (on
+/// macOS, to dodge `/usr/bin/log`) then finds the hashtable entry
+/// to flip.
+pub static bintab: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::new(|| vec![
+    BUILTIN("log", 0, Some(bin_log as crate::ported::zsh_h::HandlerFunc),
+            0, 0, 0, None, None),
+]);
 
 // `partab` — port of `static struct paramdef partab[]` (watch.c).
 

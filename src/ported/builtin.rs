@@ -107,7 +107,7 @@ use crate::zsh_h::{builtin, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, 
 // Now the descriptor carries the actual port-side `HandlerFunc` so
 // `execbuiltin` can parse flags and call through to the real builtin.
 #[allow(non_snake_case)]
-fn BUILTIN(
+pub fn BUILTIN(
     name: &str,
     flags: u32,
     handler: Option<crate::ported::zsh_h::HandlerFunc>,
@@ -315,8 +315,20 @@ pub static BUILTINS_DISABLED: std::sync::LazyLock<                           // 
 pub fn createbuiltintable() -> &'static HashMap<String, &'static builtin> { // c:150
     builtintab.get_or_init(|| {
         let table: &'static Vec<builtin> = &*BUILTINS;
-        let mut m: HashMap<String, &'static builtin> = HashMap::with_capacity(table.len());
+        let watch_bintab: &'static Vec<builtin> =
+            &*crate::ported::modules::watch::bintab;
+        let mut m: HashMap<String, &'static builtin> =
+            HashMap::with_capacity(table.len() + watch_bintab.len());
         for b in table.iter() {
+            m.insert(b.node.nam.clone(), b);
+        }
+        // zshrs auto-loads all modules at startup. Fold each module's
+        // bintab into the core builtintab so `disable <name>` (and
+        // dispatch generally) finds module-provided builtins without
+        // an explicit `zmodload` step. Mirrors C's `addbuiltins(name,
+        // bintab, sizeof(bintab)/sizeof(*bintab))` call from each
+        // module's `boot_` hook (e.g. `Src/Modules/watch.c:694`).
+        for b in watch_bintab.iter() {
             m.insert(b.node.nam.clone(), b);
         }
         m
