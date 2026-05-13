@@ -34,7 +34,7 @@ use crate::ported::zsh_h::{HashNode, zattr};
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::extensions::widget::*;
+// (was: use crate::ported::zle::widget::*; — widget.rs deleted)
 #[allow(unused_imports)]
 use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
@@ -312,6 +312,13 @@ pub type ZleIntFunc = fn(args: &[String]) -> i32;                            // 
 ///     } u;
 /// };
 /// ```
+// Legacy aliases preserved for back-compat with files that historically
+// imported `Widget` / `WidgetFunc` (PascalCase) from the deleted
+// `widget.rs` shim. New code should use `widget` / `WidgetImpl`
+// directly.
+pub use self::WidgetImpl as WidgetFunc;
+pub type Widget = widget;
+
 pub struct widget {                                                          // c:191
     /// flags (see below).
     pub flags: i32,                                                          // c:192
@@ -319,6 +326,64 @@ pub struct widget {                                                          // 
     pub first: Option<ThingyPtr>,                                            // c:193
     /// Tagged equivalent of the C anonymous union (zle.h:194-202).
     pub u: WidgetImpl,                                                       // c:194
+}
+
+impl Clone for widget {
+    fn clone(&self) -> Self {
+        widget {
+            flags: self.flags,
+            first: None, // ThingyPtr is Box<thingy>, intentionally not deep-cloned.
+            u: match &self.u {
+                WidgetImpl::Internal(f) => WidgetImpl::Internal(*f),
+                WidgetImpl::UserFunc(s) => WidgetImpl::UserFunc(s.clone()),
+                WidgetImpl::Comp { fn_, wid, func } => WidgetImpl::Comp {
+                    fn_: *fn_,
+                    wid: wid.clone(),
+                    func: func.clone(),
+                },
+            },
+        }
+    }
+}
+
+impl std::fmt::Debug for widget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("widget")
+            .field("flags", &self.flags)
+            .field("u", &match &self.u {
+                WidgetImpl::Internal(_) => "Internal(<fn>)".to_string(),
+                WidgetImpl::UserFunc(s) => format!("UserFunc({})", s),
+                WidgetImpl::Comp { .. } => "Comp{..}".to_string(),
+            })
+            .finish()
+    }
+}
+
+impl widget {
+    /// Build a widget that points at a Rust function pointer with the
+    /// supplied ZLE flags. Equivalent to the WIDGET_INT branch of
+    /// `zalloc(sizeof(*w))` + `w->u.fn = ...` in `addzlefunction()` at
+    /// Src/Zle/zle_thingy.c:281.
+    pub fn internal(name: &str, func: ZleIntFunc, flags: i32) -> Self {
+        let _ = name;
+        widget { flags: flags | WIDGET_INT, first: None, u: WidgetImpl::Internal(func) }
+    }
+
+    /// Stub for built-in widget construction — the historical 189-entry
+    /// dispatch table is gone. Returns a Widget with a no-op fn pointer
+    /// since the keymap path (`get_key_cmd` in `zle_keymap.rs`) is
+    /// itself a stub returning EOF.
+    pub fn builtin(name: &str) -> Self {
+        let _ = name;
+        widget { flags: WIDGET_INT, first: None, u: WidgetImpl::Internal(|_args: &[String]| 0i32) }
+    }
+
+    /// Build a widget that wraps a user-defined shell function.
+    /// Equivalent to `bin_zle_new()` from Src/Zle/zle_thingy.c:584.
+    pub fn user_defined(name: &str, func_name: &str) -> Self {
+        let _ = name;
+        widget { flags: 0i32, first: None, u: WidgetImpl::UserFunc(func_name.to_string()) }
+    }
 }
 
 /// Tagged port of the `widget.u` union from `Src/Zle/zle.h:194-202`.

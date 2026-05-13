@@ -69,7 +69,7 @@ use crate::ported::options::ZSH_OPTIONS_SET;
 #[allow(unused_imports)]
 use crate::parse::{Redirect, ShellCommand};
 #[allow(unused_imports)]
-use crate::extensions::zwc::ZwcFile;
+use crate::zwc::ZwcFile;
 
 
 // ---------------------------------------------------------------------------

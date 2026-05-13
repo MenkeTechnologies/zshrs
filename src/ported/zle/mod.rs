@@ -16,7 +16,7 @@
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::extensions::widget::*;
+use crate::ported::zle::zle_h::*;
 #[allow(unused_imports)]
 use crate::ported::zle::zle_main::*;
 #[allow(unused_imports)]
@@ -42,8 +42,6 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-#[path = "../../extensions/keymaps.rs"] pub mod keymaps;
-#[path = "../../extensions/widgets.rs"] pub mod widgets;
 pub mod zle_bindings;
 pub mod compctl;
 pub mod compcore;
@@ -66,18 +64,15 @@ pub mod zle_thingy;
 pub mod zle_tricky;
 pub mod zle_utils;
 pub mod zle_vi;
-#[path = "../../extensions/widget.rs"] pub mod widget;
 pub mod zle_word;
 pub mod zleparameter;
 pub mod compctl_h;
 pub mod comp_h;
 pub mod zle_h;
 
-// Re-export old API for compatibility with exec.rs
-pub use keymaps::{zle, Keymap as LegacyKeymap, KeymapName, ZleManager, ZleState};
-pub use widgets::{BuiltinWidget, Widget as LegacyWidget, WidgetResult};
-
-// Re-export new API
+// Canonical re-exports. `Widget` / `WidgetFunc` legacy aliases live on
+// `zle_h` itself (via `pub type Widget = widget; pub use
+// WidgetImpl as WidgetFunc;`) so existing call sites keep resolving.
 pub use zle_keymap::Keymap;
 pub use zle_thingy::Thingy;
-pub use widget::{Widget, WidgetFlags, WidgetFunc};
+pub use zle_h::{widget as Widget, WidgetImpl as WidgetFunc};
