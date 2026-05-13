@@ -1,0 +1,716 @@
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	:zinit-tmp-subst-source
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	-a
+STRING	___substs
+STRING	___ab
+SEPER	
+ENVARRAY	___substs
+STRING	"${(@s.;.)ICE[subst]}"
+OUTPAR	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	${(M)___substs:#*\\(#e)}
+DOUTBRACK	]]
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	___prev
+SEPER	
+ENVARRAY	___substs
+STRING	${___substs[@]//(#b)((*)\\(#e)|(*))/${match[3]:+${___prev:+$___prev\;}}${match[3]}${${___prev::=${match[2]:+${___prev:+$___prev\;}}${match[2]}}:+}}
+OUTPAR	
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+BANG	!
+STRING	-r
+STRING	$1
+DOUTBRACK	]]
+INBRACE	{
+SEPER	
+STRING	+zi-log
+STRING	"{error}source: Couldn't read the script {obj}${1}{error}"
+STRING	", cannot substitute {data}${ICE[subst]}{error}.{rst}"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+TYPESET	local
+STRING	___data="$(<$1)"
+SEPER	
+SEPER	
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	builtin
+STRING	emulate
+STRING	-LR
+STRING	zsh
+STRING	-o
+STRING	extendedglob
+STRING	-o
+STRING	interactivecomments
+STRING	${=${options[xtrace]:#off}:+-o xtrace}
+SEPER	
+TYPESET	local
+STRING	___subst
+STRING	___tabspc=$'\t'
+SEPER	
+FOR	for
+STRING	___subst
+INPAR	
+STRING	"${___substs[@]}"
+OUTPAR	
+STRING	{
+SEPER	
+ENVARRAY	___ab
+STRING	"${(@)${(@)${(@s:->:)___subst}##[[:space:]]##}%%[[:space:]]##}"
+OUTPAR	
+SEPER	
+ENVSTRING	___ab[2]=${___ab[2]//(#b)\\([[:digit:]])/\${match[${match[1]}]}}
+SEPER	
+STRING	builtin
+STRING	eval
+STRING	"___data=\"\${___data//(#b)\${~___ab[1]}/${___ab[2]}}\""
+SEPER	
+OUTBRACE	}
+SEPER	
+ENVSTRING	___data="() { ${(F)${(@)${(f)___data[@]}:#[$___tabspc]#\#*}} ; } \"\${@[2,-1]}\""
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	builtin
+STRING	eval
+STRING	"$___data"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-service
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	builtin
+STRING	emulate
+STRING	-LR
+STRING	zsh
+STRING	${=${options[xtrace]:#off}:+-o xtrace}
+SEPER	
+STRING	setopt
+STRING	extendedglob
+STRING	warncreateglobal
+STRING	typesetsilent
+STRING	noshortloops
+SEPER	
+SEPER	
+TYPESET	local
+STRING	___tpe="$1"
+STRING	___mode="$2"
+STRING	___id="$3"
+STRING	___fle="${ZINIT[SERVICES_DIR]}/${ICE[service]}.lock"
+STRING	___fd
+STRING	___cmd
+STRING	___tmp
+STRING	___lckd
+STRING	___strd=0
+SEPER	
+INBRACE	{
+STRING	builtin
+STRING	print
+STRING	-n
+OUTANGBANG	
+STRING	"$___fle"
+SEPER	
+OUTBRACE	}
+OUTANG	
+STRING	/dev/null
+OUTANGAMP	
+STRING	2
+SEPER	
+DINBRACK	[[
+BANG	!
+STRING	-e
+STRING	${___fle:r}.fifo
+DOUTBRACK	]]
+DAMPER	
+STRING	command
+STRING	mkfifo
+STRING	"${___fle:r}.fifo"
+OUTANG	
+STRING	/dev/null
+OUTANGAMP	
+STRING	2
+SEPER	
+DINBRACK	[[
+BANG	!
+STRING	-e
+STRING	${___fle:r}.fifo2
+DOUTBRACK	]]
+DAMPER	
+STRING	command
+STRING	mkfifo
+STRING	"${___fle:r}.fifo2"
+OUTANG	
+STRING	/dev/null
+OUTANGAMP	
+STRING	2
+SEPER	
+SEPER	
+TYPESET	typeset
+STRING	-gx
+STRING	ZSRV_WORK_DIR="${ZINIT[SERVICES_DIR]}"
+STRING	ZSRV_ID="${ICE[service]}"
+SEPER	
+SEPER	
+WHILE	while
+DINPAR	 1 
+SEPER	
+DOLOOP	do
+SEPER	
+INPAR	
+SEPER	
+WHILE	while
+DINPAR	 1 
+SEPER	
+DOLOOP	do
+SEPER	
+DINBRACK	[[
+BANG	!
+STRING	-f
+STRING	${___fle:r}.stop
+DOUTBRACK	]]
+DAMPER	
+IF	if
+DINPAR	 ___lckd 
+DBAR	
+STRING	zsystem
+OUTANG	
+STRING	/dev/null
+OUTANGAMP	
+STRING	2
+STRING	flock
+STRING	-t
+STRING	1
+STRING	-f
+STRING	___fd
+STRING	-e
+STRING	$___fle
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	___lckd=1
+SEPER	
+IF	if
+DINPAR	 ! ___strd 
+DBAR	
+DINBRACK	[[
+STRING	$___cmd
+STRING	=
+STRING	RESTART
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+DINBRACK	[[
+STRING	$___tpe
+STRING	=
+STRING	p
+DOUTBRACK	]]
+DAMPER	
+INBRACE	{
+ENVSTRING	___strd=1
+SEPER	
+STRING	.zinit-load
+STRING	"$___id"
+STRING	""
+STRING	"$___mode"
+STRING	0
+SEPER	
+SEPER	
+OUTBRACE	}
+SEPER	
+DINBRACK	[[
+STRING	$___tpe
+STRING	=
+STRING	s
+DOUTBRACK	]]
+DAMPER	
+INBRACE	{
+ENVSTRING	___strd=1
+SEPER	
+STRING	.zinit-load-snippet
+STRING	"$___id"
+STRING	""
+STRING	0
+SEPER	
+SEPER	
+OUTBRACE	}
+SEPER	
+FI	fi
+SEPER	
+ENVSTRING	___cmd=
+SEPER	
+WHILE	while
+DINPAR	 1 
+SEPER	
+DOLOOP	do
+STRING	builtin
+STRING	read
+STRING	-t
+STRING	32767
+STRING	___cmd
+INOUTANG	
+STRING	"${___fle:r}.fifo"
+DAMPER	
+STRING	break
+SEPER	
+DONE	done
+SEPER	
+ELSE	else
+SEPER	
+STRING	return
+STRING	0
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+DINBRACK	[[
+STRING	$___cmd
+STRING	=
+INPAR	
+SEPER	
+DINBRACK	[[
+STRING	$___cmd
+STRING	=
+INPAR	
+SEPER	
+DINBRACK	[[
+STRING	$___cmd
+STRING	=
+INPAR	
+SEPER	
+DINBRACK	[[
+STRING	$___cmd
+STRING	!=
+INPAR	
+SEPER	
+DONE	done
+SEPER	
+OUTPAR	
+DBAR	
+STRING	break
+SEPER	
+STRING	builtin
+STRING	read
+STRING	-t
+STRING	1
+STRING	___tmp
+INOUTANG	
+STRING	"${___fle:r}.fifo2"
+SEPER	
+DONE	done
+DOUTANGBANG	
+STRING	"$ZSRV_WORK_DIR/$ZSRV_ID".log
+OUTANGAMP	
+STRING	1
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	.zinit-wrap-track-functions
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	user="$1"
+STRING	plugin="$2"
+STRING	id_as="$3"
+STRING	f
+SEPER	
+TYPESET	local
+STRING	-a
+STRING	wt
+SEPER	
+ENVARRAY	wt
+STRING	${(@s.;.)ICE[wrap-track]}
+OUTPAR	
+SEPER	
+FOR	for
+STRING	f
+STRING	in
+STRING	${wt[@]}
+SEPER	
+DOLOOP	do
+SEPER	
+ENVSTRING	functions[${f}-zinit-bkp]="${functions[$f]}"
+SEPER	
+STRING	eval
+STRING	"
+function $f {
+    ZINIT[CUR_USR]=\"$user\" ZINIT[CUR_PLUGIN]=\"$plugin\" ZINIT[CUR_USPL2]=\"$id_as\"
+    .zinit-add-report \"\${ZINIT[CUR_USPL2]}\" \"Note: === Starting to track function: $f ===\"
+    .zinit-diff \"\${ZINIT[CUR_USPL2]}\" begin
+    .zinit-tmp-subst-on load
+    functions[${f}]=\${functions[${f}-zinit-bkp]}
+    ${f} \"\$@\"
+    .zinit-tmp-subst-off load
+    .zinit-diff \"\${ZINIT[CUR_USPL2]}\" end
+    .zinit-add-report \"\${ZINIT[CUR_USPL2]}\" \"Note: === Ended tracking function: $f ===\"
+    ZINIT[CUR_USR]= ZINIT[CUR_PLUGIN]= ZINIT[CUR_USPL2]=
+}"
+SEPER	
+DONE	done
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-debug-clear
+INOUTPAR	
+INBRACE	{
+SEPER	
+INBRACE	{
+SEPER	
+STRING	.zinit-clear-report-for
+STRING	_dtrace/_dtrace
+SEPER	
+STRING	+zi-log
+STRING	'{m} Cleared debug report'
+SEPER	
+OUTBRACE	}
+DBAR	
+INBRACE	{
+SEPER	
+STRING	+zi-log
+STRING	'{e} Failed to clear debug report'
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+OUTBRACE	}
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-debug-report
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	${ZINIT[DTRACE]}
+STRING	=
+STRING	1
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	+zi-log
+STRING	"{e} Debug mode active, stop it first via {cmd}zinit debug stop{rst}"
+SEPER	
+ELSE	else
+SEPER	
+DINPAR	 ${+functions[.zinit-unload]} 
+DBAR	
+STRING	builtin
+STRING	source
+STRING	"${ZINIT[BIN_DIR]}/zinit-autoload.zsh"
+DBAR	
+STRING	return
+STRING	1
+SEPER	
+STRING	.zinit-show-report
+STRING	"_dtrace/_dtrace"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-debug-revert
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	${ZINIT[DTRACE]}
+STRING	=
+STRING	1
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	+zi-log
+STRING	"{e} Debug mode is active. To stop, run {cmd}zinit debug stop{rst}"
+SEPER	
+ELSE	else
+SEPER	
+DINPAR	 ${+functions[.zinit-unload]} 
+DBAR	
+STRING	builtin
+STRING	source
+STRING	"${ZINIT[BIN_DIR]}/zinit-autoload.zsh"
+DBAR	
+STRING	return
+STRING	1
+SEPER	
+STRING	.zinit-unload
+STRING	_dtrace
+STRING	_dtrace
+SEPER	
+STRING	+zi-log
+STRING	"{m} Reverted changes detected during debug mode"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-debug-start
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	$ZINIT[DTRACE]
+STRING	=
+STRING	1
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	+zi-log
+STRING	"{e} Debug mode currently active"
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+INOUTPAR	
+INBRACE	{
+SEPER	
+ENVSTRING	ZINIT[DTRACE]=1
+SEPER	
+STRING	.zinit-diff
+STRING	_dtrace/_dtrace
+STRING	begin
+SEPER	
+STRING	.zinit-tmp-subst-on
+STRING	dtrace
+SEPER	
+OUTBRACE	}
+SEPER	
+IF	if
+DINPAR	 $? == 0 
+SEPER	
+THEN	then
+SEPER	
+STRING	+zi-log
+STRING	"{i} Started debug mode"
+SEPER	
+STRING	return
+STRING	0
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-debug-status
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	+zi-log
+STRING	-n
+STRING	'{m} Debug mode: '
+SEPER	
+DINPAR	 ZINIT[DTRACE] 
+DAMPER	
+STRING	+zi-log
+STRING	'running'
+DBAR	
+STRING	+zi-log
+STRING	'stopped'
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-debug-stop
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	$ZINIT[DTRACE]
+STRING	=
+STRING	0
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	+zi-log
+STRING	'{e} Debug mode not active'
+SEPER	
+STRING	return
+STRING	0
+SEPER	
+ELSE	else
+SEPER	
+ENVSTRING	ZINIT[DTRACE]=0
+SEPER	
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	.zinit-tmp-subst-off
+STRING	dtrace
+SEPER	
+STRING	.zinit-diff
+STRING	_dtrace/_dtrace
+STRING	end
+SEPER	
+OUTBRACE	}
+SEPER	
+IF	if
+DINPAR	 $? == 0 
+SEPER	
+THEN	then
+SEPER	
+STRING	+zi-log
+STRING	'{i} Stopped debug mode'
+SEPER	
+STRING	return
+STRING	0
+SEPER	
+FI	fi
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+STRING	+zinit-debug
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	emulate
+STRING	-LR
+STRING	zsh
+STRING	${=${options[xtrace]:#off}:+-o xtrace}
+SEPER	
+STRING	setopt
+STRING	extendedglob
+STRING	noksharrays
+STRING	nokshglob
+STRING	nullglob
+STRING	typesetsilent
+STRING	warncreateglobal
+SEPER	
+TYPESET	local
+STRING	o_help
+STRING	cmd
+SEPER	
+TYPESET	local
+STRING	-a
+STRING	usage=(
+      'Usage:'
+      '  zinit debug [options] [command]'
+      ' '
+      'Options:'
+      '  -h, --help     Show list of command-line options'
+      ' '
+      'Commands:'
+      '  clear     Clear debug report'
+      '  report    Show debug report'
+      '  revert    Revert changes made during debug mode'
+      '  start     Start debug mode'
+      '  status    Current debug status'
+      '  stop      Stop debug mode'
+    )
+SEPER	
+STRING	zmodload
+STRING	zsh/zutil
+SEPER	
+STRING	zparseopts
+STRING	-D
+STRING	-F
+STRING	-K
+STRING	--
+STRING	{h,-help}=o_help
+DBAR	
+STRING	return
+STRING	1
+SEPER	
+SEPER	
+DINPAR	 $#o_help 
+DAMPER	
+INBRACE	{
+SEPER	
+STRING	print
+STRING	-l
+STRING	--
+STRING	$usage
+SEPER	
+STRING	return
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+ENVSTRING	cmd="$1"
+SEPER	
+IF	if
+DINPAR	 ! $+functions[.zinit-debug-${cmd}] 
+SEPER	
+THEN	then
+SEPER	
+STRING	print
+STRING	-l
+STRING	--
+STRING	$usage
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+ELSE	else
+SEPER	
+STRING	.zinit-debug-${cmd}
+STRING	"${(@)@:2}"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+ENDINPUT

@@ -1,0 +1,200 @@
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+IF	if
+BANG	!
+STRING	test
+STRING	-f
+STRING	common.sh
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"Must be in $ZPWR/install directory"
+OUTANGAMP	
+STRING	2
+SEPER	
+STRING	exit
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+STRING	source
+STRING	common.sh
+SEPER	
+SEPER	
+SEPER	
+WHILE	while
+STRING	true
+SEPER	
+DOLOOP	do
+SEPER	
+IF	if
+STRING	zpwrCommandExists
+STRING	curl
+SEPER	
+THEN	then
+SEPER	
+STRING	break
+SEPER	
+FI	fi
+SEPER	
+STRING	sleep
+STRING	5
+SEPER	
+DONE	done
+SEPER	
+SEPER	
+FUNC	function
+STRING	ins
+INOUTPAR	
+INBRACE	{
+SEPER	
+ENVSTRING	p="$1"
+SEPER	
+ENVSTRING	e="$2"
+SEPER	
+SEPER	
+STRING	zpwrCommandExists
+STRING	"$e"
+DBAR	
+INBRACE	{
+SEPER	
+STRING	zpwrPrettyPrintBox
+STRING	"Installing Rustup if cargo does not exist"
+SEPER	
+STRING	zpwrCommandExists
+STRING	cargo
+DBAR	
+STRING	curl
+STRING	https://sh.rustup.rs
+STRING	-sSf
+BAR	
+STRING	sh
+STRING	-s
+STRING	--
+STRING	-y
+SEPER	
+STRING	zpwrPrettyPrintBox
+STRING	"Updating rustup"
+SEPER	
+STRING	"$HOME/.cargo/bin/rustup"
+STRING	update
+SEPER	
+STRING	zpwrPrettyPrintBox
+STRING	"Installing "$p" with cargo"
+SEPER	
+STRING	"$HOME/.cargo/bin/cargo"
+STRING	install
+STRING	"$p"
+SEPER	
+OUTBRACE	}
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	"$ZPWR_OS_TYPE"
+STRING	==
+STRING	"linux"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+SEPER	
+STRING	zpwrOsFamily
+STRING	ZPWR_DISTRO_FAMILY=debian
+STRING	ZPWR_DISTRO_FAMILY=redhat
+STRING	ZPWR_DISTRO_FAMILY=suse
+STRING	ZPWR_DISTRO_FAMILY=suse
+STRING	'export CFLAGS=-mno-outline-atomics; ZPWR_DISTRO_FAMILY=alpine'
+STRING	'zpwrPrettyPrintBox "Your ZPWR_DISTRO_FAMILY $ZPWR_DISTRO_NAME is unsupported!" >&2
+        exit 1'
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+STRING	ins
+STRING	bat
+STRING	bat
+SEPER	
+STRING	ins
+STRING	lsofrs
+STRING	lsofrs
+SEPER	
+STRING	ins
+STRING	awkrs
+STRING	awkrs
+SEPER	
+STRING	ins
+STRING	strykelang
+STRING	stryke
+SEPER	
+STRING	ins
+STRING	nmaprs
+STRING	nmaprs
+SEPER	
+STRING	ins
+STRING	storageshower
+STRING	storageshower
+SEPER	
+STRING	ins
+STRING	iftoprs
+STRING	iftoprs
+SEPER	
+STRING	ins
+STRING	hyperfine
+STRING	hyperfine
+SEPER	
+STRING	ins
+STRING	diskus
+STRING	diskus
+SEPER	
+STRING	ins
+STRING	vivid
+STRING	vivid
+SEPER	
+STRING	ins
+STRING	hexyl
+STRING	hexyl
+SEPER	
+STRING	ins
+STRING	fd-find
+STRING	fd
+SEPER	
+STRING	ins
+STRING	eza
+STRING	eza
+SEPER	
+STRING	ins
+STRING	ripgrep
+STRING	rg
+SEPER	
+STRING	ins
+STRING	thumbs
+STRING	thumbs
+SEPER	
+STRING	ins
+STRING	temprs
+STRING	tp
+SEPER	
+STRING	ins
+STRING	git-delta
+STRING	delta
+SEPER	
+SEPER	
+STRING	zpwrPrettyPrintBox
+STRING	"Installing cargo-update with Cargo"
+SEPER	
+STRING	"$HOME/.cargo/bin/cargo"
+STRING	install
+STRING	cargo-update
+SEPER	
+ENDINPUT

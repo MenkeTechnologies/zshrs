@@ -1,0 +1,58 @@
+STRING	echo
+STRING	${var}
+SEPER	
+STRING	echo
+STRING	${var:-default}
+SEPER	
+STRING	echo
+STRING	${var:=assign}
+SEPER	
+STRING	echo
+STRING	${var:?error}
+SEPER	
+STRING	echo
+STRING	${var:+alt}
+SEPER	
+STRING	echo
+STRING	${var#prefix}
+SEPER	
+STRING	echo
+STRING	${var##longprefix}
+SEPER	
+STRING	echo
+STRING	${var%suffix}
+SEPER	
+STRING	echo
+STRING	${var%%longsuffix}
+SEPER	
+STRING	echo
+STRING	${var/pat/rep}
+SEPER	
+STRING	echo
+STRING	${var//pat/rep}
+SEPER	
+STRING	echo
+STRING	${var:offset:length}
+SEPER	
+STRING	echo
+STRING	${#var}
+SEPER	
+STRING	echo
+STRING	${(U)var}
+SEPER	
+STRING	echo
+STRING	${(L)var}
+SEPER	
+STRING	echo
+STRING	${(P)var}
+SEPER	
+STRING	echo
+STRING	${(qqq)var}
+SEPER	
+STRING	echo
+STRING	${(j:,:)array}
+SEPER	
+STRING	echo
+STRING	${(s:,:)str}
+SEPER	
+ENDINPUT

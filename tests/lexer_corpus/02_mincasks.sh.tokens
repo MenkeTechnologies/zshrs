@@ -1,0 +1,91 @@
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	alacritty
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	docker
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	font-hack-nerd-font
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	google-chrome
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	intellij-idea
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	java
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	java11
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	mattermost
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	microsoft-teams
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	postman
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	slack
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	spotify
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	visual-studio-code
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	vlc
+SEPER	
+STRING	brew
+STRING	install
+STRING	--cask
+STRING	-f
+STRING	zoom
+SEPER	
+ENDINPUT

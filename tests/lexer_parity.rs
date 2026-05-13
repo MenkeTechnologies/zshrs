@@ -61,6 +61,15 @@ fn collect_corpus() -> Vec<PathBuf> {
                         Some("zsh") | Some("sh")
                     )
                 })
+                // Corpus entries are numbered `NN_*.sh|zsh`; regen.sh
+                // (the regenerator script) is the only non-numbered
+                // *.sh in the dir.
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|s| s.to_str())
+                        .map(|n| n.chars().next().is_some_and(|c| c.is_ascii_digit()))
+                        .unwrap_or(false)
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -199,7 +208,15 @@ fn dump_via_zshrs(src: &str) -> String {
     zsh::lex::lex_init(src);
     use zsh::tokens::{ENDINPUT, LEXERR};
     loop {
-        zsh::lex::zshlex();
+        // Match the C-side dump module which uses `ctxtlex` (lex.c:317),
+        // NOT bare `zshlex` (lex.c:266). ctxtlex wraps zshlex with the
+        // per-token incmdpos / inredir / oldpos / infor updates the
+        // parser would otherwise apply between calls. zshlex alone
+        // doesn't touch incmdpos (Phase 2 of the C-fidelity refactor
+        // moved that logic out of zshlex to match C). Without ctxtlex
+        // here, the Rust side would lex `{a,b,c}` as INBRACE+STRING
+        // instead of one STRING, etc.
+        zsh::lex::ctxtlex();
         let tok = zsh::lex::tok();
         if tok == ENDINPUT {
             out.push_str("ENDINPUT\n");
@@ -230,9 +247,26 @@ fn first_divergence(a: &str, b: &str) -> usize {
         .unwrap_or_else(|| a.len().min(b.len()))
 }
 
+/// Load the C-side token stream for a corpus file. Prefers the
+/// pre-generated `<basename>.tokens` file (committed to the repo so
+/// parity runs without needing to build/run zsh's C lexer); falls
+/// back to invoking zsh + the dump module when the file is missing
+/// or outdated. Regenerate via `tests/lexer_corpus/regen.sh`.
+fn load_zsh_stream(path: &Path) -> Result<String, String> {
+    let tokens_path = path.with_file_name(format!(
+        "{}.tokens",
+        path.file_name().and_then(|s| s.to_str()).unwrap_or("?")
+    ));
+    if tokens_path.exists() {
+        return std::fs::read_to_string(&tokens_path)
+            .map_err(|e| format!("read {}: {}", tokens_path.display(), e));
+    }
+    dump_via_zsh(path)
+}
+
 fn check_file(path: &Path) -> Result<(), String> {
     let src = std::fs::read_to_string(path).map_err(|e| format!("read: {}", e))?;
-    let zsh_stream = dump_via_zsh(path).map_err(|e| format!("zsh dump: {}", e))?;
+    let zsh_stream = load_zsh_stream(path).map_err(|e| format!("zsh dump: {}", e))?;
     let zshrs_stream = dump_via_zshrs(&src);
     if zsh_stream == zshrs_stream {
         return Ok(());
@@ -364,18 +398,32 @@ fn zshrc_lex() {
 
 #[test]
 fn corpus_lexer_parity() {
-    if !zsh_available() {
-        eprintln!("zsh not on PATH — skipping lexer parity");
-        return;
-    }
-    if !module_built() {
-        eprintln!(
-            "zsh/zshrs_dump module not built — skipping lexer parity.\n\
-             Build with: cd src/zsh && make Src/Modules/zshrs_dump.so"
-        );
-        return;
-    }
     let corpus = collect_corpus();
+    // Pre-generated `.tokens` files (committed alongside each corpus
+    // entry) are the C-side reference. If they're all present, parity
+    // runs without needing zsh on PATH or the dump module built.
+    let all_tokens_present = corpus.iter().all(|p| {
+        p.with_file_name(format!(
+            "{}.tokens",
+            p.file_name().and_then(|s| s.to_str()).unwrap_or("?")
+        ))
+        .exists()
+    });
+    if !all_tokens_present {
+        if !zsh_available() {
+            eprintln!("zsh not on PATH and not all .tokens files present — skipping");
+            return;
+        }
+        if !module_built() {
+            eprintln!(
+                "zsh/zshrs_dump module not built and not all .tokens files present — \
+                 skipping lexer parity. Build with: cd src/zsh && make \
+                 Src/Modules/zshrs_dump.so, then regen via \
+                 tests/lexer_corpus/regen.sh"
+            );
+            return;
+        }
+    }
     if corpus.is_empty() {
         panic!("no corpus files in tests/lexer_corpus/");
     }

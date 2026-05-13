@@ -1,0 +1,326 @@
+SEPER	
+SEPER	
+STRING	clear
+SEPER	
+SEPER	
+FUNC	function
+STRING	color
+INOUTPAR	
+INBRACE	{
+SEPER	
+SEPER	
+STRING	echo
+STRING	"\e[$1m$2\e[0m"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	extend
+INOUTPAR	
+INBRACE	{
+SEPER	
+SEPER	
+TYPESET	local
+STRING	str="$1"
+SEPER	
+DINPAR	 spaces = 60 - ${#1} 
+SEPER	
+WHILE	while
+DINPAR	 spaces > 0 
+SEPER	
+DOLOOP	do
+SEPER	
+ENVSTRING	str="$str "
+SEPER	
+DINPAR	 --spaces 
+SEPER	
+DONE	done
+SEPER	
+STRING	echo
+STRING	"$str"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	center
+INOUTPAR	
+INBRACE	{
+SEPER	
+SEPER	
+TYPESET	local
+STRING	str="$1"
+SEPER	
+STRING	let
+STRING	spacesLeft=(78-${#1})/2
+SEPER	
+STRING	let
+STRING	spacesRight=78-spacesLeft-${#1}
+SEPER	
+WHILE	while
+DINPAR	 spacesLeft > 0 
+SEPER	
+DOLOOP	do
+SEPER	
+ENVSTRING	str=" $str"
+SEPER	
+DINPAR	 --spacesLeft 
+SEPER	
+DONE	done
+SEPER	
+SEPER	
+WHILE	while
+DINPAR	 spacesRight > 0 
+SEPER	
+DOLOOP	do
+SEPER	
+ENVSTRING	str="$str "
+SEPER	
+DINPAR	 --spacesRight 
+SEPER	
+DONE	done
+SEPER	
+SEPER	
+STRING	echo
+STRING	"$str"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	sec2time
+INOUTPAR	
+INBRACE	{
+SEPER	
+SEPER	
+TYPESET	local
+STRING	input=$1
+SEPER	
+SEPER	
+IF	if
+STRING	[
+STRING	$input
+STRING	-lt
+STRING	60
+STRING	]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"$input seconds"
+SEPER	
+ELSE	else
+SEPER	
+DINPAR	days=input/86400
+SEPER	
+DINPAR	input=input%86400
+SEPER	
+DINPAR	hours=input/3600
+SEPER	
+DINPAR	input=input%3600
+SEPER	
+DINPAR	mins=input/60
+SEPER	
+SEPER	
+TYPESET	local
+STRING	daysPlural="s"
+SEPER	
+TYPESET	local
+STRING	hoursPlural="s"
+SEPER	
+TYPESET	local
+STRING	minsPlural="s"
+SEPER	
+SEPER	
+IF	if
+STRING	[
+STRING	$days
+STRING	-eq
+STRING	1
+STRING	]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	daysPlural=""
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+IF	if
+STRING	[
+STRING	$hours
+STRING	-eq
+STRING	1
+STRING	]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	hoursPlural=""
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+IF	if
+STRING	[
+STRING	$mins
+STRING	-eq
+STRING	1
+STRING	]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	minsPlural=""
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+STRING	echo
+STRING	"$days day$daysPlural, $hours hour$hoursPlural, $mins minute$minsPlural"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+ENVSTRING	borderColor=35
+SEPER	
+ENVSTRING	headerLeafColor=32
+SEPER	
+ENVSTRING	headerRaspberryColor=31
+SEPER	
+ENVSTRING	greetingsColor=36
+SEPER	
+ENVSTRING	statsLabelColor=33
+SEPER	
+SEPER	
+ENVSTRING	borderLine="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+SEPER	
+ENVSTRING	borderTopLine=$(color $borderColor "┏$borderLine┓")
+SEPER	
+ENVSTRING	borderBottomLine=$(color $borderColor "┗$borderLine┛")
+SEPER	
+ENVSTRING	borderBar=$(color $borderColor "┃")
+SEPER	
+ENVSTRING	borderEmptyLine="$borderBar                                                                              $borderBar"
+SEPER	
+SEPER	
+SEPER	
+ENVSTRING	header="$borderTopLine\n$borderEmptyLine\n"
+SEPER	
+ENVSTRING	header="$header$borderBar$(color $headerLeafColor "          .~~.   .~~.                                                         ")$borderBar\n"
+SEPER	
+ENVSTRING	header="$header$borderBar$(color $headerLeafColor "         '. \ ' ' / .'                                                        ")$borderBar\n"
+SEPER	
+ENVSTRING	header="$header$borderBar$(color $headerRaspberryColor "          .~ .~~~..~.                      _                          _       ")$borderBar\n"
+SEPER	
+ENVSTRING	header="$header$borderBar$(color $headerRaspberryColor "         : .~.'~'.~. :     ___ ___ ___ ___| |_ ___ ___ ___ _ _    ___|_|      ")$borderBar\n"
+SEPER	
+ENVSTRING	header="$header$borderBar$(color $headerRaspberryColor "        ~ (   ) (   ) ~   |  _| .'|_ -| . | . | -_|  _|  _| | |  | . | |      ")$borderBar\n"
+SEPER	
+ENVSTRING	header="$header$borderBar$(color $headerRaspberryColor "       ( : '~'.~.'~' : )  |_| |__,|___|  _|___|___|_| |_| |_  |  |  _|_|      ")$borderBar\n"
+SEPER	
+ENVSTRING	header="$header$borderBar$(color $headerRaspberryColor "        ~ .~ (   ) ~. ~               |_|                 |___|  |_|          ")$borderBar\n"
+SEPER	
+ENVSTRING	header="$header$borderBar$(color $headerRaspberryColor "         (  : '~' :  )                                                        ")$borderBar\n"
+SEPER	
+ENVSTRING	header="$header$borderBar$(color $headerRaspberryColor "          '~ .~~~. ~'                                                         ")$borderBar\n"
+SEPER	
+ENVSTRING	header="$header$borderBar$(color $headerRaspberryColor "              '~'                                                             ")$borderBar"
+SEPER	
+SEPER	
+ENVSTRING	me=$(whoami)
+SEPER	
+SEPER	
+SEPER	
+ENVSTRING	greetings="$borderBar$(color $greetingsColor "$(center "Welcome back, $me!")")$borderBar\n"
+SEPER	
+ENVSTRING	greetings="$greetings$borderBar$(color $greetingsColor "$(center "$(date +"%A, %d %B %Y, %T")")")$borderBar"
+SEPER	
+SEPER	
+SEPER	
+STRING	read
+STRING	loginFrom
+STRING	loginIP
+TRINANG	
+STRING	$(last $me -2 | awk 'NR==2 { print $2,$3 }')
+SEPER	
+SEPER	
+ENVSTRING	loginDate=$(date -u -d "$(last -2 | awk 'NR==2 {print $4,$5,$6,$7}')" +"%Y-%m-%dT%H:%M:%SZ" )
+SEPER	
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	$loginDate
+STRING	==
+STRING	-
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	loginDate=$loginIP
+SEPER	
+ENVSTRING	loginIP=$loginFrom
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	$loginDate
+STRING	==
+STRING	*T*
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	login="$(date -d $loginDate +"%A, %d %B %Y, %T") ($loginIP)"
+SEPER	
+ELSE	else
+SEPER	
+SEPER	
+ENVSTRING	login="None"
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+ENVSTRING	label1="$(extend "$login")"
+SEPER	
+ENVSTRING	label1="$borderBar  $(color $statsLabelColor "Last Login....:") $label1$borderBar"
+SEPER	
+SEPER	
+ENVSTRING	uptime="$(sec2time $(cut -d "." -f 1 /proc/uptime))"
+SEPER	
+ENVSTRING	uptime="$uptime ($(date -d "@"$(grep btime /proc/stat | cut -d " " -f 2) +"%d-%m-%Y %H:%M:%S"))"
+SEPER	
+SEPER	
+ENVSTRING	label2="$(extend "$uptime")"
+SEPER	
+ENVSTRING	label2="$borderBar  $(color $statsLabelColor "Uptime........:") $label2$borderBar"
+SEPER	
+SEPER	
+ENVSTRING	label3="$(extend "$(free -m | awk 'NR==2 { printf "Total: %sMB, Used: %sMB, Free: %sMB",$2,$3,$4; }')")"
+SEPER	
+ENVSTRING	label3="$borderBar  $(color $statsLabelColor "Memory........:") $label3$borderBar"
+SEPER	
+SEPER	
+ENVSTRING	label4="$(extend "$(df -h ~ | awk 'NR==2 { printf "Total: %sB, Used: %sB, Free: %sB",$2,$3,$4; }')")"
+SEPER	
+ENVSTRING	label4="$borderBar  $(color $statsLabelColor "Home space....:") $label4$borderBar"
+SEPER	
+SEPER	
+ENVSTRING	label5="$(extend "$(/opt/vc/bin/vcgencmd measure_temp | cut -c "6-9")ºC")"
+SEPER	
+ENVSTRING	label5="$borderBar  $(color $statsLabelColor "Temperature...:") $label5$borderBar"
+SEPER	
+SEPER	
+ENVSTRING	stats="$label1\n$label2\n$label3\n$label4\n$label5"
+SEPER	
+SEPER	
+SEPER	
+STRING	echo
+STRING	-e
+STRING	"$header\n$borderEmptyLine\n$greetings\n$borderEmptyLine\n$stats\n$borderEmptyLine\n$borderBottomLine"
+SEPER	
+ENDINPUT

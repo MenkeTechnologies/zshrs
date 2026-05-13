@@ -1,0 +1,1193 @@
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-any-colorify-as-uspl2
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	.zinit-any-to-user-plugin
+STRING	"$1"
+STRING	"$2"
+SEPER	
+TYPESET	local
+STRING	user="${reply[-2]}"
+STRING	plugin="${reply[-1]}"
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	"$user"
+STRING	=
+STRING	"%"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	.zinit-any-to-pid
+STRING	""
+STRING	$plugin
+SEPER	
+ENVSTRING	REPLY="${REPLY/https--github.com--(robbyrussell--oh-my-zsh|ohmyzsh--ohmyzsh)--trunk--plugins--/OMZP::}"
+SEPER	
+ENVSTRING	REPLY="${REPLY/https--github.com--(robbyrussell--oh-my-zsh|ohmyzsh--ohmyzsh)--trunk--plugins/OMZP}"
+SEPER	
+ENVSTRING	REPLY="${REPLY/https--github.com--(robbyrussell--oh-my-zsh|ohmyzsh--ohmyzsh)--trunk--lib--/OMZL::}"
+SEPER	
+ENVSTRING	REPLY="${REPLY/https--github.com--(robbyrussell--oh-my-zsh|ohmyzsh--ohmyzsh)--trunk--lib/OMZL}"
+SEPER	
+ENVSTRING	REPLY="${REPLY/https--github.com--(robbyrussell--oh-my-zsh|ohmyzsh--ohmyzsh)--trunk--themes--/OMZT::}"
+SEPER	
+ENVSTRING	REPLY="${REPLY/https--github.com--(robbyrussell--oh-my-zsh|ohmyzsh--ohmyzsh)--trunk--themes/OMZT}"
+SEPER	
+ENVSTRING	REPLY="${REPLY/https--github.com--(robbyrussell--oh-my-zsh|ohmyzsh--ohmyzsh)--trunk--/OMZ::}"
+SEPER	
+ENVSTRING	REPLY="${REPLY/https--github.com--(robbyrussell--oh-my-zsh|ohmyzsh--ohmyzsh)--trunk/OMZ}"
+SEPER	
+ENVSTRING	REPLY="${REPLY/https--github.com--sorin-ionescu--prezto--trunk--modules--/PZTM::}"
+SEPER	
+ENVSTRING	REPLY="${REPLY/https--github.com--sorin-ionescu--prezto--trunk--modules/PZTM}"
+SEPER	
+ENVSTRING	REPLY="${REPLY/https--github.com--sorin-ionescu--prezto--trunk--/PZT::}"
+SEPER	
+ENVSTRING	REPLY="${REPLY/https--github.com--sorin-ionescu--prezto--trunk/PZT}"
+SEPER	
+ENVSTRING	REPLY="${REPLY/(#b)%([A-Z]##)(#c0,1)(*)/%$ZINIT[col-uname]$match[1]$ZINIT[col-pname]$match[2]$ZINIT[col-rst]}"
+SEPER	
+ELIF	elif
+DINBRACK	[[
+STRING	$user
+STRING	==
+STRING	http(|s):
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	REPLY="${ZINIT[col-ice]}${user}/${plugin}${ZINIT[col-rst]}"
+SEPER	
+ELSE	else
+SEPER	
+ENVSTRING	REPLY="${user:+${ZINIT[col-uname]}${user}${ZINIT[col-rst]}/}${ZINIT[col-pname]}${plugin}${ZINIT[col-rst]}"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-compute-ice
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	builtin
+STRING	emulate
+STRING	-LR
+STRING	zsh
+STRING	${=${options[xtrace]:#off}:+-o xtrace}
+SEPER	
+STRING	setopt
+STRING	extendedglob
+STRING	typesetsilent
+STRING	warncreateglobal
+STRING	noshortloops
+SEPER	
+SEPER	
+TYPESET	local
+STRING	___URL="${1%/}"
+STRING	___pack="$2"
+STRING	___is_snippet=0
+SEPER	
+TYPESET	local
+STRING	___var_name1="${3:-ZINIT_ICE}"
+STRING	___var_name2="${4:-local_dir}"
+STRING	___var_name3="${5:-filename}"
+STRING	___var_name4="${6:-is_snippet}"
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	-a
+STRING	ice_order
+STRING	nval_ices
+SEPER	
+ENVARRAY	ice_order
+SEPER	
+STRING	${(s.|.)ZINIT[ice-list]}
+SEPER	
+SEPER	
+STRING	${(@)${(@Akons:|:)${ZINIT_EXTS[ice-mods]//\'\'/}}/(#s)<->-/}
+SEPER	
+OUTPAR	
+SEPER	
+ENVARRAY	nval_ices
+SEPER	
+STRING	${(s.|.)ZINIT[nval-ice-list]}
+SEPER	
+SEPER	
+SEPER	
+STRING	${(@)${(@)${(@Akons:|:)ZINIT_EXTS[ice-mods]}:#*\'\'*}/(#s)<->-/}
+SEPER	
+STRING	svn
+SEPER	
+OUTPAR	
+SEPER	
+SEPER	
+SEPER	
+ENVSTRING	___URL="${${___URL#"${___URL%%[! $'\t']*}"}%/}"
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-two-paths
+STRING	"$___URL"
+SEPER	
+TYPESET	local
+STRING	___s_path="${reply[-4]}"
+STRING	___s_svn="${reply[-3]}"
+STRING	___path="${reply[-2]}"
+STRING	___filename="${reply[-1]}"
+STRING	___local_dir
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-d
+STRING	"$___s_path"
+DBAR	
+STRING	-d
+STRING	"$___path"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	___is_snippet=1
+SEPER	
+ELSE	else
+SEPER	
+SEPER	
+STRING	.zinit-any-to-user-plugin
+STRING	"$___URL"
+STRING	""
+SEPER	
+TYPESET	local
+STRING	___user="${reply[-2]}"
+STRING	___plugin="${reply[-1]}"
+SEPER	
+ENVSTRING	___s_path=""
+ENVSTRING	___filename=""
+SEPER	
+DINBRACK	[[
+STRING	"$___user"
+STRING	=
+STRING	"%"
+DOUTBRACK	]]
+DAMPER	
+ENVSTRING	___path="$___plugin"
+DBAR	
+ENVSTRING	___path="${ZINIT[PLUGINS_DIR]}/${___user:+${___user}---}${___plugin//\//---}"
+SEPER	
+STRING	.zinit-exists-physically-message
+STRING	"$___user"
+STRING	"$___plugin"
+DBAR	
+STRING	return
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+DINBRACK	[[
+STRING	$___pack
+STRING	=
+STRING	pack*
+DOUTBRACK	]]
+DAMPER	
+DINPAR	 ${#ICE} > 0 
+DAMPER	
+STRING	.zinit-pack-ice
+STRING	"${___user-$___URL}"
+STRING	"$___plugin"
+SEPER	
+SEPER	
+TYPESET	local
+STRING	-A
+STRING	___sice
+SEPER	
+TYPESET	local
+STRING	-a
+STRING	___tmp
+SEPER	
+SEPER	
+ENVARRAY	___tmp
+STRING	"${(z@)ZINIT_SICE[${___user-$___URL}${${___user:#(%|/)*}:+/}$___plugin]}"
+OUTPAR	
+SEPER	
+DINPAR	 ${#___tmp[@]} > 1 && ${#___tmp[@]} % 2 == 0 
+DAMPER	
+ENVARRAY	___sice
+STRING	"${(Q)___tmp[@]}"
+OUTPAR	
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	"${+___sice[svn]}"
+STRING	=
+STRING	"1"
+DBAR	
+STRING	-n
+STRING	"$___s_svn"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+IF	if
+DINPAR	 !___is_snippet && ${+___sice[svn]} == 1 
+SEPER	
+THEN	then
+SEPER	
+STRING	builtin
+STRING	print
+STRING	-r
+STRING	--
+STRING	"The \`svn' ice is given, but the argument ($___URL) is a plugin"
+SEPER	
+STRING	builtin
+STRING	print
+STRING	-r
+STRING	--
+STRING	"(\`svn' can be used only with snippets)"
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+ELIF	elif
+DINPAR	 !___is_snippet 
+SEPER	
+THEN	then
+SEPER	
+STRING	builtin
+STRING	print
+STRING	-r
+STRING	--
+STRING	"Undefined behavior #1 occurred, please report at https://github.com/zdharma-continuum/zinit/issues"
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-e
+STRING	"$___s_path"
+DAMPER	
+STRING	-n
+STRING	"$___s_svn"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	___sice[svn]=""
+SEPER	
+ENVSTRING	___local_dir="$___s_path"
+SEPER	
+ELSE	else
+SEPER	
+IF	if
+DINBRACK	[[
+BANG	!
+STRING	-e
+STRING	"$___path"
+DOUTBRACK	]]
+INBRACE	{
+SEPER	
+STRING	builtin
+STRING	print
+STRING	-r
+STRING	--
+STRING	"No such snippet, looked at paths (1): $___s_path, and: $___path"
+SEPER	
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+SEPER	
+OUTBRACE	}
+SEPER	
+STRING	unset
+STRING	'___sice[svn]'
+SEPER	
+ENVSTRING	___local_dir="$___path"
+SEPER	
+FI	fi
+SEPER	
+ELSE	else
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-e
+STRING	"$___path"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	unset
+STRING	'___sice[svn]'
+SEPER	
+ENVSTRING	___local_dir="$___path"
+SEPER	
+ELSE	else
+SEPER	
+STRING	builtin
+STRING	print
+STRING	-r
+STRING	--
+STRING	"No such snippet, looked at paths (2): $___s_path, and: $___path"
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+TYPESET	local
+STRING	___zinit_path="$___local_dir/._zinit"
+SEPER	
+SEPER	
+TYPESET	local
+STRING	-A
+STRING	___mdata
+SEPER	
+TYPESET	local
+STRING	___key
+SEPER	
+SEPER	
+INBRACE	{
+SEPER	
+FOR	for
+STRING	___key
+STRING	in
+STRING	mode
+STRING	url
+STRING	is_release
+STRING	is_release{2..5}
+STRING	${ice_order[@]}
+SEPER	
+DOLOOP	do
+SEPER	
+DINBRACK	[[
+STRING	-f
+STRING	"$___zinit_path/$___key"
+DOUTBRACK	]]
+DAMPER	
+ENVSTRING	___mdata[$___key]="$(<$___zinit_path/$___key)"
+SEPER	
+DONE	done
+SEPER	
+DINBRACK	[[
+STRING	"${___mdata[mode]}"
+STRING	=
+STRING	"1"
+DOUTBRACK	]]
+DAMPER	
+ENVSTRING	___mdata[svn]=""
+SEPER	
+OUTBRACE	}
+OUTANG	
+STRING	/dev/null
+SEPER	
+SEPER	
+SEPER	
+FOR	for
+STRING	___key
+STRING	in
+STRING	${ice_order[@]}
+SEPER	
+DOLOOP	do
+SEPER	
+DINBRACK	[[
+STRING	$___key
+STRING	==
+INPAR	
+STRING	no
+BAR	
+OUTPAR	
+STRING	compile
+DOUTBRACK	]]
+DAMPER	
+STRING	continue
+SEPER	
+SEPER	
+IF	if
+DINPAR	 0 == ${+ICE[no$___key]} && 0 == ${+___sice[no$___key]} 
+INBRACE	{
+SEPER	
+STRING	continue
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+IF	if
+DINPAR	 1 == ${+ICE[$___key]} && 0 == ${+ICE[no$___key]} && 1 == ${+___sice[no$___key]} 
+INBRACE	{
+SEPER	
+STRING	continue
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	"$___key"
+STRING	=
+STRING	"svn"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	command
+STRING	builtin
+STRING	print
+STRING	-r
+STRING	--
+STRING	"0"
+OUTANGBANG	
+STRING	"$___zinit_path/mode"
+SEPER	
+ENVSTRING	___mdata[mode]=0
+SEPER	
+ELSE	else
+SEPER	
+STRING	command
+STRING	rm
+STRING	-f
+STRING	--
+STRING	"$___zinit_path/$___key"
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+STRING	unset
+STRING	"___mdata[$___key]"
+STRING	"___sice[$___key]"
+STRING	"ICE[$___key]"
+SEPER	
+DONE	done
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	-A
+STRING	___MY_ICE
+SEPER	
+FOR	for
+STRING	___key
+STRING	in
+STRING	mode
+STRING	url
+STRING	is_release
+STRING	is_release{2..5}
+STRING	${ice_order[@]}
+SEPER	
+DOLOOP	do
+SEPER	
+SEPER	
+SEPER	
+DINPAR	 ${+___sice[$___key]} + ${${${___pack:#pack-nf*}:+${+___mdata[$___key]}}:-0} 
+DAMPER	
+ENVSTRING	___MY_ICE[$___key]="${___sice[$___key]-${___mdata[$___key]}}"
+SEPER	
+DONE	done
+SEPER	
+SEPER	
+SEPER	
+ENVSTRING	___key=teleid
+SEPER	
+DINBRACK	[[
+STRING	"$___pack"
+STRING	=
+STRING	pack-nftid
+DOUTBRACK	]]
+DAMPER	
+INBRACE	{
+SEPER	
+DINPAR	 ${+___sice[$___key]} + ${+___mdata[$___key]} 
+DAMPER	
+ENVSTRING	___MY_ICE[$___key]="${___sice[$___key]-${___mdata[$___key]}}"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	:
+STRING	${(PA)___var_name1::="${(kv)___MY_ICE[@]}"}
+SEPER	
+STRING	:
+STRING	${(P)___var_name2::=$___local_dir}
+SEPER	
+STRING	:
+STRING	${(P)___var_name3::=$___filename}
+SEPER	
+STRING	:
+STRING	${(P)___var_name4::=$___is_snippet}
+SEPER	
+SEPER	
+STRING	return
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-countdown
+INOUTPAR	
+INBRACE	{
+SEPER	
+DINPAR	 !${+ICE[countdown]} 
+DAMPER	
+STRING	return
+STRING	0
+SEPER	
+SEPER	
+STRING	builtin
+STRING	emulate
+STRING	-L
+STRING	zsh
+STRING	-o
+STRING	extendedglob
+STRING	${=${options[xtrace]:#off}:+-o xtrace}
+SEPER	
+STRING	trap
+STRING	"+zi-log \"{ehi}ABORTING, the ice {ice}$ice{ehi} not ran{rst}\"; return 1"
+STRING	INT
+SEPER	
+SEPER	
+TYPESET	local
+STRING	count=5
+STRING	ice
+STRING	tpe="$1"
+SEPER	
+SEPER	
+ENVSTRING	ice="${ICE[$tpe]}"
+SEPER	
+DINBRACK	[[
+STRING	$tpe
+STRING	=
+STRING	"atpull"
+DAMPER	
+STRING	$ice
+STRING	=
+STRING	"%atclone"
+DOUTBRACK	]]
+DAMPER	
+ENVSTRING	ice="${ICE[atclone]}"
+SEPER	
+ENVSTRING	ice="{b}{ice}$tpe{ehi}:{rst}${ice//(#b)(\{[a-z0-9…–_-]##\})/\\$match[1]}"
+SEPER	
+SEPER	
+STRING	+zi-log
+STRING	-n
+STRING	"{hi}Running $ice{rst}{hi} ice in...{rst} "
+SEPER	
+SEPER	
+WHILE	while
+DINPAR	 -- count + 1 
+INBRACE	{
+SEPER	
+STRING	+zi-log
+STRING	-n
+STRING	--
+STRING	"{b}{error}"$(( count + 1 ))"{rst}{…}"
+SEPER	
+STRING	sleep
+STRING	1
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	+zi-log
+STRING	-r
+STRING	--
+STRING	"{b}{error}0 <running now>{rst}{…}"
+SEPER	
+STRING	return
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-exists-physically
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	.zinit-any-to-user-plugin
+STRING	"$1"
+STRING	"$2"
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	${reply[-2]}
+STRING	=
+STRING	%
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+DINBRACK	[[
+STRING	-d
+STRING	${reply[-1]}
+DOUTBRACK	]]
+DAMPER	
+STRING	return
+STRING	0
+DBAR	
+STRING	return
+STRING	1
+SEPER	
+ELSE	else
+SEPER	
+DINBRACK	[[
+STRING	-d
+STRING	${ZINIT[PLUGINS_DIR]}/${reply[-2]:+${reply[-2]}---}${reply[-1]//\//---}
+DOUTBRACK	]]
+DAMPER	
+STRING	return
+STRING	0
+DBAR	
+STRING	return
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-exists-physically-message
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	builtin
+STRING	emulate
+STRING	-LR
+STRING	zsh
+STRING	${=${options[xtrace]:#off}:+-o xtrace}
+SEPER	
+STRING	builtin
+STRING	setopt
+STRING	extendedglob
+STRING	warncreateglobal
+STRING	typesetsilent
+STRING	noshortloops
+STRING	rcquotes
+SEPER	
+IF	if
+BANG	!
+STRING	.zinit-exists-physically
+STRING	"$1"
+STRING	"$2"
+SEPER	
+THEN	then
+SEPER	
+STRING	.zinit-any-to-user-plugin
+STRING	"$1"
+STRING	"$2"
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	$reply[1]
+STRING	=
+STRING	%
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	.zinit-any-to-pid
+STRING	"$1"
+STRING	"$2"
+SEPER	
+TYPESET	local
+STRING	spec1=$REPLY
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	$1
+STRING	=
+STRING	%*
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+TYPESET	local
+STRING	spec2=%${1#%}${${1#%}:+${2:+/}}$2
+SEPER	
+ELIF	elif
+DINBRACK	[[
+STRING	-z
+STRING	$1
+DBAR	
+STRING	-z
+STRING	$2
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+TYPESET	local
+STRING	spec3=%${1#%}${2#%}
+SEPER	
+FI	fi
+SEPER	
+ELSE	else
+SEPER	
+TYPESET	integer
+STRING	nospec=1
+SEPER	
+FI	fi
+SEPER	
+STRING	.zinit-any-colorify-as-uspl2
+STRING	"$1"
+STRING	"$2"
+SEPER	
+SEPER	
+STRING	+zi-log
+STRING	"{error}No such (plugin or snippet){rst}: $REPLY."
+SEPER	
+SEPER	
+DINBRACK	[[
+STRING	$nospec
+STRING	-eq
+STRING	0
+DAMPER	
+STRING	$spec1
+STRING	!=
+STRING	$spec2
+DOUTBRACK	]]
+DAMPER	
+STRING	+zi-log
+STRING	"(expands to: {file}${spec2#%}{rst})."
+SEPER	
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+STRING	return
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-first
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	.zinit-any-to-user-plugin
+STRING	"$1"
+STRING	"$2"
+SEPER	
+TYPESET	local
+STRING	user="${reply[-2]}"
+STRING	plugin="${reply[-1]}"
+SEPER	
+SEPER	
+STRING	.zinit-any-to-pid
+STRING	"$1"
+STRING	"$2"
+SEPER	
+STRING	.zinit-get-object-path
+STRING	plugin
+STRING	"$REPLY"
+SEPER	
+TYPESET	integer
+STRING	ret=$?
+SEPER	
+TYPESET	local
+STRING	dname="$REPLY"
+SEPER	
+DINPAR	 ret 
+DAMPER	
+INBRACE	{
+ENVARRAY	reply
+STRING	"$dname"
+STRING	""
+OUTPAR	
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-e
+STRING	"$dname/$plugin.plugin.zsh"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVARRAY	reply
+STRING	"$dname/$plugin.plugin.zsh"
+OUTPAR	
+SEPER	
+ELSE	else
+SEPER	
+STRING	.zinit-find-other-matches
+STRING	"$dname"
+STRING	"$plugin"
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	"${#reply}"
+STRING	-eq
+STRING	"0"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVARRAY	reply
+STRING	"$dname"
+STRING	""
+OUTPAR	
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+SEPER	
+ENVARRAY	reply
+STRING	"$dname"
+STRING	"${reply[-${#reply}]}"
+OUTPAR	
+SEPER	
+STRING	return
+STRING	0
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-store-ices
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	___pfx="$1"
+STRING	___ice_var="$2"
+STRING	___add_ices="$3"
+STRING	___add_ices2="$4"
+SEPER	
+TYPESET	local
+STRING	url="$5"
+STRING	mode="$6"
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	-a
+STRING	ice_order
+STRING	nval_ices
+SEPER	
+ENVARRAY	ice_order
+SEPER	
+STRING	${(s.|.)ZINIT[ice-list]}
+SEPER	
+SEPER	
+STRING	${(@)${(@Akons:|:)${ZINIT_EXTS[ice-mods]//\'\'/}}/(#s)<->-/}
+SEPER	
+OUTPAR	
+SEPER	
+ENVARRAY	nval_ices
+SEPER	
+STRING	${(s.|.)ZINIT[nval-ice-list]}
+SEPER	
+SEPER	
+SEPER	
+STRING	${(@)${(@)${(@Akons:|:)ZINIT_EXTS[ice-mods]}:#*\'\'*}/(#s)<->-/}
+SEPER	
+SEPER	
+STRING	svn
+SEPER	
+OUTPAR	
+SEPER	
+SEPER	
+STRING	command
+STRING	mkdir
+STRING	-p
+STRING	"$___pfx"
+DAMPER	
+STRING	echo
+STRING	'*'
+OUTANG	
+STRING	"$___pfx/.gitignore"
+SEPER	
+TYPESET	local
+STRING	___key
+STRING	___var_name
+SEPER	
+SEPER	
+FOR	for
+STRING	___key
+STRING	in
+STRING	${ice_order[@]:#(${(~j:|:)nval_ices[@]})}
+STRING	${(s: :)___add_ices[@]}
+SEPER	
+DOLOOP	do
+SEPER	
+ENVSTRING	___var_name="${___ice_var}[$___key]"
+SEPER	
+DINPAR	 ${(P)+___var_name} 
+DAMPER	
+STRING	builtin
+STRING	print
+STRING	-r
+STRING	--
+STRING	"${(P)___var_name}"
+OUTANGBANG	
+STRING	"$___pfx"/"$___key"
+SEPER	
+DONE	done
+SEPER	
+SEPER	
+SEPER	
+FOR	for
+STRING	___key
+STRING	in
+STRING	${nval_ices[@]}
+STRING	${(s: :)___add_ices2[@]}
+SEPER	
+DOLOOP	do
+SEPER	
+ENVSTRING	___var_name="${___ice_var}[$___key]"
+SEPER	
+IF	if
+DINPAR	 ${(P)+___var_name} 
+SEPER	
+THEN	then
+SEPER	
+STRING	builtin
+STRING	print
+STRING	-r
+STRING	--
+STRING	"${(P)___var_name}"
+OUTANGBANG	
+STRING	"$___pfx"/"$___key"
+SEPER	
+ELSE	else
+SEPER	
+STRING	command
+STRING	rm
+STRING	-f
+STRING	"$___pfx"/"$___key"
+SEPER	
+FI	fi
+SEPER	
+DONE	done
+SEPER	
+SEPER	
+SEPER	
+FOR	for
+STRING	___key
+STRING	in
+STRING	url
+STRING	mode
+SEPER	
+DOLOOP	do
+SEPER	
+DINBRACK	[[
+STRING	-n
+STRING	"${(P)___key}"
+DOUTBRACK	]]
+DAMPER	
+STRING	builtin
+STRING	print
+STRING	-r
+STRING	--
+STRING	"${(P)___key}"
+OUTANGBANG	
+STRING	"$___pfx"/"$___key"
+SEPER	
+DONE	done
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	.zinit-two-paths
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	builtin
+STRING	emulate
+STRING	-LR
+STRING	zsh
+STRING	${=${options[xtrace]:#off}:+-o xtrace}
+SEPER	
+STRING	setopt
+STRING	extendedglob
+STRING	typesetsilent
+STRING	warncreateglobal
+STRING	noshortloops
+SEPER	
+SEPER	
+TYPESET	local
+STRING	dirnameA
+STRING	dirnameB
+STRING	local_dirA
+STRING	local_dirB
+STRING	svn_dirA
+STRING	url1
+STRING	url2
+STRING	url=$1
+SEPER	
+TYPESET	local
+STRING	-a
+STRING	fileB_there
+SEPER	
+SEPER	
+SEPER	
+ENVSTRING	url="${${url#"${url%%[! $'\t']*}"}%/}"
+SEPER	
+ENVSTRING	url1=$url
+SEPER	
+ENVSTRING	url2=$url
+SEPER	
+SEPER	
+STRING	.zinit-get-object-path
+STRING	snippet
+STRING	"$url1"
+SEPER	
+ENVSTRING	local_dirA=$reply[-3]
+ENVSTRING	dirnameA=$reply[-2]
+SEPER	
+DINBRACK	[[
+STRING	-d
+STRING	"$local_dirA/$dirnameA/.svn"
+DOUTBRACK	]]
+DAMPER	
+INBRACE	{
+SEPER	
+ENVSTRING	svn_dirA=".svn"
+SEPER	
+IF	if
+INBRACE	{
+STRING	.zinit-first
+STRING	%
+STRING	"$local_dirA/$dirnameA"
+SEPER	
+OUTBRACE	}
+INBRACE	{
+SEPER	
+ENVARRAY	fileB_there
+STRING	${reply[-1]}
+OUTPAR	
+SEPER	
+OUTBRACE	}
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	.zinit-get-object-path
+STRING	snippet
+STRING	"$url2"
+SEPER	
+ENVSTRING	local_dirB=$reply[-3]
+ENVSTRING	dirnameB=$reply[-2]
+SEPER	
+SEPER	
+DINBRACK	[[
+STRING	-z
+STRING	$svn_dirA
+DOUTBRACK	]]
+DAMPER	
+ENVARRAY	fileB_there
+STRING	"$local_dirB/$dirnameB"/*~*.(zwc|md|js|html)(.-DOnN[1])
+OUTPAR	
+SEPER	
+SEPER	
+ENVARRAY	reply
+STRING	"$local_dirA/$dirnameA"
+STRING	"$svn_dirA"
+STRING	"$local_dirB/$dirnameB"
+STRING	"${fileB_there[1]##$local_dirB/$dirnameB/#}"
+OUTPAR	
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+ENDINPUT

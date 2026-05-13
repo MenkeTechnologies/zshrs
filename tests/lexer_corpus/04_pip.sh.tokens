@@ -1,0 +1,257 @@
+STRING	pip
+STRING	install
+STRING	arrow
+SEPER	
+STRING	pip
+STRING	install
+STRING	Babel
+SEPER	
+STRING	pip
+STRING	install
+STRING	backports-abc
+SEPER	
+STRING	pip
+STRING	install
+STRING	backports.functools-lru-cache
+SEPER	
+STRING	pip
+STRING	install
+STRING	bashate
+SEPER	
+STRING	pip
+STRING	install
+STRING	BeautifulSoup
+SEPER	
+STRING	pip
+STRING	install
+STRING	blessings
+SEPER	
+STRING	pip
+STRING	install
+STRING	bottle
+SEPER	
+STRING	pip
+STRING	install
+STRING	bpython
+SEPER	
+STRING	pip
+STRING	install
+STRING	certifi
+SEPER	
+STRING	pip
+STRING	install
+STRING	chardet
+SEPER	
+STRING	pip
+STRING	install
+STRING	click
+SEPER	
+STRING	pip
+STRING	install
+STRING	colorama
+SEPER	
+STRING	pip
+STRING	install
+STRING	cssselect
+SEPER	
+STRING	pip
+STRING	install
+STRING	curtsies
+SEPER	
+STRING	pip
+STRING	install
+STRING	docutils
+SEPER	
+STRING	pip
+STRING	install
+STRING	enum
+SEPER	
+STRING	pip
+STRING	install
+STRING	enum34
+SEPER	
+STRING	pip
+STRING	install
+STRING	futures
+SEPER	
+STRING	pip
+STRING	install
+STRING	Glances
+SEPER	
+STRING	pip
+STRING	install
+STRING	greenlet
+SEPER	
+STRING	pip
+STRING	install
+STRING	howdoi
+SEPER	
+STRING	pip
+STRING	install
+STRING	icc-rt
+SEPER	
+STRING	pip
+STRING	install
+STRING	idna
+SEPER	
+STRING	pip
+STRING	install
+STRING	intel-numpy
+SEPER	
+STRING	pip
+STRING	install
+STRING	intel-openmp
+SEPER	
+STRING	pip
+STRING	install
+STRING	lockfile
+SEPER	
+STRING	pip
+STRING	install
+STRING	lxml
+SEPER	
+STRING	pip
+STRING	install
+STRING	maybe
+SEPER	
+STRING	pip
+STRING	install
+STRING	mercurial
+SEPER	
+STRING	pip
+STRING	install
+STRING	mkl
+SEPER	
+STRING	pip
+STRING	install
+STRING	mkl-fft
+SEPER	
+STRING	pip
+STRING	install
+STRING	mkl-random
+SEPER	
+STRING	pip
+STRING	install
+STRING	netifaces
+SEPER	
+STRING	pip
+STRING	install
+STRING	numpy
+SEPER	
+STRING	pip
+STRING	install
+STRING	parse
+SEPER	
+STRING	pip
+STRING	install
+STRING	parse-type
+SEPER	
+STRING	pip
+STRING	install
+STRING	pbr
+SEPER	
+STRING	pip
+STRING	install
+STRING	platformio
+SEPER	
+STRING	pip
+STRING	install
+STRING	powerline-mem-segment
+SEPER	
+STRING	pip
+STRING	install
+STRING	powerline-status
+SEPER	
+STRING	pip
+STRING	install
+STRING	psutil
+SEPER	
+STRING	pip
+STRING	install
+STRING	Pygments
+SEPER	
+STRING	pip
+STRING	install
+STRING	pync
+SEPER	
+STRING	pip
+STRING	install
+STRING	pyportmidi
+SEPER	
+STRING	pip
+STRING	install
+STRING	pyquery
+SEPER	
+STRING	pip
+STRING	install
+STRING	pyserial
+SEPER	
+STRING	pip
+STRING	install
+STRING	pysqlite
+SEPER	
+STRING	pip
+STRING	install
+STRING	python-dateutil
+SEPER	
+STRING	pip
+STRING	install
+STRING	python-ptrace
+SEPER	
+STRING	pip
+STRING	install
+STRING	pytz
+SEPER	
+STRING	pip
+STRING	install
+STRING	requests
+SEPER	
+STRING	pip
+STRING	install
+STRING	requests-cache
+SEPER	
+STRING	pip
+STRING	install
+STRING	selenium
+SEPER	
+STRING	pip
+STRING	install
+STRING	semantic-version
+SEPER	
+STRING	pip
+STRING	install
+STRING	singledispatch
+SEPER	
+STRING	pip
+STRING	install
+STRING	six
+SEPER	
+STRING	pip
+STRING	install
+STRING	snakeviz
+SEPER	
+STRING	pip
+STRING	install
+STRING	tornado
+SEPER	
+STRING	pip
+STRING	install
+STRING	typing
+SEPER	
+STRING	pip
+STRING	install
+STRING	urllib3
+SEPER	
+STRING	pip
+STRING	install
+STRING	virtualenv
+SEPER	
+STRING	pip
+STRING	install
+STRING	wcwidth
+SEPER	
+STRING	pip
+STRING	install
+STRING	yasm
+SEPER	
+ENDINPUT

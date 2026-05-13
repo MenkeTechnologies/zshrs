@@ -1,0 +1,18 @@
+STRING	echo
+STRING	`cat /tmp/x`
+SEPER	
+STRING	echo
+STRING	`echo "double inside"`
+SEPER	
+STRING	echo
+STRING	`echo 'single inside'`
+SEPER	
+STRING	echo
+STRING	"outer `inner`"
+SEPER	
+STRING	echo
+STRING	"`echo 'nested'`"
+SEPER	
+ENVSTRING	result=`grep pat file`
+SEPER	
+ENDINPUT

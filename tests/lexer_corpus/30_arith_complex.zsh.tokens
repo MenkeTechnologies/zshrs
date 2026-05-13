@@ -1,0 +1,29 @@
+DINPAR	 x = 1 + 2 * 3 
+SEPER	
+DINPAR	 y = (a + b) / 2 
+SEPER	
+DINPAR	 z = a < b ? a : b 
+SEPER	
+DINPAR	 count++ 
+SEPER	
+DINPAR	 ++count 
+SEPER	
+DINPAR	 count-- 
+SEPER	
+DINPAR	 total += value 
+SEPER	
+DINPAR	 bits = a & b | c ^ d 
+SEPER	
+DINPAR	 shifts = a << 2 | b >> 1 
+SEPER	
+DINPAR	 arr[i] = arr[i-1] * 2 
+SEPER	
+STRING	echo
+STRING	$((1 + 1))
+SEPER	
+STRING	echo
+STRING	$(( 2 ** 10 ))
+SEPER	
+DINPAR	flag = !0 && cond
+SEPER	
+ENDINPUT

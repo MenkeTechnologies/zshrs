@@ -1,0 +1,25 @@
+STRING	echo
+STRING	"$'ANSI \x1b[31mred\x1b[0m'"
+SEPER	
+STRING	echo
+STRING	$'tab\there'
+SEPER	
+STRING	echo
+STRING	$'\nnewline'
+SEPER	
+STRING	echo
+STRING	$'\\backslash'
+SEPER	
+ENVSTRING	str=$'quoted with \'apostrophe\''
+SEPER	
+ENVSTRING	mixed="prefix$'\t'suffix"
+SEPER	
+ENVSTRING	escaped=\"literal\"
+SEPER	
+ENVSTRING	multiline="$(cat <<EOF
+line 1
+line 2
+EOF
+)"
+SEPER	
+ENDINPUT

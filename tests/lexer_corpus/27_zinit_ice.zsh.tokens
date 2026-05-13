@@ -1,0 +1,41 @@
+STRING	zinit
+STRING	ice
+STRING	wait"0"
+STRING	lucid
+STRING	as"program"
+STRING	pick"bin/foo"
+SEPER	
+STRING	zinit
+STRING	light
+STRING	user/repo
+SEPER	
+STRING	zinit
+STRING	ice
+STRING	wait"!1"
+STRING	depth"1"
+SEPER	
+STRING	zinit
+STRING	snippet
+STRING	OMZ::lib/git.zsh
+SEPER	
+STRING	zinit
+STRING	ice
+STRING	from"gh-r"
+STRING	as"program"
+SEPER	
+STRING	zinit
+STRING	load
+STRING	junegunn/fzf-bin
+SEPER	
+STRING	zinit
+STRING	ice
+STRING	wait
+STRING	lucid
+STRING	atload'_zsh_autosuggest_start'
+STRING	atinit'ZINIT[COMPINIT_OPTS]=-C; zicompinit; zicdreplay'
+SEPER	
+STRING	zinit
+STRING	light
+STRING	zsh-users/zsh-autosuggestions
+SEPER	
+ENDINPUT

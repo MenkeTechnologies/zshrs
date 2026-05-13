@@ -1,0 +1,205 @@
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	"$ZPWR"
+DAMPER	
+STRING	-n
+STRING	"$ZPWR_LIB_INIT"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+IF	if
+BANG	!
+STRING	source
+STRING	"$ZPWR_LIB_INIT"
+STRING	""
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"Could not source dir '$ZPWR_LIB_INIT'."
+SEPER	
+STRING	exit
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+ELSE	else
+SEPER	
+ENVSTRING	source="${BASH_SOURCE[0]}"
+SEPER	
+WHILE	while
+STRING	[
+STRING	-h
+STRING	"$source"
+STRING	]
+SEPER	
+DOLOOP	do
+SEPER	
+ENVSTRING	zpwrBaseDir="$( cd -P "$( dirname "$source" )" >/dev/null 2>&1 && pwd )"
+SEPER	
+ENVSTRING	source="$(readlink "$source")"
+SEPER	
+DINBRACK	[[
+STRING	$source
+STRING	!=
+STRING	/*
+DOUTBRACK	]]
+DAMPER	
+ENVSTRING	source="$zpwrBaseDir/$source"
+SEPER	
+DONE	done
+SEPER	
+ENVSTRING	zpwrBaseDir="$( cd -P "$( dirname "$source" )" >/dev/null 2>&1 && pwd )"
+SEPER	
+SEPER	
+WHILE	while
+DINBRACK	[[
+BANG	!
+STRING	-f
+STRING	"$zpwrBaseDir/.zpwr_root"
+DOUTBRACK	]]
+SEPER	
+DOLOOP	do
+SEPER	
+ENVSTRING	zpwrBaseDir="$(dirname "$zpwrBaseDir")"
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	"$zpwrBaseDir"
+STRING	==
+STRING	/
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"Could not find .zpwr_root file up the directory tree."
+OUTANGAMP	
+STRING	2
+SEPER	
+STRING	exit
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+DONE	done
+SEPER	
+IF	if
+BANG	!
+STRING	source
+STRING	"$zpwrBaseDir/scripts/init.sh"
+STRING	"$zpwrBaseDir"
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"Could not source zpwrBaseDir '$zpwrBaseDir/scripts/init.sh'."
+SEPER	
+STRING	exit
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+STRING	unset
+STRING	zpwrBaseDir
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	zsh-gacp-mainBranch
+INOUTPAR	
+INBRACE	{
+SEPER	
+SEPER	
+STRING	command
+STRING	git
+STRING	rev-parse
+STRING	--git-dir
+AMPOUTANG	
+STRING	/dev/null
+DBAR	
+STRING	return
+STRING	1
+SEPER	
+SEPER	
+TYPESET	local
+STRING	branch
+SEPER	
+SEPER	
+FOR	for
+STRING	branch
+STRING	in
+STRING	main
+STRING	master
+SEPER	
+DOLOOP	do
+SEPER	
+IF	if
+STRING	command
+STRING	git
+STRING	show-ref
+STRING	-q
+STRING	--verify
+STRING	refs/heads/$branch
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"$branch"
+SEPER	
+STRING	return
+SEPER	
+FI	fi
+SEPER	
+DONE	done
+SEPER	
+STRING	echo
+STRING	main
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+ENVSTRING	branch='$(zsh-gacp-mainBranch)'
+SEPER	
+ENVSTRING	dir="$1"
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+BANG	!
+STRING	-d
+STRING	"$dir"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	zpwrLogConsoleErr
+STRING	"usage: forDirMain.sh DIR to run CMD in each dir/*"
+SEPER	
+STRING	exit
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+STRING	source
+STRING	"$ZPWR_SCRIPTS/forDir.sh"
+STRING	"zpwrIsGitDir && { _m=$branch; git checkout \$_m ; git fetch -f --all --prune --tags; git clean -dff && git reset --hard origin/\$_m && git clean -dff ; git pull --all; unset _m; }"
+STRING	"$dir/"*
+SEPER	
+ENDINPUT

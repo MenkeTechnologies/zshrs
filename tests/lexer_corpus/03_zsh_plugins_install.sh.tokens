@@ -1,0 +1,72 @@
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+IF	if
+BANG	!
+STRING	test
+STRING	-f
+STRING	common.sh
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"Must be in $ZPWR/install directory"
+OUTANGAMP	
+STRING	2
+SEPER	
+STRING	exit
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+STRING	source
+STRING	common.sh
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+BANG	!
+STRING	-d
+STRING	"$ZPWR_PLUGIN_MANAGER_HOME/plugins"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	mkdir
+STRING	-p
+STRING	"$ZPWR_PLUGIN_MANAGER_HOME/plugins"
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+IF	if
+STRING	builtin
+STRING	cd
+STRING	"$ZPWR_PLUGIN_MANAGER_HOME/plugins"
+SEPER	
+THEN	then
+SEPER	
+STRING	zpwrInstallGitHubPluginsFromFile
+STRING	"$@"
+STRING	"$ZPWR_INSTALL/.zshplugins"
+SEPER	
+ELSE	else
+SEPER	
+STRING	echo
+STRING	"could not cd to $HOME/.vim/bundle/YouCompleteMe"
+OUTANGAMP	
+STRING	2
+SEPER	
+STRING	exit
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+ENDINPUT

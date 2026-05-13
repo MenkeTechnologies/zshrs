@@ -1,0 +1,20 @@
+STRING	diff
+STRING	<(ls /tmp)
+STRING	<(ls /var/tmp)
+SEPER	
+STRING	cat
+STRING	<(echo a)
+STRING	<(echo b)
+SEPER	
+STRING	tee
+STRING	>(grep foo)
+STRING	>(grep bar)
+TRINANG	
+STRING	input
+SEPER	
+STRING	sort
+STRING	-u
+STRING	<(curl -s a)
+STRING	<(curl -s b)
+SEPER	
+ENDINPUT

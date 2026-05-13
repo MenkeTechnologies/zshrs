@@ -1,0 +1,800 @@
+FUNC	function
+STRING	zsh_stats
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	fc
+STRING	-l
+STRING	1
+BAR	
+STRING	awk
+STRING	'{ CMD[$2]++; count++; } END { for (a in CMD) print CMD[a] " " CMD[a]*100/count "% " a }'
+BAR	
+STRING	grep
+STRING	-v
+STRING	"./"
+BAR	
+STRING	sort
+STRING	-nr
+BAR	
+STRING	head
+STRING	-n
+STRING	20
+BAR	
+STRING	column
+STRING	-c3
+STRING	-s
+STRING	" "
+STRING	-t
+BAR	
+STRING	nl
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	uninstall_oh_my_zsh
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	command
+STRING	env
+STRING	ZSH="$ZSH"
+STRING	sh
+STRING	"$ZSH/tools/uninstall.sh"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	upgrade_oh_my_zsh
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	echo
+OUTANGAMP	
+STRING	2
+STRING	"${fg[yellow]}Note: \`$0\` is deprecated. Use \`omz update\` instead.$reset_color"
+SEPER	
+STRING	omz
+STRING	update
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	open_command
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	open_cmd
+SEPER	
+SEPER	
+SEPER	
+CASE	case
+STRING	"$OSTYPE"
+STRING	in
+SEPER	
+STRING	darwin*
+OUTPAR	
+STRING	open_cmd='open'
+DSEMI	
+SEPER	
+STRING	cygwin*
+OUTPAR	
+STRING	open_cmd='cygstart'
+DSEMI	
+SEPER	
+STRING	linux*
+OUTPAR	
+STRING	[[
+STRING	"$(uname -r)"
+STRING	!=
+STRING	*icrosoft*
+STRING	]]
+DAMPER	
+ENVSTRING	open_cmd='nohup xdg-open'
+DBAR	
+INBRACE	{
+SEPER	
+ENVSTRING	open_cmd='cmd.exe /c start ""'
+SEPER	
+DINBRACK	[[
+STRING	-e
+STRING	"$1"
+DOUTBRACK	]]
+DAMPER	
+INBRACE	{
+ENVSTRING	1="$(wslpath -w "${1:a}")"
+DBAR	
+STRING	return
+STRING	1
+OUTBRACE	}
+SEPER	
+DINBRACK	[[
+STRING	"$1"
+STRING	=
+INPAR	
+STRING	http
+BAR	
+STRING	https
+OUTPAR	
+STRING	://*
+DOUTBRACK	]]
+DAMPER	
+INBRACE	{
+SEPER	
+ENVSTRING	1="$(echo "$1" | sed -E 's/([&|()<>^])/^\1/g')"
+DBAR	
+STRING	return
+STRING	1
+SEPER	
+OUTBRACE	}
+SEPER	
+OUTBRACE	}
+DSEMI	
+SEPER	
+STRING	msys*
+OUTPAR	
+STRING	open_cmd='start ""'
+DSEMI	
+SEPER	
+STRING	*
+OUTPAR	
+STRING	echo
+STRING	"Platform $OSTYPE not supported"
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+DSEMI	
+SEPER	
+ESAC	esac
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	"$BROWSER"
+DAMPER	
+STRING	"$1"
+STRING	=
+INPAR	
+STRING	http
+BAR	
+STRING	https
+OUTPAR	
+STRING	://*
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	"$BROWSER"
+STRING	"$@"
+SEPER	
+STRING	return
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+STRING	${=open_cmd}
+STRING	"$@"
+AMPOUTANG	
+STRING	/dev/null
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	mkcd
+STRING	takedir
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	mkdir
+STRING	-p
+STRING	$@
+DAMPER	
+STRING	cd
+STRING	${@:$#}
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	takeurl
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	data
+STRING	thedir
+SEPER	
+ENVSTRING	data="$(mktemp)"
+SEPER	
+STRING	curl
+STRING	-L
+STRING	"$1"
+OUTANG	
+STRING	"$data"
+SEPER	
+STRING	tar
+STRING	xf
+STRING	"$data"
+SEPER	
+ENVSTRING	thedir="$(tar tf "$data" | head -n 1)"
+SEPER	
+STRING	rm
+STRING	"$data"
+SEPER	
+STRING	cd
+STRING	"$thedir"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	takezip
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	data
+STRING	thedir
+SEPER	
+ENVSTRING	data="$(mktemp)"
+SEPER	
+STRING	curl
+STRING	-L
+STRING	"$1"
+OUTANG	
+STRING	"$data"
+SEPER	
+STRING	unzip
+STRING	"$data"
+STRING	-d
+STRING	"./"
+SEPER	
+ENVSTRING	thedir="$(unzip -l "$data" | awk 'NR==4 {print $4}' | sed 's/\/.*//')"
+SEPER	
+STRING	rm
+STRING	"$data"
+SEPER	
+STRING	cd
+STRING	"$thedir"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	takegit
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	git
+STRING	clone
+STRING	"$1"
+SEPER	
+STRING	cd
+STRING	"$(basename ${1%%.git})"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	take
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	$1
+STRING	=~
+STRING	^(https?|ftp).*\.(tar\.(gz|bz2|xz)|tgz)$
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	takeurl
+STRING	"$1"
+SEPER	
+ELIF	elif
+DINBRACK	[[
+STRING	$1
+STRING	=~
+STRING	^(https?|ftp).*\.(zip)$
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	takezip
+STRING	"$1"
+SEPER	
+ELIF	elif
+DINBRACK	[[
+STRING	$1
+STRING	=~
+STRING	^([A-Za-z0-9]\+@|https?|git|ssh|ftps?|rsync).*\.git/?$
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	takegit
+STRING	"$1"
+SEPER	
+ELSE	else
+SEPER	
+STRING	takedir
+STRING	"$@"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	alias_value
+INOUTPAR	
+INBRACE	{
+SEPER	
+DINPAR	 $+aliases[$1] 
+DAMPER	
+STRING	echo
+STRING	$aliases[$1]
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	try_alias_value
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	alias_value
+STRING	"$1"
+DBAR	
+STRING	echo
+STRING	"$1"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	default
+INOUTPAR	
+INBRACE	{
+SEPER	
+DINPAR	 $+parameters[$1] 
+DAMPER	
+STRING	return
+STRING	0
+SEPER	
+TYPESET	typeset
+STRING	-g
+STRING	"$1"="$2"
+DAMPER	
+STRING	return
+STRING	3
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	env_default
+INOUTPAR	
+INBRACE	{
+SEPER	
+DINBRACK	[[
+STRING	${parameters[$1]}
+STRING	=
+STRING	*-export*
+DOUTBRACK	]]
+DAMPER	
+STRING	return
+STRING	0
+SEPER	
+TYPESET	export
+STRING	"$1=$2"
+DAMPER	
+STRING	return
+STRING	3
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+STRING	zmodload
+STRING	zsh/langinfo
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	omz_urlencode
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	emulate
+STRING	-L
+STRING	zsh
+SEPER	
+STRING	setopt
+STRING	norematchpcre
+SEPER	
+SEPER	
+TYPESET	local
+STRING	-a
+STRING	opts
+SEPER	
+STRING	zparseopts
+STRING	-D
+STRING	-E
+STRING	-a
+STRING	opts
+STRING	r
+STRING	m
+STRING	P
+SEPER	
+SEPER	
+TYPESET	local
+STRING	in_str="$@"
+SEPER	
+TYPESET	local
+STRING	url_str=""
+SEPER	
+TYPESET	local
+STRING	spaces_as_plus
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-z
+STRING	$opts[(r)-P]
+DOUTBRACK	]]
+SEPER	
+THEN	then
+ENVSTRING	spaces_as_plus=1
+SEPER	
+FI	fi
+SEPER	
+TYPESET	local
+STRING	str="$in_str"
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	encoding=$langinfo[CODESET]
+SEPER	
+TYPESET	local
+STRING	safe_encodings
+SEPER	
+ENVARRAY	safe_encodings
+STRING	UTF-8
+STRING	utf8
+STRING	US-ASCII
+OUTPAR	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-z
+STRING	${safe_encodings[(r)$encoding]}
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	str=$(echo -E "$str" | iconv -f $encoding -t UTF-8)
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	$?
+STRING	!=
+STRING	0
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"Error converting string from $encoding to UTF-8"
+OUTANGAMP	
+STRING	2
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	i
+STRING	byte
+STRING	ord
+STRING	LC_ALL=C
+SEPER	
+TYPESET	export
+STRING	LC_ALL
+SEPER	
+TYPESET	local
+STRING	reserved=';/?:@&=+$,'
+SEPER	
+TYPESET	local
+STRING	mark='_.!~*''()-'
+SEPER	
+TYPESET	local
+STRING	dont_escape="[A-Za-z0-9"
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-z
+STRING	$opts[(r)-r]
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	dont_escape+=$reserved
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-z
+STRING	$opts[(r)-m]
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	dont_escape+=$mark
+SEPER	
+FI	fi
+SEPER	
+ENVSTRING	dont_escape+="]"
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	url_str=""
+SEPER	
+FOR	for
+DINPAR	
+DINPAR	i = 1
+DINPAR	i <= ${#str}
+DOUTPAR	++i 
+SEPER	
+DOLOOP	do
+SEPER	
+ENVSTRING	byte="$str[i]"
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	"$byte"
+STRING	=~
+STRING	"$dont_escape"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	url_str+="$byte"
+SEPER	
+ELSE	else
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	"$byte"
+STRING	==
+STRING	" "
+DAMPER	
+STRING	-n
+STRING	$spaces_as_plus
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	url_str+="+"
+SEPER	
+ELIF	elif
+DINBRACK	[[
+STRING	"$PREFIX"
+STRING	=
+STRING	*com.termux*
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+SEPER	
+ENVSTRING	url_str+="$byte"
+SEPER	
+ELSE	else
+SEPER	
+ENVSTRING	ord=$(( [##16] #byte ))
+SEPER	
+ENVSTRING	url_str+="%$ord"
+SEPER	
+FI	fi
+SEPER	
+FI	fi
+SEPER	
+DONE	done
+SEPER	
+STRING	echo
+STRING	-E
+STRING	"$url_str"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	omz_urldecode
+STRING	{
+SEPER	
+STRING	emulate
+STRING	-L
+STRING	zsh
+SEPER	
+TYPESET	local
+STRING	encoded_url=$1
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	caller_encoding=$langinfo[CODESET]
+SEPER	
+TYPESET	local
+STRING	LC_ALL=C
+SEPER	
+TYPESET	export
+STRING	LC_ALL
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	tmp=${encoded_url:gs/+/ /}
+SEPER	
+SEPER	
+ENVSTRING	tmp=${tmp:gs/\\/\\\\/}
+SEPER	
+SEPER	
+ENVSTRING	tmp=${tmp:gs/%/\\x/}
+SEPER	
+TYPESET	local
+STRING	decoded="$(printf -- "$tmp")"
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	-a
+STRING	safe_encodings
+SEPER	
+ENVARRAY	safe_encodings
+STRING	UTF-8
+STRING	utf8
+STRING	US-ASCII
+OUTPAR	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-z
+STRING	${safe_encodings[(r)$caller_encoding]}
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	decoded=$(echo -E "$decoded" | iconv -f UTF-8 -t $caller_encoding)
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	$?
+STRING	!=
+STRING	0
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"Error converting string from UTF-8 to $caller_encoding"
+OUTANGAMP	
+STRING	2
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+STRING	echo
+STRING	-E
+STRING	"$decoded"
+SEPER	
+OUTBRACE	}
+SEPER	
+ENDINPUT

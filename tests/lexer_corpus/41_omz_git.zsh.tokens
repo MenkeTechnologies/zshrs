@@ -1,0 +1,1143 @@
+STRING	autoload
+STRING	-Uz
+STRING	is-at-least
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	__git_prompt_git
+INOUTPAR	
+INBRACE	{
+SEPER	
+ENVSTRING	GIT_OPTIONAL_LOCKS=0
+STRING	command
+STRING	git
+STRING	"$@"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	_omz_git_prompt_info
+INOUTPAR	
+INBRACE	{
+SEPER	
+SEPER	
+SEPER	
+IF	if
+BANG	!
+STRING	__git_prompt_git
+STRING	rev-parse
+STRING	--git-dir
+AMPOUTANG	
+STRING	/dev/null
+DBAR	
+DINBRACK	[[
+STRING	"$(__git_prompt_git config --get oh-my-zsh.hide-info 2>/dev/null)"
+STRING	==
+STRING	1
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	return
+STRING	0
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	ref
+SEPER	
+ENVSTRING	ref=$(__git_prompt_git symbolic-ref --short HEAD 2> /dev/null)
+DBAR	
+ENVSTRING	ref=$(__git_prompt_git describe --tags --exact-match HEAD 2> /dev/null)
+DBAR	
+ENVSTRING	ref=$(__git_prompt_git rev-parse --short HEAD 2> /dev/null)
+DBAR	
+STRING	return
+STRING	0
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	upstream
+SEPER	
+IF	if
+DINPAR	 ${+ZSH_THEME_GIT_SHOW_UPSTREAM} 
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	upstream=$(__git_prompt_git rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" 2>/dev/null)
+DAMPER	
+ENVSTRING	upstream=" -> ${upstream}"
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+STRING	echo
+STRING	"${ZSH_THEME_GIT_PROMPT_PREFIX}${ref:gs/%/%%}${upstream:gs/%/%%}$(parse_git_dirty)${ZSH_THEME_GIT_PROMPT_SUFFIX}"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	_omz_git_prompt_status
+INOUTPAR	
+INBRACE	{
+SEPER	
+DINBRACK	[[
+STRING	"$(__git_prompt_git config --get oh-my-zsh.hide-status 2>/dev/null)"
+STRING	=
+STRING	1
+DOUTBRACK	]]
+DAMPER	
+STRING	return
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	-A
+STRING	prefix_constant_map
+SEPER	
+ENVARRAY	prefix_constant_map
+SEPER	
+STRING	'\?\? '
+STRING	'UNTRACKED'
+SEPER	
+STRING	'A  '
+STRING	'ADDED'
+SEPER	
+STRING	'M  '
+STRING	'MODIFIED'
+SEPER	
+STRING	'MM '
+STRING	'MODIFIED'
+SEPER	
+STRING	' M '
+STRING	'MODIFIED'
+SEPER	
+STRING	'AM '
+STRING	'MODIFIED'
+SEPER	
+STRING	' T '
+STRING	'MODIFIED'
+SEPER	
+STRING	'R  '
+STRING	'RENAMED'
+SEPER	
+STRING	' D '
+STRING	'DELETED'
+SEPER	
+STRING	'D  '
+STRING	'DELETED'
+SEPER	
+STRING	'UU '
+STRING	'UNMERGED'
+SEPER	
+STRING	'ahead'
+STRING	'AHEAD'
+SEPER	
+STRING	'behind'
+STRING	'BEHIND'
+SEPER	
+STRING	'diverged'
+STRING	'DIVERGED'
+SEPER	
+STRING	'stashed'
+STRING	'STASHED'
+SEPER	
+OUTPAR	
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	-A
+STRING	constant_prompt_map
+SEPER	
+ENVARRAY	constant_prompt_map
+SEPER	
+STRING	'UNTRACKED'
+STRING	"$ZSH_THEME_GIT_PROMPT_UNTRACKED"
+SEPER	
+STRING	'ADDED'
+STRING	"$ZSH_THEME_GIT_PROMPT_ADDED"
+SEPER	
+STRING	'MODIFIED'
+STRING	"$ZSH_THEME_GIT_PROMPT_MODIFIED"
+SEPER	
+STRING	'RENAMED'
+STRING	"$ZSH_THEME_GIT_PROMPT_RENAMED"
+SEPER	
+STRING	'DELETED'
+STRING	"$ZSH_THEME_GIT_PROMPT_DELETED"
+SEPER	
+STRING	'UNMERGED'
+STRING	"$ZSH_THEME_GIT_PROMPT_UNMERGED"
+SEPER	
+STRING	'AHEAD'
+STRING	"$ZSH_THEME_GIT_PROMPT_AHEAD"
+SEPER	
+STRING	'BEHIND'
+STRING	"$ZSH_THEME_GIT_PROMPT_BEHIND"
+SEPER	
+STRING	'DIVERGED'
+STRING	"$ZSH_THEME_GIT_PROMPT_DIVERGED"
+SEPER	
+STRING	'STASHED'
+STRING	"$ZSH_THEME_GIT_PROMPT_STASHED"
+SEPER	
+OUTPAR	
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	status_constants
+SEPER	
+ENVARRAY	status_constants
+SEPER	
+STRING	UNTRACKED
+STRING	ADDED
+STRING	MODIFIED
+STRING	RENAMED
+STRING	DELETED
+SEPER	
+STRING	STASHED
+STRING	UNMERGED
+STRING	AHEAD
+STRING	BEHIND
+STRING	DIVERGED
+SEPER	
+OUTPAR	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	status_text
+SEPER	
+ENVSTRING	status_text="$(__git_prompt_git status --porcelain -b 2> /dev/null)"
+SEPER	
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	$?
+STRING	-eq
+STRING	128
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	return
+STRING	1
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	-A
+STRING	statuses_seen
+SEPER	
+SEPER	
+IF	if
+STRING	__git_prompt_git
+STRING	rev-parse
+STRING	--verify
+STRING	refs/stash
+AMPOUTANG	
+STRING	/dev/null
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	statuses_seen[STASHED]=1
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+TYPESET	local
+STRING	status_lines
+SEPER	
+ENVARRAY	status_lines
+STRING	"${(@f)${status_text}}"
+OUTPAR	
+SEPER	
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	"$status_lines[1]"
+STRING	=~
+STRING	"^## [^ ]+ \[(.*)\]"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+TYPESET	local
+STRING	branch_statuses
+SEPER	
+ENVARRAY	branch_statuses
+STRING	"${(@s/,/)match}"
+OUTPAR	
+SEPER	
+FOR	for
+STRING	branch_status
+STRING	in
+STRING	$branch_statuses
+SEPER	
+DOLOOP	do
+SEPER	
+IF	if
+DINBRACK	[[
+BANG	!
+STRING	$branch_status
+STRING	=~
+STRING	"(behind|diverged|ahead) ([0-9]+)?"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	continue
+SEPER	
+FI	fi
+SEPER	
+TYPESET	local
+STRING	last_parsed_status=$prefix_constant_map[$match[1]]
+SEPER	
+ENVSTRING	statuses_seen[$last_parsed_status]=$match[2]
+SEPER	
+DONE	done
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+SEPER	
+FOR	for
+STRING	status_prefix
+STRING	in
+STRING	"${(@k)prefix_constant_map}"
+SEPER	
+DOLOOP	do
+SEPER	
+TYPESET	local
+STRING	status_constant="${prefix_constant_map[$status_prefix]}"
+SEPER	
+TYPESET	local
+STRING	status_regex=$'(^|\n)'"$status_prefix"
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	"$status_text"
+STRING	=~
+STRING	$status_regex
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	statuses_seen[$status_constant]=1
+SEPER	
+FI	fi
+SEPER	
+DONE	done
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	status_prompt
+SEPER	
+FOR	for
+STRING	status_constant
+STRING	in
+STRING	$status_constants
+SEPER	
+DOLOOP	do
+SEPER	
+IF	if
+DINPAR	 ${+statuses_seen[$status_constant]} 
+SEPER	
+THEN	then
+SEPER	
+TYPESET	local
+STRING	next_display=$constant_prompt_map[$status_constant]
+SEPER	
+ENVSTRING	status_prompt="$next_display$status_prompt"
+SEPER	
+FI	fi
+SEPER	
+DONE	done
+SEPER	
+SEPER	
+STRING	echo
+STRING	$status_prompt
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+TYPESET	local
+STRING	_style
+SEPER	
+IF	if
+STRING	zstyle
+STRING	-t
+STRING	':omz:alpha:lib:git'
+STRING	async-prompt
+DBAR	
+INBRACE	{
+STRING	is-at-least
+STRING	5.0.6
+DAMPER	
+STRING	zstyle
+STRING	-T
+STRING	':omz:alpha:lib:git'
+STRING	async-prompt
+OUTBRACE	}
+SEPER	
+THEN	then
+SEPER	
+FUNC	function
+STRING	git_prompt_info
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	"${_OMZ_ASYNC_OUTPUT[_omz_git_prompt_info]}"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	-n
+STRING	"${_OMZ_ASYNC_OUTPUT[_omz_git_prompt_info]}"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_prompt_status
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	"${_OMZ_ASYNC_OUTPUT[_omz_git_prompt_status]}"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	-n
+STRING	"${_OMZ_ASYNC_OUTPUT[_omz_git_prompt_status]}"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	_defer_async_git_register
+INOUTPAR	
+INBRACE	{
+SEPER	
+SEPER	
+CASE	case
+STRING	"${PS1}:${PS2}:${PS3}:${PS4}:${RPROMPT}:${RPS1}:${RPS2}:${RPS3}:${RPS4}"
+STRING	in
+SEPER	
+STRING	*(\$\(git_prompt_info\)|\`git_prompt_info\`)*
+OUTPAR	
+SEPER	
+STRING	_omz_register_handler
+STRING	_omz_git_prompt_info
+SEPER	
+DSEMI	
+SEPER	
+ESAC	esac
+SEPER	
+SEPER	
+CASE	case
+STRING	"${PS1}:${PS2}:${PS3}:${PS4}:${RPROMPT}:${RPS1}:${RPS2}:${RPS3}:${RPS4}"
+STRING	in
+SEPER	
+STRING	*(\$\(git_prompt_status\)|\`git_prompt_status\`)*
+OUTPAR	
+SEPER	
+STRING	_omz_register_handler
+STRING	_omz_git_prompt_status
+SEPER	
+DSEMI	
+SEPER	
+ESAC	esac
+SEPER	
+SEPER	
+STRING	add-zsh-hook
+STRING	-d
+STRING	precmd
+STRING	_defer_async_git_register
+SEPER	
+STRING	unset
+STRING	-f
+STRING	_defer_async_git_register
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+ENVARRAY	precmd_functions
+STRING	_defer_async_git_register
+STRING	$precmd_functions
+OUTPAR	
+SEPER	
+ELIF	elif
+STRING	zstyle
+STRING	-s
+STRING	':omz:alpha:lib:git'
+STRING	async-prompt
+STRING	_style
+DAMPER	
+DINBRACK	[[
+STRING	$_style
+STRING	==
+STRING	"force"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+FUNC	function
+STRING	git_prompt_info
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	"${_OMZ_ASYNC_OUTPUT[_omz_git_prompt_info]}"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	-n
+STRING	"${_OMZ_ASYNC_OUTPUT[_omz_git_prompt_info]}"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_prompt_status
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	"${_OMZ_ASYNC_OUTPUT[_omz_git_prompt_status]}"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	-n
+STRING	"${_OMZ_ASYNC_OUTPUT[_omz_git_prompt_status]}"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+STRING	_omz_register_handler
+STRING	_omz_git_prompt_info
+SEPER	
+STRING	_omz_register_handler
+STRING	_omz_git_prompt_status
+SEPER	
+ELSE	else
+SEPER	
+FUNC	function
+STRING	git_prompt_info
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	_omz_git_prompt_info
+SEPER	
+OUTBRACE	}
+SEPER	
+FUNC	function
+STRING	git_prompt_status
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	_omz_git_prompt_status
+SEPER	
+OUTBRACE	}
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	parse_git_dirty
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	STATUS
+SEPER	
+TYPESET	local
+STRING	-a
+STRING	FLAGS
+SEPER	
+ENVARRAY	FLAGS
+STRING	'--porcelain'
+OUTPAR	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	"$(__git_prompt_git config --get oh-my-zsh.hide-dirty)"
+STRING	!=
+STRING	"1"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	"${DISABLE_UNTRACKED_FILES_DIRTY:-}"
+STRING	==
+STRING	"true"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	FLAGS+='--untracked-files=no'
+SEPER	
+FI	fi
+SEPER	
+CASE	case
+STRING	"${GIT_STATUS_IGNORE_SUBMODULES:-}"
+STRING	in
+SEPER	
+STRING	git
+OUTPAR	
+SEPER	
+SEPER	
+DSEMI	
+SEPER	
+STRING	*
+OUTPAR	
+SEPER	
+SEPER	
+SEPER	
+ENVSTRING	FLAGS+="--ignore-submodules=${GIT_STATUS_IGNORE_SUBMODULES:-dirty}"
+SEPER	
+DSEMI	
+SEPER	
+ESAC	esac
+SEPER	
+ENVSTRING	STATUS=$(__git_prompt_git status ${FLAGS} 2> /dev/null | tail -n 1)
+SEPER	
+FI	fi
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	$STATUS
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"$ZSH_THEME_GIT_PROMPT_DIRTY"
+SEPER	
+ELSE	else
+SEPER	
+STRING	echo
+STRING	"$ZSH_THEME_GIT_PROMPT_CLEAN"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_remote_status
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	remote
+STRING	ahead
+STRING	behind
+STRING	git_remote_status
+STRING	git_remote_status_detailed
+SEPER	
+ENVSTRING	remote=${$(__git_prompt_git rev-parse --verify ${hook_com[branch]}@{upstream} --symbolic-full-name 2>/dev/null)/refs\/remotes\/}
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	${remote}
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	ahead=$(__git_prompt_git rev-list ${hook_com[branch]}@{upstream}..HEAD 2>/dev/null | wc -l)
+SEPER	
+ENVSTRING	behind=$(__git_prompt_git rev-list HEAD..${hook_com[branch]}@{upstream} 2>/dev/null | wc -l)
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	$ahead
+STRING	-eq
+STRING	0
+DOUTBRACK	]]
+DAMPER	
+DINBRACK	[[
+STRING	$behind
+STRING	-eq
+STRING	0
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	git_remote_status="$ZSH_THEME_GIT_PROMPT_EQUAL_REMOTE"
+SEPER	
+ELIF	elif
+DINBRACK	[[
+STRING	$ahead
+STRING	-gt
+STRING	0
+DOUTBRACK	]]
+DAMPER	
+DINBRACK	[[
+STRING	$behind
+STRING	-eq
+STRING	0
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	git_remote_status="$ZSH_THEME_GIT_PROMPT_AHEAD_REMOTE"
+SEPER	
+ENVSTRING	git_remote_status_detailed="$ZSH_THEME_GIT_PROMPT_AHEAD_REMOTE_COLOR$ZSH_THEME_GIT_PROMPT_AHEAD_REMOTE$((ahead))%{$reset_color%}"
+SEPER	
+ELIF	elif
+DINBRACK	[[
+STRING	$behind
+STRING	-gt
+STRING	0
+DOUTBRACK	]]
+DAMPER	
+DINBRACK	[[
+STRING	$ahead
+STRING	-eq
+STRING	0
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	git_remote_status="$ZSH_THEME_GIT_PROMPT_BEHIND_REMOTE"
+SEPER	
+ENVSTRING	git_remote_status_detailed="$ZSH_THEME_GIT_PROMPT_BEHIND_REMOTE_COLOR$ZSH_THEME_GIT_PROMPT_BEHIND_REMOTE$((behind))%{$reset_color%}"
+SEPER	
+ELIF	elif
+DINBRACK	[[
+STRING	$ahead
+STRING	-gt
+STRING	0
+DOUTBRACK	]]
+DAMPER	
+DINBRACK	[[
+STRING	$behind
+STRING	-gt
+STRING	0
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	git_remote_status="$ZSH_THEME_GIT_PROMPT_DIVERGED_REMOTE"
+SEPER	
+ENVSTRING	git_remote_status_detailed="$ZSH_THEME_GIT_PROMPT_AHEAD_REMOTE_COLOR$ZSH_THEME_GIT_PROMPT_AHEAD_REMOTE$((ahead))%{$reset_color%}$ZSH_THEME_GIT_PROMPT_BEHIND_REMOTE_COLOR$ZSH_THEME_GIT_PROMPT_BEHIND_REMOTE$((behind))%{$reset_color%}"
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	$ZSH_THEME_GIT_PROMPT_REMOTE_STATUS_DETAILED
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+ENVSTRING	git_remote_status="$ZSH_THEME_GIT_PROMPT_REMOTE_STATUS_PREFIX${remote:gs/%/%%}$git_remote_status_detailed$ZSH_THEME_GIT_PROMPT_REMOTE_STATUS_SUFFIX"
+SEPER	
+FI	fi
+SEPER	
+SEPER	
+STRING	echo
+STRING	$git_remote_status
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_current_branch
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	ref
+SEPER	
+ENVSTRING	ref=$(__git_prompt_git symbolic-ref --quiet HEAD 2> /dev/null)
+SEPER	
+TYPESET	local
+STRING	ret=$?
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	$ret
+STRING	!=
+STRING	0
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+DINBRACK	[[
+STRING	$ret
+STRING	==
+STRING	128
+DOUTBRACK	]]
+DAMPER	
+STRING	return
+SEPER	
+ENVSTRING	ref=$(__git_prompt_git rev-parse --short HEAD 2> /dev/null)
+DBAR	
+STRING	return
+SEPER	
+FI	fi
+SEPER	
+STRING	echo
+STRING	${ref#refs/heads/}
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_previous_branch
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	ref
+SEPER	
+ENVSTRING	ref=$(__git_prompt_git rev-parse --quiet --symbolic-full-name @{-1} 2> /dev/null)
+SEPER	
+TYPESET	local
+STRING	ret=$?
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	$ret
+STRING	!=
+STRING	0
+DOUTBRACK	]]
+DBAR	
+DINBRACK	[[
+STRING	-z
+STRING	$ref
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	return
+SEPER	
+FI	fi
+SEPER	
+STRING	echo
+STRING	${ref#refs/heads/}
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_commits_ahead
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+STRING	__git_prompt_git
+STRING	rev-parse
+STRING	--git-dir
+AMPOUTANG	
+STRING	/dev/null
+SEPER	
+THEN	then
+SEPER	
+TYPESET	local
+STRING	commits="$(__git_prompt_git rev-list --count @{upstream}..HEAD 2>/dev/null)"
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	"$commits"
+DAMPER	
+STRING	"$commits"
+STRING	!=
+STRING	0
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"$ZSH_THEME_GIT_COMMITS_AHEAD_PREFIX$commits$ZSH_THEME_GIT_COMMITS_AHEAD_SUFFIX"
+SEPER	
+FI	fi
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_commits_behind
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+STRING	__git_prompt_git
+STRING	rev-parse
+STRING	--git-dir
+AMPOUTANG	
+STRING	/dev/null
+SEPER	
+THEN	then
+SEPER	
+TYPESET	local
+STRING	commits="$(__git_prompt_git rev-list --count HEAD..@{upstream} 2>/dev/null)"
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	"$commits"
+DAMPER	
+STRING	"$commits"
+STRING	!=
+STRING	0
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"$ZSH_THEME_GIT_COMMITS_BEHIND_PREFIX$commits$ZSH_THEME_GIT_COMMITS_BEHIND_SUFFIX"
+SEPER	
+FI	fi
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_prompt_ahead
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	"$(__git_prompt_git rev-list origin/$(git_current_branch)..HEAD 2> /dev/null)"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"$ZSH_THEME_GIT_PROMPT_AHEAD"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_prompt_behind
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	"$(__git_prompt_git rev-list HEAD..origin/$(git_current_branch) 2> /dev/null)"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"$ZSH_THEME_GIT_PROMPT_BEHIND"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_prompt_remote
+INOUTPAR	
+INBRACE	{
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	-n
+STRING	"$(__git_prompt_git show-ref origin/$(git_current_branch) 2> /dev/null)"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	"$ZSH_THEME_GIT_PROMPT_REMOTE_EXISTS"
+SEPER	
+ELSE	else
+SEPER	
+STRING	echo
+STRING	"$ZSH_THEME_GIT_PROMPT_REMOTE_MISSING"
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_prompt_short_sha
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	SHA
+SEPER	
+ENVSTRING	SHA=$(__git_prompt_git rev-parse --short HEAD 2> /dev/null)
+DAMPER	
+STRING	echo
+STRING	"$ZSH_THEME_GIT_PROMPT_SHA_BEFORE$SHA$ZSH_THEME_GIT_PROMPT_SHA_AFTER"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_prompt_long_sha
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	SHA
+SEPER	
+ENVSTRING	SHA=$(__git_prompt_git rev-parse HEAD 2> /dev/null)
+DAMPER	
+STRING	echo
+STRING	"$ZSH_THEME_GIT_PROMPT_SHA_BEFORE$SHA$ZSH_THEME_GIT_PROMPT_SHA_AFTER"
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_current_user_name
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	__git_prompt_git
+STRING	config
+STRING	user.name
+OUTANG	
+STRING	/dev/null
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_current_user_email
+INOUTPAR	
+INBRACE	{
+SEPER	
+STRING	__git_prompt_git
+STRING	config
+STRING	user.email
+OUTANG	
+STRING	/dev/null
+SEPER	
+OUTBRACE	}
+SEPER	
+SEPER	
+SEPER	
+SEPER	
+FUNC	function
+STRING	git_repo_name
+INOUTPAR	
+INBRACE	{
+SEPER	
+TYPESET	local
+STRING	repo_path
+SEPER	
+IF	if
+ENVSTRING	repo_path="$(__git_prompt_git rev-parse --show-toplevel 2>/dev/null)"
+DAMPER	
+DINBRACK	[[
+STRING	-n
+STRING	"$repo_path"
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+STRING	echo
+STRING	${repo_path:t}
+SEPER	
+FI	fi
+SEPER	
+OUTBRACE	}
+SEPER	
+ENDINPUT

@@ -1184,6 +1184,12 @@ fn hgetc() -> Option<char> {
         if c == '\n' {
             LEX_LINENO.set(LEX_LINENO.get() + 1);
         }
+        // c:input.c:360-361 — every char returned by ingetc feeds
+        // the raw buffer when lex_add_raw is on. Re-reads from the
+        // unget queue count the same as fresh reads; the matching
+        // `zshlex_raw_back()` call in hungetc removed the prior
+        // record, so this restores it.
+        zshlex_raw_add(c);
         return Some(c);
     }
 
@@ -1193,6 +1199,12 @@ fn hgetc() -> Option<char> {
     if c == '\n' {
         LEX_LINENO.set(LEX_LINENO.get() + 1);
     }
+
+    // c:input.c:360-361 — `if (!lexstop) zshlex_raw_add(lastc);`
+    // Every char read from input also feeds the raw buffer when
+    // lex_add_raw is on (used by skipcomm to capture verbatim
+    // `$(...)` body text into the parent token).
+    zshlex_raw_add(c);
 
     Some(c)
 }
@@ -1204,6 +1216,10 @@ fn hungetc(c: char) {
         LEX_LINENO.set(LEX_LINENO.get() - 1);
     }
     LEX_LEXSTOP.set(false);
+    // c:input.c:549,609 — `inungetc` calls `zshlex_raw_back()` so
+    // the un-gotten char isn't double-counted in lexbuf_raw on
+    // re-read. hgetc will re-add it next time it's pulled.
+    zshlex_raw_back();
 }
 
 /// Peek at next character without consuming
@@ -3141,34 +3157,133 @@ fn cmd_or_math_sub() -> i32 {
 /// invariant: stops at the matching `)`.
 fn skipcomm() -> Result<(), ()> {
     use crate::ported::zsh_h::{ZCONTEXT_LEX, ZCONTEXT_PARSE};
-    // c:2162 — `cmdpush(CS_CMDSUBST);` / c:2289 — `cmdpop();`.
-    // c:2198 — `zcontext_save_partial(ZCONTEXT_LEX|ZCONTEXT_PARSE);`
-    // c:2262 — `zcontext_restore_partial(ZCONTEXT_LEX|ZCONTEXT_PARSE);`
-    // c:2199 — `hist_in_word(1);` / c:2284 — `hist_in_word(0);`.
-    // RAII guard ensures every return path (Ok, Err, panic) drives
-    // matching pops/restores. zshrs's skipcomm doesn't recursively
-    // re-enter the parser the way C's `parse_event(OUTPAR)` does at
-    // c:2237; the save/restore + hist_in_word bracketing is still
-    // wired so the lex state is preserved across the throw-away
-    // char-walk and any nested gettokstr calls land with a clean
-    // context.
-    struct SkipcommGuard;
+    // c:2094-2225 — `skipcomm`. Captures the verbatim text of a
+    // `$(...)` / `<(...)` / `>(...)` body into the parent token via
+    // C's lex_add_raw / lexbuf_raw mechanism (lex.c:2098-2149):
+    //   1. add(Inpar) — outer lexbuf gets `(` (the marker form).
+    //   2. Copy outer tokstr/lexbuf into new_tokstr/new_lexbuf so the
+    //      raw buffer starts seeded with the prefix already lexed
+    //      (e.g. `$(` plus anything before).
+    //   3. zcontext_save_partial — saves AND resets lexbuf, lexbuf_raw,
+    //      lex_add_raw to fresh.
+    //   4. tokstr_raw = new_tokstr; lexbuf_raw = new_lexbuf — the raw
+    //      buffer now mirrors the outer's pre-call lexbuf.
+    //   5. lex_add_raw = old + 1 — turns on raw-recording so every
+    //      char hgetc reads also lands in lexbuf_raw.
+    //   6. Walk the inner body via hgetc/add. lexbuf gets the
+    //      throw-away tokenized form; lexbuf_raw accumulates the
+    //      verbatim chars.
+    //   7. Capture new_tokstr/new_lexbuf from the raw buffer.
+    //   8. zcontext_restore_partial restores outer lex state.
+    //   9. If outer lex_add_raw == 0: tokstr = new_tokstr; lexbuf =
+    //      new_lexbuf — outer's lexbuf is REPLACED with the captured
+    //      raw body (which already contains the `$(` prefix from step
+    //      4 plus the body chars). If outer lex_add_raw != 0 (nested
+    //      cmd-sub), propagate the raw vars.
+    let new_lex_add_raw = LEX_LEX_ADD_RAW.get() + 1;
+    let outer_was_recording = LEX_LEX_ADD_RAW.get() != 0;
+
+    cmdpush(CS_CMDSUBST as u8);
+    add(Inpar);
+
+    // c:2096-2143 — save outer tokstr/lexbuf into the variables that
+    // will become tokstr_raw/lexbuf_raw post-save.
+    let new_tokstr_init: Option<String>;
+    let new_lexbuf_init_ptr: Option<String>;
+    let new_lexbuf_init_siz: i32;
+    let new_lexbuf_init_len: i32;
+    if outer_was_recording {
+        // Nested: propagate the existing raw buffers.
+        new_tokstr_init = LEX_TOKSTR_RAW.with_borrow_mut(|t| t.take());
+        let (p, s, l) = LEX_LEXBUF_RAW.with_borrow_mut(|b| {
+            (b.ptr.take(), b.siz, b.len)
+        });
+        new_lexbuf_init_ptr = p;
+        new_lexbuf_init_siz = s;
+        new_lexbuf_init_len = l;
+    } else {
+        // Top-level: seed raw with current tokstr/lexbuf.
+        new_tokstr_init = tokstr();
+        let (p, s, l) = LEX_LEXBUF.with_borrow(|b| {
+            (b.ptr.clone(), b.siz, b.len)
+        });
+        new_lexbuf_init_ptr = p;
+        new_lexbuf_init_siz = s;
+        new_lexbuf_init_len = l;
+    }
+
+    crate::ported::context::zcontext_save_partial(ZCONTEXT_LEX | ZCONTEXT_PARSE);
+    crate::ported::hist::hist_in_word(1);
+
+    // c:2147-2149 — install seeded raw buffers + enable recording.
+    set_tokstr(new_tokstr_init);
+    LEX_LEXBUF.with_borrow_mut(|b| {
+        b.ptr = new_lexbuf_init_ptr.clone();
+        b.siz = if new_lexbuf_init_siz == 0 { 256 } else { new_lexbuf_init_siz };
+        b.len = new_lexbuf_init_len;
+    });
+    LEX_TOKSTR_RAW.with_borrow_mut(|t| *t = tokstr());
+    LEX_LEXBUF_RAW.with_borrow_mut(|b| {
+        b.ptr = new_lexbuf_init_ptr;
+        b.siz = if new_lexbuf_init_siz == 0 { 256 } else { new_lexbuf_init_siz };
+        b.len = new_lexbuf_init_len;
+    });
+    LEX_LEX_ADD_RAW.set(new_lex_add_raw);
+
+    // RAII: cleanup on every exit path. Captures the raw body, restores
+    // outer lex state, then (if outer wasn't recording) overwrites the
+    // restored outer lexbuf with the raw body — the trick that makes
+    // the parent token contain the verbatim `$(...)` text.
+    struct SkipcommGuard {
+        outer_was_recording: bool,
+    }
     impl Drop for SkipcommGuard {
         fn drop(&mut self) {
+            // c:2185-2186 — capture the raw form before restore.
+            let new_tokstr = LEX_TOKSTR_RAW.with_borrow_mut(|t| t.take());
+            let (new_lexbuf_ptr, new_lexbuf_siz, new_lexbuf_len) =
+                LEX_LEXBUF_RAW.with_borrow_mut(|b| (b.ptr.take(), b.siz, b.len));
+            let new_lexstop = LEX_LEXSTOP.get();
+
             crate::ported::hist::hist_in_word(0);
             crate::ported::context::zcontext_restore_partial(ZCONTEXT_LEX | ZCONTEXT_PARSE);
+
+            // c:2196-2217 — splice raw back into outer lexbuf, or
+            // propagate to outer raw if outer was recording.
+            if self.outer_was_recording {
+                LEX_TOKSTR_RAW.with_borrow_mut(|t| *t = new_tokstr);
+                LEX_LEXBUF_RAW.with_borrow_mut(|b| {
+                    b.ptr = new_lexbuf_ptr;
+                    b.siz = new_lexbuf_siz;
+                    b.len = new_lexbuf_len;
+                });
+            } else {
+                // c:2204-2207 — strip the trailing `)` that hgetc
+                // recorded into the raw buffer (closing paren).
+                let mut final_ptr = new_lexbuf_ptr;
+                let mut final_len = new_lexbuf_len;
+                if !new_lexstop {
+                    if let Some(ref mut s) = final_ptr {
+                        if s.ends_with(')') {
+                            s.pop();
+                            final_len -= 1;
+                        }
+                    }
+                }
+                set_tokstr(final_ptr.clone());
+                LEX_LEXBUF.with_borrow_mut(|b| {
+                    b.ptr = final_ptr;
+                    b.siz = new_lexbuf_siz;
+                    b.len = final_len;
+                });
+            }
             cmdpop();
         }
     }
-    cmdpush(CS_CMDSUBST as u8);
-    crate::ported::context::zcontext_save_partial(ZCONTEXT_LEX | ZCONTEXT_PARSE);
-    crate::ported::hist::hist_in_word(1);
-    let _guard = SkipcommGuard;
+    let _guard = SkipcommGuard { outer_was_recording };
 
     let mut pct = 1;
     let mut start = true;
-
-    add(Inpar);
 
     loop {
         let c = hgetc();
@@ -3890,8 +4005,20 @@ pub fn untokenize(s: &str) -> String {
 }
 
 /// Check if a string contains any token characters
+/// Mirrors C `itok(c)` (zsh.h). zsh's token markers live in the
+/// META range 0x83..=0x9f (Pound..Bnull at zsh.h:160-188). Earlier
+/// implementation checked `< 32` (control chars) which is wrong for
+/// zsh — none of its tokens land there. The bad check made
+/// `exalias` skip the `untokenize(tokstr)` path for any token
+/// containing markers (e.g. `[[` lexes as `Inbrack Inbrack` =
+/// `\u{91}\u{91}`), so the reswdtab lookup compared raw marker
+/// bytes against the literal `"[["` key and never promoted to
+/// DINBRACK. Same hit `{`/`}`, `$`, `*`, `?`, etc.
 pub fn has_token(s: &str) -> bool {
-    s.chars().any(|c| (c as u32) < 32)
+    s.chars().any(|c| {
+        let cu = c as u32;
+        (0x83..=0x9f).contains(&cu)
+    })
 }
 
 /// Convert token characters to their printable form for display

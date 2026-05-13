@@ -1,0 +1,17 @@
+STRING	brew
+STRING	tap
+STRING	dart-lang/dart
+SEPER	
+STRING	brew
+STRING	tap
+STRING	pivotal/eap
+SEPER	
+STRING	brew
+STRING	tap
+STRING	khell/homebrew-srm
+SEPER	
+STRING	brew
+STRING	tap
+STRING	amar1729/formulae
+SEPER	
+ENDINPUT

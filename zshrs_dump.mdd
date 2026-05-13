@@ -1,0 +1,7 @@
+name=zsh/zshrs_dump
+link=dynamic
+load=no
+
+autofeatures="b:dumptokens"
+
+objects="zshrs_dump.o"

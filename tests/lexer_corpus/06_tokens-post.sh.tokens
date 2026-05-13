@@ -1,0 +1,39 @@
+SEPER	
+SEPER	
+IF	if
+DINBRACK	[[
+STRING	"$ZPWR_REMOTE"
+STRING	==
+STRING	false
+DOUTBRACK	]]
+SEPER	
+THEN	then
+SEPER	
+SEPER	
+STRING	zpwrIsZsh
+DAMPER	
+STRING	zpwrLoadJenv
+OUTANG	
+STRING	/dev/null
+SEPER	
+SEPER	
+STRING	eval
+STRING	$(perl -I ~/perl5/lib/perl5 -Mlocal::lib 2> /dev/null)
+SEPER	
+SEPER	
+STRING	zpwrCommandExists
+STRING	opam
+DAMPER	
+STRING	eval
+STRING	$(opam env)
+SEPER	
+SEPER	
+TYPESET	export
+STRING	PATH="$HOMEBREW_PREFIX/anaconda3/bin:$PATH"
+SEPER	
+STRING	return
+STRING	0
+SEPER	
+FI	fi
+SEPER	
+ENDINPUT
