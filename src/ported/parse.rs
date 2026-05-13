@@ -17,8 +17,9 @@ use super::lex::{
 };
 use super::zsh_h::{
     eprog, estate, isset, redir, unset, wc_code, wordcode, Bang, Dash, Equals, Inang, Inpar,
-    Outang, Outpar, Stringg, ALIASFUNCDEF, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_NT,
-    COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ, CSHJUNKIELOOPS,
+    Outang, Outpar, Stringg, Tilde, ALIASFUNCDEF, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_NT,
+    COND_OR, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ,
+    CSHJUNKIELOOPS,
     EC_DUP, EC_NODUP, EF_HEAP, EF_REAL, EXECOPT, IGNOREBRACES, IS_DASH, MULTIFUNCDEF, OPT_ISSET,
     PM_UNDEFINED, POSIXBUILTINS, REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP,
     REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HEREDOCDASH,
@@ -32,6 +33,29 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Port of C `struct eccstr` (zsh.h:836) — the long-string dedup BST
+/// node. The dedup-walk and cmp logic in `ecstrcode` is faithful to
+/// parse.c:447-453 including the conditional cmp chain
+/// (nfunc → hashval → strcmp), so corpus inputs where C's tree-walk
+/// finds-or-misses match get the same outcome on the Rust side.
+struct EccstrNode {
+    left: Option<Box<EccstrNode>>,
+    right: Option<Box<EccstrNode>>,
+    /// C-byte form of the string (single byte per char ≤ 0xff).
+    /// Owned because Rust doesn't have C zsh's "stable pointers into
+    /// the lexer's tokstr arena" — every tokstr lives as a fresh
+    /// Rust String allocation.
+    str: Vec<u8>,
+    /// Wordcode-encoded offset: `(byte_offset << 2) | token_bit`.
+    /// Same shape as `Eccstr::offs` (parse.c:459).
+    offs: u32,
+    /// `nfunc` snapshot at insert time. Per-function namespace key
+    /// — top-level scripts use 0; each funcdef bumps it.
+    nfunc: i32,
+    /// Hash of `str` computed via zsh's `hasher` (hashtable.c:86).
+    hashval: u32,
+}
 
 // Wordcode-buffer thread-locals — direct port of `Src/parse.c:269-285`
 // file-statics. Per-evaluator (bucket-1 in PORT_PLAN.md): each worker
@@ -60,6 +84,14 @@ thread_local! {
     static ECNFUNC: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     static ECSTRS_INDEX: std::cell::RefCell<std::collections::HashMap<(i32, String), u32>>
         = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// C zsh's `eccstr` BST (parse.c:447). Port of `Eccstr ecstrs` —
+    /// a hashval-ordered binary search tree of long-strings for
+    /// dedup. Same cmp logic as C: nfunc, then hashval, then strcmp.
+    /// HashMap above is a fast-path lookup; this tree is the
+    /// C-fidelity walker that mirrors C's exact dedup-hit pattern
+    /// (including its quirks for hash-colliding content).
+    static ECSTRS_TREE: std::cell::RefCell<Option<Box<EccstrNode>>>
+        = const { std::cell::RefCell::new(None) };
     /// Reverse index for `ecgetstr`: offs → owned string. Populated
     /// at ecstrcode time so the consumer can recover the string from
     /// the wordcode offs without walking the encode-time HashMap.
@@ -231,10 +263,10 @@ pub use crate::zsh_ast::{
 use crate::ported::lex::{
     heredocs_clear, heredocs_clone, heredocs_is_empty, heredocs_len, heredocs_push, heredocs_set,
     heredocs_take, incasepat, incmdpos, incond, infor, input_slice, inredir, inrepeat, intypeset,
-    isnewlin, lex_init, lineno, pos, set_incasepat, set_incmdpos, set_incond, set_infor,
-    set_inredir, set_inrepeat, set_intypeset, set_isnewlin, set_pos, set_tokfd, set_toklineno,
-    set_tokstr, tok, tokfd, toklineno, tokstr, tokstr_eq, tokstr_is_none, tokstr_is_some,
-    tokstr_take, zshlex,
+    isnewlin, lex_init, lineno, nocorrect, pos, set_incasepat, set_incmdpos, set_incond, set_infor,
+    set_inredir, set_inrepeat, set_intypeset, set_isnewlin, set_nocorrect, set_pos, set_tokfd,
+    set_toklineno, set_tokstr, tok, tokfd, toklineno, tokstr, tokstr_eq, tokstr_is_none,
+    tokstr_is_some, tokstr_take, zshlex,
 };
 use crate::prompt::{cmdpop, cmdpush};
 use crate::zsh_h::{
@@ -635,6 +667,7 @@ pub fn init_parse() {
     ECNFUNC.set(0);
     ECSTRS_INDEX.with_borrow_mut(|m| m.clear());
     ECSTRS_REVERSE.with_borrow_mut(|m| m.clear());
+    ECSTRS_TREE.with_borrow_mut(|t| *t = None);
 
     PARSER_RECURSION_DEPTH.set(0);
     PARSER_GLOBAL_ITERATIONS.set(0);
@@ -1040,25 +1073,108 @@ pub fn ecstrcode(s: &str) -> u32 {
         }
         c
     } else {
-        // parse.c:448-470 — long string: dedup via `ecstrs` tree
-        // (compares nfunc + hashval + strcmp). Rust uses a HashMap
-        // index — same semantics for content-equal lookups within
-        // the current ecnfunc scope. Note C's dedup is partially
-        // unreliable in practice (the tree-walk's stored `p->str`
-        // pointers can go stale as the lexer reuses the tokstr
-        // buffer), so corpus files with repeated strings can still
-        // diverge — that's a parser-fidelity gap below this layer.
-        let key = (ECNFUNC.get(), s.to_string());
-        if let Some(&offs) = ECSTRS_INDEX.with_borrow(|m| m.get(&key).copied()).as_ref() {
+        // parse.c:447-466 — long string. Port of C's eccstr BST walk
+        // exactly: walk the tree comparing nfunc, then hashval, then
+        // strcmp on bytes. Return offs on full match; insert new
+        // leaf otherwise. Matches C's exact dedup-hit pattern
+        // (which is content-dependent — hash collisions and the
+        // lazy short-circuit cmp chain make the tree shape determine
+        // whether matching nodes are reachable).
+        // hasher is byte-by-byte polynomial (hashtable.c:86); pass
+        // c_bytes via from_utf8_unchecked so non-UTF-8 zsh marker
+        // bytes feed straight in. SAFETY: hasher only iterates
+        // `.bytes()` — no UTF-8 validity assumed.
+        let val = crate::ported::hashtable::hasher(unsafe {
+            std::str::from_utf8_unchecked(&c_bytes)
+        });
+        let nfunc = ECNFUNC.get();
+        let found_offs = ECSTRS_TREE.with_borrow_mut(|root| {
+            // Walk the tree. At each node, if all 3 cmps == 0,
+            // return the node's offs. Otherwise descend left/right
+            // by the first non-zero cmp's sign.
+            let mut cur: &mut Option<Box<EccstrNode>> = root;
+            loop {
+                let p = match cur.as_mut() {
+                    Some(p) => p,
+                    None => break None,
+                };
+                // c:448 — `cmp = p->nfunc - ecnfunc`
+                let mut cmp = (p.nfunc as i64) - (nfunc as i64);
+                if cmp == 0 {
+                    // c:448 — `&& !(cmp = (long)p->hashval - (long)val)`
+                    cmp = (p.hashval as i64) - (val as i64);
+                    if cmp == 0 {
+                        // c:448 — `&& !(cmp = strcmp(p->str, s))`
+                        cmp = match p.str.as_slice().cmp(c_bytes.as_slice()) {
+                            std::cmp::Ordering::Less => -1,
+                            std::cmp::Ordering::Equal => 0,
+                            std::cmp::Ordering::Greater => 1,
+                        };
+                        if cmp == 0 {
+                            // c:450 — `return p->offs;`
+                            break Some(p.offs);
+                        }
+                    }
+                }
+                // c:452 — `pp = (cmp < 0 ? &p->left : &p->right);`
+                cur = if cmp < 0 { &mut p.left } else { &mut p.right };
+            }
+        });
+        if let Some(offs) = found_offs {
             return offs;
         }
         let offs =
             (((ECSOFFS.get() - ECSSUB.get()) as u32) << 2) | if t { 1 } else { 0 };
-        ECSTRS_INDEX.with_borrow_mut(|m| {
-            m.insert(key, offs);
-        });
+        // c:457-465 — insert new node at the NULL slot the walk
+        // terminated at. Encode the walk path as a Vec<bool> of
+        // left/right turns (true = right), then re-descend to
+        // insert. Borrow-checker friendly: a single mutable walk
+        // that either finds an existing node (descend) or fills
+        // the empty slot (return).
         let stored = c_bytes.clone();
         let stored_len = stored.len();
+        let new_node = Box::new(EccstrNode {
+            left: None,
+            right: None,
+            str: stored.clone(),
+            offs,
+            nfunc,
+            hashval: val,
+        });
+        ECSTRS_TREE.with_borrow_mut(|root| {
+            // Build the path first (immutable-walk; safe because we
+            // only ever go further down).
+            let mut path: Vec<bool> = Vec::new();
+            {
+                let mut cur: &Option<Box<EccstrNode>> = root;
+                while let Some(p) = cur.as_ref() {
+                    let mut cmp = (p.nfunc as i64) - (nfunc as i64);
+                    if cmp == 0 {
+                        cmp = (p.hashval as i64) - (val as i64);
+                        if cmp == 0 {
+                            cmp = match p.str.as_slice().cmp(c_bytes.as_slice()) {
+                                std::cmp::Ordering::Less => -1,
+                                std::cmp::Ordering::Equal => 0,
+                                std::cmp::Ordering::Greater => 1,
+                            };
+                        }
+                    }
+                    let go_right = cmp >= 0;
+                    path.push(go_right);
+                    cur = if go_right { &p.right } else { &p.left };
+                }
+            }
+            // Descend mutably along the recorded path and assign at
+            // the NULL leaf.
+            let mut cur: &mut Option<Box<EccstrNode>> = root;
+            for turn in path {
+                let p = cur.as_mut().expect("path matches walk");
+                cur = if turn { &mut p.right } else { &mut p.left };
+            }
+            *cur = Some(new_node);
+        });
+        // Also keep the existing reverse index (offs → bytes) for
+        // ecgetstr_wordcode and copy_ecstr — they read flat by offs.
         ECSTRS_REVERSE.with_borrow_mut(|m| {
             m.insert(offs, stored);
         });
@@ -2607,10 +2723,18 @@ pub fn par_cond_wordcode() {
     set_incond(1);
     // c:1815 — `incmdpos = 0;`
     set_incmdpos(false);
-    // c:1816 — `zshlex();`
+    // c:1816 — `zshlex();` past `[[`.
     zshlex();
-    // c:1817 — `par_cond();`
-    let _ = par_cond();
+    // c:1817 — `par_cond();` — call the no-skip cond-expression
+    // entry that EMITS WORDCODE (par_cond_top → par_cond_1 →
+    // par_cond_2 → par_cond_double/triple/multi). NOT the AST
+    // `par_cond` at parse.rs:4644 which is a misnamed `par_dinbrack`
+    // that skips `[[` AND `]]` and returns a ZshCommand AST node
+    // instead of pushing WC_COND opcodes. NOT `parse_cond_expr`
+    // either — that's also AST-only, returning ZshCond. With
+    // `parse_cond_expr` here, every `[[ ... ]]` test produced ZERO
+    // wordcode payload and parity dropped ~148 words on /etc/zshrc.
+    let _ = par_cond_top();
     // c:1818-1819 — `if (tok != DOUTBRACK) YYERRORV(oecused);`
     if tok() != DOUTBRACK {
         let _ = oecused;
@@ -2621,7 +2745,7 @@ pub fn par_cond_wordcode() {
     set_incond(0);
     // c:1821 — `incmdpos = 1;`
     set_incmdpos(true);
-    // c:1822 — `zshlex();`
+    // c:1822 — `zshlex();` past `]]`.
     zshlex();
 }
 
@@ -2671,6 +2795,12 @@ pub fn par_simple_wordcode_impl(_nr: i32) -> i32 {
                 // C emits the canonical 7-word form, breaking
                 // byte-level wordcode parity on every corpus entry.
                 cmplx_set(true);
+                // c:1929 — `incmdpos = 0;` so the next zshlex() does
+                // not re-promote tokens like `{` to INBRACE_TOK or
+                // bare reserved words to keywords. Without this,
+                // `echo {a,b,c}` re-lexes the brace expansion as
+                // INBRACE_TOK and the simple-command loop bails out.
+                set_incmdpos(false);
                 let s = tokstr().unwrap_or_default();
                 let coded = ecstrcode(&s);
                 ecadd(coded);
@@ -3124,6 +3254,16 @@ fn par_cmd() -> Option<ZshCommand> {
                 trailing.push(redir);
             }
         }
+        // c:1072-1075 — every par_cmd tail resets the lexer state
+        // toggles so the NEXT command starts in cmd position with
+        // case/cond/typeset off. par_simple/par_cond set `incmdpos=0`
+        // during their bodies; without this reset the next iteration
+        // of the outer par_list loop sees `if` / `done` / `select`
+        // etc. as plain strings and the AST collapses.
+        set_incmdpos(true);
+        set_incasepat(0);
+        set_incond(0);
+        set_intypeset(false);
         if trailing.is_empty() {
             return Some(inner);
         }
@@ -3138,6 +3278,13 @@ fn par_cmd() -> Option<ZshCommand> {
         }
         return Some(ZshCommand::Redirected(Box::new(inner), trailing));
     }
+    // Same reset on the empty-cmd branch (mirror c:1072 unconditional
+    // path — the C function only returns 0 above when the dispatch
+    // produced no command, and falls through to the reset block).
+    set_incmdpos(true);
+    set_incasepat(0);
+    set_incond(0);
+    set_intypeset(false);
 
     None
 }
@@ -3216,6 +3363,21 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 let s = tokstr();
                 if let Some(s) = s {
                     words.push(s);
+                }
+                // c:1929 — `incmdpos = 0;` so the next zshlex() does
+                // not re-promote `{`/`[[`/reserved words at the
+                // continuation position. Without this, `echo {a,b}`
+                // re-lexes `{` as INBRACE_TOK (current-shell block)
+                // and the brace expansion never reaches par_simple.
+                set_incmdpos(false);
+                // c:1931-1932 — `if (tok == TYPESET) intypeset = is_typeset = 1;`
+                // Multi-assign `typeset a=1 b=2` relies on the lexer
+                // re-emitting `b=2` as ENVSTRING; that path is gated
+                // on `intypeset`. Without this, follow-on assignment
+                // words arrive as STRING and the typeset builtin's
+                // multi-assign form silently degrades.
+                if tok() == TYPESET {
+                    set_intypeset(true);
                 }
                 zshlex();
                 // Check for function definition foo() { ... }
@@ -3483,15 +3645,40 @@ fn par_redir() -> Option<ZshRedir> {
         1
     };
 
+    // c:2234-2245 — save/restore incmdpos and nocorrect around the
+    // zshlex that consumes the redir target word:
+    //   oldcmdpos = incmdpos; incmdpos = 0;
+    //   oldnc = nocorrect;
+    //   if (tok != INANG && tok != INOUTANG) nocorrect = 1;
+    //   ... zshlex; check tok; ...
+    //   incmdpos = oldcmdpos; nocorrect = oldnc;
+    // Without this, a redir target lexes in the parent's incmdpos
+    // (re-promoting `{` / reswords) AND with parent nocorrect (so
+    // spelling-correction wrongly runs inside `> $(cmd)` etc.).
+    let oldcmdpos = incmdpos();
+    set_incmdpos(false);
+    let oldnc = nocorrect();
+    let cur = tok();
+    if cur != INANG_TOK && cur != INOUTANG {
+        set_nocorrect(1);
+    }
     zshlex();
 
     let name = match tok() {
         STRING_LEX | ENVSTRING => {
             let n = tokstr().unwrap_or_default();
+            // Restore BEFORE the next zshlex so trailing tokens lex
+            // in the original parent context (mirrors C ordering at
+            // parse.c:2244-2245 — restore right after the word is
+            // confirmed, before any downstream advance).
+            set_incmdpos(oldcmdpos);
+            set_nocorrect(oldnc);
             zshlex();
             n
         }
         _ => {
+            set_incmdpos(oldcmdpos);
+            set_nocorrect(oldnc);
             error("expected word after redirection");
             return None;
         }
@@ -4439,6 +4626,15 @@ fn par_funcdef() -> Option<ZshCommand> {
 /// C source: handled inline in par_simple's INOUTPAR-after-name
 /// arm (parse.c:1836-2228).
 fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
+    // par_simple's STRING loop left `incmdpos = 0`; the funcdef body
+    // `{ ... }` requires `incmdpos = 1` so the lexer recognises `{`
+    // as INBRACE_TOK (current-shell block opener) instead of a
+    // literal `{` STRING. Without this, `myfunc() { echo body }`
+    // parsed the body as the single STRING `"{"`, then `echo body`
+    // fell out at top level. Mirrors the C path where par_cmd's
+    // dispatcher (parse.c:958) is called with `incmdpos = 1` for
+    // the funcdef body.
+    set_incmdpos(true);
     // Skip ()
     if tok() == INOUTPAR {
         zshlex();
@@ -4515,20 +4711,38 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
 /// + unary tests (-f, -d, -n, -z, etc.) + binary tests (=, !=,
 ///   <, >, ==, =~, -eq, -ne, -lt, -le, -gt, -ge, -nt, -ot, -ef).
 fn par_cond() -> Option<ZshCommand> {
+    // C par_dinbrack (parse.c:1810-1822) wraps the body parse with
+    // `incond = 1; incmdpos = 0;` BEFORE the first zshlex past `[[`,
+    // and resets to `incond = 0; incmdpos = 1;` after `]]`. Without
+    // `incond = 1`, lex.c does not promote `]]` to DOUTBRACK and the
+    // cond body bleeds past the close bracket — the parser then
+    // sees `]]` as a separate STRING command. Every `if [[ ... ]]; then`
+    // failed with `command not found: ]]` before this fix.
+    set_incond(1);
+    set_incmdpos(false);
     zshlex(); // skip [[
-              // Empty cond `[[ ]]` is a parse error in zsh — emit the
-              // diagnostic and return None so the caller produces a
-              // non-zero exit. Without this, `[[ ]]` silently passed and
-              // returned exit 0.
+    // Empty cond `[[ ]]` is a parse error in zsh — emit the
+    // diagnostic and return None so the caller produces a
+    // non-zero exit. Without this, `[[ ]]` silently passed and
+    // returned exit 0.
     if tok() == DOUTBRACK {
         error("parse error near `]]'");
+        set_incond(0);
+        set_incmdpos(true);
         zshlex();
         return None;
     }
     let cond = parse_cond_expr();
 
     if tok() == DOUTBRACK {
+        set_incond(0);
+        set_incmdpos(true);
         zshlex();
+    } else {
+        // Recover incond/incmdpos so subsequent parsing isn't stuck
+        // in cond-mode if the close bracket is missing.
+        set_incond(0);
+        set_incmdpos(true);
     }
 
     cond.map(ZshCommand::Cond)
@@ -5586,6 +5800,7 @@ pub fn bld_eprog(heap: bool) -> crate::ported::zsh_h::eprog {
     ECSOFFS.with(|c| c.set(0));
     ECSTRS_INDEX.with(|c| c.borrow_mut().clear());
     ECSTRS_REVERSE.with(|c| c.borrow_mut().clear());
+    ECSTRS_TREE.with(|t| *t.borrow_mut() = None);
 
     ret
 }
@@ -5675,6 +5890,40 @@ pub fn par_dinbrack() -> Option<()> {
     Some(())
 }
 
+/// Port of `par_cond(void)` from `Src/parse.c:2409`. Top-level cond
+/// OR-chain — drives `par_cond_1` and stitches `||`-separated terms
+/// with `WCB_COND(COND_OR, …)`. This is the missing top of the
+/// wordcode cond chain: `par_cond_wordcode` (the par_dinbrack port)
+/// must call into HERE so that `[[ a || b ]]` and friends land
+/// real WC_COND opcodes in `ecbuf`. Without this, the wordcode
+/// emitter for `[[ ... ]]` produced zero words and parity dropped
+/// 148 words on `/etc/zshrc` alone.
+pub fn par_cond_top() -> i32 {
+    // c:2411 — `int p = ecused, r;`
+    let p = ECUSED.with(|c| c.get()) as usize;
+    let r = par_cond_1();
+    while COND_SEP() {
+        condlex();
+    }
+    if tok() == DBAR {
+        // c:2417 — `condlex(); while (COND_SEP()) condlex();`
+        condlex();
+        while COND_SEP() {
+            condlex();
+        }
+        // c:2420-2422 — `ecispace(p, 1); par_cond(); ecbuf[p] =
+        // WCB_COND(COND_OR, ecused-1-p);`
+        ecispace(p, 1);
+        par_cond_top();
+        let ecused = ECUSED.with(|c| c.get()) as usize;
+        ECBUF.with(|c| {
+            c.borrow_mut()[p] = WCB_COND(COND_OR as u32, (ecused - 1 - p) as u32);
+        });
+        return 1;
+    }
+    r
+}
+
 /// Port of `par_cond_1(void)` from `Src/parse.c:2434`. Parses one
 /// `||`-separated cond expression. Emits `WCB_COND(COND_AND, …)`
 /// when an `&&` is found and recurses.
@@ -5754,9 +6003,19 @@ pub fn par_cond_2() -> i32 {
         return r.map_or(0, |_| 1);
     }
     let s1 = tokstr().unwrap_or_default();
-    let dble = s1.starts_with('-')
-        && s1.len() == 2
-        && "abcdefghknoprstuvwxzLONGS".contains(s1.chars().nth(1).unwrap_or('?'));
+    // c:2549 — `dble = (s1 && IS_DASH(*s1) && (!n_testargs ||
+    // strspn(s1+1, "abcd...") == 1) && !s1[2]);` — IS_DASH covers
+    // BOTH `-` and Dash (`\u{9b}`). The raw tokstr inside `[[ ... ]]`
+    // carries Dash as a marker byte, so `starts_with('-')` alone
+    // matches only ASCII dashes and misses every `-z`, `-d`, `-r`
+    // etc. — every such cond emitted the AST-only `condition
+    // expected` error from par_cond_double. Use IS_DASH and count
+    // chars (Dash is a single code point) instead of bytes.
+    let s1_chars: Vec<char> = s1.chars().collect();
+    let dble = !s1_chars.is_empty()
+        && IS_DASH(s1_chars[0])
+        && s1_chars.len() == 2
+        && "abcdefghknoprstuvwxzLONGS".contains(s1_chars[1]);
     if tok() != STRING_LEX {
         if !s1.is_empty() && tok() != LEXERR && (!dble || n_testargs != 0) {
             // c:2486-2497 — `if (n_testargs == 1)` block: under
@@ -5855,14 +6114,23 @@ pub fn par_cond_2() -> i32 {
 /// Port of `par_cond_double(char *a, char *b)` from `Src/parse.c:2626`.
 /// Emits wordcode for unary cond `[ -X b ]` or modular `[ -mod b ]`.
 pub fn par_cond_double(a: &str, b: &str) -> i32 {
-    // c:2626
-    if !a.starts_with('-') || a.len() < 2 {
+    // c:2628 — `if (!IS_DASH(a[0]) || !a[1])` — char-based, since
+    // Dash is a single code point (`\u{9b}`) and `a.len() < 2` on
+    // BYTES would still pass for "-z" but fail for the marker form
+    // `\u{9b}z` (2 bytes). Walk by chars.
+    let ac: Vec<char> = a.chars().collect();
+    if ac.is_empty() || !IS_DASH(ac[0]) || ac.len() < 2 {
         crate::ported::utils::zerr(&format!("parse error: condition expected: {}", a));
         return 1;
     }
+    // c:2630 — `else if (!a[2] && strspn(a+1, "abcd...zhLONGS") == 1)`
     let unary_set = "abcdefgknoprstuvwxzhLONGS";
-    if a.len() == 2 && unary_set.contains(a.chars().nth(1).unwrap_or('?')) {
-        ecadd(WCB_COND(a.as_bytes()[1] as u32, 0));
+    if ac.len() == 2 && unary_set.contains(ac[1]) {
+        // c:2631 — `ecadd(WCB_COND(a[1], 0));` uses the raw cond-op
+        // letter byte as the opcode payload. Use the ASCII char's
+        // code-point value directly — every letter in `unary_set`
+        // fits in 7 bits.
+        ecadd(WCB_COND(ac[1] as u32, 0));
         ecstr(b);
     } else {
         ecadd(WCB_COND(COND_MOD as u32, 1));
@@ -5875,61 +6143,70 @@ pub fn par_cond_double(a: &str, b: &str) -> i32 {
 /// Port of `par_cond_triple(char *a, char *b, char *c)` from
 /// `Src/parse.c:2659`. Emits wordcode for the binary forms
 /// `[ A op B ]` — `=` / `==` / `!=` / `<` / `>` / `=~` / `-X`.
+///
+/// C does `(b[0] == Equals || b[0] == '=')` etc., matching BOTH the
+/// raw ASCII operator char AND its tokenized marker form (Equals =
+/// `\u{8d}`, Outang = `\u{8e}`, Inang = `\u{91}`, Tilde = `\u{96}`,
+/// Bang = `\u{8b}`, Dash = `\u{9b}`). Inside `[[ ... ]]` the lexer
+/// emits the marker bytes — comparing against literal-only `b"=="`
+/// misses every cond op.
 pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
     // c:2659
+    let bc: Vec<char> = b.chars().collect();
+    let is_eq = |ch: char| ch == '=' || ch == Equals;
+    let is_gt = |ch: char| ch == '>' || ch == Outang;
+    let is_lt = |ch: char| ch == '<' || ch == Inang;
+    let is_tilde = |ch: char| ch == '~' || ch == Tilde;
+    let is_bang = |ch: char| ch == '!' || ch == Bang;
 
-    let bb = b.as_bytes();
-    if (bb == b"=" || bb == b"==") && bb.len() <= 2 {
-        let dbl = bb.len() == 2;
-        let op = if dbl { COND_STRDEQ } else { COND_STREQ };
-        ecadd(WCB_COND(op as u32, 0));
+    // c:2663 — `(b[0] == Equals || b[0] == '=') && !b[1]` → `=` (single).
+    if bc.len() == 1 && is_eq(bc[0]) {
+        ecadd(WCB_COND(COND_STREQ as u32, 0));
         ecstr(a);
         ecstr(c);
-        let np = ECNPATS.with(|cc| {
-            let v = cc.get();
-            cc.set(v + 1);
-            v
-        }) as u32;
+        let np = ECNPATS.with(|cc| { let v = cc.get(); cc.set(v + 1); v }) as u32;
         ecadd(np);
         return 1;
     }
-    if (bb == b">" || bb == b"<") && bb.len() == 1 {
-        let op = if bb[0] == b'>' {
-            COND_STRGTR
-        } else {
-            COND_STRLT
-        };
+    // c:2668-2673 — `(t0 = b[0]=='>' || Outang) || b[0]=='<' || Inang`.
+    if bc.len() == 1 && (is_gt(bc[0]) || is_lt(bc[0])) {
+        let op = if is_gt(bc[0]) { COND_STRGTR } else { COND_STRLT };
         ecadd(WCB_COND(op as u32, 0));
         ecstr(a);
         ecstr(c);
-        let np = ECNPATS.with(|cc| {
-            let v = cc.get();
-            cc.set(v + 1);
-            v
-        }) as u32;
+        let np = ECNPATS.with(|cc| { let v = cc.get(); cc.set(v + 1); v }) as u32;
         ecadd(np);
         return 1;
     }
-    if bb == b"!=" {
+    // c:2674-2679 — `==` STRDEQ.
+    if bc.len() == 2 && is_eq(bc[0]) && is_eq(bc[1]) {
+        ecadd(WCB_COND(COND_STRDEQ as u32, 0));
+        ecstr(a);
+        ecstr(c);
+        let np = ECNPATS.with(|cc| { let v = cc.get(); cc.set(v + 1); v }) as u32;
+        ecadd(np);
+        return 1;
+    }
+    // c:2680-2684 — `!=` STRNEQ.
+    if bc.len() == 2 && is_bang(bc[0]) && is_eq(bc[1]) {
         ecadd(WCB_COND(COND_STRNEQ as u32, 0));
         ecstr(a);
         ecstr(c);
-        let np = ECNPATS.with(|cc| {
-            let v = cc.get();
-            cc.set(v + 1);
-            v
-        }) as u32;
+        let np = ECNPATS.with(|cc| { let v = cc.get(); cc.set(v + 1); v }) as u32;
         ecadd(np);
         return 1;
     }
-    if bb == b"=~" {
+    // c:2685-2691 — `=~` REGEX (no pattern slot — implicit COND_MODI).
+    if bc.len() == 2 && is_eq(bc[0]) && is_tilde(bc[1]) {
         ecadd(WCB_COND(COND_REGEX as u32, 0));
         ecstr(a);
         ecstr(c);
         return 1;
     }
-    if b.starts_with('-') {
-        let t = get_cond_num(&b[1..]);
+    // c:2692-2702 — `-OP` numeric-or-modular cond (e.g. `-eq`, `-nt`).
+    if !bc.is_empty() && IS_DASH(bc[0]) {
+        let rest: String = bc[1..].iter().collect();
+        let t = get_cond_num(&rest);
         if t > -1 {
             ecadd(WCB_COND((t + COND_NT) as u32, 0));
             ecstr(a);
@@ -5942,7 +6219,9 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
         ecstr(c);
         return 1;
     }
-    if a.starts_with('-') && a.len() > 1 {
+    // c:2703-2707 — `-mod A B C` modular cond on `a`.
+    let ac: Vec<char> = a.chars().collect();
+    if !ac.is_empty() && IS_DASH(ac[0]) && ac.len() > 1 {
         ecadd(WCB_COND(COND_MOD as u32, 2));
         ecstr(a);
         ecstr(b);
@@ -5956,8 +6235,11 @@ pub fn par_cond_triple(a: &str, b: &str, c: &str) -> i32 {
 /// Port of `par_cond_multi(char *a, LinkList l)` from `Src/parse.c:2716`.
 /// Emits wordcode for `[ -OP A B C … ]` n-ary cond (alternation).
 pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {
-    // c:2716
-    if !a.starts_with('-') || a.len() < 2 {
+    // c:2716 — `if (!IS_DASH(a[0]) || !a[1])`; same Dash/`-` dual
+    // matching as par_cond_double, char-walked because Dash is a
+    // single code point.
+    let ac: Vec<char> = a.chars().collect();
+    if ac.is_empty() || !IS_DASH(ac[0]) || ac.len() < 2 {
         crate::ported::utils::zerr(&format!("condition expected: {}", a));
         return 1;
     }
