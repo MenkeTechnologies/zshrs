@@ -625,33 +625,102 @@ pub fn before_complete(lst: &mut i32) -> i32 {                               // 
 /// went 0→1 across this round), runs MENUSTARTHOOK so registered
 /// hook fns can veto or modify the about-to-display menu.
 ///
-/// The C `runhookdef(MENUSTARTHOOK, cdat)` dispatch in this
-/// translation unit feeds a hook-chain registered in module.c. The
-/// Rust hookdef machinery is per-`Module`, not the global table C
-/// uses for MENUSTARTHOOK — no registrar yet wires a MENUSTARTHOOK
-/// chain into the Zle module. With no registered handler, C's
-/// `runhookdef` returns 0 and the inner block doesn't fire — the
-/// observable behaviour is the same return-0-path we take below.
+/// Hook handlers are registered via `addhookfunc("menu_start", fn)`
+/// (see `crate::ported::module::addhookfunc`), which writes to the
+/// global HOOKTAB. C's `comphooks[]` table declares `menu_start` as
+/// HOOKF_ALL, so every handler fires and the first non-zero return
+/// short-circuits the chain (see runhookdef at module.c:990).
+///
+/// Return value semantics (c:518-532):
+///   - `ret == 0` → no action (no handler vetoed).
+///   - `ret >= 1` → zero `dat[1]`, clear menucmp/menuacc, null minfo.cur.
+///   - `ret >= 2` → also rewind buffer to origline.
+///   - `ret == 2` → also schedule list clear (CLEARLIST=1, invalidatelist).
 pub fn after_complete(dat: &mut [i32]) -> i32 {                              // c:503
     let menucmp_v = MENUCMP.load(Ordering::Relaxed);
     let oldmenucmp_v = OLDMENUCMP.load(Ordering::Relaxed);
 
     // c:505 — `if (menucmp && !oldmenucmp) { ... }`.
-    if menucmp_v != 0 && oldmenucmp_v == 0 {
-        // c:506-517 — build chdata. cdat.matches=amatches, cdat.num=
-        //              nmatches, cdat.nmesg=nmessages (not yet a
-        //              global), cdat.cur=NULL. With no MENUSTARTHOOK
-        //              hook registered globally, runhookdef returns 0
-        //              and the inner block is dead. The substrate gap
-        //              that prevents firing the hook is documented; the
-        //              gated behavior (return 0) lands the same way.
-        let _ = dat;
-        // c:518 — `if ((ret = runhookdef(MENUSTARTHOOK, (void *) &cdat)))`
-        //          ret == 0 here (no registered handler).
-        //          Inner block c:519-532 would: zero dat[1], clear
-        //          menucmp/menuacc, null minfo.cur; ret>=2 would
-        //          rewind buffer to origline; ret==2 would set
-        //          clearlist + invalidatelist. None fire when ret==0.
+    if menucmp_v == 0 || oldmenucmp_v != 0 {
+        return 0;                                                            // c:535
+    }
+
+    // c:506-517 — build chdata. cdat.matches=amatches, cdat.num=
+    //              nmatches, cdat.nmesg=nmessages, cdat.cur=NULL. The
+    //              Rust hook dispatch path doesn't yet thread chdata
+    //              into shell-fn args (handlers in the standard zsh
+    //              distribution all read directly from compsys globals
+    //              via $compstate). The fields above are still tracked
+    //              via amatches/nmatches/nmessages globals and visible
+    //              to handlers through the normal completion-state
+    //              parameter reads.
+
+    // c:518 — `runhookdef(MENUSTARTHOOK, &cdat)`. C dispatches via
+    // the hookdef chain; the Rust port walks HOOKTAB["menu_start"] and
+    // invokes each shell-fn via the canonical dispatch_function_call
+    // path used by signal-trap shfunc dispatch (signals.rs:1087). The
+    // first non-zero return short-circuits per HOOKF_ALL semantics
+    // (module.c:996-1005).
+    let handlers: Vec<String> = crate::ported::module::HOOKTAB
+        .lock()
+        .ok()
+        .and_then(|t| t.get("menu_start").cloned())
+        .unwrap_or_default();
+
+    let mut ret: i32 = 0;
+    for fn_name in &handlers {
+        let r = crate::fusevm_bridge::with_executor(|exec| {
+            exec.dispatch_function_call(fn_name, &[]).unwrap_or(0)
+        });
+        if r != 0 {
+            ret = r;
+            break;                                                           // c:1001 short-circuit
+        }
+    }
+
+    if ret == 0 {
+        return 0;                                                            // c:535
+    }
+
+    // c:519 — `dat[1] = 0`. The C caller passes a 2-int array; index 1
+    // carries the menu-acceptance flag for the outer compfunc loop.
+    if dat.len() > 1 {
+        dat[1] = 0;
+    }
+    // c:520 — `menucmp = menuacc = 0`.
+    MENUCMP.store(0, Ordering::Relaxed);
+    menuacc.store(0, Ordering::Relaxed);
+    // c:521 — `minfo.cur = NULL`.
+    if let Some(m) = MINFO.get() {
+        if let Ok(mut mi) = m.lock() {
+            mi.cur = None;
+        }
+    }
+
+    if ret >= 2 {                                                            // c:522
+        // c:523 — `fixsuffix()`.
+        crate::ported::zle::zle_misc::fixsuffix();
+        // c:524 — `zlemetacs = 0`.
+        ZLEMETACS.store(0, Ordering::Relaxed);
+        // c:525 — `foredel(zlemetall, CUT_RAW)` removes the entire line.
+        let metall = ZLEMETALL.load(Ordering::Relaxed);
+        crate::ported::zle::zle_utils::foredel(metall, crate::ported::zle::zle_h::CUT_RAW);
+        // c:526 — `inststr(origline)` reinserts the pre-completion buffer.
+        let origline_v: String = crate::ported::zle::zle_tricky::ORIGLINE
+            .get()
+            .and_then(|m| m.lock().ok().map(|g| g.clone()))
+            .unwrap_or_default();
+        let _ = crate::ported::zle::zle_tricky::inststr(&origline_v);
+        // c:527 — `zlemetacs = origcs`.
+        let origcs_v = crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::Relaxed);
+        ZLEMETACS.store(origcs_v, Ordering::Relaxed);
+
+        if ret == 2 {                                                        // c:528
+            // c:529 — `clearlist = 1`.
+            crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);
+            // c:530 — `invalidatelist()`.
+            crate::ported::zle::zle_h::invalidatelist();
+        }
     }
 
     0                                                                        // c:535
