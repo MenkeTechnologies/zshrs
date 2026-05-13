@@ -63,7 +63,14 @@ thread_local! {
     /// Reverse index for `ecgetstr`: offs → owned string. Populated
     /// at ecstrcode time so the consumer can recover the string from
     /// the wordcode offs without walking the encode-time HashMap.
-    pub static ECSTRS_REVERSE: std::cell::RefCell<std::collections::HashMap<u32, String>>
+    /// Stores the METAFIED BYTE form of each long-string, exactly
+    /// matching what C's strs region holds. `String` would not work
+    /// here because Rust strings carry UTF-8-encoded chars (e.g.
+    /// the Dash marker `\u{9b}` UTF-8-encodes to two bytes
+    /// `\xc2 \x9b`) while C stores zsh markers as single bytes
+    /// (raw `\x9b`). Storing Vec<u8> lets us write byte-for-byte
+    /// what C writes after metafy.
+    pub static ECSTRS_REVERSE: std::cell::RefCell<std::collections::HashMap<u32, Vec<u8>>>
         = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
@@ -983,26 +990,47 @@ pub fn ecdel(p: usize) {
 /// Direct port of `ecstrcode(char *s)` at `Src/parse.c:426`. Encode a
 /// string into a single wordcode (short strings ≤4 bytes packed
 /// inline; longer strings get an offset into the deduped registry).
+///
+/// The long-string path stores the METAFIED bytes (matches what C's
+/// strs region contains): collapse Rust UTF-8 chars in 0x80..=0xff
+/// to single bytes, then apply zsh metafy (high bytes ≥ 0x83 →
+/// `Meta=0x83 + byte^0x20`). Length tracking (ECSOFFS) uses the
+/// metafied byte count — same as C `strlen(s) + 1` where C's `s`
+/// is already metafied at this point.
 pub fn ecstrcode(s: &str) -> u32 {
-    // parse.c:432-470 — short-string inline-pack vs registry-offset.
-    let l = s.len() + 1; // include NUL terminator (matches C strlen+1)
-    let t = crate::ported::utils::has_token(s);
-    let bytes = s.as_bytes();
+    // Convert Rust UTF-8 → C-byte form inline: chars ≤ 0xff collapse
+    // to single bytes (so zsh markers like Dash = `\u{9b}` are 1 byte
+    // instead of `\xc2 \x9b` UTF-8). Chars > 0xff fall back to their
+    // UTF-8 bytes — matches how C tokstr would hold them (it sees
+    // multi-byte UTF-8 source as raw byte sequences).
+    let mut c_bytes: Vec<u8> = Vec::with_capacity(s.len());
+    for ch in s.chars() {
+        let cu = ch as u32;
+        if cu <= 0xff {
+            c_bytes.push(cu as u8);
+        } else {
+            let mut tmp = [0u8; 4];
+            c_bytes.extend_from_slice(ch.encode_utf8(&mut tmp).as_bytes());
+        }
+    }
+    let t = c_bytes.iter().any(|&b| (0x83..=0x9f).contains(&b));
+    let l = c_bytes.len() + 1; // include NUL terminator
     if l <= 4 {
-        // parse.c:436-445 — short-string inline pack.
+        // parse.c:436-445 — short-string inline pack. Uses raw C-bytes
+        // (NOT metafied — the inline packing stores 1 byte per slot).
         let mut c: u32 = if t { 3 } else { 2 };
         match l {
             4 => {
-                c |= (bytes[2] as u32) << 19;
-                c |= (bytes[1] as u32) << 11;
-                c |= (bytes[0] as u32) << 3;
+                c |= (c_bytes[2] as u32) << 19;
+                c |= (c_bytes[1] as u32) << 11;
+                c |= (c_bytes[0] as u32) << 3;
             }
             3 => {
-                c |= (bytes[1] as u32) << 11;
-                c |= (bytes[0] as u32) << 3;
+                c |= (c_bytes[1] as u32) << 11;
+                c |= (c_bytes[0] as u32) << 3;
             }
             2 => {
-                c |= (bytes[0] as u32) << 3;
+                c |= (c_bytes[0] as u32) << 3;
             }
             1 => {
                 // parse.c:443 — empty string special case.
@@ -1012,25 +1040,30 @@ pub fn ecstrcode(s: &str) -> u32 {
         }
         c
     } else {
-        // parse.c:448-470 — long string: dedup by (nfunc, hashval,
-        // str) and return existing offs if found, else allocate
-        // a new offs into the string region. zshrs uses HashMap
-        // for the dedup index — the canonical eccstr binary tree
-        // (zsh.h:836) is defined but not used at runtime here;
-        // the API contract (return offs for a given string) is
-        // preserved.
+        // parse.c:448-470 — long string: dedup via `ecstrs` tree
+        // (compares nfunc + hashval + strcmp). Rust uses a HashMap
+        // index — same semantics for content-equal lookups within
+        // the current ecnfunc scope. Note C's dedup is partially
+        // unreliable in practice (the tree-walk's stored `p->str`
+        // pointers can go stale as the lexer reuses the tokstr
+        // buffer), so corpus files with repeated strings can still
+        // diverge — that's a parser-fidelity gap below this layer.
         let key = (ECNFUNC.get(), s.to_string());
         if let Some(&offs) = ECSTRS_INDEX.with_borrow(|m| m.get(&key).copied()).as_ref() {
             return offs;
         }
-        let offs = (((ECSOFFS.get() - ECSSUB.get()) as u32) << 2) | if t { 1 } else { 0 };
+        let offs =
+            (((ECSOFFS.get() - ECSSUB.get()) as u32) << 2) | if t { 1 } else { 0 };
         ECSTRS_INDEX.with_borrow_mut(|m| {
             m.insert(key, offs);
         });
+        let stored = c_bytes.clone();
+        let stored_len = stored.len();
         ECSTRS_REVERSE.with_borrow_mut(|m| {
-            m.insert(offs, s.to_string());
+            m.insert(offs, stored);
         });
-        ECSOFFS.set(ECSOFFS.get() + l as i32);
+        let _ = l;
+        ECSOFFS.set(ECSOFFS.get() + (stored_len + 1) as i32);
         offs
     }
 }
@@ -1066,9 +1099,13 @@ pub fn ecgetstr_wordcode(buf: &[u32], pc: usize) -> (String, usize) {
         }
         return (String::from_utf8_lossy(&bytes).into_owned(), next);
     }
-    // parse.c:2872-2873 — long string via offs lookup.
+    // parse.c:2872-2873 — long string via offs lookup. Map value is
+    // metafied Vec<u8>; convert back to display String. Unmetafy is
+    // the caller's job (the wordcode-parity dumper does it; other
+    // callers may want raw bytes).
     let s = ECSTRS_REVERSE
         .with_borrow(|m| m.get(&c).cloned())
+        .map(|v| String::from_utf8_lossy(&v).into_owned())
         .unwrap_or_default();
     (s, next)
 }
@@ -2625,6 +2662,15 @@ pub fn par_simple_wordcode_impl(_nr: i32) -> i32 {
     loop {
         match tok() {
             STRING_LEX | ENVSTRING | TYPESET => {
+                // c:1924 — `*cmplx = 1;` unconditionally on every
+                // STRING/TYPESET inside par_simple's main loop. This
+                // marks ANY simple-command-with-args as complex,
+                // which suppresses the Z_SIMPLE LIST optimization
+                // at set_list_code (parse.c:736-737). Without this,
+                // `echo hi` lexed to an optimized 5-word eprog while
+                // C emits the canonical 7-word form, breaking
+                // byte-level wordcode parity on every corpus entry.
+                cmplx_set(true);
                 let s = tokstr().unwrap_or_default();
                 let coded = ecstrcode(&s);
                 ecadd(coded);
@@ -2643,16 +2689,23 @@ pub fn par_simple_wordcode_impl(_nr: i32) -> i32 {
             _ => break,
         }
     }
+    if nwords == 0 && redir_words == 0 {
+        // c:2173-2176 — `if (isnull && !(sr + nr)) { ecused = p;
+        // return 0; }` — empty command branch undoes ALL ecadds
+        // since the placeholder. Without resetting ECUSED here, the
+        // unused WCB_SIMPLE placeholder leaks into the wordcode
+        // buffer and bld_eprog flushes it as a stray END word,
+        // breaking byte parity with C on every empty-command frame
+        // (par_event_wordcode iter-2 etc.).
+        ECUSED.set(p as i32);
+        return 0;
+    }
     ECBUF.with_borrow_mut(|b| {
         if p < b.len() {
             b[p] = WCB_SIMPLE(nwords);
         }
     });
-    if nwords == 0 && redir_words == 0 {
-        0
-    } else {
-        1 + redir_words
-    }
+    1 + redir_words
 }
 
 /// Wrapper for the par_cmd dispatch sites that don't pass `nr`
@@ -5464,11 +5517,14 @@ pub fn COND_SEP() -> bool {
 /// `p[s->aoffs..]`. The Rust port mirrors via the
 /// `ECSTRS_REVERSE` HashMap (eccstr-tree replacement) and writes
 /// into a `Vec<u8>` slice.
-pub fn copy_ecstr(table: &std::collections::HashMap<u32, String>, p: &mut [u8]) {
-    // c:537
-    for (&offs, s) in table.iter() {
-        let off = offs as usize;
-        let bytes = s.as_bytes();
+pub fn copy_ecstr(table: &std::collections::HashMap<u32, Vec<u8>>, p: &mut [u8]) {
+    // c:537. Map key is the wordcode-encoded offs from `ecstrcode`
+    // (`(byte_offset << 2) | token_bit`, parse.c:459); strip the
+    // low 2 bits to get the real byte offset. Map value is the
+    // metafied byte form — written verbatim to match C's strs
+    // region byte-for-byte.
+    for (&offs, bytes) in table.iter() {
+        let off = (offs >> 2) as usize;
         let need = off + bytes.len() + 1;
         if need > p.len() {
             continue;
@@ -5499,6 +5555,17 @@ pub fn bld_eprog(heap: bool) -> crate::ported::zsh_h::eprog {
     let mut strs_bytes = vec![0u8; ecsoffs];
     ECSTRS_REVERSE.with(|c| copy_ecstr(&c.borrow(), &mut strs_bytes));
 
+    // c:566 — store strs as raw bytes via from_utf8_unchecked so
+    // single-byte zsh markers (e.g. Dash 0x9b) survive intact.
+    // `String::from_utf8_lossy` would replace them with U+FFFD
+    // (`\xef\xbf\xbd`), breaking byte-for-byte parity with C's
+    // strs region. SAFETY: downstream consumers of `eprog.strs`
+    // index by byte offset (per the wordcode `(offs >> 2)` offset
+    // encoding) and call `.as_bytes()` — they never iterate as
+    // chars or rely on UTF-8 validity, so storing non-UTF-8 bytes
+    // in a String is safe in practice. C zsh's strs is `char *`
+    // with the same byte-not-char semantics.
+    let strs_string = unsafe { String::from_utf8_unchecked(strs_bytes) };
     let ret = eprog {
         flags: if heap { EF_HEAP } else { EF_REAL }, // c:570
         len: len as i32,                             // c:559
@@ -5506,7 +5573,7 @@ pub fn bld_eprog(heap: bool) -> crate::ported::zsh_h::eprog {
         nref: if heap { -1 } else { 1 },             // c:562
         pats: Vec::new(),                            // c:563 dummy_patprog
         prog: prog_words,                            // c:565
-        strs: Some(String::from_utf8_lossy(&strs_bytes).into_owned()), // c:566
+        strs: Some(strs_string),
         shf: None,
         dump: None,
     };
@@ -5570,8 +5637,19 @@ pub fn par_sublist2(cmplx: &mut i32) -> Option<i32> {
         zshlex();
     }
     // c:884 — `if (!par_pline(cmplx) && !f) return -1;`
-    let pl = par_pline();
-    if pl.is_none() && f == 0 {
+    // The wordcode-emitter call chain (par_sublist_wordcode →
+    // par_sublist2 → par_pipe_wordcode) needs the wordcode pipe
+    // emitter, NOT the AST `par_pline`. The previous version called
+    // `par_pline` which builds AST nodes and never writes to ECBUF —
+    // the entire wordcode dispatch tree was broken below sublist
+    // level (every script lexed to LIST + END only, since pipes /
+    // commands / args never got emitted).
+    let outer = cmplx_get();
+    cmplx_set(false);
+    let ok = par_pipe_wordcode();
+    *cmplx |= cmplx_get() as i32;
+    cmplx_set(outer | cmplx_get());
+    if !ok && f == 0 {
         return None;
     }
     Some(f)

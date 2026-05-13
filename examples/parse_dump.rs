@@ -54,8 +54,12 @@ fn main() {
     zsh::parse::init_parse();
     zsh::lex::zshlex();
 
-    // par_event_wordcode emits to ECBUF / ECSTRS. bld_eprog finalizes.
-    let _ = zsh::parse::par_event_wordcode();
+    // Mirror C parse_list (parse.c:691-708): call par_list, NOT
+    // par_event. par_event has its own outer-WCB_END emission
+    // (parse.rs:1524) which would duplicate the one bld_eprog adds
+    // (parse.rs:5497), producing the wrong eprog len + extra END
+    // words versus C.
+    zsh::parse::par_list_wordcode();
 
     if zsh::lex::tok() != ENDINPUT {
         println!("PARSE_ERR");
@@ -93,11 +97,32 @@ fn main() {
     }
     let _ = writeln!(buf, "STRS {}", entries.len());
     for (i, e) in entries.iter().enumerate() {
-        let as_str = String::from_utf8_lossy(e);
-        let plain = zsh::lex::untokenize(&as_str);
+        // Match C `dumpwordcode` output. Strs holds unmetafied bytes;
+        // C's dumpwordcode runs unmetafy as a precaution (no-op on
+        // already-unmetafied data) then escapes byte-by-byte. Walk
+        // raw bytes here and escape each — `String::from_utf8_lossy`
+        // would replace single-byte zsh markers (e.g. Dash 0x9b)
+        // with the U+FFFD replacement (`\xef\xbf\xbd`) breaking
+        // byte-for-byte parity with C output.
         let _ = write!(buf, "STR[{}]=\"", i);
-        esc(&mut buf, &plain);
+        esc_bytes(&mut buf, e);
         buf.push_str("\"\n");
     }
     print!("{}", buf);
+}
+
+fn esc_bytes(out: &mut String, bytes: &[u8]) {
+    for &b in bytes {
+        match b {
+            b'\n' => out.push_str("\\n"),
+            b'\t' => out.push_str("\\t"),
+            b'\\' => out.push_str("\\\\"),
+            b'"' => out.push_str("\\\""),
+            0 => out.push_str("\\0"),
+            c if c < 0x20 || c >= 0x7f => {
+                let _ = write!(out, "\\x{:02x}", c);
+            }
+            c => out.push(c as char),
+        }
+    }
 }

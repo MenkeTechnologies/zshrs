@@ -47,6 +47,12 @@ Special options:
   --version    show zsh version number, then exit
   --doctor     full diagnostic report of shell health, caches, and performance
 
+Parser-pipeline dumpers (FILE, or `-` for stdin; output goes to stdout):
+  --dump-tokens   FILE   one TOKNAME<tab>TOKSTR line per lexer token
+  --dump-ast      FILE   parser AST as canonical S-expression
+  --dump-wordcode FILE   wordcode emitter output (EPROG / WORDS / WC[i] / STRS)
+  --dump-zwc      ZWCFILE [FN]   inspect compiled .zwc cache (list or one fn)
+
 Parity modes (caches OFF, daemon OFF — match the named reference shell
 byte-for-byte; every `source` re-runs the file fresh, every echo re-fires):
   --zsh        identical-behaviour drop-in for /bin/zsh (compat-test entrypoint)
@@ -646,6 +652,40 @@ pub fn zshrs_main() {
             }
         }
         return;
+    }
+
+    // Handle --dump-tokens / --dump-ast / --dump-wordcode for parser-pipeline
+    // debugging. Each takes one positional FILE arg (or `-` to read from
+    // stdin) and prints the corresponding IR to stdout in the same canonical
+    // format as the C-side `zshrs/zshrs_dump` module's `dumptokens` /
+    // `dumpwordcode` builtins (so output can be diff'd byte-for-byte against
+    // C zsh for parity verification).
+    for &(flag, dumper) in &[
+        ("--dump-tokens",   zsh::dumpers::dump_tokens   as fn(&str) -> String),
+        ("--dump-ast",      zsh::dumpers::dump_ast      as fn(&str) -> String),
+        ("--dump-wordcode", zsh::dumpers::dump_wordcode as fn(&str) -> String),
+    ] {
+        if args.len() >= 3 && args[1] == flag {
+            let path = &args[2];
+            let src = if path == "-" {
+                let mut buf = String::new();
+                if let Err(e) = io::stdin().read_to_string(&mut buf) {
+                    eprintln!("zshrs: stdin: {}", e);
+                    std::process::exit(1);
+                }
+                buf
+            } else {
+                match std::fs::read_to_string(path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("zshrs: {}: {}", path, e);
+                        std::process::exit(1);
+                    }
+                }
+            };
+            print!("{}", dumper(&src));
+            return;
+        }
     }
 
     // Extract flags before filtering: -x (xtrace), -f (no rcs), -v (verbose)
