@@ -428,8 +428,55 @@ pub fn ihwend() {                                                            // 
 }
 
 /// Port of `void ihwaddc(int c)` from Src/hist.c:357.
+///
+/// C body:
+/// ```c
+/// if (chline && !(errflag || lexstop) &&
+///     (inbufflags & (INP_ALIAS|INP_HIST)) != INP_ALIAS) {
+///     if (c == bangchar && stophist < 2 && qbang)
+///         hwaddc('\\');
+///     *hptr++ = c;
+///     if (hptr - chline >= hlinesz) {
+///         int oldsiz = hlinesz;
+///         chline = realloc(chline, hlinesz = oldsiz + 64);
+///         hptr = chline + oldsiz;
+///     }
+/// }
+/// ```
 pub fn ihwaddc(c: i32) {                                                     // c:357
+    use crate::ported::zsh_h::{INP_ALIAS, INP_HIST};
+    // c:360-361 — guard: history line must exist, no error/lex stop,
+    // and we're not strictly inside alias-expansion-only input.
+    if crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 || lexstop.load(Ordering::SeqCst) {
+        return;
+    }
+    let inbufflags = crate::ported::input::inbufflags.with(|f| f.get());
+    if (inbufflags & (INP_ALIAS | INP_HIST)) == INP_ALIAS {
+        return;
+    }
+    let chline_empty = chline.lock().unwrap().is_empty();
+    if chline_empty {
+        // C requires `chline != NULL` — the equivalent here is "an
+        // hbegin() has populated the buffer". On startup it's
+        // empty, so behave like the inactive-history C path.
+        return;
+    }
+    // c:362-366 — bang-escape under qbang.
+    let bc = bangchar.load(Ordering::SeqCst);
+    if c == bc && stophist.load(Ordering::SeqCst) < 2 && qbang.load(Ordering::SeqCst) {
+        chline.lock().unwrap().push('\\');                                    // c:366 `hwaddc('\\');`
+    }
+    // c:368 `*hptr++ = c;`
     chline.lock().unwrap().push(c as u8 as char);
+    // c:370-374 — resize tracking. Rust `String` grows on `push`
+    // automatically, but `hlinesz` mirrors C's allocation count
+    // for any caller that reads it (e.g. `hwend()`).
+    let cur_len = chline.lock().unwrap().len() as i32;
+    let sz = hlinesz.load(Ordering::SeqCst);
+    if cur_len >= sz {
+        let new_sz = sz + 64;
+        hlinesz.store(new_sz, Ordering::SeqCst);
+    }
 }
 
 /// Port of `void iaddtoline(int c)` from Src/hist.c:397.

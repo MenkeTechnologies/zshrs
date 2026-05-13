@@ -3734,73 +3734,64 @@ pub fn isnumglob(input: &str, pos: usize) -> bool {
     false
 }
 
-/// Tokenize a string as if in double quotes (error-tolerant variant).
-///
-/// Direct port of zsh/Src/lex.c:1713 `parsestrnoerr`. The C
-/// source: zcontext_save → untokenize → inpush → strinbeg →
-/// `lexbuf.ptr = tokstr = *s; lexbuf.siz = l + 1` →
-/// `err = dquote_parse('\0', 1)` → strinend → inpop → zcontext_restore.
-/// Returns the tokenized string on success, or the offending char as
-/// an error code (zsh convention: `> 32 && < 127` → printable, else
-/// generic).
-///
-/// zshrs port: the C version drives the lexer's dquote_parse method
-/// against the input string. zshrs's standalone walker produces the
-/// same Bnull/Qstring/Qtick token markers without re-entering the
-/// lexer — same output for typical bodies. Documented divergence:
-/// nested cmd-sub `$(...)` and arith `$((...))` aren't lexed
-/// recursively; the runtime handles them at expansion time.
 /// Port of `parsestrnoerr(char **s)` from `Src/lex.c:1713`.
+///
+/// C body:
+/// ```c
+/// zcontext_save();
+/// untokenize(*s);
+/// inpush(dupstring_wlen(*s, l), 0, NULL);
+/// strinbeg(0);
+/// lexbuf.len = 0; lexbuf.ptr = tokstr = *s; lexbuf.siz = l + 1;
+/// err = dquote_parse('\0', 1);
+/// if (tokstr) *s = tokstr;
+/// *lexbuf.ptr = '\0';
+/// strinend();
+/// inpop();
+/// zcontext_restore();
+/// return err;
+/// ```
+///
+/// Drives the real `dquote_parse` (with `endchar='\0'`, `sub=true`)
+/// through the nested-lex-context machinery so `${...}`, `$(...)`,
+/// `$((...))`, backticks, etc. tokenize recursively the same way
+/// they do during a normal command parse. Returns the tokenized
+/// string on success.
 pub fn parsestrnoerr(s: &str) -> Result<String, String> {
-    let mut result = String::with_capacity(s.len());
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-
-    while i < chars.len() {
-        let c = chars[i];
-        match c {
-            '\\' => {
-                i += 1;
-                if i < chars.len() {
-                    let next = chars[i];
-                    match next {
-                        '$' | '\\' | '`' | '"' | '\n' => {
-                            result.push(Bnull);
-                            result.push(next);
-                        }
-                        _ => {
-                            result.push('\\');
-                            result.push(next);
-                        }
-                    }
-                } else {
-                    result.push('\\');
-                }
-            }
-            '$' => {
-                result.push(Qstring);
-                if i + 1 < chars.len() {
-                    let next = chars[i + 1];
-                    if next == '{' {
-                        result.push(Inbrace);
-                        i += 1;
-                    } else if next == '(' {
-                        result.push(Inpar);
-                        i += 1;
-                    }
-                }
-            }
-            '`' => {
-                result.push(Qtick);
-            }
-            _ => {
-                result.push(c);
-            }
-        }
-        i += 1;
+    let untok = untokenize(s);                                                // c:1716 `untokenize(*s);`
+    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());     // c:1717
+    // c:1715 `zcontext_save();`
+    crate::ported::context::zcontext_save();
+    // c:1717 `inpush(dupstring_wlen(*s, l), 0, NULL);`
+    crate::ported::input::inpush(&dup, 0, None);
+    // c:1718 `strinbeg(0);`
+    crate::ported::hist::strinbeg(0);
+    // c:1719-1721 — seed lexbuf with the input string so dquote_parse's
+    // `add()` writes append onto our copy. `lexbuf.ptr/siz/len` are
+    // reset; tokstr is aliased to the buffer.
+    LEX_LEXBUF.with_borrow_mut(|b| {
+        b.ptr = Some(String::with_capacity(untok.len() + 1));
+        b.siz = (untok.len() + 1) as i32;
+        b.len = 0;
+    });
+    set_tokstr(None);
+    // c:1722 `err = dquote_parse('\0', 1);`
+    let parse_err = dquote_parse('\0', true).is_err();
+    // c:1723-1725 — `if (tokstr) *s = tokstr; *lexbuf.ptr = '\0';`
+    let result = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
+    // c:1726 `strinend();`
+    crate::ported::hist::strinend();
+    // c:1727 `inpop();`
+    crate::ported::input::inpop();
+    // c:1729 `zcontext_restore();`
+    crate::ported::context::zcontext_restore();
+    if parse_err {
+        Err(LEX_ERROR
+            .with_borrow(|e| e.clone())
+            .unwrap_or_else(|| "parse error".to_string()))
+    } else {
+        Ok(result)
     }
-
-    Ok(result)
 }
 
 /// Tokenize a string as if in double quotes (error-reporting variant).
@@ -3828,68 +3819,38 @@ pub fn parsestr(s: &str) -> Result<String, String> {
 /// that do (parameter expansion's `${var[expr]}`) handle the
 /// quote-aware lex separately at the expansion layer.
 pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
+    // c:1746 `if (!*s || *s == endchar) return 0;`
     if s.is_empty() || s.starts_with(endchar) {
         return None;
     }
-
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    let mut depth = 0;
-    let mut in_dquote = false;
-    let mut in_squote = false;
-
-    while i < chars.len() {
-        let c = chars[i];
-
-        if in_squote {
-            if c == '\'' {
-                in_squote = false;
-            }
-            i += 1;
-            continue;
-        }
-
-        if in_dquote {
-            if c == '"' {
-                in_dquote = false;
-            } else if c == '\\' && i + 1 < chars.len() {
-                i += 1; // skip escaped char
-            }
-            i += 1;
-            continue;
-        }
-
-        match c {
-            '\\' => {
-                i += 1; // skip next char
-            }
-            '\'' => {
-                in_squote = true;
-            }
-            '"' => {
-                in_dquote = true;
-            }
-            '[' | '(' => {
-                depth += 1;
-            }
-            ']' | ')' => {
-                if depth > 0 {
-                    depth -= 1;
-                } else if c == endchar {
-                    return Some(i);
-                }
-            }
-            _ => {}
-        }
-
-        if c == endchar && depth == 0 {
-            return Some(i);
-        }
-
-        i += 1;
+    let l = s.len();
+    let untok = untokenize(s);                                                // c:1749 `untokenize(t = dupstring_wlen(s, l));`
+    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());
+    // c:1748 `zcontext_save();`
+    crate::ported::context::zcontext_save();
+    // c:1750 `inpush(t, 0, NULL);`
+    crate::ported::input::inpush(&dup, 0, None);
+    // c:1751 `strinbeg(0);`
+    crate::ported::hist::strinbeg(0);
+    // c:1763-1765 — seed lexbuf and run dquote_parse with the
+    // caller's `endchar` + `sub=false` (zshrs's API omits the C `sub`
+    // arg — all current callers pass 0).
+    LEX_LEXBUF.with_borrow_mut(|b| {
+        b.ptr = Some(String::with_capacity(l + 1));
+        b.siz = (l + 1) as i32;
+        b.len = 0;
+    });
+    let parse_err = dquote_parse(endchar, false).is_err();
+    let toklen = LEX_LEXBUF.with_borrow(|b| b.len) as usize;
+    // c:1779 `strinend();` / c:1780 `inpop();` / c:1782
+    // `zcontext_restore();`
+    crate::ported::hist::strinend();
+    crate::ported::input::inpop();
+    crate::ported::context::zcontext_restore();
+    if parse_err {
+        return None;
     }
-
-    None
+    Some(toklen)
 }
 
 /// Tokenize a string as if it were a normal command-line argument
@@ -3908,80 +3869,43 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
 /// need to know the exact stop position, but nothing in zshrs's
 /// expansion layer uses that yet.
 pub fn parse_subst_string(s: &str) -> Result<String, String> {
+    // c:1802 `if (!*s || !strcmp(s, nulstring)) return 0;`
     if s.is_empty() {
         return Ok(String::new());
     }
-
-    let mut result = String::with_capacity(s.len());
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-
-    while i < chars.len() {
-        let c = chars[i];
-        match c {
-            '\\' => {
-                result.push(Bnull);
-                i += 1;
-                if i < chars.len() {
-                    result.push(chars[i]);
-                }
-            }
-            '\'' => {
-                result.push(Snull);
-                i += 1;
-                while i < chars.len() && chars[i] != '\'' {
-                    result.push(chars[i]);
-                    i += 1;
-                }
-                result.push(Snull);
-            }
-            '"' => {
-                result.push(Dnull);
-                i += 1;
-                while i < chars.len() && chars[i] != '"' {
-                    if chars[i] == '\\' && i + 1 < chars.len() {
-                        result.push(Bnull);
-                        i += 1;
-                        result.push(chars[i]);
-                    } else if chars[i] == '$' {
-                        result.push(Qstring);
-                    } else {
-                        result.push(chars[i]);
-                    }
-                    i += 1;
-                }
-                result.push(Dnull);
-            }
-            '$' => {
-                result.push(Stringg);
-                if i + 1 < chars.len() {
-                    match chars[i + 1] {
-                        '{' => {
-                            result.push(Inbrace);
-                            i += 1;
-                        }
-                        '(' => {
-                            result.push(Inpar);
-                            i += 1;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            '*' => result.push(Star),
-            '?' => result.push(Quest),
-            '[' => result.push(Inbrack),
-            ']' => result.push(Outbrack),
-            '{' => result.push(Inbrace),
-            '}' => result.push(Outbrace),
-            '~' => result.push(Tilde),
-            '#' => result.push(Pound),
-            '^' => result.push(Hat),
-            _ => result.push(c),
-        }
-        i += 1;
+    let l = s.len();
+    let untok = untokenize(s);                                                // c:1804
+    let dup = crate::ported::string::dupstring_wlen(&untok, untok.len());
+    // c:1803 `zcontext_save();`
+    crate::ported::context::zcontext_save();
+    // c:1805 `inpush(dupstring_wlen(s, l), 0, NULL);`
+    crate::ported::input::inpush(&dup, 0, None);
+    // c:1806 `strinbeg(0);`
+    crate::ported::hist::strinbeg(0);
+    // c:1807-1809 — seed lexbuf with the input string.
+    LEX_LEXBUF.with_borrow_mut(|b| {
+        b.ptr = Some(String::with_capacity(l + 1));
+        b.siz = (l + 1) as i32;
+        b.len = 0;
+    });
+    set_tokstr(None);
+    // c:1810 `c = hgetc();` / c:1811 `ctok = gettokstr(c, 1);`
+    let c0 = hgetc();
+    let ctok = match c0 {
+        Some(ch) => gettokstr(ch, true),
+        None => LEXERR,
+    };
+    let err = LEX_ERROR.with_borrow(|e| e.clone());
+    let result = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
+    // c:1813 `strinend();`
+    crate::ported::hist::strinend();
+    // c:1814 `inpop();`
+    crate::ported::input::inpop();
+    // c:1816 `zcontext_restore();`
+    crate::ported::context::zcontext_restore();
+    if ctok == LEXERR || err.is_some() {
+        return Err(err.unwrap_or_else(|| "parse error".to_string()));
     }
-
     Ok(result)
 }
 

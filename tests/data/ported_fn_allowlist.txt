@@ -1067,11 +1067,18 @@ parse_sublist
 parse_init
 par_event_wordcode
 par_list_wordcode
+par_list1_wordcode
 par_sublist_wordcode
 par_pipe_wordcode
 par_cmd_wordcode
+par_cmd_wordcode_noargs
 par_simple_wordcode
+par_simple_wordcode_impl
 par_arith_wordcode
+cmplx_get
+cmplx_or
+cmplx_set
+par_loop_body_wordcode
 par_case_wordcode
 par_cond_wordcode
 par_cursh_wordcode
@@ -1092,6 +1099,7 @@ exec_select_wordcode
 exec_case_wordcode
 exec_if_wordcode
 exec_while_wordcode
+par_subsh_wordcode_impl
 exec_repeat_wordcode
 exec_funcdef_wordcode
 exec_subsh_wordcode
