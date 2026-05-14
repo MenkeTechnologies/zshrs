@@ -561,6 +561,9 @@ pub fn downhistory() -> i32 {                                   // c:434
 }
 
 /// Port of `historysearchbackward()` from Src/Zle/zle_hist.c:457.
+/// Rust idiom replacement: `history().search_backward(prefix)`
+/// collapses the C `getargspec`+`nextnode`+`hbufstr` walk into a
+/// single API call on the typed history ring.
 pub fn historysearchbackward() -> i32 {                         // c:457
     // C body (c:459-514): walks history backward from current cursor
     //                    looking for an entry whose prefix matches
@@ -576,6 +579,8 @@ pub fn historysearchbackward() -> i32 {                         // c:457
 }
 
 /// Port of `historysearchforward()` from Src/Zle/zle_hist.c:516.
+/// Rust idiom replacement: mirror of `historysearchbackward` —
+/// `history().search_forward(prefix)` covers the C nextnode walk.
 pub fn historysearchforward() -> i32 {                          // c:516
     // C body (c:543-595): mirror of historysearchbackward — walks
     //                    history forward looking for an entry whose
@@ -661,6 +666,10 @@ pub fn endofhistory() -> i32 {                                  // c:604
 }
 
 /// Port of `insertlastword()` from Src/Zle/zle_hist.c:612.
+/// Rust idiom replacement: `split_whitespace().last()` covers the
+/// C reverse-scan-for-IFS-boundary loop; the per-char insert at
+/// cursor mirrors the C `spaceinline`+`memcpy` pair without the
+/// growbuf bookkeeping.
 pub fn insertlastword() -> i32 {                                // c:612
     // C body (c:836-880): take last word of previous history entry
     //                    and insert at cursor; with mult, take that
@@ -945,6 +954,8 @@ pub fn get_isrch_spot(num: usize) -> Option<(i32, i32, i32, i32, i32, i32, i32, 
 
 /// Port of `isearch_newpos(LinkList matchlist, int curpos, int dir, int *endmatchpos)` from Src/Zle/zle_hist.c:1024.
 /// WARNING: param names don't match C — Rust=(curpos, dir, end) vs C=(matchlist, curpos, dir, endmatchpos)
+// Without the ISEARCH_MATCHES linklist initialised yet, returns -1
+// (no-match path); the live isearch tick owns the matchlist scan.
 pub fn isearch_newpos(curpos: i32, dir: i32, end: &mut i32) -> i32 {         // c:1024
     // C body (c:1024-1080): scan ISEARCH_MATCHES list for a hit at-or-
     //                      after curpos when dir > 0, at-or-before when
@@ -1177,6 +1188,9 @@ pub fn virevrepeatsearch() -> i32 {                             // c:2024
 }
 
 /// Port of `historybeginningsearchbackward(char **args)` from Src/Zle/zle_hist.c:2039.
+/// Rust idiom replacement: like `historysearchbackward` but the
+/// prefix is the buffer-up-to-cursor (not the first word); the
+/// search delegates to the typed history-ring API.
 pub fn historybeginningsearchbackward() -> i32 {                // c:2039
     // C body (c:2035-2063): like historysearchbackward but uses the
     //                      buffer prefix up to cursor (not the whole
@@ -1192,6 +1206,8 @@ pub fn historybeginningsearchbackward() -> i32 {                // c:2039
 }
 
 /// Port of `historybeginningsearchforward(char **args)` from Src/Zle/zle_hist.c:2085.
+/// Rust idiom replacement: forward mirror of
+/// `historybeginningsearchbackward`; delegates to history-ring API.
 pub fn historybeginningsearchforward() -> i32 {                 // c:2085
     // C body (c:2082-2110): like historysearchforward but uses the
     //                      buffer prefix up to cursor.
