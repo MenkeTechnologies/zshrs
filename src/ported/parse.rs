@@ -72,7 +72,7 @@ struct EccstrNode {
 // ECLEN: allocated entries in ECBUF (parse.c:269).
 // ECUSED: entries actually used so far (parse.c:271).
 // ECNPATS: count of patterns referenced by ECBUF (parse.c:273).
-// ECSOFFS / ECSSUB: byte offsets into the deferred string region
+// ECSOFFS / ECSSUB: byte offsets into the string region
 // (parse.c:279). ECSSUB subtracts substring overlap.
 // ECNFUNC: count of functions defined so far (parse.c:285).
 // ECSTRS_INDEX: dedup index for long strings — C uses a binary tree
@@ -1718,20 +1718,12 @@ pub fn parse() -> ZshProgram {
     program
 }
 
-/// P9c: wordcode-emission parser entry. Direct port of zsh's
-/// `parse_event(int endtok)` from `Src/parse.c:683-720`. Emits a
-/// minimal wordcode stream for the parsed program into the live
-/// `ECBUF` thread_local via P9b's `ecadd` / `ecstrcode` API and
-/// returns the start index of the emitted Eprog (matching C's
-/// `Eprog parse_event(...)` return).
-///
-/// Minimal implementation: emits `WCB_END()` only for now (P9c
-/// stub). The full par_event/par_list/par_sublist/par_pipe/par_cmd
-/// recursion that walks the token stream and emits the right
-/// wordcode for each production is the multi-week rewrite called
-/// out in PORT_PLAN.md. This stub establishes the entry point and
-/// drives the live ECBUF emission so downstream consumers (P9d
-/// exec_wordcode) have a real wordcode buffer to walk.
+/// Wordcode-emission top-level driver. Closest C analog is
+/// `parse_list(void)` at `Src/parse.c:697-712`: init_parse +
+/// zshlex + par_list(&c) + bld_eprog. This entry omits init_parse
+/// and bld_eprog (caller responsibilities) and inlines a guard
+/// loop around par_list_wordcode for cases where the lexer leaves
+/// a non-ENDINPUT terminator (LEXERR, missing close-token, etc.).
 pub fn par_event_wordcode() -> usize {
     let start = ECUSED.get() as usize;
     // C `parse_list` (parse.c:697-712) calls par_list ONCE — par_list's
