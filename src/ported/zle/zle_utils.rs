@@ -1123,17 +1123,6 @@ pub fn insert_str(s: &str) {
     }
 
 
-/// Metafication helpers (for compatibility with zsh's metafied strings)
-pub fn pastebuf(s: &str) -> String {
-    // In zsh, Meta (0x83) is used to escape special bytes
-    // For Rust we typically don't need this, but provide for compatibility
-    s.to_string()
-}
-
-pub fn unmetafy(s: &str) -> String {
-    s.to_string()
-}
-
 // Note: dead `UndoEntry`/`UndoState`/`apply_undo_entry` aggregates
 // removed per PORT_PLAN Phase 2. They were a Rust-only invention
 // with zero references across the codebase. The canonical undo

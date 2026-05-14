@@ -1226,10 +1226,28 @@ pub fn match_highlight(spec: &str) -> TextAttr {
             "blink" => attr.blink = true,
             "noblink" => attr.blink = false,
             other => {
+                // Inline port of the named/numeric colour parser the C
+                // `match_colour()` (Src/prompt.c:1957) does for `fg=`/
+                // `bg=` clauses. The 24-bit `#rrggbb` form and
+                // `bright-foo` aliases are not surfaced here.
+                let parse = |name: &str| -> Option<u8> {
+                    match name {
+                        "black" => Some(0),
+                        "red" => Some(1),
+                        "green" => Some(2),
+                        "yellow" => Some(3),
+                        "blue" => Some(4),
+                        "magenta" => Some(5),
+                        "cyan" => Some(6),
+                        "white" => Some(7),
+                        "default" => None,
+                        n => n.parse::<u8>().ok(),
+                    }
+                };
                 if let Some(rest) = other.strip_prefix("fg=") {
-                    attr.fg_color = match_colour(rest);
+                    attr.fg_color = parse(rest);
                 } else if let Some(rest) = other.strip_prefix("bg=") {
-                    attr.bg_color = match_colour(rest);
+                    attr.bg_color = parse(rest);
                 }
                 // Anything else (hl=, layer=, opacity=, unknown name) is
                 // silently dropped — same as the C source's "found = 0"
@@ -1238,25 +1256,6 @@ pub fn match_highlight(spec: &str) -> TextAttr {
         }
     }
     attr
-}
-
-/// Parse a colour token (named or numeric) into a 256-colour palette index.
-/// Mirrors the eight ANSI base names + 256-colour numeric form supported
-/// by `match_colour()` (Src/prompt.c, called from `match_highlight`). The
-/// 24-bit `#rrggbb` form and `bright-foo` aliases are not surfaced.
-fn match_colour(name: &str) -> Option<u8> {
-    match name {
-        "black" => Some(0),
-        "red" => Some(1),
-        "green" => Some(2),
-        "yellow" => Some(3),
-        "blue" => Some(4),
-        "magenta" => Some(5),
-        "cyan" => Some(6),
-        "white" => Some(7),
-        "default" => None,
-        n => n.parse::<u8>().ok(),
-    }
 }
 
 /// Port of `ZR_equal(zr1, zr2)` macro from `Src/Zle/zle_refresh.c:74-82`.

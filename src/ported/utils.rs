@@ -5169,18 +5169,6 @@ pub fn getppid() -> i32 {
     0
 }
 
-/// Format seconds as HH:MM:SS
-pub fn printtime(secs: i64) -> String {
-    let hours = secs / 3600;
-    let mins = (secs % 3600) / 60;
-    let secs = secs % 60;
-    if hours > 0 {
-        format!("{}:{:02}:{:02}", hours, mins, secs)
-    } else {
-        format!("{}:{:02}", mins, secs)
-    }
-}
-
 /// `getkeystring` with the C `how` parameter (Src/utils.c:6915).
 /// The plain `getkeystring(s)` shim above defaults `how=0` for
 /// non-EMACS callers (zbeep, dollar-quote — they keep unknown
@@ -5362,92 +5350,6 @@ pub(crate) fn base64_decode(s: &str) -> Vec<u8> {
 // All correspond to Src/utils.c logic (path/string/bslashquote helpers).
 // ===========================================================
 
-
-/// Tokenise a string per zsh's `${(z)var}` semantics — port of
-/// `bufferwords()` from Src/lex.c (the function `subst.c::paramsubst()`
-/// dispatches to at Src/subst.c:4181/4186 for the Z-flag arm).
-///
-/// Whitespace separates words; shell metacharacters (`;`, `&`, `|`,
-/// `(`, `)`, `<`, `>`) emit as their own tokens; single/double quoted
-/// regions stay together (with outer quotes stripped).
-///
-/// The C signature is `LinkList bufferwords(LinkList, char*, int*, int)` —
-/// this Rust version takes an owned-Vec output instead of mutating a
-/// LinkList in place, and ignores the cursor-index/flags args (the
-/// `${(z)var}` call site at subst.c:4186 always passes `NULL, 0`).
-pub(crate) fn bufferwords(s: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    let flush = |out: &mut Vec<String>, cur: &mut String| {
-        if !cur.is_empty() {
-            out.push(std::mem::take(cur));
-        }
-    };
-    while i < chars.len() {
-        let c = chars[i];
-        match c {
-            ' ' | '\t' | '\n' => {
-                flush(&mut out, &mut cur);
-                i += 1;
-            }
-            ';' | '&' | '|' | '<' | '>' | '(' | ')' => {
-                flush(&mut out, &mut cur);
-                // Combine repeated metas: `&&`, `||`, `;;`, `>>`, `<<`.
-                let mut tok = String::new();
-                tok.push(c);
-                while i + 1 < chars.len()
-                    && chars[i + 1] == c
-                    && matches!(c, '&' | '|' | ';' | '<' | '>')
-                {
-                    tok.push(c);
-                    i += 1;
-                }
-                out.push(tok);
-                i += 1;
-            }
-            '\'' => {
-                // Single-quoted: take until matching bslashquote, no expansion.
-                i += 1;
-                while i < chars.len() && chars[i] != '\'' {
-                    cur.push(chars[i]);
-                    i += 1;
-                }
-                if i < chars.len() {
-                    i += 1; // skip closing '
-                }
-            }
-            '"' => {
-                // Double-quoted: take until matching bslashquote, honor `\"`.
-                i += 1;
-                while i < chars.len() && chars[i] != '"' {
-                    if chars[i] == '\\' && i + 1 < chars.len() {
-                        i += 1;
-                        cur.push(chars[i]);
-                        i += 1;
-                        continue;
-                    }
-                    cur.push(chars[i]);
-                    i += 1;
-                }
-                if i < chars.len() {
-                    i += 1; // skip closing "
-                }
-            }
-            '\\' if i + 1 < chars.len() => {
-                cur.push(chars[i + 1]);
-                i += 2;
-            }
-            _ => {
-                cur.push(c);
-                i += 1;
-            }
-        }
-    }
-    flush(&mut out, &mut cur);
-    out
-}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
