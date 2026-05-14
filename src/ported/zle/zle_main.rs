@@ -2015,9 +2015,6 @@ pub static YANKCS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsi
 pub static KCT: std::sync::Mutex<Option<usize>> = std::sync::Mutex::new(None);
 /// Port of `int vimarkcs[27]` + `zlong vimarkline[27]` from `Src/Zle/zle_move.c`.
 pub static VIMARKS: std::sync::OnceLock<std::sync::Mutex<[Option<(usize, i32)>; 27]>> = std::sync::OnceLock::new();
-pub fn vibuf() -> &'static std::sync::Mutex<[Vec<ZleChar>; 36]> {
-    VIBUF.get_or_init(|| std::sync::Mutex::new(std::array::from_fn(|_| Vec::new())))
-}
 /// Port of `int region_active` from `Src/Zle/zle_main.c`.
 pub static REGION_ACTIVE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 /// Rust-only queue for hooks. C dispatches inline via `zle_call_hook` (Src/Zle/zle_utils.c:1755).
@@ -2028,12 +2025,41 @@ pub static RAW_LP: std::sync::Mutex<String> = std::sync::Mutex::new(String::new(
 pub static RAW_RP: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 /// Port of `Region_highlight region_highlights` from `Src/Zle/zle_refresh.c`.
 pub static HIGHLIGHT: std::sync::OnceLock<std::sync::Mutex<super::zle_refresh::HighlightManager>> = std::sync::OnceLock::new();
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+pub fn vibuf() -> &'static std::sync::Mutex<[Vec<ZleChar>; 36]> {
+    VIBUF.get_or_init(|| std::sync::Mutex::new(std::array::from_fn(|_| Vec::new())))
+}
+
 pub fn history() -> &'static std::sync::Mutex<super::zle_hist::History> {
     HISTORY.get_or_init(|| std::sync::Mutex::new(super::zle_hist::History::new(2000)))
 }
+
 pub fn vimarks() -> &'static std::sync::Mutex<[Option<(usize, i32)>; 27]> {
     VIMARKS.get_or_init(|| std::sync::Mutex::new([None; 27]))
 }
+
 pub fn highlight() -> &'static std::sync::Mutex<super::zle_refresh::HighlightManager> {
     HIGHLIGHT.get_or_init(|| std::sync::Mutex::new(super::zle_refresh::HighlightManager::new()))
 }

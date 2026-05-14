@@ -1799,11 +1799,6 @@ pub fn shfunc_autoload(name: &str) -> ShFunc {                               // 
     }
 }
 
-/// Singleton accessor for the `dircache` file-static at
-/// `Src/hashtable.c:1517`.
-pub fn dircache_lock() -> &'static std::sync::Mutex<Vec<dircache_entry>> {
-    DIRCACHE_INNER.get_or_init(|| std::sync::Mutex::new(Vec::new()))
-}
 
 /// Format a reserved word for output
 /// Format a reserved-word entry.
@@ -2015,6 +2010,23 @@ fn glob_match_inner(pat: &[u8], name: &[u8]) -> bool {
         b'?' => !name.is_empty() && glob_match_inner(&pat[1..], &name[1..]),
         c => !name.is_empty() && name[0] == c && glob_match_inner(&pat[1..], &name[1..]),
     }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Singleton accessor for the `dircache` file-static at
+/// `Src/hashtable.c:1517`.
+pub fn dircache_lock() -> &'static std::sync::Mutex<Vec<dircache_entry>> {
+    DIRCACHE_INNER.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
 #[cfg(test)]

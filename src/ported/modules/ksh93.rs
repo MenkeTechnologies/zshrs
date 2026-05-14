@@ -497,20 +497,6 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     0
 }
 
-/// Port of `ksh93_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/ksh93.c:143`.
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 1,                // bintab: nameref (ksh93.c)
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 9,                // partab: .sh.edchar/edmode/file/lineno/match/name/subscript/subshell/version
-        n_abstract: 0,
-    }))
-}
 
 // Local descriptor stub mirroring the C bintab + partab.
 // WARNING: NOT IN KSH93.C — Rust-only module-framework shim.
@@ -611,6 +597,32 @@ const VIMODE:    i32 = crate::ported::zsh_h::VIMODE;
 // (locallevel is AtomicI32 to match C `int` for that field).
 #[allow(dead_code)]
 const _: AtomicI64 = AtomicI64::new(0);
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Port of `ksh93_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/ksh93.c:143`.
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 1,                // bintab: nameref (ksh93.c)
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 0,
+        pd_list: None,
+        pd_size: 9,                // partab: .sh.edchar/edmode/file/lineno/match/name/subscript/subshell/version
+        n_abstract: 0,
+    }))
+}
 
 #[cfg(test)]
 mod tests {

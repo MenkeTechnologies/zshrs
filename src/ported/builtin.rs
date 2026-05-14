@@ -6110,9 +6110,6 @@ static TRAPS_INNER: std::sync::OnceLock<std::sync::Mutex<std::collections::HashM
 fn BIN_PREFIX(name: &str, flags: u32) -> builtin {
     BUILTIN(name, flags | BINF_PREFIX, None, 0, 0, 0, None, None)
 }
-pub fn shfunctab_table() -> &'static std::sync::Mutex<std::collections::HashMap<String, usize>> {
-    SHFUNCTAB_INNER.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-}
 
 /// Inline printf-style format helper used by bin_print's -f/printf mode.
 /// Replaces `%s` / `%d` / `%i` / `%c` / `%%` with positional args.
@@ -6333,9 +6330,6 @@ pub fn findcmd(name: &str, _docopy: i32, _default_path: i32) -> Option<String> {
     }
     None
 }
-pub fn traps_table() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
-    TRAPS_INNER.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-}
 
 /// Port of `getsigidx(const char *s)` from Src/signals.c — return signal number for
 /// a name, or -1 if unknown. Strips optional `SIG` prefix; falls back
@@ -6366,6 +6360,25 @@ fn getsigidx(name: &str) -> i32 {
 fn pat_enables(_name: &str, argv: &[String], _on: bool) -> i32 {
     let _ = argv;
     0
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+pub fn shfunctab_table() -> &'static std::sync::Mutex<std::collections::HashMap<String, usize>> {
+    SHFUNCTAB_INNER.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+pub fn traps_table() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    TRAPS_INNER.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
 #[cfg(test)]
