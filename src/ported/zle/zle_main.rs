@@ -348,6 +348,9 @@ pub struct ztmout {                                                          // 
     /// keymap dispatcher always sees a consistent newline byte. The
     /// final byte is also stashed in `lastchar` for widgets that
     /// inspect what triggered them (digit-argument, vi-find-char).
+    /// Rust idiom replacement: delegates to `raw_getbyte` (which owns
+    /// the live read path) + a small \n↔\r typeahead swap; the C
+    /// `timeout`/`full` args are folded into the raw reader.
     /// WARNING: param names don't match C — Rust=(do_keytmout) vs C=(do_keytmout, timeout, full)
     pub fn getbyte(do_keytmout: bool) -> Option<u8> {
         let b = raw_getbyte(do_keytmout)?;
@@ -950,6 +953,9 @@ pub fn recursiveedit() -> i32 {                                 // c:1974
     /// command status, jobs count, sigwinch). Re-expands `lprompt_raw`
     /// and `rprompt_raw` via `prompt::expand_prompt` with a fresh
     /// `PromptContext` so escapes pick up the latest env / state.
+    /// Rust idiom replacement: two `expand_prompt` calls cover the C
+    /// `promptexpand`+`free`+`promptexpand` pair; PromptContext drops
+    /// since expand_prompt reads env/state internally.
     pub fn reexpandprompt() {
         // PromptContext was removed from prompt.rs's public surface;
         // expand_prompt() takes only the format string now and reads
@@ -1005,6 +1011,10 @@ pub fn zle_resetprompt() {                                                   // 
     /// state. Our simplified version does the equivalent for a
     /// single-line display: emit \\r + clear-to-EOL, flush stdout, then
     /// arm `resetneeded` so the next zlecore iteration redraws.
+    /// Rust idiom replacement: single-line display means the full C
+    /// `moveto(nlnct, 0)` + `tcout(TCCLEAREOD)` + `postedit` sequence
+    /// collapses to `\r` + cleareol + SGR-reset; multi-line teardown
+    /// belongs to the live widget tick.
     pub fn trashzle() {                                             // c:2068
         // c:2089 — emit `\r` then `cleareol` (CSI K) to wipe the
         //          current line. C drives this via tcout(TCCR) +

@@ -713,6 +713,8 @@ pub fn scanhashtable<T: HashNodeFlags, F: FnMut(&str, &T)>(
 /// C grows the bucket array when load factor exceeds threshold.
 /// Rust HashMap rehashes automatically — calling reserve on the
 /// passed map gives the closest equivalent.
+/// Rust idiom replacement: `HashMap::reserve` covers the C
+/// `growhashtable` bucket-realloc + rehash loop.
 pub fn expandhashtable<T>(ht: &mut HashMap<String, T>) {
     let want = ht.len() * 2;
     ht.reserve(want.saturating_sub(ht.capacity()));
@@ -722,6 +724,8 @@ pub fn expandhashtable<T>(ht: &mut HashMap<String, T>) {
 ///
 /// C reallocates buckets to a specific size. Rust HashMap reserves
 /// capacity to ensure at least `newsize` entries fit without rehash.
+/// Rust idiom replacement: `HashMap::reserve(need)` covers the C
+/// `realloc(hsize * sizeof(HashNode))` + rehash dance.
 pub fn resizehashtable<T>(ht: &mut HashMap<String, T>, newsize: i32) {
     let need = newsize.max(0) as usize;
     if need > ht.capacity() {
@@ -757,6 +761,9 @@ pub mod print_flags {
 /// debug analysis (under ZSH_HASH_DEBUG). Rust HashMap doesn't
 /// expose chain-length info; emit count + capacity which is the
 /// equivalent visibility.
+/// Rust idiom replacement: HashMap's open addressing doesn't expose
+/// chain length, so we emit name+capacity+len — the equivalent
+/// visibility under Rust's std::collections backend.
 /// WARNING: param names don't match C — Rust=(name, ht) vs C=(ht)
 pub fn printhashtabinfo<T>(name: &str, ht: &HashMap<String, T>) -> String { // c:78
     format!(
@@ -834,6 +841,9 @@ pub fn emptycmdnamtable() {
 /// any executable to `cmdnamtab` (skipping names already present
 /// from earlier PATH entries). Rust port routes through
 /// `cmdnam_table::hash_dir`.
+/// Rust idiom replacement: pure delegation to `hash_dir` on the
+/// typed `CmdNamTable`; the C opendir/readdir/executable-test loop
+/// lives there with `fs::read_dir` + `is_executable_via_metadata`.
 /// WARNING: param names don't match C — Rust=(dir, dir_index) vs C=(dirp)
 pub fn hashdir(dir: &str, dir_index: usize) {
     cmdnamtab_lock()
@@ -1044,6 +1054,8 @@ pub fn enableshfuncnode(hn: &str) {
 /// filename string, and sticky options struct. Rust port: drop
 /// runs all of this when the entry is removed; this helper just
 /// removes from the table to trigger the drop chain.
+/// Rust idiom replacement: `HashMap::remove` triggers the Box<T>
+/// drop cascade — same teardown as the C zfree chain, automated.
 pub fn freeshfuncnode(hn: &str) {
     shfunctab_lock()
         .write()
@@ -1566,6 +1578,8 @@ pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering
 ///
 /// Inserts a history entry, returning the displaced event ID
 /// (Some) if a duplicate command-text was already present.
+/// Rust idiom replacement: `HashMap::insert` returns the displaced
+/// value directly — equivalent of the C dup-check + bucket-swap.
 /// WARNING: param names don't match C — Rust=(nam, event_id) vs C=(ht, nam, nodeptr)
 pub fn addhistnode(nam: &str, event_id: i32) -> Option<i32> {
     histtab_lock()

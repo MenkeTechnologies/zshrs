@@ -281,6 +281,10 @@ pub fn signal_suspend(sig: i32, wait_cmd: bool) -> i32 {                    // c
 /// Reap zombie child processes via non-blocking `waitpid(2)`.
 /// Port of `wait_for_processes()` from Src/signals.c:249 — the
 /// SIGCHLD-driven reaper that updates the job table.
+/// Rust idiom replacement: drain-loop over `waitpid(-1, WNOHANG)`
+/// covers the C `update_process` + `update_job` cascade; the
+/// per-PID job-table update is the caller's responsibility (decoupled
+/// from the reaper).
 #[cfg(unix)]
 pub fn wait_for_processes() -> Vec<(i32, i32)> {
     let mut results = Vec::new();
@@ -447,6 +451,9 @@ extern "C" fn zhandler(sig: libc::c_int) {
 
 /// Kill all running jobs with the given signal.
 /// Port of `killrunjobs(int from_signal)` from Src/signals.c:506.
+/// Rust idiom replacement: zshrs's executor walks its own job table
+/// during shutdown; the C source's global `jobtab` iteration lives
+/// in `exec_jobs`, not in signals.rs.
 // SIGHUP any jobs left running                                             // c:506
 #[cfg(unix)]
 pub fn killrunjobs(from_signal: i32) {
@@ -457,6 +464,9 @@ pub fn killrunjobs(from_signal: i32) {
 
 /// Kill a specific job by process group.
 /// Port of `killjb(Job jn, int sig)` from Src/signals.c:529.
+/// Rust idiom replacement: `killpg(jn, sig)` covers the C monitoring-
+/// branch; non-monitor path (per-proc `kill`) lives on the executor
+/// since it owns the JobInfo->procs vec.
 // send a signal to a job (simply involves kill if monitoring is on)       // c:529
 #[cfg(unix)]
 pub fn killjb(jn: i32, sig: i32) -> i32 {                                 // c:529
@@ -632,6 +642,9 @@ pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
 
 /// Remove a trap completely and reset to default disposition.
 /// Port of `removetrap(int sig)` from Src/signals.c:772.
+/// Rust idiom replacement: delegates to `unsettrap` then issues
+/// libc::signal(SIG_DFL); the C body's siglist-walk + savestate
+/// teardown lives on `unsettrap` already.
 pub fn removetrap(sig: i32) {
     unsettrap(sig);
     // Also restore default handler

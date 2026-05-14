@@ -499,6 +499,9 @@ pub fn tcoutclear(to_end: bool) {                                            // 
 pub const DEF_MWBUF_ALLOC: usize = 32;                                       // c:697
 
 /// Port of `freevideo()` from Src/Zle/zle_refresh.c:700.
+/// Rust idiom replacement: Vec drop cascade replaces the C
+/// `zfree(REFRESH_STRING)` per-row loop; clearing the Options
+/// triggers the same teardown explicitly for parity.
 /// WARNING: param names don't match C — Rust=(state) vs C=()
 pub fn freevideo(state: &mut RefreshState) {                                 // c:freevideo
     // C body: walk nbuf/obuf rows; zfree each REFRESH_STRING; zfree
@@ -510,6 +513,9 @@ pub fn freevideo(state: &mut RefreshState) {                                 // 
 }
 
 /// Port of `resetvideo()` from Src/Zle/zle_refresh.c:725.
+/// Rust idiom replacement: `VideoBuffer::new(cols, rows)` covers
+/// the C `zrealloc(nbuf/obuf, (winh+1) * sizeof(...))` + memset-zero
+/// pair; geometry pulled from the canonical adjustcolumns/lines.
 /// WARNING: param names don't match C — Rust=(state) vs C=()
 pub fn resetvideo(state: &mut RefreshState) {                                // c:resetvideo
     // C body: `winw = zterm_columns; nbuf/obuf rows realloced for
@@ -540,6 +546,9 @@ pub fn resetvideo(state: &mut RefreshState) {                                // 
     }
 
 /// Port of `nextline(Rparams rpms, int wrapped)` from Src/Zle/zle_refresh.c:842.
+/// Rust idiom replacement: RefreshState owns its row vec, so the
+/// C `ln++` + per-row reallocation collapses to a vln increment +
+/// vertical-overflow check; row allocation lives on VideoBuffer.
 #[allow(unused_variables)]
 pub fn nextline(rpms: &mut RefreshState, wrapped: i32) -> i32 {            // c:842
     // C body (c:842-873): advance rpms->ln++; check space against
@@ -555,6 +564,9 @@ pub fn nextline(rpms: &mut RefreshState, wrapped: i32) -> i32 {            // c:
 }
 
 /// Port of `snextline(Rparams rpms)` from Src/Zle/zle_refresh.c:875.
+/// Rust idiom replacement: scroll-up is a vln decrement + vcs
+/// reset; the C `memmove(rows+1, rows, ...)` pair drops since the
+/// terminal emits the scroll itself via the wrap escape sequence.
 pub fn snextline(rpms: &mut RefreshState) -> i32 {                          // c:875
     // C body (c:875-919): scroll the on-screen display up one line
     // when the new line wraps past the bottom. zshrs decrements

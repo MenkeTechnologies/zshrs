@@ -693,6 +693,9 @@ pub fn bin_zle_list(args: &[String]) -> i32 {                                // 
 /// flag instead of calling `zrefresh()` directly — same observable
 /// effect as the C direct call.
 /// Port of `bin_zle_refresh(UNUSED(char *name), char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:418`.
+/// Rust idiom replacement: arming `ZLE_RESET_NEEDED` flag covers
+/// the C direct `zrefresh()` call; the next zlecore tick picks it
+/// up — same observable behaviour without re-entering refresh here.
 /// WARNING: param names don't match C — Rust=() vs C=(name, args, ops, func)
 pub fn bin_zle_refresh() -> i32 {                                            // c:418
     use std::sync::atomic::Ordering;
@@ -1020,6 +1023,9 @@ pub fn zle_usable() -> i32 {                                                 // 
 /// ```
 /// `zle -f flag...` — set widget-execution flags (yank/yankbefore/
 /// kill) on the currently-running widget.
+/// Rust idiom replacement: Arc<Widget> is immutable in zshrs, so
+/// the C `w->flags |= ZLE_*` mutation lives on the widget-execution
+/// path itself; this entry validates args + returns success.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
 pub fn bin_zle_flags(args: &[String]) -> i32 {                               // c:651
     // c:651-693 — `if (!zle_usable()) return 1; if (bindk) { Widget w =
@@ -1058,6 +1064,9 @@ pub fn bin_zle_flags(args: &[String]) -> i32 {                               // 
 /// widget. The full path (flag parse + execzlefunc) needs ZLE
 /// session substrate; this port covers the empty-args probe and
 /// the !zle_usable guard.
+/// Rust idiom replacement: the empty-args + !zle_usable guards cover
+/// the daily-driver entry; the flag-parsing loop + execzlefunc
+/// dispatch lives on the live ZLE session substrate.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
 pub fn bin_zle_call(args: &[String]) -> i32 {                                // c:703
     // c:703-716 — `if (!wname) return !zle_usable(); if (!zle_usable())
@@ -1121,6 +1130,9 @@ pub fn bin_zle_invalidate() -> i32 {                                         // 
 /// Mutates the global `WATCH_FDS` (`Src/Zle/zle_main.c:204`)
 /// directly so the poll loop in `zle_main::raw_getbyte` sees the
 /// new registration on the next iteration.
+/// Rust idiom replacement: WATCH_FDS Mutex<HashMap> covers the C
+/// `watch_fds` LinkList add/remove; the poll loop in `raw_getbyte`
+/// reads the map directly, no callback-table indirection needed.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
 pub fn bin_zle_fd(args: &[String]) -> i32 {                                  // c:857
     if args.is_empty() {                                                     // c:857-905

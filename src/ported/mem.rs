@@ -225,6 +225,9 @@ pub fn memory_validate(heap_id: u64) -> i32 {                                // 
 /// Reallocate heap memory.
 /// Port of `hrealloc(char *p, size_t old, size_t new)` from Src/mem.c:687 — heap-arena
 /// counterpart of `zrealloc()` (Src/mem.c:687).
+/// Rust idiom replacement: heap-arena tracking is unnecessary —
+/// `Vec::resize` covers the C arena copy + free-of-old + zero-pad
+/// in one call; `old` size arg drops since Vec tracks its own len.
 /// WARNING: param names don't match C — Rust=(old, new_size) vs C=(p, old, new)
 pub fn hrealloc(old: Vec<u8>, new_size: usize) -> Vec<u8> {                 // c:687
     let mut v = old;
@@ -306,7 +309,10 @@ pub fn zsfree(p: String) {                                                  // c
 }
 
 /// Port of `realloc(void *p, size_t size)` from Src/mem.c:1648 — wrapped `realloc`.
-/// Shim.
+/// Rust idiom replacement: zshrs never calls raw realloc — every
+/// caller uses Vec/Box/Arc which manage their own allocation. The
+/// C source wraps libc realloc for the heap-arena fallback path
+/// that zshrs replaces entirely. Shim is name-parity only.
 /// WARNING: param names don't match C — Rust=(_size) vs C=(p, size)
 pub fn realloc(_size: usize) -> usize { 0 }
 
