@@ -564,6 +564,15 @@ def main() -> int:
             ratio = round(r_body / c_body * 100)
         else:
             ratio = ""
+        # Row tint: red (low ratio) → yellow (~50%) → green (≥100%).
+        # Hue 0=red, 60=yellow, 120=green. Cap ratio at 100 so very-large
+        # Rust ports still show pure green instead of rotating past green.
+        # No-rust rows (ratio="") get a neutral dim background.
+        if isinstance(ratio, int):
+            hue = max(0, min(int(ratio), 100)) * 1.2  # 0..120
+            row_style = f"background:hsl({hue:.0f},45%,11%);"
+        else:
+            row_style = "background:hsl(0,0%,9%);"
         c_cell = (
             f'<a href="../{html.escape(c_first[0])}#L{c_line}">'
             f'{html.escape(c_file_short)}:{c_line}</a>'
@@ -576,6 +585,7 @@ def main() -> int:
         )
         lc_rows.append(
             f'<tr class="lc-row" '
+            f'style="{row_style}" '
             f'data-name="{html.escape(r["name"])}" '
             f'data-cfile="{html.escape(r["cfile"])}" '
             f'data-status="{r["status"]}" '
@@ -770,6 +780,12 @@ Excluded from this report by design:
   table.lc-table th:hover {{ background:var(--bg-hover);color:#fff; }}
   table.lc-table th.sort-asc::after {{ content:" ▲";color:var(--cyan);font-size:9px; }}
   table.lc-table th.sort-desc::after {{ content:" ▼";color:var(--cyan);font-size:9px; }}
+  /* Ratio-gradient rows: row tint is set inline via hsl(); keep the
+     gradient visible on hover by overriding the generic .fn-table
+     tr:hover background, and brighten the lightness instead. */
+  table.lc-table tbody tr.lc-row:hover {{ filter:brightness(1.4); }}
+  table.lc-table tbody tr.lc-row:hover td {{ background:transparent; }}
+  table.lc-table tbody tr.lc-row td {{ background:transparent; }}
   table.file-map td.num {{ text-align:right;font-family:'Share Tech Mono',monospace; }}
   table.file-map td.ported-num   {{ color:var(--green); }}
   table.file-map td.unported-num {{ color:#ff6b6b; }}
