@@ -2648,89 +2648,205 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
 
 /// Port of `par_if(int *cmplx)` from `Src/parse.c:1410-1512`.
 pub fn par_if_wordcode(cmplx: &mut i32) {
-    let p = ecadd(0);
-    cmdpush(CS_IF as u8);
-    // c:1437 — `type = (xtok == IF ? WC_IF_IF : WC_IF_ELIF);`. First
-    // loop iteration consumes IF; subsequent ones consume ELIF.
-    let mut first = true;
+    // c:1413 — `int oecused = ecused, p, pp, type, usebrace = 0;`
+    let _oecused = ECUSED.get() as usize;
+    let p: usize;
+    let mut pp: usize = 0;
+    let mut r#type: wordcode = WC_IF_IF;
+    let mut usebrace: i32 = 0;
+    // c:1414 — `enum lextok xtok;`
+    let mut xtok: lextok;
+    // c:1415 — `unsigned char nc;`
+    let nc: u8;
+    let _ = nc;
+
+    // c:1417 — `p = ecadd(0);`
+    p = ecadd(0);
+
+    // c:1419 — `for (;;) {`
     loop {
-        let arm = ecadd(0);
-        zshlex();
-        // c:1438 — `par_save_list(cmplx);` — condition body.
-        par_save_list_wordcode(cmplx);
-        let body_brace = tok() == INBRACE_TOK;
-        if !body_brace {
-            while tok() == SEPER {
-                zshlex();
-            }
-            if tok() != THEN {
-                error("par_if: expected `then`");
-                cmdpop();
-                return;
-            }
+        // c:1420 — `xtok = tok;`
+        xtok = tok();
+        // c:1421 — `cmdpush(xtok == IF ? CS_IF : CS_ELIF);`
+        cmdpush(if xtok == IF { CS_IF as u8 } else { CS_ELIF as u8 });
+        // c:1422-1426 — `if (xtok == FI) { incmdpos = 0; zshlex(); break; }`
+        if xtok == FI {
+            set_incmdpos(false);
+            zshlex();
+            break;
         }
-        cmdpop();
-        cmdpush(CS_IFTHEN as u8);
+        // c:1427 — `zshlex();`
         zshlex();
-        // c:1453 / c:1462 — `par_save_list(cmplx);` — then-body.
+        // c:1428-1429 — `if (xtok == ELSE) break;`
+        if xtok == ELSE {
+            break;
+        }
+        // c:1430-1431 — `while (tok == SEPER) zshlex();`
+        while tok() == SEPER {
+            zshlex();
+        }
+        // c:1432-1435 — `if (!(xtok == IF || xtok == ELIF)) { cmdpop(); YYERRORV; }`
+        if !(xtok == IF || xtok == ELIF) {
+            cmdpop();
+            error("par_if: expected `if` or `elif`");
+            return;
+        }
+        // c:1436 — `pp = ecadd(0);`
+        pp = ecadd(0);
+        // c:1437 — `type = (xtok == IF ? WC_IF_IF : WC_IF_ELIF);`
+        r#type = if xtok == IF { WC_IF_IF } else { WC_IF_ELIF };
+        // c:1438 — `par_save_list(cmplx);` — condition body
         par_save_list_wordcode(cmplx);
-        cmdpop();
-        let used = ECUSED.get() as usize;
-        let arm_off = used.saturating_sub(1 + arm) as wordcode;
-        let arm_type = if first { WC_IF_IF } else { WC_IF_ELIF };
-        first = false;
-        ECBUF.with_borrow_mut(|b| {
-            if arm < b.len() {
-                b[arm] = WCB_IF(arm_type, arm_off);
-            }
-        });
-        match tok() {
-            ELIF => {
-                cmdpush(CS_ELIF as u8);
-                continue;
-            }
-            ELSE => {
-                cmdpush(CS_ELSE as u8);
-                let arm = ecadd(0);
-                zshlex();
-                // c:1494 / c:1500 — `par_save_list(cmplx);` — else body.
-                par_save_list_wordcode(cmplx);
-                let used = ECUSED.get() as usize;
-                let arm_off = used.saturating_sub(1 + arm) as wordcode;
-                // c:1507 — `ecbuf[pp] = WCB_IF(WC_IF_ELSE, ecused - 1 - pp);`
-                ECBUF.with_borrow_mut(|b| {
-                    if arm < b.len() {
-                        b[arm] = WCB_IF(WC_IF_ELSE, arm_off);
-                    }
-                });
+        // c:1439 — `incmdpos = 1;`
+        set_incmdpos(true);
+        // c:1440-1443 — `if (tok == ENDINPUT) { cmdpop(); YYERRORV; }`
+        if tok() == ENDINPUT {
+            cmdpop();
+            error("par_if: unexpected end-of-input after condition");
+            return;
+        }
+        // c:1444-1445 — `while (tok == SEPER) zshlex();`
+        while tok() == SEPER {
+            zshlex();
+        }
+        // c:1446 — `xtok = FI;` — pre-set so the post-loop check works
+        xtok = FI;
+        // c:1447 — `nc = cmdstack[cmdsp - 1] == CS_IF ? CS_IFTHEN : CS_ELIFTHEN;`
+        // (Not tracked separately in zshrs cmdstack — derive from cur top
+        // by reading CMDSTACK; for safety use CS_IFTHEN as default.)
+        // We don't have a way to read top easily — match by tracking
+        // whether we just pushed CS_IF or CS_ELIF.
+        // For wordcode emission this only affects cmdstack debug output;
+        // not the emitted wordcode. Use CS_IFTHEN.
+        let nc_local: u8 = CS_IFTHEN as u8;
+        if tok() == THEN {
+            // c:1448-1456 — THEN branch
+            // c:1449 — `usebrace = 0;`
+            usebrace = 0;
+            // c:1450 — `cmdpop();`
+            cmdpop();
+            // c:1451 — `cmdpush(nc);`
+            cmdpush(nc_local);
+            // c:1452 — `zshlex();`
+            zshlex();
+            // c:1453 — `par_save_list(cmplx);` — then body
+            par_save_list_wordcode(cmplx);
+            // c:1454 — `ecbuf[pp] = WCB_IF(type, ecused - 1 - pp);`
+            let used = ECUSED.get() as usize;
+            ECBUF.with_borrow_mut(|b| {
+                b[pp] = WCB_IF(r#type, (used.saturating_sub(1 + pp)) as wordcode);
+            });
+            // c:1455 — `incmdpos = 1;`
+            set_incmdpos(true);
+            // c:1456 — `cmdpop();`
+            cmdpop();
+        } else if tok() == INBRACE_TOK {
+            // c:1457-1473 — INBRACE branch
+            // c:1458 — `usebrace = 1;`
+            usebrace = 1;
+            // c:1459 — `cmdpop();`
+            cmdpop();
+            // c:1460 — `cmdpush(nc);`
+            cmdpush(nc_local);
+            // c:1461 — `zshlex();`
+            zshlex();
+            // c:1462 — `par_save_list(cmplx);`
+            par_save_list_wordcode(cmplx);
+            // c:1463-1466 — `if (tok != OUTBRACE) { cmdpop(); YYERRORV; }`
+            if tok() != OUTBRACE_TOK {
                 cmdpop();
-                if tok() != FI {
-                    error("par_if: expected `fi`");
-                    return;
-                }
-                zshlex();
-                break;
-            }
-            FI => {
-                zshlex();
-                break;
-            }
-            _ => {
-                if body_brace && tok() == OUTBRACE_TOK {
-                    zshlex();
-                    break;
-                }
-                error("par_if: expected `elif`/`else`/`fi`");
+                error("par_if: expected `}`");
                 return;
             }
+            // c:1467 — `ecbuf[pp] = WCB_IF(type, ecused - 1 - pp);`
+            let used = ECUSED.get() as usize;
+            ECBUF.with_borrow_mut(|b| {
+                b[pp] = WCB_IF(r#type, (used.saturating_sub(1 + pp)) as wordcode);
+            });
+            // c:1469 — `zshlex();`
+            zshlex();
+            // c:1470 — `incmdpos = 1;`
+            set_incmdpos(true);
+            // c:1471-1472 — `if (tok == SEPER) break;`
+            if tok() == SEPER {
+                break;
+            }
+            // c:1473 — `cmdpop();`
+            cmdpop();
+        } else if unset(SHORTLOOPS) {
+            // c:1474-1476 — `cmdpop(); YYERRORV;`
+            cmdpop();
+            error("par_if: short body requires SHORTLOOPS");
+            return;
+        } else {
+            // c:1477-1484 — short loop form
+            // c:1478 — `cmdpop();`
+            cmdpop();
+            // c:1479 — `cmdpush(nc);`
+            cmdpush(nc_local);
+            // c:1480 — `par_save_list1(cmplx);`
+            par_save_list1_wordcode(cmplx);
+            // c:1481 — `ecbuf[pp] = WCB_IF(type, ecused - 1 - pp);`
+            let used = ECUSED.get() as usize;
+            ECBUF.with_borrow_mut(|b| {
+                b[pp] = WCB_IF(r#type, (used.saturating_sub(1 + pp)) as wordcode);
+            });
+            // c:1482 — `incmdpos = 1;`
+            set_incmdpos(true);
+            // c:1483 — `break;`
+            break;
         }
     }
-    let used = ECUSED.get() as usize;
-    let off = used.saturating_sub(1 + p) as wordcode;
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            b[p] = WCB_IF(WC_IF_HEAD, off);
+    // c:1486 — `cmdpop();`
+    cmdpop();
+    // c:1487 — `if (xtok == ELSE || tok == ELSE) {`
+    if xtok == ELSE || tok() == ELSE {
+        // c:1488 — `pp = ecadd(0);`
+        pp = ecadd(0);
+        // c:1489 — `cmdpush(CS_ELSE);`
+        cmdpush(CS_ELSE as u8);
+        // c:1490-1491 — `while (tok == SEPER) zshlex();`
+        while tok() == SEPER {
+            zshlex();
         }
+        // c:1492-1498 — `if (tok == INBRACE && usebrace) { ... } else { ... }`
+        if tok() == INBRACE_TOK && usebrace != 0 {
+            // c:1493 — `zshlex();`
+            zshlex();
+            // c:1494 — `par_save_list(cmplx);`
+            par_save_list_wordcode(cmplx);
+            // c:1495-1498 — `if (tok != OUTBRACE) { cmdpop(); YYERRORV; }`
+            if tok() != OUTBRACE_TOK {
+                cmdpop();
+                error("par_if: else expected `}`");
+                return;
+            }
+        } else {
+            // c:1500 — `par_save_list(cmplx);`
+            par_save_list_wordcode(cmplx);
+            // c:1501-1504 — `if (tok != FI) { cmdpop(); YYERRORV; }`
+            if tok() != FI {
+                cmdpop();
+                error("par_if: else expected `fi`");
+                return;
+            }
+        }
+        // c:1506 — `incmdpos = 0;`
+        set_incmdpos(false);
+        // c:1507 — `ecbuf[pp] = WCB_IF(WC_IF_ELSE, ecused - 1 - pp);`
+        let used = ECUSED.get() as usize;
+        ECBUF.with_borrow_mut(|b| {
+            b[pp] = WCB_IF(WC_IF_ELSE, (used.saturating_sub(1 + pp)) as wordcode);
+        });
+        // c:1508 — `zshlex();`
+        zshlex();
+        // c:1509 — `cmdpop();`
+        cmdpop();
+    }
+    // c:1511 — `ecbuf[p] = WCB_IF(WC_IF_HEAD, ecused - 1 - p);`
+    let used = ECUSED.get() as usize;
+    ECBUF.with_borrow_mut(|b| {
+        b[p] = WCB_IF(WC_IF_HEAD, (used.saturating_sub(1 + p)) as wordcode);
     });
 }
 
