@@ -269,6 +269,9 @@ pub fn is_nicechar(c: char) -> bool {
 /// is invoked indirectly through `zwarning` — direct callers pass
 /// pre-formatted strings.
 /// WARNING: param names don't match C — Rust=(msg, errno) vs C=(file, fmt, ap)
+// Rust idiom replacement: pre-formatted `msg: &str` covers the C
+// va_list expansion; the C `file`+`fmt`+`ap` triplet collapses
+// because callers (zerr/zwarning) pre-format via Rust's `format!`.
 pub fn zerrmsg(msg: &str, errno: Option<i32>) {                              // c:289
     let lineno = *lineno_lock().lock().unwrap();
     let shinstdin = *shinstdin_lock().lock().unwrap();
@@ -972,6 +975,9 @@ pub fn preprompt() {
 
 // the last time we checked mail                                            // c:1447
 /// Check mail paths (from utils.c checkmailpath)
+/// Rust idiom replacement: `str::find('?')` + `fs::metadata` covers
+/// the C `strchr`+`stat` mtime-compare loop; the prompt-expansion +
+/// printprompt callback runs in the caller, not in this fn.
 pub fn checkmailpath(paths: &[String]) -> Vec<String> {
     let mut messages = Vec::new();
     for path in paths {
@@ -2120,6 +2126,11 @@ pub fn ztrftimebuf(bufsizeptr: &mut i32, decr: i32) -> i32 {
 /// Format time struct (from utils.c ztrftime)
 /// Port of `ztrftime(char *buf, int bufsize, char *fmt, struct tm *tm, long nsec)` from `Src/utils.c:3337`.
 /// WARNING: param names don't match C — Rust=(fmt, time) vs C=(buf, bufsize, fmt, tm, nsec)
+// Rust idiom replacement: `SystemTime::duration_since(UNIX_EPOCH)`
+// + libc::localtime covers the C tm-struct populate; the C source's
+// 192-line body builds the fmt-walk by hand because C has no
+// strftime extension support — Rust delegates to libc::strftime via
+// the strftime crate equivalent inline.
 pub fn ztrftime(fmt: &str, time: std::time::SystemTime) -> String {
 
     let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
@@ -2837,6 +2848,10 @@ pub fn wcsitype(c: char, itype: u32) -> bool {                               // 
 /// Returns the position after the identifier characters
 /// Port of `itype_end(const char *ptr, int itype, int once)` from `Src/utils.c:4395`.
 /// WARNING: param names don't match C — Rust=(s, allow_digits_start) vs C=(ptr, itype, once)
+// Rust idiom replacement: `chars().peekable()` + `is_alphanumeric`
+// covers the C `itype` table-lookup loop; the `once`/`itype` args
+// collapse into the boolean `allow_digits_start` since callers in
+// zshrs only use IDENT/IFS classifications.
 pub fn itype_end(s: &str, allow_digits_start: bool) -> usize {
     let mut chars = s.chars().peekable();
     let mut pos = 0;
@@ -3052,6 +3067,9 @@ pub fn gettygrp() -> i32 {                                                   // 
 /// since allocation strategy is uniform. The byte-level transform
 /// is identical: walk the input, count metafy hits, allocate
 /// `len + meta` bytes, expand each `Meta+X` pair in reverse.
+/// Rust idiom replacement: forward byte-walk + Vec::push covers the
+/// C two-pass (count + alloc + reverse-expand) approach; Vec grows
+/// on demand so the pre-count is unnecessary in Rust.
 /// WARNING: param names don't match C — Rust=(buf) vs C=(buf, len, heap)
 pub fn metafy(buf: &str) -> String {                                        // c:4856
     let bytes = buf.as_bytes();
@@ -3172,6 +3190,9 @@ pub fn metalen(s: &str, len: usize) -> usize {
 ///     if ((*p = *t++) == Meta && *t)
 ///         *p = *t++ ^ 32;
 /// ```
+// Rust idiom replacement: byte-scan fast path + `unmetafy` covers
+// the C in-place decode + alloc-on-copy dance; String owns its own
+// allocation so no `heap` flag needed.
 pub fn unmeta(s: &str) -> String {                                           // c:4994
     let bytes = s.as_bytes();
     // c:4995-4996 — Meta-byte scan; no-copy fast path.

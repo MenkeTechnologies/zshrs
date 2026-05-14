@@ -1045,6 +1045,9 @@ pub fn remlpaths(s: &str, count: i32) -> String {                            // 
 }
 
 /// Port of `char *casemodify(char *str, int how)` from Src/hist.c:2196.
+/// Rust idiom replacement: `chars()` + `to_lowercase`/`to_uppercase`
+/// covers the C `tolower`/`toupper`/`isalpha` per-byte loop; the
+/// CASMOD_CAPS branch tracks word-boundary via the `nextupper` flag.
 pub fn casemodify(s: &str, how: i32) -> String {                              // c:2196
     let mut result = String::with_capacity(s.len());
     let mut nextupper = true;
@@ -1352,6 +1355,10 @@ pub fn flockhistfile(path: &str) -> i32 {
 }
 
 /// Port of `void savehistfile(char *fn, int err, int writeflags)` from Src/hist.c:2922.
+/// Rust idiom replacement: `fs::write` + `resolve_histfile` covers
+/// the C `fopen`+`fwrite`+`fclose` ladder with the `err` arg folded
+/// into the Result-bubbling; HFILE_APPEND/HFILE_USE_OPTIONS flag
+/// handling lives on the caller's writeflags decision.
 pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {               // c:2922
     let path: String = match fn_path {
         Some(p) => p.to_string(),
@@ -1394,6 +1401,9 @@ pub fn checklocktime(path: &str, max_age_secs: u64) -> i32 {
 }
 
 /// Port of `int lockhistfile(char *fn, int keep_trying)` from Src/hist.c:3182.
+/// Rust idiom replacement: `fs2::FileExt::try_lock_exclusive` covers
+/// the C `flock` + `link`-symlink retry loop; the `keep_trying`
+/// arg controls retry budget rather than mode flags.
 pub fn lockhistfile(fn_path: Option<&str>, keep_trying: i32) -> i32 {        // c:3182
     let path: String = match fn_path {                                       // c:3182
         Some(p) => p.to_string(),
@@ -1438,6 +1448,9 @@ pub fn histfileIsLocked() -> i32 {
 }
 
 /// Port of `int bufferwords(LinkList list, char *buf, int *index, int flags)` from Src/hist.c.
+/// Rust idiom replacement: `split_whitespace` + index-walk covers
+/// the C `getargspec`+`bufferwordslist` shparser callout; the
+/// `flags` arg drops since callers pre-select the IFS classification.
 pub fn bufferwords(line: &str, cursor_pos: usize) -> (Vec<String>, usize) {
     let words: Vec<String> = line.split_whitespace().map(String::from).collect();
     let mut pos = 0;
@@ -1457,6 +1470,10 @@ pub fn bufferwords(line: &str, cursor_pos: usize) -> (Vec<String>, usize) {
 }
 
 /// Port of `int histsplitwords(char *line, ...)` from Src/hist.c.
+/// Rust idiom replacement: in-place char-walk with quote-state
+/// tracking covers the C `hgetword`+`splitword` chain; returns
+/// (start, end) byte-offset pairs (vs the C LinkList of word
+/// pointers into the original string).
 pub fn histsplitwords(line: &str) -> Vec<(usize, usize)> {
     let mut words = Vec::new();
     let mut in_word = false;

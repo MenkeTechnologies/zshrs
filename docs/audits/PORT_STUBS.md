@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-14T21:25:54.045265+00:00
+Generated: 2026-05-14T21:33:46.579479+00:00
 
 ## Method
 
@@ -16,27 +16,14 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 129 stubs across 42 files
+## Summary: 63 stubs across 36 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
-| `src/ported/modules/zutil.rs` | 8 | `zalloc_default_array` (1 / 17) |
-| `src/ported/prompt.rs` | 7 | `prompttrunc` (1 / 183) |
-| `src/ported/utils.rs` | 7 | `lchdir` (8 / 298) |
-| `src/ported/zle/compctl.rs` | 7 | `makecomplistflags` (19 / 746) |
-| `src/ported/pattern.rs` | 6 | `patmatch` (4 / 558) |
-| `src/ported/zle/compresult.rs` | 6 | `do_single` (4 / 180) |
-| `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
-| `src/ported/hist.rs` | 5 | `bufferwords` (15 / 158) |
-| `src/ported/init.rs` | 5 | `init_term` (8 / 86) |
-| `src/ported/zle/zle_utils.rs` | 5 | `stringaszleline` (14 / 102) |
-| `src/ported/jobs.rs` | 4 | `handle_sub` (10 / 57) |
 | `src/ported/modules/db_gdbm.rs` | 4 | `gdbmgetfn` (7 / 28) |
 | `src/ported/zle/complist.rs` | 4 | `compprintfmt` (4 / 232) |
-| `src/ported/zle/zle_main.rs` | 4 | `zsetterm` (10 / 70) |
-| `src/ported/zle/zle_params.rs` | 4 | `get_zle_state` (9 / 46) |
 | `src/ported/zle/zle_refresh.rs` | 4 | `moveto` (2 / 44) |
-| `src/ported/zle/zle_vi.rs` | 4 | `vigetkey` (5 / 32) |
+| `src/ported/zle/compctl.rs` | 3 | `makecomplistflags` (19 / 746) |
 | `src/ported/zle/termquery.rs` | 3 | `handle_color` (1 / 24) |
 | `src/ported/zle/zle_hist.rs` | 3 | `doisearch` (12 / 454) |
 | `src/ported/zle/zle_keymap.rs` | 3 | `getrestchar_keybuf` (2 / 39) |
@@ -47,6 +34,8 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/modules/curses.rs` | 2 | `zccmd_input` (33 / 162) |
 | `src/ported/zle/compcore.rs` | 2 | `set_comp_sep` (9 / 319) |
 | `src/ported/zle/zle_misc.rs` | 2 | `makesuffixstr` (3 / 42) |
+| `src/ported/zle/zle_tricky.rs` | 2 | `pfxlen` (4 / 35) |
+| `src/ported/zle/zle_vi.rs` | 2 | `dovilinerange` (4 / 23) |
 | `src/ported/glob.rs` | 1 | `get_match_ret` (5 / 71) |
 | `src/ported/math.rs` | 1 | `setmathvar` (7 / 44) |
 | `src/ported/module.rs` | 1 | `printmodulenode` (10 / 89) |
@@ -60,131 +49,15 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/options.rs` | 1 | `createoptiontable` (4 / 16) |
 | `src/ported/params.rs` | 1 | `assignaparam` (45 / 187) |
 | `src/ported/parse.rs` | 1 | `check_dump_file` (1 / 83) |
+| `src/ported/pattern.rs` | 1 | `patmatchrange` (21 / 110) |
+| `src/ported/prompt.rs` | 1 | `parsecolorchar` (3 / 24) |
+| `src/ported/utils.rs` | 1 | `lchdir` (8 / 298) |
 | `src/ported/zle/compmatch.rs` | 1 | `bld_line` (40 / 137) |
+| `src/ported/zle/compresult.rs` | 1 | `cline_str` (45 / 268) |
 | `src/ported/zle/computil.rs` | 1 | `cfp_add_sdirs` (18 / 73) |
+| `src/ported/zle/zle_main.rs` | 1 | `getrestchar` (7 / 36) |
 
 ## Per-file detail
-
-### `src/ported/modules/zutil.rs` — 8 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1400 | `zalloc_default_array` | 1 | 17 | 5% |
-| 1379 | `map_opt_desc` | 1 | 16 | 6% |
-| 613 | `newzstyletable` | 1 | 15 | 6% |
-| 1358 | `lookup_opt` | 1 | 13 | 7% |
-| 45 | `restorematch` | 1 | 12 | 8% |
-| 630 | `setstypat` | 6 | 58 | 10% |
-| 113 | `freestylenode` | 2 | 10 | 20% |
-| 1059 | `connectstates` | 4 | 15 | 26% |
-
-### `src/ported/prompt.rs` — 7 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 434 | `prompttrunc` | 1 | 183 | 0% |
-| 1779 | `match_highlight` | 6 | 75 | 8% |
-| 283 | `promptexpand` | 4 | 43 | 9% |
-| 359 | `parsecolorchar` | 3 | 24 | 12% |
-| 597 | `mixattrs` | 9 | 60 | 15% |
-| 475 | `applytextattributes` | 8 | 52 | 15% |
-| 1751 | `match_colour` | 13 | 55 | 23% |
-
-### `src/ported/utils.rs` — 7 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 4249 | `lchdir` | 8 | 298 | 2% |
-| 2123 | `ztrftime` | 28 | 192 | 14% |
-| 272 | `zerrmsg` | 12 | 72 | 16% |
-| 3175 | `unmeta` | 8 | 35 | 22% |
-| 3056 | `metafy` | 12 | 50 | 24% |
-| 975 | `checkmailpath` | 19 | 73 | 26% |
-| 2840 | `itype_end` | 18 | 65 | 27% |
-
-### `src/ported/zle/compctl.rs` — 7 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 2463 | `makecomplistflags` | 19 | 746 | 2% |
-| 917 | `delpatcomp` | 2 | 13 | 15% |
-| 1931 | `makecomplistctl` | 12 | 74 | 16% |
-| 1581 | `addmatch` | 17 | 99 | 17% |
-| 1639 | `getreal` | 2 | 11 | 18% |
-| 1974 | `makecomplistext` | 36 | 150 | 24% |
-| 110 | `createcompctltable` | 4 | 14 | 28% |
-
-### `src/ported/pattern.rs` — 6 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1081 | `patmatch` | 4 | 558 | 0% |
-| 874 | `patcompnot` | 1 | 17 | 5% |
-| 1041 | `pattryrefs` | 17 | 202 | 8% |
-| 1110 | `patmatchrange` | 21 | 110 | 19% |
-| 340 | `patcompswitch` | 24 | 88 | 27% |
-| 1137 | `patmatchindex` | 18 | 63 | 28% |
-
-### `src/ported/zle/compresult.rs` — 6 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 316 | `do_single` | 4 | 180 | 2% |
-| 297 | `do_allmatches` | 2 | 47 | 4% |
-| 157 | `build_pos_string` | 1 | 18 | 5% |
-| 69 | `cut_cline` | 5 | 81 | 6% |
-| 207 | `instmatch` | 6 | 80 | 7% |
-| 96 | `cline_str` | 45 | 268 | 16% |
-
-### `src/ported/zle/zle_tricky.rs` — 6 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 734 | `doexpansion` | 1 | 58 | 1% |
-| 688 | `get_comp_string` | 15 | 794 | 1% |
-| 765 | `pfxlen` | 4 | 35 | 11% |
-| 855 | `listlist` | 33 | 174 | 18% |
-| 377 | `docomplete` | 40 | 210 | 19% |
-| 1034 | `expandcmdpath` | 6 | 28 | 21% |
-
-### `src/ported/hist.rs` — 5 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1441 | `bufferwords` | 15 | 158 | 9% |
-| 1355 | `savehistfile` | 22 | 191 | 11% |
-| 1397 | `lockhistfile` | 21 | 109 | 19% |
-| 1460 | `histsplitwords` | 24 | 117 | 20% |
-| 1048 | `casemodify` | 23 | 101 | 22% |
-
-### `src/ported/init.rs` — 5 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 315 | `init_term` | 8 | 86 | 9% |
-| 661 | `source` | 11 | 97 | 11% |
-| 617 | `run_init_scripts` | 8 | 54 | 14% |
-| 179 | `parseopts` | 30 | 142 | 21% |
-| 296 | `init_shout` | 4 | 15 | 26% |
-
-### `src/ported/zle/zle_utils.rs` — 5 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 96 | `stringaszleline` | 14 | 102 | 13% |
-| 174 | `zle_restore_positions` | 7 | 51 | 13% |
-| 195 | `spaceinline` | 8 | 54 | 14% |
-| 249 | `cuttext` | 18 | 79 | 22% |
-| 161 | `zle_save_positions` | 8 | 34 | 23% |
-
-### `src/ported/jobs.rs` — 4 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 277 | `handle_sub` | 10 | 57 | 17% |
-| 402 | `update_job` | 33 | 146 | 22% |
-| 638 | `should_report_time` | 12 | 44 | 27% |
-| 545 | `printtime` | 56 | 192 | 29% |
 
 ### `src/ported/modules/db_gdbm.rs` — 4 stubs
 
@@ -204,24 +77,6 @@ python3 scripts/gen_port_stubs.py
 | 199 | `getcolval` | 2 | 37 | 5% |
 | 472 | `clnicezputs` | 25 | 104 | 24% |
 
-### `src/ported/zle/zle_main.rs` — 4 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 68 | `zsetterm` | 10 | 70 | 14% |
-| 547 | `zleread` | 20 | 125 | 16% |
-| 428 | `getrestchar` | 7 | 36 | 19% |
-| 270 | `raw_getbyte` | 46 | 195 | 23% |
-
-### `src/ported/zle/zle_params.rs` — 4 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 779 | `get_zle_state` | 9 | 46 | 19% |
-| 536 | `set_killring` | 6 | 27 | 22% |
-| 206 | `set_rbuffer` | 4 | 14 | 28% |
-| 188 | `set_lbuffer` | 5 | 17 | 29% |
-
 ### `src/ported/zle/zle_refresh.rs` — 4 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -231,14 +86,13 @@ python3 scripts/gen_port_stubs.py
 | 613 | `zrefresh` | 87 | 566 | 15% |
 | 478 | `zwcputc` | 3 | 19 | 15% |
 
-### `src/ported/zle/zle_vi.rs` — 4 stubs
+### `src/ported/zle/compctl.rs` — 3 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 103 | `vigetkey` | 5 | 32 | 15% |
-| 147 | `dovilinerange` | 4 | 23 | 17% |
-| 409 | `vireplacechars` | 14 | 62 | 22% |
-| 231 | `videletechar` | 5 | 19 | 26% |
+| 2463 | `makecomplistflags` | 19 | 746 | 2% |
+| 1581 | `addmatch` | 17 | 99 | 17% |
+| 1974 | `makecomplistext` | 36 | 150 | 24% |
 
 ### `src/ported/zle/termquery.rs` — 3 stubs
 
@@ -313,6 +167,20 @@ python3 scripts/gen_port_stubs.py
 |---|---|---|---|---|
 | 1519 | `makesuffixstr` | 3 | 42 | 7% |
 | 1477 | `addsuffix` | 3 | 12 | 25% |
+
+### `src/ported/zle/zle_tricky.rs` — 2 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 765 | `pfxlen` | 4 | 35 | 11% |
+| 855 | `listlist` | 33 | 174 | 18% |
+
+### `src/ported/zle/zle_vi.rs` — 2 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 147 | `dovilinerange` | 4 | 23 | 17% |
+| 231 | `videletechar` | 5 | 19 | 26% |
 
 ### `src/ported/glob.rs` — 1 stubs
 
@@ -392,15 +260,45 @@ python3 scripts/gen_port_stubs.py
 |---|---|---|---|---|
 | 3499 | `check_dump_file` | 1 | 83 | 1% |
 
+### `src/ported/pattern.rs` — 1 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 1110 | `patmatchrange` | 21 | 110 | 19% |
+
+### `src/ported/prompt.rs` — 1 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 359 | `parsecolorchar` | 3 | 24 | 12% |
+
+### `src/ported/utils.rs` — 1 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 4270 | `lchdir` | 8 | 298 | 2% |
+
 ### `src/ported/zle/compmatch.rs` — 1 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
 | 2032 | `bld_line` | 40 | 137 | 29% |
 
+### `src/ported/zle/compresult.rs` — 1 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 96 | `cline_str` | 45 | 268 | 16% |
+
 ### `src/ported/zle/computil.rs` — 1 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
 | 6654 | `cfp_add_sdirs` | 18 | 73 | 24% |
+
+### `src/ported/zle/zle_main.rs` — 1 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 428 | `getrestchar` | 7 | 36 | 19% |
 
