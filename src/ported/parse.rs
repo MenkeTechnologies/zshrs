@@ -2420,110 +2420,229 @@ pub fn par_select_wordcode(cmplx: &mut i32) {
     par_for_wordcode(cmplx);
 }
 
-/// Port of `par_case(int *cmplx)` from `Src/parse.c:1209-1400`.
-pub fn par_case_wordcode(cmplx: &mut i32) {
-    let p = ecadd(0);
+/// Port of `par_case(int *cmplx)` from `Src/parse.c:1208-1400`.
+pub fn par_case_wordcode(_cmplx: &mut i32) {
+    // c:1211 — `int oecused = ecused, brflag, p, pp, palts, type, nalts;`
+    let _oecused = ECUSED.get() as usize;
+    let brflag: bool;
+    let p: usize;
+    let mut pp: usize;
+    let mut palts: usize;
+    let mut r#type: wordcode;
+    let mut nalts: u32;
+    // c:1212 — `int ona, onc;`
+    let ona: bool;
+    let onc: i32;
+
+    // c:1214 — `p = ecadd(0);`
+    p = ecadd(0);
+
+    // c:1216 — `incmdpos = 0;`
     set_incmdpos(false);
+    // c:1217 — `zshlex();`
     zshlex();
+    // c:1218-1219 — `if (tok != STRING) YYERRORV(oecused);`
     if tok() != STRING_LEX {
         error("par_case: expected scrutinee");
         return;
     }
+    // c:1220 — `ecstr(tokstr);`
     ecstr(&tokstr().unwrap_or_default());
+
+    // c:1222 — `incmdpos = 1;`
     set_incmdpos(true);
+    // c:1223-1224 — `ona = noaliases; onc = nocorrect;`
+    ona = noaliases();
+    onc = nocorrect();
+    // c:1225 — `noaliases = nocorrect = 1;`
+    set_noaliases(true);
+    set_nocorrect(1);
+    // c:1226 — `zshlex();`
     zshlex();
+    // c:1227-1228 — `while (tok == SEPER) zshlex();`
     while tok() == SEPER {
         zshlex();
     }
-    let saw_brace = tok() == INBRACE_TOK;
-    if !saw_brace && !(tok() == STRING_LEX && tokstr().as_deref() == Some("in")) {
+    // c:1229 — `if (!(tok == STRING && !strcmp(tokstr, "in")) && tok != INBRACE)`
+    if !(tok() == STRING_LEX && tokstr().as_deref() == Some("in")) && tok() != INBRACE_TOK {
+        // c:1231-1233 — restore noaliases/nocorrect + ERROR
+        set_noaliases(ona);
+        set_nocorrect(onc);
         error("par_case: expected `in` or `{`");
         return;
     }
+    // c:1235 — `brflag = (tok == INBRACE);`
+    brflag = tok() == INBRACE_TOK;
+    // c:1236 — `incasepat = 1;`
+    set_incasepat(1);
+    // c:1237 — `incmdpos = 0;`
+    set_incmdpos(false);
+    // c:1238-1239 — `noaliases = ona; nocorrect = onc;`
+    set_noaliases(ona);
+    set_nocorrect(onc);
+    // c:1240 — `zshlex();`
     zshlex();
-    loop {
+
+    // c:1242 — `for (;;) {`
+    'arms: loop {
+        // c:1243 — `char *str;`
+        let mut str: String;
+        // c:1244 — `int skip_zshlex;`
+        let skip_zshlex: bool;
+
+        // c:1246-1247 — `while (tok == SEPER) zshlex();`
         while tok() == SEPER {
             zshlex();
         }
-        // c:1245-1247 — `esac` can arrive either as the ESAC reswd
-        // token (when incmdpos was true at the SEPER between arms,
-        // which is the normal case after the body's `;;`) OR as a
-        // STRING with tokstr "esac" (alias context or noaliases off).
-        // Accept both shapes so the outer arm loop terminates.
-        if (saw_brace && tok() == OUTBRACE_TOK)
-            || (!saw_brace && tok() == ESAC)
-            || (!saw_brace && tok() == STRING_LEX && tokstr().as_deref() == Some("esac"))
-        {
-            zshlex();
-            break;
+        // c:1248-1249 — `if (tok == OUTBRACE) break;`
+        if tok() == OUTBRACE_TOK {
+            break 'arms;
         }
+        // c:1250-1251 — `if (tok == INPAR) zshlex();`
         if tok() == INPAR_TOK {
             zshlex();
         }
-        // c:1265-1266 — `pp = ecadd(0); palts = ecadd(0); nalts = 0;`
-        // Two arm-header words: PP holds WCB_CASE(type, body_off),
-        // PALTS holds the pattern alternative count.
-        let pp = ecadd(0);
-        let palts = ecadd(0);
-        let mut nalts: u32 = 0;
-        loop {
+        // c:1252-1254 — `if (tok == BAR) { str = ""; skip_zshlex = 1; }`
+        if tok() == BAR_TOK {
+            str = String::new();
+            skip_zshlex = true;
+        } else {
+            // c:1256-1257 — `if (tok != STRING) YYERRORV(oecused);`
             if tok() != STRING_LEX {
                 error("par_case: expected pattern");
                 return;
             }
-            ecstr(&tokstr().unwrap_or_default());
-            // c:1307,1316 — `ecadd(ecnpats++);` after each pattern.
-            // Records a per-pattern index slot that the compiled
-            // Patprog later drops into. Without this, npats=0 and
-            // the strs/wordcode header bytes diverge from C.
-            let np = ECNPATS.with(|c| { let v = c.get(); c.set(v + 1); v }) as u32;
-            ecadd(np);
-            nalts += 1;
+            // c:1258-1259 — `if (!strcmp(tokstr, "esac")) break;`
+            if tokstr().as_deref() == Some("esac") {
+                break 'arms;
+            }
+            // c:1260 — `str = dupstring(tokstr);`
+            str = tokstr().unwrap_or_default();
+            // c:1261 — `skip_zshlex = 0;`
+            skip_zshlex = false;
+        }
+        // c:1263 — `type = WC_CASE_OR;`
+        r#type = WC_CASE_OR;
+        // c:1264-1266 — `pp = ecadd(0); palts = ecadd(0); nalts = 0;`
+        pp = ecadd(0);
+        palts = ecadd(0);
+        nalts = 0;
+        // c:1300 — `incasepat = -1;`
+        set_incasepat(-1);
+        // c:1301 — `incmdpos = 1;`
+        set_incmdpos(true);
+        // c:1302-1303 — `if (!skip_zshlex) zshlex();`
+        if !skip_zshlex {
             zshlex();
-            if tok() != BAR_TOK {
+        }
+        // c:1304 — `for (;;) {`
+        loop {
+            // c:1305-1313 — `if (tok == OUTPAR) { ecstr(str);
+            //   ecadd(ecnpats++); nalts++; incasepat = 0;
+            //   incmdpos = 1; zshlex(); break; }`
+            if tok() == OUTPAR_TOK {
+                ecstr(&str);
+                let np = ECNPATS.with(|cc| {
+                    let v = cc.get();
+                    cc.set(v + 1);
+                    v
+                }) as u32;
+                ecadd(np);
+                nalts += 1;
+                set_incasepat(0);
+                set_incmdpos(true);
+                zshlex();
                 break;
             }
-            zshlex();
-        }
-        ECBUF.with_borrow_mut(|b| {
-            if palts < b.len() {
-                b[palts] = nalts;
+            // c:1314-1320 — `else if (tok == BAR) { ecstr(str);
+            //   ecadd(ecnpats++); nalts++; incasepat = 1;
+            //   incmdpos = 0; }`
+            else if tok() == BAR_TOK {
+                ecstr(&str);
+                let np = ECNPATS.with(|cc| {
+                    let v = cc.get();
+                    cc.set(v + 1);
+                    v
+                }) as u32;
+                ecadd(np);
+                nalts += 1;
+                set_incasepat(1);
+                set_incmdpos(false);
             }
+            // c:1321-1357 — else { ... `(...)` whole-pattern hack
+            // (Inpar at str[0]); else YYERRORV. Not yet ported —
+            // err out on unexpected. }
+            else {
+                error("par_case: expected `)` or `|`");
+                return;
+            }
+
+            // c:1359 — `zshlex();`
+            zshlex();
+            // c:1360-1377 — switch on next tok.
+            match tok() {
+                STRING_LEX => {
+                    // c:1361-1365
+                    str = tokstr().unwrap_or_default();
+                    zshlex();
+                }
+                OUTPAR_TOK | BAR_TOK => {
+                    // c:1367-1371 — empty string
+                    str = String::new();
+                }
+                _ => {
+                    // c:1374-1376 — `YYERRORV(oecused);`
+                    error("par_case: expected pattern, `)` or `|`");
+                    return;
+                }
+            }
+        }
+        // c:1379 — `incasepat = 0;`
+        set_incasepat(0);
+        // c:1380 — `par_save_list(cmplx);`
+        par_save_list_wordcode(_cmplx);
+        // c:1381-1384 — terminator → arm type
+        if tok() == SEMIAMP {
+            r#type = WC_CASE_AND;
+        } else if tok() == SEMIBAR {
+            r#type = WC_CASE_TESTAND;
+        }
+        // c:1385 — `ecbuf[pp] = WCB_CASE(type, ecused - 1 - pp);`
+        let used = ECUSED.get() as usize;
+        ECBUF.with_borrow_mut(|b| {
+            b[pp] = WCB_CASE(r#type, (used.saturating_sub(1 + pp)) as wordcode);
         });
-        if tok() != OUTPAR_TOK {
-            error("par_case: expected `)`");
+        // c:1386 — `ecbuf[palts] = nalts;`
+        ECBUF.with_borrow_mut(|b| {
+            b[palts] = nalts;
+        });
+        // c:1387-1388 — terminator (ESAC w/o brace OR OUTBRACE w/ brace) → break
+        if (tok() == ESAC && !brflag) || (tok() == OUTBRACE_TOK && brflag) {
+            break 'arms;
+        }
+        // c:1389-1390 — `if (tok != DSEMI && tok != SEMIAMP && tok != SEMIBAR) YYERRORV;`
+        if tok() != DSEMI && tok() != SEMIAMP && tok() != SEMIBAR {
+            error("par_case: expected `;;`, `;&`, or `;|`");
             return;
         }
-        set_incmdpos(true);
+        // c:1391 — `incasepat = 1;`
+        set_incasepat(1);
+        // c:1392 — `incmdpos = 0;`
+        set_incmdpos(false);
+        // c:1393 — `zshlex();`
         zshlex();
-        // c:1380 — `par_save_list(cmplx);`
-        par_save_list_wordcode(cmplx);
-        // c:1330-1336 — arm-terminator drives the WC_CASE_OR /
-        // WC_CASE_AND / WC_CASE_TESTAND type tag in the WCB_CASE
-        // header, which is patched at pp.
-        let arm_type = match tok() {
-            DSEMI => WC_CASE_OR,
-            SEMIAMP => WC_CASE_AND,
-            SEMIBAR => WC_CASE_TESTAND,
-            _ => WC_CASE_OR,
-        };
-        let used = ECUSED.get() as usize;
-        let arm_off = used.saturating_sub(1 + pp) as wordcode;
-        ECBUF.with_borrow_mut(|b| {
-            if pp < b.len() {
-                b[pp] = WCB_CASE(arm_type, arm_off);
-            }
-        });
-        if tok() == DSEMI || tok() == SEMIAMP || tok() == SEMIBAR {
-            zshlex();
-        }
     }
+    // c:1395 — `incmdpos = 1;`
+    set_incmdpos(true);
+    // c:1396 — `incasepat = 0;`
+    set_incasepat(0);
+    // c:1397 — `zshlex();`
+    zshlex();
+
+    // c:1399 — `ecbuf[p] = WCB_CASE(WC_CASE_HEAD, ecused - 1 - p);`
     let used = ECUSED.get() as usize;
-    let off = used.saturating_sub(1 + p) as wordcode;
     ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            b[p] = WCB_CASE(WC_CASE_HEAD, off);
-        }
+        b[p] = WCB_CASE(WC_CASE_HEAD, (used.saturating_sub(1 + p)) as wordcode);
     });
 }
 
