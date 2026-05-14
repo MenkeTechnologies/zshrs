@@ -855,7 +855,7 @@ pub fn transposewords(_args: &[String]) -> i32 {          // c:652
 // zle_vi.c; the Rust port factors them into one helper parameterised by
 // WordStyle so zle_vi.rs's six vi-style motion entries share the impl.
 // Allowlisted alongside the pattern.rs / glob.rs extracted-helper
-// precedent in tests/data/ported_fn_allowlist.txt.
+// precedent in tests/data/fake_fn_allowlist.txt.
 // ---------------------------------------------------------------------------
 
 /// Word style for `find_word_start` / `find_word_end`.

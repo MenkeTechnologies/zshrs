@@ -27,7 +27,7 @@ fn main() {
     // being checked), the C-name snapshot, and the allowlist files.
     println!("cargo:rerun-if-changed=src/ported");
     println!("cargo:rerun-if-changed=tests/data/zsh_c_fn_names.txt");
-    println!("cargo:rerun-if-changed=tests/data/ported_fn_allowlist.txt");
+    println!("cargo:rerun-if-changed=tests/data/fake_fn_allowlist.txt");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/zsh/Config/version.mk");
 
@@ -63,7 +63,7 @@ fn main() {
 
     let ported_root = manifest_dir.join("src/ported");
     let c_index_path = manifest_dir.join("tests/data/zsh_c_fn_names.txt");
-    let allowlist_path = manifest_dir.join("tests/data/ported_fn_allowlist.txt");
+    let allowlist_path = manifest_dir.join("tests/data/fake_fn_allowlist.txt");
 
     // If the ported root or the C-name snapshot is missing, this
     // isn't a configured port checkout — skip silently rather than
@@ -150,7 +150,7 @@ fn main() {
                2. Or: rename to match the actual C function it ports.\n\
                   Cite Src/<file>.c:<line> in the doc comment.\n\
                3. Last resort: add the name to\n\
-                  tests/data/ported_fn_allowlist.txt with a comment\n\
+                  tests/data/fake_fn_allowlist.txt with a comment\n\
                   explaining why no C analog exists (architectural\n\
                   Rust-only helpers like singleton accessors only).\n\n\
              Enforced by build.rs on every `cargo build` / `cargo test`\n\

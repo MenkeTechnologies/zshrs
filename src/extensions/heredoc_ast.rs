@@ -25,20 +25,28 @@
 //! `content`, `quoted`, `processed`. The Vec position carries
 //! ordering (no `next` linked list).
 //!
-//! Both `HereDoc` (pending lexer state) and `HereDocInfo` (parsed
-//! redir attachment) are scheduled to disappear when Phase 9 of
-//! `docs/PORT_PLAN.md` lands — the wordcode port reinstates the
-//! C `struct heredocs` shape + `gethere()` flow.
+//! `HereDoc` is the AST-glue Vec entry the AST consumer
+//! (`fill_heredoc_bodies` in parse.rs) reads. The canonical
+//! `struct heredocs` linked list (parse.c:84) + `gethere()`
+//! (exec.c:4573) are ported as `parse::HDOCS` /
+//! `crate::exec::gethere`; the inline `zshlex()` NEWLIN walk
+//! (lex.c:278-306) writes body content into the next
+//! unprocessed `LEX_HEREDOCS` entry directly (no helper fn).
+//! `HereDocInfo` is the per-redir attachment that flows through
+//! the AST.
 
 use serde::{Deserialize, Serialize};
 
 /// Per-heredoc state collected by the lexer during `<<EOF` parsing.
-/// Held in the lexer-side `HEREDOCS: Vec<HereDoc>` thread_local for
-/// later attachment to `ZshRedir` entries (via `heredoc_idx`).
+/// Held in the lexer-side `LEX_HEREDOCS: Vec<HereDoc>` thread_local
+/// for later attachment to `ZshRedir` entries (via `heredoc_idx`).
 ///
-/// Rust-only — Phase 9 wordcode port replaces this with the canonical
-/// `struct heredocs` linked list (zsh.h:1152) + `gethere()` deferred
-/// body collection.
+/// Rust-only AST-glue Vec — runs parallel to the canonical
+/// `struct heredocs *hdocs` linked list at `parse::HDOCS` (port of
+/// `Src/parse.c:84`). The inline NEWLIN walk in `zshlex()` drains
+/// both: it pops from HDOCS (the C-faithful list), calls `gethere`,
+/// then walks `LEX_HEREDOCS` to find the next entry with
+/// `processed == false` and writes the body there.
 #[derive(Debug, Clone)]
 pub struct HereDoc {
     pub terminator: String,
@@ -48,9 +56,9 @@ pub struct HereDoc {
     /// `<<"EOF"`, or `<<\EOF`). Disables variable expansion / command
     /// substitution / arithmetic in the body.
     pub quoted: bool,
-    /// True once `process_heredocs` has read the body. Distinct from
-    /// "content is empty" because an empty heredoc legitimately has
-    /// empty content.
+    /// True once the inline NEWLIN walk in `zshlex()` has read the
+    /// body via `gethere`. Distinct from "content is empty" because
+    /// an empty heredoc legitimately has empty content.
     pub processed: bool,
 }
 
@@ -58,9 +66,10 @@ pub struct HereDoc {
 /// through the AST and consumed by the compiler when emitting
 /// `Op::HereDoc(idx)` for the fusevm VM.
 ///
-/// Rust-only — Phase 9 wordcode port deletes this together with the
-/// rest of the AST tree; bodies will land directly in the wordcode
-/// stream at the redirection's `pc` slot.
+/// Rust-only — the wordcode track stores bodies as strs-region
+/// strings indexed by `WCB_REDIR` slot. The AST track keeps this
+/// per-redir attachment so the fusevm compiler can emit a
+/// `Op::HereDoc(idx)` referencing the body verbatim.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HereDocInfo {
     pub content: String,

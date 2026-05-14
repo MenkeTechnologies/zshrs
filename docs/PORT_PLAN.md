@@ -163,7 +163,7 @@ bucket follow-up work, not blocking.
 unclosed delimiter (rustc reports `error: this file contains an
 unclosed delimiter` at line 4610, pointing at `fn dquote_parse` at
 line 3096). Build also fails the drift gate: `parsestr_inner` at
-`lex.rs:3895` has no C counterpart per `tests/data/ported_fn_allowlist
+`lex.rs:3895` has no C counterpart per `tests/data/fake_fn_allowlist
 .txt`. Both must be fixed before `cargo build --lib` will succeed.
 Neither is a Phase 1–6 regression — the file shipped broken.
 

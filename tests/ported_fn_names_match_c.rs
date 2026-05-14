@@ -241,7 +241,7 @@ fn ported_fns_match_c_source() {
     let c_names: HashSet<&String> = c_index.keys().collect();
     eprintln!("Loaded {} C function names from snapshot", c_names.len());
 
-    // Allowlist loaded from `tests/data/ported_fn_allowlist.txt`.
+    // Allowlist loaded from `tests/data/fake_fn_allowlist.txt`.
     // Snapshot of pre-existing violations — anything in this file is
     // exempt-for-now. Anything NOT in this file but free-fn-without-
     // C-counterpart fails the test, blocking new drift.
@@ -249,7 +249,7 @@ fn ported_fns_match_c_source() {
     // To shrink: inline the body at every call site (or rename to a
     // real C function), then remove the line from the snapshot file.
     let allowlist_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/data/ported_fn_allowlist.txt");
+        .join("tests/data/fake_fn_allowlist.txt");
     let allowlist_src = fs::read_to_string(&allowlist_path).unwrap_or_else(|_| {
         panic!(
             "missing snapshot file {}. Generate via: \n  \
@@ -349,7 +349,7 @@ fn ported_fns_match_c_source() {
             msg.push_str(&format!(
                 "PORT.md freeze violation: {} NEW function(s) in src/ported/ \
                  have no matching definition in zsh's C source AND are not in \
-                 the snapshot allowlist (tests/data/ported_fn_allowlist.txt). \
+                 the snapshot allowlist (tests/data/fake_fn_allowlist.txt). \
                  Either inline at call sites, rename to match a C function, \
                  or add to the snapshot with a justifying comment.\n\n{}\n",
                 name_violations.len(),

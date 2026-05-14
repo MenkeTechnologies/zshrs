@@ -54,7 +54,7 @@ isn't ticked until ALL of them pass.
 
 7. **Drift gate stays green.** Every `pub fn` / `fn` in `src/ported/`
    either matches a C function name in `tests/data/zsh_c_fn_names.txt`
-   or appears in `tests/data/ported_fn_allowlist.txt` with a
+   or appears in `tests/data/fake_fn_allowlist.txt` with a
    citation explaining why no C counterpart exists. Adding new
    entries to the allowlist is a code smell — reach for it only
    when the helper is genuinely unavoidable.
@@ -228,7 +228,7 @@ an unported dependency is moved to **🚧 BLOCKED** and tracked in
   - **Math-number type:** `pub use crate::ported::math::{Mnumber, MN_INTEGER, MN_FLOAT, MN_UNSET};` re-export so consumers that mirror C's `#include "zsh.h"` style can do `use crate::ported::zsh::*;` and get mnumber alongside the rest.
   - **Parameter flags (c:1878-1949):** 41 PM_* constants (`PM_SCALAR`/`PM_ARRAY`/`PM_INTEGER`/`PM_EFLOAT`/`PM_FFLOAT`/`PM_HASHED`/`PM_LEFT`/`PM_RIGHT_B`/`PM_RIGHT_Z`/`PM_LOWER`/`PM_UPPER`/`PM_UNDEFINED`/`PM_READONLY`/`PM_TAGGED`/`PM_EXPORTED`/`PM_ABSPATH_USED`/`PM_UNIQUE`/`PM_UNALIASED`/`PM_HIDE`/`PM_CUR_FPATH`/`PM_HIDEVAL`/`PM_WARNNESTED`/`PM_TIED`/`PM_TAGGED_LOCAL`/`PM_DONTIMPORT_SUID`/`PM_LOADDIR`/`PM_SINGLE`/`PM_ANONYMOUS`/`PM_LOCAL`/`PM_KSHSTORED`/`PM_SPECIAL`/`PM_ZSHSTORED`/`PM_RO_BY_DESIGN`/`PM_READONLY_SPECIAL`/`PM_DONTIMPORT`/`PM_DECLARED`/`PM_RESTRICTED`/`PM_UNSET`/`PM_DEFAULTED`/`PM_REMOVABLE`/`PM_AUTOLOAD`/`PM_NORESTORE`/`PM_AUTOALL`/`PM_HASHELEM`/`PM_NAMEDDIR`/`PM_NAMEREF`). Plus the `PM_TYPE(X)` mask macro at c:1885 ported as `pub const fn pm_type(x: u32) -> u32`. Plus `TYPESET_OPTSTR` (c:1947) and `TYPESET_OPTNUM` (c:1950) for the typeset builtin's option parser.
   - **Hash/array scan flags (c:1953-1961):** 8 SCANPM_* constants — `SCANPM_WANTVALS`/`SCANPM_WANTKEYS`/`SCANPM_WANTINDEX`/`SCANPM_MATCHKEY`/`SCANPM_MATCHVAL`/`SCANPM_MATCHMANY`/`SCANPM_ASSIGNING`/`SCANPM_KEYMATCH`.
-  - **Options accessor macros (c:1400-1414):** `OPT_ISSET`/`OPT_MINUS`/`OPT_PLUS` ported as `opt_isset`/`opt_minus`/`opt_plus` inline fns over the `[bool; 256]` bitmap that PORT_CHECKLIST.md rule 3 substitutes for C's `Options ops` struct. Allowlisted in `tests/data/ported_fn_allowlist.txt` (zsh.h macros aren't in zsh_c_fn_names.txt since they're preprocessor macros, not function definitions).
+  - **Options accessor macros (c:1400-1414):** `OPT_ISSET`/`OPT_MINUS`/`OPT_PLUS` ported as `opt_isset`/`opt_minus`/`opt_plus` inline fns over the `[bool; 256]` bitmap that PORT_CHECKLIST.md rule 3 substitutes for C's `Options ops` struct. Allowlisted in `tests/data/fake_fn_allowlist.txt` (zsh.h macros aren't in zsh_c_fn_names.txt since they're preprocessor macros, not function definitions).
   - **Builtin flags:** `BINF_PREFIX = 1 << 6` (c:1452 BIN_PREFIX macro).
   - `pub mod zsh;` registered in `src/ported/mod.rs:55` (was `mod zsh;` private).
   - 9/9 zsh.rs tests pass: `zlong_is_i64`, `zulong_is_u64`, `meta_byte_value`, `default_ifs_strings`, `parser_tokens_have_correct_bytes`, `pm_type_isolates_type_bits`, `pm_readonly_special_aggregate`, `opt_isset_basic`, `scanpm_flags_are_distinct`. Drift gate clean.

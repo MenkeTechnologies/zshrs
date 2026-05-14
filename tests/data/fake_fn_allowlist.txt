@@ -1,3 +1,50 @@
+# =============================================================
+# !!! READ THIS BEFORE ADDING ANY LINE TO THIS FILE !!!
+# =============================================================
+#
+# Adding a name here is NOT a free pass. The allowlist is the
+# AUDIT TRAIL OF MAINTAINER-APPROVED EXCEPTIONS, not a workaround
+# for the drift gate test.
+#
+# Per docs/PORT.md "Rule 0 — ASK BEFORE INVENTING ANY NEW FN":
+# if you are about to write a `fn` (or `struct`/`enum`/`static`/
+# `type`) under `src/ported/` whose name does NOT exist in
+# upstream zsh C source, you must STOP and ASK THE MAINTAINER
+# FIRST. Permission is required BEFORE the helper is written AND
+# BEFORE the name is added here.
+#
+# Forbidden additions without explicit permission (examples — NOT
+# exhaustive):
+#   - Thread_local accessor wrappers (`*_take`, `*_set`, `*_get`,
+#     `*_clear`, `*_is_some`, `*_is_none`, `*_eq`, `*_fill_*`,
+#     `*_push`, `*_pop`, `*_len`, `*_clone`)
+#   - "Convenience" / "helper" / "_impl" / "_kind" / "_noargs"
+#     splits of a single C fn into multiple Rust fns
+#   - Rust-only paranoia checkers (`check_limit`, `check_recursion`,
+#     `*_iterations > 10_000` caps, sentinel AtomicBools)
+#   - Bag-of-globals aggregator types (`*State`, `*Table`,
+#     `*Builder`, `*Config`, `*Context`)
+#   - Rust-only AST-glue walkers (`fill_*`, `resolve_*`, `walk_*`)
+#   - "Bridge" helpers that smuggle one track into another
+#
+# Required flow when you think a Rust-only helper is needed:
+#   1. STOP writing.
+#   2. Tell the maintainer: "I want to add `fn <name>` because
+#      <one-sentence reason>. May I?"
+#   3. Wait for explicit permission ("yes", "y", "ok", "go",
+#      "approved"). Anything else is NOT permission.
+#   4. If approved: add the fn AND add the name to this file
+#      with a comment recording the approval date and the
+#      one-sentence reason.
+#   5. If denied: inline at call sites OR find a real C name OR
+#      abandon the change.
+#
+# Past damage from skipping this gate: 30+ unauthorized fns
+# deleted, 700+ lines of dead Rust-only paranoia + glue removed.
+# See docs/PORT.md "Rule 0" for the full incident list.
+#
+# =============================================================
+#
 # Snapshot of free `fn` names in src/ported/**.rs that have no
 # matching function definition in zsh's upstream C source. Each line
 # is one identifier — the test reads this file and treats anything in
@@ -913,7 +960,6 @@ mv_link
 # of untokenize/getkeystring/etc. Each is documented inline in lex.rs.
 untokenize_preserve_quotes
 getkeystring_dollar_quote
-tokens_to_printable
 # lexact1_get / lexact2_get / lextok2_get — accessor wrappers for the
 # `lexact1[256]` / `lexact2[256]` / `lextok2[256]` byte tables built
 # by `initlextabs()` (Src/lex.c:410). C dereferences directly via
@@ -928,7 +974,6 @@ ensure_tabs_inited
 # error path. The C-named `get_cond_num(s)` (parse.c:2643 string
 # lookup) is the separate, faithful port that takes a precomputed
 # string.
-read_cond_num
 
 # Pre-existing zsh.h macro-shaped helpers (Src/zsh.h is a header,
 # not in zsh_c_fn_names.txt which only lists fns from .c files).
@@ -1013,7 +1058,6 @@ apply_history_modifiers
 # that C inlines via `itok()` / `inblank()` / `iblank()` macros
 # (is_token / is_blank / is_inblank). Long-term these all collapse
 # into the canonical `gettok` body when that is fully ported.
-check_recursion
 check_iterations
 process_heredocs
 read_line
@@ -1031,7 +1075,6 @@ fill_heredoc_bodies
 fill_in_sublist
 fill_in_pipe
 fill_in_command
-resolve_redir
 simple_name_with_inoutpar
 
 # lex.rs `mod tests {}` test functions — build.rs's brace counter
@@ -1055,14 +1098,6 @@ test_arithmetic
 test_semicolon_variants
 
 # === P7-P8 ZshLexer dissolution: free fns at module scope ===
-error
-heredocs_clear
-heredocs_clone
-heredocs_is_empty
-heredocs_len
-heredocs_push
-heredocs_set
-heredocs_take
 incasepat
 incmdpos
 incond
@@ -1074,7 +1109,6 @@ intypeset
 isnewlin
 lineno
 pos
-set_error
 set_incasepat
 set_incmdpos
 set_incond
@@ -1092,14 +1126,9 @@ tok
 tokfd
 toklineno
 tokstr
-tokstr_eq
-tokstr_is_none
-tokstr_is_some
-tokstr_take
 lex_init
 
 # === P8 ZshParser dissolution: free fns at module scope ===
-check_limit
 parse
 parse_case
 parse_cmd
@@ -1121,7 +1150,6 @@ par_list1_wordcode
 par_sublist_wordcode
 par_pipe_wordcode
 par_cmd_wordcode
-par_cmd_wordcode_noargs
 par_simple_wordcode
 par_simple_wordcode_impl
 par_arith_wordcode

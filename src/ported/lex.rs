@@ -509,8 +509,13 @@ thread_local! {
     pub static LEX_ISFIRSTLN: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// `int isfirstch` (lex.c:116).
     pub static LEX_ISFIRSTCH: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
-    /// Pending heredocs — Rust-only working set until P9c reinstates
-    /// the C `struct heredocs` linked-list shape (zsh.h:1152).
+    /// !!! WARNING: NOT IN LEX.C — Rust-only AST-glue Vec !!!
+    /// Runs parallel to the canonical C `struct heredocs *hdocs;`
+    /// linked list at `parse::HDOCS` (port of `Src/parse.c:84`).
+    /// Carries terminator / strip_tabs / quoted metadata that C
+    /// stores implicitly via tokstr; zshrs's AST consumer
+    /// (`fill_heredoc_bodies` in parse.rs) reads it via the
+    /// `heredoc_idx` field on `ZshRedir`.
     pub static LEX_HEREDOCS: std::cell::RefCell<Vec<HereDoc>> = const { std::cell::RefCell::new(Vec::new()) };
     /// `struct lexbufstate lexbuf` (lex.c:210).
     pub static LEX_LEXBUF: std::cell::RefCell<lexbufstate> = const { std::cell::RefCell::new(
@@ -543,16 +548,6 @@ thread_local! {
 // `tokstr()`, `set_tok(v)`, etc.) provide read/write into LEX_*.
 
 // ─── Accessor fns for the LEX_* thread_locals (Src/lex.c file-statics) ───
-
-/// C lex.c does not retain lexer error messages — `zerr(...)` prints
-/// to stderr immediately and sets `errflag |= ERRFLAG_ERROR`. Callers
-/// should check `crate::ported::utils::errflag` directly. These shims
-/// remain for backward-compatibility callers (parse.rs:1469) and
-/// always return None / no-op; remove once the parser stops calling.
-pub fn error() -> Option<String> {
-    None
-}
-pub fn set_error(_v: Option<String>) {}
 
 pub fn toklineno() -> u64 {
     LEX_TOKLINENO.get()
@@ -638,48 +633,12 @@ pub fn incasepat() -> i32 {
 pub fn set_incasepat(v: i32) {
     LEX_INCASEPAT.set(v);
 }
-/// Pending-heredocs accessors. The Vec lives in LEX_HEREDOCS;
-/// these helpers package the common operations so callers don't
-/// touch the thread_local directly.
-pub fn heredocs_take() -> Vec<HereDoc> {
-    LEX_HEREDOCS.with_borrow_mut(|v| std::mem::take(v))
-}
-pub fn heredocs_set(v: Vec<HereDoc>) {
-    LEX_HEREDOCS.with_borrow_mut(|c| *c = v);
-}
-pub fn heredocs_clear() {
-    LEX_HEREDOCS.with_borrow_mut(|v| v.clear());
-}
-pub fn heredocs_is_empty() -> bool {
-    LEX_HEREDOCS.with_borrow(|v| v.is_empty())
-}
-pub fn heredocs_len() -> usize {
-    LEX_HEREDOCS.with_borrow(|v| v.len())
-}
-pub fn heredocs_clone() -> Vec<HereDoc> {
-    LEX_HEREDOCS.with_borrow(|v| v.clone())
-}
-pub fn heredocs_push(h: HereDoc) {
-    LEX_HEREDOCS.with_borrow_mut(|v| v.push(h));
-}
 /// `char *tokstr` accessors — direct port of lex.c:170 file-static.
 pub fn tokstr() -> Option<String> {
     LEX_TOKSTR.with_borrow(|t| t.clone())
 }
 pub fn set_tokstr(v: Option<String>) {
     LEX_TOKSTR.with_borrow_mut(|t| *t = v);
-}
-pub fn tokstr_take() -> Option<String> {
-    LEX_TOKSTR.with_borrow_mut(|t| t.take())
-}
-pub fn tokstr_is_some() -> bool {
-    LEX_TOKSTR.with_borrow(|t| t.is_some())
-}
-pub fn tokstr_is_none() -> bool {
-    LEX_TOKSTR.with_borrow(|t| t.is_none())
-}
-pub fn tokstr_eq(s: &str) -> bool {
-    LEX_TOKSTR.with_borrow(|t| t.as_deref() == Some(s))
 }
 /// `enum lextok tok` accessors — direct port of lex.c:180 file-static.
 pub fn tok() -> lextok {
@@ -857,7 +816,7 @@ pub fn exalias() -> bool {
     }
 
     // lex.c:1964-1969 — bare-token path (no tokstr).
-    if tokstr_is_none() {
+    if LEX_TOKSTR.with_borrow(|t| t.is_none()) {
         // lex.c:1965 — `zshlextext = tokstrings[tok];` — for tokens
         // like SEMI/AMPER/etc. the canonical text comes from a
         // static table.
@@ -1157,7 +1116,7 @@ pub fn lex_context_save(ls: &mut lex_stack) {
     ls.isfirstch = LEX_ISFIRSTCH.get() as i32;
     ls.lexflags = LEX_LEXFLAGS.get();
     ls.tok = tok();
-    ls.tokstr = tokstr_take();
+    ls.tokstr = LEX_TOKSTR.with_borrow_mut(|t| t.take());
     // `zshlextext` (c:225) — pointer alias of `tokstr` after
     // untokenization. zshrs derives it on demand from `tokstr` +
     // `untokenize` so there's no separate global to stash.
@@ -1242,7 +1201,7 @@ pub fn lexinit() {
 /// Check recursion depth; returns true if exceeded
 #[inline]
 /// Get next character from input
-fn hgetc() -> Option<char> {
+pub(crate) fn hgetc() -> Option<char> {
     // Re-read from unget_buf: increment lineno on `\n` HERE
     // too. hungetc() decremented lineno when the char was put
     // back; without a matching increment on the way out, every
@@ -1367,11 +1326,79 @@ pub fn zshlex() {
     // dropped.
     LEX_NOCORRECT.set(LEX_NOCORRECT.get() & 1);
 
-    // lex.c:278-306 — drain pending here-documents at the start
-    // of a new line. zshrs's process_heredocs reads the full body
-    // and stitches it onto the matching redir token.
+    // lex.c:278-306 — drain pending here-documents at the start of
+    // a new line. Line-by-line port: walks the canonical `hdocs`
+    // linked list (`parse::HDOCS` mirrors `Src/parse.c:84 struct
+    // heredocs *hdocs;`), calls `gethere` to read each body, calls
+    // `setheredoc` to patch the wordcode redir slot. Two zshrs-only
+    // lines (annotated below) bridge body content + processed flag
+    // into the parallel AST-glue `LEX_HEREDOCS` Vec.
     if tok() == NEWLIN || tok() == ENDINPUT {
-        process_heredocs();
+        // c:279 — `while (hdocs)`
+        while let Some(mut node) = crate::ported::parse::HDOCS.with_borrow_mut(
+            |h| h.take(),
+        ) {
+            // c:280 — `struct heredocs *next = hdocs->next;`
+            let next: Option<Box<crate::ported::zsh_h::heredocs>> = node.next.take();
+            // c:281 — `char *doc, *munged_term;`
+            let doc: Option<String>;
+            let mut munged_term: String;
+
+            // c:283 — `hwbegin(0);` (history-build cursor — zshrs no-op)
+            // c:284 — `cmdpush(hdocs->type == REDIR_HEREDOC ? CS_HEREDOC : CS_HEREDOCD);`
+            cmdpush(if node.typ == crate::ported::zsh_h::REDIR_HEREDOC {
+                CS_HEREDOC as u8
+            } else {
+                CS_HEREDOCD as u8
+            });
+            // c:285 — `munged_term = dupstring(hdocs->str);`
+            munged_term = crate::ported::mem::dupstring(node.str.as_deref().unwrap_or(""));
+            // c:286 — `STOPHIST` (history-disable scope — zshrs no-op)
+            // c:287 — `doc = gethere(&munged_term, hdocs->type);`
+            doc = crate::exec::gethere(&mut munged_term, node.typ);
+            // c:288 — `ALLOWHIST`
+            // c:289 — `cmdpop();`
+            cmdpop();
+            // c:290 — `hwend();`
+
+            // c:291 — `if (!doc)`
+            let Some(doc) = doc else {
+                // c:292 — `zerr("here document too large");`
+                crate::ported::utils::zerr("here document too large");
+                // c:293-297 — while (hdocs) { next = hdocs->next; zfree(hdocs); hdocs = next; }
+                crate::ported::parse::HDOCS.with_borrow_mut(|h| *h = None);
+                // c:298 — `tok = LEXERR;`
+                set_tok(LEXERR);
+                // c:299 — break out of the while.
+                break;
+            };
+            // c:301-302 — `setheredoc(hdocs->pc, REDIR_HERESTR, doc,
+            //                         hdocs->str, munged_term);`
+            crate::ported::parse::setheredoc(
+                node.pc as usize,
+                crate::ported::zsh_h::REDIR_HERESTR,
+                &doc,
+                node.str.as_deref().unwrap_or(""),
+                &munged_term,
+            );
+            // zshrs-only: write body into the parallel AST-glue
+            // LEX_HEREDOCS entry so `fill_heredoc_bodies` (parse.rs)
+            // wires it onto the matching ZshRedir.heredoc field.
+            // No C counterpart — LEX_HEREDOCS is Rust-only state.
+            LEX_HEREDOCS.with_borrow_mut(|v| {
+                for h in v.iter_mut() {
+                    if !h.processed {
+                        h.content = doc;
+                        h.processed = true;
+                        return;
+                    }
+                }
+            });
+            // c:303 — `zfree(hdocs, sizeof(struct heredocs));`
+            drop(node);
+            // c:304 — `hdocs = next;`
+            crate::ported::parse::HDOCS.with_borrow_mut(|h| *h = next);
+        }
     }
 
     // lex.c:307-310 — track whether we just saw a newline.
@@ -1405,105 +1432,6 @@ pub fn zshlex() {
     // incondpat tracker into zshlex so the parser would get those
     // updates "for free"; that broke the C-faithful contract of
     // zshlex. Removed.
-}
-
-/// Process pending here-documents. Walks each heredoc whose body
-/// hasn't been filled yet (content is empty AND terminator is set),
-/// reads lines from input until the terminator, and stuffs the body
-/// into `hdoc.content` IN PLACE. The list itself is preserved so the
-/// parser can index into it after parse() finishes.
-fn process_heredocs() {
-    let n = LEX_HEREDOCS.with_borrow(|v| v.len());
-    for i in 0..n {
-        // Skip heredocs we've already processed AND those without
-        // a terminator (early-error case). The `processed` bool
-        // distinguishes "filled with empty body" from "not yet
-        // visited" — both have empty `content`.
-        let (skip, strip_tabs, terminator) = LEX_HEREDOCS.with_borrow(|v| {
-            if v[i].processed || v[i].terminator.is_empty() {
-                (true, false, String::new())
-            } else {
-                (false, v[i].strip_tabs, v[i].terminator.clone())
-            }
-        });
-        if skip {
-            continue;
-        }
-        // c:284 — `cmdpush(hdocs->type == REDIR_HEREDOC ? CS_HEREDOC :
-        // CS_HEREDOCD);` — `<<-` (strip_tabs) is CS_HEREDOCD; bare
-        // `<<` is CS_HEREDOC.
-        cmdpush(if strip_tabs {
-            CS_HEREDOCD as u8
-        } else {
-            CS_HEREDOC as u8
-        });
-        let mut content = String::new();
-
-        loop {
-            let line = read_line();
-            if line.is_none() {
-                // c:292 — `zerr("here document too large");` then
-                // tok = LEXERR + cmdpop + bail out of the heredoc loop.
-                crate::ported::utils::zerr("here document too large");
-                set_tok(LEXERR);
-                cmdpop();
-                return;
-            }
-
-            let line = line.unwrap();
-            let check_line = if strip_tabs {
-                line.trim_start_matches('\t')
-            } else {
-                line.as_str()
-            };
-
-            if check_line.trim_end_matches('\n') == terminator {
-                break;
-            }
-
-            // `<<-` strips leading tabs from BODY lines too, not just
-            // from terminator-match comparison. Without this, tabs in
-            // here-doc content survive into stdin.
-            if strip_tabs {
-                content.push_str(check_line);
-            } else {
-                content.push_str(&line);
-            }
-        }
-
-        // c:289 — `cmdpop();` matches c:284 push on normal completion.
-        cmdpop();
-
-        LEX_HEREDOCS.with_borrow_mut(|v| {
-            v[i].content = content;
-            v[i].processed = true;
-        });
-    }
-}
-
-/// Read a line from input (returns partial line at EOF)
-fn read_line() -> Option<String> {
-    let mut line = String::new();
-
-    loop {
-        match hgetc() {
-            Some(c) => {
-                line.push(c);
-                if c == '\n' {
-                    break;
-                }
-            }
-            None => {
-                // EOF - return partial line if any
-                if line.is_empty() {
-                    return None;
-                }
-                break;
-            }
-        }
-    }
-
-    Some(line)
 }
 
 // `hashchar` / `bangchar` / `hatchar` — port of `unsigned char
@@ -4149,11 +4077,6 @@ pub fn has_token(s: &str) -> bool {
         let cu = c as u32;
         (0x83..=0x9f).contains(&cu)
     })
-}
-
-/// Convert token characters to their printable form for display
-pub fn tokens_to_printable(s: &str) -> String {
-    untokenize(s)
 }
 
 #[cfg(test)]
