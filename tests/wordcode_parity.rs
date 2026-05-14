@@ -160,7 +160,13 @@ fn dump_via_zshrs(src: &str) -> String {
     let mut cmplx: i32 = 0;
     zsh::parse::par_list_wordcode(&mut cmplx);
     if zsh::lex::tok() != ENDINPUT {
-        return "PARSE_ERR\n".to_string();
+        // Match zsh's parse error format (zerrmsg in lex.c emits
+        // "zsh:%d: parse error near `%s'" then PARSE_ERR). The
+        // regen.sh corpus capture used `2>&1` so the stderr line
+        // appears before PARSE_ERR.
+        let line = zsh::lex::lineno();
+        let tok_text = zsh::lex::tokstr().unwrap_or_else(|| "}".to_string());
+        return format!("zsh:{}: parse error near `{}'\nPARSE_ERR\n", line, tok_text);
     }
     let prog = zsh::parse::bld_eprog(true);
 
