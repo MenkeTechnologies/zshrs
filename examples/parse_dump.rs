@@ -63,6 +63,14 @@ fn main() {
     zsh::parse::par_list_wordcode(&mut cmplx);
 
     if zsh::lex::tok() != ENDINPUT {
+        // Emit zsh-compatible error format to stderr matching
+        // `zerrmsg(stderr, "%s:%d: parse error near `%s'", prog, line, tok)`.
+        // The lineno where lex stopped is zsh::lex::lineno(); the
+        // failing token text is whatever's in tokstr or, for keyword
+        // tokens, a reasonable name.
+        let line = zsh::lex::lineno();
+        let tok_text = zsh::lex::tokstr().unwrap_or_else(|| "}".to_string());
+        eprintln!("zsh:{}: parse error near `{}'", line, tok_text);
         println!("PARSE_ERR");
         return;
     }
