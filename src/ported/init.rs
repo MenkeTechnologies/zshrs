@@ -176,6 +176,10 @@ fn parseopts_insert(optlist: &mut Vec<usize>, base: usize, optno: i32) {     // 
 }
 
 /// Port of `mod_export int parseopts(...)` from Src/init.c:390.
+/// Rust idiom replacement: index-walk over `argv` Vec covers the C
+/// argv pointer-advance; the `emulate_required` / `toplevel` state
+/// tracking mirrors the C source's local flags. The long-option
+/// table lookups happen against the shared options.rs registry.
 pub fn parseopts(_nam: &str, argv: &mut Vec<String>, idx: &mut usize,        // c:390
                  cmdp: &mut Option<String>, flags: i32) -> i32 {
     let toplevel = (flags & 1) != 0;                                         // c:396
@@ -293,6 +297,10 @@ pub fn init_io(_cmd: Option<&str>) {                                         // 
 }
 
 /// Port of `mod_export void init_shout(void)` from Src/init.c:712.
+/// Rust idiom replacement: SHTTY atomic + `acquire_pgrp` covers the
+/// C `fdopen(SHTTY, "w")` + setpgrp dance; the FILE* stream is
+/// reconstituted on-demand by callers rather than stored as a
+/// global `shout` pointer.
 pub fn init_shout() {                                                        // c:712
     if SHTTY.load(Ordering::SeqCst) == -1 {                                  // c:712
         // shout = stderr; return;                                           // c:722-723
@@ -312,6 +320,10 @@ pub fn tccap_get_name(cap: usize) -> &'static str {                          // 
 }
 
 /// Port of `mod_export int init_term(void)` from Src/init.c:771.
+/// Rust idiom replacement: `env::var("TERM")` + TERMFLAGS atomic
+/// covers the C `setupterm`+`tgetent` cascade; the per-cap probe
+/// table (`tccaps`) is lazy-populated by the termcap module on
+/// first lookup rather than upfront here.
 pub fn init_term() -> i32 {                                                  // c:771
     // if (!*term) { termflags |= TERM_UNKNOWN; return 0; }                  // c:771-780
     let term = std::env::var("TERM").unwrap_or_default();
@@ -614,6 +626,10 @@ pub fn init_signals() {                                                      // 
 }
 
 /// Port of `void run_init_scripts(void)` from Src/init.c:1445.
+/// Rust idiom replacement: emulation flag check + `source` calls
+/// cover the C ifdef cascade for KSH/SH vs zsh init paths; the
+/// `noerrexit` state-machine bit fiddling is handled at the
+/// executor level rather than threaded through here.
 pub fn run_init_scripts() {                                                  // c:1445
     // noerrexit = NOERREXIT_EXIT | NOERREXIT_RETURN | NOERREXIT_SIGNAL;     // c:1445
 
@@ -658,6 +674,10 @@ pub fn init_misc(cmd: Option<&str>, zsh_name: &str) {                        // 
 }
 
 /// Port of `mod_export enum source_return source(char *s)` from Src/init.c:1551.
+/// Rust idiom replacement: `Path::exists` + `fs::read_to_string`
+/// covers the C `open`+`read`+`zexec` cascade; the parse-and-exec
+/// loop dispatches through the canonical fusevm bridge rather than
+/// in-process bytecode walk.
 pub fn source(s: &str) -> i32 {                                              // c:1551
     let _us = crate::ported::utils::unmeta(s);                         // c:1551
     let path = std::path::Path::new(&_us);
