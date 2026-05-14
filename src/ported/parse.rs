@@ -3626,59 +3626,55 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                 assignments = true;
             }
             ENVARRAY => {
-                // c:1898-1922 — array assignment `name=( ... )`.
-                // Implementation note: emits placeholder, parses
-                // wordlist, patches WCB_ASSIGN(ARRAY, NEW|INC, n)
-                // header with the actual element count. zshrs's
-                // par_nl_wordlist isn't wired into the wordcode
-                // emitter yet; fall back to a minimal placeholder
-                // so the WCB_ASSIGN slot exists at the expected
-                // position. TODO: full port of c:1898-1922.
+                // c:1883-1908 — array assignment `name=( ... )` in the
+                // pre-cmd loop (no `typeset`-style typeset_force flag).
+                // c:1884 — `int oldcmdpos = incmdpos, n, type2;`
+                let oldcmdpos = incmdpos();
+                let n: u32;
+                let type2: wordcode;
+                let p: usize;
+
+                // c:1886-1889 — `array setting is cmplx because it can
+                //   contain process substitutions`
+                // c:1890 — `*cmplx = c = 1;`
                 *cmplx = 1;
-                let p = ecadd(0);
+                // c:1891 — `p = ecadd(0);`
+                p = ecadd(0);
+                // c:1892 — `incmdpos = 0;`
                 set_incmdpos(false);
+                // c:1893-1897 — `+=` detection: if tokstr ends in `+`,
+                // strip the `+` and use WC_ASSIGN_INC; else WC_ASSIGN_NEW.
                 let raw = tokstr().unwrap_or_default();
-                let is_inc = raw.ends_with('+');
-                let name = if is_inc { &raw[..raw.len() - 1] } else { raw.as_str() };
-                let flag = if is_inc { WC_ASSIGN_INC } else { WC_ASSIGN_NEW };
-                ecstr(name);
+                let (name, t2) = if raw.ends_with('+') {
+                    (raw[..raw.len() - 1].to_string(), WC_ASSIGN_INC)
+                } else {
+                    (raw.clone(), WC_ASSIGN_NEW)
+                };
+                type2 = t2;
+                // c:1898 — `ecstr(tokstr);` (tokstr now NUL-trimmed)
+                ecstr(&name);
+                // c:1899 — `cmdpush(CS_ARRAY);`
                 cmdpush(CS_ARRAY as u8);
+                // c:1900 — `zshlex();`
                 zshlex();
-                // c:1901 — `n = par_nl_wordlist();` (parse.c:2379-2391):
-                //   `while (tok == STRING || tok == SEPER) {
-                //     if (tok != SEPER) { ecstr(tokstr); num++; }
-                //     zshlex();
-                //   }`
-                // SEPER is the lexer's general line-terminator token —
-                // covers `;`, `\n`, and `\r\n`. The old loop only handled
-                // NEWLIN and started inside-string, which couldn't enter
-                // when the first post-`(` token was a newline (multi-line
-                // array literals always start that way).
-                let mut n = 0u32;
-                loop {
-                    let t = tok();
-                    if t != STRING_LEX && t != SEPER && t != NEWLIN {
-                        break;
-                    }
-                    if t == STRING_LEX {
-                        let w = tokstr().unwrap_or_default();
-                        ecstr(&w);
-                        n += 1;
-                    }
-                    zshlex();
-                }
+                // c:1901 — `n = par_nl_wordlist();`
+                n = par_nl_wordlist_wordcode();
+                // c:1902 — `ecbuf[p] = WCB_ASSIGN(WC_ASSIGN_ARRAY, type2, n);`
                 ECBUF.with_borrow_mut(|b| {
-                    if p < b.len() {
-                        b[p] = WCB_ASSIGN(WC_ASSIGN_ARRAY, flag, n);
-                    }
+                    b[p] = WCB_ASSIGN(WC_ASSIGN_ARRAY, type2, n);
                 });
+                // c:1903 — `cmdpop();`
                 cmdpop();
+                // c:1904-1905 — `if (tok != OUTPAR) YYERROR(oecused);`
                 if tok() != OUTPAR_TOK {
-                    error("expected `)' after array assignment");
+                    error("par_simple: expected `)' after array assignment");
                     return 0;
                 }
-                set_incmdpos(true);
+                // c:1906 — `incmdpos = oldcmdpos;`
+                set_incmdpos(oldcmdpos);
+                // c:1907 — `isnull = 0;`
                 isnull = false;
+                // c:1908 — `assignments = 1;`
                 assignments = true;
             }
             t if IS_REDIROP(t) => {
