@@ -3529,21 +3529,19 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                     idx += 1;
                 }
                 let is_inc = idx < bytes.len() && bytes[idx] == '+';
-                // c:1855-1860 — emit WCB_ASSIGN with WC_ASSIGN_INC
-                // (+=) or WC_ASSIGN_NEW (=). The third arg (count)
-                // is 0 for scalar.
-                let flag = if is_inc { WC_ASSIGN_INC } else { WC_ASSIGN_NEW };
-                ecadd(WCB_ASSIGN(WC_ASSIGN_SCALAR, flag, 0));
-                // Split into name and str at the `=` (after the
-                // optional `+`).
+                // c:1856-1858 — `if (*ptr == '+') { *ptr++ = '\0';
+                // ecadd(WCB_ASSIGN(SCALAR, INC, 0)); } else WCB_NEW`
+                // C nulls the `+` AT THAT POSITION then advances ptr.
+                // `name` is bytes BEFORE the `+`, NOT including it.
+                let name_end = idx;
                 if is_inc {
                     idx += 1;
                 }
-                let name: String = bytes[..idx].iter().collect();
-                // Skip past the `=` separator (literal or Equals
-                // marker `\u{8d}`) so the value starts at the byte
-                // after it. Mirrors C `*ptr = '\0'; str = ptr + 1;`
-                // (parse.c:1864).
+                let flag = if is_inc { WC_ASSIGN_INC } else { WC_ASSIGN_NEW };
+                ecadd(WCB_ASSIGN(WC_ASSIGN_SCALAR, flag, 0));
+                // c:1860 — `if (*ptr == '=') { *ptr = '\0'; str = ptr + 1; }
+                //          else equalsplit(tokstr, &str);`
+                let name: String = bytes[..name_end].iter().collect();
                 let str_off = if idx < bytes.len()
                     && (bytes[idx] == '=' || bytes[idx] == '\u{8d}')
                 {
