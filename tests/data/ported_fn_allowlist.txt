@@ -1360,3 +1360,5 @@ test_function
 test_redirection
 test_assignment
 test_parse_completion_function
+test_parse_array_with_complex_elements
+test_parse_full_completion_file
