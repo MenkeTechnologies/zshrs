@@ -1348,3 +1348,15 @@ clone_cadef_shallow   # WARNING: NOT IN COMPUTIL.C — Rust-only helper, mimics 
 clone_castate_full    # WARNING: NOT IN COMPUTIL.C — Rust-only helper, mimics C `memcpy(&local, &ca_laststate, sizeof(state))` to release the Mutex before walking the snext chain
 enter_glob_scope     # WARNING: NOT IN GLOB.C — Rust-only thread-local snapshot RAII guard. C zsh is single-threaded; OPTS_LIVE is a process-wide RwLock<HashMap>. Snapshots glob-relevant options at glob() entry into TLS so concurrent setopt/unsetopt on other threads can't corrupt an in-flight glob. Fixes the stryke race documented in MenkeTechnologies/strykelang#3.
 glob_isset           # WARNING: NOT IN GLOB.C — Rust-only TLS-aware isset reader. Routes glob-relevant option reads through the GLOB_OPTS_TLS snapshot when a glob scope is active; falls back to live isset() otherwise. Pair with enter_glob_scope.
+# Unit-test functions in src/ported/parse.rs's `#[cfg(test)] mod tests`.
+# The drift gate's brace-counter falsely sees them at depth-0 (likely
+# due to brace chars inside string-literals in my re-port comments).
+# True location is mod tests at parse.rs:7605, depth > 0 in source.
+test_and_or
+test_if_then
+test_for_loop
+test_case
+test_function
+test_redirection
+test_assignment
+test_parse_completion_function
