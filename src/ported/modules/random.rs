@@ -11,9 +11,20 @@ use std::os::unix::fs::FileTypeExt;
 use std::os::fd::IntoRawFd;
 use std::sync::atomic::Ordering;
 
-/// Buffer size for pre-loading random integers
-// buffer to pre-load integers for SRANDOM to lessen the context switches  // c:49
-const RAND_BUFF_SIZE: usize = 8;
+/// Fill a buffer with cryptographically random bytes.
+/// Port of `getrandom_buffer(void *buf, size_t len)` from Src/Modules/random.c:62 — the
+/// C source dispatches to `getentropy(3)` on BSD, `getrandom(2)` on
+/// Linux, or `/dev/urandom` as a portable fallback. We map onto
+/// `arc4random_buf(3)` for macOS (BSD-derived), `getrandom(2)` on
+/// Linux, and `/dev/urandom` everywhere else.
+#[cfg(target_os = "macos")]
+/// WARNING: param names don't match C — Rust=(buf) vs C=(buf, len)
+pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // c:62
+    unsafe {
+        libc::arc4random_buf(buf.as_mut_ptr() as *mut libc::c_void, buf.len());
+    }
+    Ok(())
+}
 
 // Per-evaluator random-buffer state — bucket-1 dissolution per
 // PORT_PLAN.md Phase 2. C source has TWO file-statics at
@@ -43,21 +54,6 @@ thread_local! {
     static BUF_CNT: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
-}
-
-/// Fill a buffer with cryptographically random bytes.
-/// Port of `getrandom_buffer(void *buf, size_t len)` from Src/Modules/random.c:62 — the
-/// C source dispatches to `getentropy(3)` on BSD, `getrandom(2)` on
-/// Linux, or `/dev/urandom` as a portable fallback. We map onto
-/// `arc4random_buf(3)` for macOS (BSD-derived), `getrandom(2)` on
-/// Linux, and `/dev/urandom` everywhere else.
-#[cfg(target_os = "macos")]
-/// WARNING: param names don't match C — Rust=(buf) vs C=(buf, len)
-pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {                  // c:62
-    unsafe {
-        libc::arc4random_buf(buf.as_mut_ptr() as *mut libc::c_void, buf.len());
-    }
-    Ok(())
 }
 
 /// Port of `getrandom_buffer(void *buf, size_t len)` from `Src/Modules/random.c:62`,
@@ -223,41 +219,6 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
     handlefeatures(m, module_features(), enables)
 }
 
-/// Re-export of the canonical `random_real()` from
-/// `Src/Modules/random_real.c:147` — Campbell's algorithm for
-/// distribution-correct uniform doubles in `[0, 1)`. The simpler
-/// "53-bit mantissa" approximation that previously lived here was
-/// removed because it biases ~3% of the interval; the C author
-/// (Taylor R. Campbell) explicitly warns against it in the random_real.c
-/// header comment.
-pub use crate::ported::modules::random_real::random_real;
-
-/// Generate a random integer in `[min, max]`.
-
-
-
-// =====================================================================
-// static struct features module_features                            c:255 (random.c)
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
-// `mftab` — port of `static struct mathfunc mftab[]` (random.c).
-
-
-// `patab` — port of `static struct paramdef patab[]` (random.c).
-
-
-// `module_features` — port of `static struct features module_features`
-// from random.c:255.
-
-
-
-/// `RANDFD` — port of the file-static `int randfd` in
-/// `Src/Modules/random.c:243`. Holds the open fd for `/dev/urandom`.
-/// Set in `boot_()`, closed in `finish_()`.
-pub static RANDFD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:34
-
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/random.c:282`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:282
@@ -278,6 +239,25 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
     }
 }
 
+/// Re-export of the canonical `random_real()` from
+/// `Src/Modules/random_real.c:147` — Campbell's algorithm for
+/// distribution-correct uniform doubles in `[0, 1)`. The simpler
+/// "53-bit mantissa" approximation that previously lived here was
+/// removed because it biases ~3% of the interval; the C author
+/// (Taylor R. Campbell) explicitly warns against it in the random_real.c
+/// header comment.
+pub use crate::ported::modules::random_real::random_real;
+
+/// Generate a random integer in `[min, max]`.
+
+
+
+// =====================================================================
+// static struct features module_features                            c:255 (random.c)
+// =====================================================================
+
+use crate::ported::zsh_h::module;
+
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/random.c:312`.
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:312
     setfeatureenables(m, module_features(), None)
@@ -293,6 +273,26 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     }
     0
 }
+
+/// Buffer size for pre-loading random integers
+// buffer to pre-load integers for SRANDOM to lessen the context switches  // c:49
+const RAND_BUFF_SIZE: usize = 8;
+
+// `mftab` — port of `static struct mathfunc mftab[]` (random.c).
+
+
+// `patab` — port of `static struct paramdef patab[]` (random.c).
+
+
+// `module_features` — port of `static struct features module_features`
+// from random.c:255.
+
+
+
+/// `RANDFD` — port of the file-static `int randfd` in
+/// `Src/Modules/random.c:243`. Holds the open fd for `/dev/urandom`.
+/// Set in `boot_()`, closed in `finish_()`.
+pub static RANDFD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:34
 
 // WARNING: NOT IN RANDOM.C — Rust-only convenience helpers.
 // C inlines the equivalent logic inside `get_bound_random_buffer()`
@@ -395,6 +395,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

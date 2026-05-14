@@ -20,9 +20,18 @@ use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, Read};
 use std::io::Write;
 
-// Size of buffer for non-interactive command input                        // c:127
-/// Size of the shell input buffer
-const SHIN_BUF_SIZE: usize = 8192;
+/// Port of `struct instacks` from `Src/input.c:109`. One frame in
+/// the input stack — pushed by `inpush()` and popped by `inpoptop()`
+/// to layer alias expansion / history-substitution / `eval`
+/// continuations over the active input.
+#[derive(Clone, Default)]
+#[allow(non_camel_case_types)]
+struct instacks {                                                            // c:109
+    buf: String,                                                             // c:110 char *buf
+    bufpos: usize,                                                           // c:110 char *bufptr offset
+    flags: i32,                                                              // c:112 int flags
+    alias: Option<String>,                                                   // c:111 Alias alias
+}
 
 /// Initial input stack size
 #[allow(dead_code)]
@@ -38,17 +47,16 @@ use crate::ported::zsh_h::{
     INP_HISTCONT, INP_LINENO, INP_RAW_KEEP,
 };
 
-/// Port of `struct instacks` from `Src/input.c:109`. One frame in
-/// the input stack — pushed by `inpush()` and popped by `inpoptop()`
-/// to layer alias expansion / history-substitution / `eval`
-/// continuations over the active input.
-#[derive(Clone, Default)]
-#[allow(non_camel_case_types)]
-struct instacks {                                                            // c:109
-    buf: String,                                                             // c:110 char *buf
-    bufpos: usize,                                                           // c:110 char *bufptr offset
-    flags: i32,                                                              // c:112 int flags
-    alias: Option<String>,                                                   // c:111 Alias alias
+// ---------------------------------------------------------------------------
+// SHIN buffer helpers — direct ports of input.c:159/171/181/200/218/267.
+// ---------------------------------------------------------------------------
+
+/// Reset the SHIN pushback buffer.
+/// Port of `shinbufreset()` from Src/input.c:159 —
+/// `shinbufendptr = shinbufptr = shinbuffer`.
+pub fn shinbufreset() {                                                      // c:159
+    shinbuffer.with(|b| b.borrow_mut().clear());
+    shinbufpos.with(|p| p.set(0));
 }
 
 // ---------------------------------------------------------------------------
@@ -122,18 +130,6 @@ thread_local! {
 
     /// Raw-input accumulator for history. zshrs-specific.
     static raw_input: RefCell<String> = const { RefCell::new(String::new()) };
-}
-
-// ---------------------------------------------------------------------------
-// SHIN buffer helpers — direct ports of input.c:159/171/181/200/218/267.
-// ---------------------------------------------------------------------------
-
-/// Reset the SHIN pushback buffer.
-/// Port of `shinbufreset()` from Src/input.c:159 —
-/// `shinbufendptr = shinbufptr = shinbuffer`.
-pub fn shinbufreset() {                                                      // c:159
-    shinbuffer.with(|b| b.borrow_mut().clear());
-    shinbufpos.with(|p| p.set(0));
 }
 
 /// Allocate a fresh SHIN buffer.
@@ -454,9 +450,6 @@ pub fn inpopalias() {                                                        // 
     }
 }
 
-/// Meta character marker
-pub const META: char = '\u{83}';
-
 /// Get a slice of the unread portion of the current input.
 /// Port of `ingetptr()` from Src/input.c:817.
 pub fn ingetptr() -> String {                                                // c:817
@@ -470,6 +463,13 @@ pub fn ingetptr() -> String {                                                // 
         }
     })
 }
+
+// Size of buffer for non-interactive command input                        // c:127
+/// Size of the shell input buffer
+const SHIN_BUF_SIZE: usize = 8192;
+
+/// Meta character marker
+pub const META: char = '\u{83}';
 
 /// Check if a character needs meta encoding
 fn imeta(c: char) -> bool {

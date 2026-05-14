@@ -54,136 +54,6 @@ use crate::ported::zle::textobjects::*;
 use crate::ported::zle::deltochar::*;
 use crate::zle::zle_h::{change, modifier, widget};
 
-pub type ZleChar = char;
-
-/// ZLE string type
-pub type ZleString = Vec<ZleChar>;
-
-/// ZLE integer type for character values
-pub type ZleInt = i32;
-
-/// EOF marker
-pub const ZLEEOF: ZleInt = -1;
-
-// `ZleReadFlags` deleted — Rust-only struct wrapping what C carries
-// as bare `int flags` with `ZLRF_HISTORY` / `ZLRF_NOSETTY` /
-// `ZLRF_IGNOREEOF` bits (Src/zsh.h:3203-3205). The fake fields
-// (no_history / completion / vared) had no C counterpart; C uses
-// `!(zlereadflags & ZLRF_HISTORY)` inline for the no-history test
-// and a separate `zlecontext == ZLCON_VARED` check for vared mode.
-// `zlereadflags` is now `i32` matching C's `int zlereadflags`
-// (Src/Zle/zle_main.c:90).
-
-// `ZleContext` deleted — Rust-named enum duplicating the legit C
-// enum at Src/zsh.h:3211-3216 (`ZLCON_LINE_START` / `ZLCON_LINE_CONT`
-// / `ZLCON_SELECT` / `ZLCON_VARED`), already ported in zsh_h.rs:3162-3165.
-// `ZLECONTEXT` is now an `AtomicI32` static matching C's `int
-// zlecontext` (zle_main.c:163).
-
-
-impl Default for modifier {
-    fn default() -> Self {
-        // c:1604 initmodifier — mult=1, tmult=1, base=10.
-        modifier {
-            flags: 0,
-            mult: 1,
-            tmult: 1,
-            vibuf: 0,
-            base: 10,
-        }
-    }
-}
-
-use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
-
-// `ModifierFlags` bitflags wrapper deleted — C uses bare `int flags`
-// in `struct modifier` (zle.h:246) with the `MOD_*` bit constants
-// at zle.h:253-263, already legit-ported in zle_h.rs:371-381.
-// modifier.flags is now `i32` matching C verbatim.
-
-/// Direct port of `struct change` from `Src/Zle/zle.h:284-294`.
-/// Undo change record. `ChangeFlags` bitflags wrapper deleted —
-/// C uses bare `int flags` with `CH_NEXT` (1<<0) and `CH_PREV`
-/// (1<<1) bits (zle.h:297-298, ported in zle_h.rs as i32).
-// `WatchFd` deleted — duplicate of `struct watch_fd` already legit-
-// ported at zle_h.rs:781 (Src/Zle/zle.h:572). The Rust port uses
-// `super::zle_h::watch_fd` directly.
-
-// `TimeoutType` / `Timeout` deleted — Rust-named duplicates of the
-// legit `ztmouttp` enum + `ztmout` struct already ported at
-// `zle_main.c:398/432`. See definitions below.
-
-/// Maximum timeout value (about 24 days in 100ths of a second)
-/// Port of `ZMAXTIMEOUT` macro from `Src/Zle/zle_main.c:429`.
-/// `#define ZMAXTIMEOUT ((time_t)1 << (sizeof(int)*8-11))`.
-/// Maximum keytimeout value clamped before passing to select(2),
-/// keeps the (microseconds * 100) product within `time_t` range.
-/// On a 32-bit `int` platform: `1 << 21` (~2.1M centiseconds = 21k sec).
-pub const ZMAXTIMEOUT: u64 = 1 << 21;                                        // c:429
-
-/// Port of `MAXFOUND` from `Src/Zle/zle_main.c:1925`.
-/// Hash-search saturation cap: stop walking after this many matches
-/// in the brief-key-description scan — keeps the prompt-line summary
-/// short enough to fit on screen.
-pub const MAXFOUND: usize = 4;                                               // c:1925
-
-/// Port of `enum ztmouttp` from `Src/Zle/zle_main.c:398`. Discriminator
-/// for the active read-timeout source: none, key (do_keytmout), function
-/// (timedfns), or maxed-out (re-arm needed).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(i32)]
-#[allow(non_camel_case_types)]
-pub enum ztmouttp {                                                          // c:398
-    ZTM_NONE = 0,                                                            // c:401
-    ZTM_KEY  = 1,                                                            // c:406
-    ZTM_FUNC = 2,                                                            // c:412
-    ZTM_MAX  = 3,                                                            // c:428
-}
-
-/// Port of `struct ztmout` from `Src/Zle/zle_main.c:432`. Carries the
-/// active timeout type plus expiration in 100ths of a second.
-#[derive(Debug, Clone, Copy)]
-#[allow(non_camel_case_types)]
-pub struct ztmout {                                                          // c:432
-    pub tp: ztmouttp,                                                        // c:434 enum ztmouttp tp
-    pub exp100ths: i64,                                                      // c:438 time_t exp100ths
-}
-
-/// Port of `struct findfunc` from `Src/Zle/zle_main.c:1927`. Closure
-/// state for the `describe-key-briefly` widget — accumulates the
-/// found-binding hits up to `MAXFOUND` and a status message.
-#[derive(Debug, Default)]
-#[allow(non_camel_case_types)]
-pub struct findfunc {                                                        // c:1927
-    /// Target Thingy we're searching for; matched against scan key.
-    /// Cell holds `None` until set; `usize` indexes into THINGYTAB.
-    pub func: Option<usize>,                                                 // c:1928
-    /// Hit counter; capped at MAXFOUND.
-    pub found: usize,                                                        // c:1929
-    /// Accumulated message: " is on KEY1 KEY2 ..." or similar.
-    pub msg: String,                                                         // c:1930
-}
-
-// `pub struct Zle;` deleted along with `impl Default for Zle` and
-// `impl Zle { fn new() }`. The unit marker had no C counterpart and
-// served only as a per-instance dispatch tag for the now-deleted
-// methods. State init lives in `zle_reset()` below, the C-equivalent
-// of `zleread()`'s reset block at `Src/Zle/zle_main.c:1216`.
-
-// `CompletionRequest` enum deleted along with the matching field.
-// C dispatches completion-widget variants via separate function
-// pointers in `Src/Zle/zle_tricky.c` — no enum type.
-
-/// Process-wide lock that serialises ZLE-touching tests. The ZLE
-/// session state lives in file-scope statics (ZLELINE/ZLECS/etc.);
-/// `cargo test` runs tests in parallel by default which races on
-/// those shared statics. Tests acquire this lock at the top
-/// (typically via `zle_test_setup()` below) so the parallel runner
-/// effectively serialises just the ZLE-touching subset. No C
-/// counterpart — C is single-threaded so the question doesn't arise.
-#[doc(hidden)]
-pub static ZLE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     /// Configure the terminal for ZLE input.
     /// Port of `zsetterm()` from Src/Zle/zle_main.c:210. The C source
     /// disables ICANON + ECHO, sets VMIN=1 / VTIME=0 (one-byte
@@ -276,6 +146,37 @@ pub fn ungetbytes_unmeta(s: &[u8]) {                          // c:366
     }
 }
 
+// `ZleReadFlags` deleted — Rust-only struct wrapping what C carries
+// as bare `int flags` with `ZLRF_HISTORY` / `ZLRF_NOSETTY` /
+// `ZLRF_IGNOREEOF` bits (Src/zsh.h:3203-3205). The fake fields
+// (no_history / completion / vared) had no C counterpart; C uses
+// `!(zlereadflags & ZLRF_HISTORY)` inline for the no-history test
+// and a separate `zlecontext == ZLCON_VARED` check for vared mode.
+// `zlereadflags` is now `i32` matching C's `int zlereadflags`
+// (Src/Zle/zle_main.c:90).
+
+// `ZleContext` deleted — Rust-named enum duplicating the legit C
+// enum at Src/zsh.h:3211-3216 (`ZLCON_LINE_START` / `ZLCON_LINE_CONT`
+// / `ZLCON_SELECT` / `ZLCON_VARED`), already ported in zsh_h.rs:3162-3165.
+// `ZLECONTEXT` is now an `AtomicI32` static matching C's `int
+// zlecontext` (zle_main.c:163).
+
+
+impl Default for modifier {
+    fn default() -> Self {
+        // c:1604 initmodifier — mult=1, tmult=1, base=10.
+        modifier {
+            flags: 0,
+            mult: 1,
+            tmult: 1,
+            vibuf: 0,
+            base: 10,
+        }
+    }
+}
+
+use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+
 /// Port of `breakread(int fd, char *buf, int n)` from Src/Zle/zle_main.c:381.
 pub fn breakread(fd: i32, buf: &mut [u8], n: usize) -> isize {               // c:381
     // C body (c:381-389): `#if defined(pyr) && defined(HAVE_SELECT)`
@@ -288,6 +189,53 @@ pub fn breakread(fd: i32, buf: &mut [u8], n: usize) -> isize {               // 
     let count = n.min(buf.len());
     let r = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, count) };
     r as isize
+}
+
+/// Port of `enum ztmouttp` from `Src/Zle/zle_main.c:398`. Discriminator
+/// for the active read-timeout source: none, key (do_keytmout), function
+/// (timedfns), or maxed-out (re-arm needed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+#[allow(non_camel_case_types)]
+pub enum ztmouttp {                                                          // c:398
+    ZTM_NONE = 0,                                                            // c:401
+    ZTM_KEY  = 1,                                                            // c:406
+    ZTM_FUNC = 2,                                                            // c:412
+    ZTM_MAX  = 3,                                                            // c:428
+}
+
+// `ModifierFlags` bitflags wrapper deleted — C uses bare `int flags`
+// in `struct modifier` (zle.h:246) with the `MOD_*` bit constants
+// at zle.h:253-263, already legit-ported in zle_h.rs:371-381.
+// modifier.flags is now `i32` matching C verbatim.
+
+/// Direct port of `struct change` from `Src/Zle/zle.h:284-294`.
+/// Undo change record. `ChangeFlags` bitflags wrapper deleted —
+/// C uses bare `int flags` with `CH_NEXT` (1<<0) and `CH_PREV`
+/// (1<<1) bits (zle.h:297-298, ported in zle_h.rs as i32).
+// `WatchFd` deleted — duplicate of `struct watch_fd` already legit-
+// ported at zle_h.rs:781 (Src/Zle/zle.h:572). The Rust port uses
+// `super::zle_h::watch_fd` directly.
+
+// `TimeoutType` / `Timeout` deleted — Rust-named duplicates of the
+// legit `ztmouttp` enum + `ztmout` struct already ported at
+// `zle_main.c:398/432`. See definitions below.
+
+/// Maximum timeout value (about 24 days in 100ths of a second)
+/// Port of `ZMAXTIMEOUT` macro from `Src/Zle/zle_main.c:429`.
+/// `#define ZMAXTIMEOUT ((time_t)1 << (sizeof(int)*8-11))`.
+/// Maximum keytimeout value clamped before passing to select(2),
+/// keeps the (microseconds * 100) product within `time_t` range.
+/// On a 32-bit `int` platform: `1 << 21` (~2.1M centiseconds = 21k sec).
+pub const ZMAXTIMEOUT: u64 = 1 << 21;                                        // c:429
+
+/// Port of `struct ztmout` from `Src/Zle/zle_main.c:432`. Carries the
+/// active timeout type plus expiration in 100ths of a second.
+#[derive(Debug, Clone, Copy)]
+#[allow(non_camel_case_types)]
+pub struct ztmout {                                                          // c:432
+    pub tp: ztmouttp,                                                        // c:434 enum ztmouttp tp
+    pub exp100ths: i64,                                                      // c:438 time_t exp100ths
 }
 
     /// Direct port of `static void calc_timeout(struct ztmout *tmoutp,
@@ -908,6 +856,27 @@ pub fn describekeybriefly() -> i32 {                                         // 
     1                                                                        // c:1929 no-resolution path
 }
 
+/// Port of `MAXFOUND` from `Src/Zle/zle_main.c:1925`.
+/// Hash-search saturation cap: stop walking after this many matches
+/// in the brief-key-description scan — keeps the prompt-line summary
+/// short enough to fit on screen.
+pub const MAXFOUND: usize = 4;                                               // c:1925
+
+/// Port of `struct findfunc` from `Src/Zle/zle_main.c:1927`. Closure
+/// state for the `describe-key-briefly` widget — accumulates the
+/// found-binding hits up to `MAXFOUND` and a status message.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct findfunc {                                                        // c:1927
+    /// Target Thingy we're searching for; matched against scan key.
+    /// Cell holds `None` until set; `usize` indexes into THINGYTAB.
+    pub func: Option<usize>,                                                 // c:1928
+    /// Hit counter; capped at MAXFOUND.
+    pub found: usize,                                                        // c:1929
+    /// Accumulated message: " is on KEY1 KEY2 ..." or similar.
+    pub msg: String,                                                         // c:1930
+}
+
 /// Direct port of `static void scanfindfunc(char *seq, Thingy func,
 ///                                          char *str, void *magic)`
 /// from `Src/Zle/zle_main.c:1935`. Per-keymap scan callback for
@@ -1292,6 +1261,37 @@ pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {             // c
     // direct, so this collapses to no-op.
     0                                                                         // c:2357
 }
+
+pub type ZleChar = char;
+
+/// ZLE string type
+pub type ZleString = Vec<ZleChar>;
+
+/// ZLE integer type for character values
+pub type ZleInt = i32;
+
+/// EOF marker
+pub const ZLEEOF: ZleInt = -1;
+
+// `pub struct Zle;` deleted along with `impl Default for Zle` and
+// `impl Zle { fn new() }`. The unit marker had no C counterpart and
+// served only as a per-instance dispatch tag for the now-deleted
+// methods. State init lives in `zle_reset()` below, the C-equivalent
+// of `zleread()`'s reset block at `Src/Zle/zle_main.c:1216`.
+
+// `CompletionRequest` enum deleted along with the matching field.
+// C dispatches completion-widget variants via separate function
+// pointers in `Src/Zle/zle_tricky.c` — no enum type.
+
+/// Process-wide lock that serialises ZLE-touching tests. The ZLE
+/// session state lives in file-scope statics (ZLELINE/ZLECS/etc.);
+/// `cargo test` runs tests in parallel by default which races on
+/// those shared statics. Tests acquire this lock at the top
+/// (typically via `zle_test_setup()` below) so the parallel runner
+/// effectively serialises just the ZLE-touching subset. No C
+/// counterpart — C is single-threaded so the question doesn't arise.
+#[doc(hidden)]
+pub static ZLE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Test-only setup helper: acquires `ZLE_TEST_LOCK` and resets state.
 /// Returns the lock guard which holds for the test body's lifetime.
@@ -2025,6 +2025,28 @@ pub static RAW_LP: std::sync::Mutex<String> = std::sync::Mutex::new(String::new(
 pub static RAW_RP: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 /// Port of `Region_highlight region_highlights` from `Src/Zle/zle_refresh.c`.
 pub static HIGHLIGHT: std::sync::OnceLock<std::sync::Mutex<super::zle_refresh::HighlightManager>> = std::sync::OnceLock::new();
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

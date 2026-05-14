@@ -144,13 +144,6 @@ pub fn makeprivate(hn: *mut crate::ported::zsh_h::param, flags: i32) {  // c:80
     unsafe { (*hn).level -= 1; }
 }
 
-/// `makeprivate_error` — file-scope global from
-/// `Src/Modules/param_private.c`. Sticky error flag the
-/// `makeprivate()` walker sets on rejection; `bin_private` reads it
-/// (c:256 `return makeprivate_error | from_typeset;`).
-pub static MAKEPRIVATE_ERROR: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-
 /// Port of `is_private(Param pm)` from `Src/Modules/param_private.c:181`.
 ///
 /// C body:
@@ -294,24 +287,6 @@ pub fn bin_private(nam: &str, args: &[String],                               // 
     mpe | from_typeset                                                        // c:257
 }
 
-/// Registry of currently-active private params. Port of the implicit
-/// state the C source tracks via `pm->gsu.X->unsetfn == pp{X}_unsetfn`
-/// pointer comparisons. Static-link path uses a name-set since the
-/// per-type GSU vtable pointers aren't a clean Rust mapping.
-// Static-link path: name registry of params marked PM_PRIVATE.
-// C tracks private-ness via PM_PRIVATE bit on each Param's
-// node.flags directly; this side-set is the bridge until paramtab
-// reads/writes use the real flag.
-pub static PRIVATE_PARAMS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>>
-    = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
-
-/// `private_wraplevel` — file-scope global from
-/// `Src/Modules/param_private.c`. Tracks the locallevel at which
-/// `bin_private` started a scope; the `*_setfn` family compares
-/// `locallevel` against this to decide whether assignment is allowed.
-pub static private_wraplevel: std::sync::atomic::AtomicI32
-    = std::sync::atomic::AtomicI32::new(0);
-
 /// Port of `setfn_error(Param pm)` from `Src/Modules/param_private.c:260`.
 ///
 /// C body:
@@ -335,12 +310,6 @@ pub fn setfn_error(pm: *mut crate::ported::zsh_h::param) {               // c:26
         name,
     ));
 }
-
-// `fakelevel` — file-scope global from `Src/Modules/param_private.c:215`.
-// Set by `bin_private` to the locallevel at which it ran, used by
-// `printprivatenode`'s scope-walking loop.
-pub static FAKELEVEL: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `pps_getfn(Param pm)` from `Src/Modules/param_private.c:287`.
 ///
@@ -546,6 +515,14 @@ pub fn ppa_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
     }
 }
 
+/// `emptytable` — file-scope `static HashTable emptytable;` from
+/// Src/Modules/param_private.c:709. Holds the empty paramtab marker
+/// the wrapper swaps in on `private`-builtin entry. Allocated in
+/// boot_, freed in finish_ via deletehashtable.
+#[allow(non_upper_case_globals)]
+pub static emptytable: std::sync::Mutex<Option<crate::ported::zsh_h::HashTable>> =
+    std::sync::Mutex::new(None);                                              // c:447
+
 /// Port of `pph_getfn(Param pm)` from `Src/Modules/param_private.c:451`.
 ///
 /// Returns whether the param has a hash table (zsh_h::HashTable is
@@ -593,6 +570,12 @@ pub fn pph_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
     }
 }
 
+/// `PM_WAS_UNSET` / `PM_WAS_RONLY` — file-scope `#define` aliases
+/// from `Src/Modules/param_private.c:568` reusing existing PM_*
+/// flag bits the private-scope save/restore code repurposes.
+pub const PM_WAS_UNSET: u32 = crate::ported::zsh_h::PM_NORESTORE;        // c:508
+pub const PM_WAS_RONLY: u32 = crate::ported::zsh_h::PM_RESTRICTED;       // c:509
+
 /// Port of `scopeprivate(HashNode hn, int onoff)` from `Src/Modules/param_private.c:512`.
 ///
 /// C body: per-param hook called via `scanhashtable` to mark/unmark
@@ -639,11 +622,12 @@ pub fn scopeprivate(hn: *mut crate::ported::zsh_h::param, onoff: i32) {  // c:51
     }
 }
 
-/// `PM_WAS_UNSET` / `PM_WAS_RONLY` — file-scope `#define` aliases
-/// from `Src/Modules/param_private.c:568` reusing existing PM_*
-/// flag bits the private-scope save/restore code repurposes.
-pub const PM_WAS_UNSET: u32 = crate::ported::zsh_h::PM_NORESTORE;        // c:508
-pub const PM_WAS_RONLY: u32 = crate::ported::zsh_h::PM_RESTRICTED;       // c:509
+/// `private_wraplevel` — file-scope global from
+/// `Src/Modules/param_private.c`. Tracks the locallevel at which
+/// `bin_private` started a scope; the `*_setfn` family compares
+/// `locallevel` against this to decide whether assignment is allowed.
+pub static private_wraplevel: std::sync::atomic::AtomicI32
+    = std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `wrap_private(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/param_private.c:550`.
 ///
@@ -796,16 +780,6 @@ pub fn printprivatenode(hn: *mut crate::ported::zsh_h::param, printflags: i32) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Module loaders (c:670-734).
-// ---------------------------------------------------------------------------
-
-// =====================================================================
-// static struct features module_features                            c:660 (param_private.c)
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
 // `bintab` — port of `static struct builtin bintab[]` (param_private.c).
 // `BUILTIN("private", BINF_PLUSOPTS|BINF_MAGICEQUALS|BINF_PSPECIAL|BINF_ASSIGN,
 //   bin_private, 0, -1, 0, "AE:%F:%HL:%PR:%TUZ:%ahi:%lnmrtux", "P")`.
@@ -837,19 +811,21 @@ pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     0
 }
 
+// ---------------------------------------------------------------------------
+// Module loaders (c:670-734).
+// ---------------------------------------------------------------------------
+
+// =====================================================================
+// static struct features module_features                            c:660 (param_private.c)
+// =====================================================================
+
+use crate::ported::zsh_h::module;
+
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/param_private.c:702`.
 /// C body: `return handlefeatures(m, &module_features, enables);`
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     handlefeatures(m, module_features(), enables)
 }
-
-/// `emptytable` — file-scope `static HashTable emptytable;` from
-/// Src/Modules/param_private.c:709. Holds the empty paramtab marker
-/// the wrapper swaps in on `private`-builtin entry. Allocated in
-/// boot_, freed in finish_ via deletehashtable.
-#[allow(non_upper_case_globals)]
-pub static emptytable: std::sync::Mutex<Option<crate::ported::zsh_h::HashTable>> =
-    std::sync::Mutex::new(None);                                              // c:447
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/param_private.c:709`.
 #[allow(unused_variables)]
@@ -889,6 +865,30 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     // restore is a no-op on the static-link path.
     0                                                                         // c:744
 }
+
+/// `makeprivate_error` — file-scope global from
+/// `Src/Modules/param_private.c`. Sticky error flag the
+/// `makeprivate()` walker sets on rejection; `bin_private` reads it
+/// (c:256 `return makeprivate_error | from_typeset;`).
+pub static MAKEPRIVATE_ERROR: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Registry of currently-active private params. Port of the implicit
+/// state the C source tracks via `pm->gsu.X->unsetfn == pp{X}_unsetfn`
+/// pointer comparisons. Static-link path uses a name-set since the
+/// per-type GSU vtable pointers aren't a clean Rust mapping.
+// Static-link path: name registry of params marked PM_PRIVATE.
+// C tracks private-ness via PM_PRIVATE bit on each Param's
+// node.flags directly; this side-set is the bridge until paramtab
+// reads/writes use the real flag.
+pub static PRIVATE_PARAMS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>>
+    = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+// `fakelevel` — file-scope global from `Src/Modules/param_private.c:215`.
+// Set by `bin_private` to the locallevel at which it ran, used by
+// `printprivatenode`'s scope-walking loop.
+pub static FAKELEVEL: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
 
 
 
@@ -937,6 +937,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

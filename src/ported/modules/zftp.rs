@@ -15,72 +15,35 @@ use std::time::Duration;
 use std::sync::atomic::Ordering;
 use std::os::unix::io::AsRawFd;
 
-/// Port of `zfhandler(int sig)` from `Src/Modules/zftp.c:366`.
-/// C: `static void zfhandler(int sig)` — SIGALRM handler. Sets the
-/// `zfdrrrring` flag so the next zfread/zfgetline returns -1 and exits
-/// its setjmp-protected critical section.
-#[allow(non_snake_case)]
-pub extern "C" fn zfhandler(sig: i32) {                                       // c:366
-    if sig == libc::SIGALRM {                                                 // c:368
-        ZFDRRRRING.store(1, std::sync::atomic::Ordering::Relaxed);            // c:369
-        // c:370-374 — errno = ETIMEDOUT (or EIO).
-        unsafe {
-            *errno_ptr() = libc::ETIMEDOUT;
+/// Port of `zftp_session(UNUSED(char *name), char **args, UNUSED(int flags))` from `Src/Modules/zftp.c:2889`.
+#[allow(unused_variables)]
+pub fn zftp_session(name: &str, args: &[&str], flags: i32) -> i32 {           // c:2889
+    if args.is_empty() {                                                        // c:2889
+        // c:2892-2895 — walk zfsessions list, print each name.
+        if let Ok(state) = zftp_state().lock() {
+            for sess_name in state.session_names() {                            // c:2894
+                println!("{}", sess_name);                                      // c:2895
+            }
         }
-        // c:375 — longjmp(zfalrmbuf, 1). Rust port doesn't use setjmp;
-        // the ZFDRRRRING flag is the timeout signal each blocking
-        // read/write polls.
+        return 0;                                                               // c:2896
     }
-    // c:377 DPUTS — unreachable in static-link path.
+    // c:2903-2904 — no-op if already in the requested session.
+    let current = zftp_state().lock().ok()
+        .and_then(|s| s.current_name().map(|n| n.to_string()))
+        .unwrap_or_default();
+    if args[0] == current {
+        return 0;                                                               // c:2915
+    }
+    savesession();                                                              // c:2915
+    switchsession(args[0]);                                                     // c:2915
+    0                                                                           // c:2915
 }
 
-// `TransferType` enum removed — was Rust-only invention. C uses the
-// `ZFST_ASCI` (0x0000) / `ZFST_IMAG` (0x0001) bits from the ZFST_*
-// status word (c:246-247) for the next-transfer type, and
-// `ZFST_CASC` (0x0000) / `ZFST_CIMA` (0x0002) for the current-transfer
-// type. Callers store the type as `i32` and compare via the `ZFST_TYPE`
-// macro (c:267): `ZFST_TYPE(x) (x & ZFST_TMSK)`.
-//
-// Inline-test pattern matching C `if (zfst_status & ZFST_IMAG) ...`
-// at every TYPE-letter dispatch (e.g. zftp.c around `zftp_type` body):
-//   `if (typ & ZFST_IMAG) != 0 { "I" } else { "A" }`
-
-// `TransferMode` enum removed — was Rust-only invention. C uses the
-// `ZFST_STRE` (0x0000) / `ZFST_BLOC` (0x0004) bits from the ZFST_*
-// status word (defined later in this file at the c:245 enum). Callers
-// store the mode as `i32` and compare against those constants directly:
-//   `if (mode & ZFST_BLOC) != 0 { "B" } else { "S" }`
-// — same inline-test pattern the C source uses at every MODE send-site.
-
-/// FTP server response (3-digit code + message).
-/// Port of the response handling inside `zfgetmsg()` from
-/// `lastmsg` — file-scope global from `Src/Modules/zftp.c:227`:
-/// `static char *lastmsg, lastcodestr[4];`. Holds the most recent
-/// FTP server reply message text (post-3-digit-code body).
-pub static lastmsg: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
-
-/// `lastcodestr` — file-scope global from `Src/Modules/zftp.c:227`.
-/// 3-digit FTP reply code as ASCII (`"000".."599"`), zero-terminated
-/// to 4 bytes in C; mirrored as a 4-byte Mutex array for parity.
-pub static lastcodestr: std::sync::Mutex<[u8; 4]>
-    = std::sync::Mutex::new([b'0', b'0', b'0', 0]);
-
-/// `lastcode` — file-scope global from `Src/Modules/zftp.c:228`:
-/// `static int lastcode;`. Numeric form of `lastcodestr`.
-pub static lastcode: std::sync::atomic::AtomicI32
-    = std::sync::atomic::AtomicI32::new(0);
-
-// `FtpResponse` struct removed — was Rust-only invention. C source
-// returns plain `int` from every reply-handling fn and reads the
-// `lastcode` / `lastmsg` globals (c:227-228) inline at each check
-// site. Callers in this Rust port use the same pattern: each fn
-// returns `i32` (matching C `int`), and `lastmsg.lock().unwrap()`
-// + `lastcode.load(Relaxed)` provide the C-equivalent inline reads.
-//
-// For ergonomic call sites the type alias below carries both halves
-// without inventing a new struct shape:
+/// Port of `typedef struct zftp_session *Zftp_session;` from
+/// `Src/Modules/zftp.c:50`. Pointer-style typedef alias used by every
+/// `zftp_*` callsite that takes a session arg.
 #[allow(non_camel_case_types)]
-pub type FtpResponse = (i32, String);
+pub type Zftp_session = Box<zftp_session>;
 
 // =====================================================================
 // `struct zfheader` from `Src/Modules/zftp.c:114` — block-mode header.
@@ -98,24 +61,6 @@ pub struct zfheader {
     pub flags: i8,                                                       // c:115
     pub bytes: [u8; 2],                                                   // c:116
 }
-
-// =====================================================================
-// `enum { ZFHD_* }` from `Src/Modules/zftp.c:119` — block-header flags.
-// =====================================================================
-
-/// `ZFHD_MARK` — restart marker.
-pub const ZFHD_MARK: i32 = 16;                                            // c:120
-/// `ZFHD_ERRS` — suspected errors in block.
-pub const ZFHD_ERRS: i32 = 32;                                            // c:121
-/// `ZFHD_EOFB` — block is end of record.
-pub const ZFHD_EOFB: i32 = 64;                                            // c:122
-/// `ZFHD_EORB` — block is end of file.
-pub const ZFHD_EORB: i32 = 128;                                           // c:123
-
-/// `readwrite_t` — function pointer typedef from
-/// `Src/Modules/zftp.c:126`: `typedef int (*readwrite_t)(int, char *, off_t, int);`
-#[allow(non_camel_case_types)]
-pub type readwrite_t = fn(i32, &mut [u8], libc::off_t, i32) -> i32;
 
 // =====================================================================
 // `struct zftpcmd` from `Src/Modules/zftp.c:128` — subcommand entry.
@@ -142,137 +87,77 @@ pub struct zftpcmd {
 #[allow(non_camel_case_types)]
 pub type Zftpcmd = Box<zftpcmd>;
 
-// =====================================================================
-// `enum { ZFTP_* }` from `Src/Modules/zftp.c:134` — zftpcmd.flags bits.
-// =====================================================================
+/// `lastcode` — file-scope global from `Src/Modules/zftp.c:228`:
+/// `static int lastcode;`. Numeric form of `lastcodestr`.
+pub static lastcode: std::sync::atomic::AtomicI32
+    = std::sync::atomic::AtomicI32::new(0);
 
-/// `ZFTP_CONN` — must be connected.
-pub const ZFTP_CONN: i32 = 0x0001;                                        // c:135
-/// `ZFTP_LOGI` — must be logged in.
-pub const ZFTP_LOGI: i32 = 0x0002;                                        // c:136
-/// `ZFTP_TBIN` — set transfer type image.
-pub const ZFTP_TBIN: i32 = 0x0004;                                        // c:137
-/// `ZFTP_TASC` — set transfer type ASCII.
-pub const ZFTP_TASC: i32 = 0x0008;                                        // c:138
-/// `ZFTP_NLST` — use NLST rather than LIST.
-pub const ZFTP_NLST: i32 = 0x0010;                                        // c:139
-/// `ZFTP_DELE` — a delete rather than a make.
-pub const ZFTP_DELE: i32 = 0x0020;                                        // c:140
-/// `ZFTP_SITE` — a site rather than a quote.
-pub const ZFTP_SITE: i32 = 0x0040;                                        // c:141
-/// `ZFTP_APPE` — append rather than overwrite.
-pub const ZFTP_APPE: i32 = 0x0080;                                        // c:142
-/// `ZFTP_HERE` — here rather than over there.
-pub const ZFTP_HERE: i32 = 0x0100;                                        // c:143
-/// `ZFTP_CDUP` — CDUP rather than CWD.
-pub const ZFTP_CDUP: i32 = 0x0200;                                        // c:144
-/// `ZFTP_REST` — restart: set point in remote file.
-pub const ZFTP_REST: i32 = 0x0400;                                        // c:145
-/// `ZFTP_RECV` — receive rather than send.
-pub const ZFTP_RECV: i32 = 0x0800;                                        // c:146
-/// `ZFTP_TEST` — test command, don't test.
-pub const ZFTP_TEST: i32 = 0x1000;                                        // c:147
-/// `ZFTP_SESS` — session command, don't need status.
-pub const ZFTP_SESS: i32 = 0x2000;                                        // c:148
+/// `ZFST_TYPE(x)` macro — extract type-flag bits.
+/// Port of `#define ZFST_TYPE(x) (x & ZFST_TMSK)` from
+/// `Src/Modules/zftp.c`.
+#[allow(non_snake_case)]
+#[inline]
+pub fn ZFST_TYPE(x: i32) -> i32 { x & ZFST_TMSK }
 
-/// `static char *zfparams[]` from `Src/Modules/zftp.c:197` — list of
-/// non-special params to unset when a connection closes.
-pub static ZFPARAMS: &[&str] = &[
-    "ZFTP_HOST", "ZFTP_PORT", "ZFTP_IP", "ZFTP_SYSTEM", "ZFTP_USER",
-    "ZFTP_ACCOUNT", "ZFTP_PWD", "ZFTP_TYPE", "ZFTP_MODE",                // c:198-199
-];
+/// `ZFST_MODE(x)` macro — extract mode-flag bits.
+/// Port of `#define ZFST_MODE(x) (x & ZFST_MMSK)` from
+/// `Src/Modules/zftp.c`.
+#[allow(non_snake_case)]
+#[inline]
+pub fn ZFST_MODE(x: i32) -> i32 { x & ZFST_MMSK }
 
-// =====================================================================
-// `enum { ZFPM_* }` from `Src/Modules/zftp.c:204` — zfsetparam flags.
-// =====================================================================
+/// Port of `struct zftp_session` from `Src/Modules/zftp.c:299`.
+///
+/// C definition (verbatim):
+/// ```c
+/// struct zftp_session {
+///     char *name;            /* name of session */
+///     char **params;         /* parameters ordered as in zfparams */
+///     char **userparams;     /* user parameters set by zftp_params */
+///     FILE *cin;             /* control input file */
+///     Tcp_session control;   /* the control connection */
+///     int dfd;               /* data connection */
+///     int has_size;          /* understands SIZE? */
+///     int has_mdtm;          /* understands MDTM? */
+/// };
+///
+/// typedef struct zftp_session *Zftp_session;  // c:50
+/// ```
+///
+/// Field names + order match C exactly. `cin` (control input file) is
+/// modelled as `Option<TcpStream>` since Rust doesn't expose libc
+/// FILE* directly; `control` (the Tcp_session) collapses into the
+/// same TcpStream slot in the static-link path.
+#[derive(Debug)]
+#[allow(non_camel_case_types)]
+pub struct zftp_session {
+    pub name: String,                                                    // c:300 char *name
+    pub params: Vec<String>,                                              // c:301 char **params
+    pub userparams: Vec<String>,                                          // c:302 char **userparams
+    pub cin: Option<TcpStream>,                                          // c:303 FILE *cin (control input)
+    pub control: Option<TcpStream>,                                       // c:304 Tcp_session control
+    pub dfd: i32,                                                         // c:305 int dfd
+    pub has_size: i32,                                                    // c:306 int has_size
+    pub has_mdtm: i32,                                                    // c:307 int has_mdtm
 
-/// `ZFPM_READONLY` — make parameter readonly.
-pub const ZFPM_READONLY: i32 = 0x01;                                      // c:205
-/// `ZFPM_IFUNSET` — only set if not already set.
-pub const ZFPM_IFUNSET: i32 = 0x02;                                       // c:206
-/// `ZFPM_INTEGER` — passed pointer to off_t.
-pub const ZFPM_INTEGER: i32 = 0x04;                                       // c:207
-
-/// `zfnopen` — file-scope global from `Src/Modules/zftp.c:211`:
-/// `static int zfnopen;` — number of connections actually open.
-pub static ZFNOPEN: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-
-/// `zcfinish` — file-scope global from `Src/Modules/zftp.c:218`:
-/// `static int zcfinish;` — 0 keep going, 1 line finished, 2 EOF.
-pub static ZCFINISH: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-
-/// `zfclosing` — file-scope global from `Src/Modules/zftp.c:220`:
-/// `static int zfclosing;` — set when zftp_close() is active.
-pub static ZFCLOSING: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-
-// =====================================================================
-// `enum { ZFCP_* }` from `Src/Modules/zftp.c` — server-capability
-// tri-state for SIZE / MDTM probes.
-// =====================================================================
-
-/// `ZFCP_UNKN` — dunno if it works on this server. Port of c:`enum`
-/// in `Src/Modules/zftp.c`.
-pub const ZFCP_UNKN: i32 = 0;
-/// `ZFCP_YUPP` — server supports the feature.
-pub const ZFCP_YUPP: i32 = 1;
-/// `ZFCP_NOPE` — server doesn't support the feature.
-pub const ZFCP_NOPE: i32 = 2;
-
-// =====================================================================
-// `enum { ZFST_* }` from `Src/Modules/zftp.c` — bit-packed shared-fd
-// status word used by the `zfstatfd` mechanism so a subshell can
-// detect type/mode/connection changes in the parent shell.
-// =====================================================================
-
-/// `ZF_BUFSIZE` from `Src/Modules/zftp.c:1458`. Default I/O block
-/// size for the zftp byte-stream pump.
-pub const ZF_BUFSIZE: usize = 32_768;                                        // c:1458
-
-/// `ZF_ASCSIZE` from `Src/Modules/zftp.c:1459`.
-/// `#define ZF_ASCSIZE (ZF_BUFSIZE/2)`. Smaller buffer for ASCII
-/// mode (line-by-line CRLF translation can grow output up to 2x).
-pub const ZF_ASCSIZE: usize = ZF_BUFSIZE / 2;                                // c:1459
-
-/// `ZFST_ASCI` — type for next transfer is ASCII.
-pub const ZFST_ASCI: i32 = 0x0000;
-/// `ZFST_IMAG` — type for next transfer is image (binary).
-pub const ZFST_IMAG: i32 = 0x0001;
-/// `ZFST_TMSK` — mask for type flags.
-pub const ZFST_TMSK: i32 = 0x0001;
-/// `ZFST_TBIT` — number of bits in type flags.
-pub const ZFST_TBIT: i32 = 0x0001;
-/// `ZFST_CASC` — current type is ASCII (default).
-pub const ZFST_CASC: i32 = 0x0000;
-/// `ZFST_CIMA` — current type is image.
-pub const ZFST_CIMA: i32 = 0x0002;
-/// `ZFST_STRE` — stream mode (default).
-pub const ZFST_STRE: i32 = 0x0000;
-/// `ZFST_BLOC` — block mode.
-pub const ZFST_BLOC: i32 = 0x0004;
-/// `ZFST_MMSK` — mask for mode flags.
-pub const ZFST_MMSK: i32 = 0x0004;
-/// `ZFST_LOGI` — user logged in.
-pub const ZFST_LOGI: i32 = 0x0008;
-/// `ZFST_SYST` — done SYST type check.
-pub const ZFST_SYST: i32 = 0x0010;
-/// `ZFST_NOPS` — server doesn't understand PASV.
-pub const ZFST_NOPS: i32 = 0x0020;
-/// `ZFST_NOSZ` — server doesn't send `(XXXX bytes)' reply.
-pub const ZFST_NOSZ: i32 = 0x0040;
-/// `ZFST_TRSZ` — tried getting 'size' from reply.
-pub const ZFST_TRSZ: i32 = 0x0080;
-/// `ZFST_CLOS` — connection closed.
-pub const ZFST_CLOS: i32 = 0x0100;
-
-/// `ZFPF_SNDP` — use send port (active mode) preference.
-pub const ZFPF_SNDP: i32 = 0x01;                                           // c:280
-/// `ZFPF_PASV` — try passive mode preference.
-pub const ZFPF_PASV: i32 = 0x02;                                           // c:281
-/// `ZFPF_DUMB` — don't do clever things with variables.
-pub const ZFPF_DUMB: i32 = 0x04;                                           // c:282
+    // Below: ergonomic Rust fields not in C `struct zftp_session` but
+    // needed by the Rust wrapper to track connection state without the
+    // C `params` array indexing convention. Document the mapping back
+    // to C `params[]` slots in comments.
+    pub host: Option<String>,            // C: params[ZFPM_HOST]
+    pub port: u16,                       // C: params[ZFPM_PORT] (parsed)
+    pub user: Option<String>,            // C: params[ZFPM_USER]
+    pub pwd: Option<String>,             // C: params[ZFPM_PASSWORD]
+    pub connected: bool,                 // C: cin != NULL
+    pub logged_in: bool,                 // C: derived from greeting parse
+    pub transfer_type: i32,
+    pub transfer_mode: i32,
+    pub passive: bool,
+    /// Mirrors the ZFST_SYST bit of `zfstatusp[zfsessno]` (c:240).
+    /// Set after a successful SYST probe so re-login on the same
+    /// session doesn't re-issue SYST.
+    pub syst_probed: bool,
+}
 
 /// `zfprefs` — file-scope `static int zfprefs;` from
 /// Src/Modules/zftp.c:218. Bitfield of ZFPF_SNDP|ZFPF_PASV|ZFPF_DUMB.
@@ -280,6 +165,25 @@ pub const ZFPF_DUMB: i32 = 0x04;                                           // c:
 #[allow(non_upper_case_globals)]
 pub static zfprefs: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0);                                 // c:218
+
+/// Port of `zfhandler(int sig)` from `Src/Modules/zftp.c:366`.
+/// C: `static void zfhandler(int sig)` — SIGALRM handler. Sets the
+/// `zfdrrrring` flag so the next zfread/zfgetline returns -1 and exits
+/// its setjmp-protected critical section.
+#[allow(non_snake_case)]
+pub extern "C" fn zfhandler(sig: i32) {                                       // c:366
+    if sig == libc::SIGALRM {                                                 // c:368
+        ZFDRRRRING.store(1, std::sync::atomic::Ordering::Relaxed);            // c:369
+        // c:370-374 — errno = ETIMEDOUT (or EIO).
+        unsafe {
+            *errno_ptr() = libc::ETIMEDOUT;
+        }
+        // c:375 — longjmp(zfalrmbuf, 1). Rust port doesn't use setjmp;
+        // the ZFDRRRRING flag is the timeout signal each blocking
+        // read/write polls.
+    }
+    // c:377 DPUTS — unreachable in static-link path.
+}
 
 /// Port of `zfalarm(int tmout)` from `Src/Modules/zftp.c:384`.
 /// C: `static void zfalarm(int tmout)` — set up alarm + SIGALRM handler.
@@ -308,452 +212,6 @@ pub fn zfalarm(tmout: i32) {                                                  //
         OALTIME.store(now, std::sync::atomic::Ordering::Relaxed);
     }
     ZFALARMED.store(1, std::sync::atomic::Ordering::Relaxed);                 // c:405
-}
-
-/// Port of `typedef struct zftp_session *Zftp_session;` from
-/// `Src/Modules/zftp.c:50`. Pointer-style typedef alias used by every
-/// `zftp_*` callsite that takes a session arg.
-#[allow(non_camel_case_types)]
-pub type Zftp_session = Box<zftp_session>;
-
-impl zftp_session {
-    /// Port of `newsession(char *nm)` from `Src/Modules/zftp.c`. C uses
-    /// `zshcalloc(sizeof(struct zftp_session))` then sets `name`
-    /// (c:2891 `zfsess->name = ztrdup(name);`) and pre-allocates the
-    /// `params` / `userparams` arrays. Same default state.
-    pub fn new(name: &str) -> Self {
-        Self {
-            // C-faithful fields from `struct zftp_session` (c:299):
-            name: name.to_string(),                                       // c:300
-            params: Vec::new(),                                           // c:301
-            userparams: Vec::new(),                                       // c:302
-            cin: None,                                                    // c:303 NULL
-            control: None,                                                // c:304 NULL
-            dfd: -1,                                                      // c:305 (closed)
-            has_size: 0,                                                  // c:306
-            has_mdtm: 0,                                                  // c:307
-            // Ergonomic Rust-side state mirroring C's params[] indices:
-            host: None,
-            port: 21,
-            user: None,
-            pwd: None,
-            connected: false,
-            logged_in: false,
-            transfer_type: ZFST_IMAG,
-            transfer_mode: ZFST_STRE,
-            passive: true,
-            syst_probed: false,
-        }
-    }
-
-    /// Port of `zftp_open(char *name, char **args, int flags)` from `Src/Modules/zftp.c:1690`.
-    fn send_command(&mut self, cmd: &str) -> io::Result<()> {
-        if let Some(ref mut stream) = self.cin {
-            write!(stream, "{}\r\n", cmd)?;
-            stream.flush()
-        } else {
-            Err(io::Error::new(io::ErrorKind::NotConnected, "not connected"))
-        }
-    }
-
-    /// Port of `zfgetmsg()` from `Src/Modules/zftp.c:702`.
-    fn read_response(&mut self) -> io::Result<FtpResponse> {
-        let stream = self
-            .cin
-            .as_mut()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "not connected"))?;
-
-        let mut reader = BufReader::new(stream.try_clone()?);
-        let mut full_message = String::new();
-        let mut code = 0u32;
-        let mut multiline = false;
-        let mut first_code = String::new();
-
-        loop {
-            let mut line = String::new();
-            reader.read_line(&mut line)?;
-            let line = line.trim_end();
-
-            if line.len() < 3 {
-                continue;
-            }
-
-            if code == 0 {
-                first_code = line[..3].to_string();
-                code = first_code.parse().unwrap_or(0);
-
-                if line.len() > 3 && line.chars().nth(3) == Some('-') {
-                    multiline = true;
-                }
-            }
-
-            full_message.push_str(line);
-            full_message.push('\n');
-
-            if multiline {
-                if line.starts_with(&first_code)
-                    && line.len() > 3
-                    && line.chars().nth(3) == Some(' ')
-                {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        Ok((code as i32, full_message))
-    }
-
-    /// Port of `zftp_open(char *name, char **args, int flags)` from `Src/Modules/zftp.c:1690`.
-    /// Connect to FTP server — DNS resolution on background thread to avoid hangs
-    pub fn connect(&mut self, host: &str, port: Option<u16>) -> io::Result<FtpResponse> {
-        let port = port.unwrap_or(21);
-        let addr_str = format!("{}:{}", host, port);
-        let dns_timeout = Duration::from_secs(10);
-
-        // DNS on background thread
-        let (tx, rx) = std::sync::mpsc::channel();
-        let dns = addr_str.clone();
-        std::thread::Builder::new()
-            .name("zftp-dns".to_string())
-            .spawn(move || {
-                let _ = tx.send(dns.to_socket_addrs().map(|a| a.collect::<Vec<_>>()));
-            })
-            .map_err(io::Error::other)?;
-
-        let addrs = rx
-            .recv_timeout(dns_timeout)
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DNS resolution timed out"))?
-            .map_err(|e| {
-                // C: `zwarnnam("zftp", "host not found: %s", host);` at
-                //    `Src/Modules/zftp.c:1715`. Route through canonical
-                //    zwarnnam so the user sees a real shell warning
-                //    instead of a tracing log line.
-                crate::ported::utils::zwarnnam(
-                    "zftp",
-                    &format!("host not found: {}: {}", host, e),
-                );
-                e
-            })?;
-
-        let sock_addr = addrs
-            .into_iter()
-            .next()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid address"))?;
-
-        let stream = TcpStream::connect_timeout(&sock_addr, Duration::from_secs(30))?;
-
-        stream.set_read_timeout(Some(Duration::from_secs(60)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(60)))?;
-
-        self.cin = Some(stream);
-        self.host = Some(host.to_string());
-        self.port = port;
-        self.connected = true;
-
-        self.read_response()
-    }
-
-    /// Port of `zftp_login(char *name, char **args, UNUSED(int flags))` from `Src/Modules/zftp.c:2118`.
-    /// Login to FTP server
-    pub fn login(&mut self, user: &str, pass: Option<&str>) -> io::Result<FtpResponse> {
-        self.send_command(&format!("USER {}", user))?;
-        let resp = self.read_response()?;
-
-        if resp.0 == 331 {
-            let password = pass.unwrap_or("");
-            self.send_command(&format!("PASS {}", password))?;
-            let resp = self.read_response()?;
-
-            if (resp.0 >= 200 && resp.0 < 300) {
-                self.logged_in = true;
-                self.user = Some(user.to_string());
-            }
-            return Ok(resp);
-        }
-
-        if (resp.0 >= 200 && resp.0 < 300) {
-            self.logged_in = true;
-            self.user = Some(user.to_string());
-        }
-
-        Ok(resp)
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    /// Set transfer type
-    pub fn set_type(&mut self, transfer_type: i32) -> io::Result<FtpResponse> {
-        // C inline pattern: `(typ & ZFST_IMAG) ? "I" : "A"`
-        let typ_letter = if (transfer_type & ZFST_IMAG) != 0 { "I" } else { "A" };
-        self.send_command(&format!("TYPE {}", typ_letter))?;
-        let resp = self.read_response()?;
-        if (resp.0 >= 200 && resp.0 < 300) {
-            self.transfer_type = transfer_type;
-        }
-        Ok(resp)
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    /// Change directory
-    pub fn cd(&mut self, path: &str) -> io::Result<FtpResponse> {
-        self.send_command(&format!("CWD {}", path))?;
-        self.read_response()
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    /// Change to parent directory
-    pub fn cdup(&mut self) -> io::Result<FtpResponse> {
-        self.send_command("CDUP")?;
-        self.read_response()
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    /// Get current directory
-    pub fn pwd(&mut self) -> io::Result<(FtpResponse, Option<String>)> {
-        self.send_command("PWD")?;
-        let resp = self.read_response()?;
-
-        let pwd = if (resp.0 >= 200 && resp.0 < 300) {
-            if let Some(start) = resp.1.find('"') {
-                if let Some(end) = resp.1[start + 1..].find('"') {
-                    Some(resp.1[start + 1..start + 1 + end].to_string())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        Ok((resp, pwd))
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    /// List directory
-    pub fn list(&mut self, path: Option<&str>) -> io::Result<(FtpResponse, Vec<String>)> {
-        let data_stream = self.enter_passive_mode()?;
-
-        let cmd = match path {
-            Some(p) => format!("LIST {}", p),
-            None => "LIST".to_string(),
-        };
-        self.send_command(&cmd)?;
-        let resp = self.read_response()?;
-
-        if !(resp.0 >= 100 && resp.0 < 400) {
-            return Ok((resp, Vec::new()));
-        }
-
-        let mut reader = BufReader::new(data_stream);
-        let mut lines = Vec::new();
-        let mut line = String::new();
-        while reader.read_line(&mut line)? > 0 {
-            lines.push(line.trim_end().to_string());
-            line.clear();
-        }
-
-        let final_resp = self.read_response()?;
-
-        Ok((final_resp, lines))
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    /// List filenames only
-    pub fn nlst(&mut self, path: Option<&str>) -> io::Result<(FtpResponse, Vec<String>)> {
-        let data_stream = self.enter_passive_mode()?;
-
-        let cmd = match path {
-            Some(p) => format!("NLST {}", p),
-            None => "NLST".to_string(),
-        };
-        self.send_command(&cmd)?;
-        let resp = self.read_response()?;
-
-        if !(resp.0 >= 100 && resp.0 < 400) {
-            return Ok((resp, Vec::new()));
-        }
-
-        let mut reader = BufReader::new(data_stream);
-        let mut lines = Vec::new();
-        let mut line = String::new();
-        while reader.read_line(&mut line)? > 0 {
-            lines.push(line.trim_end().to_string());
-            line.clear();
-        }
-
-        let final_resp = self.read_response()?;
-
-        Ok((final_resp, lines))
-    }
-
-    /// Port of `zftp_open(char *name, char **args, int flags)` from `Src/Modules/zftp.c:1690`.
-    fn enter_passive_mode(&mut self) -> io::Result<TcpStream> {
-        self.send_command("PASV")?;
-        let resp = self.read_response()?;
-
-        if !(resp.0 >= 200 && resp.0 < 300) {
-            return Err(io::Error::other(resp.1));
-        }
-
-        let (ip, port) = parse_pasv_response(&resp.1)?;
-        let addr = format!("{}:{}", ip, port);
-
-        TcpStream::connect_timeout(
-            &addr.to_socket_addrs()?.next().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "invalid PASV address")
-            })?,
-            Duration::from_secs(30),
-        )
-    }
-
-    /// Port of `zfstats(char *fnam, int remote, off_t *retsize, char **retmdtm, int fd)` from `Src/Modules/zftp.c:1193`.
-    /// Download a file
-    pub fn get(&mut self, remote: &str, local: &Path) -> io::Result<FtpResponse> {
-        let mut data_stream = self.enter_passive_mode()?;
-
-        self.send_command(&format!("RETR {}", remote))?;
-        let resp = self.read_response()?;
-
-        if !(resp.0 >= 100 && resp.0 < 400) {
-            return Ok(resp);
-        }
-
-        let mut file = std::fs::File::create(local)?;
-        let mut buf = [0u8; 8192];
-        loop {
-            let n = data_stream.read(&mut buf)?;
-            if n == 0 {
-                break;
-            }
-            file.write_all(&buf[..n])?;
-        }
-
-        self.read_response()
-    }
-
-    /// Port of `zfstats(char *fnam, int remote, off_t *retsize, char **retmdtm, int fd)` from `Src/Modules/zftp.c:1193`.
-    /// Upload a file
-    pub fn put(&mut self, local: &Path, remote: &str) -> io::Result<FtpResponse> {
-        let mut data_stream = self.enter_passive_mode()?;
-
-        self.send_command(&format!("STOR {}", remote))?;
-        let resp = self.read_response()?;
-
-        if !(resp.0 >= 100 && resp.0 < 400) {
-            return Ok(resp);
-        }
-
-        let mut file = std::fs::File::open(local)?;
-        let mut buf = [0u8; 8192];
-        loop {
-            let n = file.read(&mut buf)?;
-            if n == 0 {
-                break;
-            }
-            data_stream.write_all(&buf[..n])?;
-        }
-        drop(data_stream);
-
-        self.read_response()
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    /// Delete a file
-    pub fn delete(&mut self, path: &str) -> io::Result<FtpResponse> {
-        self.send_command(&format!("DELE {}", path))?;
-        self.read_response()
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    /// Make directory
-    pub fn mkdir(&mut self, path: &str) -> io::Result<FtpResponse> {
-        self.send_command(&format!("MKD {}", path))?;
-        self.read_response()
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    /// Remove directory
-    pub fn rmdir(&mut self, path: &str) -> io::Result<FtpResponse> {
-        self.send_command(&format!("RMD {}", path))?;
-        self.read_response()
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    /// Rename file
-    pub fn rename(&mut self, from: &str, to: &str) -> io::Result<FtpResponse> {
-        self.send_command(&format!("RNFR {}", from))?;
-        let resp = self.read_response()?;
-
-        if !(resp.0 >= 300 && resp.0 < 400) {
-            return Ok(resp);
-        }
-
-        self.send_command(&format!("RNTO {}", to))?;
-        self.read_response()
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    /// Get file size
-    pub fn size(&mut self, path: &str) -> io::Result<(FtpResponse, Option<u64>)> {
-        self.send_command(&format!("SIZE {}", path))?;
-        let resp = self.read_response()?;
-
-        let size = if (resp.0 >= 200 && resp.0 < 300) {
-            resp.1
-                .split_whitespace()
-                .last()
-                .and_then(|s| s.parse().ok())
-        } else {
-            None
-        };
-
-        Ok((resp, size))
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    /// Send raw command
-    pub fn bslashquote(&mut self, cmd: &str) -> io::Result<FtpResponse> {
-        self.send_command(cmd)?;
-        self.read_response()
-    }
-
-    /// Port of `zftp_open(char *name, char **args, int flags)` from `Src/Modules/zftp.c:1690`.
-    /// Close connection
-    pub fn close(&mut self) -> io::Result<FtpResponse> {
-        if !self.connected {
-            return Ok((0, "not connected".to_string()));
-        }
-
-        let resp = if let Ok(()) = self.send_command("QUIT") {
-            self.read_response().unwrap_or_else(|_| (221, "Goodbye".to_string()))
-        } else {
-            (221, "Goodbye".to_string())
-        };
-
-        self.cin = None;
-        self.connected = false;
-        self.logged_in = false;
-        self.host = None;
-        self.user = None;
-        self.pwd = None;
-
-        Ok(resp)
-    }
 }
 
 /// Port of `zfpipe()` from `Src/Modules/zftp.c:412`.
@@ -790,100 +248,6 @@ pub fn zfunalarm() {                                                         // 
     }
 }
 
-/// FTP sessions manager.
-/// Port of the file-static `zfsess_node` linked list +
-/// `zfsess_current` pointer Src/Modules/zftp.c keeps —
-/// `zftp_session()` (line 2889) drives the switch,
-/// `zftp_rmsession()` (line 2915) the removal.
-// `Zftp` struct renamed to `zftp_globals` — C has no `struct zftp`;
-// the equivalent state in `Src/Modules/zftp.c` lives in file-scope
-// globals (`Zfsess zfsessions` linked list head + `Zfsess
-// zfsesscurrent`). Rust collapses these into one container accessed
-// via `ZFTP_STATE_INNER`; the suffix names this as a Rust extension
-// that bags the module's C-static state.
-#[allow(non_camel_case_types)]
-#[derive(Debug, Default)]
-pub struct zftp_globals {
-    sessions: HashMap<String, zftp_session>,
-    current: Option<String>,
-}
-
-impl zftp_globals {
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    pub fn get_session(&self, name: Option<&str>) -> Option<&zftp_session> {
-        let key = name
-            .map(|s| s.to_string())
-            .or_else(|| self.current.clone())?;
-        self.sessions.get(&key)
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    pub fn get_session_mut(&mut self, name: Option<&str>) -> Option<&mut zftp_session> {
-        let key = name
-            .map(|s| s.to_string())
-            .or_else(|| self.current.clone())?;
-        self.sessions.get_mut(&key)
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    pub fn create_session(&mut self, name: &str) -> &mut zftp_session {
-        self.sessions
-            .entry(name.to_string())
-            .or_insert_with(|| zftp_session::new(name))
-    }
-
-    /// Port of `zftp_rmsession(UNUSED(char *name), char **args, UNUSED(int flags))` from `Src/Modules/zftp.c:2915`.
-    pub fn remove_session(&mut self, name: &str) -> Option<zftp_session> {
-        let sess = self.sessions.remove(name);
-        if self.current.as_deref() == Some(name) {
-            // After dropping the current session, pick the
-            // alphabetically-first remaining session (deterministic;
-            // HashMap::keys().next() picks at random).
-            let mut keys: Vec<&String> = self.sessions.keys().collect();
-            keys.sort();
-            self.current = keys.first().map(|s| (*s).clone());
-        }
-        sess
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    pub fn set_current(&mut self, name: &str) -> bool {
-        if self.sessions.contains_key(name) {
-            self.current = Some(name.to_string());
-            true
-        } else {
-            false
-        }
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    pub fn current_name(&self) -> Option<&str> {
-        self.current.as_deref()
-    }
-
-    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
-    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
-    pub fn session_names(&self) -> Vec<&str> {
-        // Sorted so `zftp session` listing is deterministic across
-        // runs. Matches zsh's table-walk order for the underlying
-        // sessions hash.
-        let mut names: Vec<&str> = self.sessions.keys().map(|s| s.as_str()).collect();
-        names.sort();
-        names
-    }
-}
-
 /// Port of `zfunpipe()` from Src/Modules/zftp.c:453.
 /// C: `void zfunpipe(void)` — restores the SIGPIPE disposition that
 /// existed before `zfpipe()` ignored it.
@@ -895,25 +259,6 @@ pub fn zfunpipe() {                                                          // 
     // common case where SIGPIPE wasn't trapped.
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL); }                   // c:460
 }
-
-
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Phase: module-shims
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
-
-// END moved-from-exec-rs
-
-// =====================================================================
-// static struct features module_features                            c:3163 (zftp.c)
-// =====================================================================
-
-use crate::ported::zsh_h::module;
 
 /// Port of `zfmovefd(int fd)` from `Src/Modules/zftp.c:472`.
 /// C: `static int zfmovefd(int fd)` — moves fd above SHTTY.
@@ -1783,6 +1128,12 @@ pub fn zfwrite(fd: i32, bf: &[u8], sz: i64, tmout: i32) -> i32 {             // 
     ret                                                                      // c:1351
 }
 
+/// Port of `static int zfread_eof` file-static from
+/// `Src/Modules/zftp.c:1359`. Set by zfread_block when the ZFHD_EOFB
+/// flag arrives; cleared at the top of every fresh transfer.
+pub static zfread_eof: std::sync::atomic::AtomicI32 =                         // c:1359
+    std::sync::atomic::AtomicI32::new(0);
+
 /// Port of `zfread_block(int fd, char *bf, off_t sz, int tmout)` from `Src/Modules/zftp.c:1359`.
 /// C: `static int zfread_block(int fd, char *bf, off_t sz, int tmout)` —
 /// read a block-mode framed record: a 3-byte zfheader followed by
@@ -2135,6 +1486,21 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
     }
     if ret != 0 { 1 } else { 0 }                                              // c:1683
 }
+
+// =====================================================================
+// `enum { ZFST_* }` from `Src/Modules/zftp.c` — bit-packed shared-fd
+// status word used by the `zfstatfd` mechanism so a subshell can
+// detect type/mode/connection changes in the parent shell.
+// =====================================================================
+
+/// `ZF_BUFSIZE` from `Src/Modules/zftp.c:1458`. Default I/O block
+/// size for the zftp byte-stream pump.
+pub const ZF_BUFSIZE: usize = 32_768;                                        // c:1458
+
+/// `ZF_ASCSIZE` from `Src/Modules/zftp.c:1459`.
+/// `#define ZF_ASCSIZE (ZF_BUFSIZE/2)`. Smaller buffer for ASCII
+/// mode (line-by-line CRLF translation can grow output up to 2x).
+pub const ZF_ASCSIZE: usize = ZF_BUFSIZE / 2;                                // c:1459
 
 // Subcommand dispatch table for zftp. Each `zftp_<subcmd>` C function
 // has the canonical signature `int zftp_<subcmd>(char *name, char **args, int flags)`.
@@ -2745,12 +2111,6 @@ pub fn zftp_dir(name: &str, args: &[&str], flags: i32) -> i32 {                 
     zfsenddata(name, 1, 0, 0)                                                   // c:2332
 }
 
-/// Port of `static int zfread_eof` file-static from
-/// `Src/Modules/zftp.c:1359`. Set by zfread_block when the ZFHD_EOFB
-/// flag arrives; cleared at the top of every fresh transfer.
-pub static zfread_eof: std::sync::atomic::AtomicI32 =                         // c:1359
-    std::sync::atomic::AtomicI32::new(0);
-
 /// Port of `zftp_cd(UNUSED(char *name), char **args, int flags)` from `Src/Modules/zftp.c:2332`.
 /// C: send `CDUP\r\n` or `CWD <dir>\r\n` based on flags + arg shape.
 /// Then call zfgetcwd to update the cached pwd.
@@ -3238,30 +2598,6 @@ pub fn freesession(sptr: &mut zftp_session) {                                 //
     sptr.userparams.clear();
     // c:2884 — zfree(sptr, sizeof(struct zftp_session)); the caller's
     // owning Box::drop releases the struct memory.
-}
-
-/// Port of `zftp_session(UNUSED(char *name), char **args, UNUSED(int flags))` from `Src/Modules/zftp.c:2889`.
-#[allow(unused_variables)]
-pub fn zftp_session(name: &str, args: &[&str], flags: i32) -> i32 {           // c:2889
-    if args.is_empty() {                                                        // c:2889
-        // c:2892-2895 — walk zfsessions list, print each name.
-        if let Ok(state) = zftp_state().lock() {
-            for sess_name in state.session_names() {                            // c:2894
-                println!("{}", sess_name);                                      // c:2895
-            }
-        }
-        return 0;                                                               // c:2896
-    }
-    // c:2903-2904 — no-op if already in the requested session.
-    let current = zftp_state().lock().ok()
-        .and_then(|s| s.current_name().map(|n| n.to_string()))
-        .unwrap_or_default();
-    if args[0] == current {
-        return 0;                                                               // c:2915
-    }
-    savesession();                                                              // c:2915
-    switchsession(args[0]);                                                     // c:2915
-    0                                                                           // c:2915
 }
 
 /// Port of `zftp_rmsession(UNUSED(char *name), char **args, UNUSED(int flags))` from `Src/Modules/zftp.c:2915`.
@@ -3803,6 +3139,446 @@ pub fn zftp_cleanup() -> i32 {                                              // c
     0
 }
 
+impl zftp_session {
+    /// Port of `newsession(char *nm)` from `Src/Modules/zftp.c`. C uses
+    /// `zshcalloc(sizeof(struct zftp_session))` then sets `name`
+    /// (c:2891 `zfsess->name = ztrdup(name);`) and pre-allocates the
+    /// `params` / `userparams` arrays. Same default state.
+    pub fn new(name: &str) -> Self {
+        Self {
+            // C-faithful fields from `struct zftp_session` (c:299):
+            name: name.to_string(),                                       // c:300
+            params: Vec::new(),                                           // c:301
+            userparams: Vec::new(),                                       // c:302
+            cin: None,                                                    // c:303 NULL
+            control: None,                                                // c:304 NULL
+            dfd: -1,                                                      // c:305 (closed)
+            has_size: 0,                                                  // c:306
+            has_mdtm: 0,                                                  // c:307
+            // Ergonomic Rust-side state mirroring C's params[] indices:
+            host: None,
+            port: 21,
+            user: None,
+            pwd: None,
+            connected: false,
+            logged_in: false,
+            transfer_type: ZFST_IMAG,
+            transfer_mode: ZFST_STRE,
+            passive: true,
+            syst_probed: false,
+        }
+    }
+
+    /// Port of `zftp_open(char *name, char **args, int flags)` from `Src/Modules/zftp.c:1690`.
+    fn send_command(&mut self, cmd: &str) -> io::Result<()> {
+        if let Some(ref mut stream) = self.cin {
+            write!(stream, "{}\r\n", cmd)?;
+            stream.flush()
+        } else {
+            Err(io::Error::new(io::ErrorKind::NotConnected, "not connected"))
+        }
+    }
+
+    /// Port of `zfgetmsg()` from `Src/Modules/zftp.c:702`.
+    fn read_response(&mut self) -> io::Result<FtpResponse> {
+        let stream = self
+            .cin
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "not connected"))?;
+
+        let mut reader = BufReader::new(stream.try_clone()?);
+        let mut full_message = String::new();
+        let mut code = 0u32;
+        let mut multiline = false;
+        let mut first_code = String::new();
+
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line)?;
+            let line = line.trim_end();
+
+            if line.len() < 3 {
+                continue;
+            }
+
+            if code == 0 {
+                first_code = line[..3].to_string();
+                code = first_code.parse().unwrap_or(0);
+
+                if line.len() > 3 && line.chars().nth(3) == Some('-') {
+                    multiline = true;
+                }
+            }
+
+            full_message.push_str(line);
+            full_message.push('\n');
+
+            if multiline {
+                if line.starts_with(&first_code)
+                    && line.len() > 3
+                    && line.chars().nth(3) == Some(' ')
+                {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        Ok((code as i32, full_message))
+    }
+
+    /// Port of `zftp_open(char *name, char **args, int flags)` from `Src/Modules/zftp.c:1690`.
+    /// Connect to FTP server — DNS resolution on background thread to avoid hangs
+    pub fn connect(&mut self, host: &str, port: Option<u16>) -> io::Result<FtpResponse> {
+        let port = port.unwrap_or(21);
+        let addr_str = format!("{}:{}", host, port);
+        let dns_timeout = Duration::from_secs(10);
+
+        // DNS on background thread
+        let (tx, rx) = std::sync::mpsc::channel();
+        let dns = addr_str.clone();
+        std::thread::Builder::new()
+            .name("zftp-dns".to_string())
+            .spawn(move || {
+                let _ = tx.send(dns.to_socket_addrs().map(|a| a.collect::<Vec<_>>()));
+            })
+            .map_err(io::Error::other)?;
+
+        let addrs = rx
+            .recv_timeout(dns_timeout)
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DNS resolution timed out"))?
+            .map_err(|e| {
+                // C: `zwarnnam("zftp", "host not found: %s", host);` at
+                //    `Src/Modules/zftp.c:1715`. Route through canonical
+                //    zwarnnam so the user sees a real shell warning
+                //    instead of a tracing log line.
+                crate::ported::utils::zwarnnam(
+                    "zftp",
+                    &format!("host not found: {}: {}", host, e),
+                );
+                e
+            })?;
+
+        let sock_addr = addrs
+            .into_iter()
+            .next()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid address"))?;
+
+        let stream = TcpStream::connect_timeout(&sock_addr, Duration::from_secs(30))?;
+
+        stream.set_read_timeout(Some(Duration::from_secs(60)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(60)))?;
+
+        self.cin = Some(stream);
+        self.host = Some(host.to_string());
+        self.port = port;
+        self.connected = true;
+
+        self.read_response()
+    }
+
+    /// Port of `zftp_login(char *name, char **args, UNUSED(int flags))` from `Src/Modules/zftp.c:2118`.
+    /// Login to FTP server
+    pub fn login(&mut self, user: &str, pass: Option<&str>) -> io::Result<FtpResponse> {
+        self.send_command(&format!("USER {}", user))?;
+        let resp = self.read_response()?;
+
+        if resp.0 == 331 {
+            let password = pass.unwrap_or("");
+            self.send_command(&format!("PASS {}", password))?;
+            let resp = self.read_response()?;
+
+            if (resp.0 >= 200 && resp.0 < 300) {
+                self.logged_in = true;
+                self.user = Some(user.to_string());
+            }
+            return Ok(resp);
+        }
+
+        if (resp.0 >= 200 && resp.0 < 300) {
+            self.logged_in = true;
+            self.user = Some(user.to_string());
+        }
+
+        Ok(resp)
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    /// Set transfer type
+    pub fn set_type(&mut self, transfer_type: i32) -> io::Result<FtpResponse> {
+        // C inline pattern: `(typ & ZFST_IMAG) ? "I" : "A"`
+        let typ_letter = if (transfer_type & ZFST_IMAG) != 0 { "I" } else { "A" };
+        self.send_command(&format!("TYPE {}", typ_letter))?;
+        let resp = self.read_response()?;
+        if (resp.0 >= 200 && resp.0 < 300) {
+            self.transfer_type = transfer_type;
+        }
+        Ok(resp)
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    /// Change directory
+    pub fn cd(&mut self, path: &str) -> io::Result<FtpResponse> {
+        self.send_command(&format!("CWD {}", path))?;
+        self.read_response()
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    /// Change to parent directory
+    pub fn cdup(&mut self) -> io::Result<FtpResponse> {
+        self.send_command("CDUP")?;
+        self.read_response()
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    /// Get current directory
+    pub fn pwd(&mut self) -> io::Result<(FtpResponse, Option<String>)> {
+        self.send_command("PWD")?;
+        let resp = self.read_response()?;
+
+        let pwd = if (resp.0 >= 200 && resp.0 < 300) {
+            if let Some(start) = resp.1.find('"') {
+                if let Some(end) = resp.1[start + 1..].find('"') {
+                    Some(resp.1[start + 1..start + 1 + end].to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok((resp, pwd))
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    /// List directory
+    pub fn list(&mut self, path: Option<&str>) -> io::Result<(FtpResponse, Vec<String>)> {
+        let data_stream = self.enter_passive_mode()?;
+
+        let cmd = match path {
+            Some(p) => format!("LIST {}", p),
+            None => "LIST".to_string(),
+        };
+        self.send_command(&cmd)?;
+        let resp = self.read_response()?;
+
+        if !(resp.0 >= 100 && resp.0 < 400) {
+            return Ok((resp, Vec::new()));
+        }
+
+        let mut reader = BufReader::new(data_stream);
+        let mut lines = Vec::new();
+        let mut line = String::new();
+        while reader.read_line(&mut line)? > 0 {
+            lines.push(line.trim_end().to_string());
+            line.clear();
+        }
+
+        let final_resp = self.read_response()?;
+
+        Ok((final_resp, lines))
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    /// List filenames only
+    pub fn nlst(&mut self, path: Option<&str>) -> io::Result<(FtpResponse, Vec<String>)> {
+        let data_stream = self.enter_passive_mode()?;
+
+        let cmd = match path {
+            Some(p) => format!("NLST {}", p),
+            None => "NLST".to_string(),
+        };
+        self.send_command(&cmd)?;
+        let resp = self.read_response()?;
+
+        if !(resp.0 >= 100 && resp.0 < 400) {
+            return Ok((resp, Vec::new()));
+        }
+
+        let mut reader = BufReader::new(data_stream);
+        let mut lines = Vec::new();
+        let mut line = String::new();
+        while reader.read_line(&mut line)? > 0 {
+            lines.push(line.trim_end().to_string());
+            line.clear();
+        }
+
+        let final_resp = self.read_response()?;
+
+        Ok((final_resp, lines))
+    }
+
+    /// Port of `zftp_open(char *name, char **args, int flags)` from `Src/Modules/zftp.c:1690`.
+    fn enter_passive_mode(&mut self) -> io::Result<TcpStream> {
+        self.send_command("PASV")?;
+        let resp = self.read_response()?;
+
+        if !(resp.0 >= 200 && resp.0 < 300) {
+            return Err(io::Error::other(resp.1));
+        }
+
+        let (ip, port) = parse_pasv_response(&resp.1)?;
+        let addr = format!("{}:{}", ip, port);
+
+        TcpStream::connect_timeout(
+            &addr.to_socket_addrs()?.next().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "invalid PASV address")
+            })?,
+            Duration::from_secs(30),
+        )
+    }
+
+    /// Port of `zfstats(char *fnam, int remote, off_t *retsize, char **retmdtm, int fd)` from `Src/Modules/zftp.c:1193`.
+    /// Download a file
+    pub fn get(&mut self, remote: &str, local: &Path) -> io::Result<FtpResponse> {
+        let mut data_stream = self.enter_passive_mode()?;
+
+        self.send_command(&format!("RETR {}", remote))?;
+        let resp = self.read_response()?;
+
+        if !(resp.0 >= 100 && resp.0 < 400) {
+            return Ok(resp);
+        }
+
+        let mut file = std::fs::File::create(local)?;
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = data_stream.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            file.write_all(&buf[..n])?;
+        }
+
+        self.read_response()
+    }
+
+    /// Port of `zfstats(char *fnam, int remote, off_t *retsize, char **retmdtm, int fd)` from `Src/Modules/zftp.c:1193`.
+    /// Upload a file
+    pub fn put(&mut self, local: &Path, remote: &str) -> io::Result<FtpResponse> {
+        let mut data_stream = self.enter_passive_mode()?;
+
+        self.send_command(&format!("STOR {}", remote))?;
+        let resp = self.read_response()?;
+
+        if !(resp.0 >= 100 && resp.0 < 400) {
+            return Ok(resp);
+        }
+
+        let mut file = std::fs::File::open(local)?;
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = file.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            data_stream.write_all(&buf[..n])?;
+        }
+        drop(data_stream);
+
+        self.read_response()
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    /// Delete a file
+    pub fn delete(&mut self, path: &str) -> io::Result<FtpResponse> {
+        self.send_command(&format!("DELE {}", path))?;
+        self.read_response()
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    /// Make directory
+    pub fn mkdir(&mut self, path: &str) -> io::Result<FtpResponse> {
+        self.send_command(&format!("MKD {}", path))?;
+        self.read_response()
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    /// Remove directory
+    pub fn rmdir(&mut self, path: &str) -> io::Result<FtpResponse> {
+        self.send_command(&format!("RMD {}", path))?;
+        self.read_response()
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    /// Rename file
+    pub fn rename(&mut self, from: &str, to: &str) -> io::Result<FtpResponse> {
+        self.send_command(&format!("RNFR {}", from))?;
+        let resp = self.read_response()?;
+
+        if !(resp.0 >= 300 && resp.0 < 400) {
+            return Ok(resp);
+        }
+
+        self.send_command(&format!("RNTO {}", to))?;
+        self.read_response()
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    /// Get file size
+    pub fn size(&mut self, path: &str) -> io::Result<(FtpResponse, Option<u64>)> {
+        self.send_command(&format!("SIZE {}", path))?;
+        let resp = self.read_response()?;
+
+        let size = if (resp.0 >= 200 && resp.0 < 300) {
+            resp.1
+                .split_whitespace()
+                .last()
+                .and_then(|s| s.parse().ok())
+        } else {
+            None
+        };
+
+        Ok((resp, size))
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_session` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    /// Send raw command
+    pub fn bslashquote(&mut self, cmd: &str) -> io::Result<FtpResponse> {
+        self.send_command(cmd)?;
+        self.read_response()
+    }
+
+    /// Port of `zftp_open(char *name, char **args, int flags)` from `Src/Modules/zftp.c:1690`.
+    /// Close connection
+    pub fn close(&mut self) -> io::Result<FtpResponse> {
+        if !self.connected {
+            return Ok((0, "not connected".to_string()));
+        }
+
+        let resp = if let Ok(()) = self.send_command("QUIT") {
+            self.read_response().unwrap_or_else(|_| (221, "Goodbye".to_string()))
+        } else {
+            (221, "Goodbye".to_string())
+        };
+
+        self.cin = None;
+        self.connected = false;
+        self.logged_in = false;
+        self.host = None;
+        self.user = None;
+        self.pwd = None;
+
+        Ok(resp)
+    }
+}
+
 /// Port of `zftpexithook(UNUSED(Hookdef d), UNUSED(void *dummy))` from Src/Modules/zftp.c:3156.
 /// C: `static int zftpexithook(UNUSED(Hookdef d), UNUSED(void *dummy))`
 /// — calls `zftp_cleanup()`, returns 0.
@@ -3834,16 +3610,105 @@ pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     0
 }
 
+impl zftp_globals {
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    pub fn get_session(&self, name: Option<&str>) -> Option<&zftp_session> {
+        let key = name
+            .map(|s| s.to_string())
+            .or_else(|| self.current.clone())?;
+        self.sessions.get(&key)
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    pub fn get_session_mut(&mut self, name: Option<&str>) -> Option<&mut zftp_session> {
+        let key = name
+            .map(|s| s.to_string())
+            .or_else(|| self.current.clone())?;
+        self.sessions.get_mut(&key)
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    pub fn create_session(&mut self, name: &str) -> &mut zftp_session {
+        self.sessions
+            .entry(name.to_string())
+            .or_insert_with(|| zftp_session::new(name))
+    }
+
+    /// Port of `zftp_rmsession(UNUSED(char *name), char **args, UNUSED(int flags))` from `Src/Modules/zftp.c:2915`.
+    pub fn remove_session(&mut self, name: &str) -> Option<zftp_session> {
+        let sess = self.sessions.remove(name);
+        if self.current.as_deref() == Some(name) {
+            // After dropping the current session, pick the
+            // alphabetically-first remaining session (deterministic;
+            // HashMap::keys().next() picks at random).
+            let mut keys: Vec<&String> = self.sessions.keys().collect();
+            keys.sort();
+            self.current = keys.first().map(|s| (*s).clone());
+        }
+        sess
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    pub fn set_current(&mut self, name: &str) -> bool {
+        if self.sessions.contains_key(name) {
+            self.current = Some(name.to_string());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    pub fn current_name(&self) -> Option<&str> {
+        self.current.as_deref()
+    }
+
+    /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
+    /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
+    pub fn session_names(&self) -> Vec<&str> {
+        // Sorted so `zftp session` listing is deterministic across
+        // runs. Matches zsh's table-walk order for the underlying
+        // sessions hash.
+        let mut names: Vec<&str> = self.sessions.keys().map(|s| s.as_str()).collect();
+        names.sort();
+        names
+    }
+}
+
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/zftp.c:3189`.
 pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     handlefeatures(m, module_features(), enables)
 }
 
-/// Global ZFTP session state — port of the C file-scope statics
-/// `static Zftp_session zfsessions[]` and friends in zftp.c. Holds
-/// all sessions and the currently-active one. Free fns above route
-/// through this so subcommand dispatch matches C behaviour.
-static ZFTP_STATE_INNER: std::sync::OnceLock<std::sync::Mutex<zftp_globals>> = std::sync::OnceLock::new();
+
+
+// ===========================================================
+// Methods moved verbatim from src/ported/exec.rs because their
+// C counterpart's source file maps 1:1 to this Rust module.
+// Phase: module-shims
+// ===========================================================
+
+// BEGIN moved-from-exec-rs
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
+// END moved-from-exec-rs
+
+// =====================================================================
+// static struct features module_features                            c:3163 (zftp.c)
+// =====================================================================
+
+use crate::ported::zsh_h::module;
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/zftp.c:3196`.
 #[allow(unused_variables)]
@@ -3887,6 +3752,208 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     0
 }
 
+// `TransferType` enum removed — was Rust-only invention. C uses the
+// `ZFST_ASCI` (0x0000) / `ZFST_IMAG` (0x0001) bits from the ZFST_*
+// status word (c:246-247) for the next-transfer type, and
+// `ZFST_CASC` (0x0000) / `ZFST_CIMA` (0x0002) for the current-transfer
+// type. Callers store the type as `i32` and compare via the `ZFST_TYPE`
+// macro (c:267): `ZFST_TYPE(x) (x & ZFST_TMSK)`.
+//
+// Inline-test pattern matching C `if (zfst_status & ZFST_IMAG) ...`
+// at every TYPE-letter dispatch (e.g. zftp.c around `zftp_type` body):
+//   `if (typ & ZFST_IMAG) != 0 { "I" } else { "A" }`
+
+// `TransferMode` enum removed — was Rust-only invention. C uses the
+// `ZFST_STRE` (0x0000) / `ZFST_BLOC` (0x0004) bits from the ZFST_*
+// status word (defined later in this file at the c:245 enum). Callers
+// store the mode as `i32` and compare against those constants directly:
+//   `if (mode & ZFST_BLOC) != 0 { "B" } else { "S" }`
+// — same inline-test pattern the C source uses at every MODE send-site.
+
+/// FTP server response (3-digit code + message).
+/// Port of the response handling inside `zfgetmsg()` from
+/// `lastmsg` — file-scope global from `Src/Modules/zftp.c:227`:
+/// `static char *lastmsg, lastcodestr[4];`. Holds the most recent
+/// FTP server reply message text (post-3-digit-code body).
+pub static lastmsg: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// `lastcodestr` — file-scope global from `Src/Modules/zftp.c:227`.
+/// 3-digit FTP reply code as ASCII (`"000".."599"`), zero-terminated
+/// to 4 bytes in C; mirrored as a 4-byte Mutex array for parity.
+pub static lastcodestr: std::sync::Mutex<[u8; 4]>
+    = std::sync::Mutex::new([b'0', b'0', b'0', 0]);
+
+// `FtpResponse` struct removed — was Rust-only invention. C source
+// returns plain `int` from every reply-handling fn and reads the
+// `lastcode` / `lastmsg` globals (c:227-228) inline at each check
+// site. Callers in this Rust port use the same pattern: each fn
+// returns `i32` (matching C `int`), and `lastmsg.lock().unwrap()`
+// + `lastcode.load(Relaxed)` provide the C-equivalent inline reads.
+//
+// For ergonomic call sites the type alias below carries both halves
+// without inventing a new struct shape:
+#[allow(non_camel_case_types)]
+pub type FtpResponse = (i32, String);
+
+// =====================================================================
+// `enum { ZFHD_* }` from `Src/Modules/zftp.c:119` — block-header flags.
+// =====================================================================
+
+/// `ZFHD_MARK` — restart marker.
+pub const ZFHD_MARK: i32 = 16;                                            // c:120
+/// `ZFHD_ERRS` — suspected errors in block.
+pub const ZFHD_ERRS: i32 = 32;                                            // c:121
+/// `ZFHD_EOFB` — block is end of record.
+pub const ZFHD_EOFB: i32 = 64;                                            // c:122
+/// `ZFHD_EORB` — block is end of file.
+pub const ZFHD_EORB: i32 = 128;                                           // c:123
+
+/// `readwrite_t` — function pointer typedef from
+/// `Src/Modules/zftp.c:126`: `typedef int (*readwrite_t)(int, char *, off_t, int);`
+#[allow(non_camel_case_types)]
+pub type readwrite_t = fn(i32, &mut [u8], libc::off_t, i32) -> i32;
+
+// =====================================================================
+// `enum { ZFTP_* }` from `Src/Modules/zftp.c:134` — zftpcmd.flags bits.
+// =====================================================================
+
+/// `ZFTP_CONN` — must be connected.
+pub const ZFTP_CONN: i32 = 0x0001;                                        // c:135
+/// `ZFTP_LOGI` — must be logged in.
+pub const ZFTP_LOGI: i32 = 0x0002;                                        // c:136
+/// `ZFTP_TBIN` — set transfer type image.
+pub const ZFTP_TBIN: i32 = 0x0004;                                        // c:137
+/// `ZFTP_TASC` — set transfer type ASCII.
+pub const ZFTP_TASC: i32 = 0x0008;                                        // c:138
+/// `ZFTP_NLST` — use NLST rather than LIST.
+pub const ZFTP_NLST: i32 = 0x0010;                                        // c:139
+/// `ZFTP_DELE` — a delete rather than a make.
+pub const ZFTP_DELE: i32 = 0x0020;                                        // c:140
+/// `ZFTP_SITE` — a site rather than a quote.
+pub const ZFTP_SITE: i32 = 0x0040;                                        // c:141
+/// `ZFTP_APPE` — append rather than overwrite.
+pub const ZFTP_APPE: i32 = 0x0080;                                        // c:142
+/// `ZFTP_HERE` — here rather than over there.
+pub const ZFTP_HERE: i32 = 0x0100;                                        // c:143
+/// `ZFTP_CDUP` — CDUP rather than CWD.
+pub const ZFTP_CDUP: i32 = 0x0200;                                        // c:144
+/// `ZFTP_REST` — restart: set point in remote file.
+pub const ZFTP_REST: i32 = 0x0400;                                        // c:145
+/// `ZFTP_RECV` — receive rather than send.
+pub const ZFTP_RECV: i32 = 0x0800;                                        // c:146
+/// `ZFTP_TEST` — test command, don't test.
+pub const ZFTP_TEST: i32 = 0x1000;                                        // c:147
+/// `ZFTP_SESS` — session command, don't need status.
+pub const ZFTP_SESS: i32 = 0x2000;                                        // c:148
+
+/// `static char *zfparams[]` from `Src/Modules/zftp.c:197` — list of
+/// non-special params to unset when a connection closes.
+pub static ZFPARAMS: &[&str] = &[
+    "ZFTP_HOST", "ZFTP_PORT", "ZFTP_IP", "ZFTP_SYSTEM", "ZFTP_USER",
+    "ZFTP_ACCOUNT", "ZFTP_PWD", "ZFTP_TYPE", "ZFTP_MODE",                // c:198-199
+];
+
+// =====================================================================
+// `enum { ZFPM_* }` from `Src/Modules/zftp.c:204` — zfsetparam flags.
+// =====================================================================
+
+/// `ZFPM_READONLY` — make parameter readonly.
+pub const ZFPM_READONLY: i32 = 0x01;                                      // c:205
+/// `ZFPM_IFUNSET` — only set if not already set.
+pub const ZFPM_IFUNSET: i32 = 0x02;                                       // c:206
+/// `ZFPM_INTEGER` — passed pointer to off_t.
+pub const ZFPM_INTEGER: i32 = 0x04;                                       // c:207
+
+/// `zfnopen` — file-scope global from `Src/Modules/zftp.c:211`:
+/// `static int zfnopen;` — number of connections actually open.
+pub static ZFNOPEN: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// `zcfinish` — file-scope global from `Src/Modules/zftp.c:218`:
+/// `static int zcfinish;` — 0 keep going, 1 line finished, 2 EOF.
+pub static ZCFINISH: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// `zfclosing` — file-scope global from `Src/Modules/zftp.c:220`:
+/// `static int zfclosing;` — set when zftp_close() is active.
+pub static ZFCLOSING: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+// =====================================================================
+// `enum { ZFCP_* }` from `Src/Modules/zftp.c` — server-capability
+// tri-state for SIZE / MDTM probes.
+// =====================================================================
+
+/// `ZFCP_UNKN` — dunno if it works on this server. Port of c:`enum`
+/// in `Src/Modules/zftp.c`.
+pub const ZFCP_UNKN: i32 = 0;
+/// `ZFCP_YUPP` — server supports the feature.
+pub const ZFCP_YUPP: i32 = 1;
+/// `ZFCP_NOPE` — server doesn't support the feature.
+pub const ZFCP_NOPE: i32 = 2;
+
+/// `ZFST_ASCI` — type for next transfer is ASCII.
+pub const ZFST_ASCI: i32 = 0x0000;
+/// `ZFST_IMAG` — type for next transfer is image (binary).
+pub const ZFST_IMAG: i32 = 0x0001;
+/// `ZFST_TMSK` — mask for type flags.
+pub const ZFST_TMSK: i32 = 0x0001;
+/// `ZFST_TBIT` — number of bits in type flags.
+pub const ZFST_TBIT: i32 = 0x0001;
+/// `ZFST_CASC` — current type is ASCII (default).
+pub const ZFST_CASC: i32 = 0x0000;
+/// `ZFST_CIMA` — current type is image.
+pub const ZFST_CIMA: i32 = 0x0002;
+/// `ZFST_STRE` — stream mode (default).
+pub const ZFST_STRE: i32 = 0x0000;
+/// `ZFST_BLOC` — block mode.
+pub const ZFST_BLOC: i32 = 0x0004;
+/// `ZFST_MMSK` — mask for mode flags.
+pub const ZFST_MMSK: i32 = 0x0004;
+/// `ZFST_LOGI` — user logged in.
+pub const ZFST_LOGI: i32 = 0x0008;
+/// `ZFST_SYST` — done SYST type check.
+pub const ZFST_SYST: i32 = 0x0010;
+/// `ZFST_NOPS` — server doesn't understand PASV.
+pub const ZFST_NOPS: i32 = 0x0020;
+/// `ZFST_NOSZ` — server doesn't send `(XXXX bytes)' reply.
+pub const ZFST_NOSZ: i32 = 0x0040;
+/// `ZFST_TRSZ` — tried getting 'size' from reply.
+pub const ZFST_TRSZ: i32 = 0x0080;
+/// `ZFST_CLOS` — connection closed.
+pub const ZFST_CLOS: i32 = 0x0100;
+
+/// `ZFPF_SNDP` — use send port (active mode) preference.
+pub const ZFPF_SNDP: i32 = 0x01;                                           // c:280
+/// `ZFPF_PASV` — try passive mode preference.
+pub const ZFPF_PASV: i32 = 0x02;                                           // c:281
+/// `ZFPF_DUMB` — don't do clever things with variables.
+pub const ZFPF_DUMB: i32 = 0x04;                                           // c:282
+
+/// FTP sessions manager.
+/// Port of the file-static `zfsess_node` linked list +
+/// `zfsess_current` pointer Src/Modules/zftp.c keeps —
+/// `zftp_session()` (line 2889) drives the switch,
+/// `zftp_rmsession()` (line 2915) the removal.
+// `Zftp` struct renamed to `zftp_globals` — C has no `struct zftp`;
+// the equivalent state in `Src/Modules/zftp.c` lives in file-scope
+// globals (`Zfsess zfsessions` linked list head + `Zfsess
+// zfsesscurrent`). Rust collapses these into one container accessed
+// via `ZFTP_STATE_INNER`; the suffix names this as a Rust extension
+// that bags the module's C-static state.
+#[allow(non_camel_case_types)]
+#[derive(Debug, Default)]
+pub struct zftp_globals {
+    sessions: HashMap<String, zftp_session>,
+    current: Option<String>,
+}
+
+/// Global ZFTP session state — port of the C file-scope statics
+/// `static Zftp_session zfsessions[]` and friends in zftp.c. Holds
+/// all sessions and the currently-active one. Free fns above route
+/// through this so subcommand dispatch matches C behaviour.
+static ZFTP_STATE_INNER: std::sync::OnceLock<std::sync::Mutex<zftp_globals>> = std::sync::OnceLock::new();
+
 /// WARNING: NOT IN ZFTP.C — platform-gated `errno` pointer; C reads errno directly after syscalls
 /// (equivalent C logic at Src/Modules/zftp.c:25).
 /// Platform-gated `errno` pointer. zsh's C source writes `errno` directly
@@ -3904,73 +3971,6 @@ fn errno_ptr() -> *mut libc::c_int {
         extern "C" { fn __errno() -> *mut libc::c_int; }
         __errno()
     }
-}
-
-/// `ZFST_TYPE(x)` macro — extract type-flag bits.
-/// Port of `#define ZFST_TYPE(x) (x & ZFST_TMSK)` from
-/// `Src/Modules/zftp.c`.
-#[allow(non_snake_case)]
-#[inline]
-pub fn ZFST_TYPE(x: i32) -> i32 { x & ZFST_TMSK }
-
-/// `ZFST_MODE(x)` macro — extract mode-flag bits.
-/// Port of `#define ZFST_MODE(x) (x & ZFST_MMSK)` from
-/// `Src/Modules/zftp.c`.
-#[allow(non_snake_case)]
-#[inline]
-pub fn ZFST_MODE(x: i32) -> i32 { x & ZFST_MMSK }
-
-/// Port of `struct zftp_session` from `Src/Modules/zftp.c:299`.
-///
-/// C definition (verbatim):
-/// ```c
-/// struct zftp_session {
-///     char *name;            /* name of session */
-///     char **params;         /* parameters ordered as in zfparams */
-///     char **userparams;     /* user parameters set by zftp_params */
-///     FILE *cin;             /* control input file */
-///     Tcp_session control;   /* the control connection */
-///     int dfd;               /* data connection */
-///     int has_size;          /* understands SIZE? */
-///     int has_mdtm;          /* understands MDTM? */
-/// };
-///
-/// typedef struct zftp_session *Zftp_session;  // c:50
-/// ```
-///
-/// Field names + order match C exactly. `cin` (control input file) is
-/// modelled as `Option<TcpStream>` since Rust doesn't expose libc
-/// FILE* directly; `control` (the Tcp_session) collapses into the
-/// same TcpStream slot in the static-link path.
-#[derive(Debug)]
-#[allow(non_camel_case_types)]
-pub struct zftp_session {
-    pub name: String,                                                    // c:300 char *name
-    pub params: Vec<String>,                                              // c:301 char **params
-    pub userparams: Vec<String>,                                          // c:302 char **userparams
-    pub cin: Option<TcpStream>,                                          // c:303 FILE *cin (control input)
-    pub control: Option<TcpStream>,                                       // c:304 Tcp_session control
-    pub dfd: i32,                                                         // c:305 int dfd
-    pub has_size: i32,                                                    // c:306 int has_size
-    pub has_mdtm: i32,                                                    // c:307 int has_mdtm
-
-    // Below: ergonomic Rust fields not in C `struct zftp_session` but
-    // needed by the Rust wrapper to track connection state without the
-    // C `params` array indexing convention. Document the mapping back
-    // to C `params[]` slots in comments.
-    pub host: Option<String>,            // C: params[ZFPM_HOST]
-    pub port: u16,                       // C: params[ZFPM_PORT] (parsed)
-    pub user: Option<String>,            // C: params[ZFPM_USER]
-    pub pwd: Option<String>,             // C: params[ZFPM_PASSWORD]
-    pub connected: bool,                 // C: cin != NULL
-    pub logged_in: bool,                 // C: derived from greeting parse
-    pub transfer_type: i32,
-    pub transfer_mode: i32,
-    pub passive: bool,
-    /// Mirrors the ZFST_SYST bit of `zfstatusp[zfsessno]` (c:240).
-    /// Set after a successful SYST probe so re-login on the same
-    /// session doesn't re-issue SYST.
-    pub syst_probed: bool,
 }
 
 /// Port of `zfopendata(char *name, union tcp_sockaddr *zdsockp, int *is_passivep)` from `Src/Modules/zftp.c:859`.
@@ -4075,6 +4075,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

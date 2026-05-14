@@ -21,11 +21,14 @@
 
 use std::collections::VecDeque;
 
-/// A doubly-ended list, port of `struct linklist` (`Src/zsh.h:563`).
-/// `flags` carries `LF_ARRAY` and friends from `Src/subst.c:33`.
-pub struct LinkList<T> {
-    pub nodes: VecDeque<T>,                                                 // c:zsh.h:565,566
-    pub flags: u32,                                                          // c:zsh.h:567
+// ===========================================================
+// Free-fn ports of `Src/linklist.c` (functions, not macros).
+// ===========================================================
+
+// Get an empty linked list header                                         // c:116
+/// Port of `newlinklist()` (`Src/linklist.c:103`).
+pub fn newlinklist() -> LinkList<String> {                                   // c:103
+    LinkList::new()
 }
 
 impl<T> Default for LinkList<T> {
@@ -237,16 +240,6 @@ impl<'a, T> IntoIterator for &'a LinkList<T> {
     }
 }
 
-// ===========================================================
-// Free-fn ports of `Src/linklist.c` (functions, not macros).
-// ===========================================================
-
-// Get an empty linked list header                                         // c:116
-/// Port of `newlinklist()` (`Src/linklist.c:103`).
-pub fn newlinklist() -> LinkList<String> {                                   // c:103
-    LinkList::new()
-}
-
 /// Port of `znewlinklist()` (`Src/linklist.c:116`).
 pub fn znewlinklist() -> LinkList<String> {                                  // c:116
     LinkList::new()
@@ -364,6 +357,13 @@ pub fn hlinklist2array(list: &LinkList<String>) -> Vec<String> {                
 /// WARNING: param names don't match C — Rust=(list) vs C=(list, copy)
 pub fn zlinklist2array(list: &LinkList<String>) -> Vec<String> {             // c:449
     list.iter().cloned().collect()
+}
+
+/// A doubly-ended list, port of `struct linklist` (`Src/zsh.h:563`).
+/// `flags` carries `LF_ARRAY` and friends from `Src/subst.c:33`.
+pub struct LinkList<T> {
+    pub nodes: VecDeque<T>,                                                 // c:zsh.h:565,566
+    pub flags: u32,                                                          // c:zsh.h:567
 }
 
 #[cfg(test)]

@@ -54,39 +54,6 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-pub static DONE: AtomicI32 = AtomicI32::new(0);                              // c:79
-
-/// Port of `int mark` from `Src/Zle/zle_main.c:84`. Saved cursor
-/// position for the region (set by `set-mark-command`, consumed by
-/// `kill-region`, `copy-region-as-kill`, `regionlines`, etc.).
-pub static MARK: AtomicI32 = AtomicI32::new(0);                              // c:84
-
-/// Port of `mod_export int suffixlen` from `Src/Zle/zle_misc.c:1553`.
-/// Length of the currently active, auto-removable suffix.
-pub static SUFFIXLEN: AtomicI32 = AtomicI32::new(0);                         // c:1553
-
-/// Port of `struct suffixset` from `Src/Zle/zle_misc.c`. One node
-/// in the auto-removable suffix list.
-#[derive(Debug, Clone, Default)]
-#[allow(non_camel_case_types)]
-pub struct suffixset {                                                       // c:1530
-    /// Type bits (SUFTYP_POSSTR/POSRNG/etc.).
-    pub tp: i32,
-    /// Flag bits (SUFFLAGS_SPACE etc.).
-    pub flags: i32,
-    /// Characters to match (for *STR types).
-    pub chars: Vec<char>,
-    /// Length of `chars`.
-    pub lenstr: i32,
-    /// Suffix length to remove on insert.
-    pub lensuf: i32,
-}
-
-/// Port of `struct suffixset *suffixlist` from `Src/Zle/zle_misc.c`.
-/// Stack of registered auto-removable suffixes.
-pub static SUFFIXLIST: std::sync::OnceLock<std::sync::Mutex<Vec<suffixset>>>
-    = std::sync::OnceLock::new();
-
 /// Port of `doinsert(ZLE_STRING_T zstr, int len)` from `Src/Zle/zle_misc.c:37`.
 /// ```c
 /// mod_export void
@@ -185,59 +152,6 @@ pub fn doinsert(zstr: &[char]) {                              // c:37
     }
     crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
-
-/// Port of `int suffixnoinsrem` from `Src/Zle/zle_misc.c:1549`.
-/// Suppresses inserted-character suffix removal when set.
-pub static SUFFIXNOINSREM: AtomicI32 = AtomicI32::new(0);                    // c:1549
-
-/// Port of `static ZLE_INT_T vfindchar` from `Src/Zle/zle_move.c:734`.
-/// The character argument to the most recent vi-find* command.
-pub static VFINDCHAR: AtomicI32 = AtomicI32::new(0);                         // c:734
-
-/// Port of `static int vfinddir, tailadd` from `Src/Zle/zle_move.c:735`.
-/// vfinddir = +1 forward, -1 backward; tailadd = +1 land just after,
-/// -1 land just before, 0 land on the char itself.
-pub static VFINDDIR: AtomicI32 = AtomicI32::new(0);                          // c:735
-pub static TAILADD:  AtomicI32 = AtomicI32::new(0);                          // c:735
-
-/// Port of `static int kct` from `Src/Zle/zle_misc.c:523`. Index into
-/// the kill ring for the next yank-pop, or -1 for the original cutbuf
-/// at the start of a yank sequence.
-pub static KCT:    AtomicI32 = AtomicI32::new(-1);                           // c:523
-
-/// Port of `static int yankcs` from `Src/Zle/zle_misc.c:523`. Saved
-/// cursor position at the start of the most-recent yank — `yank-pop`
-/// rewinds to this and re-inserts the next ring entry.
-pub static YANKCS: AtomicI32 = AtomicI32::new(0);                            // c:523
-
-/// Port of `static int namedcmdambig` from `Src/Zle/zle_misc.c:1231`.
-/// Length of the longest unambiguous prefix among all matched
-/// `namedcmd` widget names — drives `execute-named-command` ambig
-/// resolution. Mirrored on `NamedCmdState.namedcmdambig` already;
-/// this is the searchable counterpart.
-pub static NAMEDCMDAMBIG: AtomicI32 = AtomicI32::new(0);                     // c:1231
-
-// ===== Pre/post-display strings (Src/Zle/zle_main.c) =====
-//
-// `ZLE_STRING_T predisplay` / `ZLE_STRING_T postdisplay` — text
-// shown before/after the line buffer (used by `zle -K -P` and
-// completion menu rendering).
-
-/// Port of `ZLE_STRING_T predisplay` (zle_main.c). Storage for the
-/// `$PREDISPLAY` parameter value.
-pub static PREDISPLAY: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
-
-/// Port of `ZLE_STRING_T postdisplay` (zle_main.c). Storage for the
-/// `$POSTDISPLAY` parameter value.
-pub static POSTDISPLAY: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
-
-/// Port of `char *previous_search` from `Src/Zle/zle_hist.c`. Set
-/// by `historyincrementalsearch*` on accept; read by `$LSEARCH`.
-pub static PREVIOUS_SEARCH: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
-
-/// Port of `char *previous_aborted_search` from
-/// `Src/Zle/zle_hist.c`. Set on isearch abort; read by `$LASEARCH`.
-pub static PREVIOUS_ABORTED_SEARCH: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
 
 /// Direct port of `int selfinsert(char **args)` from
 /// `Src/Zle/zle_misc.c:112-126`.
@@ -1481,6 +1395,18 @@ pub fn makequote(s: &[char]) -> Vec<char> {                                  // 
     out
 }
 
+/// Port of `static char *namedcmdstr` from `Src/Zle/zle_misc.c:1229`.
+pub static namedcmdstr: std::sync::Mutex<String> =                           // c:1229
+    std::sync::Mutex::new(String::new());
+
+/// Port of `static LinkList namedcmdll` from `Src/Zle/zle_misc.c:1235`.
+pub static namedcmdll: std::sync::Mutex<Vec<String>> =                       // c:1235
+    std::sync::Mutex::new(Vec::new());
+
+/// Port of `static int namedcmdambig` from `Src/Zle/zle_misc.c:1235`.
+pub static namedcmdambig: std::sync::atomic::AtomicUsize =                   // c:1235
+    std::sync::atomic::AtomicUsize::new(0);
+
 /// Direct port of `static int scancompcmd(HashNode hn, UNUSED(int flags))`
 /// from `Src/Zle/zle_misc.c:1235`.
 pub fn scancompcmd(name: &str) -> i32 {                                      // c:1235
@@ -1503,6 +1429,12 @@ pub fn scancompcmd(name: &str) -> i32 {                                      // 
     0
 }
 
+/// Port of `NAMLEN` from `Src/Zle/zle_misc.c:1249`. Maximum length
+/// of a widget name buffer used by `executenamedcommand` for
+/// `execute-named-command` / `where-is`. The C source declares this
+/// as a macro just before the local-keymap fixture.
+pub const NAMLEN: usize = 60;                                                // c:1249
+
 /// Direct port of `Thingy executenamedcommand(char *prompt)` from
 /// `Src/Zle/zle_misc.c:1261`. Prompts the user for a widget
 /// name (with name-completion via thingytab), then resolves the
@@ -1523,11 +1455,22 @@ pub fn executenamedcommand(prompt: &str) -> Option<String> {                 // 
         .filter(|s| !s.is_empty())
 }
 
-/// Port of `NAMLEN` from `Src/Zle/zle_misc.c:1249`. Maximum length
-/// of a widget name buffer used by `executenamedcommand` for
-/// `execute-named-command` / `where-is`. The C source declares this
-/// as a macro just before the local-keymap fixture.
-pub const NAMLEN: usize = 60;                                                // c:1249
+/// Port of `struct suffixset` from `Src/Zle/zle_misc.c`. One node
+/// in the auto-removable suffix list.
+#[derive(Debug, Clone, Default)]
+#[allow(non_camel_case_types)]
+pub struct suffixset {                                                       // c:1530
+    /// Type bits (SUFTYP_POSSTR/POSRNG/etc.).
+    pub tp: i32,
+    /// Flag bits (SUFFLAGS_SPACE etc.).
+    pub flags: i32,
+    /// Characters to match (for *STR types).
+    pub chars: Vec<char>,
+    /// Length of `chars`.
+    pub lenstr: i32,
+    /// Suffix length to remove on insert.
+    pub lensuf: i32,
+}
 
 // Suffix system                                                            // c:1500
 /// Port of `addsuffix(int tp, int flags, ZLE_STRING_T chars, int lenstr, int lensuf)` from Src/Zle/zle_misc.c:1558.
@@ -1581,11 +1524,6 @@ pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {  // c:1642
         addsuffixstring(0, 0, s, n);
     }
 }
-
-/// File-scope `char *suffixfunc` from `Src/Zle/zle_misc.c` — the
-/// registered shfunc name run by `iremovesuffix` on suffix match.
-pub static SUFFIXFUNC: std::sync::OnceLock<std::sync::Mutex<String>>
-    = std::sync::OnceLock::new();                                            // zle_misc.c
 
 // Remove suffix, if there is one, when inserting character c.             // c:1699
 /// Direct port of `int iremovesuffix(ZLE_INT_T c, int keep)` from
@@ -1658,6 +1596,80 @@ pub fn fixsuffix() {                                                         // 
     suffixlist().lock().unwrap().clear();
     SUFFIXLEN.store(0, Ordering::SeqCst);
 }
+
+pub static DONE: AtomicI32 = AtomicI32::new(0);                              // c:79
+
+/// Port of `int mark` from `Src/Zle/zle_main.c:84`. Saved cursor
+/// position for the region (set by `set-mark-command`, consumed by
+/// `kill-region`, `copy-region-as-kill`, `regionlines`, etc.).
+pub static MARK: AtomicI32 = AtomicI32::new(0);                              // c:84
+
+/// Port of `mod_export int suffixlen` from `Src/Zle/zle_misc.c:1553`.
+/// Length of the currently active, auto-removable suffix.
+pub static SUFFIXLEN: AtomicI32 = AtomicI32::new(0);                         // c:1553
+
+/// Port of `struct suffixset *suffixlist` from `Src/Zle/zle_misc.c`.
+/// Stack of registered auto-removable suffixes.
+pub static SUFFIXLIST: std::sync::OnceLock<std::sync::Mutex<Vec<suffixset>>>
+    = std::sync::OnceLock::new();
+
+/// Port of `int suffixnoinsrem` from `Src/Zle/zle_misc.c:1549`.
+/// Suppresses inserted-character suffix removal when set.
+pub static SUFFIXNOINSREM: AtomicI32 = AtomicI32::new(0);                    // c:1549
+
+/// Port of `static ZLE_INT_T vfindchar` from `Src/Zle/zle_move.c:734`.
+/// The character argument to the most recent vi-find* command.
+pub static VFINDCHAR: AtomicI32 = AtomicI32::new(0);                         // c:734
+
+/// Port of `static int vfinddir, tailadd` from `Src/Zle/zle_move.c:735`.
+/// vfinddir = +1 forward, -1 backward; tailadd = +1 land just after,
+/// -1 land just before, 0 land on the char itself.
+pub static VFINDDIR: AtomicI32 = AtomicI32::new(0);                          // c:735
+pub static TAILADD:  AtomicI32 = AtomicI32::new(0);                          // c:735
+
+/// Port of `static int kct` from `Src/Zle/zle_misc.c:523`. Index into
+/// the kill ring for the next yank-pop, or -1 for the original cutbuf
+/// at the start of a yank sequence.
+pub static KCT:    AtomicI32 = AtomicI32::new(-1);                           // c:523
+
+/// Port of `static int yankcs` from `Src/Zle/zle_misc.c:523`. Saved
+/// cursor position at the start of the most-recent yank — `yank-pop`
+/// rewinds to this and re-inserts the next ring entry.
+pub static YANKCS: AtomicI32 = AtomicI32::new(0);                            // c:523
+
+/// Port of `static int namedcmdambig` from `Src/Zle/zle_misc.c:1231`.
+/// Length of the longest unambiguous prefix among all matched
+/// `namedcmd` widget names — drives `execute-named-command` ambig
+/// resolution. Mirrored on `NamedCmdState.namedcmdambig` already;
+/// this is the searchable counterpart.
+pub static NAMEDCMDAMBIG: AtomicI32 = AtomicI32::new(0);                     // c:1231
+
+// ===== Pre/post-display strings (Src/Zle/zle_main.c) =====
+//
+// `ZLE_STRING_T predisplay` / `ZLE_STRING_T postdisplay` — text
+// shown before/after the line buffer (used by `zle -K -P` and
+// completion menu rendering).
+
+/// Port of `ZLE_STRING_T predisplay` (zle_main.c). Storage for the
+/// `$PREDISPLAY` parameter value.
+pub static PREDISPLAY: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+
+/// Port of `ZLE_STRING_T postdisplay` (zle_main.c). Storage for the
+/// `$POSTDISPLAY` parameter value.
+pub static POSTDISPLAY: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+
+/// Port of `char *previous_search` from `Src/Zle/zle_hist.c`. Set
+/// by `historyincrementalsearch*` on accept; read by `$LSEARCH`.
+pub static PREVIOUS_SEARCH: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+
+/// Port of `char *previous_aborted_search` from
+/// `Src/Zle/zle_hist.c`. Set on isearch abort; read by `$LASEARCH`.
+pub static PREVIOUS_ABORTED_SEARCH: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+
+/// File-scope `char *suffixfunc` from `Src/Zle/zle_misc.c` — the
+/// registered shfunc name run by `iremovesuffix` on suffix match.
+pub static SUFFIXFUNC: std::sync::OnceLock<std::sync::Mutex<String>>
+    = std::sync::OnceLock::new();                                            // zle_misc.c
 
 
 // `PasteBuffer` deleted — Rust-invented struct that wasn't referenced
@@ -1974,18 +1986,6 @@ pub fn fixsuffix() {                                                         // 
         crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
     }
 
-/// Port of `static char *namedcmdstr` from `Src/Zle/zle_misc.c:1229`.
-pub static namedcmdstr: std::sync::Mutex<String> =                           // c:1229
-    std::sync::Mutex::new(String::new());
-
-/// Port of `static LinkList namedcmdll` from `Src/Zle/zle_misc.c:1235`.
-pub static namedcmdll: std::sync::Mutex<Vec<String>> =                       // c:1235
-    std::sync::Mutex::new(Vec::new());
-
-/// Port of `static int namedcmdambig` from `Src/Zle/zle_misc.c:1235`.
-pub static namedcmdambig: std::sync::atomic::AtomicUsize =                   // c:1235
-    std::sync::atomic::AtomicUsize::new(0);
-
     /// Quote region
     /// Port of quoteregion(UNUSED(char **args)) from zle_misc.c
     pub fn quote_region() {
@@ -2162,6 +2162,17 @@ pub fn zgetline(_args: &[String]) -> i32 {                                   // 
     // returns 0 matching the C source.
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

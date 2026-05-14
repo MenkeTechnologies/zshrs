@@ -21,37 +21,6 @@ use crate::ported::zsh_h::mathfunc;
 use crate::zsh_h::module;
 use crate::ported::zsh_h::OPT_ISSET;
 
-/// Port of `MathFunc mathfuncs;` from `Src/module.c:1258` — the
-/// global head of the linked list of math functions. Both
-/// autoloadable math fns (added by modules) and user math fns
-/// (added by `functions -M`) live here.
-///
-/// C is a singly linked list with `mathfunc.next` chaining. The
-/// Rust port stores entries in a `Vec` — the call sites only ever
-/// walk linearly and erase by name, so the linked-list shape buys
-/// nothing in safe Rust.
-pub static MATHFUNCS: Lazy<Mutex<Vec<mathfunc>>> =                       // c:1258
-    Lazy::new(|| Mutex::new(Vec::new()));
-
-/// Port of `Hookdef hooktab;` from `Src/module.c:843` — the global
-/// hook-definition table. Modules register hook callbacks via
-/// `addhookfunc(name, fn)` and the runtime fires them via
-/// `runhookdef(name, data)`. The Rust port stores the list as a
-/// `HashMap<String, Vec<String>>` keyed by hook name (the value is
-/// the registered handler function names, in install order).
-pub static HOOKTAB: Lazy<Mutex<HashMap<String, Vec<String>>>> =              // c:843
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-/// Port of `mod_export ModuleTable modulestab` from
-/// `Src/Modules/zmodload.c:32`. The C source keeps the module
-/// hashtable as a process-global accessed by every module-mgmt
-/// path (zmodload, addbuiltin, deletebuiltin, etc.). This Rust
-/// global mirrors that — bin_zmodload_handler reaches for it so
-/// the canonical `bin_zmodload` can be wired into BUILTINS via
-/// HandlerFunc without an extra table-arg.
-pub static MODULESTAB: Lazy<Mutex<modulestab>> =                            // c:zmodload.c:32
-    Lazy::new(|| Mutex::new(modulestab::new()));
-
 /// Free module node (from module.c freemodulenode)
 /// Free a module table entry.
 /// Port of `freemodulenode(HashNode hn)` from Src/module.c:119 — Rust's
@@ -78,86 +47,244 @@ pub fn printmodulenode(hn: &str, m: &module) -> String {
     format!("{} ({})", hn, state)
 }
 
-// `FeatureType` enum + `ModuleFeature` struct + `ModuleState` enum
-// DELETED.
-//
-// `FeatureType` / `ModuleState`: C zsh uses bare integers. C
-// `features_()` (`Src/module.c:313+`) classifies exports by `type`
-// index 0..4 (no named constants — just position-in-table), and
-// module load state is the `MOD_*` bitmask in `module.node.flags`
-// (`Src/zsh.h:1516-1532`, mirrored at `zsh_h.rs:2249-2255`).
-//
-// `ModuleFeature` + the per-module `features: Vec<ModuleFeature>`
-// ledger were a Rust-only duplicate store. C does not record which
-// features a module added on the module struct — feature
-// registration flows into the canonical per-feature-kind tables
-// (`builtintab`, `condtab`, `paramtab`, `mathfuncs`, `hooktab`) and
-// modules never inspect a per-module "what did I add" list. The
-// `features` field on `Module` is gone; addbuiltin/deletebuiltin/
-// addconddef/etc. no longer write to it (they were no-ops anyway —
-// the canonical tables get the real entries via other paths).
-
-/// Feature-type index passed to `features_()` (`Src/module.c:313+`).
-/// C ships bare ints; Rust adds names for readability.
-pub const FEATURE_TYPE_BUILTIN: i32   = 0;
-pub const FEATURE_TYPE_CONDITION: i32 = 1;
-pub const FEATURE_TYPE_PARAMETER: i32 = 2;
-pub const FEATURE_TYPE_MATHFUNC: i32  = 3;
-pub const FEATURE_TYPE_HOOK: i32      = 4;
-/// Module table (from module.c module hash table)
-#[derive(Debug, Default)]
-/// Table of registered modules.
-/// Port of the `modulestab` HashTable Src/module.c keeps —
-/// `newmoduletable()` (line 274) creates it, `register_module()`
-/// (line 359) inserts entries, `printmodulenode()` (line 154)
-/// renders for `zmodload`.
-pub struct modulestab {
-    modules: HashMap<String, module>,
-    /// Builtin name → module name mapping for autoload
-    autoload_builtins: HashMap<String, String>,
-    /// Condition name → module name mapping for autoload
-    autoload_conditions: HashMap<String, String>,
-    /// Parameter name → module name mapping for autoload
-    autoload_params: HashMap<String, String>,
-    /// Math function name → module name mapping for autoload
-    autoload_mathfuncs: HashMap<String, String>,
-    /// Hook functions
-    hooks: HashMap<String, Vec<String>>,
+/// Create new module table (from module.c newmoduletable)
+/// Create an empty module table.
+/// Port of `newmoduletable(int size, char const *name)` from Src/module.c:274 — the C
+/// source allocates the `modulestab` hash with `createhashtable`.
+/// WARNING: param names don't match C — Rust=() vs C=(size, name)
+pub fn newmoduletable() -> modulestab {
+    modulestab::new()
 }
 
-// `pub struct Wrapper` deleted — Rust-only PascalCase mirror of
-// C's `struct funcwrap` (zsh.h:1362, ported as
-// `crate::ported::zsh_h::funcwrap` at zsh_h.rs:639). The only
-// users were `ModuleTable::addwrapper`/`deletewrapper` which
-// likewise had zero external callers and have been deleted.
+// `setbuiltins` / `setconddefs` / `setmathfuncs` / `setparamdefs`
+// / `setfeatureenables` all deleted — Rust-only ports that took
+// the deleted `Builtin` / `Conddef` / `MathFunc` / `Paramdef` /
+// `Module` / `Features` PascalCase structs. C versions
+// (module.c:501/754/1374/1165/3350) flip `*_ADDED` flags and
+// insert/remove from the global hashtabs; per-module Rust files
+// stub these locally and the canonical free-fn re-ports belong
+// in zsh_h.rs / hashtable.rs once `struct features` carries
+// real pointers.
 
-// =====================================================================
-// Builtin / Conddef / MathFunc / Paramdef descriptors and the
-// `struct features` aggregator from `Src/zsh.h:1440-1571` and
-// `Src/module.c:3279+`.
-//
-// In zsh C these are linked into modules via `dlsym()`; in zshrs
-// modules are compiled in (no dlopen), so each module ships a
-// `static` `Features` describing its `bintab[]` / etc. that the
-// `features_` / `enables_` / `cleanup_` entry points hand to the
-// helpers below.
-// =====================================================================
+/// Port of `setup_(UNUSED(Module m))` from `Src/module.c:306`.
+///
+/// C body: `setup_(UNUSED(Module m)) { return 0; }` — the no-op
+/// setup hook of the module subsystem itself.
+#[allow(unused_variables)]
+pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {          // c:306
+    0                                                                    // c:306
+}
 
-/// `BINF_ADDED` flag from `Src/zsh.h:1459`. Set when the builtin is
-/// in the runtime hash table.
-pub const BINF_ADDED: u32 = 1 << 3;
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/module.c:313`.
+///
+/// C body:
+/// ```c
+/// features_(UNUSED(Module m), UNUSED(char ***features))
+/// {
+///     /* There are lots and lots of features, but they're not handled here. */
+///     return 1;
+/// }
+/// ```
+#[allow(unused_variables)]
+pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 { // c:313
+    /* There are lots and lots of features, but they're not handled here. */ // c:313-318
+    1                                                                    // c:319
+}
 
-/// `CONDF_INFIX` flag from `Src/zsh.h`. Marks an infix `[[ … ]]`
-/// condition (`-eq`, `-ot`, etc.) vs prefix (`-z`, `-n`).
-pub const CONDF_INFIX: u32 = 1;
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/module.c:324`.
+///
+/// C body: `enables_(UNUSED(Module m), UNUSED(int **enables)) { return 1; }`
+/// — the module subsystem itself doesn't manage feature enables.
+#[allow(unused_variables)]
+pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 { // c:324
+    1                                                                    // c:324
+}
 
-/// `CONDF_ADDED` flag from `Src/zsh.h`. Set when the condition is
-/// in the runtime hash table.
-pub const CONDF_ADDED: u32 = 1 << 1;
+/// Port of `boot_(UNUSED(Module m))` from `Src/module.c:331`.
+///
+/// C body: `boot_(UNUSED(Module m)) { return 0; }` — the no-op
+/// boot hook of the module subsystem itself.
+#[allow(unused_variables)]
+pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:331
+    0                                                                    // c:331
+}
 
-/// `MFF_ADDED` flag from `Src/zsh.h`. Set when the math function is
-/// in the runtime hash table.
-pub const MFF_ADDED: u32 = 1 << 1;
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/module.c:338`.
+///
+/// C body: `cleanup_(UNUSED(Module m)) { return 0; }` — the no-op
+/// cleanup hook of the module subsystem itself.
+#[allow(unused_variables)]
+pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {        // c:338
+    0                                                                    // c:338
+}
+
+/// Port of `finish_(UNUSED(Module m))` from `Src/module.c:345`.
+///
+/// C body: `finish_(UNUSED(Module m)) { return 0; }` —
+/// the no-op finish hook for the module subsystem itself.
+#[allow(unused_variables)]
+pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {         // c:345
+    0                                                                    // c:345
+}
+
+// This registers a builtin module.                                        // c:359
+/// Register module (from module.c register_module)
+/// Register a module by name.
+/// Port of `register_module(const char *n, Module_void_func setup, Module_features_func features, Module_enables_func enables, Module_void_func boot, Module_void_func cleanup, Module_void_func finish)` from Src/module.c:359 — wraps
+/// a slot in the global `modulestab` and seeds its lifecycle
+/// callbacks.
+/// WARNING: param names don't match C — Rust=(table, name) vs C=(n, setup, features, enables, boot, cleanup, finish)
+pub fn register_module(table: &mut modulestab, name: &str) -> bool {       // c:359
+    if table.modules.contains_key(name) {
+        return false;
+    }
+    table.modules.insert(name.to_string(), module::new(name));
+    true
+}
+
+/// Port of `addbuiltins(char const *nam, Builtin binl, int size)` from `Src/module.c:544`.
+///
+/// C body:
+/// ```c
+/// addbuiltins(char const *nam, Builtin binl, int size)
+/// {
+///     int ret = 0, n;
+///     for(n = 0; n < size; n++) {
+///         Builtin b = &binl[n];
+///         if(b->node.flags & BINF_ADDED)
+///             continue;
+///         if(addbuiltin(b)) {
+///             zwarnnam(nam, "name clash when adding builtin `%s'", b->node.nam);
+///             ret = 1;
+///         } else {
+///             b->node.flags |= BINF_ADDED;
+///         }
+///     }
+///     return ret;
+/// }
+/// ```
+///
+/// Rust port: walks the slice, checks BINF_ADDED, registers via the
+/// module-table addbuiltin if not already registered. `binl` is taken
+/// by `&mut [Builtin]` so the BINF_ADDED flag-set after success
+/// matches C's in-place mutation.
+// `addbuiltins` deleted — Rust-only port that took `&mut [Builtin]`
+// (the deleted Rust-only `Builtin` PascalCase struct). C
+// `addbuiltins(char *nam, Builtin binl, int size, char *modname)` at
+// module.c:545 walks the module's bintab pointer; a re-port will
+// land alongside the wider modulestab-as-global refactor.
+
+/// Port of `addhookdeffunc(Hookdef h, Hookfn f)` from `Src/module.c:939`.
+///
+/// C body:
+/// ```c
+/// addhookdeffunc(Hookdef h, Hookfn f) {
+///     zaddlinknode(h->funcs, (void *) f);
+///     return 0;
+/// }
+/// ```
+///
+/// Appends function `f` to the named hook's function-list. C uses
+/// `LinkList` with `void *` payload (cast to Hookfn at dispatch); Rust
+/// port uses the table's per-hook `Vec<String>` (function names) since
+/// fn-pointer storage requires a more elaborate type-erased registry.
+/// WARNING: param names don't match C — Rust=(table, h, fn_name) vs C=(h, f)
+pub fn addhookdeffunc(table: &mut modulestab, h: &mut crate::ported::zsh_h::hookdef, fn_name: &str) -> i32 { // c:939
+    // c:939 — zaddlinknode(h->funcs, (void *) f);
+    table.hooks.entry(h.name.clone()).or_default().push(fn_name.to_string());
+    let _ = h.funcs; // keep field mention for parity
+    0                                                                    // c:943
+}
+
+/// Port of `void addhookfunc(const char *name, Hookfn fn)` —
+/// the global-scope wrapper used by modules and ZLE boot/cleanup
+/// paths to install hook callbacks without holding a ModuleTable.
+pub fn addhookfunc(hook: &str, func: &str) {                                 // c:module.c
+    if let Ok(mut tab) = HOOKTAB.lock() {
+        tab.entry(hook.to_string())
+            .or_default()
+            .push(func.to_string());
+    }
+}
+
+/// Port of `deletehookdeffunc(Hookdef h, Hookfn f)` from `Src/module.c:961`.
+///
+/// C body:
+/// ```c
+/// deletehookdeffunc(Hookdef h, Hookfn f) {
+///     LinkNode p;
+///     for (p = firstnode(h->funcs); p; incnode(p))
+///         if (f == (Hookfn) getdata(p)) {
+///             remnode(h->funcs, p);
+///             return 0;
+///         }
+///     return 1;
+/// }
+/// ```
+///
+/// Removes function `f` from the hook's function-list. Returns 0 on
+/// successful removal, 1 if not found.
+/// WARNING: param names don't match C — Rust=(table, h, fn_name) vs C=(h, f)
+pub fn deletehookdeffunc(table: &mut modulestab, h: &mut crate::ported::zsh_h::hookdef, fn_name: &str) -> i32 { // c:961
+    if let Some(funcs) = table.hooks.get_mut(&h.name) {
+        // c:965-969 — for (p = firstnode...; p; incnode(p)) if (f == ...)
+        if let Some(pos) = funcs.iter().position(|n| n == fn_name) {
+            funcs.remove(pos);                                            // c:967 remnode
+            let _ = h.funcs;
+            return 0;                                                     // c:968
+        }
+    }
+    let _ = h.funcs;
+    1                                                                    // c:970
+}
+
+/// Port of `void deletehookfunc(const char *name, Hookfn fn)`.
+/// Removes one registered handler from the global HOOKTAB.
+pub fn deletehookfunc(hook: &str, func: &str) {                              // c:module.c
+    if let Ok(mut tab) = HOOKTAB.lock() {
+        if let Some(v) = tab.get_mut(hook) {
+            v.retain(|f| f != func);
+        }
+    }
+}
+
+/// Port of `checkaddparam(const char *nam, int opt_i)` from `Src/module.c:1026`.
+///
+/// C body:
+/// ```c
+/// checkaddparam(const char *nam, int opt_i)
+/// {
+///     Param pm;
+///     if (!(pm = (Param) gethashnode2(paramtab, nam)))
+///         return 0;
+///     if (pm->level || !(pm->node.flags & PM_AUTOLOAD)) {
+///         if (!opt_i || pm->level) {
+///             zwarn("Can't add module parameter `%s': %s",
+///                   nam, pm->level ? "local parameter exists" :
+///                                    "parameter already exists");
+///             return 1;
+///         }
+///         return 2;
+///     }
+///     unsetparam_pm(pm, 0, 1);
+///     return 0;
+/// }
+/// ```
+///
+/// Returns: 0 = OK to add, 1 = error printed, 2 = blocked but `-i`
+/// suppressed warning. `pm->level != 0` means a local param shadows
+/// the name (always errors). `PM_AUTOLOAD` set means the existing
+/// param is an autoload stub the C source unsets to make room.
+///
+/// Static-link path: the param-table is `crate::ported::params::*`
+/// global. Stub returns 0 (no clash) until the params global-state
+/// port wires gethashnode2(paramtab, ...) in.
+#[allow(unused_variables)]
+pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {                   // c:1026
+    // c:1026 — if (!(pm = gethashnode2(paramtab, nam))) return 0;
+    // Static-link: paramtab not yet hooked through; treat unknown.
+    0
+}
 
 // `pub struct Builtin` / `Conddef` / `MathFunc` / `Paramdef` /
 // `Features` deleted — Rust-only PascalCase duplicates of the
@@ -582,290 +709,6 @@ pub trait ModuleLifecycle {
     fn finish(&mut self) -> i32 {
         0
     }
-}
-
-/// Create new module table (from module.c newmoduletable)
-/// Create an empty module table.
-/// Port of `newmoduletable(int size, char const *name)` from Src/module.c:274 — the C
-/// source allocates the `modulestab` hash with `createhashtable`.
-/// WARNING: param names don't match C — Rust=() vs C=(size, name)
-pub fn newmoduletable() -> modulestab {
-    modulestab::new()
-}
-
-// `setbuiltins` / `setconddefs` / `setmathfuncs` / `setparamdefs`
-// / `setfeatureenables` all deleted — Rust-only ports that took
-// the deleted `Builtin` / `Conddef` / `MathFunc` / `Paramdef` /
-// `Module` / `Features` PascalCase structs. C versions
-// (module.c:501/754/1374/1165/3350) flip `*_ADDED` flags and
-// insert/remove from the global hashtabs; per-module Rust files
-// stub these locally and the canonical free-fn re-ports belong
-// in zsh_h.rs / hashtable.rs once `struct features` carries
-// real pointers.
-
-/// Port of `setup_(UNUSED(Module m))` from `Src/module.c:306`.
-///
-/// C body: `setup_(UNUSED(Module m)) { return 0; }` — the no-op
-/// setup hook of the module subsystem itself.
-#[allow(unused_variables)]
-pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {          // c:306
-    0                                                                    // c:306
-}
-
-/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/module.c:313`.
-///
-/// C body:
-/// ```c
-/// features_(UNUSED(Module m), UNUSED(char ***features))
-/// {
-///     /* There are lots and lots of features, but they're not handled here. */
-///     return 1;
-/// }
-/// ```
-#[allow(unused_variables)]
-pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 { // c:313
-    /* There are lots and lots of features, but they're not handled here. */ // c:313-318
-    1                                                                    // c:319
-}
-
-/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/module.c:324`.
-///
-/// C body: `enables_(UNUSED(Module m), UNUSED(int **enables)) { return 1; }`
-/// — the module subsystem itself doesn't manage feature enables.
-#[allow(unused_variables)]
-pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 { // c:324
-    1                                                                    // c:324
-}
-
-
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Rust permits multiple inherent impl blocks for the same
-// type within a crate, so call sites in exec.rs are unchanged.
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
-
-// END moved-from-exec-rs
-
-// ===========================================================
-// Direct ports of module-loader / dlsym / feature-array /
-// math-func registration entries from Src/module.c. The Rust
-// rewrite uses statically-linked module impls (each module
-// compiled into the binary, registered through a static
-// dispatch table — see `crate::ported::modules::mod`), so the
-// dynamic-loader plumbing collapses to no-ops. These free-fn
-// entries satisfy ABI/name parity for the drift gate.
-// ===========================================================
-
-/// `FEAT_IGNORE` — bit in the `flags` arg to add_/del_-automathfunc
-/// and friends. Port of `enum { FEAT_IGNORE = 0x0001 }` from
-/// `Src/module.c:62`. /* `-i` option: ignore redefinition errors. */
-pub const FEAT_IGNORE: i32 = 0x0001;                                     // c:62
-
-/// `FEAT_INFIX` — bit indicating a condition is infix-style. Port of
-/// `enum { FEAT_INFIX = 0x0002 }` from `Src/module.c:64`.
-pub const FEAT_INFIX: i32 = 0x0002;                                      // c:64
-
-/// `FEAT_AUTOALL` — `zmodload -a` enable-all-features. Port of
-/// `enum { FEAT_AUTOALL = 0x0004 }` from `Src/module.c:69`.
-pub const FEAT_AUTOALL: i32 = 0x0004;                                    // c:69
-
-/// `FEAT_REMOVE` — bit indicating feature removal pass. Port of
-/// `enum { FEAT_REMOVE = 0x0008 }` from `Src/module.c:76`.
-pub const FEAT_REMOVE: i32 = 0x0008;                                     // c:76
-
-/// `FEAT_CHECKAUTO` — verify autoloads are actually provided. Port of
-/// `enum { FEAT_CHECKAUTO = 0x0010 }` from `Src/module.c:81`.
-pub const FEAT_CHECKAUTO: i32 = 0x0010;                                  // c:81
-
-/// Port of `boot_(UNUSED(Module m))` from `Src/module.c:331`.
-///
-/// C body: `boot_(UNUSED(Module m)) { return 0; }` — the no-op
-/// boot hook of the module subsystem itself.
-#[allow(unused_variables)]
-pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:331
-    0                                                                    // c:331
-}
-
-/// Port of `cleanup_(UNUSED(Module m))` from `Src/module.c:338`.
-///
-/// C body: `cleanup_(UNUSED(Module m)) { return 0; }` — the no-op
-/// cleanup hook of the module subsystem itself.
-#[allow(unused_variables)]
-pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {        // c:338
-    0                                                                    // c:338
-}
-
-/// Port of `finish_(UNUSED(Module m))` from `Src/module.c:345`.
-///
-/// C body: `finish_(UNUSED(Module m)) { return 0; }` —
-/// the no-op finish hook for the module subsystem itself.
-#[allow(unused_variables)]
-pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {         // c:345
-    0                                                                    // c:345
-}
-
-// This registers a builtin module.                                        // c:359
-/// Register module (from module.c register_module)
-/// Register a module by name.
-/// Port of `register_module(const char *n, Module_void_func setup, Module_features_func features, Module_enables_func enables, Module_void_func boot, Module_void_func cleanup, Module_void_func finish)` from Src/module.c:359 — wraps
-/// a slot in the global `modulestab` and seeds its lifecycle
-/// callbacks.
-/// WARNING: param names don't match C — Rust=(table, name) vs C=(n, setup, features, enables, boot, cleanup, finish)
-pub fn register_module(table: &mut modulestab, name: &str) -> bool {       // c:359
-    if table.modules.contains_key(name) {
-        return false;
-    }
-    table.modules.insert(name.to_string(), module::new(name));
-    true
-}
-
-/// Port of `addbuiltins(char const *nam, Builtin binl, int size)` from `Src/module.c:544`.
-///
-/// C body:
-/// ```c
-/// addbuiltins(char const *nam, Builtin binl, int size)
-/// {
-///     int ret = 0, n;
-///     for(n = 0; n < size; n++) {
-///         Builtin b = &binl[n];
-///         if(b->node.flags & BINF_ADDED)
-///             continue;
-///         if(addbuiltin(b)) {
-///             zwarnnam(nam, "name clash when adding builtin `%s'", b->node.nam);
-///             ret = 1;
-///         } else {
-///             b->node.flags |= BINF_ADDED;
-///         }
-///     }
-///     return ret;
-/// }
-/// ```
-///
-/// Rust port: walks the slice, checks BINF_ADDED, registers via the
-/// module-table addbuiltin if not already registered. `binl` is taken
-/// by `&mut [Builtin]` so the BINF_ADDED flag-set after success
-/// matches C's in-place mutation.
-// `addbuiltins` deleted — Rust-only port that took `&mut [Builtin]`
-// (the deleted Rust-only `Builtin` PascalCase struct). C
-// `addbuiltins(char *nam, Builtin binl, int size, char *modname)` at
-// module.c:545 walks the module's bintab pointer; a re-port will
-// land alongside the wider modulestab-as-global refactor.
-
-/// Port of `addhookdeffunc(Hookdef h, Hookfn f)` from `Src/module.c:939`.
-///
-/// C body:
-/// ```c
-/// addhookdeffunc(Hookdef h, Hookfn f) {
-///     zaddlinknode(h->funcs, (void *) f);
-///     return 0;
-/// }
-/// ```
-///
-/// Appends function `f` to the named hook's function-list. C uses
-/// `LinkList` with `void *` payload (cast to Hookfn at dispatch); Rust
-/// port uses the table's per-hook `Vec<String>` (function names) since
-/// fn-pointer storage requires a more elaborate type-erased registry.
-/// WARNING: param names don't match C — Rust=(table, h, fn_name) vs C=(h, f)
-pub fn addhookdeffunc(table: &mut modulestab, h: &mut crate::ported::zsh_h::hookdef, fn_name: &str) -> i32 { // c:939
-    // c:939 — zaddlinknode(h->funcs, (void *) f);
-    table.hooks.entry(h.name.clone()).or_default().push(fn_name.to_string());
-    let _ = h.funcs; // keep field mention for parity
-    0                                                                    // c:943
-}
-
-/// Port of `void addhookfunc(const char *name, Hookfn fn)` —
-/// the global-scope wrapper used by modules and ZLE boot/cleanup
-/// paths to install hook callbacks without holding a ModuleTable.
-pub fn addhookfunc(hook: &str, func: &str) {                                 // c:module.c
-    if let Ok(mut tab) = HOOKTAB.lock() {
-        tab.entry(hook.to_string())
-            .or_default()
-            .push(func.to_string());
-    }
-}
-
-/// Port of `deletehookdeffunc(Hookdef h, Hookfn f)` from `Src/module.c:961`.
-///
-/// C body:
-/// ```c
-/// deletehookdeffunc(Hookdef h, Hookfn f) {
-///     LinkNode p;
-///     for (p = firstnode(h->funcs); p; incnode(p))
-///         if (f == (Hookfn) getdata(p)) {
-///             remnode(h->funcs, p);
-///             return 0;
-///         }
-///     return 1;
-/// }
-/// ```
-///
-/// Removes function `f` from the hook's function-list. Returns 0 on
-/// successful removal, 1 if not found.
-/// WARNING: param names don't match C — Rust=(table, h, fn_name) vs C=(h, f)
-pub fn deletehookdeffunc(table: &mut modulestab, h: &mut crate::ported::zsh_h::hookdef, fn_name: &str) -> i32 { // c:961
-    if let Some(funcs) = table.hooks.get_mut(&h.name) {
-        // c:965-969 — for (p = firstnode...; p; incnode(p)) if (f == ...)
-        if let Some(pos) = funcs.iter().position(|n| n == fn_name) {
-            funcs.remove(pos);                                            // c:967 remnode
-            let _ = h.funcs;
-            return 0;                                                     // c:968
-        }
-    }
-    let _ = h.funcs;
-    1                                                                    // c:970
-}
-
-/// Port of `void deletehookfunc(const char *name, Hookfn fn)`.
-/// Removes one registered handler from the global HOOKTAB.
-pub fn deletehookfunc(hook: &str, func: &str) {                              // c:module.c
-    if let Ok(mut tab) = HOOKTAB.lock() {
-        if let Some(v) = tab.get_mut(hook) {
-            v.retain(|f| f != func);
-        }
-    }
-}
-
-/// Port of `checkaddparam(const char *nam, int opt_i)` from `Src/module.c:1026`.
-///
-/// C body:
-/// ```c
-/// checkaddparam(const char *nam, int opt_i)
-/// {
-///     Param pm;
-///     if (!(pm = (Param) gethashnode2(paramtab, nam)))
-///         return 0;
-///     if (pm->level || !(pm->node.flags & PM_AUTOLOAD)) {
-///         if (!opt_i || pm->level) {
-///             zwarn("Can't add module parameter `%s': %s",
-///                   nam, pm->level ? "local parameter exists" :
-///                                    "parameter already exists");
-///             return 1;
-///         }
-///         return 2;
-///     }
-///     unsetparam_pm(pm, 0, 1);
-///     return 0;
-/// }
-/// ```
-///
-/// Returns: 0 = OK to add, 1 = error printed, 2 = blocked but `-i`
-/// suppressed warning. `pm->level != 0` means a local param shadows
-/// the name (always errors). `PM_AUTOLOAD` set means the existing
-/// param is an autoload stub the C source unsets to make room.
-///
-/// Static-link path: the param-table is `crate::ported::params::*`
-/// global. Stub returns 0 (no clash) until the params global-state
-/// port wires gethashnode2(paramtab, ...) in.
-#[allow(unused_variables)]
-pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {                   // c:1026
-    // c:1026 — if (!(pm = gethashnode2(paramtab, nam))) return 0;
-    // Static-link: paramtab not yet hooked through; treat unknown.
-    0
 }
 
 // `getfeatureenables` deleted — Rust-only port that took the
@@ -1443,27 +1286,6 @@ pub fn do_boot_module(m: &mut modulestab, enablesarr: &str, silent: i32) -> i32 
     }
     ret                                                                   // c:2150
 }
-
-// `featuresarray` deleted — Rust-only port that took the deleted
-// `Module` / `Features` PascalCase structs. C
-// `featuresarray(Module m, Features f)` at module.c:3279 builds
-// the `b:NAME`/`c:NAME`/`f:NAME`/`p:NAME` descriptor array from
-// the module's bintab/conddefs/mathfuncs/paramdefs pointers. The
-// per-module rust files (rlimits.rs, langinfo.rs, curses.rs, …)
-// each ship their own local `featuresarray` stub returning a
-// hardcoded descriptor list; a future canonical free-fn port will
-// live in zsh_h.rs once `struct features` carries real bintab/etc.
-// pointers.
-
-/// `FINDMOD_ALIASP` — bit in `find_module()`'s `flags` arg.
-/// Port of `enum { FINDMOD_ALIASP = 0x0001 }` from `Src/module.c:110`.
-/// /* Resolve any aliases to the underlying module. */
-pub const FINDMOD_ALIASP: i32 = 0x0001;                                  // c:110
-
-/// `FINDMOD_CREATE` — bit in `find_module()`'s `flags` arg.
-/// Port of `enum { FINDMOD_CREATE = 0x0002 }` from `Src/module.c:115`.
-/// /* Create an element for the module in the list if not found. */
-pub const FINDMOD_CREATE: i32 = 0x0002;                                  // c:115
 
 /// Port of `do_cleanup_module(Module m)` from `Src/module.c:2159`.
 ///
@@ -2360,6 +2182,184 @@ pub fn autofeatures(table: &mut modulestab, _cmdnam: &str, module: Option<&str>,
     }
     ret
 }
+
+/// Port of `MathFunc mathfuncs;` from `Src/module.c:1258` — the
+/// global head of the linked list of math functions. Both
+/// autoloadable math fns (added by modules) and user math fns
+/// (added by `functions -M`) live here.
+///
+/// C is a singly linked list with `mathfunc.next` chaining. The
+/// Rust port stores entries in a `Vec` — the call sites only ever
+/// walk linearly and erase by name, so the linked-list shape buys
+/// nothing in safe Rust.
+pub static MATHFUNCS: Lazy<Mutex<Vec<mathfunc>>> =                       // c:1258
+    Lazy::new(|| Mutex::new(Vec::new()));
+
+/// Port of `Hookdef hooktab;` from `Src/module.c:843` — the global
+/// hook-definition table. Modules register hook callbacks via
+/// `addhookfunc(name, fn)` and the runtime fires them via
+/// `runhookdef(name, data)`. The Rust port stores the list as a
+/// `HashMap<String, Vec<String>>` keyed by hook name (the value is
+/// the registered handler function names, in install order).
+pub static HOOKTAB: Lazy<Mutex<HashMap<String, Vec<String>>>> =              // c:843
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Port of `mod_export ModuleTable modulestab` from
+/// `Src/Modules/zmodload.c:32`. The C source keeps the module
+/// hashtable as a process-global accessed by every module-mgmt
+/// path (zmodload, addbuiltin, deletebuiltin, etc.). This Rust
+/// global mirrors that — bin_zmodload_handler reaches for it so
+/// the canonical `bin_zmodload` can be wired into BUILTINS via
+/// HandlerFunc without an extra table-arg.
+pub static MODULESTAB: Lazy<Mutex<modulestab>> =                            // c:zmodload.c:32
+    Lazy::new(|| Mutex::new(modulestab::new()));
+
+// `FeatureType` enum + `ModuleFeature` struct + `ModuleState` enum
+// DELETED.
+//
+// `FeatureType` / `ModuleState`: C zsh uses bare integers. C
+// `features_()` (`Src/module.c:313+`) classifies exports by `type`
+// index 0..4 (no named constants — just position-in-table), and
+// module load state is the `MOD_*` bitmask in `module.node.flags`
+// (`Src/zsh.h:1516-1532`, mirrored at `zsh_h.rs:2249-2255`).
+//
+// `ModuleFeature` + the per-module `features: Vec<ModuleFeature>`
+// ledger were a Rust-only duplicate store. C does not record which
+// features a module added on the module struct — feature
+// registration flows into the canonical per-feature-kind tables
+// (`builtintab`, `condtab`, `paramtab`, `mathfuncs`, `hooktab`) and
+// modules never inspect a per-module "what did I add" list. The
+// `features` field on `Module` is gone; addbuiltin/deletebuiltin/
+// addconddef/etc. no longer write to it (they were no-ops anyway —
+// the canonical tables get the real entries via other paths).
+
+/// Feature-type index passed to `features_()` (`Src/module.c:313+`).
+/// C ships bare ints; Rust adds names for readability.
+pub const FEATURE_TYPE_BUILTIN: i32   = 0;
+pub const FEATURE_TYPE_CONDITION: i32 = 1;
+pub const FEATURE_TYPE_PARAMETER: i32 = 2;
+pub const FEATURE_TYPE_MATHFUNC: i32  = 3;
+pub const FEATURE_TYPE_HOOK: i32      = 4;
+/// Module table (from module.c module hash table)
+#[derive(Debug, Default)]
+/// Table of registered modules.
+/// Port of the `modulestab` HashTable Src/module.c keeps —
+/// `newmoduletable()` (line 274) creates it, `register_module()`
+/// (line 359) inserts entries, `printmodulenode()` (line 154)
+/// renders for `zmodload`.
+pub struct modulestab {
+    modules: HashMap<String, module>,
+    /// Builtin name → module name mapping for autoload
+    autoload_builtins: HashMap<String, String>,
+    /// Condition name → module name mapping for autoload
+    autoload_conditions: HashMap<String, String>,
+    /// Parameter name → module name mapping for autoload
+    autoload_params: HashMap<String, String>,
+    /// Math function name → module name mapping for autoload
+    autoload_mathfuncs: HashMap<String, String>,
+    /// Hook functions
+    hooks: HashMap<String, Vec<String>>,
+}
+
+// `pub struct Wrapper` deleted — Rust-only PascalCase mirror of
+// C's `struct funcwrap` (zsh.h:1362, ported as
+// `crate::ported::zsh_h::funcwrap` at zsh_h.rs:639). The only
+// users were `ModuleTable::addwrapper`/`deletewrapper` which
+// likewise had zero external callers and have been deleted.
+
+// =====================================================================
+// Builtin / Conddef / MathFunc / Paramdef descriptors and the
+// `struct features` aggregator from `Src/zsh.h:1440-1571` and
+// `Src/module.c:3279+`.
+//
+// In zsh C these are linked into modules via `dlsym()`; in zshrs
+// modules are compiled in (no dlopen), so each module ships a
+// `static` `Features` describing its `bintab[]` / etc. that the
+// `features_` / `enables_` / `cleanup_` entry points hand to the
+// helpers below.
+// =====================================================================
+
+/// `BINF_ADDED` flag from `Src/zsh.h:1459`. Set when the builtin is
+/// in the runtime hash table.
+pub const BINF_ADDED: u32 = 1 << 3;
+
+/// `CONDF_INFIX` flag from `Src/zsh.h`. Marks an infix `[[ … ]]`
+/// condition (`-eq`, `-ot`, etc.) vs prefix (`-z`, `-n`).
+pub const CONDF_INFIX: u32 = 1;
+
+/// `CONDF_ADDED` flag from `Src/zsh.h`. Set when the condition is
+/// in the runtime hash table.
+pub const CONDF_ADDED: u32 = 1 << 1;
+
+/// `MFF_ADDED` flag from `Src/zsh.h`. Set when the math function is
+/// in the runtime hash table.
+pub const MFF_ADDED: u32 = 1 << 1;
+
+
+
+// ===========================================================
+// Methods moved verbatim from src/ported/exec.rs because their
+// C counterpart's source file maps 1:1 to this Rust module.
+// Rust permits multiple inherent impl blocks for the same
+// type within a crate, so call sites in exec.rs are unchanged.
+// ===========================================================
+
+// BEGIN moved-from-exec-rs
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
+// END moved-from-exec-rs
+
+// ===========================================================
+// Direct ports of module-loader / dlsym / feature-array /
+// math-func registration entries from Src/module.c. The Rust
+// rewrite uses statically-linked module impls (each module
+// compiled into the binary, registered through a static
+// dispatch table — see `crate::ported::modules::mod`), so the
+// dynamic-loader plumbing collapses to no-ops. These free-fn
+// entries satisfy ABI/name parity for the drift gate.
+// ===========================================================
+
+/// `FEAT_IGNORE` — bit in the `flags` arg to add_/del_-automathfunc
+/// and friends. Port of `enum { FEAT_IGNORE = 0x0001 }` from
+/// `Src/module.c:62`. /* `-i` option: ignore redefinition errors. */
+pub const FEAT_IGNORE: i32 = 0x0001;                                     // c:62
+
+/// `FEAT_INFIX` — bit indicating a condition is infix-style. Port of
+/// `enum { FEAT_INFIX = 0x0002 }` from `Src/module.c:64`.
+pub const FEAT_INFIX: i32 = 0x0002;                                      // c:64
+
+/// `FEAT_AUTOALL` — `zmodload -a` enable-all-features. Port of
+/// `enum { FEAT_AUTOALL = 0x0004 }` from `Src/module.c:69`.
+pub const FEAT_AUTOALL: i32 = 0x0004;                                    // c:69
+
+/// `FEAT_REMOVE` — bit indicating feature removal pass. Port of
+/// `enum { FEAT_REMOVE = 0x0008 }` from `Src/module.c:76`.
+pub const FEAT_REMOVE: i32 = 0x0008;                                     // c:76
+
+/// `FEAT_CHECKAUTO` — verify autoloads are actually provided. Port of
+/// `enum { FEAT_CHECKAUTO = 0x0010 }` from `Src/module.c:81`.
+pub const FEAT_CHECKAUTO: i32 = 0x0010;                                  // c:81
+
+// `featuresarray` deleted — Rust-only port that took the deleted
+// `Module` / `Features` PascalCase structs. C
+// `featuresarray(Module m, Features f)` at module.c:3279 builds
+// the `b:NAME`/`c:NAME`/`f:NAME`/`p:NAME` descriptor array from
+// the module's bintab/conddefs/mathfuncs/paramdefs pointers. The
+// per-module rust files (rlimits.rs, langinfo.rs, curses.rs, …)
+// each ship their own local `featuresarray` stub returning a
+// hardcoded descriptor list; a future canonical free-fn port will
+// live in zsh_h.rs once `struct features` carries real bintab/etc.
+// pointers.
+
+/// `FINDMOD_ALIASP` — bit in `find_module()`'s `flags` arg.
+/// Port of `enum { FINDMOD_ALIASP = 0x0001 }` from `Src/module.c:110`.
+/// /* Resolve any aliases to the underlying module. */
+pub const FINDMOD_ALIASP: i32 = 0x0001;                                  // c:110
+
+/// `FINDMOD_CREATE` — bit in `find_module()`'s `flags` arg.
+/// Port of `enum { FINDMOD_CREATE = 0x0002 }` from `Src/module.c:115`.
+/// /* Create an element for the module in the list if not found. */
+pub const FINDMOD_CREATE: i32 = 0x0002;                                  // c:115
 
 #[cfg(test)]
 mod tests {

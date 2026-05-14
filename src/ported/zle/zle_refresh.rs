@@ -4,31 +4,28 @@
 
 use std::io::{self, Write};
 
-
-// TextAttr / RefreshElement / VideoBuffer / RefreshState — Rust-side
-// aggregates over zsh's C flat-globals (`winw`/`winh`/`vcs`/`vln`/
-// `lpromptw`/`rpromptw`/`region_highlights[]`/`nbuf`/`obuf` in
-// `Src/Zle/zle_refresh.c`). The C side represents these as separate
-// file-scope statics + bitmap-packed `zattr` cells; this port collects
-// them into structs for ergonomic access. Eventual unification target
-// (mirroring `Src/zsh.h:2685` `pub type zattr = u64`):
-//   - `TextAttr` → `zattr` (u64 packed bitmap)
-//   - `RefreshElement` → `zle_h::REFRESH_ELEMENT`
-//   - `VideoBuffer` → raw `Vec<REFRESH_ELEMENT>` for `nbuf`/`obuf`
-//   - `RefreshState` → discrete file-scope statics
-
-/// Unpacked-bool form of `zattr` (C's u64 packed attribute bitmap from
-/// `Src/zsh.h:2685`, ported as `pub type zattr = u64`). C stores
-/// attributes inline in `REFRESH_ELEMENT.atr` (a `zattr`); this port
-/// pre-unpacks to a 6-field struct for ergonomic access.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct TextAttr {
-    pub bold: bool,
-    pub underline: bool,
-    pub standout: bool,
-    pub blink: bool,
-    pub fg_color: Option<u8>,
-    pub bg_color: Option<u8>,
+/// Port of `ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)` from `Src/Zle/zle_refresh.c:86`.
+/// ```c
+/// static void
+/// ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)
+/// {
+///     while (len--)
+///         *dst++ = rc;
+/// }
+/// ```
+/// Fill `dst[0..len]` with copies of `rc`. Equivalent to
+/// `memset` for REFRESH_ELEMENT slices.
+#[allow(non_snake_case)]
+/// WARNING: param names don't match C — Rust=(rc, len) vs C=(dst, rc, len)
+pub fn ZR_memset(                                                            // c:86
+    dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    rc: crate::ported::zle::zle_h::REFRESH_ELEMENT,
+    len: usize,
+) {
+    let n = len.min(dst.len());
+    for slot in dst.iter_mut().take(n) {                                     // c:88-89 while (len--) *dst++ = rc
+        *slot = rc;
+    }
 }
 
 impl TextAttr {
@@ -64,16 +61,34 @@ impl TextAttr {
     }
 }
 
-/// Display cell. Loosely equivalent to zsh's `REFRESH_ELEMENT`
-/// (legit-ported at `zle_h.rs:688` as
-/// `pub struct REFRESH_ELEMENT { chr: REFRESH_CHAR, atr: zattr }`).
-/// Adds a `width: u8` field C doesn't have and uses `TextAttr` for
-/// `atr` instead of the C `zattr` bitmap.
-#[derive(Debug, Clone, Default)]
-pub struct RefreshElement {
-    pub chr: char,
-    pub atr: TextAttr,
-    pub width: u8,
+/// Port of `ZR_strcpy(REFRESH_ELEMENT *dst, const REFRESH_ELEMENT *src)` from `Src/Zle/zle_refresh.c:95`.
+/// ```c
+/// static void
+/// ZR_strcpy(REFRESH_ELEMENT *dst, const REFRESH_ELEMENT *src)
+/// {
+///     while ((*dst++ = *src++).chr != ZWC('\0'))
+///         ;
+/// }
+/// ```
+/// Copy a NUL-terminated REFRESH_ELEMENT string from `src` to
+/// `dst`. The terminator is INCLUDED in the copy.
+#[allow(non_snake_case)]
+/// WARNING: param names don't match C — Rust=(src) vs C=(dst, src)
+pub fn ZR_strcpy(                                                            // c:95
+    dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    src: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+) {
+    let mut i = 0;
+    loop {                                                                   // c:97 while ((*dst++ = *src++).chr != ZWC('\0'))
+        if i >= dst.len() || i >= src.len() {
+            break;
+        }
+        dst[i] = src[i];
+        if src[i].chr == '\0' {
+            break;
+        }
+        i += 1;
+    }
 }
 
 impl RefreshElement {
@@ -99,18 +114,26 @@ impl RefreshElement {
     }
 }
 
-/// 2D screen-buffer container. C uses `REFRESH_STRING nbuf[]` and
-/// `obuf[]` flat arrays of `REFRESH_ELEMENT *` (zle_refresh.c
-/// globals); this struct wraps a single 2D Vec for the per-frame
-/// new/old buffer pair.
-#[derive(Debug, Clone)]
-pub struct VideoBuffer {
-    /// Buffer contents — 2D array of lines.
-    pub lines: Vec<Vec<RefreshElement>>,
-    /// Number of columns.
-    pub cols: usize,
-    /// Number of rows.
-    pub rows: usize,
+/// Port of `ZR_strlen(const REFRESH_ELEMENT *wstr)` from `Src/Zle/zle_refresh.c:102`.
+/// ```c
+/// static size_t
+/// ZR_strlen(const REFRESH_ELEMENT *wstr)
+/// {
+///     int len = 0;
+///     while (wstr++->chr != ZWC('\0'))
+///         len++;
+///     return len;
+/// }
+/// ```
+/// Length of a NUL-terminated REFRESH_ELEMENT string.
+#[allow(non_snake_case)]
+/// Port of `ZR_strlen(const REFRESH_ELEMENT *wstr)` from `Src/Zle/zle_refresh.c:102`.
+pub fn ZR_strlen(wstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {  // c:102
+    let mut len = 0;                                                         // c:102 int len = 0
+    while len < wstr.len() && wstr[len].chr != '\0' {                        // c:106 while (wstr++->chr != ZWC('\0'))
+        len += 1;                                                            // c:107 len++
+    }
+    len                                                                      // c:109 return len
 }
 
 impl VideoBuffer {
@@ -166,44 +189,55 @@ impl VideoBuffer {
     }
 }
 
-/// Composite of zle_refresh.c globals (winw/winh/vcs/vln/vmaxln,
-/// oldmax, lastrow, lastcol, more_status, etc.) collected into one
-/// struct. C uses separate file-statics per name
-/// (`int winw, winh, vcs, vln, ...`).
-#[derive(Debug, Clone, Default)]
-pub struct RefreshState {
-    /// Number of columns.
-    pub columns: usize, // winw, window width                                // c:682
-    /// Number of lines.
-    pub lines: usize, // winh, window height                                 // c:682
-    /// Current line on screen (cursor row).
-    pub vln: usize, // video cursor position line                            // c:680
-    /// Current column on screen (cursor col).
-    pub vcs: usize, // video cursor position column                          // c:680
-    /// Prompt width (left).
-    pub lpromptw: usize, // prompt widths on screen                          // c:676
-    /// Right prompt width.
-    pub rpromptw: usize, // prompt widths on screen                          // c:676
-    /// Scroll offset for horizontal scrolling.
-    pub scrolloff: usize,
-    /// Region highlight start.
-    pub region_highlight_start: Option<usize>,
-    /// Region highlight end.
-    pub region_highlight_end: Option<usize>,
-    /// Old video buffer.
-    pub old_video: Option<VideoBuffer>,
-    /// New video buffer.
-    pub new_video: Option<VideoBuffer>,
-    /// Prompt string (left).
-    pub lpromptbuf: String,
-    /// Right prompt string.
-    pub rpromptbuf: String,
-    /// Whether we need full redraw.
-    pub need_full_redraw: bool,
-    /// Predisplay string (before main buffer).
-    pub predisplay: String,
-    /// Postdisplay string (after main buffer).
-    pub postdisplay: String,
+/// Port of `ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr, int len)` from `Src/Zle/zle_refresh.c:119`.
+/// ```c
+/// static int
+/// ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr,
+///            int len)
+/// {
+///     while (len--) {
+///         if ((!(oldwstr->atr & TXT_MULTIWORD_MASK) && !oldwstr->chr) ||
+///             (!(newwstr->atr & TXT_MULTIWORD_MASK) && !newwstr->chr))
+///             return !ZR_equal(*oldwstr, *newwstr);
+///         if (!ZR_equal(*oldwstr, *newwstr))
+///             return 1;
+///         oldwstr++;
+///         newwstr++;
+///     }
+///     return 0;
+/// }
+/// ```
+/// Simplified strcmp: returns 0 if first `len` elements match
+/// (chr+atr pair-equal), 1 otherwise. Stops early at NUL in
+/// either string (treating it as the shorter-string boundary).
+#[allow(non_snake_case)]
+/// Port of `ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr, int len)` from `Src/Zle/zle_refresh.c:120`.
+/// WARNING: param names don't match C — Rust=(newwstr, len) vs C=(oldwstr, newwstr, len)
+pub fn ZR_strncmp(                                                           // c:120
+    oldwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    newwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
+    len: usize,
+) -> i32 {
+    let mut i = 0;
+    while i < len {                                                          // c:123 while (len--)
+        if i >= oldwstr.len() || i >= newwstr.len() {
+            // C reads past end via pointer; we bound it.
+            return if oldwstr.get(i) == newwstr.get(i) { 0 } else { 1 };
+        }
+        let o = oldwstr[i];
+        let n = newwstr[i];
+        // c:124-126 — `if early-NUL → return !equal`.
+        let old_is_nul = (o.atr & TXT_MULTIWORD_MASK) == 0 && o.chr == '\0';
+        let new_is_nul = (n.atr & TXT_MULTIWORD_MASK) == 0 && n.chr == '\0';
+        if old_is_nul || new_is_nul {
+            return if o == n { 0 } else { 1 };                               // c:126 !ZR_equal
+        }
+        if o != n {                                                          // c:127 if (!ZR_equal(...)) return 1
+            return 1;
+        }
+        i += 1;                                                              // c:129-130 oldwstr++; newwstr++
+    }
+    0                                                                        // c:133 return 0
 }
 
 impl RefreshState {
@@ -303,132 +337,17 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-/// Port of `ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)` from `Src/Zle/zle_refresh.c:86`.
-/// ```c
-/// static void
-/// ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)
-/// {
-///     while (len--)
-///         *dst++ = rc;
-/// }
-/// ```
-/// Fill `dst[0..len]` with copies of `rc`. Equivalent to
-/// `memset` for REFRESH_ELEMENT slices.
-#[allow(non_snake_case)]
-/// WARNING: param names don't match C — Rust=(rc, len) vs C=(dst, rc, len)
-pub fn ZR_memset(                                                            // c:86
-    dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
-    rc: crate::ported::zle::zle_h::REFRESH_ELEMENT,
-    len: usize,
-) {
-    let n = len.min(dst.len());
-    for slot in dst.iter_mut().take(n) {                                     // c:88-89 while (len--) *dst++ = rc
-        *slot = rc;
-    }
-}
+/// Port of `ZR_END_ELLIPSIS_SIZE` macro from `zle_refresh.c:284`.
+pub const ZR_END_ELLIPSIS_SIZE: usize = ZR_END_ELLIPSIS.len();               // c:284
 
-/// Port of `ZR_strcpy(REFRESH_ELEMENT *dst, const REFRESH_ELEMENT *src)` from `Src/Zle/zle_refresh.c:95`.
-/// ```c
-/// static void
-/// ZR_strcpy(REFRESH_ELEMENT *dst, const REFRESH_ELEMENT *src)
-/// {
-///     while ((*dst++ = *src++).chr != ZWC('\0'))
-///         ;
-/// }
-/// ```
-/// Copy a NUL-terminated REFRESH_ELEMENT string from `src` to
-/// `dst`. The terminator is INCLUDED in the copy.
-#[allow(non_snake_case)]
-/// WARNING: param names don't match C — Rust=(src) vs C=(dst, src)
-pub fn ZR_strcpy(                                                            // c:95
-    dst: &mut [crate::ported::zle::zle_h::REFRESH_ELEMENT],
-    src: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
-) {
-    let mut i = 0;
-    loop {                                                                   // c:97 while ((*dst++ = *src++).chr != ZWC('\0'))
-        if i >= dst.len() || i >= src.len() {
-            break;
-        }
-        dst[i] = src[i];
-        if src[i].chr == '\0' {
-            break;
-        }
-        i += 1;
-    }
-}
+/// Port of `ZR_MID_ELLIPSIS1_SIZE` macro from `zle_refresh.c:295`.
+pub const ZR_MID_ELLIPSIS1_SIZE: usize = ZR_MID_ELLIPSIS1.len();             // c:295
 
-/// Port of `ZR_strlen(const REFRESH_ELEMENT *wstr)` from `Src/Zle/zle_refresh.c:102`.
-/// ```c
-/// static size_t
-/// ZR_strlen(const REFRESH_ELEMENT *wstr)
-/// {
-///     int len = 0;
-///     while (wstr++->chr != ZWC('\0'))
-///         len++;
-///     return len;
-/// }
-/// ```
-/// Length of a NUL-terminated REFRESH_ELEMENT string.
-#[allow(non_snake_case)]
-/// Port of `ZR_strlen(const REFRESH_ELEMENT *wstr)` from `Src/Zle/zle_refresh.c:102`.
-pub fn ZR_strlen(wstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT]) -> usize {  // c:102
-    let mut len = 0;                                                         // c:102 int len = 0
-    while len < wstr.len() && wstr[len].chr != '\0' {                        // c:106 while (wstr++->chr != ZWC('\0'))
-        len += 1;                                                            // c:107 len++
-    }
-    len                                                                      // c:109 return len
-}
+/// Port of `ZR_MID_ELLIPSIS2_SIZE` macro from `zle_refresh.c:302`.
+pub const ZR_MID_ELLIPSIS2_SIZE: usize = ZR_MID_ELLIPSIS2.len();             // c:302
 
-/// Port of `ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr, int len)` from `Src/Zle/zle_refresh.c:119`.
-/// ```c
-/// static int
-/// ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr,
-///            int len)
-/// {
-///     while (len--) {
-///         if ((!(oldwstr->atr & TXT_MULTIWORD_MASK) && !oldwstr->chr) ||
-///             (!(newwstr->atr & TXT_MULTIWORD_MASK) && !newwstr->chr))
-///             return !ZR_equal(*oldwstr, *newwstr);
-///         if (!ZR_equal(*oldwstr, *newwstr))
-///             return 1;
-///         oldwstr++;
-///         newwstr++;
-///     }
-///     return 0;
-/// }
-/// ```
-/// Simplified strcmp: returns 0 if first `len` elements match
-/// (chr+atr pair-equal), 1 otherwise. Stops early at NUL in
-/// either string (treating it as the shorter-string boundary).
-#[allow(non_snake_case)]
-/// Port of `ZR_strncmp(const REFRESH_ELEMENT *oldwstr, const REFRESH_ELEMENT *newwstr, int len)` from `Src/Zle/zle_refresh.c:120`.
-/// WARNING: param names don't match C — Rust=(newwstr, len) vs C=(oldwstr, newwstr, len)
-pub fn ZR_strncmp(                                                           // c:120
-    oldwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
-    newwstr: &[crate::ported::zle::zle_h::REFRESH_ELEMENT],
-    len: usize,
-) -> i32 {
-    let mut i = 0;
-    while i < len {                                                          // c:123 while (len--)
-        if i >= oldwstr.len() || i >= newwstr.len() {
-            // C reads past end via pointer; we bound it.
-            return if oldwstr.get(i) == newwstr.get(i) { 0 } else { 1 };
-        }
-        let o = oldwstr[i];
-        let n = newwstr[i];
-        // c:124-126 — `if early-NUL → return !equal`.
-        let old_is_nul = (o.atr & TXT_MULTIWORD_MASK) == 0 && o.chr == '\0';
-        let new_is_nul = (n.atr & TXT_MULTIWORD_MASK) == 0 && n.chr == '\0';
-        if old_is_nul || new_is_nul {
-            return if o == n { 0 } else { 1 };                               // c:126 !ZR_equal
-        }
-        if o != n {                                                          // c:127 if (!ZR_equal(...)) return 1
-            return 1;
-        }
-        i += 1;                                                              // c:129-130 oldwstr++; newwstr++
-    }
-    0                                                                        // c:133 return 0
-}
+/// Port of `ZR_START_ELLIPSIS_SIZE` macro from `zle_refresh.c:312`.
+pub const ZR_START_ELLIPSIS_SIZE: usize = ZR_START_ELLIPSIS.len();           // c:312
 
 /// Apply a `$zle_highlight` array to the manager.
 /// Port of `zle_set_highlight()` from Src/Zle/zle_refresh.c:322. Walks
@@ -569,6 +488,16 @@ pub fn tcoutclear(to_end: bool) {                                            // 
         let _ = crate::ported::utils::write_loop({ use std::sync::atomic::Ordering; let f = crate::ported::init::SHTTY.load(Ordering::Relaxed); if f >= 0 { f } else { 1 } }, s.as_bytes());
     }
 
+// =====================================================================
+// `DEF_MWBUF_ALLOC` + `zr_*_ellipsis` tables — `Src/Zle/zle_refresh.c:697`
+// + c:269-313. Pre-built REFRESH_ELEMENT sequences for line-truncation
+// markers.
+// =====================================================================
+
+/// Port of `DEF_MWBUF_ALLOC` from `Src/Zle/zle_refresh.c:697`.
+/// Number of words to allocate in one go for the multiword buffers.
+pub const DEF_MWBUF_ALLOC: usize = 32;                                       // c:697
+
 /// Port of `freevideo()` from Src/Zle/zle_refresh.c:700.
 /// WARNING: param names don't match C — Rust=(state) vs C=()
 pub fn freevideo(state: &mut RefreshState) {                                 // c:freevideo
@@ -659,94 +588,6 @@ pub fn addmultiword(base: &mut crate::ported::zle::zle_h::REFRESH_ELEMENT,   // 
     // separate mwbuf table indexed off base->chr), so flagging
     // TXT_MULTIWORD_MASK is the complete observable effect.
     base.atr |= TXT_MULTIWORD_MASK;
-}
-
-// RegionHighlight / HighlightCategory / HighlightManager — Rust-side
-// aggregates over zsh's C `region_highlights[N_SPECIAL_HIGHLIGHTS]`
-// array + per-category attr globals (`default_attr`/`special_attr`/
-// `ellipsis_attr` from `Src/Zle/zle_refresh.c`). C uses bare integer
-// indexing into a fixed-size array; this port uses a typed enum +
-// HashMap. Eventual unification: collapse into discrete file-scope
-// statics matching the C layout.
-
-/// Simplified region-highlight entry. Loosely equivalent to
-/// `struct region_highlight` (legit-ported at `zle_h.rs:613` with
-/// different fields: start/end/atr/flags/memo/layer).
-#[derive(Debug, Clone)]
-pub struct RegionHighlight {
-    pub start: usize,
-    pub end: usize,
-    pub attr: TextAttr,
-    pub memo: Option<String>,
-}
-
-/// Identifies a fixed slot in zsh's
-/// `region_highlights[N_SPECIAL_HIGHLIGHTS]` array (zle_refresh.c
-/// indices 0=region, 1=isearch, 2=suffix, 3=paste) plus the
-/// standalone default/special/ellipsis attr globals
-/// (`default_attr`/`special_attr`/`ellipsis_attr`). C uses bare
-/// integer indexing — no enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum HighlightCategory {
-    Region,
-    Isearch,
-    Suffix,
-    Paste,
-    Default,
-    Special,
-    Ellipsis,
-}
-
-/// Collects C's `region_highlights[]` array + per-category attr
-/// globals (`default_attr`/`special_attr`/`ellipsis_attr` from
-/// zle_refresh.c) into one container.
-#[derive(Debug, Default)]
-pub struct HighlightManager {
-    pub regions: Vec<RegionHighlight>,
-    /// Per-category attrs from `$zle_highlight`. Index by
-    /// `HighlightCategory`. Equivalent to the per-slot atr storage
-    /// in `region_highlights[]` and the
-    /// `default_attr`/`special_attr`/`ellipsis_attr` globals in
-    /// Src/Zle/zle_refresh.c — populated by `zle_set_highlight()`.
-    pub category_attrs: std::collections::HashMap<HighlightCategory, TextAttr>,
-}
-
-impl HighlightManager {
-    pub fn new() -> Self {
-        HighlightManager {
-            regions: Vec::new(),
-            category_attrs: std::collections::HashMap::new(),
-        }
-    }
-
-    /// Set region highlight. Equivalent to
-    /// `set_region_highlight()` from zle_refresh.c.
-    pub fn set_region_highlight(&mut self, start: usize, end: usize, attr: TextAttr) {
-        self.regions.push(RegionHighlight {
-            start,
-            end,
-            attr,
-            memo: None,
-        });
-    }
-
-    /// Get region highlight for position. Equivalent to
-    /// `get_region_highlight()` from zle_refresh.c.
-    pub fn get_region_highlight(&self, pos: usize) -> Option<&RegionHighlight> {
-        self.regions.iter().find(|r| pos >= r.start && pos < r.end)
-    }
-
-    /// Unset region highlight. Equivalent to
-    /// `unset_region_highlight()` from zle_refresh.c.
-    pub fn unset_region_highlight(&mut self) {
-        self.regions.clear();
-    }
-
-    /// Free highlight resources. Equivalent to
-    /// `zle_free_highlight()` from zle_refresh.c.
-    pub fn free(&mut self) {
-        self.regions.clear();
-    }
 }
 
 /// Port of `bufswap()` from Src/Zle/zle_refresh.c:946.
@@ -886,6 +727,44 @@ pub fn bufswap(state: &mut RefreshState) {                                   // 
         let out_fd = if fd >= 0 { fd } else { 1 };
         let _ = crate::ported::utils::write_loop(out_fd, handle.as_bytes());
     }
+
+impl HighlightManager {
+    pub fn new() -> Self {
+        HighlightManager {
+            regions: Vec::new(),
+            category_attrs: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Set region highlight. Equivalent to
+    /// `set_region_highlight()` from zle_refresh.c.
+    pub fn set_region_highlight(&mut self, start: usize, end: usize, attr: TextAttr) {
+        self.regions.push(RegionHighlight {
+            start,
+            end,
+            attr,
+            memo: None,
+        });
+    }
+
+    /// Get region highlight for position. Equivalent to
+    /// `get_region_highlight()` from zle_refresh.c.
+    pub fn get_region_highlight(&self, pos: usize) -> Option<&RegionHighlight> {
+        self.regions.iter().find(|r| pos >= r.start && pos < r.end)
+    }
+
+    /// Unset region highlight. Equivalent to
+    /// `unset_region_highlight()` from zle_refresh.c.
+    pub fn unset_region_highlight(&mut self) {
+        self.regions.clear();
+    }
+
+    /// Free highlight resources. Equivalent to
+    /// `zle_free_highlight()` from zle_refresh.c.
+    pub fn free(&mut self) {
+        self.regions.clear();
+    }
+}
 
 /// Port of `wpfxlen(const REFRESH_ELEMENT *olds, const REFRESH_ELEMENT *news)` from `Src/Zle/zle_refresh.c:1736`.
 /// ```c
@@ -1064,6 +943,149 @@ pub fn zle_refresh_boot() -> RefreshState {
 /// Port of zle_refresh_finish() from zle_refresh.c
 pub fn zle_refresh_finish(state: &mut RefreshState) {
     state.free_video();
+}
+
+
+// TextAttr / RefreshElement / VideoBuffer / RefreshState — Rust-side
+// aggregates over zsh's C flat-globals (`winw`/`winh`/`vcs`/`vln`/
+// `lpromptw`/`rpromptw`/`region_highlights[]`/`nbuf`/`obuf` in
+// `Src/Zle/zle_refresh.c`). The C side represents these as separate
+// file-scope statics + bitmap-packed `zattr` cells; this port collects
+// them into structs for ergonomic access. Eventual unification target
+// (mirroring `Src/zsh.h:2685` `pub type zattr = u64`):
+//   - `TextAttr` → `zattr` (u64 packed bitmap)
+//   - `RefreshElement` → `zle_h::REFRESH_ELEMENT`
+//   - `VideoBuffer` → raw `Vec<REFRESH_ELEMENT>` for `nbuf`/`obuf`
+//   - `RefreshState` → discrete file-scope statics
+
+/// Unpacked-bool form of `zattr` (C's u64 packed attribute bitmap from
+/// `Src/zsh.h:2685`, ported as `pub type zattr = u64`). C stores
+/// attributes inline in `REFRESH_ELEMENT.atr` (a `zattr`); this port
+/// pre-unpacks to a 6-field struct for ergonomic access.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TextAttr {
+    pub bold: bool,
+    pub underline: bool,
+    pub standout: bool,
+    pub blink: bool,
+    pub fg_color: Option<u8>,
+    pub bg_color: Option<u8>,
+}
+
+/// Display cell. Loosely equivalent to zsh's `REFRESH_ELEMENT`
+/// (legit-ported at `zle_h.rs:688` as
+/// `pub struct REFRESH_ELEMENT { chr: REFRESH_CHAR, atr: zattr }`).
+/// Adds a `width: u8` field C doesn't have and uses `TextAttr` for
+/// `atr` instead of the C `zattr` bitmap.
+#[derive(Debug, Clone, Default)]
+pub struct RefreshElement {
+    pub chr: char,
+    pub atr: TextAttr,
+    pub width: u8,
+}
+
+/// 2D screen-buffer container. C uses `REFRESH_STRING nbuf[]` and
+/// `obuf[]` flat arrays of `REFRESH_ELEMENT *` (zle_refresh.c
+/// globals); this struct wraps a single 2D Vec for the per-frame
+/// new/old buffer pair.
+#[derive(Debug, Clone)]
+pub struct VideoBuffer {
+    /// Buffer contents — 2D array of lines.
+    pub lines: Vec<Vec<RefreshElement>>,
+    /// Number of columns.
+    pub cols: usize,
+    /// Number of rows.
+    pub rows: usize,
+}
+
+/// Composite of zle_refresh.c globals (winw/winh/vcs/vln/vmaxln,
+/// oldmax, lastrow, lastcol, more_status, etc.) collected into one
+/// struct. C uses separate file-statics per name
+/// (`int winw, winh, vcs, vln, ...`).
+#[derive(Debug, Clone, Default)]
+pub struct RefreshState {
+    /// Number of columns.
+    pub columns: usize, // winw, window width                                // c:682
+    /// Number of lines.
+    pub lines: usize, // winh, window height                                 // c:682
+    /// Current line on screen (cursor row).
+    pub vln: usize, // video cursor position line                            // c:680
+    /// Current column on screen (cursor col).
+    pub vcs: usize, // video cursor position column                          // c:680
+    /// Prompt width (left).
+    pub lpromptw: usize, // prompt widths on screen                          // c:676
+    /// Right prompt width.
+    pub rpromptw: usize, // prompt widths on screen                          // c:676
+    /// Scroll offset for horizontal scrolling.
+    pub scrolloff: usize,
+    /// Region highlight start.
+    pub region_highlight_start: Option<usize>,
+    /// Region highlight end.
+    pub region_highlight_end: Option<usize>,
+    /// Old video buffer.
+    pub old_video: Option<VideoBuffer>,
+    /// New video buffer.
+    pub new_video: Option<VideoBuffer>,
+    /// Prompt string (left).
+    pub lpromptbuf: String,
+    /// Right prompt string.
+    pub rpromptbuf: String,
+    /// Whether we need full redraw.
+    pub need_full_redraw: bool,
+    /// Predisplay string (before main buffer).
+    pub predisplay: String,
+    /// Postdisplay string (after main buffer).
+    pub postdisplay: String,
+}
+
+// RegionHighlight / HighlightCategory / HighlightManager — Rust-side
+// aggregates over zsh's C `region_highlights[N_SPECIAL_HIGHLIGHTS]`
+// array + per-category attr globals (`default_attr`/`special_attr`/
+// `ellipsis_attr` from `Src/Zle/zle_refresh.c`). C uses bare integer
+// indexing into a fixed-size array; this port uses a typed enum +
+// HashMap. Eventual unification: collapse into discrete file-scope
+// statics matching the C layout.
+
+/// Simplified region-highlight entry. Loosely equivalent to
+/// `struct region_highlight` (legit-ported at `zle_h.rs:613` with
+/// different fields: start/end/atr/flags/memo/layer).
+#[derive(Debug, Clone)]
+pub struct RegionHighlight {
+    pub start: usize,
+    pub end: usize,
+    pub attr: TextAttr,
+    pub memo: Option<String>,
+}
+
+/// Identifies a fixed slot in zsh's
+/// `region_highlights[N_SPECIAL_HIGHLIGHTS]` array (zle_refresh.c
+/// indices 0=region, 1=isearch, 2=suffix, 3=paste) plus the
+/// standalone default/special/ellipsis attr globals
+/// (`default_attr`/`special_attr`/`ellipsis_attr`). C uses bare
+/// integer indexing — no enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HighlightCategory {
+    Region,
+    Isearch,
+    Suffix,
+    Paste,
+    Default,
+    Special,
+    Ellipsis,
+}
+
+/// Collects C's `region_highlights[]` array + per-category attr
+/// globals (`default_attr`/`special_attr`/`ellipsis_attr` from
+/// zle_refresh.c) into one container.
+#[derive(Debug, Default)]
+pub struct HighlightManager {
+    pub regions: Vec<RegionHighlight>,
+    /// Per-category attrs from `$zle_highlight`. Index by
+    /// `HighlightCategory`. Equivalent to the per-slot atr storage
+    /// in `region_highlights[]` and the
+    /// `default_attr`/`special_attr`/`ellipsis_attr` globals in
+    /// Src/Zle/zle_refresh.c — populated by `zle_set_highlight()`.
+    pub category_attrs: std::collections::HashMap<HighlightCategory, TextAttr>,
 }
 
     /// Build the per-character attribute overlay used by `zrefresh`.
@@ -1251,16 +1273,6 @@ pub fn ZR_memcpy(                                                            // 
     dst[..l].copy_from_slice(&src[..l]);
 }
 
-// =====================================================================
-// `DEF_MWBUF_ALLOC` + `zr_*_ellipsis` tables — `Src/Zle/zle_refresh.c:697`
-// + c:269-313. Pre-built REFRESH_ELEMENT sequences for line-truncation
-// markers.
-// =====================================================================
-
-/// Port of `DEF_MWBUF_ALLOC` from `Src/Zle/zle_refresh.c:697`.
-/// Number of words to allocate in one go for the multiword buffers.
-pub const DEF_MWBUF_ALLOC: usize = 32;                                       // c:697
-
 /// Port of `zr_end_ellipsis[]` from `Src/Zle/zle_refresh.c:269-281`.
 /// "...>" rendered when a long line overflows past the right edge.
 /// TXT_ERROR is the standard zsh-error highlight (set in zsh_h::TXT_ERROR).
@@ -1273,9 +1285,6 @@ pub static ZR_END_ELLIPSIS: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[ /
     crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '>', atr: 0 },
 ];
 
-/// Port of `ZR_END_ELLIPSIS_SIZE` macro from `zle_refresh.c:284`.
-pub const ZR_END_ELLIPSIS_SIZE: usize = ZR_END_ELLIPSIS.len();               // c:284
-
 /// Port of `zr_mid_ellipsis1[]` from `zle_refresh.c:287-294`.
 /// First half of " <.... ... >" mid-line cluster.
 pub static ZR_MID_ELLIPSIS1: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[ // c:287
@@ -1287,18 +1296,12 @@ pub static ZR_MID_ELLIPSIS1: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[ 
     crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
 ];
 
-/// Port of `ZR_MID_ELLIPSIS1_SIZE` macro from `zle_refresh.c:295`.
-pub const ZR_MID_ELLIPSIS1_SIZE: usize = ZR_MID_ELLIPSIS1.len();             // c:295
-
 /// Port of `zr_mid_ellipsis2[]` from `zle_refresh.c:298-301`.
 /// Trailing close of the mid-line ellipsis cluster.
 pub static ZR_MID_ELLIPSIS2: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[ // c:298
     crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '>', atr: crate::ported::zsh_h::TXT_ERROR },
     crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: ' ', atr: 0 },
 ];
-
-/// Port of `ZR_MID_ELLIPSIS2_SIZE` macro from `zle_refresh.c:302`.
-pub const ZR_MID_ELLIPSIS2_SIZE: usize = ZR_MID_ELLIPSIS2.len();             // c:302
 
 /// Port of `zr_start_ellipsis[]` from `zle_refresh.c:305-311`.
 /// "><..." rendered when a line begins past the left edge.
@@ -1309,9 +1312,6 @@ pub static ZR_START_ELLIPSIS: &[crate::ported::zle::zle_h::REFRESH_ELEMENT] = &[
     crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
     crate::ported::zle::zle_h::REFRESH_ELEMENT { chr: '.', atr: crate::ported::zsh_h::TXT_ERROR },
 ];
-
-/// Port of `ZR_START_ELLIPSIS_SIZE` macro from `zle_refresh.c:312`.
-pub const ZR_START_ELLIPSIS_SIZE: usize = ZR_START_ELLIPSIS.len();           // c:312
 
 /// Port of `tcinscost(X)` macro from `Src/Zle/zle_refresh.c:1724`.
 /// `#define tcinscost(X) (tccan(TCMULTINS) ? tclen[TCMULTINS] : (X)*tclen[TCINS])`.

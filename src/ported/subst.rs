@@ -73,18 +73,11 @@ use crate::ported::utils::{xsymlinks, zerr};
 
 use std::sync::atomic::Ordering;
 
-// Canonical LinkList — port of `struct linklist` (`Src/zsh.h:563`)
-// with the C-macro accessors (`firstnode`/`nextnode`/`getdata`/
-// `setdata`/`insertlinknode`/`empty`) lifted from `Src/zsh.h:576-590`.
-// subst.rs previously kept a private `pub struct LinkList { nodes:
-// VecDeque<LinkNode>, flags: u32 }` + `pub struct LinkNode { data:
-// String }` — DELETED per user directive (Rust-only abstraction, no
-// C counterpart).
-/// LinkList of substitution words. Canonical
-/// `crate::ported::linklist::LinkList<String>` (port of
-/// `Src/linklist.c` with `LF_ARRAY` (`Src/subst.c:33`) carried in
-/// the `flags` field).
-pub type LinkList = crate::ported::linklist::LinkList<String>;
+/// Port of `LF_ARRAY` from `Src/subst.c:33`.
+/// `#define LF_ARRAY 1`. Linked-list flag the substitution-result
+/// LinkList carries when the expansion produced multiple words.
+/// Drives `prefork` / `singsub` / `aget` to return an array vs scalar.
+pub const LF_ARRAY: u32 = 1;                                                 // c:33
 
 /// Check for array assignment with entries like [key]=val
 /// Port of `keyvalpairelement(LinkList list, LinkNode node)` from `Src/subst.c:49`.
@@ -372,52 +365,6 @@ use crate::ported::zsh_h::{
     Qstring, Qtick, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS, Snull,
     Stringg, Tick,
 }; // c:zsh.h:159-224 + scan flags c:1953-1973
-// Aliases for the two names that diverged in the local module.
-// Cite c:zsh.h:160 (`STRING`) and c:zsh.h:177 (`Outang`+proc-sub).
-const STRING: char = Stringg; // c:zsh.h:160
-const OUTANGPROC: char = OutangProc; // c:zsh.h:177
-
-/// Port of `LF_ARRAY` from `Src/subst.c:33`.
-/// `#define LF_ARRAY 1`. Linked-list flag the substitution-result
-/// LinkList carries when the expansion produced multiple words.
-/// Drives `prefork` / `singsub` / `aget` to return an array vs scalar.
-pub const LF_ARRAY: u32 = 1;                                                 // c:33
-
-// `pub mod prefork_flags { … }` — DELETED per user directive.
-// Every bit value was WRONG vs the canonical C source: local
-// `SINGLE=1, SPLIT=2, SHWORDSPLIT=4, NOSHWORDSPLIT=8, ASSIGN=16,
-// TYPESET=32` vs C's `PREFORK_TYPESET=0x01, PREFORK_ASSIGN=0x02,
-// PREFORK_SINGLE=0x04, PREFORK_SPLIT=0x08, PREFORK_SHWORDSPLIT=0x10,
-// PREFORK_NOSHWORDSPLIT=0x20` (`Src/zsh.h:2020-2042`). Every
-// `flags & prefork_flags::X` test silently mis-tested the wrong
-// bit. Canonical defs imported from `crate::ported::zsh_h` below.
-use crate::ported::zsh_h::{
-    PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK,
-    PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET,
-}; // c:zsh.h:2020-2042
-
-// `SubstState` and `SubstOptions` structs — DELETED per user
-// directive ("SubstState must be removed", "SubstOptions must be
-// removed", "delete SubstState"). All formerly-bundled fields are
-// canonical globals or executor-backed:
-//   - `errflag`     → `crate::ported::utils::errflag` `AtomicI32`
-//                     (port of `Src/utils.c`'s `int errflag`).
-//   - `opts.*`      → `crate::ported::options::opt_state_get/set`
-//                     (port of zsh's `opts[OPT_…]` via `Src/options.c`).
-//   - `variables` / `arrays` / `assoc_arrays`
-//                   → `vars_get`/`arrays_get`/`assoc_get` helpers
-//                     below (executor-backed, equiv to C's
-//                     `getsparam`/`getaparam`).
-//   - `skip_filesub` → `SKIP_FILESUB` thread_local in this file.
-//   - `function_names`/`command_names`/`alias_names`/`var_attrs`
-//                   → `shfunctab`/`cmdnamtab`/`aliastab` walks.
-//   - `dirstack`/`pushdminus` → `dirstack_lock()` + `opt_state_get`.
-//   - `last_subst` → `crate::ported::hist::hsubl`/`hsubr`/`hsubpatopt`.
-//   - `sub_flags`  → `SUB_FLAGS` thread_local at the top of this file.
-// Every fn signature has dropped the `state: &mut SubstState` arg.
-
-/// Null string constant (from subst.c line 36)
-pub const NULSTRING: &str = "\u{8F}"; // c:100
 
 ///
 /// Implements `$'...'` ANSI-C-style quoted-string substitution. The
@@ -1131,6 +1078,19 @@ pub fn quotesubst(str: &str) -> String {              // c:463
     // glob.rs'str full port operates on Vec<GlobToken>).
     result.replace('\u{0}', "") // c:474
 } // c:475
+
+// `pub mod prefork_flags { … }` — DELETED per user directive.
+// Every bit value was WRONG vs the canonical C source: local
+// `SINGLE=1, SPLIT=2, SHWORDSPLIT=4, NOSHWORDSPLIT=8, ASSIGN=16,
+// TYPESET=32` vs C's `PREFORK_TYPESET=0x01, PREFORK_ASSIGN=0x02,
+// PREFORK_SINGLE=0x04, PREFORK_SPLIT=0x08, PREFORK_SHWORDSPLIT=0x10,
+// PREFORK_NOSHWORDSPLIT=0x20` (`Src/zsh.h:2020-2042`). Every
+// `flags & prefork_flags::X` test silently mis-tested the wrong
+// bit. Canonical defs imported from `crate::ported::zsh_h` below.
+use crate::ported::zsh_h::{
+    PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK,
+    PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET,
+}; // c:zsh.h:2020-2042
 
 /// Glob entries in a linked list
 /// Port of `globlist(LinkList list, int flags)` from `Src/subst.c:489`.
@@ -7032,6 +6992,46 @@ pub fn dstackent(                                                            // 
     // C: `return (char *)getdata(n);`
     dirstack.get(idx).cloned() // c:4920
 } // c:4922
+
+// Canonical LinkList — port of `struct linklist` (`Src/zsh.h:563`)
+// with the C-macro accessors (`firstnode`/`nextnode`/`getdata`/
+// `setdata`/`insertlinknode`/`empty`) lifted from `Src/zsh.h:576-590`.
+// subst.rs previously kept a private `pub struct LinkList { nodes:
+// VecDeque<LinkNode>, flags: u32 }` + `pub struct LinkNode { data:
+// String }` — DELETED per user directive (Rust-only abstraction, no
+// C counterpart).
+/// LinkList of substitution words. Canonical
+/// `crate::ported::linklist::LinkList<String>` (port of
+/// `Src/linklist.c` with `LF_ARRAY` (`Src/subst.c:33`) carried in
+/// the `flags` field).
+pub type LinkList = crate::ported::linklist::LinkList<String>;
+// Aliases for the two names that diverged in the local module.
+// Cite c:zsh.h:160 (`STRING`) and c:zsh.h:177 (`Outang`+proc-sub).
+const STRING: char = Stringg; // c:zsh.h:160
+const OUTANGPROC: char = OutangProc; // c:zsh.h:177
+
+// `SubstState` and `SubstOptions` structs — DELETED per user
+// directive ("SubstState must be removed", "SubstOptions must be
+// removed", "delete SubstState"). All formerly-bundled fields are
+// canonical globals or executor-backed:
+//   - `errflag`     → `crate::ported::utils::errflag` `AtomicI32`
+//                     (port of `Src/utils.c`'s `int errflag`).
+//   - `opts.*`      → `crate::ported::options::opt_state_get/set`
+//                     (port of zsh's `opts[OPT_…]` via `Src/options.c`).
+//   - `variables` / `arrays` / `assoc_arrays`
+//                   → `vars_get`/`arrays_get`/`assoc_get` helpers
+//                     below (executor-backed, equiv to C's
+//                     `getsparam`/`getaparam`).
+//   - `skip_filesub` → `SKIP_FILESUB` thread_local in this file.
+//   - `function_names`/`command_names`/`alias_names`/`var_attrs`
+//                   → `shfunctab`/`cmdnamtab`/`aliastab` walks.
+//   - `dirstack`/`pushdminus` → `dirstack_lock()` + `opt_state_get`.
+//   - `last_subst` → `crate::ported::hist::hsubl`/`hsubr`/`hsubpatopt`.
+//   - `sub_flags`  → `SUB_FLAGS` thread_local at the top of this file.
+// Every fn signature has dropped the `state: &mut SubstState` arg.
+
+/// Null string constant (from subst.c line 36)
+pub const NULSTRING: &str = "\u{8F}"; // c:100
 
 /// Returns true if the global `errflag` (Src/utils.c) is set.
 /// Matches the C idiom `if (errflag) …` that subst.c sprinkles

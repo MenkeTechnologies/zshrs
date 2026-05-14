@@ -50,14 +50,6 @@ use crate::ported::zsh_h::options;
 pub type Schedcmd = Option<Box<schedcmd>>;
 
 // =====================================================================
-// enum schedflags                                                    c:38
-// =====================================================================
-
-// Port of `enum schedflags` from `Src/Builtins/sched.c:38`.
-// Trash zle if necessary when event is activated.
-pub const SCHEDFLAG_TRASH_ZLE: i32 = 1;                              // c:40
-
-// =====================================================================
 // struct schedcmd                                                    c:43
 // =====================================================================
 
@@ -80,16 +72,6 @@ pub struct schedcmd {
     pub time: time_t,                                                 // c:46
     pub flags: i32,                                                   // c:47
 }
-
-// =====================================================================
-// static struct schedcmd *schedcmds;   the list of sched jobs pending  c:52
-// =====================================================================
-
-// Port of `static struct schedcmd *schedcmds;` from sched.c:52. Bucket-2
-// (shell-wide) per PORT_PLAN.md: `checksched` can fire on any thread
-// reaching the prepromptfn hook, so the head pointer sits behind a
-// shared `OnceLock<Mutex<…>>` rather than `thread_local!`.
-static schedcmds: OnceLock<Mutex<Option<Box<schedcmd>>>> = OnceLock::new();
 
 // =====================================================================
 // static int schedcmdtimed;      flag that timed event is running     c:55
@@ -570,20 +552,6 @@ pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec
     handlefeatures(m, module_features(), enables)                        // c:418
 }
 
-// =====================================================================
-// static struct builtin bintab[]                                     c:374
-// static const struct gsu_array sched_gsu                            c:378
-// static struct paramdef partab[]                                    c:381
-// static struct features module_features                             c:386
-// =====================================================================
-
-use crate::ported::zsh_h::features as features_t;
-
-// `module_features` — port of `static struct features module_features`
-// from sched.c:386. Bucket-2 shared global; OnceLock-init since
-// `features` contains fn-pointer fields not const-initializable.
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 /// Port of `boot_(UNUSED(Module m))` from `Src/Builtins/sched.c:418`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {               // c:418
@@ -612,11 +580,43 @@ pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {             // 
     setfeatureenables(m, module_features(), None)                        // c:443
 }
 
+// =====================================================================
+// static struct builtin bintab[]                                     c:374
+// static const struct gsu_array sched_gsu                            c:378
+// static struct paramdef partab[]                                    c:381
+// static struct features module_features                             c:386
+// =====================================================================
+
+use crate::ported::zsh_h::features as features_t;
+
 /// Port of `finish_(UNUSED(Module m))` from `Src/Builtins/sched.c:443`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {             // c:443
     0                                                                    // c:443
 }
+
+// =====================================================================
+// enum schedflags                                                    c:38
+// =====================================================================
+
+// Port of `enum schedflags` from `Src/Builtins/sched.c:38`.
+// Trash zle if necessary when event is activated.
+pub const SCHEDFLAG_TRASH_ZLE: i32 = 1;                              // c:40
+
+// =====================================================================
+// static struct schedcmd *schedcmds;   the list of sched jobs pending  c:52
+// =====================================================================
+
+// Port of `static struct schedcmd *schedcmds;` from sched.c:52. Bucket-2
+// (shell-wide) per PORT_PLAN.md: `checksched` can fire on any thread
+// reaching the prepromptfn hook, so the head pointer sits behind a
+// shared `OnceLock<Mutex<…>>` rather than `thread_local!`.
+static schedcmds: OnceLock<Mutex<Option<Box<schedcmd>>>> = OnceLock::new();
+
+// `module_features` — port of `static struct features module_features`
+// from sched.c:386. Bucket-2 shared global; OnceLock-init since
+// `features` contains fn-pointer fields not const-initializable.
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
 // Init-on-first-use accessors. C dereferences the statics directly — Rust
 // requires the OnceLock get-or-init dance. Inlined at call sites would
@@ -694,6 +694,17 @@ fn execstring(_cmd: &str, _exiting: i32, _dont_change_job: i32, _context: &str) 
 // =====================================================================
 // Tests
 // =====================================================================
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

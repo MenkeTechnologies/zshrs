@@ -133,6 +133,25 @@ pub fn free_region_highlights_memos() {                                      // 
     //                    calls zfree on each. Drop covers it; no-op.
 }
 
+
+/// Direct port of `struct zle_position` from
+/// `Src/Zle/zle_utils.c:595-605`. One saved-state node in the
+/// zle_positions stack; pushed by `zle_save_positions()` and popped
+/// by `zle_restore_positions()`.
+#[derive(Debug, Clone)]
+#[allow(non_camel_case_types)]
+pub struct zle_position {                                                    // c:595
+    /// `int cs` — c:599, saved cursor position.
+    pub cs: usize,
+    /// `int mk` — c:600, saved mark position.
+    pub mk: usize,
+    /// `int ll` — c:601, saved line length.
+    pub ll: usize,
+    // `struct zle_region *regions` (c:604) — region_highlights
+    // are persisted separately through `zle_refresh::HighlightManager`;
+    // not snapshotted in the position-save record.
+}
+
 /// Port of `mod_export void zle_save_positions(void)` from
 /// Src/Zle/zle_utils.c:619.
 ///
@@ -320,25 +339,6 @@ pub fn backdel(ct: i32, _flags: i32) {  // c:1084
      ZLELL.store( ZLELINE.lock().unwrap().len(), std::sync::atomic::Ordering::SeqCst);
      ZLECS.store(start, std::sync::atomic::Ordering::SeqCst);
      ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);                                              // c:1091 CCRIGHT
-}
-
-
-/// Direct port of `struct zle_position` from
-/// `Src/Zle/zle_utils.c:595-605`. One saved-state node in the
-/// zle_positions stack; pushed by `zle_save_positions()` and popped
-/// by `zle_restore_positions()`.
-#[derive(Debug, Clone)]
-#[allow(non_camel_case_types)]
-pub struct zle_position {                                                    // c:595
-    /// `int cs` — c:599, saved cursor position.
-    pub cs: usize,
-    /// `int mk` — c:600, saved mark position.
-    pub mk: usize,
-    /// `int ll` — c:601, saved line length.
-    pub ll: usize,
-    // `struct zle_region *regions` (c:604) — region_highlights
-    // are persisted separately through `zle_refresh::HighlightManager`;
-    // not snapshotted in the position-save record.
 }
 
 /// Port of `foredel(int ct, int flags)` from `Src/Zle/zle_utils.c:1105`. Removes `ct`

@@ -121,6 +121,14 @@ pub fn decpos(pos: &mut usize) {                                             // 
     // c:155 — `alignmultiwordleft(pos, 1)`. No-op for Vec<char>.
 }
 
+
+/// Port of `BMC_BUFSIZE` from `Src/Zle/zle_move.c:49`.
+/// `#define BMC_BUFSIZE MB_CUR_MAX`. Per-cluster buffer size for
+/// the multibyte combining-char walker; UTF-8 needs at most 4 bytes
+/// per codepoint, so this is conservatively 6 to match POSIX
+/// MB_CUR_MAX (some locales use legacy multi-byte encodings up to 6).
+pub const BMC_BUFSIZE: usize = 6;                                            // c:161
+
 /// Port of `backwardmetafiedchar(char *start, char *endptr, convchar_t *retchr)` from Src/Zle/zle_move.c:170.
 /// WARNING: param names don't match C — Rust=(zle) vs C=(start, endptr, retchr)
 pub fn backwardmetafiedchar() {   // c:170
@@ -132,14 +140,6 @@ pub fn backwardmetafiedchar() {   // c:170
         crate::ported::zle::zle_main::ZLECS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
-
-
-/// Port of `BMC_BUFSIZE` from `Src/Zle/zle_move.c:49`.
-/// `#define BMC_BUFSIZE MB_CUR_MAX`. Per-cluster buffer size for
-/// the multibyte combining-char walker; UTF-8 needs at most 4 bytes
-/// per codepoint, so this is conservatively 6 to match POSIX
-/// MB_CUR_MAX (some locales use legacy multi-byte encodings up to 6).
-pub const BMC_BUFSIZE: usize = 6;                                            // c:161
 
 /// Port of `beginningofline(char **args)` from Src/Zle/zle_move.c:298.
 pub fn beginningofline() -> i32 {  // c:298

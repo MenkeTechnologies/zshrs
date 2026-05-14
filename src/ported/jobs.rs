@@ -43,19 +43,85 @@ pub mod stat {
     pub const ATTACH:   i32 = 1 << 10; // Attached to tty
 }
 
-/// Special process status values
-pub const SP_RUNNING: i32 = -1;
+/// Time difference for timeval (from jobs.c dtime_tv)
+/// Port of `dtime_tv(struct timeval *dt, struct timeval *t1, struct timeval *t2)` from `Src/jobs.c:137`.
+pub fn dtime_tv(dt: &mut Duration, t1: &Duration, t2: &Duration) -> Duration {
+    if *t2 > *t1 {
+        *dt = *t2 - *t1;
+    } else {
+        *dt = Duration::ZERO;
+    }
+    *dt
+}
 
-/// Maximum pipestats
-pub const MAX_PIPESTATS: usize = 256;
+/// Time difference for timespec (from jobs.c dtime_ts)
+/// Port of `dtime_ts(struct timespec *dt, struct timespec *t1, struct timespec *t2)` from `Src/jobs.c:152`.
+/// WARNING: param names don't match C — Rust=(t1, t2) vs C=(dt, t1, t2)
+pub fn dtime_ts(t1: &Instant, t2: &Instant) -> Duration {
+    if *t2 > *t1 {
+        t2.duration_since(*t1)
+    } else {
+        Duration::ZERO
+    }
+}
 
-/// Job-table allocation chunk size.
-/// Port of `MAXJOBS_ALLOC` from `Src/zsh.h:1107`.
-pub const MAXJOBS_ALLOC: usize = 50;
+// change job table entry from stopped to running                           // c:163
+/// Port of `makerunning(Job jn)` from `Src/jobs.c:167`.
+///
+/// C body:
+/// ```c
+/// jn->stat &= ~STAT_STOPPED;
+/// for (pn = jn->procs; pn; pn = pn->next)
+///     if (WIFSTOPPED(pn->status))
+///         pn->status = SP_RUNNING;
+/// if (jn->stat & STAT_SUPERJOB)
+///     makerunning(jobtab + jn->other);
+/// ```
+///
+/// Clears the STOPPED flag on the job, resets each stopped process
+/// to SP_RUNNING, and recurses into the linked subjob if this is a
+// change job table entry from stopped to running                           // c:167
+/// superjob. The previous Rust port called `job.make_running()`
+/// which mutates only the single Job — missing the superjob
+/// recursion. This port walks the table to handle the recursion.
+pub fn makerunning(jobtab: &mut [Job], idx: usize) {
+    if idx >= jobtab.len() {
+        return;
+    }
+    let other = jobtab[idx].other as usize;
+    let is_super = (jobtab[idx].stat & stat::SUPERJOB) != 0;
+    {
+        let job = &mut jobtab[idx];
+        job.stat &= !stat::STOPPED;
+        for proc in &mut job.procs {
+            if proc.is_stopped() {
+                proc.status = SP_RUNNING;
+            }
+        }
+    }
+    if is_super && other != idx && other < jobtab.len() {
+        makerunning(jobtab, other);
+    }
+}
 
-/// Hard upper bound on job-table growth.
-/// Port of `MAX_MAXJOBS` from `Src/jobs.c:2221`.
-pub const MAX_MAXJOBS: usize = 1000;
+// Find process and job associated with pid.                                // c:191
+// Return 1 if search was successful, else return 0.                        // c:191
+/// Find a process by PID in the job table (from jobs.c findproc)
+pub fn findproc(jobtab: &[Job], pid: i32) -> Option<(usize, usize, bool)> {
+    for (ji, job) in jobtab.iter().enumerate() {
+        for (pi, proc) in job.procs.iter().enumerate() {
+            if proc.pid == pid {
+                return Some((ji, pi, false));
+            }
+        }
+        for (pi, proc) in job.auxprocs.iter().enumerate() {
+            if proc.pid == pid {
+                return Some((ji, pi, true));
+            }
+        }
+    }
+    None
+}
 
 // `TimeInfo` / `ChildTimes` deleted — both folded into canonical
 // `timeinfo` at `zsh_h.rs:2153` (direct port of `struct timeinfo`
@@ -173,168 +239,6 @@ impl Job {
 
 use std::sync::{Mutex, OnceLock};
 use crate::zsh_h::{isset, POSIXBUILTINS};
-
-// the process group of the shell at startup                                 // c:54
-/// Port of `origpgrp` from `Src/jobs.c:58`.
-pub static ORIGPGRP: OnceLock<Mutex<i32>> = OnceLock::new();
-
-// the process group of the shell                                            // c:60
-/// Port of `mypgrp` from `Src/jobs.c:63`.
-pub static MYPGRP: OnceLock<Mutex<i32>> = OnceLock::new();
-
-// the last process group to attach to the terminal                          // c:66
-/// Port of `last_attached_pgrp` from `Src/jobs.c:68`.
-pub static LAST_ATTACHED_PGRP: OnceLock<Mutex<i32>> = OnceLock::new();
-
-// the job we are working on, or -1 if none                                  // c:70
-/// Port of `thisjob` from `Src/jobs.c:73`.
-pub static THISJOB: OnceLock<Mutex<i32>> = OnceLock::new();
-
-// the current job (%+)                                                      // c:75
-/// Port of `curjob` from `Src/jobs.c:78`.
-pub static CURJOB: OnceLock<Mutex<i32>> = OnceLock::new();
-
-// the previous job (%-) */                                                  // c:80
-/// Port of `prevjob` from `Src/jobs.c:83`.
-pub static PREVJOB: OnceLock<Mutex<i32>> = OnceLock::new();
-
-// the job table                                                             // c:85
-/// Port of `jobtab` from `Src/jobs.c:88`.
-pub static JOBTAB: OnceLock<Mutex<Vec<Job>>> = OnceLock::new();
-
-// Size of the job table.                                                    // c:91
-/// Port of `jobtabsize` from `Src/jobs.c:93`.
-pub static JOBTABSIZE: OnceLock<Mutex<usize>> = OnceLock::new();
-
-// The highest numbered job in the jobtable                                  // c:96
-/// Port of `maxjob` from `Src/jobs.c:98`.
-pub static MAXJOB: OnceLock<Mutex<usize>> = OnceLock::new();
-
-// If we have entered a subshell, the original shell's job table.            // c:100
-/// Port of `oldjobtab` from `Src/jobs.c:101`.
-static OLDJOBTAB: OnceLock<Mutex<Vec<Job>>> = OnceLock::new();
-
-// The size of that.                                                         // c:103
-/// Port of `oldmaxjob` from `Src/jobs.c:104`.
-static OLDMAXJOB: OnceLock<Mutex<usize>> = OnceLock::new();
-
-// 1 if ttyctl -f has been executed                                          // c:119
-/// Port of `ttyfrozen` from `Src/jobs.c:721`.
-pub static TTYFROZEN: OnceLock<Mutex<i32>> = OnceLock::new();
-
-// pipestats array                                                           // c:131
-/// Port of `numpipestats` from `Src/jobs.c:721`.
-pub static NUMPIPESTATS: OnceLock<Mutex<usize>> = OnceLock::new();
-/// Port of `pipestats` from `Src/jobs.c:721`.
-pub static PIPESTATS: OnceLock<Mutex<[i32; MAX_PIPESTATS]>> = OnceLock::new();
-
-/// Time difference for timeval (from jobs.c dtime_tv)
-/// Port of `dtime_tv(struct timeval *dt, struct timeval *t1, struct timeval *t2)` from `Src/jobs.c:137`.
-pub fn dtime_tv(dt: &mut Duration, t1: &Duration, t2: &Duration) -> Duration {
-    if *t2 > *t1 {
-        *dt = *t2 - *t1;
-    } else {
-        *dt = Duration::ZERO;
-    }
-    *dt
-}
-
-/// Time difference for timespec (from jobs.c dtime_ts)
-/// Port of `dtime_ts(struct timespec *dt, struct timespec *t1, struct timespec *t2)` from `Src/jobs.c:152`.
-/// WARNING: param names don't match C — Rust=(t1, t2) vs C=(dt, t1, t2)
-pub fn dtime_ts(t1: &Instant, t2: &Instant) -> Duration {
-    if *t2 > *t1 {
-        t2.duration_since(*t1)
-    } else {
-        Duration::ZERO
-    }
-}
-
-// change job table entry from stopped to running                           // c:163
-/// Port of `makerunning(Job jn)` from `Src/jobs.c:167`.
-///
-/// C body:
-/// ```c
-/// jn->stat &= ~STAT_STOPPED;
-/// for (pn = jn->procs; pn; pn = pn->next)
-///     if (WIFSTOPPED(pn->status))
-///         pn->status = SP_RUNNING;
-/// if (jn->stat & STAT_SUPERJOB)
-///     makerunning(jobtab + jn->other);
-/// ```
-///
-/// Clears the STOPPED flag on the job, resets each stopped process
-/// to SP_RUNNING, and recurses into the linked subjob if this is a
-// change job table entry from stopped to running                           // c:167
-/// superjob. The previous Rust port called `job.make_running()`
-/// which mutates only the single Job — missing the superjob
-/// recursion. This port walks the table to handle the recursion.
-pub fn makerunning(jobtab: &mut [Job], idx: usize) {
-    if idx >= jobtab.len() {
-        return;
-    }
-    let other = jobtab[idx].other as usize;
-    let is_super = (jobtab[idx].stat & stat::SUPERJOB) != 0;
-    {
-        let job = &mut jobtab[idx];
-        job.stat &= !stat::STOPPED;
-        for proc in &mut job.procs {
-            if proc.is_stopped() {
-                proc.status = SP_RUNNING;
-            }
-        }
-    }
-    if is_super && other != idx && other < jobtab.len() {
-        makerunning(jobtab, other);
-    }
-}
-
-/// Default time format (from jobs.c DEFAULT_TIMEFMT)
-pub const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total";
-
-// Find process and job associated with pid.                                // c:191
-// Return 1 if search was successful, else return 0.                        // c:191
-/// Find a process by PID in the job table (from jobs.c findproc)
-pub fn findproc(jobtab: &[Job], pid: i32) -> Option<(usize, usize, bool)> {
-    for (ji, job) in jobtab.iter().enumerate() {
-        for (pi, proc) in job.procs.iter().enumerate() {
-            if proc.pid == pid {
-                return Some((ji, pi, false));
-            }
-        }
-        for (pi, proc) in job.auxprocs.iter().enumerate() {
-            if proc.pid == pid {
-                return Some((ji, pi, true));
-            }
-        }
-    }
-    None
-}
-
-/// Port of `struct bgstatus` from `Src/jobs.c:2295`.
-/// One `(pid, status)` pair the bg-status tracker records when a
-/// background process exits so `wait $pid` can read its $?.
-#[allow(non_camel_case_types)]
-#[derive(Clone, Copy)]
-pub struct bgstatus {                                                        // c:2296
-    pub pid: i32,                                                            // c:2297
-    pub status: i32,                                                         // c:2298
-}
-
-/// Port of `typedef struct bgstatus *Bgstatus;` (jobs.c:2300).
-pub type Bgstatus = Box<bgstatus>;                                           // c:2300
-
-/// Port of `static LinkList bgstatus_list;` (jobs.c:2302). Insertion-
-/// ordered list so the oldest entry can be evicted when the cap is
-/// reached. Stored as `Vec<bgstatus>` since the order is the only
-/// thing we'd ever need from a linked list here.
-pub static bgstatus_list: std::sync::Mutex<Vec<bgstatus>> =                  // c:2302
-    std::sync::Mutex::new(Vec::new());
-
-/// Port of `static long bgstatus_count;` (jobs.c:2304). Reaches
-/// `_SC_CHILD_MAX` and stops (addbgstatus then evicts oldest).
-pub static bgstatus_count: std::sync::atomic::AtomicI64 =                    // c:2304
-    std::sync::atomic::AtomicI64::new(0);
 
 /// Port of `hasprocs(int job)` from `Src/jobs.c:243`.
 ///
@@ -1517,6 +1421,10 @@ pub fn init_jobs(argv: &[String], envp: &[String]) -> crate::exec_jobs::JobTable
     table                                                                    // c:2210 done
 }
 
+/// Hard upper bound on job-table growth.
+/// Port of `MAX_MAXJOBS` from `Src/jobs.c:2221`.
+pub const MAX_MAXJOBS: usize = 1000;
+
 /// Port of `expandjobtab()` from `Src/jobs.c:2225`.
 ///
 /// C body:
@@ -1556,6 +1464,31 @@ pub fn maybeshrinkjobtab(jobtab: &mut Vec<Job>) {
         jobtab.pop();
     }
 }
+
+/// Port of `struct bgstatus` from `Src/jobs.c:2295`.
+/// One `(pid, status)` pair the bg-status tracker records when a
+/// background process exits so `wait $pid` can read its $?.
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub struct bgstatus {                                                        // c:2296
+    pub pid: i32,                                                            // c:2297
+    pub status: i32,                                                         // c:2298
+}
+
+/// Port of `typedef struct bgstatus *Bgstatus;` (jobs.c:2300).
+pub type Bgstatus = Box<bgstatus>;                                           // c:2300
+
+/// Port of `static LinkList bgstatus_list;` (jobs.c:2302). Insertion-
+/// ordered list so the oldest entry can be evicted when the cap is
+/// reached. Stored as `Vec<bgstatus>` since the order is the only
+/// thing we'd ever need from a linked list here.
+pub static bgstatus_list: std::sync::Mutex<Vec<bgstatus>> =                  // c:2302
+    std::sync::Mutex::new(Vec::new());
+
+/// Port of `static long bgstatus_count;` (jobs.c:2304). Reaches
+/// `_SC_CHILD_MAX` and stops (addbgstatus then evicts oldest).
+pub static bgstatus_count: std::sync::atomic::AtomicI64 =                    // c:2304
+    std::sync::atomic::AtomicI64::new(0);
 
 /// Direct port of `void addbgstatus(pid_t pid, int status)` from
 /// `Src/jobs.c:2325`. Caps the global `bgstatus_list` at
@@ -2379,6 +2312,73 @@ pub fn release_pgrp() {                                                      // 
             .lock().expect("mypgrp poisoned") = origpgrp;
     }
 }
+
+/// Special process status values
+pub const SP_RUNNING: i32 = -1;
+
+/// Maximum pipestats
+pub const MAX_PIPESTATS: usize = 256;
+
+/// Job-table allocation chunk size.
+/// Port of `MAXJOBS_ALLOC` from `Src/zsh.h:1107`.
+pub const MAXJOBS_ALLOC: usize = 50;
+
+// the process group of the shell at startup                                 // c:54
+/// Port of `origpgrp` from `Src/jobs.c:58`.
+pub static ORIGPGRP: OnceLock<Mutex<i32>> = OnceLock::new();
+
+// the process group of the shell                                            // c:60
+/// Port of `mypgrp` from `Src/jobs.c:63`.
+pub static MYPGRP: OnceLock<Mutex<i32>> = OnceLock::new();
+
+// the last process group to attach to the terminal                          // c:66
+/// Port of `last_attached_pgrp` from `Src/jobs.c:68`.
+pub static LAST_ATTACHED_PGRP: OnceLock<Mutex<i32>> = OnceLock::new();
+
+// the job we are working on, or -1 if none                                  // c:70
+/// Port of `thisjob` from `Src/jobs.c:73`.
+pub static THISJOB: OnceLock<Mutex<i32>> = OnceLock::new();
+
+// the current job (%+)                                                      // c:75
+/// Port of `curjob` from `Src/jobs.c:78`.
+pub static CURJOB: OnceLock<Mutex<i32>> = OnceLock::new();
+
+// the previous job (%-) */                                                  // c:80
+/// Port of `prevjob` from `Src/jobs.c:83`.
+pub static PREVJOB: OnceLock<Mutex<i32>> = OnceLock::new();
+
+// the job table                                                             // c:85
+/// Port of `jobtab` from `Src/jobs.c:88`.
+pub static JOBTAB: OnceLock<Mutex<Vec<Job>>> = OnceLock::new();
+
+// Size of the job table.                                                    // c:91
+/// Port of `jobtabsize` from `Src/jobs.c:93`.
+pub static JOBTABSIZE: OnceLock<Mutex<usize>> = OnceLock::new();
+
+// The highest numbered job in the jobtable                                  // c:96
+/// Port of `maxjob` from `Src/jobs.c:98`.
+pub static MAXJOB: OnceLock<Mutex<usize>> = OnceLock::new();
+
+// If we have entered a subshell, the original shell's job table.            // c:100
+/// Port of `oldjobtab` from `Src/jobs.c:101`.
+static OLDJOBTAB: OnceLock<Mutex<Vec<Job>>> = OnceLock::new();
+
+// The size of that.                                                         // c:103
+/// Port of `oldmaxjob` from `Src/jobs.c:104`.
+static OLDMAXJOB: OnceLock<Mutex<usize>> = OnceLock::new();
+
+// 1 if ttyctl -f has been executed                                          // c:119
+/// Port of `ttyfrozen` from `Src/jobs.c:721`.
+pub static TTYFROZEN: OnceLock<Mutex<i32>> = OnceLock::new();
+
+// pipestats array                                                           // c:131
+/// Port of `numpipestats` from `Src/jobs.c:721`.
+pub static NUMPIPESTATS: OnceLock<Mutex<usize>> = OnceLock::new();
+/// Port of `pipestats` from `Src/jobs.c:721`.
+pub static PIPESTATS: OnceLock<Mutex<[i32; MAX_PIPESTATS]>> = OnceLock::new();
+
+/// Default time format (from jobs.c DEFAULT_TIMEFMT)
+pub const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total";
 
 /// Wait for a single specific job (from jobs.c waitonejob)
 pub fn waitonejob(job: &mut Job) {

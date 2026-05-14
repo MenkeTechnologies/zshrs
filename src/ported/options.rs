@@ -16,16 +16,6 @@ use crate::ported::zsh_h::{APPENDHISTORY, BANGHIST, CHASELINKS, GLOBDOTS, HASHCM
 use crate::ported::zsh_h::OPT_SIZE;
 use crate::ported::zsh_h as zh;
 
-/// Port of `mod_export int emulation;` from `Src/options.c:36`.
-/// Current emulation bitmap; one of EMULATE_ZSH / EMULATE_KSH /
-/// EMULATE_SH / EMULATE_CSH. Tested via the `EMULATION(bits)` macro
-/// at zsh.h:2347 (`(emulation & bits) != 0`). Default 0 — the
-/// initial value matches C's zero-initialised BSS slot; `setup_init`
-/// calls `installemulation()` (options.c:523) early in startup to
-/// flip the right bit.
-#[allow(non_upper_case_globals)]
-pub static emulation: AtomicI32 = AtomicI32::new(0);                         // c:36
-
 /// Emulation flags for option defaults
 // `#define OPT_X EMULATE_X` (options.c:55-58) — the option-default
 // bits ARE the emulation bits. Direct mirror of the C macros.
@@ -111,52 +101,6 @@ pub static zshletters: &[(char, &str, bool)] = &[
     ('y', "shwordsplit", false),
 ];
 
-/// Ksh single-letter options
-pub static KSH_LETTERS: &[(char, &str, bool)] = &[
-    ('C', "clobber", true),
-    ('T', "trapsasync", false),
-    ('X', "markdirs", false),
-    ('a', "allexport", false),
-    ('b', "notify", false),
-    ('e', "errexit", false),
-    ('f', "glob", true),
-    ('i', "interactive", false),
-    ('l', "login", false),
-    ('m', "monitor", false),
-    ('n', "exec", true),
-    ('p', "privileged", false),
-    ('s', "shinstdin", false),
-    ('t', "singlecommand", false),
-    ('u', "unset", true),
-    ('v', "verbose", false),
-    ('x', "xtrace", false),
-];
-
-// `ShellOptions` struct + `impl ShellOptions` (14 methods) + `impl
-// Default for ShellOptions` DELETED. C zsh holds option state in
-// two file-scope globals at `Src/options.c:33-46`:
-//
-//     int emulation;                              // c:33
-//     mod_export char opts[OPT_SIZE];             // c:43
-//
-// Rust port mirrors `opts[]` via `OPTS_LIVE` (already at
-// `options.rs:1259+`) and `emulation` via `EMULATION` below. Every
-// former method becomes a free fn matching a C entry point
-// (`emulate` c:533, `installemulation` c:523, `dosetopt` c:735,
-// `optlookup` c:684, `optlookupc` c:721, `createoptiontable` c:471).
-
-/// Port of file-static `int emulation;` at `Src/options.c:33`.
-/// Holds the current emulation bit (`EMULATE_ZSH`/`CSH`/`KSH`/`SH`,
-/// OR-able with `EMULATE_FULLY`).
-pub static EMULATION: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(crate::ported::zsh_h::EMULATE_ZSH);
-
-/// `EMULATE_FULLY` bit (`Src/zsh.h:2354`) tracked separately so
-/// `install_emulation_defaults` can re-OR it into the emulation
-/// bitmap.
-pub static FULLY_EMULATING: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
 /// C body (c:450-466):
 /// ```c
 /// optno = on->optno; if (optno < 0) optno = -optno;
@@ -188,275 +132,6 @@ pub fn printoptionnode(hn: &str, set: bool) {                                // 
         println!("{}", hn);                                                  // c:465
     }
 }
-
-
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Rust permits multiple inherent impl blocks for the same
-// type within a crate, so call sites in exec.rs are unchanged.
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
-
-// END moved-from-exec-rs
-
-// ===========================================================
-// Static + helpers moved verbatim from src/ported/exec.rs.
-// These are the C options.c port-of-record (canonical option
-// name list, default values, normalization, pattern matching,
-// emulation-mode option deltas, and the option-printing
-// helpers). Their C counterparts all live in
-// src/zsh/Src/options.c (`optns[]` table, `defset()`,
-// `installemulation()`, `printoptions()`).
-// ===========================================================
-
-// BEGIN moved-from-exec-rs (statics)
-use std::collections::HashSet;
-use std::sync::LazyLock;
-use crate::zsh_h::{isset, EMULATE_ZSH};
-
-pub(crate) static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    [
-        "aliases",
-        "allexport",
-        "alwayslastprompt",
-        "alwaystoend",
-        "appendcreate",
-        "appendhistory",
-        "autocd",
-        "autocontinue",
-        "autolist",
-        "automenu",
-        "autonamedirs",
-        "autoparamkeys",
-        "autoparamslash",
-        "autopushd",
-        "autoremoveslash",
-        "autoresume",
-        "badpattern",
-        "banghist",
-        "bareglobqual",
-        "bashautolist",
-        "bashrematch",
-        "beep",
-        "bgnice",
-        "braceccl",
-        "bsdecho",
-        "caseglob",
-        "casematch",
-        "cbases",
-        "cdablevars",
-        "cdsilent",
-        "chasedots",
-        "chaselinks",
-        "checkjobs",
-        "checkrunningjobs",
-        "clobber",
-        "combiningchars",
-        "completealiases",
-        "completeinword",
-        "continueonerror",
-        "correct",
-        "correctall",
-        "cprecedences",
-        "cshjunkiehistory",
-        "cshjunkieloops",
-        "cshjunkiequotes",
-        "cshnullcmd",
-        "cshnullglob",
-        "debugbeforecmd",
-        "dotglob",
-        "dvorak",
-        "emacs",
-        "equals",
-        "errexit",
-        "errreturn",
-        "evallineno",
-        "exec",
-        "extendedglob",
-        "extendedhistory",
-        "flowcontrol",
-        "forcefloat",
-        "functionargzero",
-        "glob",
-        "globassign",
-        "globcomplete",
-        "globdots",
-        "globstarshort",
-        "globsubst",
-        "globalexport",
-        "globalrcs",
-        "hashall",
-        "hashcmds",
-        "hashdirs",
-        "hashexecutablesonly",
-        "hashlistall",
-        "histallowclobber",
-        "histappend",
-        "histbeep",
-        "histexpand",
-        "histexpiredupsfirst",
-        "histfcntllock",
-        "histfindnodups",
-        "histignorealldups",
-        "histignoredups",
-        "histignorespace",
-        "histlexwords",
-        "histnofunctions",
-        "histnostore",
-        "histreduceblanks",
-        "histsavebycopy",
-        "histsavenodups",
-        "histsubstpattern",
-        "histverify",
-        "hup",
-        "ignorebraces",
-        "ignoreclosebraces",
-        "ignoreeof",
-        "incappendhistory",
-        "incappendhistorytime",
-        "interactive",
-        "interactivecomments",
-        "ksharrays",
-        "kshautoload",
-        "kshglob",
-        "kshoptionprint",
-        "kshtypeset",
-        "kshzerosubscript",
-        "listambiguous",
-        "listbeep",
-        "listpacked",
-        "listrowsfirst",
-        "listtypes",
-        "localloops",
-        "localoptions",
-        "localpatterns",
-        "localtraps",
-        "log",
-        "login",
-        "longlistjobs",
-        "magicequalsubst",
-        "mailwarn",
-        "mailwarning",
-        "markdirs",
-        "menucomplete",
-        "monitor",
-        "multibyte",
-        "multifuncdef",
-        "multios",
-        "nomatch",
-        "notify",
-        "nullglob",
-        "numericglobsort",
-        "octalzeroes",
-        "onecmd",
-        "overstrike",
-        "pathdirs",
-        "pathscript",
-        "physical",
-        "pipefail",
-        "posixaliases",
-        "posixargzero",
-        "posixbuiltins",
-        "posixcd",
-        "posixidentifiers",
-        "posixjobs",
-        "posixstrings",
-        "posixtraps",
-        "printeightbit",
-        "printexitvalue",
-        "privileged",
-        "promptbang",
-        "promptcr",
-        "promptpercent",
-        "promptsp",
-        "promptsubst",
-        "promptvars",
-        "pushdignoredups",
-        "pushdminus",
-        "pushdsilent",
-        "pushdtohome",
-        "rcexpandparam",
-        "rcquotes",
-        "rcs",
-        "recexact",
-        "rematchpcre",
-        "restricted",
-        "rmstarsilent",
-        "rmstarwait",
-        "sharehistory",
-        "shfileexpansion",
-        "shglob",
-        "shinstdin",
-        "shnullcmd",
-        "shoptionletters",
-        "shortloops",
-        "shortrepeat",
-        "shwordsplit",
-        "singlecommand",
-        "singlelinezle",
-        "sourcetrace",
-        "stdin",
-        "sunkeyboardhack",
-        "trackall",
-        "transientrprompt",
-        "trapsasync",
-        "typesetsilent",
-        "typesettounset",
-        "unset",
-        "verbose",
-        "vi",
-        "warncreateglobal",
-        "warnnestedvar",
-        "xtrace",
-        "zle",
-        // bash/ksh-compat aliases — the canonical zsh names live in
-        // alias-resolution match in set_option (port of optns[]:269-280),
-        // but for the runtime
-        // `setopt`/`unsetopt` "no such option" check we accept the
-        // alias spellings too so scripts written for bash/ksh (e.g.
-        // p10k's `setopt brace_expand`, `dotglob` users) don't error.
-        "braceexpand",   // alias of `noignorebraces`
-        "dotglob",       // alias of `globdots`
-        "hashall",       // alias of `hashcmds`
-        "histappend",    // alias of `appendhistory`
-        "histexpand",    // alias of `banghist`
-        "log",           // alias of `nohistnofunctions`
-        "mailwarn",      // alias of `mailwarning`
-        "onecmd",        // alias of `singlecommand`
-        "physical",      // alias of `chaselinks`
-        "promptvars",    // alias of `promptsubst`
-    ]
-    .into_iter()
-    .collect()
-});
-// END moved-from-exec-rs (statics)
-
-// BEGIN moved-from-exec-rs (helpers)
-// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
-
-// END moved-from-exec-rs (helpers)
-
-// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
-
-
-// ===========================================================
-// Direct ports of the static option-table builders / lookup /
-// printers from Src/options.c. The Rust executor stores option
-// state as `HashMap<String, bool>` on `ShellExecutor`; the C
-// source instead hangs everything off the global `optiontab[]`
-// array indexed by `OPT_*` enum constants. These free-fn entries
-// satisfy ABI/name parity for the drift gate; live state is
-// owned by the executor.
-// ===========================================================
-
-/// Sentinel returned by `optlookup` when no matching option exists.
-/// Mirrors the `OPT_INVALID` enum value the C source returns at
-/// Src/options.c:714.
-pub const OPT_INVALID: i32 = -10000;
 
 // =====================================================================
 // Per-emulation option-set masks — `Src/options.c:55-67`. The OPT_CSH
@@ -592,6 +267,35 @@ pub fn emulate(mode: &str, fully: bool) {                                    // 
     }
 }
 
+
+
+// ===========================================================
+// Methods moved verbatim from src/ported/exec.rs because their
+// C counterpart's source file maps 1:1 to this Rust module.
+// Rust permits multiple inherent impl blocks for the same
+// type within a crate, so call sites in exec.rs are unchanged.
+// ===========================================================
+
+// BEGIN moved-from-exec-rs
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
+// END moved-from-exec-rs
+
+// ===========================================================
+// Static + helpers moved verbatim from src/ported/exec.rs.
+// These are the C options.c port-of-record (canonical option
+// name list, default values, normalization, pattern matching,
+// emulation-mode option deltas, and the option-printing
+// helpers). Their C counterparts all live in
+// src/zsh/Src/options.c (`optns[]` table, `defset()`,
+// `installemulation()`, `printoptions()`).
+// ===========================================================
+
+// BEGIN moved-from-exec-rs (statics)
+use std::collections::HashSet;
+use std::sync::LazyLock;
+use crate::zsh_h::{isset, EMULATE_ZSH};
+
 /// `setopt OPT` builtin per-arg dispatch.
 /// Port of `setoption(HashNode hn, int value)` from Src/options.c:573 — the inner loop
 /// of `bin_setopt`. Returns 0 on success, -1 on bad option name.
@@ -603,21 +307,6 @@ pub fn setoption(hn: &str, value: i32) -> i32 {
     opt_state_set(hn, value != 0);                                         // c:735+ dosetopt body
     0
 }
-
-/// Port of `static int setemulate_emulation;` from `Src/options.c:496`.
-/// The target emulation bitmap, written by `installemulation` and
-/// read by the `setemulate` per-option callback (c:518).
-static SETEMULATE_EMULATION: std::sync::atomic::AtomicI32 =                  // c:496
-    std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `static char *setemulate_opts;` from `Src/options.c:501`.
-/// The precomputed `new_opts[]` array `setemulate` writes into. C
-/// stores it as a flat `char[]` indexed by `optno`; the Rust port
-/// keeps it as a HashMap<String, bool> since the runtime is FNV-
-/// hashed instead of densely indexed.
-static SETEMULATE_OPTS: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, bool>>,
-> = std::sync::OnceLock::new();                                              // c:501
 
 /// Direct port of `bin_setopt(char *nam, char **args, UNUSED(Options ops), int isun)` from Src/options.c:580.
 /// C body (c:585-680):
@@ -974,33 +663,6 @@ pub fn printoptionnodestate(name: &str, value: bool, hadplus: bool) {        // 
     }
 }
 
-// =====================================================================
-// !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
-// =====================================================================
-//
-// `OPTS_LIVE` is the process-wide option-state map that bin_setopt
-// reads + writes. The C source uses a flat `char opts[OPTSIZE]`
-// global indexed by optno (Src/options.c:36 + accessors `isset(o)`,
-// `opts[o] = 1` etc.). Rust uses an RwLock<HashMap<String,bool>>
-// because optno is FNV-hashed (no flat index range) and HashMap is
-// the natural Rust mirror of "name → set?" lookup.
-//
-// Per PORT_PLAN.md Phase 3 (bucket-2 read-mostly): options are read
-// on every command dispatch (`isset(ERREXIT)`, `isset(INTERACTIVE)`,
-// etc.) but written only on `setopt`/`unsetopt`. `RwLock` lets
-// parallel readers proceed without serialising on a mutex.
-//
-// !!! Do NOT add a parallel options store elsewhere. Every read /
-// write of an option's set-state in the lib must route through
-// `opt_state_get` / `opt_state_set` to stay coherent with bin_setopt.
-// The ShellExecutor.options HashMap should eventually become a
-// read-through cache of this map. !!!
-// =====================================================================
-
-static OPTS_LIVE: std::sync::OnceLock<
-    std::sync::RwLock<std::collections::HashMap<String, bool>>> =
-    std::sync::OnceLock::new();
-
 /// Direct port of `printoptionlist()` from Src/options.c:938.
 /// C body (c:945-955):
 /// ```c
@@ -1101,6 +763,344 @@ pub fn print_emulate_option(name: &str, value: bool, _fully: bool) {         // 
     }
     println!("{}", name);                                                    // c:996
 }
+
+/// Port of `mod_export int emulation;` from `Src/options.c:36`.
+/// Current emulation bitmap; one of EMULATE_ZSH / EMULATE_KSH /
+/// EMULATE_SH / EMULATE_CSH. Tested via the `EMULATION(bits)` macro
+/// at zsh.h:2347 (`(emulation & bits) != 0`). Default 0 — the
+/// initial value matches C's zero-initialised BSS slot; `setup_init`
+/// calls `installemulation()` (options.c:523) early in startup to
+/// flip the right bit.
+#[allow(non_upper_case_globals)]
+pub static emulation: AtomicI32 = AtomicI32::new(0);                         // c:36
+
+/// Ksh single-letter options
+pub static KSH_LETTERS: &[(char, &str, bool)] = &[
+    ('C', "clobber", true),
+    ('T', "trapsasync", false),
+    ('X', "markdirs", false),
+    ('a', "allexport", false),
+    ('b', "notify", false),
+    ('e', "errexit", false),
+    ('f', "glob", true),
+    ('i', "interactive", false),
+    ('l', "login", false),
+    ('m', "monitor", false),
+    ('n', "exec", true),
+    ('p', "privileged", false),
+    ('s', "shinstdin", false),
+    ('t', "singlecommand", false),
+    ('u', "unset", true),
+    ('v', "verbose", false),
+    ('x', "xtrace", false),
+];
+
+// `ShellOptions` struct + `impl ShellOptions` (14 methods) + `impl
+// Default for ShellOptions` DELETED. C zsh holds option state in
+// two file-scope globals at `Src/options.c:33-46`:
+//
+//     int emulation;                              // c:33
+//     mod_export char opts[OPT_SIZE];             // c:43
+//
+// Rust port mirrors `opts[]` via `OPTS_LIVE` (already at
+// `options.rs:1259+`) and `emulation` via `EMULATION` below. Every
+// former method becomes a free fn matching a C entry point
+// (`emulate` c:533, `installemulation` c:523, `dosetopt` c:735,
+// `optlookup` c:684, `optlookupc` c:721, `createoptiontable` c:471).
+
+/// Port of file-static `int emulation;` at `Src/options.c:33`.
+/// Holds the current emulation bit (`EMULATE_ZSH`/`CSH`/`KSH`/`SH`,
+/// OR-able with `EMULATE_FULLY`).
+pub static EMULATION: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(crate::ported::zsh_h::EMULATE_ZSH);
+
+/// `EMULATE_FULLY` bit (`Src/zsh.h:2354`) tracked separately so
+/// `install_emulation_defaults` can re-OR it into the emulation
+/// bitmap.
+pub static FULLY_EMULATING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    [
+        "aliases",
+        "allexport",
+        "alwayslastprompt",
+        "alwaystoend",
+        "appendcreate",
+        "appendhistory",
+        "autocd",
+        "autocontinue",
+        "autolist",
+        "automenu",
+        "autonamedirs",
+        "autoparamkeys",
+        "autoparamslash",
+        "autopushd",
+        "autoremoveslash",
+        "autoresume",
+        "badpattern",
+        "banghist",
+        "bareglobqual",
+        "bashautolist",
+        "bashrematch",
+        "beep",
+        "bgnice",
+        "braceccl",
+        "bsdecho",
+        "caseglob",
+        "casematch",
+        "cbases",
+        "cdablevars",
+        "cdsilent",
+        "chasedots",
+        "chaselinks",
+        "checkjobs",
+        "checkrunningjobs",
+        "clobber",
+        "combiningchars",
+        "completealiases",
+        "completeinword",
+        "continueonerror",
+        "correct",
+        "correctall",
+        "cprecedences",
+        "cshjunkiehistory",
+        "cshjunkieloops",
+        "cshjunkiequotes",
+        "cshnullcmd",
+        "cshnullglob",
+        "debugbeforecmd",
+        "dotglob",
+        "dvorak",
+        "emacs",
+        "equals",
+        "errexit",
+        "errreturn",
+        "evallineno",
+        "exec",
+        "extendedglob",
+        "extendedhistory",
+        "flowcontrol",
+        "forcefloat",
+        "functionargzero",
+        "glob",
+        "globassign",
+        "globcomplete",
+        "globdots",
+        "globstarshort",
+        "globsubst",
+        "globalexport",
+        "globalrcs",
+        "hashall",
+        "hashcmds",
+        "hashdirs",
+        "hashexecutablesonly",
+        "hashlistall",
+        "histallowclobber",
+        "histappend",
+        "histbeep",
+        "histexpand",
+        "histexpiredupsfirst",
+        "histfcntllock",
+        "histfindnodups",
+        "histignorealldups",
+        "histignoredups",
+        "histignorespace",
+        "histlexwords",
+        "histnofunctions",
+        "histnostore",
+        "histreduceblanks",
+        "histsavebycopy",
+        "histsavenodups",
+        "histsubstpattern",
+        "histverify",
+        "hup",
+        "ignorebraces",
+        "ignoreclosebraces",
+        "ignoreeof",
+        "incappendhistory",
+        "incappendhistorytime",
+        "interactive",
+        "interactivecomments",
+        "ksharrays",
+        "kshautoload",
+        "kshglob",
+        "kshoptionprint",
+        "kshtypeset",
+        "kshzerosubscript",
+        "listambiguous",
+        "listbeep",
+        "listpacked",
+        "listrowsfirst",
+        "listtypes",
+        "localloops",
+        "localoptions",
+        "localpatterns",
+        "localtraps",
+        "log",
+        "login",
+        "longlistjobs",
+        "magicequalsubst",
+        "mailwarn",
+        "mailwarning",
+        "markdirs",
+        "menucomplete",
+        "monitor",
+        "multibyte",
+        "multifuncdef",
+        "multios",
+        "nomatch",
+        "notify",
+        "nullglob",
+        "numericglobsort",
+        "octalzeroes",
+        "onecmd",
+        "overstrike",
+        "pathdirs",
+        "pathscript",
+        "physical",
+        "pipefail",
+        "posixaliases",
+        "posixargzero",
+        "posixbuiltins",
+        "posixcd",
+        "posixidentifiers",
+        "posixjobs",
+        "posixstrings",
+        "posixtraps",
+        "printeightbit",
+        "printexitvalue",
+        "privileged",
+        "promptbang",
+        "promptcr",
+        "promptpercent",
+        "promptsp",
+        "promptsubst",
+        "promptvars",
+        "pushdignoredups",
+        "pushdminus",
+        "pushdsilent",
+        "pushdtohome",
+        "rcexpandparam",
+        "rcquotes",
+        "rcs",
+        "recexact",
+        "rematchpcre",
+        "restricted",
+        "rmstarsilent",
+        "rmstarwait",
+        "sharehistory",
+        "shfileexpansion",
+        "shglob",
+        "shinstdin",
+        "shnullcmd",
+        "shoptionletters",
+        "shortloops",
+        "shortrepeat",
+        "shwordsplit",
+        "singlecommand",
+        "singlelinezle",
+        "sourcetrace",
+        "stdin",
+        "sunkeyboardhack",
+        "trackall",
+        "transientrprompt",
+        "trapsasync",
+        "typesetsilent",
+        "typesettounset",
+        "unset",
+        "verbose",
+        "vi",
+        "warncreateglobal",
+        "warnnestedvar",
+        "xtrace",
+        "zle",
+        // bash/ksh-compat aliases — the canonical zsh names live in
+        // alias-resolution match in set_option (port of optns[]:269-280),
+        // but for the runtime
+        // `setopt`/`unsetopt` "no such option" check we accept the
+        // alias spellings too so scripts written for bash/ksh (e.g.
+        // p10k's `setopt brace_expand`, `dotglob` users) don't error.
+        "braceexpand",   // alias of `noignorebraces`
+        "dotglob",       // alias of `globdots`
+        "hashall",       // alias of `hashcmds`
+        "histappend",    // alias of `appendhistory`
+        "histexpand",    // alias of `banghist`
+        "log",           // alias of `nohistnofunctions`
+        "mailwarn",      // alias of `mailwarning`
+        "onecmd",        // alias of `singlecommand`
+        "physical",      // alias of `chaselinks`
+        "promptvars",    // alias of `promptsubst`
+    ]
+    .into_iter()
+    .collect()
+});
+// END moved-from-exec-rs (statics)
+
+// BEGIN moved-from-exec-rs (helpers)
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
+// END moved-from-exec-rs (helpers)
+
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
+
+// ===========================================================
+// Direct ports of the static option-table builders / lookup /
+// printers from Src/options.c. The Rust executor stores option
+// state as `HashMap<String, bool>` on `ShellExecutor`; the C
+// source instead hangs everything off the global `optiontab[]`
+// array indexed by `OPT_*` enum constants. These free-fn entries
+// satisfy ABI/name parity for the drift gate; live state is
+// owned by the executor.
+// ===========================================================
+
+/// Sentinel returned by `optlookup` when no matching option exists.
+/// Mirrors the `OPT_INVALID` enum value the C source returns at
+/// Src/options.c:714.
+pub const OPT_INVALID: i32 = -10000;
+
+/// Port of `static int setemulate_emulation;` from `Src/options.c:496`.
+/// The target emulation bitmap, written by `installemulation` and
+/// read by the `setemulate` per-option callback (c:518).
+static SETEMULATE_EMULATION: std::sync::atomic::AtomicI32 =                  // c:496
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static char *setemulate_opts;` from `Src/options.c:501`.
+/// The precomputed `new_opts[]` array `setemulate` writes into. C
+/// stores it as a flat `char[]` indexed by `optno`; the Rust port
+/// keeps it as a HashMap<String, bool> since the runtime is FNV-
+/// hashed instead of densely indexed.
+static SETEMULATE_OPTS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, bool>>,
+> = std::sync::OnceLock::new();                                              // c:501
+
+// =====================================================================
+// !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+//
+// `OPTS_LIVE` is the process-wide option-state map that bin_setopt
+// reads + writes. The C source uses a flat `char opts[OPTSIZE]`
+// global indexed by optno (Src/options.c:36 + accessors `isset(o)`,
+// `opts[o] = 1` etc.). Rust uses an RwLock<HashMap<String,bool>>
+// because optno is FNV-hashed (no flat index range) and HashMap is
+// the natural Rust mirror of "name → set?" lookup.
+//
+// Per PORT_PLAN.md Phase 3 (bucket-2 read-mostly): options are read
+// on every command dispatch (`isset(ERREXIT)`, `isset(INTERACTIVE)`,
+// etc.) but written only on `setopt`/`unsetopt`. `RwLock` lets
+// parallel readers proceed without serialising on a mutex.
+//
+// !!! Do NOT add a parallel options store elsewhere. Every read /
+// write of an option's set-state in the lib must route through
+// `opt_state_get` / `opt_state_set` to stay coherent with bin_setopt.
+// The ShellExecutor.options HashMap should eventually become a
+// read-through cache of this map. !!!
+// =====================================================================
+
+static OPTS_LIVE: std::sync::OnceLock<
+    std::sync::RwLock<std::collections::HashMap<String, bool>>> =
+    std::sync::OnceLock::new();
 
 // =====================================================================
 // `default_on_options` mirrors the `defset(on, emulation)` macro

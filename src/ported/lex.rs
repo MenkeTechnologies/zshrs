@@ -41,116 +41,6 @@ use crate::ported::zsh_h::{
 use crate::zsh_h::lex_stack;
 use crate::ztype_h::itok;
 
-/// Port of `static const char ztokens[]` from `Src/lex.c:80`.
-pub const ztokens: &str = "#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\";
-
-// `enum lextok` — port of `Src/zsh.h:304-371`. The full constant set
-// (`NULLTOK`, `SEPER`, …, `TYPESET`) and the `lextok` type alias live
-// in `super::zsh_h:198-262`. Re-export here so external callers can
-// keep saying `lex::lextok` / `tokens::lextok` without reaching into
-// `zsh_h::` directly. `IS_REDIROP()` (port of `Src/zsh.h:408`
-// `#define IS_REDIROP`) lives in `zsh_h:318`.
-pub use super::zsh_h::{
-    lextok, AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BARAMP, BAR_TOK, CASE, COPROC, DAMPER, DBAR,
-    DINANG, DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG,
-    DOUTANGBANG, DOUTBRACK, DOUTPAR, DSEMI, ELIF, ELSE, ENDINPUT, ENVARRAY, ENVSTRING, ESAC, FI,
-    FOR, FOREACH, FUNC, IF, INANGAMP, INANG_TOK, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK,
-    IS_REDIROP, LEXERR, NEWLIN, NOCORRECT, NULLTOK, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG,
-    OUTANG_TOK, OUTBRACE_TOK, OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP, SEMIBAR, SEPER,
-    STRING_LEX, THEN, TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND,
-};
-
-// RedirType / CondType — flat `REDIR_*` (`Src/zsh.h:377-408`) and
-// `COND_*` (`Src/zsh.h:660-679`) constants already live in
-// `super::zsh_h`. Do NOT wrap them in Rust enums here — the wrapper
-// is a fake abstraction (no C counterpart).
-//
-// LX1_* / LX2_* — flat `#define`s in `Src/lex.c:371-405`. The
-// lexer's `gettok` body uses these as the action table for the
-// first / second-tier character dispatch.
-
-/// `#define LX1_BKSLASH 0` (Src/lex.c:371).
-pub const LX1_BKSLASH: u8 = 0;
-/// `#define LX1_COMMENT 1` (Src/lex.c:372).
-pub const LX1_COMMENT: u8 = 1;
-/// `#define LX1_NEWLIN 2` (Src/lex.c:373).
-pub const LX1_NEWLIN: u8 = 2;
-/// `#define LX1_SEMI 3` (Src/lex.c:374).
-pub const LX1_SEMI: u8 = 3;
-/// `#define LX1_AMPER 5` (Src/lex.c:375).
-pub const LX1_AMPER: u8 = 5;
-/// `#define LX1_BAR 6` (Src/lex.c:376).
-pub const LX1_BAR: u8 = 6;
-/// `#define LX1_INPAR 7` (Src/lex.c:377).
-pub const LX1_INPAR: u8 = 7;
-/// `#define LX1_OUTPAR 8` (Src/lex.c:378).
-pub const LX1_OUTPAR: u8 = 8;
-/// `#define LX1_INANG 13` (Src/lex.c:379).
-pub const LX1_INANG: u8 = 13;
-/// `#define LX1_OUTANG 14` (Src/lex.c:380).
-pub const LX1_OUTANG: u8 = 14;
-/// `#define LX1_OTHER 15` (Src/lex.c:381).
-pub const LX1_OTHER: u8 = 15;
-
-/// `#define LX2_BREAK 0` (Src/lex.c:383).
-pub const LX2_BREAK: u8 = 0;
-/// `#define LX2_OUTPAR 1` (Src/lex.c:384).
-pub const LX2_OUTPAR: u8 = 1;
-/// `#define LX2_BAR 2` (Src/lex.c:385).
-pub const LX2_BAR: u8 = 2;
-/// `#define LX2_STRING 3` (Src/lex.c:386).
-pub const LX2_STRING: u8 = 3;
-/// `#define LX2_INBRACK 4` (Src/lex.c:387).
-pub const LX2_INBRACK: u8 = 4;
-/// `#define LX2_OUTBRACK 5` (Src/lex.c:388).
-pub const LX2_OUTBRACK: u8 = 5;
-/// `#define LX2_TILDE 6` (Src/lex.c:389).
-pub const LX2_TILDE: u8 = 6;
-/// `#define LX2_INPAR 7` (Src/lex.c:390).
-pub const LX2_INPAR: u8 = 7;
-/// `#define LX2_INBRACE 8` (Src/lex.c:391).
-pub const LX2_INBRACE: u8 = 8;
-/// `#define LX2_OUTBRACE 9` (Src/lex.c:392).
-pub const LX2_OUTBRACE: u8 = 9;
-/// `#define LX2_OUTANG 10` (Src/lex.c:393).
-pub const LX2_OUTANG: u8 = 10;
-/// `#define LX2_INANG 11` (Src/lex.c:394).
-pub const LX2_INANG: u8 = 11;
-/// `#define LX2_EQUALS 12` (Src/lex.c:395).
-pub const LX2_EQUALS: u8 = 12;
-/// `#define LX2_BKSLASH 13` (Src/lex.c:396).
-pub const LX2_BKSLASH: u8 = 13;
-/// `#define LX2_QUOTE 14` (Src/lex.c:397).
-pub const LX2_QUOTE: u8 = 14;
-/// `#define LX2_DQUOTE 15` (Src/lex.c:398).
-pub const LX2_DQUOTE: u8 = 15;
-/// `#define LX2_BQUOTE 16` (Src/lex.c:399).
-pub const LX2_BQUOTE: u8 = 16;
-/// `#define LX2_COMMA 17` (Src/lex.c:400).
-pub const LX2_COMMA: u8 = 17;
-/// `#define LX2_DASH 18` (Src/lex.c:401).
-pub const LX2_DASH: u8 = 18;
-/// `#define LX2_BANG 19` (Src/lex.c:402).
-pub const LX2_BANG: u8 = 19;
-/// `#define LX2_OTHER 20` (Src/lex.c:403).
-pub const LX2_OTHER: u8 = 20;
-/// `#define LX2_META 21` (Src/lex.c:404).
-pub const LX2_META: u8 = 21;
-
-/// `static unsigned char lexact1[256]` from `Src/lex.c:406`. Per-byte
-/// action table for the first-tier dispatch in `gettok`. Init'd by
-/// `initlextabs()`.
-pub static LEXACT1: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> = std::sync::OnceLock::new();
-/// `static unsigned char lexact2[256]` from `Src/lex.c:406`. Per-byte
-/// action table for the second-tier dispatch in `gettokstr`.
-pub static LEXACT2: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> = std::sync::OnceLock::new();
-/// `static unsigned char lextok2[256]` from `Src/lex.c:406`. Per-byte
-/// token-character map: maps `*` → `Star`, `?` → `Quest`, etc.
-pub static LEXTOK2: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> = std::sync::OnceLock::new();
-
-/// Sentinel: true once `initlextabs()` has populated the tables.
-static LEX_TABS_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 /// zsh/Src/lex.c:216 `lex_context_save`. After save, the lexer
 /// is in a clean state suitable for parsing a nested input (command
 /// substitution body, here-doc terminator, eval'd string).
@@ -443,6 +333,83 @@ pub fn ctxtlex() {
     }
 }
 
+// RedirType / CondType — flat `REDIR_*` (`Src/zsh.h:377-408`) and
+// `COND_*` (`Src/zsh.h:660-679`) constants already live in
+// `super::zsh_h`. Do NOT wrap them in Rust enums here — the wrapper
+// is a fake abstraction (no C counterpart).
+//
+// LX1_* / LX2_* — flat `#define`s in `Src/lex.c:371-405`. The
+// lexer's `gettok` body uses these as the action table for the
+// first / second-tier character dispatch.
+
+/// `#define LX1_BKSLASH 0` (Src/lex.c:371).
+pub const LX1_BKSLASH: u8 = 0;
+/// `#define LX1_COMMENT 1` (Src/lex.c:372).
+pub const LX1_COMMENT: u8 = 1;
+/// `#define LX1_NEWLIN 2` (Src/lex.c:373).
+pub const LX1_NEWLIN: u8 = 2;
+/// `#define LX1_SEMI 3` (Src/lex.c:374).
+pub const LX1_SEMI: u8 = 3;
+/// `#define LX1_AMPER 5` (Src/lex.c:375).
+pub const LX1_AMPER: u8 = 5;
+/// `#define LX1_BAR 6` (Src/lex.c:376).
+pub const LX1_BAR: u8 = 6;
+/// `#define LX1_INPAR 7` (Src/lex.c:377).
+pub const LX1_INPAR: u8 = 7;
+/// `#define LX1_OUTPAR 8` (Src/lex.c:378).
+pub const LX1_OUTPAR: u8 = 8;
+/// `#define LX1_INANG 13` (Src/lex.c:379).
+pub const LX1_INANG: u8 = 13;
+/// `#define LX1_OUTANG 14` (Src/lex.c:380).
+pub const LX1_OUTANG: u8 = 14;
+/// `#define LX1_OTHER 15` (Src/lex.c:381).
+pub const LX1_OTHER: u8 = 15;
+
+/// `#define LX2_BREAK 0` (Src/lex.c:383).
+pub const LX2_BREAK: u8 = 0;
+/// `#define LX2_OUTPAR 1` (Src/lex.c:384).
+pub const LX2_OUTPAR: u8 = 1;
+/// `#define LX2_BAR 2` (Src/lex.c:385).
+pub const LX2_BAR: u8 = 2;
+/// `#define LX2_STRING 3` (Src/lex.c:386).
+pub const LX2_STRING: u8 = 3;
+/// `#define LX2_INBRACK 4` (Src/lex.c:387).
+pub const LX2_INBRACK: u8 = 4;
+/// `#define LX2_OUTBRACK 5` (Src/lex.c:388).
+pub const LX2_OUTBRACK: u8 = 5;
+/// `#define LX2_TILDE 6` (Src/lex.c:389).
+pub const LX2_TILDE: u8 = 6;
+/// `#define LX2_INPAR 7` (Src/lex.c:390).
+pub const LX2_INPAR: u8 = 7;
+/// `#define LX2_INBRACE 8` (Src/lex.c:391).
+pub const LX2_INBRACE: u8 = 8;
+/// `#define LX2_OUTBRACE 9` (Src/lex.c:392).
+pub const LX2_OUTBRACE: u8 = 9;
+/// `#define LX2_OUTANG 10` (Src/lex.c:393).
+pub const LX2_OUTANG: u8 = 10;
+/// `#define LX2_INANG 11` (Src/lex.c:394).
+pub const LX2_INANG: u8 = 11;
+/// `#define LX2_EQUALS 12` (Src/lex.c:395).
+pub const LX2_EQUALS: u8 = 12;
+/// `#define LX2_BKSLASH 13` (Src/lex.c:396).
+pub const LX2_BKSLASH: u8 = 13;
+/// `#define LX2_QUOTE 14` (Src/lex.c:397).
+pub const LX2_QUOTE: u8 = 14;
+/// `#define LX2_DQUOTE 15` (Src/lex.c:398).
+pub const LX2_DQUOTE: u8 = 15;
+/// `#define LX2_BQUOTE 16` (Src/lex.c:399).
+pub const LX2_BQUOTE: u8 = 16;
+/// `#define LX2_COMMA 17` (Src/lex.c:400).
+pub const LX2_COMMA: u8 = 17;
+/// `#define LX2_DASH 18` (Src/lex.c:401).
+pub const LX2_DASH: u8 = 18;
+/// `#define LX2_BANG 19` (Src/lex.c:402).
+pub const LX2_BANG: u8 = 19;
+/// `#define LX2_OTHER 20` (Src/lex.c:403).
+pub const LX2_OTHER: u8 = 20;
+/// `#define LX2_META 21` (Src/lex.c:404).
+pub const LX2_META: u8 = 21;
+
 /// Port of `void initlextabs(void)` from `Src/lex.c:410`. Builds the
 /// three byte-keyed action tables the lexer dispatches on.
 ///
@@ -494,6 +461,214 @@ pub fn initlextabs() {
     t2[b'~' as usize] = Tilde as u8;
     t2[b'#' as usize] = Pound as u8;
     t2[b'^' as usize] = Hat as u8;
+}
+
+/// Initialize lexical state. Direct port of zsh/Src/lex.c:441
+/// `lexinit`. Resets dbparens / nocorrect / lexstop and sets `tok`
+/// to ENDINPUT so the next gettok starts from a known baseline.
+/// Note: `lex_init(input)` already sets equivalent defaults; this
+/// function exists for the rare case a caller wants to reset the
+/// lexer state mid-parse without re-loading input.
+pub fn lexinit() {
+    // lex.c:443 — `nocorrect = dbparens = lexstop = 0;`
+    LEX_NOCORRECT.set(0);
+    LEX_DBPARENS.set(false);
+    LEX_LEXSTOP.set(false);
+    // lex.c:444 — `tok = ENDINPUT;`
+    set_tok(ENDINPUT);
+}
+
+/// Add character to token buffer
+/// Port of `add(int c)` from `Src/lex.c:451`.
+fn add(c: char) {
+    LEX_LEXBUF.with_borrow_mut(|b| b.add(c));
+}
+
+/// Determine if (( is arithmetic or command
+/// Decide whether `( ... )` after a `$` is a math expression
+/// `$((...))` or a command substitution `$(...)`. Direct port of
+/// zsh/Src/lex.c:495 `cmd_or_math`. Tries dquote_parse first;
+/// if it succeeds AND the next char is `)` (closing the second
+/// paren of `(( ))`), it's math. Otherwise rewinds and treats as
+/// a command substitution.
+fn cmd_or_math() -> i32 {
+    let oldlen = LEX_LEXBUF.with_borrow(|b| b.buf_len());
+
+    // c:501 — `cmdpush(cs_type);` — the C source takes a `cs_type`
+    // arg (CS_MATH or CS_MATHSUBST); zshrs's lone caller (gettok
+    // LX1_INPAR `((`) uses CS_MATH. The matching `cmdpop()` fires
+    // both on the math path (after success) and on the rewind path
+    // (before falling through to skipcomm, which has its own
+    // CS_CMDSUBST push/pop).
+    cmdpush(CS_MATH as u8);
+
+    // Per lex.c:498-518 — `cmd_or_math` calls `dquote_parse(')')`
+    // which fills lexbuf with ONLY the inner expression, then checks
+    // for the closing `)`. The surrounding `((` / `))` are NOT added
+    // to lexbuf. zshrs previously added Inpar + '(' before dquote and
+    // ')' after, polluting DINPAR's tokstr with the literal parens.
+    // Removed to match C exactly.
+    if dquote_parse(')', false).is_err() {
+        // c:506 — `cmdpop();` before rewind to command-parse path.
+        cmdpop();
+        // Back up and try as command
+        while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
+            if let Some(c) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
+                hungetc(c);
+            }
+        }
+        hungetc('(');
+        LEX_LEXSTOP.set(false);
+        return if skipcomm().is_err() {
+            CMD_OR_MATH_ERR
+        } else {
+            CMD_OR_MATH_CMD
+        };
+    }
+
+    // Check for closing ) — matches C lex.c:511-512: success-with-`)`
+    // means `((..))` was math. Don't add `)` to lexbuf.
+    let c = hgetc();
+    if c == Some(')') {
+        // c:506 — `cmdpop();` on math success.
+        cmdpop();
+        return CMD_OR_MATH_MATH;
+    }
+
+    // c:506 — `cmdpop();` before rewind to command-parse path.
+    cmdpop();
+    // Not math, back up
+    if let Some(c) = c {
+        hungetc(c);
+    }
+    LEX_LEXSTOP.set(false);
+
+    // Back up token
+    while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
+        if let Some(c) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
+            hungetc(c);
+        }
+    }
+    hungetc('(');
+
+    if skipcomm().is_err() {
+        CMD_OR_MATH_ERR
+    } else {
+        CMD_OR_MATH_CMD
+    }
+}
+
+/// Parse `$(...)` or `$((...))` after the `$` has been consumed.
+/// Direct port of zsh/Src/lex.c:540 `cmd_or_math_sub`. Reads
+/// the next char to discriminate: a leading `(` plus successful
+/// math parse via `cmd_or_math` → arithmetic substitution (with
+/// the open-paren retroactively rewritten to Inparmath); else
+/// command substitution via skipcomm.
+fn cmd_or_math_sub() -> i32 {
+    loop {
+        let c = hgetc();
+        if c == Some('\\') {
+            let c2 = hgetc();
+            if c2 != Some('\n') {
+                if let Some(c2) = c2 {
+                    hungetc(c2);
+                }
+                hungetc('\\');
+                LEX_LEXSTOP.set(false);
+                return if skipcomm().is_err() {
+                    CMD_OR_MATH_ERR
+                } else {
+                    CMD_OR_MATH_CMD
+                };
+            }
+            // Line continuation, try again (loop instead of recursion)
+            continue;
+        }
+
+        // Not a line continuation, process normally
+        if c == Some('(') {
+            // Might be $((...))
+            let lexpos = LEX_LEXBUF.with_borrow(|b| b.buf_len());
+            add(Inpar);
+            add('(');
+
+            if dquote_parse(')', false).is_ok() {
+                let c2 = hgetc();
+                if c2 == Some(')') {
+                    // c:559-562 — `tokstr[lexpos] = Inparmath;` — on
+                    // confirmed math `$(( ... ))`, retroactively
+                    // rewrite the Inpar marker (just emitted at
+                    // lexpos) to Inparmath. `buf_len()` is the BYTE
+                    // length of the lexbuf (matching C's
+                    // `lexbuf.len`), so lexpos is the byte offset
+                    // where Inpar landed. Inpar and Inparmath are
+                    // both 2-byte UTF-8 chars (`\u{88}` and
+                    // `\u{89}`) so set_char_at can swap in place.
+                    LEX_LEXBUF.with_borrow_mut(|b| b.set_char_at(lexpos, Inparmath));
+                    add(')');
+                    return CMD_OR_MATH_MATH;
+                }
+                if let Some(c2) = c2 {
+                    hungetc(c2);
+                }
+            }
+
+            // Not math, restore and parse as command
+            while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > lexpos {
+                if let Some(ch) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
+                    hungetc(ch);
+                }
+            }
+            hungetc('(');
+            LEX_LEXSTOP.set(false);
+        } else {
+            if let Some(c) = c {
+                hungetc(c);
+            }
+            LEX_LEXSTOP.set(false);
+        }
+
+        return if skipcomm().is_err() {
+            CMD_OR_MATH_ERR
+        } else {
+            CMD_OR_MATH_CMD
+        };
+    }
+}
+
+// ============================================================================
+// Additional parsing functions ported from lex.c
+// ============================================================================
+
+/// Check whether we're looking at valid numeric globbing syntax
+/// `<N-M>` / `<N->` / `<-M>` / `<->`. Call pointing just after the
+/// opening `<`. Leaves the input position unchanged, returning true
+/// or false.
+///
+/// Direct port of zsh/Src/lex.c:581 `isnumglob`. C source uses
+/// hgetc/hungetc against the input stream and a temp buffer to
+/// remember consumed chars; zshrs takes a `(input, pos)` slice and
+/// scans without consumption. Same predicate, different I/O model.
+pub fn isnumglob(input: &str, pos: usize) -> bool {
+    let chars: Vec<char> = input[pos..].chars().collect();
+    let mut i = 0;
+    let mut expect_close = false;
+
+    // Look for digits, then -, then digits, then >
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_ascii_digit() {
+            i += 1;
+        } else if c == '-' && !expect_close {
+            expect_close = true;
+            i += 1;
+        } else if c == '>' && expect_close {
+            return true;
+        } else {
+            break;
+        }
+    }
+    false
 }
 
 // SPECCHARS / PATCHARS — port of `Src/zsh.h:228, 232`. Use
@@ -776,214 +951,6 @@ thread_local! {
     pub static LEX_LEXBUF_RAW: std::cell::RefCell<lexbufstate> = const { std::cell::RefCell::new(
         lexbufstate { ptr: None, siz: 0, len: 0 }
     )};
-}
-
-/// Initialize lexical state. Direct port of zsh/Src/lex.c:441
-/// `lexinit`. Resets dbparens / nocorrect / lexstop and sets `tok`
-/// to ENDINPUT so the next gettok starts from a known baseline.
-/// Note: `lex_init(input)` already sets equivalent defaults; this
-/// function exists for the rare case a caller wants to reset the
-/// lexer state mid-parse without re-loading input.
-pub fn lexinit() {
-    // lex.c:443 — `nocorrect = dbparens = lexstop = 0;`
-    LEX_NOCORRECT.set(0);
-    LEX_DBPARENS.set(false);
-    LEX_LEXSTOP.set(false);
-    // lex.c:444 — `tok = ENDINPUT;`
-    set_tok(ENDINPUT);
-}
-
-/// Add character to token buffer
-/// Port of `add(int c)` from `Src/lex.c:451`.
-fn add(c: char) {
-    LEX_LEXBUF.with_borrow_mut(|b| b.add(c));
-}
-
-/// Determine if (( is arithmetic or command
-/// Decide whether `( ... )` after a `$` is a math expression
-/// `$((...))` or a command substitution `$(...)`. Direct port of
-/// zsh/Src/lex.c:495 `cmd_or_math`. Tries dquote_parse first;
-/// if it succeeds AND the next char is `)` (closing the second
-/// paren of `(( ))`), it's math. Otherwise rewinds and treats as
-/// a command substitution.
-fn cmd_or_math() -> i32 {
-    let oldlen = LEX_LEXBUF.with_borrow(|b| b.buf_len());
-
-    // c:501 — `cmdpush(cs_type);` — the C source takes a `cs_type`
-    // arg (CS_MATH or CS_MATHSUBST); zshrs's lone caller (gettok
-    // LX1_INPAR `((`) uses CS_MATH. The matching `cmdpop()` fires
-    // both on the math path (after success) and on the rewind path
-    // (before falling through to skipcomm, which has its own
-    // CS_CMDSUBST push/pop).
-    cmdpush(CS_MATH as u8);
-
-    // Per lex.c:498-518 — `cmd_or_math` calls `dquote_parse(')')`
-    // which fills lexbuf with ONLY the inner expression, then checks
-    // for the closing `)`. The surrounding `((` / `))` are NOT added
-    // to lexbuf. zshrs previously added Inpar + '(' before dquote and
-    // ')' after, polluting DINPAR's tokstr with the literal parens.
-    // Removed to match C exactly.
-    if dquote_parse(')', false).is_err() {
-        // c:506 — `cmdpop();` before rewind to command-parse path.
-        cmdpop();
-        // Back up and try as command
-        while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
-            if let Some(c) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
-                hungetc(c);
-            }
-        }
-        hungetc('(');
-        LEX_LEXSTOP.set(false);
-        return if skipcomm().is_err() {
-            CMD_OR_MATH_ERR
-        } else {
-            CMD_OR_MATH_CMD
-        };
-    }
-
-    // Check for closing ) — matches C lex.c:511-512: success-with-`)`
-    // means `((..))` was math. Don't add `)` to lexbuf.
-    let c = hgetc();
-    if c == Some(')') {
-        // c:506 — `cmdpop();` on math success.
-        cmdpop();
-        return CMD_OR_MATH_MATH;
-    }
-
-    // c:506 — `cmdpop();` before rewind to command-parse path.
-    cmdpop();
-    // Not math, back up
-    if let Some(c) = c {
-        hungetc(c);
-    }
-    LEX_LEXSTOP.set(false);
-
-    // Back up token
-    while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > oldlen {
-        if let Some(c) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
-            hungetc(c);
-        }
-    }
-    hungetc('(');
-
-    if skipcomm().is_err() {
-        CMD_OR_MATH_ERR
-    } else {
-        CMD_OR_MATH_CMD
-    }
-}
-
-/// Parse `$(...)` or `$((...))` after the `$` has been consumed.
-/// Direct port of zsh/Src/lex.c:540 `cmd_or_math_sub`. Reads
-/// the next char to discriminate: a leading `(` plus successful
-/// math parse via `cmd_or_math` → arithmetic substitution (with
-/// the open-paren retroactively rewritten to Inparmath); else
-/// command substitution via skipcomm.
-fn cmd_or_math_sub() -> i32 {
-    loop {
-        let c = hgetc();
-        if c == Some('\\') {
-            let c2 = hgetc();
-            if c2 != Some('\n') {
-                if let Some(c2) = c2 {
-                    hungetc(c2);
-                }
-                hungetc('\\');
-                LEX_LEXSTOP.set(false);
-                return if skipcomm().is_err() {
-                    CMD_OR_MATH_ERR
-                } else {
-                    CMD_OR_MATH_CMD
-                };
-            }
-            // Line continuation, try again (loop instead of recursion)
-            continue;
-        }
-
-        // Not a line continuation, process normally
-        if c == Some('(') {
-            // Might be $((...))
-            let lexpos = LEX_LEXBUF.with_borrow(|b| b.buf_len());
-            add(Inpar);
-            add('(');
-
-            if dquote_parse(')', false).is_ok() {
-                let c2 = hgetc();
-                if c2 == Some(')') {
-                    // c:559-562 — `tokstr[lexpos] = Inparmath;` — on
-                    // confirmed math `$(( ... ))`, retroactively
-                    // rewrite the Inpar marker (just emitted at
-                    // lexpos) to Inparmath. `buf_len()` is the BYTE
-                    // length of the lexbuf (matching C's
-                    // `lexbuf.len`), so lexpos is the byte offset
-                    // where Inpar landed. Inpar and Inparmath are
-                    // both 2-byte UTF-8 chars (`\u{88}` and
-                    // `\u{89}`) so set_char_at can swap in place.
-                    LEX_LEXBUF.with_borrow_mut(|b| b.set_char_at(lexpos, Inparmath));
-                    add(')');
-                    return CMD_OR_MATH_MATH;
-                }
-                if let Some(c2) = c2 {
-                    hungetc(c2);
-                }
-            }
-
-            // Not math, restore and parse as command
-            while LEX_LEXBUF.with_borrow(|b| b.buf_len()) > lexpos {
-                if let Some(ch) = LEX_LEXBUF.with_borrow_mut(|b| b.pop()) {
-                    hungetc(ch);
-                }
-            }
-            hungetc('(');
-            LEX_LEXSTOP.set(false);
-        } else {
-            if let Some(c) = c {
-                hungetc(c);
-            }
-            LEX_LEXSTOP.set(false);
-        }
-
-        return if skipcomm().is_err() {
-            CMD_OR_MATH_ERR
-        } else {
-            CMD_OR_MATH_CMD
-        };
-    }
-}
-
-// ============================================================================
-// Additional parsing functions ported from lex.c
-// ============================================================================
-
-/// Check whether we're looking at valid numeric globbing syntax
-/// `<N-M>` / `<N->` / `<-M>` / `<->`. Call pointing just after the
-/// opening `<`. Leaves the input position unchanged, returning true
-/// or false.
-///
-/// Direct port of zsh/Src/lex.c:581 `isnumglob`. C source uses
-/// hgetc/hungetc against the input stream and a temp buffer to
-/// remember consumed chars; zshrs takes a `(input, pos)` slice and
-/// scans without consumption. Same predicate, different I/O model.
-pub fn isnumglob(input: &str, pos: usize) -> bool {
-    let chars: Vec<char> = input[pos..].chars().collect();
-    let mut i = 0;
-    let mut expect_close = false;
-
-    // Look for digits, then -, then digits, then >
-    while i < chars.len() {
-        let c = chars[i];
-        if c.is_ascii_digit() {
-            i += 1;
-        } else if c == '-' && !expect_close {
-            expect_close = true;
-            i += 1;
-        } else if c == '>' && expect_close {
-            return true;
-        } else {
-            break;
-        }
-    }
-    false
 }
 
 /// Get the next token. Direct port of `gettok(void)` from
@@ -3387,6 +3354,39 @@ fn skipcomm() -> Result<(), ()> {
         start = iswhite;
     }
 }
+
+/// Port of `static const char ztokens[]` from `Src/lex.c:80`.
+pub const ztokens: &str = "#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\";
+
+// `enum lextok` — port of `Src/zsh.h:304-371`. The full constant set
+// (`NULLTOK`, `SEPER`, …, `TYPESET`) and the `lextok` type alias live
+// in `super::zsh_h:198-262`. Re-export here so external callers can
+// keep saying `lex::lextok` / `tokens::lextok` without reaching into
+// `zsh_h::` directly. `IS_REDIROP()` (port of `Src/zsh.h:408`
+// `#define IS_REDIROP`) lives in `zsh_h:318`.
+pub use super::zsh_h::{
+    lextok, AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BARAMP, BAR_TOK, CASE, COPROC, DAMPER, DBAR,
+    DINANG, DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG,
+    DOUTANGBANG, DOUTBRACK, DOUTPAR, DSEMI, ELIF, ELSE, ENDINPUT, ENVARRAY, ENVSTRING, ESAC, FI,
+    FOR, FOREACH, FUNC, IF, INANGAMP, INANG_TOK, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK,
+    IS_REDIROP, LEXERR, NEWLIN, NOCORRECT, NULLTOK, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG,
+    OUTANG_TOK, OUTBRACE_TOK, OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP, SEMIBAR, SEPER,
+    STRING_LEX, THEN, TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND,
+};
+
+/// `static unsigned char lexact1[256]` from `Src/lex.c:406`. Per-byte
+/// action table for the first-tier dispatch in `gettok`. Init'd by
+/// `initlextabs()`.
+pub static LEXACT1: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> = std::sync::OnceLock::new();
+/// `static unsigned char lexact2[256]` from `Src/lex.c:406`. Per-byte
+/// action table for the second-tier dispatch in `gettokstr`.
+pub static LEXACT2: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> = std::sync::OnceLock::new();
+/// `static unsigned char lextok2[256]` from `Src/lex.c:406`. Per-byte
+/// token-character map: maps `*` → `Star`, `?` → `Quest`, etc.
+pub static LEXTOK2: std::sync::OnceLock<std::sync::Mutex<[u8; 256]>> = std::sync::OnceLock::new();
+
+/// Sentinel: true once `initlextabs()` has populated the tables.
+static LEX_TABS_INITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[inline]
 fn ensure_tabs_inited() {

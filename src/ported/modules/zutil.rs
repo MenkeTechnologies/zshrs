@@ -15,72 +15,74 @@ use crate::ported::zsh_h::OPT_ISSET;
 use std::io::Write;
 use crate::ported::zsh_h::{Param, hashnode, param, PM_ARRAY};
 
-// =====================================================================
-// ZOF_* — `zparseopts` flag bits, `Src/Modules/zutil.c:1531-1538`.
-// Encode the per-option spec parsed from `zparseopts -D ...`:
-// =====================================================================
-
-/// `ZOF_ARG` from `Src/Modules/zutil.c:1531`. Option takes an argument
-/// (suffix `:`).
-pub const ZOF_ARG:  i32 = 1;                                                 // c:1531
-/// `ZOF_OPT` from `Src/Modules/zutil.c:1532`. Argument is optional
-/// (suffix `::`).
-pub const ZOF_OPT:  i32 = 2;                                                 // c:1532
-/// `ZOF_MULT` from `Src/Modules/zutil.c:1533`. Multiple occurrences
-/// allowed (suffix `+`).
-pub const ZOF_MULT: i32 = 4;                                                 // c:1533
-/// `ZOF_SAME` from `Src/Modules/zutil.c:1534`. All same-name options
-/// share one slot (default for arrays without `+`).
-pub const ZOF_SAME: i32 = 8;                                                 // c:1534
-/// `ZOF_MAP` from `Src/Modules/zutil.c:1535`. Option spec includes a
-/// `=` mapping to a different array name.
-pub const ZOF_MAP:  i32 = 16;                                                // c:1535
-/// `ZOF_CYC` from `Src/Modules/zutil.c:1536`. Cyclic mapping detected
-/// during option parsing (error guard).
-pub const ZOF_CYC:  i32 = 32;                                                // c:1536
-/// `ZOF_GNUS` from `Src/Modules/zutil.c:1537`. GNU-style `--option`
-/// short variant.
-pub const ZOF_GNUS: i32 = 64;                                                // c:1537
-/// `ZOF_GNUL` from `Src/Modules/zutil.c:1538`. GNU-style `--option=value`
-/// long variant.
-pub const ZOF_GNUL: i32 = 128;                                               // c:1538
-// zstyle_entry is defined below (moved from exec.rs).
-
-/// Save/restore for the per-pattern-match magic vars `$match`,
-/// `$mbegin`, `$mend`. Direct port of `MatchData` and the
-/// `savematch`/`restorematch`/`freematch` trio in
-/// src/zsh/Src/Modules/zutil.c:33-80.
-///
-/// zstyle's `-e` (eval pattern on retrieve) and zregexparse's
-/// inner pattern matches both want to evaluate patterns without
-/// clobbering the caller's `$match[]`, `$mbegin[]`, `$mend[]`
-/// variables. The C version keeps a heap-duplicated copy in a
-/// `MatchData` struct, runs the inner match, then either
-/// restores or frees. The Rust port stores `Option<Vec<String>>`
-/// — `None` means the var was unset.
-pub struct MatchData {
-    pub r#match: Option<Vec<String>>,
-    pub mbegin: Option<Vec<String>>,
-    pub mend: Option<Vec<String>>,
+/// Port of `savematch(MatchData *m)` from Src/Modules/zutil.c:40.
+/// C: `static void savematch(MatchData *m)` — snapshot $match/$mbegin/
+/// $mend into the MatchData struct.
+#[allow(non_snake_case)]
+pub fn savematch(m: &mut MatchData) {                                         // c:40
+    let mut a: Option<Vec<String>>;                                           // c:40 char **a
+    crate::ported::signals_h::queue_signals();                                // c:44
+    // c:45 — a = getaparam("match");
+    // Static-link path: getaparam reads from paramtab (bucket-2);
+    // src/ported/ doesn't reach the executor's array tables yet, so
+    // each read yields None. The MatchData fields take that None and
+    // act as "var was unset" per `restore` semantics (c:54-69).
+    a = None;
+    m.r#match = a;                                                            // c:46
+    a = None;                                                                 // c:47
+    m.mbegin = a;                                                             // c:48
+    a = None;                                                                 // c:49
+    m.mend = a;                                                               // c:50
+    crate::ported::signals_h::unqueue_signals();                              // c:51
 }
 
-/// `zstyle` storage table.
-/// Port of the `zstyletab` HashTable Src/Modules/zutil.c builds —
-/// `newzstyletable()` (line 270) creates it, `bin_zstyle()`
-/// (line 487) drives every mutation. Stores `stypat` entries
-/// (port of C `struct stypat`, zutil.c:95) per style name,
-/// weight-sorted so the most specific pattern wins.
-// `StyleTable` renamed to `style_table`. C uses `HashTable zstyletab`
-// (`Src/Modules/zutil.c:209`) with `struct style` (zutil.c:91) nodes
-// containing a `Stypat pats` linked list (zutil.c:97-104). Rust port
-// uses a `HashMap<String, Vec<stypat>>` while the canonical
-// `hashtable` port lands; the canonical `style` / `stypat` structs
-// already exist at lines 1608 / 1596 below.
+
+
+/// Port of `restorematch(MatchData *m)` from Src/Modules/zutil.c:55.
+/// C: `static void restorematch(MatchData *m)` — restore $match/$mbegin/
+/// $mend from the saved snapshot.
+#[allow(non_snake_case)]
+pub fn restorematch(m: &MatchData) {
+    // c:55
+    // c:57-70 — setaparam("match", m->match) etc., or unsetparam.
+    let _ = m;
+}
+
+/// Port of `freematch(Cmatch m, int nbeg, int nend)` from Src/Modules/zutil.c:72.
+/// C: `static void freematch(MatchData *m)` — drops the captured arrays.
+#[allow(non_snake_case)]
+pub fn freematch(m: &mut MatchData) {                                        // c:72
+    // c:72
+    // c:74-81 — freearray(m->match/mbegin/mend) when non-NULL. Rust
+    // path: take() drops the inner Vec, mirroring freearray + NULL set.
+    m.r#match.take();
+    m.mbegin.take();
+    m.mend.take();
+}
+// `MatchData` is defined above (line 23) — Option<Vec<String>> per field
+// matches the C `char **match`/`mbegin`/`mend` semantics where NULL means
+// the variable was unset. The savematch/restorematch/freematch ports
+// below operate on that existing struct.
+
+/// `Stypat` mirroring Src/Modules/zutil.c:97-104.
 #[allow(non_camel_case_types)]
-#[derive(Default)]
-pub struct style_table {
-    styles: HashMap<String, Vec<stypat>>,
+pub struct stypat {
+    pub next: Option<Box<stypat>>,                            // c:98 Stypat next
+    pub pat: String,                                          // c:99 char *pat
+    pub prog: Option<crate::ported::zsh_h::Patprog>,          // c:100 Patprog prog (compiled)
+    pub weight: u64,                                          // c:101 zulong weight
+    pub eval: Option<crate::ported::zsh_h::Eprog>,            // c:102 Eprog eval
+    pub vals: Vec<String>,                                    // c:103 char **vals
 }
+pub type Stypat = Box<stypat>;
+
+/// `Style` mirroring Src/Modules/zutil.c:91-94.
+#[allow(non_camel_case_types)]
+pub struct style {
+    pub node: crate::ported::zsh_h::hashnode, // c:92 struct hashnode node
+    pub pats: Option<Stypat>,                 // c:93 Stypat pats (sorted by weight)
+}
+pub type Style = Box<style>;
 
 /// Global `zstyletab` mirror — port of the static
 /// `static HashTable zstyletab` in Src/Modules/zutil.c:209.
@@ -91,6 +93,61 @@ pub struct style_table {
 #[allow(non_upper_case_globals)]
 pub static zstyletab: std::sync::LazyLock<std::sync::Mutex<style_table>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(style_table::new())); // c:209
+
+/// Port of `freestylepatnode(Stypat p)` from Src/Modules/zutil.c:111.
+/// C: `static void freestylepatnode(Stypat p)` — drops pat/prog/vals/eval.
+#[allow(non_snake_case)]
+pub fn freestylepatnode(p: Stypat) {                                          // c:111
+    // c:111 zsfree(p->pat) — String drop
+    // c:114 freepatprog(p->prog) — Option<()> drop
+    // c:115-116 if (p->vals) freearray(p->vals) — Vec<String> drop
+    // c:117-118 if (p->eval) freeeprog(p->eval) — Option<()> drop
+    // c:119 zfree(p, sizeof(*p)) — Box<stypat> drop
+    drop(p);
+}
+
+/// Port of `freestylenode(HashNode hn)` from Src/Modules/zutil.c:123.
+/// C: `static void freestylenode(HashNode hn)` — walk pats list freeing
+/// each via freestylepatnode, then free node name + Style.
+#[allow(non_snake_case)]
+pub fn freestylenode(hn: HashNode) {                                          // c:123
+    // c:123 — Style s = (Style) hn; (C uses hashnode-prefix
+    // inheritance; the Rust HashNode and Style are separate Boxes so
+    // the cast collapses to dropping hn — its underlying style.pats
+    // chain drops with it.)
+    let s: HashNode = hn;
+    // c:111 — Stypat p, pn;
+    // c:111-133 — while (p) { pn = p->next; freestylepatnode(p); p = pn; }
+    // Rust: dropping s drops style.pats recursively.
+    drop(s);
+    // c:135 zsfree(s->node.nam) + c:136 zfree(s) — Rust Drop handles.
+}
+
+/// Port of `freestypat(Stypat p, Style s, Stypat prev)` from Src/Modules/zutil.c:151.
+/// C: `static void freestypat(Stypat p, Style s, Stypat prev)` — unlink
+/// from style.pats list, then freestylepatnode. If style empties,
+/// remove from zstyletab too.
+#[allow(non_snake_case)]
+pub fn freestypat(mut p: Stypat, s: Option<&mut style>, prev: Option<&mut stypat>) { // c:151
+    // c:151-158 — relink prev->next to p->next (or s->pats if no prev).
+    // Use Option::take() to move the chain pointer out of p, since
+    // stypat doesn't derive Clone (matching C's pointer-move semantics).
+    let next = p.next.take();                                                 // c:155 capture p->next
+    let s_has_some = s.is_some();
+    if let Some(s_ref) = s {                                                  // c:153
+        if let Some(prev_ref) = prev {                                        // c:154
+            prev_ref.next = next;                                             // c:155 prev->next = p->next
+        } else {
+            s_ref.pats = next;                                                // c:157 s->pats = p->next
+        }
+    }
+    // c:160 — freestylepatnode(p);
+    freestylepatnode(p);
+    // c:162-167 — if (s && !s->pats) { zstyletab->removenode + zsfree(name) + zfree(s) }
+    // Static-link path: zstyletab access lives outside src/ported; the
+    // removal is a no-op until the style table accessor is wired.
+    let _ = s_has_some;
+}
 
 impl style_table {
     /// WARNING: NOT IN ZUTIL.C — method on Rust-only `style_table` wrapper.
@@ -300,31 +357,62 @@ impl style_table {
     }
 }
 
-/// Port of `savematch(MatchData *m)` from Src/Modules/zutil.c:40.
-/// C: `static void savematch(MatchData *m)` — snapshot $match/$mbegin/
-/// $mend into the MatchData struct.
+/// Port of `printstylenode(HashNode hn, int printflags)` from Src/Modules/zutil.c:184.
+/// C: `static void printstylenode(HashNode hn, int printflags)` — emit
+/// `zstyle -L` / basic-list output for one style entry.
 #[allow(non_snake_case)]
-pub fn savematch(m: &mut MatchData) {                                         // c:40
-    let mut a: Option<Vec<String>>;                                           // c:40 char **a
-    crate::ported::signals_h::queue_signals();                                // c:44
-    // c:45 — a = getaparam("match");
-    // Static-link path: getaparam reads from paramtab (bucket-2);
-    // src/ported/ doesn't reach the executor's array tables yet, so
-    // each read yields None. The MatchData fields take that None and
-    // act as "var was unset" per `restore` semantics (c:54-69).
-    a = None;
-    m.r#match = a;                                                            // c:46
-    a = None;                                                                 // c:47
-    m.mbegin = a;                                                             // c:48
-    a = None;                                                                 // c:49
-    m.mend = a;                                                               // c:50
-    crate::ported::signals_h::unqueue_signals();                              // c:51
+pub fn printstylenode(hn: HashNode, printflags: i32) {                        // c:184
+    // c:186 — Style s = (Style)hn; HashNode/Style differ in Rust;
+    // walk the canonical zstyletab by style name instead.
+    let nam: String = hn.nam.clone();
+    let mut stdout = std::io::stdout().lock();
+    if printflags == 1 {                                                      // c:190 ZSLIST_BASIC
+        let _ = writeln!(stdout, "{}", nam);                                  // c:191-192
+        return;
+    }
+    // c:195-211 — `zstyle -L` form: emit one line per (pat, vals) tuple.
+    if let Ok(t) = zstyletab.lock() {
+        for (pat, style, vals) in t.list(None) {                              // c:196-208
+            if style != nam { continue; }
+            let _ = write!(stdout, "zstyle ");
+            let _ = write!(stdout, "{} ", pat);                               // c:201
+            let _ = write!(stdout, "{}", style);                              // c:201
+            for v in &vals {
+                let _ = write!(stdout, " {}", v);                             // c:206-209
+            }
+            let _ = writeln!(stdout);                                         // c:210
+        }
+    }
 }
 
-/// Namespace for the recursive zformat walker — distinct from
-/// the public zformat_substring entry point above so the inner
-/// recursion doesn't collide with the outer wrapper's name.
-struct ZFormat;
+/// Port of `scanpatstyles(HashNode hn, int spatflags)` from Src/Modules/zutil.c:229.
+/// C: `static void scanpatstyles(HashNode hn, int spatflags)` — iterate
+/// every pattern of `hn`'s style, switching on `spatflags` (ZSPAT_NAME /
+/// ZSPAT_PAT / ZSPAT_REMOVE).
+#[allow(non_snake_case)]
+pub fn scanpatstyles(hn: HashNode, spatflags: i32) {                          // c:229
+    // c:229 — Style s = (Style)hn;
+    let _s: HashNode = hn;
+    // c:232 — Stypat p, q;
+    // c:233 — LinkNode n;
+    // c:235-265 — for (q = NULL, p = s->pats; p; q = p, p = p->next)
+    // walks the pattern list and dispatches on spatflags. Rust port:
+    // the HashNode→Style cast doesn't yield the pats list directly
+    // (separate Boxes), so the body switches on spatflags and exits
+    // each branch without traversal until the cast is wired.
+    match spatflags {                                                         // c:236
+        0 => {                                                                // c:237 ZSPAT_NAME
+            // c:238-241 — if pat matches zstyle_patname, addlinknode + return
+        }
+        1 => {                                                                // c:244 ZSPAT_PAT
+            // c:246-251 — addlinknode unless already present
+        }
+        2 => {                                                                // c:253 ZSPAT_REMOVE
+            // c:254-262 — if pat matches, freestypat(p, s, q) + return
+        }
+        _ => {}
+    }
+}
 
 impl ZFormat {
     /// Recursive walker for zformat. Returns the index of the
@@ -517,163 +605,6 @@ impl ZFormat {
     }
 } // impl ZFormat
 
-
-
-/// Port of `restorematch(MatchData *m)` from Src/Modules/zutil.c:55.
-/// C: `static void restorematch(MatchData *m)` — restore $match/$mbegin/
-/// $mend from the saved snapshot.
-#[allow(non_snake_case)]
-pub fn restorematch(m: &MatchData) {
-    // c:55
-    // c:57-70 — setaparam("match", m->match) etc., or unsetparam.
-    let _ = m;
-}
-
-/// Port of `freematch(Cmatch m, int nbeg, int nend)` from Src/Modules/zutil.c:72.
-/// C: `static void freematch(MatchData *m)` — drops the captured arrays.
-#[allow(non_snake_case)]
-pub fn freematch(m: &mut MatchData) {                                        // c:72
-    // c:72
-    // c:74-81 — freearray(m->match/mbegin/mend) when non-NULL. Rust
-    // path: take() drops the inner Vec, mirroring freearray + NULL set.
-    m.r#match.take();
-    m.mbegin.take();
-    m.mend.take();
-}
-
-/// Port of `freestylepatnode(Stypat p)` from Src/Modules/zutil.c:111.
-/// C: `static void freestylepatnode(Stypat p)` — drops pat/prog/vals/eval.
-#[allow(non_snake_case)]
-pub fn freestylepatnode(p: Stypat) {                                          // c:111
-    // c:111 zsfree(p->pat) — String drop
-    // c:114 freepatprog(p->prog) — Option<()> drop
-    // c:115-116 if (p->vals) freearray(p->vals) — Vec<String> drop
-    // c:117-118 if (p->eval) freeeprog(p->eval) — Option<()> drop
-    // c:119 zfree(p, sizeof(*p)) — Box<stypat> drop
-    drop(p);
-}
-
-/// Port of `freestylenode(HashNode hn)` from Src/Modules/zutil.c:123.
-/// C: `static void freestylenode(HashNode hn)` — walk pats list freeing
-/// each via freestylepatnode, then free node name + Style.
-#[allow(non_snake_case)]
-pub fn freestylenode(hn: HashNode) {                                          // c:123
-    // c:123 — Style s = (Style) hn; (C uses hashnode-prefix
-    // inheritance; the Rust HashNode and Style are separate Boxes so
-    // the cast collapses to dropping hn — its underlying style.pats
-    // chain drops with it.)
-    let s: HashNode = hn;
-    // c:111 — Stypat p, pn;
-    // c:111-133 — while (p) { pn = p->next; freestylepatnode(p); p = pn; }
-    // Rust: dropping s drops style.pats recursively.
-    drop(s);
-    // c:135 zsfree(s->node.nam) + c:136 zfree(s) — Rust Drop handles.
-}
-
-// ─── moved from src/ported/exec.rs (drift extraction) ───
-
-/// One `zstyle` entry — Rust extension that flattens what C splits
-/// across `struct style` (zutil.c:91, holds the style name) and
-/// `struct stypat` (zutil.c:97, holds pat + vals). The canonical
-/// split structs are at lines 1596 / 1608 above; this flat shape is
-/// kept while the C-style HashTable port lands.
-#[allow(non_camel_case_types)]
-#[derive(Debug, Clone)]
-pub struct zstyle_entry {
-    pub pattern: String,
-    pub style: String,
-    pub values: Vec<String>,
-}
-
-// =====================================================================
-// static struct features module_features                            c:2143
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
-/// Port of `freestypat(Stypat p, Style s, Stypat prev)` from Src/Modules/zutil.c:151.
-/// C: `static void freestypat(Stypat p, Style s, Stypat prev)` — unlink
-/// from style.pats list, then freestylepatnode. If style empties,
-/// remove from zstyletab too.
-#[allow(non_snake_case)]
-pub fn freestypat(mut p: Stypat, s: Option<&mut style>, prev: Option<&mut stypat>) { // c:151
-    // c:151-158 — relink prev->next to p->next (or s->pats if no prev).
-    // Use Option::take() to move the chain pointer out of p, since
-    // stypat doesn't derive Clone (matching C's pointer-move semantics).
-    let next = p.next.take();                                                 // c:155 capture p->next
-    let s_has_some = s.is_some();
-    if let Some(s_ref) = s {                                                  // c:153
-        if let Some(prev_ref) = prev {                                        // c:154
-            prev_ref.next = next;                                             // c:155 prev->next = p->next
-        } else {
-            s_ref.pats = next;                                                // c:157 s->pats = p->next
-        }
-    }
-    // c:160 — freestylepatnode(p);
-    freestylepatnode(p);
-    // c:162-167 — if (s && !s->pats) { zstyletab->removenode + zsfree(name) + zfree(s) }
-    // Static-link path: zstyletab access lives outside src/ported; the
-    // removal is a no-op until the style table accessor is wired.
-    let _ = s_has_some;
-}
-
-/// Port of `printstylenode(HashNode hn, int printflags)` from Src/Modules/zutil.c:184.
-/// C: `static void printstylenode(HashNode hn, int printflags)` — emit
-/// `zstyle -L` / basic-list output for one style entry.
-#[allow(non_snake_case)]
-pub fn printstylenode(hn: HashNode, printflags: i32) {                        // c:184
-    // c:186 — Style s = (Style)hn; HashNode/Style differ in Rust;
-    // walk the canonical zstyletab by style name instead.
-    let nam: String = hn.nam.clone();
-    let mut stdout = std::io::stdout().lock();
-    if printflags == 1 {                                                      // c:190 ZSLIST_BASIC
-        let _ = writeln!(stdout, "{}", nam);                                  // c:191-192
-        return;
-    }
-    // c:195-211 — `zstyle -L` form: emit one line per (pat, vals) tuple.
-    if let Ok(t) = zstyletab.lock() {
-        for (pat, style, vals) in t.list(None) {                              // c:196-208
-            if style != nam { continue; }
-            let _ = write!(stdout, "zstyle ");
-            let _ = write!(stdout, "{} ", pat);                               // c:201
-            let _ = write!(stdout, "{}", style);                              // c:201
-            for v in &vals {
-                let _ = write!(stdout, " {}", v);                             // c:206-209
-            }
-            let _ = writeln!(stdout);                                         // c:210
-        }
-    }
-}
-
-/// Port of `scanpatstyles(HashNode hn, int spatflags)` from Src/Modules/zutil.c:229.
-/// C: `static void scanpatstyles(HashNode hn, int spatflags)` — iterate
-/// every pattern of `hn`'s style, switching on `spatflags` (ZSPAT_NAME /
-/// ZSPAT_PAT / ZSPAT_REMOVE).
-#[allow(non_snake_case)]
-pub fn scanpatstyles(hn: HashNode, spatflags: i32) {                          // c:229
-    // c:229 — Style s = (Style)hn;
-    let _s: HashNode = hn;
-    // c:232 — Stypat p, q;
-    // c:233 — LinkNode n;
-    // c:235-265 — for (q = NULL, p = s->pats; p; q = p, p = p->next)
-    // walks the pattern list and dispatches on spatflags. Rust port:
-    // the HashNode→Style cast doesn't yield the pats list directly
-    // (separate Boxes), so the body switches on spatflags and exits
-    // each branch without traversal until the cast is wired.
-    match spatflags {                                                         // c:236
-        0 => {                                                                // c:237 ZSPAT_NAME
-            // c:238-241 — if pat matches zstyle_patname, addlinknode + return
-        }
-        1 => {                                                                // c:244 ZSPAT_PAT
-            // c:246-251 — addlinknode unless already present
-        }
-        2 => {                                                                // c:253 ZSPAT_REMOVE
-            // c:254-262 — if pat matches, freestypat(p, s, q) + return
-        }
-        _ => {}
-    }
-}
-
 /// Port of `newzstyletable(int size, char const *name)` from Src/Modules/zutil.c:270.
 /// C: `static HashTable newzstyletable(int size, char const *name)` —
 /// alloc a fresh style hash table.
@@ -729,69 +660,6 @@ pub fn addstyle(name: &str) -> Option<Style> {                               // 
     Some(Box::new(s))
 }
 
-// === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/zutil.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
-
-use crate::ported::zsh_h::HashNode;
-use crate::zsh_h::isset;
-// `MatchData` is defined above (line 23) — Option<Vec<String>> per field
-// matches the C `char **match`/`mbegin`/`mend` semantics where NULL means
-// the variable was unset. The savematch/restorematch/freematch ports
-// below operate on that existing struct.
-
-/// `Stypat` mirroring Src/Modules/zutil.c:97-104.
-#[allow(non_camel_case_types)]
-pub struct stypat {
-    pub next: Option<Box<stypat>>,                            // c:98 Stypat next
-    pub pat: String,                                          // c:99 char *pat
-    pub prog: Option<crate::ported::zsh_h::Patprog>,          // c:100 Patprog prog (compiled)
-    pub weight: u64,                                          // c:101 zulong weight
-    pub eval: Option<crate::ported::zsh_h::Eprog>,            // c:102 Eprog eval
-    pub vals: Vec<String>,                                    // c:103 char **vals
-}
-pub type Stypat = Box<stypat>;
-
-/// `Style` mirroring Src/Modules/zutil.c:91-94.
-#[allow(non_camel_case_types)]
-pub struct style {
-    pub node: crate::ported::zsh_h::hashnode, // c:92 struct hashnode node
-    pub pats: Option<Stypat>,                 // c:93 Stypat pats (sorted by weight)
-}
-pub type Style = Box<style>;
-
-/// `Zoptdesc` family mirroring Src/Modules/zutil.c:1519-1538.
-#[allow(non_camel_case_types)]
-pub struct zoptdesc {
-    pub name: String,
-    pub flags: i32,
-    pub arg: i32,
-    pub vals: Vec<String>,
-    pub next: Option<Box<zoptdesc>>,
-}
-pub type Zoptdesc = Box<zoptdesc>;
-#[allow(non_camel_case_types)]
-pub struct zoptarr {
-    pub name: String,
-    pub vals: Vec<String>,
-}
-pub type Zoptarr = Box<zoptarr>;
-
-#[allow(non_camel_case_types)]
-
-pub struct zoptval {
-    pub name: String,
-    pub arg: String,
-}
-pub type Zoptval = Box<zoptval>;
-
-/// `RParseResult` (used by zregexparse) — Src/Modules/zutil.c:1642.
-pub struct RParseResult {
-    pub nullacts: Vec<String>,
-    pub args: Vec<String>,
-}
-
 /// Port of `evalstyle(Stypat p)` from Src/Modules/zutil.c:413.
 /// C: `static char **evalstyle(Stypat p)` — execute the eval-prog and
 /// return the resulting `reply`/value array.
@@ -818,6 +686,12 @@ pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {                  //
         Err(_) => Vec::new(),
     }
 }
+
+// =====================================================================
+// static struct features module_features                            c:2143
+// =====================================================================
+
+use crate::ported::zsh_h::module;
 
 /// Port of `testforstyle(char *ctxt, char *style)` from Src/Modules/zutil.c:465.
 /// C: `static int testforstyle(char *ctxt, char *style)` — non-empty
@@ -1214,6 +1088,14 @@ pub fn rparseclo(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 
     0
 }
 
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/zutil.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+use crate::ported::zsh_h::HashNode;
+use crate::zsh_h::isset;
+
 /// Port of `prependactions(LinkList acts, LinkList branches)` from Src/Modules/zutil.c:1269.
 /// C: `static void prependactions(LinkList acts, LinkList branches)` —
 /// dual of appendactions, pushnode at head of each branch's actions list.
@@ -1372,6 +1254,61 @@ pub fn bin_zregexparse(nam: &str, args: &[String],                            //
     );                                                                       // c:1514
     ret                                                                      // c:1515
 }
+
+/// `Zoptdesc` family mirroring Src/Modules/zutil.c:1519-1538.
+#[allow(non_camel_case_types)]
+pub struct zoptdesc {
+    pub name: String,
+    pub flags: i32,
+    pub arg: i32,
+    pub vals: Vec<String>,
+    pub next: Option<Box<zoptdesc>>,
+}
+pub type Zoptdesc = Box<zoptdesc>;
+#[allow(non_camel_case_types)]
+pub struct zoptarr {
+    pub name: String,
+    pub vals: Vec<String>,
+}
+pub type Zoptarr = Box<zoptarr>;
+
+#[allow(non_camel_case_types)]
+
+pub struct zoptval {
+    pub name: String,
+    pub arg: String,
+}
+pub type Zoptval = Box<zoptval>;
+
+// =====================================================================
+// ZOF_* — `zparseopts` flag bits, `Src/Modules/zutil.c:1531-1538`.
+// Encode the per-option spec parsed from `zparseopts -D ...`:
+// =====================================================================
+
+/// `ZOF_ARG` from `Src/Modules/zutil.c:1531`. Option takes an argument
+/// (suffix `:`).
+pub const ZOF_ARG:  i32 = 1;                                                 // c:1531
+/// `ZOF_OPT` from `Src/Modules/zutil.c:1532`. Argument is optional
+/// (suffix `::`).
+pub const ZOF_OPT:  i32 = 2;                                                 // c:1532
+/// `ZOF_MULT` from `Src/Modules/zutil.c:1533`. Multiple occurrences
+/// allowed (suffix `+`).
+pub const ZOF_MULT: i32 = 4;                                                 // c:1533
+/// `ZOF_SAME` from `Src/Modules/zutil.c:1534`. All same-name options
+/// share one slot (default for arrays without `+`).
+pub const ZOF_SAME: i32 = 8;                                                 // c:1534
+/// `ZOF_MAP` from `Src/Modules/zutil.c:1535`. Option spec includes a
+/// `=` mapping to a different array name.
+pub const ZOF_MAP:  i32 = 16;                                                // c:1535
+/// `ZOF_CYC` from `Src/Modules/zutil.c:1536`. Cyclic mapping detected
+/// during option parsing (error guard).
+pub const ZOF_CYC:  i32 = 32;                                                // c:1536
+/// `ZOF_GNUS` from `Src/Modules/zutil.c:1537`. GNU-style `--option`
+/// short variant.
+pub const ZOF_GNUS: i32 = 64;                                                // c:1537
+/// `ZOF_GNUL` from `Src/Modules/zutil.c:1538`. GNU-style `--option=value`
+/// long variant.
+pub const ZOF_GNUL: i32 = 128;                                               // c:1538
 
 /// Port of `get_opt_desc(char *name)` from Src/Modules/zutil.c:1558.
 /// C: `static Zoptdesc get_opt_desc(char *name)` — find a Zoptdesc.
@@ -1845,6 +1782,69 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
 pub fn finish_(m: *const module) -> i32 {                                   // c:2190
     0
 }
+// zstyle_entry is defined below (moved from exec.rs).
+
+/// Save/restore for the per-pattern-match magic vars `$match`,
+/// `$mbegin`, `$mend`. Direct port of `MatchData` and the
+/// `savematch`/`restorematch`/`freematch` trio in
+/// src/zsh/Src/Modules/zutil.c:33-80.
+///
+/// zstyle's `-e` (eval pattern on retrieve) and zregexparse's
+/// inner pattern matches both want to evaluate patterns without
+/// clobbering the caller's `$match[]`, `$mbegin[]`, `$mend[]`
+/// variables. The C version keeps a heap-duplicated copy in a
+/// `MatchData` struct, runs the inner match, then either
+/// restores or frees. The Rust port stores `Option<Vec<String>>`
+/// — `None` means the var was unset.
+pub struct MatchData {
+    pub r#match: Option<Vec<String>>,
+    pub mbegin: Option<Vec<String>>,
+    pub mend: Option<Vec<String>>,
+}
+
+/// `zstyle` storage table.
+/// Port of the `zstyletab` HashTable Src/Modules/zutil.c builds —
+/// `newzstyletable()` (line 270) creates it, `bin_zstyle()`
+/// (line 487) drives every mutation. Stores `stypat` entries
+/// (port of C `struct stypat`, zutil.c:95) per style name,
+/// weight-sorted so the most specific pattern wins.
+// `StyleTable` renamed to `style_table`. C uses `HashTable zstyletab`
+// (`Src/Modules/zutil.c:209`) with `struct style` (zutil.c:91) nodes
+// containing a `Stypat pats` linked list (zutil.c:97-104). Rust port
+// uses a `HashMap<String, Vec<stypat>>` while the canonical
+// `hashtable` port lands; the canonical `style` / `stypat` structs
+// already exist at lines 1608 / 1596 below.
+#[allow(non_camel_case_types)]
+#[derive(Default)]
+pub struct style_table {
+    styles: HashMap<String, Vec<stypat>>,
+}
+
+/// Namespace for the recursive zformat walker — distinct from
+/// the public zformat_substring entry point above so the inner
+/// recursion doesn't collide with the outer wrapper's name.
+struct ZFormat;
+
+// ─── moved from src/ported/exec.rs (drift extraction) ───
+
+/// One `zstyle` entry — Rust extension that flattens what C splits
+/// across `struct style` (zutil.c:91, holds the style name) and
+/// `struct stypat` (zutil.c:97, holds pat + vals). The canonical
+/// split structs are at lines 1596 / 1608 above; this flat shape is
+/// kept while the C-style HashTable port lands.
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
+pub struct zstyle_entry {
+    pub pattern: String,
+    pub style: String,
+    pub values: Vec<String>,
+}
+
+/// `RParseResult` (used by zregexparse) — Src/Modules/zutil.c:1642.
+pub struct RParseResult {
+    pub nullacts: Vec<String>,
+    pub args: Vec<String>,
+}
 
 /// Port of `setstypat(Style s, char *pat, Patprog prog, char **vals, int eval)` from `Src/Modules/zutil.c:814`.
 /// Format a string with specifications
@@ -1934,6 +1934,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

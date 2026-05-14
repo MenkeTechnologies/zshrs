@@ -28,35 +28,9 @@ use crate::ported::zsh_h::{
     WC_WHILE_TYPE, WC_WHILE_UNTIL, wc_code,
 };
 
-// ---------------------------------------------------------------------------
-// Globals from text.c:40 / 48–54
-// ---------------------------------------------------------------------------
-
-/// Port of `int text_expand_tabs` from `Src/text.c:58`.
-pub static TEXT_EXPAND_TABS: AtomicI32 = AtomicI32::new(0);
-
-static COND_BINARY_OPS: &[&str] = &[
-    "=", "==", "!=", "<", ">", "-nt", "-ot", "-ef", "-eq", "-ne", "-lt", "-gt", "-le", "-ge", "=~",
-];
-
 /// Port of `is_cond_binary_op(const char *str)` from `Src/text.c:58`.
 pub fn is_cond_binary_op(str: &str) -> i32 {
     COND_BINARY_OPS.iter().any(|&op| op == str) as i32
-}
-
-// ---------------------------------------------------------------------------
-// Internal: file-static text buffer + gettext2 (text.c:53–1015)
-// ---------------------------------------------------------------------------
-
-// File-statics from `Src/text.c:396` (`tbuf`/`tptr`/`tlim` modeled as `tbuf` Vec +
-// `tlim` cap; `tpending`/`tindent`/`tnewlins`/`tjob`).
-thread_local! {
-    static tbuf: RefCell<Vec<u8>> = RefCell::new(Vec::new());
-    static tlim: RefCell<Option<usize>> = RefCell::new(None);
-    static tpending: RefCell<Option<Vec<u8>>> = RefCell::new(None);
-    static tindent: RefCell<i32> = RefCell::new(0);
-    static tnewlins: RefCell<bool> = RefCell::new(true);
-    static tjob: RefCell<bool> = RefCell::new(false);
 }
 
 /// Port of `dec_tindent` from `Src/text.c:70`.
@@ -86,35 +60,19 @@ pub fn taddpending(str1: &str, str2: &str) {
     });
 }
 
-#[allow(non_camel_case_types)]
-enum tstack_u {
-    None,
-    Redir(LinkList<redir>),
-    Funcdef {
-        strs_off: usize,
-        end_pc: usize,
-        nargs: i32,
-    },
-    Case {
-        end_pc: usize,
-    },
-    If {
-        end_pc: usize,
-        cond: i32,
-    },
-    Cond {
-        par: i32,
-    },
-    Subsh {
-        end_pc: usize,
-    },
-}
+// ---------------------------------------------------------------------------
+// Internal: file-static text buffer + gettext2 (text.c:53–1015)
+// ---------------------------------------------------------------------------
 
-#[allow(non_camel_case_types)]
-struct tstack {
-    code: wordcode,
-    pop: i32,
-    u: tstack_u,
+// File-statics from `Src/text.c:396` (`tbuf`/`tptr`/`tlim` modeled as `tbuf` Vec +
+// `tlim` cap; `tpending`/`tindent`/`tnewlins`/`tjob`).
+thread_local! {
+    static tbuf: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+    static tlim: RefCell<Option<usize>> = RefCell::new(None);
+    static tpending: RefCell<Option<Vec<u8>>> = RefCell::new(None);
+    static tindent: RefCell<i32> = RefCell::new(0);
+    static tnewlins: RefCell<bool> = RefCell::new(true);
+    static tjob: RefCell<bool> = RefCell::new(false);
 }
 
 /// Port of `tdopending` from `Src/text.c:114`.
@@ -286,12 +244,12 @@ pub fn getjobtext(prog: Eprog, c: Option<usize>) -> String {
     lex::untokenize(&raw)
 }
 
-// c:1022-1026 — fstr[] (getredirs)
-const FSTR: [&str; 18] = [
-    ">", ">|", ">>", ">>|", "&>", "&>|", "&>>", "&>>|", "<>", "<", "<<", "<<-", "<<", "<&", ">&",
-    ">&-",
-    "<", ">",
-];
+#[allow(non_camel_case_types)]
+struct tstack {
+    code: wordcode,
+    pop: i32,
+    u: tstack_u,
+}
 
 /// Port of `tpush(wordcode code, int pop)` from `Src/text.c:396` (append byte to `tbuf`, honour `tlim`).
 fn tpush(c: i32) {
@@ -1299,6 +1257,48 @@ pub fn getredirs(redirs: &LinkList<redir>) {
     }); // c:1116
     unqueue_signals(); // c:1118
 }
+
+// ---------------------------------------------------------------------------
+// Globals from text.c:40 / 48–54
+// ---------------------------------------------------------------------------
+
+/// Port of `int text_expand_tabs` from `Src/text.c:58`.
+pub static TEXT_EXPAND_TABS: AtomicI32 = AtomicI32::new(0);
+
+static COND_BINARY_OPS: &[&str] = &[
+    "=", "==", "!=", "<", ">", "-nt", "-ot", "-ef", "-eq", "-ne", "-lt", "-gt", "-le", "-ge", "=~",
+];
+
+#[allow(non_camel_case_types)]
+enum tstack_u {
+    None,
+    Redir(LinkList<redir>),
+    Funcdef {
+        strs_off: usize,
+        end_pc: usize,
+        nargs: i32,
+    },
+    Case {
+        end_pc: usize,
+    },
+    If {
+        end_pc: usize,
+        cond: i32,
+    },
+    Cond {
+        par: i32,
+    },
+    Subsh {
+        end_pc: usize,
+    },
+}
+
+// c:1022-1026 — fstr[] (getredirs)
+const FSTR: [&str; 18] = [
+    ">", ">|", ">>", ">>|", "&>", "&>|", "&>>", "&>>|", "<>", "<", "<<", "<<-", "<<", "<&", ">&",
+    ">&-",
+    "<", ">",
+];
 
 /// WARNING: NOT IN `text.c` — `ecgetstr(Estate, …)` is defined in `Src/parse.c`.
 /// Local shim renamed to avoid name-clashing with the canonical

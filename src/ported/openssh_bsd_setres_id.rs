@@ -26,43 +26,6 @@
 use crate::utils::zwarnnam;
 use std::cell::UnsafeCell;
 
-/// True on platforms whose `setregid()` does not reset the saved gid.
-/// Mirrors `#define BROKEN_SETREGID` under `#ifdef __NetBSD__`.
-#[inline]
-const fn broken_setregid() -> bool {
-    cfg!(target_os = "netbsd")
-}
-
-/// True on platforms whose `setreuid()` does not reset the saved uid.
-/// Mirrors `#define BROKEN_SETREUID` under `#ifdef __NetBSD__`.
-#[inline]
-const fn broken_setreuid() -> bool {
-    cfg!(target_os = "netbsd")
-}
-
-/// True on platforms whose libc provides a native `setregid()` we can
-/// call. Mirrors `ZSH_HAVE_NATIVE_SETREGID`; configure detects this on
-/// every Unix we currently support, so it is unconditionally true.
-#[inline]
-const fn have_native_setregid() -> bool {
-    cfg!(unix)
-}
-
-/// True on platforms whose libc provides a native `setreuid()` we can
-/// call. Mirrors `ZSH_HAVE_NATIVE_SETREUID`.
-#[inline]
-const fn have_native_setreuid() -> bool {
-    cfg!(unix)
-}
-
-/// True on platforms where calling `seteuid()` first prevents a
-/// later `setuid()` from succeeding. Mirrors `SETEUID_BREAKS_SETUID`,
-/// which is not detected on any platform we target.
-#[inline]
-const fn seteuid_breaks_setuid() -> bool {
-    false
-}
-
 /// Port of `setresgid(gid_t rgid, gid_t egid, gid_t sgid)` from Src/openssh_bsd_setres_id.c:70.
 ///
 /// Set the real, effective and saved group ids. Implementation
@@ -154,6 +117,43 @@ pub unsafe fn setresuid(ruid: libc::uid_t, euid: libc::uid_t, suid: libc::uid_t)
         }
     }
     ret
+}
+
+/// True on platforms whose `setregid()` does not reset the saved gid.
+/// Mirrors `#define BROKEN_SETREGID` under `#ifdef __NetBSD__`.
+#[inline]
+const fn broken_setregid() -> bool {
+    cfg!(target_os = "netbsd")
+}
+
+/// True on platforms whose `setreuid()` does not reset the saved uid.
+/// Mirrors `#define BROKEN_SETREUID` under `#ifdef __NetBSD__`.
+#[inline]
+const fn broken_setreuid() -> bool {
+    cfg!(target_os = "netbsd")
+}
+
+/// True on platforms whose libc provides a native `setregid()` we can
+/// call. Mirrors `ZSH_HAVE_NATIVE_SETREGID`; configure detects this on
+/// every Unix we currently support, so it is unconditionally true.
+#[inline]
+const fn have_native_setregid() -> bool {
+    cfg!(unix)
+}
+
+/// True on platforms whose libc provides a native `setreuid()` we can
+/// call. Mirrors `ZSH_HAVE_NATIVE_SETREUID`.
+#[inline]
+const fn have_native_setreuid() -> bool {
+    cfg!(unix)
+}
+
+/// True on platforms where calling `seteuid()` first prevents a
+/// later `setuid()` from succeeding. Mirrors `SETEUID_BREAKS_SETUID`,
+/// which is not detected on any platform we target.
+#[inline]
+const fn seteuid_breaks_setuid() -> bool {
+    false
 }
 
 // WARNING: NOT IN OPENSSH_BSD_SETRES_ID.C — Rust-only errno-read

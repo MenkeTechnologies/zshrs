@@ -60,27 +60,52 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-/// Port of `getcolval(char *s, int multi)` from Src/Zle/complist.c:275.
-#[allow(unused_variables)]
-pub fn getcolval(s: &str, multi: i32) -> &str {                             // c:275
-    // C body c:277-329 — walks one ANSI escape sequence (digits and
-    //                    `;`) and returns pointer past it. Used while
-    //                    parsing `key=val` from LS_COLORS.
-    let trimmed = s.trim_start_matches(|c: char| c.is_ascii_digit() || c == ';');
-    trimmed
-}
+/// Port of `MMARK` from `Src/Zle/complist.c:126`. Tag bit used in
+/// the low bit of `Cmatch *` / `Cmgroup` pointers to mark a match
+/// as visited during the menu-select / hidden-row dispatch. Real C
+/// uses pointer tagging; the Rust port uses the same bit position
+/// (`u32 = 1`) as a search-anchor — actual marker storage lives on
+/// a separate `bool` per Cmatch when the substrate hydrates.
+pub const MMARK: u32 = 1;                                                    // c:126
 
-/// Port of `getcoldef(char *s)` from Src/Zle/complist.c:330.
-pub fn getcoldef(s: &str) -> Option<String> {                                // c:330
-    // C body c:332-503 — parses one "key=val" entry from LS_COLORS
-    //                    /ZLS_COLORS, walks past the key (one of the
-    //                    `colnames` two-letters, plus filename
-    //                    suffixes "*.ext", patterns "=cls"), returns
-    //                    pointer past the entry. Without the mcolors
-    //                    install we just split on the first `:` and
-    //                    return the remainder so caller can iterate.
-    s.split_once(':').map(|(_, rest)| rest.to_string())
-}
+/// Port of `MAX_POS` from `Src/Zle/complist.c:137`. Maximum number
+/// of saved (mline, mcol) menu-select positions in the back-stack
+/// used by msearchpush/msearchpop.
+pub const MAX_POS: usize = 11;                                               // c:137
+
+// =====================================================================
+// Substrate for the LS_COLORS / ZLS_COLORS subsystem —
+// `Src/Zle/complist.c:165-269`.
+// =====================================================================
+
+// `COL_*` — index into `mcolors.files[]` per `Src/Zle/complist.c:167-194`.
+pub const COL_NO:  usize = 0;                                                // c:167
+pub const COL_FI:  usize = 1;                                                // c:168
+pub const COL_DI:  usize = 2;                                                // c:169
+pub const COL_LN:  usize = 3;                                                // c:170
+pub const COL_PI:  usize = 4;                                                // c:171
+pub const COL_SO:  usize = 5;                                                // c:172
+pub const COL_BD:  usize = 6;                                                // c:173
+pub const COL_CD:  usize = 7;                                                // c:174
+pub const COL_OR:  usize = 8;                                                // c:175
+pub const COL_MI:  usize = 9;                                                // c:176
+pub const COL_SU:  usize = 10;                                               // c:177
+pub const COL_SG:  usize = 11;                                               // c:178
+pub const COL_TW:  usize = 12;                                               // c:179
+pub const COL_OW:  usize = 13;                                               // c:180
+pub const COL_ST:  usize = 14;                                               // c:181
+pub const COL_EX:  usize = 15;                                               // c:182
+pub const COL_LC:  usize = 16;                                               // c:183
+pub const COL_RC:  usize = 17;                                               // c:184
+pub const COL_EC:  usize = 18;                                               // c:185
+pub const COL_TC:  usize = 19;                                               // c:186
+pub const COL_SP:  usize = 20;                                               // c:187
+pub const COL_MA:  usize = 21;                                               // c:188
+pub const COL_HI:  usize = 22;                                               // c:189
+pub const COL_DU:  usize = 23;                                               // c:190
+pub const COL_SA:  usize = 24;                                               // c:191
+/// Port of `NUM_COLS` from `Src/Zle/complist.c:193`.
+pub const NUM_COLS: usize = 25;                                              // c:193
 
 /// ```c
 /// static filecol
@@ -105,6 +130,92 @@ pub fn filecol(col: &str) -> filecol {                                       // 
     }                                                                        // c:497 return fc
 }
 
+/// Port of `struct filecol` / `typedef struct filecol *filecol` from
+/// `Src/Zle/complist.c:213-219`. One terminal-color spec for a file
+/// type; chained via `next` so multiple per-group rules can apply.
+///
+/// `prog` mirrors C's `Patprog prog` (NULL → applies to all groups).
+/// Patprog doesn't impl Debug/Clone in the Rust port, so this struct
+/// can't auto-derive them; impl manually if needed by callers.
+#[derive(Default)]
+#[allow(non_camel_case_types)]
+pub struct filecol {                                                         // c:215
+    /// Group pattern (NULL → applies to all groups).
+    pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:216
+    /// Color string (ANSI escape-code body).
+    pub col: String,                                                         // c:217
+    /// Next entry chained for the same color slot.
+    pub next: Option<Box<filecol>>,                                          // c:218
+}
+
+/// Port of `struct patcol` from `Src/Zle/complist.c:225`. Per-pattern
+/// terminal-color spec — links a glob `pat` to up to MAX_POS+1 color
+/// strings (one per submatch position).
+#[derive(Default)]
+#[allow(non_camel_case_types)]
+pub struct patcol {                                                          // c:225
+    /// Group pattern (NULL → all groups).
+    pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:226
+    /// Pattern for match.
+    pub pat: Option<crate::ported::zsh_h::Patprog>,                          // c:227
+    /// Color strings indexed by submatch position (MAX_POS + 1 slots).
+    pub cols: Vec<String>,                                                   // c:228
+    /// Next entry in the patcol chain.
+    pub next: Option<Box<patcol>>,                                           // c:229
+}
+
+/// Port of `struct extcol` from `Src/Zle/complist.c:236`. Per-extension
+/// terminal-color spec.
+#[derive(Default)]
+#[allow(non_camel_case_types)]
+pub struct extcol {                                                          // c:236
+    /// Group pattern (NULL → all groups).
+    pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:237
+    /// File extension (e.g. ".tar").
+    pub ext: String,                                                         // c:238
+    /// Terminal color string.
+    pub col: String,                                                         // c:239
+    /// Next entry in the extcol chain.
+    pub next: Option<Box<extcol>>,                                           // c:240
+}
+
+/// Port of `struct listcols` from `Src/Zle/complist.c:253`. Holds
+/// every terminal-color string a completion-listing run might emit.
+#[derive(Default)]
+#[allow(non_camel_case_types)]
+pub struct listcols {                                                        // c:253
+    /// Strings for file types (indexed by `col::*` constants).
+    pub files: Vec<filecol>,                                                 // c:254 [NUM_COLS]
+    /// Strings for patterns.
+    pub pats: Option<Box<patcol>>,                                           // c:255
+    /// Strings for extensions.
+    pub exts: Option<Box<extcol>>,                                           // c:256
+    /// Special settings, see `LC_FOLLOW_SYMLINKS` above.
+    pub flags: i32,                                                          // c:257
+}
+
+/// Port of `getcolval(char *s, int multi)` from Src/Zle/complist.c:275.
+#[allow(unused_variables)]
+pub fn getcolval(s: &str, multi: i32) -> &str {                             // c:275
+    // C body c:277-329 — walks one ANSI escape sequence (digits and
+    //                    `;`) and returns pointer past it. Used while
+    //                    parsing `key=val` from LS_COLORS.
+    let trimmed = s.trim_start_matches(|c: char| c.is_ascii_digit() || c == ';');
+    trimmed
+}
+
+/// Port of `getcoldef(char *s)` from Src/Zle/complist.c:330.
+pub fn getcoldef(s: &str) -> Option<String> {                                // c:330
+    // C body c:332-503 — parses one "key=val" entry from LS_COLORS
+    //                    /ZLS_COLORS, walks past the key (one of the
+    //                    `colnames` two-letters, plus filename
+    //                    suffixes "*.ext", patterns "=cls"), returns
+    //                    pointer past the entry. Without the mcolors
+    //                    install we just split on the first `:` and
+    //                    return the remainder so caller can iterate.
+    s.split_once(':').map(|(_, rest)| rest.to_string())
+}
+
 /// Port of `getcols()` from Src/Zle/complist.c:505.
 /// WARNING: param names don't match C — Rust=(_lscol) vs C=()
 pub fn getcols(_lscol: &str) -> i32 {                                        // c:505
@@ -114,43 +225,6 @@ pub fn getcols(_lscol: &str) -> i32 {                                        // 
     //                    mcolors substrate we no-op and return success.
     0
 }
-
-/// Port of file-static `char *last_cap` from
-/// `Src/Zle/complist.c:148` — last LS_COLOR escape emitted so we
-/// can zcoff() before newlines to prevent color bleed. Co-located
-/// with the MLBEG/NREFS/CURIS* statics declared further down.
-pub static LAST_CAP: std::sync::LazyLock<std::sync::Mutex<String>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new()));
-
-/// Port of file-static `char **patcols` from
-/// `Src/Zle/complist.c:143` — array of LS_COLORS caps for the
-/// current match's regex sub-groups (one per in-string region).
-pub static PATCOLS: std::sync::LazyLock<std::sync::Mutex<Vec<String>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
-
-/// File-static index into PATCOLS. C source increments the
-/// `patcols` pointer directly; Rust uses a separate cursor since
-/// `Vec<String>` doesn't support pointer arithmetic.
-pub static PATCOLS_IDX: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
-/// Port of `static int begpos[MAX_POS]` from `complist.c:140` —
-/// begin positions of regex backref regions in the current match.
-pub static BEGPOS: std::sync::LazyLock<std::sync::Mutex<Vec<i32>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(vec![0xfffffff_i32; 11]));
-
-/// Port of `static int endpos[MAX_POS]` from `complist.c:141`.
-pub static ENDPOS: std::sync::LazyLock<std::sync::Mutex<Vec<i32>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(vec![0xfffffff_i32; 11]));
-
-/// Port of `static int sendpos[MAX_POS]` from `c:142`.
-pub static SENDPOS: std::sync::LazyLock<std::sync::Mutex<Vec<i32>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(vec![0xfffffff_i32; 11]));
-
-/// Port of `static char *curiscols[MAX_POS]` from `c:143` — the
-/// active-color stack as in-string regions nest.
-pub static CURISCOLS: std::sync::LazyLock<std::sync::Mutex<Vec<String>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(vec![String::new(); 11]));
 
 /// Direct port of `void zlrputs(char *cap)` from
 /// `Src/Zle/complist.c:564`. Emits an LS_COLORS escape
@@ -544,137 +618,59 @@ pub fn compprintlist(showall: i32) -> i32 {                                  // 
     crate::ported::zle::compresult::printlist(0, showall)
 }
 
-// =====================================================================
-// Substrate for the LS_COLORS / ZLS_COLORS subsystem —
-// `Src/Zle/complist.c:165-269`.
-// =====================================================================
+/// Port of `clprintm(Cmgroup g, Cmatch *mp, int mc, int ml, int lastc, int width)` from Src/Zle/complist.c:1730.
+/// WARNING: param names don't match C — Rust=() vs C=(g, mp, mc, ml, lastc, width)
+pub fn clprintm() -> i32 {                                                   // c:1730
+    // C body c:1732-1988 — full per-match printer: emits LS_COLOR for
+    //                      file type, leading spaces, the match string
+    //                      via clnicezputs, the trailing colon/desc,
+    //                      and reset escapes. Needs Cmatch + mcolors
+    //                      pipelines. Returns 0 on success.
+    0
+}
 
-// `COL_*` — index into `mcolors.files[]` per `Src/Zle/complist.c:167-194`.
-pub const COL_NO:  usize = 0;                                                // c:167
-pub const COL_FI:  usize = 1;                                                // c:168
-pub const COL_DI:  usize = 2;                                                // c:169
-pub const COL_LN:  usize = 3;                                                // c:170
-pub const COL_PI:  usize = 4;                                                // c:171
-pub const COL_SO:  usize = 5;                                                // c:172
-pub const COL_BD:  usize = 6;                                                // c:173
-pub const COL_CD:  usize = 7;                                                // c:174
-pub const COL_OR:  usize = 8;                                                // c:175
-pub const COL_MI:  usize = 9;                                                // c:176
-pub const COL_SU:  usize = 10;                                               // c:177
-pub const COL_SG:  usize = 11;                                               // c:178
-pub const COL_TW:  usize = 12;                                               // c:179
-pub const COL_OW:  usize = 13;                                               // c:180
-pub const COL_ST:  usize = 14;                                               // c:181
-pub const COL_EX:  usize = 15;                                               // c:182
-pub const COL_LC:  usize = 16;                                               // c:183
-pub const COL_RC:  usize = 17;                                               // c:184
-pub const COL_EC:  usize = 18;                                               // c:185
-pub const COL_TC:  usize = 19;                                               // c:186
-pub const COL_SP:  usize = 20;                                               // c:187
-pub const COL_MA:  usize = 21;                                               // c:188
-pub const COL_HI:  usize = 22;                                               // c:189
-pub const COL_DU:  usize = 23;                                               // c:190
-pub const COL_SA:  usize = 24;                                               // c:191
-/// Port of `NUM_COLS` from `Src/Zle/complist.c:193`.
-pub const NUM_COLS: usize = 25;                                              // c:193
+/// Port of `singlecalc(int *cp, int l, int *lcp)` from Src/Zle/complist.c:1909.
+#[allow(unused_variables)]
+pub fn singlecalc(cp: &mut i32, l: i32, lcp: &mut i32) -> i32 {          // c:1909
+    // C body c:1911-1933 — computes scroll offset for single-column
+    //                      mode. Without mtab/mline substrate: 0.
+    0
+}
 
-/// Port of `MMARK` from `Src/Zle/complist.c:126`. Tag bit used in
-/// the low bit of `Cmatch *` / `Cmgroup` pointers to mark a match
-/// as visited during the menu-select / hidden-row dispatch. Real C
-/// uses pointer tagging; the Rust port uses the same bit position
-/// (`u32 = 1`) as a search-anchor — actual marker storage lives on
-/// a separate `bool` per Cmatch when the substrate hydrates.
-pub const MMARK: u32 = 1;                                                    // c:126
-
-/// Port of `MAX_POS` from `Src/Zle/complist.c:137`. Maximum number
-/// of saved (mline, mcol) menu-select positions in the back-stack
-/// used by msearchpush/msearchpop.
-pub const MAX_POS: usize = 11;                                               // c:137
-
-/// Port of `colnames[]` from `Src/Zle/complist.c:197-201`.
-/// Two-letter LS_COLORS keys, parallel-indexed with `col::*`.
-pub static COLNAMES: &[&str] = &[                                            // c:197
-    "no", "fi", "di", "ln", "pi", "so", "bd", "cd", "or", "mi",
-    "su", "sg", "tw", "ow", "st", "ex",
-    "lc", "rc", "ec", "tc", "sp", "ma", "hi", "du", "sa",
-];
-
-/// Port of `defcols[]` from `Src/Zle/complist.c:205-209`.
-/// Default ANSI escape codes when LS_COLORS doesn't override.
-pub static DEFCOLS: &[Option<&str>] = &[                                     // c:205
-    Some("0"), Some("0"), Some("1;31"), Some("1;36"), Some("33"),
-    Some("1;35"), Some("1;33"), Some("1;33"), None, None,
-    Some("37;41"), Some("30;43"), Some("30;42"), Some("34;42"), Some("37;44"),
-    Some("1;32"), Some("\x1b["), Some("m"), None, Some("0"),
-    Some("0"), Some("7"), None, None, Some("0"),
-];
-
-/// Port of `struct filecol` / `typedef struct filecol *filecol` from
-/// `Src/Zle/complist.c:213-219`. One terminal-color spec for a file
-/// type; chained via `next` so multiple per-group rules can apply.
+/// Direct port of `static int singledraw(void)` from
+/// `Src/Zle/complist.c:1934`. Repaints the menu-completion
+/// listing in single-column mode (one match per line, current
+/// pick highlighted).
 ///
-/// `prog` mirrors C's `Patprog prog` (NULL → applies to all groups).
-/// Patprog doesn't impl Debug/Clone in the Rust port, so this struct
-/// can't auto-derive them; impl manually if needed by callers.
-#[derive(Default)]
-#[allow(non_camel_case_types)]
-pub struct filecol {                                                         // c:215
-    /// Group pattern (NULL → applies to all groups).
-    pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:216
-    /// Color string (ANSI escape-code body).
-    pub col: String,                                                         // c:217
-    /// Next entry chained for the same color slot.
-    pub next: Option<Box<filecol>>,                                          // c:218
+/// **Substrate trade-off:** the redraw needs `mtab` (the
+/// match-table indexed by row) + the `complistmtab`/`complistmlist`
+/// terminal-coordinate arrays + `tputs`-driven cursor/color escapes.
+/// All three live on the live ZLE refresh layer that compcore-call
+/// context can't reach. Returns 0 = "redraw scheduled" so the live
+/// refresh tick picks up the geometry from `listdat` + `amatches`.
+pub fn singledraw() -> i32 {                                                 // c:1934
+    // c:1986 — return 0 = redraw scheduled.
+    0
 }
 
-/// Port of `struct patcol` from `Src/Zle/complist.c:225`. Per-pattern
-/// terminal-color spec — links a glob `pat` to up to MAX_POS+1 color
-/// strings (one per submatch position).
-#[derive(Default)]
-#[allow(non_camel_case_types)]
-pub struct patcol {                                                          // c:225
-    /// Group pattern (NULL → all groups).
-    pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:226
-    /// Pattern for match.
-    pub pat: Option<crate::ported::zsh_h::Patprog>,                          // c:227
-    /// Color strings indexed by submatch position (MAX_POS + 1 slots).
-    pub cols: Vec<String>,                                                   // c:228
-    /// Next entry in the patcol chain.
-    pub next: Option<Box<patcol>>,                                           // c:229
+/// Port of `complistmatches(UNUSED(Hookdef dummy), Chdata dat)` from Src/Zle/complist.c:1990.
+/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
+pub fn complistmatches() -> i32 {                                            // c:1990
+    // C body c:1992-2125 — top-level entry installed as the
+    //                      "comp_list_matches" hook by boot_(); calls
+    //                      compprintlist() to render the current
+    //                      matches list. Without that engine we no-op
+    //                      and return 0.
+    0
 }
 
-/// Port of `struct extcol` from `Src/Zle/complist.c:236`. Per-extension
-/// terminal-color spec.
-#[derive(Default)]
-#[allow(non_camel_case_types)]
-pub struct extcol {                                                          // c:236
-    /// Group pattern (NULL → all groups).
-    pub prog: Option<crate::ported::zsh_h::Patprog>,                         // c:237
-    /// File extension (e.g. ".tar").
-    pub ext: String,                                                         // c:238
-    /// Terminal color string.
-    pub col: String,                                                         // c:239
-    /// Next entry in the extcol chain.
-    pub next: Option<Box<extcol>>,                                           // c:240
-}
-
-/// Port of `LC_FOLLOW_SYMLINKS` from `Src/Zle/complist.c:251`.
-/// `ln=target:` flag — follow symlinks to determine highlighting.
-pub const LC_FOLLOW_SYMLINKS: i32 = 0x0001;                                  // c:251
-
-/// Port of `struct listcols` from `Src/Zle/complist.c:253`. Holds
-/// every terminal-color string a completion-listing run might emit.
-#[derive(Default)]
-#[allow(non_camel_case_types)]
-pub struct listcols {                                                        // c:253
-    /// Strings for file types (indexed by `col::*` constants).
-    pub files: Vec<filecol>,                                                 // c:254 [NUM_COLS]
-    /// Strings for patterns.
-    pub pats: Option<Box<patcol>>,                                           // c:255
-    /// Strings for extensions.
-    pub exts: Option<Box<extcol>>,                                           // c:256
-    /// Special settings, see `LC_FOLLOW_SYMLINKS` above.
-    pub flags: i32,                                                          // c:257
+/// Port of `adjust_mcol(int wish, Cmatch ***tabp, Cmgroup **grp)` from Src/Zle/complist.c:2127.
+pub fn adjust_mcol(wish: i32, tabp: &mut i32, grp: &mut i32) -> i32 {       // c:2127
+    // C body c:2129-2170 — clamps mcol to nearest valid column when
+    //                      moving across rows of variable-width matches.
+    //                      Without the mtab[][] matrix we just clamp
+    //                      to a non-negative column.
+    wish.max(0)
 }
 
 /// Port of `struct menustack` from `Src/Zle/complist.c:2159`. Saved
@@ -740,155 +736,6 @@ pub const MS_WRAPPED: i32 = 2;                                               // 
 /// Port of `MAX_STATUS` from `Src/Zle/complist.c:2200`. Max bytes the
 /// menu-status line shows.
 pub const MAX_STATUS: usize = 128;                                           // c:2200
-
-// =====================================================================
-// Menu-select / list-render file-statics — `Src/Zle/complist.c:52-148`.
-// All AtomicI32 so the multi-threaded shell can flip them between
-// widget invocations without locking. (C source uses plain int file-
-// statics in single-threaded compilation units.)
-// =====================================================================
-
-/// Port of `static int noselect` from `complist.c:52`. Suppress the
-/// menu-select cursor highlight when set.
-pub static NOSELECT:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
-/// Port of `static int mselect` from `complist.c:52`. Currently
-/// selected match index (-1 = none).
-pub static MSELECT:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:52
-/// Port of `static int inselect` from `complist.c:52`. Inside menu-
-/// select dispatch loop.
-pub static INSELECT:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
-/// Port of `static int mcol` from `complist.c:52`. Current column.
-pub static MCOL:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
-/// Port of `static int mline` from `complist.c:52`. Current line.
-pub static MLINE:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
-/// Port of `static int mcols` from `complist.c:52`. Total columns.
-pub static MCOLS:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
-/// Port of `static int mlines` from `complist.c:52`. Total lines.
-pub static MLINES:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
-
-/// Port of `static int selected` from `complist.c:62`. Match was
-/// selected (Enter/Tab pressed in menu).
-pub static SELECTED:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:62
-/// Port of `static int mlbeg = -1` from `complist.c:62`. First visible
-/// menu line.
-pub static MLBEG:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:62
-/// Port of `static int mlend = 9999999` from `complist.c:62`. Last
-/// visible menu line.
-pub static MLEND:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(9_999_999); // c:62
-/// Port of `static int mscroll` from `complist.c:62`. Scroll-mode
-/// active.
-pub static MSCROLL:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:62
-/// Port of `static int mrestlines` from `complist.c:62`. Lines remaining
-/// before next asklistscroll prompt.
-pub static MRESTLINES:std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:62
-
-/// Port of `static int mnew` from `complist.c:76`. Match list is new
-/// (vs. continuation of prior cycle).
-pub static MNEW:        std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
-/// Port of `static int mlastcols` from `complist.c:76`. Previous columns.
-pub static MLASTCOLS:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
-/// Port of `static int mlastlines` from `complist.c:76`. Previous lines.
-pub static MLASTLINES:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
-/// Port of `static int mhasstat` from `complist.c:76`. Status line is shown.
-pub static MHASSTAT:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
-/// Port of `static int mfirstl` from `complist.c:76`. First line of menu.
-pub static MFIRSTL:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
-/// Port of `static int mlastm` from `complist.c:76`. Last match index.
-pub static MLASTM:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
-
-/// Port of `static int mlprinted` from `complist.c:88`. Lines actually printed.
-pub static MLPRINTED:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
-/// Port of `static int molbeg = -2` from `complist.c:88`. Old menu beg.
-pub static MOLBEG:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-2); // c:88
-/// Port of `static int mocol` from `complist.c:88`. Old column.
-pub static MOCOL:       std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
-/// Port of `static int moline` from `complist.c:88`. Old line.
-pub static MOLINE:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
-/// Port of `static int mstatprinted` from `complist.c:88`. Status was printed.
-pub static MSTATPRINTED:std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
-
-/// Port of `static int mtab_been_reallocated` from `complist.c:106`.
-pub static MTAB_BEEN_REALLOCATED: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                                    // c:106
-
-/// Port of `static int mgtabsize` from `complist.c:117`. Size of mgtab.
-pub static MGTABSIZE:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:117
-
-/// Port of `static int nrefs` from `complist.c:139`. Number of group
-/// pattern references in the current LS_COLORS spec.
-pub static NREFS:       std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:139
-
-/// Port of `static int curisbeg` from `complist.c:140`. Current
-/// "is-begin-pos" iterator state.
-pub static CURISBEG:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:140
-/// Port of `static int curissend` from `complist.c:142`. Current
-/// "is-sorted-end-pos" iterator state.
-pub static CURISSEND:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:142
-/// Port of `static int curiscol` from `complist.c:144`. Current
-/// "is-color" iterator state.
-pub static CURISCOL:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:144
-
-/// Port of `static int lr_caplen` from `complist.c:269`. Left-right
-/// cap length (current).
-pub static LR_CAPLEN:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:269
-/// Port of `static int max_caplen` from `complist.c:269`. Maximum
-/// observed cap length.
-pub static MAX_CAPLEN:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:269
-
-/// Port of `clprintm(Cmgroup g, Cmatch *mp, int mc, int ml, int lastc, int width)` from Src/Zle/complist.c:1730.
-/// WARNING: param names don't match C — Rust=() vs C=(g, mp, mc, ml, lastc, width)
-pub fn clprintm() -> i32 {                                                   // c:1730
-    // C body c:1732-1988 — full per-match printer: emits LS_COLOR for
-    //                      file type, leading spaces, the match string
-    //                      via clnicezputs, the trailing colon/desc,
-    //                      and reset escapes. Needs Cmatch + mcolors
-    //                      pipelines. Returns 0 on success.
-    0
-}
-
-/// Port of `singlecalc(int *cp, int l, int *lcp)` from Src/Zle/complist.c:1909.
-#[allow(unused_variables)]
-pub fn singlecalc(cp: &mut i32, l: i32, lcp: &mut i32) -> i32 {          // c:1909
-    // C body c:1911-1933 — computes scroll offset for single-column
-    //                      mode. Without mtab/mline substrate: 0.
-    0
-}
-
-/// Direct port of `static int singledraw(void)` from
-/// `Src/Zle/complist.c:1934`. Repaints the menu-completion
-/// listing in single-column mode (one match per line, current
-/// pick highlighted).
-///
-/// **Substrate trade-off:** the redraw needs `mtab` (the
-/// match-table indexed by row) + the `complistmtab`/`complistmlist`
-/// terminal-coordinate arrays + `tputs`-driven cursor/color escapes.
-/// All three live on the live ZLE refresh layer that compcore-call
-/// context can't reach. Returns 0 = "redraw scheduled" so the live
-/// refresh tick picks up the geometry from `listdat` + `amatches`.
-pub fn singledraw() -> i32 {                                                 // c:1934
-    // c:1986 — return 0 = redraw scheduled.
-    0
-}
-
-/// Port of `complistmatches(UNUSED(Hookdef dummy), Chdata dat)` from Src/Zle/complist.c:1990.
-/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
-pub fn complistmatches() -> i32 {                                            // c:1990
-    // C body c:1992-2125 — top-level entry installed as the
-    //                      "comp_list_matches" hook by boot_(); calls
-    //                      compprintlist() to render the current
-    //                      matches list. Without that engine we no-op
-    //                      and return 0.
-    0
-}
-
-/// Port of `adjust_mcol(int wish, Cmatch ***tabp, Cmgroup **grp)` from Src/Zle/complist.c:2127.
-pub fn adjust_mcol(wish: i32, tabp: &mut i32, grp: &mut i32) -> i32 {       // c:2127
-    // C body c:2129-2170 — clamps mcol to nearest valid column when
-    //                      moving across rows of variable-width matches.
-    //                      Without the mtab[][] matrix we just clamp
-    //                      to a non-negative column.
-    wish.max(0)
-}
 
 /// Port of `setmstatus(char *status, char *sline, int sll, int scs, int *csp, int *llp, int *lenp)` from Src/Zle/complist.c:2203.
 /// WARNING: param names don't match C — Rust=(_status, _sline, _scs, _np, _nl, _nc) vs C=(status, sline, sll, scs, csp, llp, lenp)
@@ -1017,6 +864,159 @@ pub fn finish_() -> i32 {                                                    // 
     // C body c:3603-3604 — `return 0`. Faithful port of the empty body.
     0
 }
+
+/// Port of file-static `char *last_cap` from
+/// `Src/Zle/complist.c:148` — last LS_COLOR escape emitted so we
+/// can zcoff() before newlines to prevent color bleed. Co-located
+/// with the MLBEG/NREFS/CURIS* statics declared further down.
+pub static LAST_CAP: std::sync::LazyLock<std::sync::Mutex<String>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new()));
+
+/// Port of file-static `char **patcols` from
+/// `Src/Zle/complist.c:143` — array of LS_COLORS caps for the
+/// current match's regex sub-groups (one per in-string region).
+pub static PATCOLS: std::sync::LazyLock<std::sync::Mutex<Vec<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
+
+/// File-static index into PATCOLS. C source increments the
+/// `patcols` pointer directly; Rust uses a separate cursor since
+/// `Vec<String>` doesn't support pointer arithmetic.
+pub static PATCOLS_IDX: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Port of `static int begpos[MAX_POS]` from `complist.c:140` —
+/// begin positions of regex backref regions in the current match.
+pub static BEGPOS: std::sync::LazyLock<std::sync::Mutex<Vec<i32>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(vec![0xfffffff_i32; 11]));
+
+/// Port of `static int endpos[MAX_POS]` from `complist.c:141`.
+pub static ENDPOS: std::sync::LazyLock<std::sync::Mutex<Vec<i32>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(vec![0xfffffff_i32; 11]));
+
+/// Port of `static int sendpos[MAX_POS]` from `c:142`.
+pub static SENDPOS: std::sync::LazyLock<std::sync::Mutex<Vec<i32>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(vec![0xfffffff_i32; 11]));
+
+/// Port of `static char *curiscols[MAX_POS]` from `c:143` — the
+/// active-color stack as in-string regions nest.
+pub static CURISCOLS: std::sync::LazyLock<std::sync::Mutex<Vec<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(vec![String::new(); 11]));
+
+/// Port of `colnames[]` from `Src/Zle/complist.c:197-201`.
+/// Two-letter LS_COLORS keys, parallel-indexed with `col::*`.
+pub static COLNAMES: &[&str] = &[                                            // c:197
+    "no", "fi", "di", "ln", "pi", "so", "bd", "cd", "or", "mi",
+    "su", "sg", "tw", "ow", "st", "ex",
+    "lc", "rc", "ec", "tc", "sp", "ma", "hi", "du", "sa",
+];
+
+/// Port of `defcols[]` from `Src/Zle/complist.c:205-209`.
+/// Default ANSI escape codes when LS_COLORS doesn't override.
+pub static DEFCOLS: &[Option<&str>] = &[                                     // c:205
+    Some("0"), Some("0"), Some("1;31"), Some("1;36"), Some("33"),
+    Some("1;35"), Some("1;33"), Some("1;33"), None, None,
+    Some("37;41"), Some("30;43"), Some("30;42"), Some("34;42"), Some("37;44"),
+    Some("1;32"), Some("\x1b["), Some("m"), None, Some("0"),
+    Some("0"), Some("7"), None, None, Some("0"),
+];
+
+/// Port of `LC_FOLLOW_SYMLINKS` from `Src/Zle/complist.c:251`.
+/// `ln=target:` flag — follow symlinks to determine highlighting.
+pub const LC_FOLLOW_SYMLINKS: i32 = 0x0001;                                  // c:251
+
+// =====================================================================
+// Menu-select / list-render file-statics — `Src/Zle/complist.c:52-148`.
+// All AtomicI32 so the multi-threaded shell can flip them between
+// widget invocations without locking. (C source uses plain int file-
+// statics in single-threaded compilation units.)
+// =====================================================================
+
+/// Port of `static int noselect` from `complist.c:52`. Suppress the
+/// menu-select cursor highlight when set.
+pub static NOSELECT:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+/// Port of `static int mselect` from `complist.c:52`. Currently
+/// selected match index (-1 = none).
+pub static MSELECT:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:52
+/// Port of `static int inselect` from `complist.c:52`. Inside menu-
+/// select dispatch loop.
+pub static INSELECT:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+/// Port of `static int mcol` from `complist.c:52`. Current column.
+pub static MCOL:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+/// Port of `static int mline` from `complist.c:52`. Current line.
+pub static MLINE:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+/// Port of `static int mcols` from `complist.c:52`. Total columns.
+pub static MCOLS:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+/// Port of `static int mlines` from `complist.c:52`. Total lines.
+pub static MLINES:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:52
+
+/// Port of `static int selected` from `complist.c:62`. Match was
+/// selected (Enter/Tab pressed in menu).
+pub static SELECTED:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:62
+/// Port of `static int mlbeg = -1` from `complist.c:62`. First visible
+/// menu line.
+pub static MLBEG:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:62
+/// Port of `static int mlend = 9999999` from `complist.c:62`. Last
+/// visible menu line.
+pub static MLEND:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(9_999_999); // c:62
+/// Port of `static int mscroll` from `complist.c:62`. Scroll-mode
+/// active.
+pub static MSCROLL:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:62
+/// Port of `static int mrestlines` from `complist.c:62`. Lines remaining
+/// before next asklistscroll prompt.
+pub static MRESTLINES:std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);  // c:62
+
+/// Port of `static int mnew` from `complist.c:76`. Match list is new
+/// (vs. continuation of prior cycle).
+pub static MNEW:        std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+/// Port of `static int mlastcols` from `complist.c:76`. Previous columns.
+pub static MLASTCOLS:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+/// Port of `static int mlastlines` from `complist.c:76`. Previous lines.
+pub static MLASTLINES:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+/// Port of `static int mhasstat` from `complist.c:76`. Status line is shown.
+pub static MHASSTAT:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+/// Port of `static int mfirstl` from `complist.c:76`. First line of menu.
+pub static MFIRSTL:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+/// Port of `static int mlastm` from `complist.c:76`. Last match index.
+pub static MLASTM:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:76
+
+/// Port of `static int mlprinted` from `complist.c:88`. Lines actually printed.
+pub static MLPRINTED:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
+/// Port of `static int molbeg = -2` from `complist.c:88`. Old menu beg.
+pub static MOLBEG:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-2); // c:88
+/// Port of `static int mocol` from `complist.c:88`. Old column.
+pub static MOCOL:       std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
+/// Port of `static int moline` from `complist.c:88`. Old line.
+pub static MOLINE:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
+/// Port of `static int mstatprinted` from `complist.c:88`. Status was printed.
+pub static MSTATPRINTED:std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:88
+
+/// Port of `static int mtab_been_reallocated` from `complist.c:106`.
+pub static MTAB_BEEN_REALLOCATED: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                                    // c:106
+
+/// Port of `static int mgtabsize` from `complist.c:117`. Size of mgtab.
+pub static MGTABSIZE:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:117
+
+/// Port of `static int nrefs` from `complist.c:139`. Number of group
+/// pattern references in the current LS_COLORS spec.
+pub static NREFS:       std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:139
+
+/// Port of `static int curisbeg` from `complist.c:140`. Current
+/// "is-begin-pos" iterator state.
+pub static CURISBEG:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:140
+/// Port of `static int curissend` from `complist.c:142`. Current
+/// "is-sorted-end-pos" iterator state.
+pub static CURISSEND:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:142
+/// Port of `static int curiscol` from `complist.c:144`. Current
+/// "is-color" iterator state.
+pub static CURISCOL:    std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:144
+
+/// Port of `static int lr_caplen` from `complist.c:269`. Left-right
+/// cap length (current).
+pub static LR_CAPLEN:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:269
+/// Port of `static int max_caplen` from `complist.c:269`. Maximum
+/// observed cap length.
+pub static MAX_CAPLEN:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:269
 
 /// Bridge to the canonical port at `compresult.rs:1080` (which is
 /// `void calclist(int showall)` in `compresult.c:1495`). The name

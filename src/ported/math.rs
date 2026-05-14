@@ -32,6 +32,40 @@ pub use crate::ported::zsh_h::MN_UNSET;
 /// Re-export of `mnumber` (defined in zsh_h.rs as the Src/zsh.h:95 port).
 pub use crate::ported::zsh_h::mnumber;
 
+/// Port of `struct mathvalue` from `Src/math.c`:
+///
+/// ```c
+/// struct mathvalue {
+///     char *lval;     /* lvalue string for variable write-back  */
+///     Value pval;     /* resolved variable handle (or NULL)     */
+///     mnumber val;    /* current numeric value                  */
+/// };
+/// ```
+#[derive(Clone)]
+pub(crate) struct mathvalue {
+    pub val: mnumber,
+    pub lval: Option<String>,
+    /// `Value pval` slot from the C source. zsh uses it to cache the
+    /// resolved parameter handle so write-back doesn't re-parse the
+    /// `lval` string. Rust port leaves this as `()` for now — the
+    /// resolved variable lives in `crate::ported::exec::ShellExecutor`'s
+    /// `variables` map, looked up by `lval` on each access.
+    pub pval: (),
+}
+
+/// Operator associativity and type flags
+const LR: u16 = 0x0000; // left-to-right
+const RL: u16 = 0x0001; // right-to-left
+const BOOL: u16 = 0x0002; // short-circuit boolean
+
+const OP_A2: u16 = 0x0004; // 2 arguments
+const OP_A2IR: u16 = 0x0008; // 2 args, return int
+const OP_A2IO: u16 = 0x0010; // 2 args, must be int
+const OP_E2: u16 = 0x0020; // 2 args with assignment
+const OP_E2IO: u16 = 0x0040; // 2 args assign, must be int
+const OP_OP: u16 = 0x0080; // expecting operator position
+const OP_OPF: u16 = 0x0100; // followed by operator (after this, next is operator)
+
 /// Math tokens — direct port of Src/math.c:109-162. C uses bare
 /// `#define`s; the Rust port mirrors as `pub const` ints so
 /// `static int mtok` (math.c:305) can be a plain `i32` and the
@@ -63,7 +97,6 @@ pub const NEQ: i32 = 23;          // c:132  !=
 pub const DAND: i32 = 24;         // c:133  &&
 pub const DOR: i32 = 25;          // c:134  ||
 pub const DXOR: i32 = 26;         // c:135  ^^
-pub const Quest: i32 = 27;        // c:136  ?
 pub const COLON: i32 = 28;        // c:137  :
 pub const EQ: i32 = 29;           // c:138  =
 pub const PLUSEQ: i32 = 30;       // c:139  +=
@@ -79,7 +112,6 @@ pub const SHRIGHTEQ: i32 = 39;    // c:148  >>=
 pub const DANDEQ: i32 = 40;       // c:149  &&=
 pub const DOREQ: i32 = 41;        // c:150  ||=
 pub const DXOREQ: i32 = 42;       // c:151  ^^=
-pub const Comma: i32 = 43;        // c:152  ,
 pub const EOI: i32 = 44;          // c:153  end of input
 pub const PREPLUS: i32 = 45;      // c:154  ++x
 pub const PREMINUS: i32 = 46;     // c:155  --x
@@ -93,108 +125,6 @@ pub const FUNC: i32 = 52;         // c:161  function call
 /// `c_prec`/`z_prec`/`type` arrays are sized by this.
 pub const TOKCOUNT: usize = 53;
 
-/// Operator associativity and type flags
-const LR: u16 = 0x0000; // left-to-right
-const RL: u16 = 0x0001; // right-to-left
-const BOOL: u16 = 0x0002; // short-circuit boolean
-
-const OP_A2: u16 = 0x0004; // 2 arguments
-const OP_A2IR: u16 = 0x0008; // 2 args, return int
-const OP_A2IO: u16 = 0x0010; // 2 args, must be int
-const OP_E2: u16 = 0x0020; // 2 args with assignment
-const OP_E2IO: u16 = 0x0040; // 2 args assign, must be int
-const OP_OP: u16 = 0x0080; // expecting operator position
-const OP_OPF: u16 = 0x0100; // followed by operator (after this, next is operator)
-
-/// Zsh precedence table (default)
-static Z_PREC: [u8; TOKCOUNT] = [
-    1, 137, 2, 2, 2, // InPar OutPar Not Comp PostPlus
-    2, 2, 2, 4, 5, // PostMinus UPlus UMinus And Xor
-    6, 8, 8, 8, 9, // Or Mul Div Mod Plus
-    9, 3, 3, 10, 10, // Minus ShLeft ShRight Les Leq
-    10, 10, 11, 11, 12, // Gre Geq Deq Neq DAnd
-    13, 13, 14, 15, 16, // DOr DXor Quest Colon Eq
-    16, 16, 16, 16, 16, // PlusEq MinusEq MulEq DivEq ModEq
-    16, 16, 16, 16, 16, // AndEq XorEq OrEq ShLeftEq ShRightEq
-    16, 16, 16, 17, 200, // DAndEq DOrEq DXorEq Comma Eoi
-    2, 2, 0, 0, 7, // PrePlus PreMinus Num Id Power
-    0, 16, 0, // CId PowerEq Func
-];
-
-/// C precedence table (used with C_PRECEDENCES option)
-static C_PREC: [u8; TOKCOUNT] = [
-    1, 137, 2, 2, 2, 2, 2, 2, 9, 10, 11, 4, 4, 4, 5, 5, 6, 6, 7, 7, 7, 7, 8, 8, 12, 14, 13, 15, 16,
-    17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 18, 200, 2, 2, 0, 0, 3, 0, 17, 0,
-];
-
-/// Operator type table (matches C math.c type[] array)
-static OP_TYPE: [u16; TOKCOUNT] = [
-    // InPar, OutPar, Not, Comp, PostPlus
-    LR,
-    LR | OP_OP | OP_OPF,
-    RL,
-    RL,
-    RL | OP_OP | OP_OPF,
-    // PostMinus, UPlus, UMinus, And, Xor
-    RL | OP_OP | OP_OPF,
-    RL,
-    RL,
-    LR | OP_A2IO,
-    LR | OP_A2IO,
-    // Or, Mul, Div, Mod, Plus
-    LR | OP_A2IO,
-    LR | OP_A2,
-    LR | OP_A2,
-    LR | OP_A2,
-    LR | OP_A2,
-    // Minus, ShLeft, ShRight, Les, Leq
-    LR | OP_A2,
-    LR | OP_A2IO,
-    LR | OP_A2IO,
-    LR | OP_A2IR,
-    LR | OP_A2IR,
-    // Gre, Geq, Deq, Neq, DAnd
-    LR | OP_A2IR,
-    LR | OP_A2IR,
-    LR | OP_A2IR,
-    LR | OP_A2IR,
-    BOOL | OP_A2IO,
-    // DOr, DXor, Quest, Colon, Eq
-    BOOL | OP_A2IO,
-    LR | OP_A2IO,
-    RL | OP_OP,
-    RL | OP_OP,
-    RL | OP_E2,
-    // PlusEq, MinusEq, MulEq, DivEq, ModEq
-    RL | OP_E2,
-    RL | OP_E2,
-    RL | OP_E2,
-    RL | OP_E2,
-    RL | OP_E2,
-    // AndEq, XorEq, OrEq, ShLeftEq, ShRightEq
-    RL | OP_E2IO,
-    RL | OP_E2IO,
-    RL | OP_E2IO,
-    RL | OP_E2IO,
-    RL | OP_E2IO,
-    // DAndEq, DOrEq, DXorEq, Comma, Eoi
-    BOOL | OP_E2IO,
-    BOOL | OP_E2IO,
-    RL | OP_A2IO,
-    RL | OP_A2,
-    RL | OP_OP,
-    // PrePlus, PreMinus, Num, Id, Power
-    RL,
-    RL,
-    LR | OP_OPF,
-    LR | OP_OPF,
-    RL | OP_A2,
-    // CId, PowerEq, Func
-    LR | OP_OPF,
-    RL | OP_E2,
-    LR | OP_OPF,
-];
-
 /// Port of `enum prec_type` from `Src/math.c`. `mathevall()` (line
 /// 367) uses this to differentiate top-level expression evaluation
 /// (`(())`, `$(())`) from function-argument evaluation
@@ -205,265 +135,6 @@ static OP_TYPE: [u16; TOKCOUNT] = [
 pub enum prec_type {
     MPREC_TOP,
     MPREC_ARG,
-}
-
-// ============================================================
-// Module-level math statics — direct port of Src/math.c globals.
-//
-// math.c declares each of these at file scope:
-//   int noeval;                         // line 40
-//   mnumber zero_mnumber;               // line 45
-//   mnumber lastmathval;                // line 53
-//   int lastbase;                       // line 58
-//   static char *ptr;                   // line 60
-//   static mnumber yyval;               // line 62
-//   static char *yylval;                // line 63
-//   static int mlevel = 0;              // line 67
-//   static int unary = 1;               // line 71
-//   static struct mathvalue *stack;     // (math.c body)
-//   ... and a few derived from option flags (force_float, etc.).
-//
-// Rust port: thread_local!<Cell|RefCell<T>> per global. `mathevall`
-// (math.c:367) saves these to its own locals (`xyyval`, `xyylval`,
-// `xunary`, etc.) on entry and restores on exit so recursive math
-// calls (function-arg eval, indirect string eval) don't clobber
-// the outer evaluator's state.
-//
-// Cell for Copy types (i64/i32/usize/bool/mnumber/i32/&'static
-// slice). RefCell for owned/non-Copy (String, Vec, HashMap, Option).
-// ============================================================
-
-thread_local! {
-    /// `static char *ptr` — current input cursor. Owned String in Rust
-    /// (vs C's caller-owned char*) so the thread_local isn't a borrow.
-    static M_INPUT: RefCell<String> = const { RefCell::new(String::new()) };
-    /// Byte offset into `M_INPUT` of the next char to lex.
-    static M_POS: Cell<usize> = const { Cell::new(0) };
-    /// Byte offset where the current token began (post-whitespace).
-    /// Used to format zsh-style "at `<remaining>'" error pointers.
-    static M_TOK_START: Cell<usize> = const { Cell::new(0) };
-    /// `static mnumber yyval` (math.c:62) — value lexed by zzlex.
-    static M_YYVAL: Cell<mnumber> = const { Cell::new(mnumber { l: 0, d: 0.0, type_: MN_INTEGER }) };
-    /// `static char *yylval` (math.c:63) — identifier or function-call
-    /// text lexed by zzlex (caller side reads via `M_YYLVAL.with(...)`).
-    static M_YYLVAL: RefCell<String> = const { RefCell::new(String::new()) };
-    /// `static struct mathvalue *stack` — operand stack for the
-    /// shunting-yard evaluator. Mirrors C's heap-grown array.
-    static M_STACK: RefCell<Vec<mathvalue >> = const { RefCell::new(Vec::new()) };
-    /// `int mtok` — current token tag set by zzlex.
-    static M_MTOK: Cell<i32> = const { Cell::new(EOI) };
-    /// `static int unary` (math.c:71) — 1 when the parser is expecting
-    /// an operand (so `+`/`-` mean unary plus/minus).
-    static M_UNARY: Cell<bool> = const { Cell::new(true) };
-    // nonzero means we are not evaluating, just parsing                    // c:37
-    /// `int noeval` (math.c:40) — non-zero when in the parse-only side
-    /// of `&&`/`||`/ternary; suppresses side-effects.
-    static M_NOEVAL: Cell<i32> = const { Cell::new(0) };                    // c:40
-    // last input base we used                                              // c:55
-    /// `int lastbase` (math.c:58) — base of the last numeric literal
-    /// (set by lexconstant, used by `$((…))` formatting).
-    static M_LASTBASE: Cell<i32> = const { Cell::new(-1) };                 // c:58
-    /// `int *prec` — active precedence table (Z_PREC or C_PREC).
-    static M_PREC: Cell<&'static [u8; TOKCOUNT]> = const { Cell::new(&Z_PREC) };
-    /// `setopt CPRECEDENCES` mirror.
-    static M_C_PRECEDENCES: Cell<bool> = const { Cell::new(false) };
-    /// `setopt FORCEFLOAT` mirror.
-    static M_FORCE_FLOAT: Cell<bool> = const { Cell::new(false) };
-    /// `setopt OCTALZEROES` mirror.
-    static M_OCTAL_ZEROES: Cell<bool> = const { Cell::new(false) };
-    /// In-memory params table (zshrs uses this instead of the C param
-    /// table). Carries float/integer mnumber results.
-    static M_VARIABLES: RefCell<HashMap<String, mnumber>> = RefCell::new(HashMap::new());
-    /// Raw string values for variables whose contents aren't a plain
-    /// number — recursively re-eval'd by `getmathparam` for
-    /// `a="3+2"; $((a))` semantics.
-    static M_STRING_VARIABLES: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
-    /// `$?` — last command exit status, used by the `?` token in
-    /// unary position.
-    static M_LASTVAL: Cell<i32> = const { Cell::new(0) };
-    /// `$$` — current process ID, lexed for the `$` token.
-    static M_PID: Cell<i64> = const { Cell::new(0) };
-    /// Error message accumulator. zsh C uses `setjmp`/`longjmp`; the
-    /// Rust port returns errors via this Option then `mathevall`
-    /// surfaces it as `Result::Err`.
-    static M_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
-}
-
-// ============================================================
-// WARNING: NOT IN MATH.C — every `m_*` fn below is a Rust-only
-// thread_local accessor. C dereferences the corresponding module
-// global directly (`yyval.u.l`, `*ptr++`, etc.) without an
-// fn-shaped wrapper. The wrappers exist solely because Rust's
-// `thread_local!` requires `.with(|c| ...)` for any access, and
-// scattering 600 such closures throughout the evaluator would be
-// unreadable. Allowlisted in tests/data/fake_fn_allowlist.txt.
-// ============================================================
-// Accessor helpers — each thread_local reads/writes via these so the
-// migration from `s.X` → free-fn-only access is mechanical.
-
-#[inline] fn m_input_clone() -> String { M_INPUT.with(|c| c.borrow().clone()) }
-#[inline] fn m_input_set(v: String) { M_INPUT.with(|c| *c.borrow_mut() = v) }
-#[inline] fn m_input_len() -> usize { M_INPUT.with(|c| c.borrow().len()) }
-#[inline] fn m_input_byte(i: usize) -> u8 {
-    M_INPUT.with(|c| c.borrow().as_bytes().get(i).copied().unwrap_or(0))
-}
-#[inline] fn m_input_slice_from(start: usize) -> String {
-    M_INPUT.with(|c| c.borrow()[start..].to_string())
-}
-#[inline] fn m_input_slice(start: usize, end: usize) -> String {
-    M_INPUT.with(|c| c.borrow()[start..end].to_string())
-}
-
-#[inline] fn m_pos() -> usize { M_POS.with(|c| c.get()) }
-#[inline] fn m_pos_set(v: usize) { M_POS.with(|c| c.set(v)) }
-#[inline] fn m_pos_sub(n: usize) { M_POS.with(|c| c.set(c.get() - n)) }
-#[inline] fn m_pos_add(n: usize) { M_POS.with(|c| c.set(c.get() + n)) }
-
-#[inline] fn m_tok_start() -> usize { M_TOK_START.with(|c| c.get()) }
-#[inline] fn m_tok_start_set(v: usize) { M_TOK_START.with(|c| c.set(v)) }
-
-#[inline] fn m_yyval() -> mnumber { M_YYVAL.with(|c| c.get()) }
-#[inline] fn m_yyval_set(v: mnumber) { M_YYVAL.with(|c| c.set(v)) }
-
-#[inline] fn m_yylval_clone() -> String { M_YYLVAL.with(|c| c.borrow().clone()) }
-#[inline] fn m_yylval_set(v: String) { M_YYLVAL.with(|c| *c.borrow_mut() = v) }
-
-#[inline] fn m_mtok() -> i32 { M_MTOK.with(|c| c.get()) }
-#[inline] fn m_mtok_set(t: i32) { M_MTOK.with(|c| c.set(t)) }
-
-#[inline] fn m_unary() -> bool { M_UNARY.with(|c| c.get()) }
-#[inline] fn m_unary_set(v: bool) { M_UNARY.with(|c| c.set(v)) }
-
-#[inline] fn m_noeval() -> i32 { M_NOEVAL.with(|c| c.get()) }
-#[inline] fn m_noeval_set(v: i32) { M_NOEVAL.with(|c| c.set(v)) }
-#[inline] fn m_noeval_inc() { M_NOEVAL.with(|c| c.set(c.get() + 1)) }
-#[inline] fn m_noeval_dec() { M_NOEVAL.with(|c| c.set(c.get() - 1)) }
-
-#[inline] fn m_lastbase_set(v: i32) { M_LASTBASE.with(|c| c.set(v)) }
-
-/// Public getter for `lastbase` — used by `assignstrvalue` in
-/// params.rs to inherit the input numeric base when a freshly
-/// assigned integer parameter has none of its own.
-pub fn lastbase() -> i32 { M_LASTBASE.with(|c| c.get()) }
-
-#[inline] fn m_prec() -> &'static [u8; TOKCOUNT] { M_PREC.with(|c| c.get()) }
-#[inline] fn m_prec_set(p: &'static [u8; TOKCOUNT]) { M_PREC.with(|c| c.set(p)) }
-
-#[inline] fn m_c_precedences() -> bool { M_C_PRECEDENCES.with(|c| c.get()) }
-#[inline] fn m_c_precedences_set(v: bool) { M_C_PRECEDENCES.with(|c| c.set(v)) }
-#[inline] fn m_force_float() -> bool { M_FORCE_FLOAT.with(|c| c.get()) }
-#[inline] fn m_force_float_set(v: bool) { M_FORCE_FLOAT.with(|c| c.set(v)) }
-#[inline] fn m_octal_zeroes() -> bool { M_OCTAL_ZEROES.with(|c| c.get()) }
-#[inline] fn m_octal_zeroes_set(v: bool) { M_OCTAL_ZEROES.with(|c| c.set(v)) }
-
-#[inline] fn m_lastval_set(v: i32) { M_LASTVAL.with(|c| c.set(v)) }
-#[inline] fn m_lastval() -> i32 { M_LASTVAL.with(|c| c.get()) }
-#[inline] fn m_pid() -> i64 { M_PID.with(|c| c.get()) }
-#[inline] fn m_pid_set(v: i64) { M_PID.with(|c| c.set(v)) }
-
-#[inline] fn m_error_take() -> Option<String> { M_ERROR.with(|c| c.borrow_mut().take()) }
-#[inline] fn m_error_some() -> bool { M_ERROR.with(|c| c.borrow().is_some()) }
-#[inline] fn m_error_set(msg: String) {
-    M_ERROR.with(|c| {
-        if c.borrow().is_none() {
-            *c.borrow_mut() = Some(msg);
-        }
-    })
-}
-#[inline] fn m_error_set_force(msg: String) {
-    M_ERROR.with(|c| *c.borrow_mut() = Some(msg))
-}
-#[inline] fn m_error_clear() { M_ERROR.with(|c| *c.borrow_mut() = None) }
-
-// Stack helpers — mathvalue stack operations.
-#[inline] fn m_stack_push(v: mathvalue) { M_STACK.with(|c| c.borrow_mut().push(v)) }
-#[inline] fn m_stack_pop() -> Option<mathvalue> { M_STACK.with(|c| c.borrow_mut().pop()) }
-#[inline] fn m_stack_len() -> usize { M_STACK.with(|c| c.borrow().len()) }
-#[inline] fn m_stack_is_empty() -> bool { M_STACK.with(|c| c.borrow().is_empty()) }
-#[inline] fn m_stack_top_clone() -> Option<mathvalue> { M_STACK.with(|c| c.borrow().last().cloned()) }
-
-// Variable map helpers.
-#[inline] fn m_variables_get(name: &str) -> Option<mnumber> {
-    M_VARIABLES.with(|c| c.borrow().get(name).copied())
-}
-#[inline] fn m_variables_insert(k: String, v: mnumber) {
-    M_VARIABLES.with(|c| { c.borrow_mut().insert(k, v); })
-}
-#[inline] fn m_variables_clone() -> HashMap<String, mnumber> {
-    M_VARIABLES.with(|c| c.borrow().clone())
-}
-#[inline] fn m_variables_set(map: HashMap<String, mnumber>) {
-    M_VARIABLES.with(|c| *c.borrow_mut() = map)
-}
-
-#[inline] fn m_string_variables_get(name: &str) -> Option<String> {
-    M_STRING_VARIABLES.with(|c| c.borrow().get(name).cloned())
-}
-#[inline] fn m_string_variables_remove(name: &str) {
-    M_STRING_VARIABLES.with(|c| { c.borrow_mut().remove(name); })
-}
-#[inline] fn m_string_variables_clone() -> HashMap<String, String> {
-    M_STRING_VARIABLES.with(|c| c.borrow().clone())
-}
-#[inline] fn m_string_variables_set(map: HashMap<String, String>) {
-    M_STRING_VARIABLES.with(|c| *c.borrow_mut() = map)
-}
-#[inline] fn m_string_variables_insert(k: String, v: String) {
-    M_STRING_VARIABLES.with(|c| { c.borrow_mut().insert(k, v); })
-}
-
-/// Save/restore container — mirrors C `mathevall()` (Src/math.c:367)'s
-/// stack locals (`xyyval`, `xyylval`, `xunary`, `xnoeval`, `xptr`,
-/// etc.). Wrap recursive math eval (`callmathfunc` arg parsing,
-/// `getmathparam` indirect-string eval) with `save_state()` /
-/// `restore_state()` so the parent's evaluator state survives the
-/// inner call's thread_local mutations.
-#[allow(non_camel_case_types)]
-struct xyy_locals {
-    input: String,
-    pos: usize,
-    tok_start: usize,
-    yyval: mnumber,
-    yylval: String,
-    stack: Vec<mathvalue>,
-    mtok: i32,
-    unary: bool,
-    noeval: i32,
-    error: Option<String>,
-    variables: HashMap<String, mnumber>,
-    string_variables: HashMap<String, String>,
-    prec: &'static [u8; TOKCOUNT],
-    c_precedences: bool,
-    force_float: bool,
-    octal_zeroes: bool,
-    lastbase: i32,
-}
-
-// WARNING: NOT IN MATH.C — Rust-only helper. C inlines the
-// xyy* save/restore directly inside `mathevall()`'s body
-// (math.c:367 onward); the Rust port factors it out because two
-// callsites (callmathfunc arg parsing, getmathparam indirect-string
-// eval) would each duplicate ~17 lines of save/restore code.
-fn save_state() -> xyy_locals {
-    xyy_locals {
-        input: m_input_clone(),
-        pos: m_pos(),
-        tok_start: m_tok_start(),
-        yyval: m_yyval(),
-        yylval: m_yylval_clone(),
-        stack: M_STACK.with(|c| c.borrow().clone()),
-        mtok: m_mtok(),
-        unary: m_unary(),
-        noeval: m_noeval(),
-        error: M_ERROR.with(|c| c.borrow().clone()),
-        variables: m_variables_clone(),
-        string_variables: m_string_variables_clone(),
-        prec: m_prec(),
-        c_precedences: m_c_precedences(),
-        force_float: m_force_float(),
-        octal_zeroes: m_octal_zeroes(),
-        lastbase: M_LASTBASE.with(|c| c.get()),
-    }
 }
 
 /// Port of `getmathparam(struct mathvalue *mptr)` from `Src/math.c:337`.
@@ -573,37 +244,6 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
         }
         mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
     }
-
-/// Port of `struct mathvalue` from `Src/math.c`:
-///
-/// ```c
-/// struct mathvalue {
-///     char *lval;     /* lvalue string for variable write-back  */
-///     Value pval;     /* resolved variable handle (or NULL)     */
-///     mnumber val;    /* current numeric value                  */
-/// };
-/// ```
-#[derive(Clone)]
-pub(crate) struct mathvalue {
-    pub val: mnumber,
-    pub lval: Option<String>,
-    /// `Value pval` slot from the C source. zsh uses it to cache the
-    /// resolved parameter handle so write-back doesn't re-parse the
-    /// `lval` string. Rust port leaves this as `()` for now — the
-    /// resolved variable lives in `crate::ported::exec::ShellExecutor`'s
-    /// `variables` map, looked up by `lval` on each access.
-    pub pval: (),
-}
-
-impl Default for mathvalue {
-    fn default() -> Self {
-        mathvalue {
-            val: mnumber { l: 0, d: 0.0, type_: MN_INTEGER },
-            lval: None,
-            pval: (),
-        }
-    }
-}
 
     /// Evaluate the expression
 /// Port of `mathevall(char *s, enum prec_type prec_tp, char **ep)` from `Src/math.c:367`.
@@ -954,6 +594,265 @@ pub(crate) fn notzero(a: mnumber) -> bool {
         return a.l != 0;
     }
     true
+}
+
+// ============================================================
+// Module-level math statics — direct port of Src/math.c globals.
+//
+// math.c declares each of these at file scope:
+//   int noeval;                         // line 40
+//   mnumber zero_mnumber;               // line 45
+//   mnumber lastmathval;                // line 53
+//   int lastbase;                       // line 58
+//   static char *ptr;                   // line 60
+//   static mnumber yyval;               // line 62
+//   static char *yylval;                // line 63
+//   static int mlevel = 0;              // line 67
+//   static int unary = 1;               // line 71
+//   static struct mathvalue *stack;     // (math.c body)
+//   ... and a few derived from option flags (force_float, etc.).
+//
+// Rust port: thread_local!<Cell|RefCell<T>> per global. `mathevall`
+// (math.c:367) saves these to its own locals (`xyyval`, `xyylval`,
+// `xunary`, etc.) on entry and restores on exit so recursive math
+// calls (function-arg eval, indirect string eval) don't clobber
+// the outer evaluator's state.
+//
+// Cell for Copy types (i64/i32/usize/bool/mnumber/i32/&'static
+// slice). RefCell for owned/non-Copy (String, Vec, HashMap, Option).
+// ============================================================
+
+thread_local! {
+    /// `static char *ptr` — current input cursor. Owned String in Rust
+    /// (vs C's caller-owned char*) so the thread_local isn't a borrow.
+    static M_INPUT: RefCell<String> = const { RefCell::new(String::new()) };
+    /// Byte offset into `M_INPUT` of the next char to lex.
+    static M_POS: Cell<usize> = const { Cell::new(0) };
+    /// Byte offset where the current token began (post-whitespace).
+    /// Used to format zsh-style "at `<remaining>'" error pointers.
+    static M_TOK_START: Cell<usize> = const { Cell::new(0) };
+    /// `static mnumber yyval` (math.c:62) — value lexed by zzlex.
+    static M_YYVAL: Cell<mnumber> = const { Cell::new(mnumber { l: 0, d: 0.0, type_: MN_INTEGER }) };
+    /// `static char *yylval` (math.c:63) — identifier or function-call
+    /// text lexed by zzlex (caller side reads via `M_YYLVAL.with(...)`).
+    static M_YYLVAL: RefCell<String> = const { RefCell::new(String::new()) };
+    /// `static struct mathvalue *stack` — operand stack for the
+    /// shunting-yard evaluator. Mirrors C's heap-grown array.
+    static M_STACK: RefCell<Vec<mathvalue >> = const { RefCell::new(Vec::new()) };
+    /// `int mtok` — current token tag set by zzlex.
+    static M_MTOK: Cell<i32> = const { Cell::new(EOI) };
+    /// `static int unary` (math.c:71) — 1 when the parser is expecting
+    /// an operand (so `+`/`-` mean unary plus/minus).
+    static M_UNARY: Cell<bool> = const { Cell::new(true) };
+    // nonzero means we are not evaluating, just parsing                    // c:37
+    /// `int noeval` (math.c:40) — non-zero when in the parse-only side
+    /// of `&&`/`||`/ternary; suppresses side-effects.
+    static M_NOEVAL: Cell<i32> = const { Cell::new(0) };                    // c:40
+    // last input base we used                                              // c:55
+    /// `int lastbase` (math.c:58) — base of the last numeric literal
+    /// (set by lexconstant, used by `$((…))` formatting).
+    static M_LASTBASE: Cell<i32> = const { Cell::new(-1) };                 // c:58
+    /// `int *prec` — active precedence table (Z_PREC or C_PREC).
+    static M_PREC: Cell<&'static [u8; TOKCOUNT]> = const { Cell::new(&Z_PREC) };
+    /// `setopt CPRECEDENCES` mirror.
+    static M_C_PRECEDENCES: Cell<bool> = const { Cell::new(false) };
+    /// `setopt FORCEFLOAT` mirror.
+    static M_FORCE_FLOAT: Cell<bool> = const { Cell::new(false) };
+    /// `setopt OCTALZEROES` mirror.
+    static M_OCTAL_ZEROES: Cell<bool> = const { Cell::new(false) };
+    /// In-memory params table (zshrs uses this instead of the C param
+    /// table). Carries float/integer mnumber results.
+    static M_VARIABLES: RefCell<HashMap<String, mnumber>> = RefCell::new(HashMap::new());
+    /// Raw string values for variables whose contents aren't a plain
+    /// number — recursively re-eval'd by `getmathparam` for
+    /// `a="3+2"; $((a))` semantics.
+    static M_STRING_VARIABLES: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    /// `$?` — last command exit status, used by the `?` token in
+    /// unary position.
+    static M_LASTVAL: Cell<i32> = const { Cell::new(0) };
+    /// `$$` — current process ID, lexed for the `$` token.
+    static M_PID: Cell<i64> = const { Cell::new(0) };
+    /// Error message accumulator. zsh C uses `setjmp`/`longjmp`; the
+    /// Rust port returns errors via this Option then `mathevall`
+    /// surfaces it as `Result::Err`.
+    static M_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+// ============================================================
+// WARNING: NOT IN MATH.C — every `m_*` fn below is a Rust-only
+// thread_local accessor. C dereferences the corresponding module
+// global directly (`yyval.u.l`, `*ptr++`, etc.) without an
+// fn-shaped wrapper. The wrappers exist solely because Rust's
+// `thread_local!` requires `.with(|c| ...)` for any access, and
+// scattering 600 such closures throughout the evaluator would be
+// unreadable. Allowlisted in tests/data/fake_fn_allowlist.txt.
+// ============================================================
+// Accessor helpers — each thread_local reads/writes via these so the
+// migration from `s.X` → free-fn-only access is mechanical.
+
+#[inline] fn m_input_clone() -> String { M_INPUT.with(|c| c.borrow().clone()) }
+#[inline] fn m_input_set(v: String) { M_INPUT.with(|c| *c.borrow_mut() = v) }
+#[inline] fn m_input_len() -> usize { M_INPUT.with(|c| c.borrow().len()) }
+#[inline] fn m_input_byte(i: usize) -> u8 {
+    M_INPUT.with(|c| c.borrow().as_bytes().get(i).copied().unwrap_or(0))
+}
+#[inline] fn m_input_slice_from(start: usize) -> String {
+    M_INPUT.with(|c| c.borrow()[start..].to_string())
+}
+#[inline] fn m_input_slice(start: usize, end: usize) -> String {
+    M_INPUT.with(|c| c.borrow()[start..end].to_string())
+}
+
+#[inline] fn m_pos() -> usize { M_POS.with(|c| c.get()) }
+#[inline] fn m_pos_set(v: usize) { M_POS.with(|c| c.set(v)) }
+#[inline] fn m_pos_sub(n: usize) { M_POS.with(|c| c.set(c.get() - n)) }
+#[inline] fn m_pos_add(n: usize) { M_POS.with(|c| c.set(c.get() + n)) }
+
+#[inline] fn m_tok_start() -> usize { M_TOK_START.with(|c| c.get()) }
+#[inline] fn m_tok_start_set(v: usize) { M_TOK_START.with(|c| c.set(v)) }
+
+#[inline] fn m_yyval() -> mnumber { M_YYVAL.with(|c| c.get()) }
+#[inline] fn m_yyval_set(v: mnumber) { M_YYVAL.with(|c| c.set(v)) }
+
+#[inline] fn m_yylval_clone() -> String { M_YYLVAL.with(|c| c.borrow().clone()) }
+#[inline] fn m_yylval_set(v: String) { M_YYLVAL.with(|c| *c.borrow_mut() = v) }
+
+#[inline] fn m_mtok() -> i32 { M_MTOK.with(|c| c.get()) }
+#[inline] fn m_mtok_set(t: i32) { M_MTOK.with(|c| c.set(t)) }
+
+#[inline] fn m_unary() -> bool { M_UNARY.with(|c| c.get()) }
+#[inline] fn m_unary_set(v: bool) { M_UNARY.with(|c| c.set(v)) }
+
+#[inline] fn m_noeval() -> i32 { M_NOEVAL.with(|c| c.get()) }
+#[inline] fn m_noeval_set(v: i32) { M_NOEVAL.with(|c| c.set(v)) }
+#[inline] fn m_noeval_inc() { M_NOEVAL.with(|c| c.set(c.get() + 1)) }
+#[inline] fn m_noeval_dec() { M_NOEVAL.with(|c| c.set(c.get() - 1)) }
+
+#[inline] fn m_lastbase_set(v: i32) { M_LASTBASE.with(|c| c.set(v)) }
+
+/// Public getter for `lastbase` — used by `assignstrvalue` in
+/// params.rs to inherit the input numeric base when a freshly
+/// assigned integer parameter has none of its own.
+pub fn lastbase() -> i32 { M_LASTBASE.with(|c| c.get()) }
+
+#[inline] fn m_prec() -> &'static [u8; TOKCOUNT] { M_PREC.with(|c| c.get()) }
+#[inline] fn m_prec_set(p: &'static [u8; TOKCOUNT]) { M_PREC.with(|c| c.set(p)) }
+
+#[inline] fn m_c_precedences() -> bool { M_C_PRECEDENCES.with(|c| c.get()) }
+#[inline] fn m_c_precedences_set(v: bool) { M_C_PRECEDENCES.with(|c| c.set(v)) }
+#[inline] fn m_force_float() -> bool { M_FORCE_FLOAT.with(|c| c.get()) }
+#[inline] fn m_force_float_set(v: bool) { M_FORCE_FLOAT.with(|c| c.set(v)) }
+#[inline] fn m_octal_zeroes() -> bool { M_OCTAL_ZEROES.with(|c| c.get()) }
+#[inline] fn m_octal_zeroes_set(v: bool) { M_OCTAL_ZEROES.with(|c| c.set(v)) }
+
+#[inline] fn m_lastval_set(v: i32) { M_LASTVAL.with(|c| c.set(v)) }
+#[inline] fn m_lastval() -> i32 { M_LASTVAL.with(|c| c.get()) }
+#[inline] fn m_pid() -> i64 { M_PID.with(|c| c.get()) }
+#[inline] fn m_pid_set(v: i64) { M_PID.with(|c| c.set(v)) }
+
+#[inline] fn m_error_take() -> Option<String> { M_ERROR.with(|c| c.borrow_mut().take()) }
+#[inline] fn m_error_some() -> bool { M_ERROR.with(|c| c.borrow().is_some()) }
+#[inline] fn m_error_set(msg: String) {
+    M_ERROR.with(|c| {
+        if c.borrow().is_none() {
+            *c.borrow_mut() = Some(msg);
+        }
+    })
+}
+#[inline] fn m_error_set_force(msg: String) {
+    M_ERROR.with(|c| *c.borrow_mut() = Some(msg))
+}
+#[inline] fn m_error_clear() { M_ERROR.with(|c| *c.borrow_mut() = None) }
+
+// Stack helpers — mathvalue stack operations.
+#[inline] fn m_stack_push(v: mathvalue) { M_STACK.with(|c| c.borrow_mut().push(v)) }
+#[inline] fn m_stack_pop() -> Option<mathvalue> { M_STACK.with(|c| c.borrow_mut().pop()) }
+#[inline] fn m_stack_len() -> usize { M_STACK.with(|c| c.borrow().len()) }
+#[inline] fn m_stack_is_empty() -> bool { M_STACK.with(|c| c.borrow().is_empty()) }
+#[inline] fn m_stack_top_clone() -> Option<mathvalue> { M_STACK.with(|c| c.borrow().last().cloned()) }
+
+// Variable map helpers.
+#[inline] fn m_variables_get(name: &str) -> Option<mnumber> {
+    M_VARIABLES.with(|c| c.borrow().get(name).copied())
+}
+#[inline] fn m_variables_insert(k: String, v: mnumber) {
+    M_VARIABLES.with(|c| { c.borrow_mut().insert(k, v); })
+}
+#[inline] fn m_variables_clone() -> HashMap<String, mnumber> {
+    M_VARIABLES.with(|c| c.borrow().clone())
+}
+#[inline] fn m_variables_set(map: HashMap<String, mnumber>) {
+    M_VARIABLES.with(|c| *c.borrow_mut() = map)
+}
+
+#[inline] fn m_string_variables_get(name: &str) -> Option<String> {
+    M_STRING_VARIABLES.with(|c| c.borrow().get(name).cloned())
+}
+#[inline] fn m_string_variables_remove(name: &str) {
+    M_STRING_VARIABLES.with(|c| { c.borrow_mut().remove(name); })
+}
+#[inline] fn m_string_variables_clone() -> HashMap<String, String> {
+    M_STRING_VARIABLES.with(|c| c.borrow().clone())
+}
+#[inline] fn m_string_variables_set(map: HashMap<String, String>) {
+    M_STRING_VARIABLES.with(|c| *c.borrow_mut() = map)
+}
+#[inline] fn m_string_variables_insert(k: String, v: String) {
+    M_STRING_VARIABLES.with(|c| { c.borrow_mut().insert(k, v); })
+}
+
+/// Save/restore container — mirrors C `mathevall()` (Src/math.c:367)'s
+/// stack locals (`xyyval`, `xyylval`, `xunary`, `xnoeval`, `xptr`,
+/// etc.). Wrap recursive math eval (`callmathfunc` arg parsing,
+/// `getmathparam` indirect-string eval) with `save_state()` /
+/// `restore_state()` so the parent's evaluator state survives the
+/// inner call's thread_local mutations.
+#[allow(non_camel_case_types)]
+struct xyy_locals {
+    input: String,
+    pos: usize,
+    tok_start: usize,
+    yyval: mnumber,
+    yylval: String,
+    stack: Vec<mathvalue>,
+    mtok: i32,
+    unary: bool,
+    noeval: i32,
+    error: Option<String>,
+    variables: HashMap<String, mnumber>,
+    string_variables: HashMap<String, String>,
+    prec: &'static [u8; TOKCOUNT],
+    c_precedences: bool,
+    force_float: bool,
+    octal_zeroes: bool,
+    lastbase: i32,
+}
+
+// WARNING: NOT IN MATH.C — Rust-only helper. C inlines the
+// xyy* save/restore directly inside `mathevall()`'s body
+// (math.c:367 onward); the Rust port factors it out because two
+// callsites (callmathfunc arg parsing, getmathparam indirect-string
+// eval) would each duplicate ~17 lines of save/restore code.
+fn save_state() -> xyy_locals {
+    xyy_locals {
+        input: m_input_clone(),
+        pos: m_pos(),
+        tok_start: m_tok_start(),
+        yyval: m_yyval(),
+        yylval: m_yylval_clone(),
+        stack: M_STACK.with(|c| c.borrow().clone()),
+        mtok: m_mtok(),
+        unary: m_unary(),
+        noeval: m_noeval(),
+        error: M_ERROR.with(|c| c.borrow().clone()),
+        variables: m_variables_clone(),
+        string_variables: m_string_variables_clone(),
+        prec: m_prec(),
+        c_precedences: m_c_precedences(),
+        force_float: m_force_float(),
+        octal_zeroes: m_octal_zeroes(),
+        lastbase: M_LASTBASE.with(|c| c.get()),
+    }
 }
 
 /// Port of `store(double *x)` from Src/math.c:601 — load/store a double
@@ -1386,6 +1285,16 @@ pub(crate) fn zzlex() -> i32 {
             }
         }
     }
+
+impl Default for mathvalue {
+    fn default() -> Self {
+        mathvalue {
+            val: mnumber { l: 0, d: 0.0, type_: MN_INTEGER },
+            lval: None,
+            pval: (),
+        }
+    }
+}
 
 /// Port of `push(mnumber val, char *lval, int getme)` from `Src/math.c:916`.
 ///
@@ -2195,6 +2104,97 @@ pub(crate) fn checkunary() {
             checkunary();
         }
     }
+pub const Quest: i32 = 27;        // c:136  ?
+pub const Comma: i32 = 43;        // c:152  ,
+
+/// Zsh precedence table (default)
+static Z_PREC: [u8; TOKCOUNT] = [
+    1, 137, 2, 2, 2, // InPar OutPar Not Comp PostPlus
+    2, 2, 2, 4, 5, // PostMinus UPlus UMinus And Xor
+    6, 8, 8, 8, 9, // Or Mul Div Mod Plus
+    9, 3, 3, 10, 10, // Minus ShLeft ShRight Les Leq
+    10, 10, 11, 11, 12, // Gre Geq Deq Neq DAnd
+    13, 13, 14, 15, 16, // DOr DXor Quest Colon Eq
+    16, 16, 16, 16, 16, // PlusEq MinusEq MulEq DivEq ModEq
+    16, 16, 16, 16, 16, // AndEq XorEq OrEq ShLeftEq ShRightEq
+    16, 16, 16, 17, 200, // DAndEq DOrEq DXorEq Comma Eoi
+    2, 2, 0, 0, 7, // PrePlus PreMinus Num Id Power
+    0, 16, 0, // CId PowerEq Func
+];
+
+/// C precedence table (used with C_PRECEDENCES option)
+static C_PREC: [u8; TOKCOUNT] = [
+    1, 137, 2, 2, 2, 2, 2, 2, 9, 10, 11, 4, 4, 4, 5, 5, 6, 6, 7, 7, 7, 7, 8, 8, 12, 14, 13, 15, 16,
+    17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 18, 200, 2, 2, 0, 0, 3, 0, 17, 0,
+];
+
+/// Operator type table (matches C math.c type[] array)
+static OP_TYPE: [u16; TOKCOUNT] = [
+    // InPar, OutPar, Not, Comp, PostPlus
+    LR,
+    LR | OP_OP | OP_OPF,
+    RL,
+    RL,
+    RL | OP_OP | OP_OPF,
+    // PostMinus, UPlus, UMinus, And, Xor
+    RL | OP_OP | OP_OPF,
+    RL,
+    RL,
+    LR | OP_A2IO,
+    LR | OP_A2IO,
+    // Or, Mul, Div, Mod, Plus
+    LR | OP_A2IO,
+    LR | OP_A2,
+    LR | OP_A2,
+    LR | OP_A2,
+    LR | OP_A2,
+    // Minus, ShLeft, ShRight, Les, Leq
+    LR | OP_A2,
+    LR | OP_A2IO,
+    LR | OP_A2IO,
+    LR | OP_A2IR,
+    LR | OP_A2IR,
+    // Gre, Geq, Deq, Neq, DAnd
+    LR | OP_A2IR,
+    LR | OP_A2IR,
+    LR | OP_A2IR,
+    LR | OP_A2IR,
+    BOOL | OP_A2IO,
+    // DOr, DXor, Quest, Colon, Eq
+    BOOL | OP_A2IO,
+    LR | OP_A2IO,
+    RL | OP_OP,
+    RL | OP_OP,
+    RL | OP_E2,
+    // PlusEq, MinusEq, MulEq, DivEq, ModEq
+    RL | OP_E2,
+    RL | OP_E2,
+    RL | OP_E2,
+    RL | OP_E2,
+    RL | OP_E2,
+    // AndEq, XorEq, OrEq, ShLeftEq, ShRightEq
+    RL | OP_E2IO,
+    RL | OP_E2IO,
+    RL | OP_E2IO,
+    RL | OP_E2IO,
+    RL | OP_E2IO,
+    // DAndEq, DOrEq, DXorEq, Comma, Eoi
+    BOOL | OP_E2IO,
+    BOOL | OP_E2IO,
+    RL | OP_A2IO,
+    RL | OP_A2,
+    RL | OP_OP,
+    // PrePlus, PreMinus, Num, Id, Power
+    RL,
+    RL,
+    LR | OP_OPF,
+    LR | OP_OPF,
+    RL | OP_A2,
+    // CId, PowerEq, Func
+    LR | OP_OPF,
+    RL | OP_E2,
+    LR | OP_OPF,
+];
 
 // WARNING: NOT IN MATH.C — Rust-only helper. See save_state above.
 fn restore_state(saved: xyy_locals) {

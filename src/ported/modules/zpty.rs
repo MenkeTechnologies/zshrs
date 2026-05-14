@@ -53,6 +53,34 @@ impl ptycmd {
     }
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// WARNING: NOT IN ZPTY.C — OnceLock<Mutex> accessor for ptycmd registry; C uses static linked list `ptycmds`
+/// (equivalent C logic at Src/Modules/zpty.c:48).
+fn ptycmds() -> &'static Mutex<HashMap<String, ptycmd>> {
+    PTYCMDS.get_or_init(|| Mutex::new(HashMap::<String, ptycmd>::new()))
+}
+
 /// Set non-blocking mode on a file descriptor.
 /// Port of `ptynonblock(int fd)` from Src/Modules/zpty.c:65 — wraps
 /// `fcntl(F_GETFL)` + `fcntl(F_SETFL, |O_NONBLOCK)`.
@@ -116,6 +144,39 @@ pub fn getptycmd<'a>(cmds: &'a HashMap<String, ptycmd>, name: &str) -> Option<&'
 }
 
 
+
+// ===========================================================
+// Methods moved verbatim from src/ported/exec.rs because their
+// C counterpart's source file maps 1:1 to this Rust module.
+// Phase: module-shims
+// ===========================================================
+
+// BEGIN moved-from-exec-rs
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
+// END moved-from-exec-rs
+
+
+// ─── moved from src/ported/exec.rs (drift extraction) ───
+
+// Note: dead `ZptyState` aggregate deleted per PORT_PLAN Phase 2.
+// It was a duplicate of `ptycmd` (zpty.rs:19), which is the correct
+// faithful port of C `struct ptycmd` (Src/Modules/zpty.c:48). The
+// dead `ZptyState` was wired into ShellExecutor as
+// `pub zptys: HashMap<String, ZptyState>` but never inserted or
+// read. Use `ptycmd` + `HashMap<String, ptycmd>` (the port of the file-static
+// `static Ptycmd ptycmds;` linked list at zpty.c:62) for any
+// real wiring.
+
+// =====================================================================
+// static struct features module_features                            c:884 (zpty.c)
+// =====================================================================
+
+use std::sync::Mutex;
+use std::sync::OnceLock;
+use crate::ported::zsh_h::module;
+
+
 /// Open a pseudo-terminal master/slave pair.
 /// Port of `get_pty(int master, int *retfd)` from Src/Modules/zpty.c:191 (or :255 for
 /// the fallback path on systems without `posix_openpt`). Wraps
@@ -157,39 +218,6 @@ pub fn get_pty() -> io::Result<(RawFd, RawFd)> {                            // c
         Ok((master_fd, slave_fd))
     }
 }
-
-
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Phase: module-shims
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
-
-// END moved-from-exec-rs
-
-
-// ─── moved from src/ported/exec.rs (drift extraction) ───
-
-// Note: dead `ZptyState` aggregate deleted per PORT_PLAN Phase 2.
-// It was a duplicate of `ptycmd` (zpty.rs:19), which is the correct
-// faithful port of C `struct ptycmd` (Src/Modules/zpty.c:48). The
-// dead `ZptyState` was wired into ShellExecutor as
-// `pub zptys: HashMap<String, ZptyState>` but never inserted or
-// read. Use `ptycmd` + `HashMap<String, ptycmd>` (the port of the file-static
-// `static Ptycmd ptycmds;` linked list at zpty.c:62) for any
-// real wiring.
-
-// =====================================================================
-// static struct features module_features                            c:884 (zpty.c)
-// =====================================================================
-
-use std::sync::Mutex;
-use std::sync::OnceLock;
-use crate::ported::zsh_h::module;
 
 /// Port of `newptycmd(char *nam, char *pname, char **args, int echo, int nblock)` from `Src/Modules/zpty.c:310`. Forks a
 /// new pty session, exec'ing `args` in the child. Allocates a
@@ -263,11 +291,6 @@ pub fn deleteallptycmds(cmds: &mut HashMap<String, ptycmd>) {                   
         deleteptycmd(cmds, &n);                                          // c:530
     }
 }
-
-/// Global `ptycmds` linked-list from `Src/Modules/zpty.c:36`.
-/// C declares `static Ptycmd ptycmds;` and mutates it through the
-/// whole module. Rust uses OnceLock<Mutex<>> for thread-safe access.
-pub static PTYCMDS: std::sync::OnceLock<Mutex<HashMap<String, ptycmd>>> = std::sync::OnceLock::new();
 
 /// Port of `checkptycmd(Ptycmd cmd)` from `Src/Modules/zpty.c:530`. Polls
 /// the master fd with a 1-byte non-blocking read; if read fails
@@ -702,6 +725,11 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 
 use crate::ported::zsh_h::features as features_t;
 
+/// Global `ptycmds` linked-list from `Src/Modules/zpty.c:36`.
+/// C declares `static Ptycmd ptycmds;` and mutates it through the
+/// whole module. Rust uses OnceLock<Mutex<>> for thread-safe access.
+pub static PTYCMDS: std::sync::OnceLock<Mutex<HashMap<String, ptycmd>>> = std::sync::OnceLock::new();
+
 static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
 
@@ -743,23 +771,6 @@ fn setfeatureenables(
     _e: Option<&[i32]>,
 ) -> i32 {
     0
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ─── RUST-ONLY ACCESSORS ───
-//
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
-// RwLock<T>>` globals declared above. C zsh uses direct global
-// access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
-// here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/// WARNING: NOT IN ZPTY.C — OnceLock<Mutex> accessor for ptycmd registry; C uses static linked list `ptycmds`
-/// (equivalent C logic at Src/Modules/zpty.c:48).
-fn ptycmds() -> &'static Mutex<HashMap<String, ptycmd>> {
-    PTYCMDS.get_or_init(|| Mutex::new(HashMap::<String, ptycmd>::new()))
 }
 
 // WARNING: NOT IN ZPTY.C — Rust-only module-framework shim.

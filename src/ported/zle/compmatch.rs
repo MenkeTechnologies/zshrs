@@ -439,18 +439,6 @@ pub fn cline_setlens(l: &mut Option<Box<crate::ported::zle::comp_h::Cline>>, bot
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-/// Port of `char *matchbuf` from `Src/Zle/compmatch.c:287`. Static
-/// buffer used during pattern matching to assemble the trial string.
-pub static MATCHBUF: OnceLock<Mutex<String>> = OnceLock::new();              // c:287
-
-/// Port of `Cline matchparts, matchlastpart` from
-/// `Src/Zle/compmatch.c:292`. Top-level cline list being built.
-pub static MATCHPARTS: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>> = OnceLock::new();  // c:292
-
-/// Port of `Cline matchsubs, matchlastsub` from
-/// `Src/Zle/compmatch.c:294`. Inner cline list (prefix/suffix sub-list).
-pub static MATCHSUBS: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>> = OnceLock::new();   // c:294
-
 /// Port of `cline_matched(Cline p)` from `Src/Zle/compmatch.c:254`.
 /// ```c
 /// void
@@ -1432,10 +1420,6 @@ pub fn match_str(                                                            // 
     if part != 0 { il } else { iw }
 }
 
-/// File-scope `Cline matchlastpart` from `Src/Zle/compmatch.c:327`.
-pub static MATCHLASTPART: std::sync::OnceLock<std::sync::Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>>
-    = std::sync::OnceLock::new();                                            // c:292
-
 /// Direct port of `static int match_parts(char *l, char *w, int n,
 ///                                          int part)` from
 /// `Src/Zle/compmatch.c:1092-1108`. Tests whether the first `n` bytes
@@ -1450,10 +1434,6 @@ pub fn match_parts(l: &str, w: &str, n: i32, part: i32) -> i32 {             // 
     // c:1101 — match_str(l, w, NULL, 0, NULL, 0, 1, part).
     match_str(l_slice, w_slice, None, 0, None, 0, 1, part)
 }
-
-/// File-scope `int matchbufadded` from `Src/Zle/compmatch.c:446`.
-pub static MATCHBUFADDED: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:289
 
 /// Direct port of `mod_export char *comp_match(char *pfx, char *sfx,
 ///                                               char *w, Patprog cp,
@@ -1576,10 +1556,6 @@ pub fn comp_match(                                                           // 
     Some(r)
 }
 
-/// File-scope `Cline matchlastsub` from `Src/Zle/compmatch.c:294`.
-pub static MATCHLASTSUB: std::sync::OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>>
-    = std::sync::OnceLock::new();                                            // c:294
-
 /// Port of `pattern_match1(Cpattern p, convchar_t c, int *mtp)` from Src/Zle/compmatch.c:1269.
 /// Direct port of `mod_export convchar_t pattern_match1(Cpattern p,
 ///                                    convchar_t c, int *mtp)`
@@ -1695,22 +1671,6 @@ pub fn pattern_match_equivalence(
     }
     if wmtp != 0 && wmtp == lmtp { return wchr; }
     u32::MAX                                                                 // c:1378
-}
-
-
-/// Port of `struct cmdata` from `Src/Zle/compmatch.c:2142-2147`.
-/// Working state for `check_cmdata` / `undo_cmdata` / `sub_match`.
-#[derive(Default, Clone, Debug)]
-#[allow(non_camel_case_types)]
-pub struct cmdata {                                                          // c:2142
-    pub cl:   Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143
-    pub pcl:  Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143
-    pub str: String,                                                        // c:2152
-    pub astr: String,                                                        // c:2152
-    pub len:  i32,                                                           // c:2152
-    pub alen: i32,                                                           // c:2152
-    pub olen: i32,                                                           // c:2152
-    pub line: i32,                                                           // c:2152
 }
 
 /// Direct port of `static int pattern_match_restrict(Cpattern p,
@@ -2297,6 +2257,22 @@ pub fn cmp_anchors(o: &mut crate::ported::zle::comp_h::Cline,                // 
         }
     }
     0                                                                        // c:2134
+}
+
+
+/// Port of `struct cmdata` from `Src/Zle/compmatch.c:2142-2147`.
+/// Working state for `check_cmdata` / `undo_cmdata` / `sub_match`.
+#[derive(Default, Clone, Debug)]
+#[allow(non_camel_case_types)]
+pub struct cmdata {                                                          // c:2142
+    pub cl:   Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143
+    pub pcl:  Option<Box<crate::ported::zle::comp_h::Cline>>,                // c:2143
+    pub str: String,                                                        // c:2152
+    pub astr: String,                                                        // c:2152
+    pub len:  i32,                                                           // c:2152
+    pub alen: i32,                                                           // c:2152
+    pub olen: i32,                                                           // c:2152
+    pub line: i32,                                                           // c:2152
 }
 
 /// Direct port of `static int check_cmdata(cmdata md, int sfx)` from
@@ -3464,6 +3440,30 @@ pub fn join_clines(                                                          // 
     }
     oo                                                                       // c:2972
 }
+
+/// Port of `char *matchbuf` from `Src/Zle/compmatch.c:287`. Static
+/// buffer used during pattern matching to assemble the trial string.
+pub static MATCHBUF: OnceLock<Mutex<String>> = OnceLock::new();              // c:287
+
+/// Port of `Cline matchparts, matchlastpart` from
+/// `Src/Zle/compmatch.c:292`. Top-level cline list being built.
+pub static MATCHPARTS: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>> = OnceLock::new();  // c:292
+
+/// Port of `Cline matchsubs, matchlastsub` from
+/// `Src/Zle/compmatch.c:294`. Inner cline list (prefix/suffix sub-list).
+pub static MATCHSUBS: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>> = OnceLock::new();   // c:294
+
+/// File-scope `Cline matchlastpart` from `Src/Zle/compmatch.c:327`.
+pub static MATCHLASTPART: std::sync::OnceLock<std::sync::Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>>
+    = std::sync::OnceLock::new();                                            // c:292
+
+/// File-scope `int matchbufadded` from `Src/Zle/compmatch.c:446`.
+pub static MATCHBUFADDED: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:289
+
+/// File-scope `Cline matchlastsub` from `Src/Zle/compmatch.c:294`.
+pub static MATCHLASTSUB: std::sync::OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Cline>>>>
+    = std::sync::OnceLock::new();                                            // c:294
 
 /// Port of `PATMATCHRANGE(str, c, indp, mtp)` macro from
 /// `Src/pattern.c`. Walks an encoded character-range descriptor in

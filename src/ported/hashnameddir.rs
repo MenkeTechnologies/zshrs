@@ -19,15 +19,10 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::ported::zsh_h::{nameddir, ND_USERNAME, PRINT_LIST, PRINT_NAMEONLY};
 
-/****************************************/
-/* Named Directory Hash Table Functions */
-/****************************************/
-
-// hash table containing named directories                                 // c:45
-//
-// C: `mod_export HashTable nameddirtab;` (c:48). Rust port stores the
-// table as a `Mutex<HashMap<String, nameddir>>` keyed on `node.nam`.
-static NAMEDDIRTAB_INNER: OnceLock<Mutex<HashMap<String, nameddir>>> = OnceLock::new();
+// != 0 if all the usernames have already been *
+// added to the named directory hash table.    *                           // c:59-51
+#[allow(non_upper_case_globals)]
+pub static allusersadded: AtomicI32 = AtomicI32::new(0);                   // c:59
 
 /* Create new hash table for named directories */                          // c:59
 
@@ -45,11 +40,6 @@ pub fn createnameddirtable() {                                             // c:
     // c:84 — `finddir(NULL);` clear the finddir cache. The Rust
     // `finddir` port has no cache, so the call is a no-op here.
 }
-
-// != 0 if all the usernames have already been *
-// added to the named directory hash table.    *                           // c:59-51
-#[allow(non_upper_case_globals)]
-pub static allusersadded: AtomicI32 = AtomicI32::new(0);                   // c:59
 
 /* Empty the named directories table */                                    // c:84
 
@@ -174,6 +164,27 @@ pub fn printnameddirnode(hn: &nameddir, printflags: i32) {                 // c:
     );
     let _ = writeln!(out);                                                 // c:181
 }
+
+/****************************************/
+/* Named Directory Hash Table Functions */
+/****************************************/
+
+// hash table containing named directories                                 // c:45
+//
+// C: `mod_export HashTable nameddirtab;` (c:48). Rust port stores the
+// table as a `Mutex<HashMap<String, nameddir>>` keyed on `node.nam`.
+static NAMEDDIRTAB_INNER: OnceLock<Mutex<HashMap<String, nameddir>>> = OnceLock::new();
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

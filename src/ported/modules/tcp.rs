@@ -168,34 +168,6 @@ pub fn tcp_socket(domain: i32, ty: i32, protocol: i32, ztflags: i32) -> TcpSessi
     Some(idx)                                                            // c:245 return sess
 }
 
-// =====================================================================
-// !!! WARNING: RUST-ONLY HELPERS — NO DIRECT C COUNTERPART !!!
-// =====================================================================
-//
-// `sess_get` and `sess_with` DO NOT EXIST as functions in
-// `Src/Modules/tcp.c`. The C source dereferences `Tcp_session sess`
-// (a struct pointer) directly to read or write fields:
-//
-//     sess->fd = fd;
-//     if (sess->flags & ZTCP_LISTEN) ...
-//
-// Rust's borrow checker won't let us hand out a long-lived reference
-// to a slot inside the thread_local `ZTCP_SESSIONS` Vec without a
-// borrow guard, so the Rust port wraps each field touch in a
-// closure. Each call to `sess_with(idx, |s| { s.field = x })` maps
-// 1:1 to a C `sess->field = x;` — they are NOT new policy, only an
-// adapter for the storage shape (Vec<tcp_session> vs linked list).
-//
-// !!! Do NOT use these for any state that the C source doesn't
-// already touch via `Tcp_session`. They are a borrow-checker
-// adapter, not a new abstraction. !!!
-// =====================================================================
-//
-// C `Tcp_session` is `struct tcp_session *` (a pointer into the
-// `ztcp_sessions` linked list). Rust models the same: a handle that
-// indexes into the thread-local `ZTCP_SESSIONS` Vec. NULL → None.
-type TcpSessionHandle = Option<usize>;
-
 /// Port of `ztcp_free_session(Tcp_session sess)` from `Src/Modules/tcp.c:245`.
 /// In the Rust port the Vec drop handles `zfree(sess, ...)`.
 pub fn ztcp_free_session(sess: usize) -> i32 {                           // c:245
@@ -663,12 +635,6 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c
     handlefeatures(m, module_features(), enables) // c:736
 }
 
-// =====================================================================
-// static struct features module_features                            c:705 (tcp.c)
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/tcp.c:736`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {                                     // c:736
@@ -678,6 +644,12 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
     ZTCP_SESSIONS.with(|s| s.borrow_mut().clear());                          // c:745
     0
 }
+
+// =====================================================================
+// static struct features module_features                            c:705 (tcp.c)
+// =====================================================================
+
+use crate::ported::zsh_h::module;
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/tcp.c:745`.
 /// C body: `tcp_cleanup(); return setfeatureenables(m, &module_features, NULL);`
@@ -693,6 +665,34 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     //                    actual session teardown happens in cleanup_.
     0
 }
+
+// =====================================================================
+// !!! WARNING: RUST-ONLY HELPERS — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+//
+// `sess_get` and `sess_with` DO NOT EXIST as functions in
+// `Src/Modules/tcp.c`. The C source dereferences `Tcp_session sess`
+// (a struct pointer) directly to read or write fields:
+//
+//     sess->fd = fd;
+//     if (sess->flags & ZTCP_LISTEN) ...
+//
+// Rust's borrow checker won't let us hand out a long-lived reference
+// to a slot inside the thread_local `ZTCP_SESSIONS` Vec without a
+// borrow guard, so the Rust port wraps each field touch in a
+// closure. Each call to `sess_with(idx, |s| { s.field = x })` maps
+// 1:1 to a C `sess->field = x;` — they are NOT new policy, only an
+// adapter for the storage shape (Vec<tcp_session> vs linked list).
+//
+// !!! Do NOT use these for any state that the C source doesn't
+// already touch via `Tcp_session`. They are a borrow-checker
+// adapter, not a new abstraction. !!!
+// =====================================================================
+//
+// C `Tcp_session` is `struct tcp_session *` (a pointer into the
+// `ztcp_sessions` linked list). Rust models the same: a handle that
+// indexes into the thread-local `ZTCP_SESSIONS` Vec. NULL → None.
+type TcpSessionHandle = Option<usize>;
 
 /// Port of `zsh_inet_aton(char const *src, struct in_addr *dst)` from `Src/Modules/tcp.c:103`.
 /// WARNING: param names don't match C — Rust=(src) vs C=(src, dst)
@@ -773,6 +773,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

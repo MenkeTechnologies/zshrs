@@ -22,28 +22,6 @@ use std::ffi::CString;
 use std::os::unix::io::RawFd;
 
 // =====================================================================
-// External C globals from other Src/*.c files. Mirrored as atomic /
-// Mutex statics with the same case-sensitive C name; the eventual real
-// ports of jobs.c / exec.c / init.c / params.c will replace these
-// stubs in-place without touching call sites.
-// =====================================================================
-
-// `coprocin` / `coprocout` — `int` globals in `Src/exec.c:430-431`.
-pub static coprocin: AtomicI32 = AtomicI32::new(-1);
-pub static coprocout: AtomicI32 = AtomicI32::new(-1);
-
-// `mypgrp` — `pid_t` global in `Src/jobs.c:60`.
-pub static mypgrp: AtomicI32 = AtomicI32::new(0);
-
-// `lastpid` — `pid_t` global in `Src/jobs.c:73` (zsh's `$!`).
-pub static lastpid: AtomicI32 = AtomicI32::new(0);
-
-// `ttystrname` — `char *` global in `Src/init.c:248`, set by
-// `init_io` from `ttyname(SHTTY)`. Mirrored as `Mutex<String>` since
-// the value is mutated at runtime by init_io.
-pub static ttystrname: Mutex<String> = Mutex::new(String::new());
-
-// =====================================================================
 // bin_clone(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))  c:43
 // =====================================================================
 
@@ -247,6 +225,28 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 }
 
 // =====================================================================
+// External C globals from other Src/*.c files. Mirrored as atomic /
+// Mutex statics with the same case-sensitive C name; the eventual real
+// ports of jobs.c / exec.c / init.c / params.c will replace these
+// stubs in-place without touching call sites.
+// =====================================================================
+
+// `coprocin` / `coprocout` — `int` globals in `Src/exec.c:430-431`.
+pub static coprocin: AtomicI32 = AtomicI32::new(-1);
+pub static coprocout: AtomicI32 = AtomicI32::new(-1);
+
+// `mypgrp` — `pid_t` global in `Src/jobs.c:60`.
+pub static mypgrp: AtomicI32 = AtomicI32::new(0);
+
+// `lastpid` — `pid_t` global in `Src/jobs.c:73` (zsh's `$!`).
+pub static lastpid: AtomicI32 = AtomicI32::new(0);
+
+// `ttystrname` — `char *` global in `Src/init.c:248`, set by
+// `init_io` from `ttyname(SHTTY)`. Mirrored as `Mutex<String>` since
+// the value is mutated at runtime by init_io.
+pub static ttystrname: Mutex<String> = Mutex::new(String::new());
+
+// =====================================================================
 // Tests
 // =====================================================================
 
@@ -296,6 +296,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

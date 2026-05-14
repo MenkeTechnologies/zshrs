@@ -29,45 +29,6 @@ use std::os::unix::fs::MetadataExt;
 /// `zstat -H` mode uses to store the file name in the result assoc.
 pub const HNAMEKEY: &str = "name";                                       // c:43
 
-pub const ST_DEV:      i32 = 0;                                          // c:33
-pub const ST_INO:      i32 = 1;
-pub const ST_MODE:     i32 = 2;
-pub const ST_NLINK:    i32 = 3;
-pub const ST_UID:      i32 = 4;
-pub const ST_GID:      i32 = 5;
-pub const ST_RDEV:     i32 = 6;
-pub const ST_SIZE:     i32 = 7;
-pub const ST_ATIM:     i32 = 8;
-pub const ST_MTIM:     i32 = 9;
-pub const ST_CTIM:     i32 = 10;
-pub const ST_BLKSIZE:  i32 = 11;
-pub const ST_BLOCKS:   i32 = 12;
-pub const ST_READLINK: i32 = 13;
-pub const ST_COUNT:    i32 = 14;                                         // c:34
-
-// ============================================================
-// Port of `enum statflags` from `Src/Modules/stat.c:36-38`.
-// Bitmask flags passed to the print fns + bin_stat dispatch.
-// ============================================================
-pub const STF_NAME:   i32 = 1;                                           // c:36
-pub const STF_FILE:   i32 = 2;
-pub const STF_STRING: i32 = 4;
-pub const STF_RAW:    i32 = 8;
-pub const STF_PICK:   i32 = 16;
-pub const STF_ARRAY:  i32 = 32;
-pub const STF_GMT:    i32 = 64;
-pub const STF_HASH:   i32 = 128;
-pub const STF_OCTAL:  i32 = 256;                                         // c:38
-
-/// Port of `statelts[]` from `Src/Modules/stat.c:39`. Names of the
-/// 14 stat-elements, indexed by the `ST_*` constants above.
-pub static STATELTS: &[&str] = &[                                        // c:39
-    "device", "inode", "mode", "nlink",
-    "uid", "gid", "rdev", "size", "atime",
-    "mtime", "ctime", "blksize", "blocks",
-    "link",
-];
-
 /// Port of `statmodeprint(mode_t mode, char *outbuf, int flags)` from `Src/Modules/stat.c:47`. Renders
 /// a Unix mode word per the STF_RAW / STF_OCTAL / STF_STRING flag
 /// combination — raw octal/decimal, "ls -l"-style permission
@@ -535,13 +496,6 @@ pub fn bin_stat(nam: &str, args: &[String],                                  // 
     0
 }
 
-// =====================================================================
-// static struct builtin bintab[]                                    c:638
-// static struct features module_features                            c:642
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
 // `bintab` — port of `static struct builtin bintab[]` (stat.c:638).
 
 
@@ -592,6 +546,52 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     0
 }
 
+pub const ST_DEV:      i32 = 0;                                          // c:33
+pub const ST_INO:      i32 = 1;
+pub const ST_MODE:     i32 = 2;
+pub const ST_NLINK:    i32 = 3;
+pub const ST_UID:      i32 = 4;
+pub const ST_GID:      i32 = 5;
+pub const ST_RDEV:     i32 = 6;
+pub const ST_SIZE:     i32 = 7;
+pub const ST_ATIM:     i32 = 8;
+pub const ST_MTIM:     i32 = 9;
+pub const ST_CTIM:     i32 = 10;
+pub const ST_BLKSIZE:  i32 = 11;
+pub const ST_BLOCKS:   i32 = 12;
+pub const ST_READLINK: i32 = 13;
+pub const ST_COUNT:    i32 = 14;                                         // c:34
+
+// ============================================================
+// Port of `enum statflags` from `Src/Modules/stat.c:36-38`.
+// Bitmask flags passed to the print fns + bin_stat dispatch.
+// ============================================================
+pub const STF_NAME:   i32 = 1;                                           // c:36
+pub const STF_FILE:   i32 = 2;
+pub const STF_STRING: i32 = 4;
+pub const STF_RAW:    i32 = 8;
+
+// =====================================================================
+// static struct builtin bintab[]                                    c:638
+// static struct features module_features                            c:642
+// =====================================================================
+
+use crate::ported::zsh_h::module;
+pub const STF_PICK:   i32 = 16;
+pub const STF_ARRAY:  i32 = 32;
+pub const STF_GMT:    i32 = 64;
+pub const STF_HASH:   i32 = 128;
+pub const STF_OCTAL:  i32 = 256;                                         // c:38
+
+/// Port of `statelts[]` from `Src/Modules/stat.c:39`. Names of the
+/// 14 stat-elements, indexed by the `ST_*` constants above.
+pub static STATELTS: &[&str] = &[                                        // c:39
+    "device", "inode", "mode", "nlink",
+    "uid", "gid", "rdev", "size", "atime",
+    "mtime", "ctime", "blksize", "blocks",
+    "link",
+];
+
 
 
 use crate::ported::zsh_h::features as features_t;
@@ -639,6 +639,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
