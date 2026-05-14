@@ -271,7 +271,7 @@ use crate::ported::lex::{
 };
 use crate::prompt::{cmdpop, cmdpush};
 use crate::zsh_h::{
-    wc_bdata, CS_ARRAY, CS_CASE, CS_CMDAND, CS_CMDOR, CS_COND, CS_CURSH, CS_ELIF, CS_ELSE,
+    wc_bdata, CS_ALWAYS, CS_ARRAY, CS_CASE, CS_CMDAND, CS_CMDOR, CS_COND, CS_CURSH, CS_ELIF, CS_ELSE,
     CS_ERRPIPE, CS_FOR, CS_FOREACH, CS_FUNCDEF, CS_IF, CS_IFTHEN, CS_PIPE, CS_REPEAT, CS_SELECT,
     CS_SUBSH, CS_UNTIL, CS_WHILE, EF_RUN, WCB_ARITH, WCB_ASSIGN, WCB_CASE, WCB_CURSH, WCB_END,
     WCB_FOR, WCB_FUNCDEF, WCB_IF, WCB_LIST, WCB_PIPE, WCB_REDIR, WCB_REPEAT, WCB_SELECT,
@@ -3237,10 +3237,16 @@ pub fn par_funcdef_wordcode(cmplx: &mut i32) {
 pub fn par_subsh_wordcode_impl(cmplx: &mut i32, zsh_construct: i32) {
     // c:1621 — `enum lextok otok = tok;`
     let otok = tok();
+    // c:1622 — `int oecused = ecused, p, pp;`
+    let _oecused = ECUSED.get() as usize;
+    let p: usize;
+    let pp: usize;
+
     // c:1624 — `p = ecadd(0);`
-    let p = ecadd(0);
-    // c:1626 — `pp = ecadd(0);` (extra word for the always-block try slot)
-    let pp = ecadd(0);
+    p = ecadd(0);
+    // c:1625 — `/* Extra word only needed for always block */`
+    // c:1626 — `pp = ecadd(0);`
+    pp = ecadd(0);
     // c:1627 — `zshlex();`
     zshlex();
     // c:1628 — `par_list(cmplx);`
@@ -3249,46 +3255,43 @@ pub fn par_subsh_wordcode_impl(cmplx: &mut i32, zsh_construct: i32) {
     ecadd(WCB_END());
     // c:1630-1631 — `if (tok != ((otok == INPAR) ? OUTPAR : OUTBRACE))
     // YYERRORV(oecused);`
-    let want = if otok == INPAR_TOK {
-        OUTPAR_TOK
-    } else {
-        OUTBRACE_TOK
-    };
-    if tok() != want {
+    if tok() != (if otok == INPAR_TOK { OUTPAR_TOK } else { OUTBRACE_TOK }) {
         error("par_subsh: missing closing token");
         return;
     }
-    // c:1633 — `incmdpos = !zsh_construct;`
+    // c:1632 — `incmdpos = !zsh_construct;`
     set_incmdpos(zsh_construct == 0);
-    // c:1634 — `zshlex();`
+    // c:1633 — `zshlex();`
     zshlex();
 
-    // c:1637 — `if (otok == INBRACE && tok == STRING && !strcmp(tokstr, "always"))`
-    let is_always =
-        otok == INBRACE_TOK && tok() == STRING_LEX && tokstr().as_deref() == Some("always");
-    if is_always {
-        // c:1638 — `ecbuf[pp] = WCB_TRY(ecused - 1 - pp);`
+    // c:1635 — `/* Optional always block. No intervening SEPERs allowed. */`
+    // c:1636 — `if (otok == INBRACE && tok == STRING && !strcmp(tokstr, "always")) {`
+    if otok == INBRACE_TOK && tok() == STRING_LEX && tokstr().as_deref() == Some("always") {
+        // c:1637 — `ecbuf[pp] = WCB_TRY(ecused - 1 - pp);`
         let used = ECUSED.get() as usize;
-        let off = used.saturating_sub(1 + pp);
         ECBUF.with_borrow_mut(|b| {
-            if pp < b.len() {
-                b[pp] = WCB_TRY(off as wordcode);
-            }
+            b[pp] = WCB_TRY((used.saturating_sub(1 + pp)) as wordcode);
         });
-        // c:1639 — `incmdpos = 1;`
+        // c:1638 — `incmdpos = 1;`
         set_incmdpos(true);
-        // c:1640-1642 — `do { zshlex(); } while (tok == SEPER);`
+        // c:1639-1641 — `do { zshlex(); } while (tok == SEPER);`
         loop {
             zshlex();
             if tok() != SEPER {
                 break;
             }
         }
-        // c:1644-1645 — `if (tok != INBRACE) YYERRORV(oecused);`
+
+        // c:1643-1644 — `if (tok != INBRACE) YYERRORV(oecused);`
         if tok() != INBRACE_TOK {
-            error("par_subsh: 'always' expects '{'");
+            error("par_subsh: 'always' expects `{`");
             return;
         }
+        // c:1645 — `cmdpop();`
+        cmdpop();
+        // c:1646 — `cmdpush(CS_ALWAYS);`
+        cmdpush(CS_ALWAYS as u8);
+
         // c:1648 — `zshlex();`
         zshlex();
         // c:1649 — `par_save_list(cmplx);`
@@ -3297,35 +3300,32 @@ pub fn par_subsh_wordcode_impl(cmplx: &mut i32, zsh_construct: i32) {
         while tok() == SEPER {
             zshlex();
         }
+
         // c:1653 — `incmdpos = 1;`
         set_incmdpos(true);
+
         // c:1655-1656 — `if (tok != OUTBRACE) YYERRORV(oecused);`
         if tok() != OUTBRACE_TOK {
-            error("par_subsh: 'always' block missing '}'");
+            error("par_subsh: 'always' block missing `}`");
             return;
         }
+        // c:1657 — `zshlex();`
         zshlex();
         // c:1658 — `ecbuf[p] = WCB_TRY(ecused - 1 - p);`
         let used = ECUSED.get() as usize;
-        let off = used.saturating_sub(1 + p);
         ECBUF.with_borrow_mut(|b| {
-            if p < b.len() {
-                b[p] = WCB_TRY(off as wordcode);
-            }
+            b[p] = WCB_TRY((used.saturating_sub(1 + p)) as wordcode);
         });
     } else {
-        // c:1660-1662 — `ecbuf[p] = (otok == INPAR ? WCB_SUBSH(...) :
-        // WCB_CURSH(...));`
+        // c:1660-1661 — `ecbuf[p] = (otok == INPAR ? WCB_SUBSH(...) : WCB_CURSH(...));`
         let used = ECUSED.get() as usize;
         let off = used.saturating_sub(1 + p);
         ECBUF.with_borrow_mut(|b| {
-            if p < b.len() {
-                b[p] = if otok == INPAR_TOK {
-                    WCB_SUBSH(off as wordcode)
-                } else {
-                    WCB_CURSH(off as wordcode)
-                };
-            }
+            b[p] = if otok == INPAR_TOK {
+                WCB_SUBSH(off as wordcode)
+            } else {
+                WCB_CURSH(off as wordcode)
+            };
         });
     }
 }
