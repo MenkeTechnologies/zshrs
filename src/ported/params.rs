@@ -6656,17 +6656,56 @@ pub fn resolve_nameref_rec(
 /// ```
 /// `gethashnode2` is the no-autoload paramtab lookup. The
 /// nameref branch updates the alias target in-place; the normal
-/// branch falls through to `setsparam`. Stub: requires real
-/// `paramtab` global with HashTable backend; until then the
-/// non-nameref `setsparam` path is the only one that fires.
+/// branch falls through to `setsparam`.
 /// Port of `setloopvar(char *name, char *value)` from `Src/params.c:6362`.
-#[allow(unused_variables)]
 pub fn setloopvar(name: &str, value: &str) {
-    // Once paramtab gethashnode2 is wired:
-    //   if let Some(pm) = paramtab_get(name) {
-    //       if (pm.flags & PM_NAMEREF) != 0 { ...nameref branch... return; }
-    //   }
-    //   setsparam(name, value);
+    // c:6367 — `Param pm = (Param) gethashnode2(realparamtab, name);`
+    // Scope the write lock so we drop it before calling setsparam below.
+    let nameref_branch = {
+        let mut tab = realparamtab().write().unwrap();
+        if let Some(pm) = tab.get_mut(name) {
+            // c:6369 — `if (pm && (pm->node.flags & PM_NAMEREF))`
+            if (pm.node.flags as u32 & PM_NAMEREF) != 0 {
+                // c:6370 — `if (pm->node.flags & PM_READONLY)`
+                if (pm.node.flags as u32 & PM_READONLY) != 0 {
+                    // c:6372 — `zerr("read-only reference: %s", pm->node.nam);`
+                    zerr(&format!("read-only reference: {}", pm.node.nam));
+                    // c:6373 — `return;`
+                    return;
+                }
+                // c:6376 — `pm->base = pm->width = 0;`
+                pm.base = 0;
+                pm.width = 0;
+                // c:6377 — `SETREFNAME(pm, ztrdup(value));`
+                // SETREFNAME (params.c:482) macro: for PM_SPECIAL,
+                // call gsu_s.setfn(pm, S); else free pm->u.str and
+                // assign new. The PM_SPECIAL gsu vtable isn't fully
+                // wired in zshrs; both branches collapse to the
+                // direct `u_str` assignment which matches the
+                // non-special path verbatim.
+                pm.u_str = Some(value.to_string());
+                // c:6378 — `pm->node.flags &= ~PM_UNSET;`
+                pm.node.flags &= !(PM_UNSET as i32);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
+    if nameref_branch {
+        // c:6379 — `setscope(pm);` — re-borrow under a fresh write
+        // lock since we dropped the earlier one before crossing the
+        // fn boundary.
+        let mut tab = realparamtab().write().unwrap();
+        if let Some(pm) = tab.get_mut(name) {
+            setscope(pm);
+        }
+    } else {
+        // c:6381 — `setsparam(name, ztrdup(value));`
+        setsparam(name, value);
+    }
 }
 
 /// PM_NAMEREF: extract `refname = GETREFNAME(pm)`, locate first
