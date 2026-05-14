@@ -2627,40 +2627,10 @@ pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
 // `crate::ported::params::convbase`. This entry is drift pending
 // cleanup; do not add new callers — use `crate::ported::params::convbase`.
 /// Format an integer in the given base (2-36) using zsh's
-/// `BASE#DIGITS` form.
-/// Port of `convbase(char *s, zlong v, int base)` from Src/utils.c (also called from
-/// Src/math.c:1089). Bases 2-9 are unsigned-style; uppercase
-/// A-Z are used for digits >= 10. A negative value is output
-/// as `-BASE#DIGITS`.
-/// WARNING: param names don't match C — Rust=(n, base) vs C=(buf, l, 10)
-pub fn convbase(n: i64, base: u32) -> String {                               // c:params.c:5632
-    if !(2..=36).contains(&base) {
-        return n.to_string();
-    }
-    if n == 0 {
-        return format!("{}#0", base);
-    }
-    let neg = n < 0;
-    let mut v: u64 = n.unsigned_abs();
-    let mut digits = Vec::new();
-    while v > 0 {
-        let d = (v % base as u64) as u32;
-        let ch = if d < 10 {
-            (b'0' + d as u8) as char
-        } else {
-            (b'A' + (d - 10) as u8) as char
-        };
-        digits.push(ch);
-        v /= base as u64;
-    }
-    digits.reverse();
-    let body: String = digits.into_iter().collect();
-    if neg {
-        format!("-{}#{}", base, body)
-    } else {
-        format!("{}#{}", base, body)
-    }
-}
+// `convbase` lives in params.rs (matching C: defined in params.c:5632
+// as a 1-line delegation to `convbase_ptr` at params.c:5586). The
+// math.rs entry that used to duplicate it is removed; callers should
+// import `crate::ported::params::convbase` directly.
 
 #[cfg(test)]
 mod tests {

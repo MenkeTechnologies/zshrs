@@ -69,7 +69,7 @@ use crate::ported::zsh_h::PM_UNDEFINED;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::glob::{expand_glob_alternation, find_top_level_tilde};
 #[allow(unused_imports)]
-pub use crate::ported::math::convbase as format_int_in_base;
+pub use crate::ported::params::convbase as format_int_in_base;
 pub use crate::ported::params::convbase_underscore;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::math::{parse_assign, parse_compound, parse_pre_inc};
