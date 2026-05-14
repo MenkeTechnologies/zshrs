@@ -6853,9 +6853,6 @@ pub fn valid_refname(val: &str, flags: i32) -> bool {                        // 
     true                                                                     // c:6510
 }
 
-fn foundparam_lock() -> &'static std::sync::Mutex<Option<String>> {
-    FOUNDPARAM.get_or_init(|| std::sync::Mutex::new(None))
-}
 
 /// Read `foundparam`. Returns the last param name observed by
 /// `scanparamvals`; cleared by callers after consumption.
@@ -6995,20 +6992,7 @@ pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
     result
 }
 
-/// Accessor for the global `paramtab` (Src/params.c:515).
-/// Mirrors C's `paramtab->...` dereference by handing back the
-/// inner RwLock; callers `.read()` for lookups and `.write()` for
-/// mutation, operating on the `HashMap<String, Param>` directly.
-pub fn paramtab() -> &'static RwLock<HashMap<String, crate::ported::zsh_h::Param>> {
-    PARAMTAB_INNER.get_or_init(|| RwLock::new(HashMap::new()))
-}
 
-/// Accessor for the global `realparamtab` (Src/params.c:515).
-/// Same role as `paramtab` for the not-currently-redirected case;
-/// the alias-flip during assoc-array iteration isn't modelled yet.
-pub fn realparamtab() -> &'static RwLock<HashMap<String, crate::ported::zsh_h::Param>> {
-    REALPARAMTAB_INNER.get_or_init(|| RwLock::new(HashMap::new()))
-}
 
 fn ifs_lock() -> &'static Mutex<String> {
     static IFS_VAR: OnceLock<Mutex<String>> = OnceLock::new();
@@ -7196,15 +7180,6 @@ fn dontimport(flags: i32) -> i32 {                                           // 
     0                                                                        // c:809
 }
 
-fn scanprog_lock() -> &'static std::sync::Mutex<Option<String>> {
-    SCANPROG.get_or_init(|| std::sync::Mutex::new(None))
-}
-fn scanstr_lock() -> &'static std::sync::Mutex<Option<String>> {
-    SCANSTR.get_or_init(|| std::sync::Mutex::new(None))
-}
-fn paramvals_lock() -> &'static std::sync::Mutex<Vec<String>> {
-    PARAMVALS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
-}
 
 /// Minimal `pattry()` shim — exact-match fallback until the pattern
 /// engine in `Src/pattern.c` is wired.
@@ -7468,6 +7443,59 @@ mod gsu_tests {
         assert_eq!(histcharsgetfn(), "@$&");
         histcharssetfn(None);
     }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+fn foundparam_lock() -> &'static std::sync::Mutex<Option<String>> {
+    FOUNDPARAM.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Accessor for the global `paramtab` (Src/params.c:515).
+/// Mirrors C's `paramtab->...` dereference by handing back the
+/// inner RwLock; callers `.read()` for lookups and `.write()` for
+/// mutation, operating on the `HashMap<String, Param>` directly.
+pub fn paramtab() -> &'static RwLock<HashMap<String, crate::ported::zsh_h::Param>> {
+    PARAMTAB_INNER.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Accessor for the global `realparamtab` (Src/params.c:515).
+/// Same role as `paramtab` for the not-currently-redirected case;
+/// the alias-flip during assoc-array iteration isn't modelled yet.
+pub fn realparamtab() -> &'static RwLock<HashMap<String, crate::ported::zsh_h::Param>> {
+    REALPARAMTAB_INNER.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn scanprog_lock() -> &'static std::sync::Mutex<Option<String>> {
+    SCANPROG.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+fn scanstr_lock() -> &'static std::sync::Mutex<Option<String>> {
+    SCANSTR.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+fn paramvals_lock() -> &'static std::sync::Mutex<Vec<String>> {
+    PARAMVALS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
 #[cfg(test)]

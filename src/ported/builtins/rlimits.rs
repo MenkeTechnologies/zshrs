@@ -1433,21 +1433,6 @@ fn setlimits(_nam: &str) -> i32 {
     0
 }
 
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(features_t {
-            bn_list: None,                                                // c:874 bintab
-            bn_size: 3,                                                   // c:874 sizeof(bintab)/sizeof(*bintab) — limit, ulimit, unlimit
-            cd_list: None,                                                // c:875
-            cd_size: 0,
-            mf_list: None,                                                // c:876
-            mf_size: 0,
-            pd_list: None,                                                // c:877
-            pd_size: 0,
-            n_abstract: 0,                                                // c:883
-        })
-    })
-}
 
 // =====================================================================
 // External fns from Src/module.c. Stubbed locally with C-faithful
@@ -1502,6 +1487,33 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features_t>, _e: Option<&Vec<
 // =====================================================================
 // Tests
 // =====================================================================
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,                                                // c:874 bintab
+            bn_size: 3,                                                   // c:874 sizeof(bintab)/sizeof(*bintab) — limit, ulimit, unlimit
+            cd_list: None,                                                // c:875
+            cd_size: 0,
+            mf_list: None,                                                // c:876
+            mf_size: 0,
+            pd_list: None,                                                // c:877
+            pd_size: 0,
+            n_abstract: 0,                                                // c:883
+        })
+    })
+}
 
 #[cfg(test)]
 mod tests {

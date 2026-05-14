@@ -636,19 +636,6 @@ fn checksched_thunk() {
     let _ = checksched();
 }
 
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,                                                   // c:387 bintab
-        bn_size: 1,                                                       // sizeof(bintab)/sizeof(*bintab) — sched
-        cd_list: None,                                                    // c:388
-        cd_size: 0,
-        mf_list: None,                                                    // c:389
-        mf_size: 0,
-        pd_list: None,                                                    // c:396 partab
-        pd_size: 1,                                                       // sizeof(partab)/sizeof(*partab) — zsh_scheduled_events
-        n_abstract: 0,                                                    // c:396
-    }))
-}
 
 // =====================================================================
 // External fns from Src/module.c. Stubbed locally with C-faithful
@@ -707,6 +694,31 @@ fn execstring(_cmd: &str, _exiting: i32, _dont_change_job: i32, _context: &str) 
 // =====================================================================
 // Tests
 // =====================================================================
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,                                                   // c:387 bintab
+        bn_size: 1,                                                       // sizeof(bintab)/sizeof(*bintab) — sched
+        cd_list: None,                                                    // c:388
+        cd_size: 0,
+        mf_list: None,                                                    // c:389
+        mf_size: 0,
+        pd_list: None,                                                    // c:396 partab
+        pd_size: 1,                                                       // sizeof(partab)/sizeof(*partab) — zsh_scheduled_events
+        n_abstract: 0,                                                    // c:396
+    }))
+}
 
 #[cfg(test)]
 mod tests {

@@ -1659,9 +1659,6 @@ pub fn fixsuffix() {                                                         // 
     SUFFIXLEN.store(0, Ordering::SeqCst);
 }
 
-fn suffixlist() -> &'static std::sync::Mutex<Vec<suffixset>> {
-    SUFFIXLIST.get_or_init(|| std::sync::Mutex::new(Vec::new()))
-}
 
 // `PasteBuffer` deleted — Rust-invented struct that wasn't referenced
 // anywhere. The C source uses `Cutbuffer` (zle.h:342, ported as
@@ -2164,6 +2161,21 @@ pub fn zgetline(_args: &[String]) -> i32 {                                   // 
     // mechanism is part of `push-line` / `push-line-or-edit`;
     // returns 0 matching the C source.
     0
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+fn suffixlist() -> &'static std::sync::Mutex<Vec<suffixset>> {
+    SUFFIXLIST.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
 #[cfg(test)]

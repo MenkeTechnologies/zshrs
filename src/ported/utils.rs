@@ -4639,31 +4639,6 @@ pub fn mailstat(path: &str, st: &mut libc::stat) -> i32 {                    // 
     0                                                                        // c:7787
 }
 
-// WARNING: NOT IN UTILS.C — Rust-only OnceLock get-or-init
-// helpers. C dereferences each global directly.
-fn scriptname_lock() -> &'static std::sync::Mutex<Option<String>> {
-    SCRIPTNAME.get_or_init(|| std::sync::Mutex::new(None))
-}
-// WARNING: NOT IN UTILS.C — see scriptname_lock above.
-fn argzero_lock() -> &'static std::sync::Mutex<Option<String>> {
-    ARGZERO.get_or_init(|| std::sync::Mutex::new(None))
-}
-// WARNING: NOT IN UTILS.C — see scriptname_lock above.
-fn noerrs_lock() -> &'static std::sync::Mutex<i32> {
-    NOERRS.get_or_init(|| std::sync::Mutex::new(0))
-}
-// `locallevel_lock` removed — duplicate of canonical
-// `crate::ported::params::locallevel` (port of params.c:54). All
-// accessors here now route through the canonical AtomicI32.
-// WARNING: NOT IN UTILS.C — see scriptname_lock above.
-fn lineno_lock() -> &'static std::sync::Mutex<i32> {
-    LINENO.get_or_init(|| std::sync::Mutex::new(0))
-}
-// WARNING: NOT IN UTILS.C — Rust-only cache for the SHINSTDIN
-// option flag so error-emission doesn't pull in the option-table.
-fn shinstdin_lock() -> &'static std::sync::Mutex<bool> {
-    SHINSTDIN_OPT.get_or_init(|| std::sync::Mutex::new(false))
-}
 
 /// Setter for `scriptname`. Called from `bin_dot` / `source`
 /// when entering a script.
@@ -5180,11 +5155,6 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {              //
     (result, consumed)
 }
 
-/// !!! RUST-ONLY HELPER — see WARNING block above. C source uses bare
-/// `unsigned char *fdtable` global from Src/utils.c:~63.
-fn fdtable_lock() -> &'static std::sync::Mutex<Vec<i32>> {
-    FDTABLE.get_or_init(|| std::sync::Mutex::new(Vec::new()))
-}
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Equivalent to
 /// the C expression `fdtable[fd]` (read). Returns `FDT_UNUSED` for
@@ -5377,6 +5347,64 @@ pub(crate) fn bufferwords(s: &str) -> Vec<String> {
     }
     flush(&mut out, &mut cur);
     out
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// WARNING: NOT IN UTILS.C — Rust-only OnceLock get-or-init
+// helpers. C dereferences each global directly.
+fn scriptname_lock() -> &'static std::sync::Mutex<Option<String>> {
+    SCRIPTNAME.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+// WARNING: NOT IN UTILS.C — see scriptname_lock above.
+fn argzero_lock() -> &'static std::sync::Mutex<Option<String>> {
+    ARGZERO.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+// WARNING: NOT IN UTILS.C — see scriptname_lock above.
+fn noerrs_lock() -> &'static std::sync::Mutex<i32> {
+    NOERRS.get_or_init(|| std::sync::Mutex::new(0))
+}
+
+// `locallevel_lock` removed — duplicate of canonical
+// `crate::ported::params::locallevel` (port of params.c:54). All
+// accessors here now route through the canonical AtomicI32.
+// WARNING: NOT IN UTILS.C — see scriptname_lock above.
+fn lineno_lock() -> &'static std::sync::Mutex<i32> {
+    LINENO.get_or_init(|| std::sync::Mutex::new(0))
+}
+
+// WARNING: NOT IN UTILS.C — Rust-only cache for the SHINSTDIN
+// option flag so error-emission doesn't pull in the option-table.
+fn shinstdin_lock() -> &'static std::sync::Mutex<bool> {
+    SHINSTDIN_OPT.get_or_init(|| std::sync::Mutex::new(false))
+}
+
+/// !!! RUST-ONLY HELPER — see WARNING block above. C source uses bare
+/// `unsigned char *fdtable` global from Src/utils.c:~63.
+fn fdtable_lock() -> &'static std::sync::Mutex<Vec<i32>> {
+    FDTABLE.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
 #[cfg(test)]

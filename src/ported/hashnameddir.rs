@@ -175,6 +175,17 @@ pub fn printnameddirnode(hn: &nameddir, printflags: i32) {                 // c:
     let _ = writeln!(out);                                                 // c:181
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 /// Accessor for the global `nameddirtab`. Mirrors the C global
 /// dereference (`nameddirtab->...`) by returning the underlying
 /// mutex; callers `.lock()` and operate on the map directly.

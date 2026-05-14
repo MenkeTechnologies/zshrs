@@ -1513,9 +1513,6 @@ pub fn historybeginningsearchforward() -> i32 {                 // c:2085
         }
     }
 
-fn isrch_spots() -> &'static std::sync::Mutex<Vec<isrch_spot>> {
-    ISRCH_SPOTS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
-}
 
 #[cfg(test)]
 mod zlinecmp_zlinefind_tests {
@@ -1634,6 +1631,21 @@ mod isearch_prompt_tests {
         assert!(ISEARCH_PROMPT.starts_with("XXXXXXX "));
         assert!(ISEARCH_PROMPT.contains("XXX-i-search:"));
     }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+fn isrch_spots() -> &'static std::sync::Mutex<Vec<isrch_spot>> {
+    ISRCH_SPOTS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
 #[cfg(test)]

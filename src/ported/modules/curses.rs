@@ -1606,10 +1606,6 @@ fn windows_lock() -> &'static Mutex<HashMap<String, zc_win>> {
     zcurses_windows.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-// WARNING: NOT IN CURSES.C — see windows_lock above.
-fn order_lock() -> &'static Mutex<Vec<String>> {
-    WINDOW_ORDER.get_or_init(|| Mutex::new(Vec::new()))
-}
 
 // WARNING: NOT IN CURSES.C — see windows_lock above.
 fn errno_lock() -> &'static Mutex<i32> {
@@ -1811,25 +1807,6 @@ fn keypad_name(code: i32) -> Option<String> {
     Some(name.to_string())
 }
 
-// WARNING: NOT IN CURSES.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(features_t {
-            bn_list: None,                                                    // c:1639 bintab
-            bn_size: 1,                                                       // c:1639 sizeof(bintab)/sizeof(*bintab)
-            cd_list: None,                                                    // c:1640
-            cd_size: 0,
-            mf_list: None,                                                    // c:1641
-            mf_size: 0,
-            pd_list: None,                                                    // c:1642
-            pd_size: 0,
-            n_abstract: 0,                                                    // c:1643
-        })
-    })
-}
 
 // Local stubs mirroring the C `featuresarray` / `handlefeatures` /
 // `setfeatureenables` signatures (Src/module.c:3388/3370/3445). The
@@ -1953,6 +1930,42 @@ fn sgr_for_attrs(attrs: u32) -> String {
 // =====================================================================
 // Tests
 // =====================================================================
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// WARNING: NOT IN CURSES.C — see windows_lock above.
+fn order_lock() -> &'static Mutex<Vec<String>> {
+    WINDOW_ORDER.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+// WARNING: NOT IN CURSES.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| {
+        Mutex::new(features_t {
+            bn_list: None,                                                    // c:1639 bintab
+            bn_size: 1,                                                       // c:1639 sizeof(bintab)/sizeof(*bintab)
+            cd_list: None,                                                    // c:1640
+            cd_size: 0,
+            mf_list: None,                                                    // c:1641
+            mf_size: 0,
+            pd_list: None,                                                    // c:1642
+            pd_size: 0,
+            n_abstract: 0,                                                    // c:1643
+        })
+    })
+}
 
 #[cfg(test)]
 mod tests {
