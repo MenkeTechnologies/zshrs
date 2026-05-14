@@ -4035,8 +4035,39 @@ pub fn par_simple_wordcode() {
 /// 4 with idstring, 5 for HEREDOC[DASH] which carries the
 /// terminator strings inline). Returns 0 on parse error.
 fn par_redir_wordcode(rp: &mut usize) -> i32 {
-    let cur = tok();
-    let rtype: i32 = match cur {
+    par_redir_wordcode_inner(rp, None)
+}
+
+/// par_redir variant taking the `idstring` parameter for the
+/// `{var}>file` shape. C signature `par_redir(int *rp, char *idstring)`
+/// passes NULL when there's no var-id. Rust uses Option<&str>.
+fn par_redir_wordcode_inner(rp: &mut usize, idstring: Option<&str>) -> i32 {
+    // c:2231 — `int r = *rp, type, fd1, oldcmdpos, oldnc, ncodes;`
+    let r: usize = *rp;
+    let mut r#type: i32;
+    let fd1: i32;
+    let oldcmdpos: bool;
+    let oldnc: i32;
+    let mut ncodes: usize;
+    // c:2232 — `char *name;`
+    let name: String;
+
+    // c:2234 — `oldcmdpos = incmdpos;`
+    oldcmdpos = incmdpos();
+    // c:2235 — `incmdpos = 0;`
+    set_incmdpos(false);
+    // c:2236 — `oldnc = nocorrect;`
+    oldnc = nocorrect();
+    // c:2237-2238 — `if (tok != INANG && tok != INOUTANG) nocorrect = 1;`
+    if tok() != INANG_TOK && tok() != INOUTANG {
+        set_nocorrect(1);
+    }
+    // c:2239 — `type = redirtab[tok - OUTANG];`
+    // Map current redirop token to redirtab index — matches order of
+    // C `enum { OUTANG, OUTANGBANG, DOUTANG, DOUTANGBANG, INANG,
+    // INOUTANG, DINANG, DINANGDASH, INANGAMP, OUTANGAMP, AMPOUTANG,
+    // OUTANGAMPBANG, DOUTANGAMP, DOUTANGAMPBANG, TRINANG }`.
+    r#type = match tok() {
         OUTANG_TOK => REDIR_WRITE,
         OUTANGBANG => REDIR_WRITENOW,
         DOUTANG => REDIR_APP,
@@ -4045,119 +4076,183 @@ fn par_redir_wordcode(rp: &mut usize) -> i32 {
         INOUTANG => REDIR_READWRITE,
         DINANG => REDIR_HEREDOC,
         DINANGDASH => REDIR_HEREDOCDASH,
-        TRINANG => REDIR_HERESTR,
         INANGAMP => REDIR_MERGEIN,
         OUTANGAMP => REDIR_MERGEOUT,
         AMPOUTANG => REDIR_ERRWRITE,
         OUTANGAMPBANG => REDIR_ERRWRITENOW,
         DOUTANGAMP => REDIR_ERRAPP,
         DOUTANGAMPBANG => REDIR_ERRAPPNOW,
-        _ => return 0,
+        TRINANG => REDIR_HERESTR,
+        _ => {
+            set_incmdpos(oldcmdpos);
+            set_nocorrect(oldnc);
+            return 0;
+        }
     };
-    let fd1 = if tokfd() >= 0 {
-        tokfd()
-    } else if matches!(
-        rtype,
-        REDIR_READ
-            | REDIR_READWRITE
-            | REDIR_MERGEIN
-            | REDIR_HEREDOC
-            | REDIR_HEREDOCDASH
-            | REDIR_HERESTR
-    ) {
-        0
-    } else {
-        1
-    };
-    // c:2234-2245 — save+force incmdpos=0 / nocorrect=1 (when not
-    // INANG/INOUTANG) around the zshlex that consumes the target
-    // word.
-    let oldcmdpos = incmdpos();
-    set_incmdpos(false);
-    let oldnc = nocorrect();
-    if cur != INANG_TOK && cur != INOUTANG {
-        set_nocorrect(1);
-    }
+    // c:2240 — `fd1 = tokfd;`
+    fd1 = tokfd();
+    // c:2241 — `zshlex();`
     zshlex();
+    // c:2242-2243 — `if (tok != STRING && tok != ENVSTRING) YYERROR(ecused);`
     if tok() != STRING_LEX && tok() != ENVSTRING {
         set_incmdpos(oldcmdpos);
         set_nocorrect(oldnc);
         error("expected word after redirection");
         return 0;
     }
-    let name = tokstr().unwrap_or_default();
+    // c:2244 — `incmdpos = oldcmdpos;`
     set_incmdpos(oldcmdpos);
+    // c:2245 — `nocorrect = oldnc;`
     set_nocorrect(oldnc);
 
-    // c:2249-2300 — HEREDOC / HEREDOCDASH carry extra words (here
-    // string + terminator + munged terminator). The C source
-    // emits 5 words and registers a struct heredocs entry that
-    // setheredoc patches later. Stub for now: emit the basic
-    // 3-word shape so wordcode parity at least sees WC_REDIR.
-    // TODO: full heredoc registration + 5-word emission.
-    let _ = (REDIR_FROM_HEREDOC_MASK, REDIR_VARID_MASK);
-
-    // c:2302-2321 — proc-subst rewriting: detect `>(`/`<(` in the
-    // target word's first 2 chars and rewrite REDIR_WRITE/READ to
-    // REDIR_OUTPIPE/INPIPE. The detection compares the FIRST char
-    // of the unmetafied tokstr against the marker bytes.
-    let mut rtype = rtype;
-    let nbytes: Vec<char> = name.chars().collect();
-    let two = |i: usize| -> Option<(char, char)> {
-        if i + 1 < nbytes.len() {
-            Some((nbytes[i], nbytes[i + 1]))
+    // c:2248-2249 — `if (fd1 == -1) fd1 = IS_READFD(type) ? 0 : 1;`
+    let fd1 = if fd1 == -1 {
+        if is_readfd(r#type) {
+            0
         } else {
-            None
+            1
         }
+    } else {
+        fd1
     };
-    if let Some((c0, c1)) = two(0) {
-        match rtype {
-            x if x == REDIR_WRITE || x == REDIR_WRITENOW => {
-                if c0 == '\u{96}' /* OutangProc */ && c1 == '\u{88}' /* Inpar */ {
-                    rtype = REDIR_OUTPIPE;
-                } else if c0 == '\u{94}' /* Inang */ && c1 == '\u{88}' {
-                    error("invalid redirection: < before >");
-                    return 0;
-                }
+
+    // c:2251 — `name = tokstr;`
+    name = tokstr().unwrap_or_default();
+
+    // c:2253-2321 — switch on type:
+    match r#type {
+        // c:2254-2300 — REDIR_HEREDOC / REDIR_HEREDOCDASH
+        x if x == REDIR_HEREDOC || x == REDIR_HEREDOCDASH => {
+            // c:2257 — `struct heredocs **hd;`
+            // c:2258 — `int htype = type;`
+            let htype = r#type;
+            // c:2260-2261 — `if (strchr(tokstr, '\n')) YYERROR(ecused);`
+            if name.contains('\n') {
+                error("here-doc terminator contains newline");
+                return 0;
             }
-            x if x == REDIR_READ => {
-                if c0 == '\u{94}' && c1 == '\u{88}' {
-                    rtype = REDIR_INPIPE;
-                } else if c0 == '\u{96}' && c1 == '\u{88}' {
-                    error("invalid redirection: > before <");
-                    return 0;
-                }
+            // c:2263-2273 — `ncodes = 5; if (idstring) { type |= MASK; ncodes = 6; }`
+            if idstring.is_some() {
+                r#type |= REDIR_VARID_MASK;
+                ncodes = 6;
+            } else {
+                ncodes = 5;
             }
-            x if x == REDIR_READWRITE => {
-                if c0 == '\u{94}' && c1 == '\u{88}' {
-                    rtype = REDIR_INPIPE;
-                } else if c0 == '\u{96}' && c1 == '\u{88}' {
-                    rtype = REDIR_OUTPIPE;
-                }
+            // c:2277 — `ecispace(r, ncodes);`
+            ecispace(r, ncodes);
+            // c:2278 — `*rp = r + ncodes;`
+            *rp = r + ncodes;
+            // c:2279 — `ecbuf[r] = WCB_REDIR(type | REDIR_FROM_HEREDOC_MASK);`
+            ECBUF.with_borrow_mut(|b| {
+                b[r] = WCB_REDIR((r#type | REDIR_FROM_HEREDOC_MASK) as wordcode);
+                // c:2280 — `ecbuf[r + 1] = fd1;`
+                b[r + 1] = fd1 as wordcode;
+            });
+            // c:2282-2286 — r+2..4 are filled later by setheredoc.
+            // c:2287-2288 — `if (idstring) ecbuf[r + 5] = ecstrcode(idstring);`
+            if let Some(id) = idstring {
+                let coded = ecstrcode(id);
+                ECBUF.with_borrow_mut(|b| {
+                    b[r + 5] = coded;
+                });
             }
-            _ => {}
+            // c:2290-2296 — register `struct heredocs` entry. The
+            // zshrs heredoc registration uses a different storage
+            // model (per-redir struct in the AST tree); skipping for
+            // wordcode-only parity. setheredoc patches r+2/r+3/r+4
+            // when the body is later collected.
+            let _ = htype;
+            // c:2298 — `zshlex();`
+            zshlex();
+            // c:2299 — `return ncodes;`
+            return ncodes as i32;
         }
+        // c:2301-2308 — REDIR_WRITE / REDIR_WRITENOW
+        x if x == REDIR_WRITE || x == REDIR_WRITENOW => {
+            // c:2303-2305 — `if (tokstr[0] == OutangProc && tokstr[1] == Inpar)
+            //                  type = REDIR_OUTPIPE;`
+            let nb: Vec<char> = name.chars().collect();
+            if nb.len() >= 2 && nb[0] == '\u{96}' && nb[1] == '\u{88}' {
+                r#type = REDIR_OUTPIPE;
+            } else if nb.len() >= 2 && nb[0] == '\u{94}' && nb[1] == '\u{88}' {
+                // c:2306-2307 — `else if (tokstr[0] == Inang && tokstr[1] == Inpar) YYERROR;`
+                error("par_redir: < before >");
+                return 0;
+            }
+        }
+        // c:2309-2315 — REDIR_READ
+        x if x == REDIR_READ => {
+            let nb: Vec<char> = name.chars().collect();
+            if nb.len() >= 2 && nb[0] == '\u{94}' && nb[1] == '\u{88}' {
+                r#type = REDIR_INPIPE;
+            } else if nb.len() >= 2 && nb[0] == '\u{96}' && nb[1] == '\u{88}' {
+                error("par_redir: > before <");
+                return 0;
+            }
+        }
+        // c:2316-2320 — REDIR_READWRITE
+        x if x == REDIR_READWRITE => {
+            let nb: Vec<char> = name.chars().collect();
+            if nb.len() >= 2
+                && (nb[0] == '\u{94}' || nb[0] == '\u{96}')
+                && nb[1] == '\u{88}'
+            {
+                r#type = if nb[0] == '\u{94}' {
+                    REDIR_INPIPE
+                } else {
+                    REDIR_OUTPIPE
+                };
+            }
+        }
+        _ => {}
     }
+    // c:2322 — `zshlex();`
     zshlex();
 
-    // c:2326-2333 — emit WCB_REDIR + fd + ecstrcode(name) at the
-    // CALLER's `r` cursor (NOT at ecused). ecispace shifts later
-    // words DOWN to make space; the caller bumps its `p` (SIMPLE
-    // placeholder offset) to compensate. 3-word basic shape;
-    // idstring (`{var}>file`) form not yet wired here.
-    let ncodes: usize = 3;
-    let r = *rp;
+    // c:2326-2333 — `if (idstring) { type |= MASK; ncodes = 4; } else ncodes = 3;`
+    if idstring.is_some() {
+        r#type |= REDIR_VARID_MASK;
+        ncodes = 4;
+    } else {
+        ncodes = 3;
+    }
+
+    // c:2334 — `ecispace(r, ncodes);`
     ecispace(r, ncodes);
-    let coded = ecstrcode(&name);
+    // c:2335 — `*rp = r + ncodes;`
+    *rp = r + ncodes;
+    // c:2336 — `ecbuf[r] = WCB_REDIR(type);`
+    let coded_name = ecstrcode(&name);
     ECBUF.with_borrow_mut(|b| {
-        if r + 2 < b.len() {
-            b[r] = WCB_REDIR(rtype as wordcode);
-            b[r + 1] = fd1 as wordcode;
-            b[r + 2] = coded;
-        }
+        b[r] = WCB_REDIR(r#type as wordcode);
+        // c:2337 — `ecbuf[r + 1] = fd1;`
+        b[r + 1] = fd1 as wordcode;
+        // c:2338 — `ecbuf[r + 2] = ecstrcode(name);`
+        b[r + 2] = coded_name;
     });
-    *rp += ncodes; // c:2280 `*rp = r + ncodes;`
+    // c:2339-2340 — `if (idstring) ecbuf[r + 3] = ecstrcode(idstring);`
+    if let Some(id) = idstring {
+        let coded_id = ecstrcode(id);
+        ECBUF.with_borrow_mut(|b| {
+            b[r + 3] = coded_id;
+        });
+    }
+    // c:2342 — `return ncodes;`
     ncodes as i32
+}
+
+/// Port of `IS_READFD(type)` macro from `Src/zsh.h` — determines
+/// default fd (0 for read-ish, 1 for write-ish) when none specified.
+fn is_readfd(t: i32) -> bool {
+    matches!(
+        t,
+        x if x == REDIR_READ
+            || x == REDIR_READWRITE
+            || x == REDIR_MERGEIN
+            || x == REDIR_HEREDOC
+            || x == REDIR_HEREDOCDASH
+            || x == REDIR_HERESTR
+    )
 }
 
 /// Parse a program (list of lists)
