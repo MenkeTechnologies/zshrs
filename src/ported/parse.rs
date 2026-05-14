@@ -1129,7 +1129,10 @@ pub fn ecstrcode(s: &str) -> u32 {
                 let mut cmp = (p.nfunc as i64) - (nfunc as i64);
                 if cmp == 0 {
                     // c:448 — `&& !(cmp = (long)p->hashval - (long)val)`
-                    cmp = (p.hashval as i64) - (val as i64);
+                    // C does `(int)(p->hashval - val)` — unsigned 32-bit
+                    // subtraction wraps, then cast to int. Use
+                    // wrapping_sub + as i32 to match the bit pattern.
+                    cmp = (p.hashval.wrapping_sub(val) as i32) as i64;
                     if cmp == 0 {
                         // c:448 — `&& !(cmp = strcmp(p->str, s))`
                         cmp = match p.str.as_slice().cmp(c_bytes.as_slice()) {
@@ -1181,7 +1184,10 @@ pub fn ecstrcode(s: &str) -> u32 {
                 while let Some(p) = cur.as_ref() {
                     let mut cmp = (p.nfunc as i64) - (nfunc as i64);
                     if cmp == 0 {
-                        cmp = (p.hashval as i64) - (val as i64);
+                        // C does `(int)(p->hashval - val)` — unsigned 32-bit
+                    // subtraction wraps, then cast to int. Use
+                    // wrapping_sub + as i32 to match the bit pattern.
+                    cmp = (p.hashval.wrapping_sub(val) as i32) as i64;
                         if cmp == 0 {
                             cmp = match p.str.as_slice().cmp(c_bytes.as_slice()) {
                                 std::cmp::Ordering::Less => -1,
