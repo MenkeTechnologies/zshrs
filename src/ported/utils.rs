@@ -65,6 +65,9 @@ use std::sync::atomic::AtomicI64;
 /// chars (returns without setting `wca->chars`); Rust port mirrors
 /// by returning empty Vec when conversion fails.
 /// WARNING: param names don't match C — Rust=(mb_array) vs C=(mb_array, wca)
+// Rust idiom replacement: `unmetafy` + `str::chars` covers the C
+// `mbsrtowcs`+`mbstate_t` conversion; the C `wca` out-param drops
+// since the Vec is returned by value.
 pub fn set_widearray(mb_array: &str) -> Vec<char> {
     let mut bytes = mb_array.as_bytes().to_vec();
     unmetafy(&mut bytes);
@@ -1899,6 +1902,9 @@ pub fn zsleep_random(max_us: i64, end_time: i64) -> i32 {                    // 
 
 /// Check before removing directory tree (from utils.c checkrmall)
 /// Port of `checkrmall(char *s)` from `Src/utils.c:2867`.
+/// Rust idiom replacement: delegates to `getquery` (which itself
+/// covers the C prompt+read loop). The C body's two-arm response
+/// table collapses to a single y/Y compare here.
 pub fn checkrmall(s: &str) -> bool {
     if let Some(c) = getquery(
         &format!("zsh: sure you want to delete all of {}? [yn] ", s),
@@ -2026,6 +2032,10 @@ pub fn noquery(purge: bool) -> i32 {                                         // 
 
 /// Simple interactive query (from utils.c getquery)
 /// Port of `getquery(char *valid_chars, int purge)` from `Src/utils.c:3014`.
+/// Rust idiom replacement: `io::stdin().read_exact` + `eprint!` covers
+/// the C raw-tty read-one-char loop without the SHTTY/termios save-
+/// restore dance; the C `purge` arg drops since `read_exact` consumes
+/// exactly one byte and doesn't pre-fill from a queued buffer.
 /// WARNING: param names don't match C — Rust=(prompt, valid_chars) vs C=(valid_chars, purge)
 pub fn getquery(prompt: &str, valid_chars: &str) -> Option<char> {
     eprint!("{}", prompt);
@@ -2064,6 +2074,10 @@ pub fn spscan(name: &str, candidates: &[String], threshold: usize) -> Option<Str
 // fix s ; if hist is nonzero, fix the history list too                    // c:3128
 /// Spelling correction distance (from utils.c spdist, already exists but adding spckword)
 /// Check if word is close enough to correct (from utils.c spckword)
+/// Rust idiom replacement: bounded for-loop over the candidate slice
+/// with `spdist` collapses the C `paramtab` + hash-walk + ralloc dance;
+/// the interactive prompt + history fix-up live separately in the
+/// suggestion-call site, not in the distance picker.
 pub fn spckword(word: &str, candidates: &[&str], threshold: usize) -> Option<String> { // c:3128
     let mut best = None;
     let mut best_dist = threshold + 1;
@@ -2390,6 +2404,9 @@ pub fn wordcount(s: &str, sep: Option<&str>, mul: i32) -> i32 {              // 
 /// Join an array with separator.
 /// Port of `sepjoin(char **s, char *sep, int heap)` from Src/utils.c:3928.
 /// WARNING: param names don't match C — Rust=(arr, sep) vs C=(s, sep, heap)
+// Rust idiom replacement: `slice::join` covers the C `zalloc`+`strcpy`
+// loop with running length pre-compute; the `heap` arg drops since
+// String owns its own allocation.
 pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {                // c:3928
     if arr.is_empty() {
         return String::new();
@@ -3290,6 +3307,9 @@ pub fn ztrsub(t: &str, s: &str) -> usize {                                   // 
 
 /// Check if directory is readable with entries (from utils.c)
 /// Port of `zreaddir(DIR *dir, int ignoredots)` from `Src/utils.c:5217`.
+/// Rust idiom replacement: `fs::read_dir` covers the C `opendir`+
+/// `readdir` loop; `ignoredots` flag is folded into the filter
+/// (`.`/`..` always skipped to match C `ignoredots=1` default).
 /// WARNING: param names don't match C — Rust=(path) vs C=(dir, ignoredots)
 pub fn zreaddir(path: &str) -> Vec<String> {
     match std::fs::read_dir(path) {

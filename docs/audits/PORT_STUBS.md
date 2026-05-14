@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-14T21:15:08.194688+00:00
+Generated: 2026-05-14T21:17:02.291673+00:00
 
 ## Method
 
@@ -16,16 +16,16 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 178 stubs across 46 files
+## Summary: 172 stubs across 46 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
-| `src/ported/utils.rs` | 13 | `lchdir` (8 / 298) |
 | `src/ported/jobs.rs` | 8 | `clearjobtab` (1 / 22) |
 | `src/ported/modules/zutil.rs` | 8 | `zalloc_default_array` (1 / 17) |
 | `src/ported/zle/zle_hist.rs` | 8 | `doisearch` (12 / 454) |
 | `src/ported/zle/zle_refresh.rs` | 8 | `moveto` (2 / 44) |
 | `src/ported/prompt.rs` | 7 | `prompttrunc` (1 / 183) |
+| `src/ported/utils.rs` | 7 | `lchdir` (8 / 298) |
 | `src/ported/zle/compctl.rs` | 7 | `makecomplistflags` (19 / 746) |
 | `src/ported/zle/zle_main.rs` | 7 | `getbyte` (10 / 74) |
 | `src/ported/hashtable.rs` | 6 | `hashdir` (4 / 54) |
@@ -68,24 +68,6 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/computil.rs` | 1 | `cfp_add_sdirs` (18 / 73) |
 
 ## Per-file detail
-
-### `src/ported/utils.rs` — 13 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 4229 | `lchdir` | 8 | 298 | 2% |
-| 2067 | `spckword` | 10 | 156 | 6% |
-| 2109 | `ztrftime` | 28 | 192 | 14% |
-| 269 | `zerrmsg` | 12 | 72 | 16% |
-| 1902 | `checkrmall` | 8 | 48 | 16% |
-| 2030 | `getquery` | 13 | 69 | 18% |
-| 68 | `set_widearray` | 6 | 28 | 21% |
-| 2393 | `sepjoin` | 5 | 23 | 21% |
-| 3158 | `unmeta` | 8 | 35 | 22% |
-| 3039 | `metafy` | 12 | 50 | 24% |
-| 972 | `checkmailpath` | 19 | 73 | 26% |
-| 2823 | `itype_end` | 18 | 65 | 27% |
-| 3294 | `zreaddir` | 8 | 28 | 28% |
 
 ### `src/ported/jobs.rs` — 8 stubs
 
@@ -150,6 +132,18 @@ python3 scripts/gen_port_stubs.py
 | 597 | `mixattrs` | 9 | 60 | 15% |
 | 475 | `applytextattributes` | 8 | 52 | 15% |
 | 1751 | `match_colour` | 13 | 55 | 23% |
+
+### `src/ported/utils.rs` — 7 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 4249 | `lchdir` | 8 | 298 | 2% |
+| 2123 | `ztrftime` | 28 | 192 | 14% |
+| 272 | `zerrmsg` | 12 | 72 | 16% |
+| 3175 | `unmeta` | 8 | 35 | 22% |
+| 3056 | `metafy` | 12 | 50 | 24% |
+| 975 | `checkmailpath` | 19 | 73 | 26% |
+| 2840 | `itype_end` | 18 | 65 | 27% |
 
 ### `src/ported/zle/compctl.rs` — 7 stubs
 
