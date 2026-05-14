@@ -1038,17 +1038,31 @@ pub fn ecdel(p: usize) {
 /// metafied byte count — same as C `strlen(s) + 1` where C's `s`
 /// is already metafied at this point.
 pub fn ecstrcode(s: &str) -> u32 {
-    // Convert Rust UTF-8 → C-byte form inline: chars ≤ 0xff collapse
-    // to single bytes (so zsh markers like Dash = `\u{9b}` are 1 byte
-    // instead of `\xc2 \x9b` UTF-8). Chars > 0xff fall back to their
-    // UTF-8 bytes — matches how C tokstr would hold them (it sees
-    // multi-byte UTF-8 source as raw byte sequences).
+    // Convert Rust UTF-8 → C-byte form. zsh stores two kinds of high
+    // bytes in tokstr:
+    //   1) Single-byte zsh markers (Meta=0x83, Pound=0x84, ...,
+    //      Marker=0xa2). These were inserted by the lexer at tokenize
+    //      time to mark token boundaries (Dash, Inang, etc.).
+    //   2) Multi-byte UTF-8 sequences from user-input chars 0x80+
+    //      (e.g. 'º' = U+00BA = `0xc2 0xba`). zsh treats UTF-8 as
+    //      opaque bytes — the lex reads them as raw 2-byte sequences.
+    //
+    // Rust receives both as `char`. We must distinguish:
+    //   - codepoint in [0x83..=0xa2] → ZSH MARKER → emit as 1 byte
+    //   - codepoint in [0x80..=0x82] or [0xa3..=0xff] → UTF-8 char →
+    //     emit as its 2-byte UTF-8 encoding (`0xc2 0xXX` or `0xc3 0xXX`)
+    //   - codepoint > 0xff → 3+ byte UTF-8 char → emit UTF-8 encoding
+    //   - codepoint < 0x80 → ASCII → emit as 1 byte
     let mut c_bytes: Vec<u8> = Vec::with_capacity(s.len());
     for ch in s.chars() {
         let cu = ch as u32;
-        if cu <= 0xff {
+        if cu < 0x80 {
+            c_bytes.push(cu as u8);
+        } else if (0x83..=0xa2).contains(&cu) {
+            // zsh marker byte (single-byte representation).
             c_bytes.push(cu as u8);
         } else {
+            // UTF-8 char: emit its multi-byte encoding.
             let mut tmp = [0u8; 4];
             c_bytes.extend_from_slice(ch.encode_utf8(&mut tmp).as_bytes());
         }
