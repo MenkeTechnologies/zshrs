@@ -2245,14 +2245,6 @@ pub const Bnull: char  = '\u{9f}';  // Backslash null
 pub const Stringg: char  = '\u{85}';  // META-$
 pub const QSTRING_TOK: char = '\u{84}';  // Qstring (for $'...')
 
-/// Direct port of `#define inull(X) zistype(X,INULL)` from
-/// `Src/ztype.h:62`. Tests whether `c` is one of the parser's
-/// "inull" token chars (the high-bit token bytes the lexer
-/// produces).
-fn inull(c: char) -> bool {                                                  // c:62
-    matches!(c, Snull | Dnull | Bnull | Stringg | QSTRING_TOK)
-}
-
 /// Separate the cursor word into prefix/word/suffix components.
 /// Port of `sep_comp_string(char *ss, char *s, int noffs)` from Src/Zle/compctl.c:2806 (~225 lines).
 ///
@@ -2647,32 +2639,6 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, s: &str, _incmd: bool, _compa
     }
 }
 
-// =================================================================
-// Module boot/cleanup hooks — port of compctl.c:4000+
-// =================================================================
-
-/// Storage for the special compctl targets — `cc_compos` (command
-/// completion), `cc_default` (default completion), `cc_first`
-/// (first completion). Port of the file-static C declarations at
-/// Src/Zle/compctl.c:41 — `struct compctl cc_compos, cc_default,
-/// cc_first, cc_dummy;`. setup_ initializes the masks; tests +
-/// real-completion paths read them.
-pub(crate) static CC_COMPOS: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
-pub(crate) static CC_DEFAULT: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
-pub(crate) static CC_FIRST: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
-pub(crate) static CC_DUMMY: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
-
-/// Last-used compctl tracking list. Port of `LinkList lastccused`
-/// at Src/Zle/compctl.c:1702. setup_ initializes to empty; finish_
-/// frees its contents.
-static LASTCCUSED: Mutex<Vec<Arc<Compctl>>> = Mutex::new(Vec::new());
-
-/// Pointer to compctlread (vs fallback_compctlread). Port of the
-/// `CompctlReadFn compctlreadptr` indirect dispatch at
-/// Src/Modules/zle/compctl.c:4016. setup_ installs this; finish_
-/// restores the fallback.
-static COMPCTLREAD_INSTALLED: Mutex<bool> = Mutex::new(false);
-
 /// Setup hook — port of `setup_(UNUSED(Module m))` from Src/Zle/compctl.c:4014.
 ///
 /// Wires `compctlreadptr` to compctlread, creates the compctltab,
@@ -2703,6 +2669,32 @@ pub(crate) fn setup_() -> i32 {
     *LASTCCUSED.lock().unwrap() = Vec::new();                 // c:4034
     0
 }
+
+// =================================================================
+// Module boot/cleanup hooks — port of compctl.c:4000+
+// =================================================================
+
+/// Storage for the special compctl targets — `cc_compos` (command
+/// completion), `cc_default` (default completion), `cc_first`
+/// (first completion). Port of the file-static C declarations at
+/// Src/Zle/compctl.c:41 — `struct compctl cc_compos, cc_default,
+/// cc_first, cc_dummy;`. setup_ initializes the masks; tests +
+/// real-completion paths read them.
+pub(crate) static CC_COMPOS: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
+pub(crate) static CC_DEFAULT: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
+pub(crate) static CC_FIRST: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
+pub(crate) static CC_DUMMY: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
+
+/// Last-used compctl tracking list. Port of `LinkList lastccused`
+/// at Src/Zle/compctl.c:1702. setup_ initializes to empty; finish_
+/// frees its contents.
+static LASTCCUSED: Mutex<Vec<Arc<Compctl>>> = Mutex::new(Vec::new());
+
+/// Pointer to compctlread (vs fallback_compctlread). Port of the
+/// `CompctlReadFn compctlreadptr` indirect dispatch at
+/// Src/Modules/zle/compctl.c:4016. setup_ installs this; finish_
+/// restores the fallback.
+static COMPCTLREAD_INSTALLED: Mutex<bool> = Mutex::new(false);
 
 /// Features hook — port of `features_(UNUSED(Module m), UNUSED(char ***features))` from Src/Zle/compctl.c:4034.
 ///
@@ -2761,6 +2753,14 @@ pub(crate) fn finish_() -> i32 {
     LASTCCUSED.lock().unwrap().clear();                       // c:4071-4072 freelinklist
     *COMPCTLREAD_INSTALLED.lock().unwrap() = false;           // c:4074
     0
+}
+
+/// Direct port of `#define inull(X) zistype(X,INULL)` from
+/// `Src/ztype.h:62`. Tests whether `c` is one of the parser's
+/// "inull" token chars (the high-bit token bytes the lexer
+/// produces).
+fn inull(c: char) -> bool {                                                  // c:62
+    matches!(c, Snull | Dnull | Bnull | Stringg | QSTRING_TOK)
 }
 
 #[cfg(test)]

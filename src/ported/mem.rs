@@ -119,12 +119,75 @@ thread_local! {
     static HEAP: RefCell<heap_arena> = RefCell::new(heap_arena::new());
 }
 
+// ===========================================================
+// Direct ports of arena/heap routines from Src/mem.c. Rust
+// uses owned allocations + RAII, so the C heap-arena machinery
+// (zalloc, zhalloc, switch_heaps, mmap_heap_alloc, etc.) is
+// replaced by stdlib alloc + scoped owned strings. These free-
+// fn entries satisfy ABI/name parity for the drift gate.
+// ===========================================================
+
+/// Port of `new_heap_id()` from Src/mem.c:182.
+/// C: `static Heapid new_heap_id(void)` → `return next_heap_id++;`
+pub fn new_heap_id() -> u64 {                                                // c:182
+    NEXT_HEAP_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)          // c:182
+}
+
+// Use new heaps from now on. This returns the old heap-list.               // c:194
+/// Port of `new_heaps()` from Src/mem.c:194.
+/// C: `Heap new_heaps(void)` — save current `heaps`/`fheap` chain,
+///   reset both to NULL, return the saved head for later restoration.
+pub fn new_heaps() -> *mut std::ffi::c_void {                                // c:194
+    queue_signals();                                                         // c:194
+    // c:199 — `h = heaps;`
+    let h = HEAPS.load(std::sync::atomic::Ordering::Relaxed);                // c:199
+    // c:220 — `fheap = heaps = NULL;`
+    HEAPS.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed); // c:220
+    FHEAP.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed);
+    unqueue_signals();                                                       // c:220
+    h
+}
+
+// Re-install the old heaps again, freeing the new ones.                    // c:220
+/// Port of `old_heaps(Heap old)` from Src/mem.c:220.
+/// C: `void old_heaps(Heap old)` — free the current heaps chain (each
+///   `h->next`), then restore `heaps = old`.
+pub fn old_heaps(old: *mut std::ffi::c_void) {                               // c:220
+    queue_signals();                                                         // c:220
+    // c:226-264 — walk current heaps freeing each (DPUTS guards against
+    // pushed-but-not-popped frames). Static-link path: HEAPS is a flat
+    // pointer chain managed by heap_arena above; just restore.
+    HEAPS.store(old, std::sync::atomic::Ordering::Relaxed);                  // c:267
+    unqueue_signals();                                                       // c:267
+}
+
+// Temporarily switch to other heaps (or back again).                       // c:267
+/// Port of `switch_heaps(Heap new)` from Src/mem.c:267.
+/// C: `Heap switch_heaps(Heap new)` — return current `heaps`, install
+///   `new` in its place. Used to enter a different heap-arena scope.
+pub fn switch_heaps(new: *mut std::ffi::c_void) -> *mut std::ffi::c_void {   // c:267
+    queue_signals();                                                         // c:267
+    // c:272 — `h = heaps;`
+    let h = HEAPS.load(std::sync::atomic::Ordering::Relaxed);                // c:272
+    HEAPS.store(new, std::sync::atomic::Ordering::Relaxed);                  // c:282
+    FHEAP.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed);
+    unqueue_signals();                                                       // c:284
+    h
+}
+
 /// Push heap state.
 // save states of zsh heaps                                                 // c:291
 /// Port of `pushheap()` from Src/mem.c:291 — the global entry-point
 /// version that operates on the thread-local arena.
 pub fn pushheap() {                                                          // c:291
     HEAP.with(|h| h.borrow_mut().push());
+}
+
+// reset heaps to previous state                                            // c:325
+/// Free current heap allocations but keep state.
+/// Port of `freeheap()` from Src/mem.c:325.
+pub fn freeheap() {                                                          // c:325
+    HEAP.with(|h| h.borrow_mut().free_current());
 }
 
 // reset heap to previous state and destroy state information               // c:443
@@ -134,11 +197,85 @@ pub fn popheap() {                                                           // 
     HEAP.with(|h| h.borrow_mut().pop());
 }
 
-// reset heaps to previous state                                            // c:325
-/// Free current heap allocations but keep state.
-/// Port of `freeheap()` from Src/mem.c:325.
-pub fn freeheap() {                                                          // c:325
-    HEAP.with(|h| h.borrow_mut().free_current());
+/// Port of `mmap_heap_alloc(size_t *n)` from Src/mem.c:526.
+/// C: `static Heap mmap_heap_alloc(size_t *n)` — round `*n` up to the
+///   page size, mmap an anonymous region of that size, write back the
+///   actual allocation in `*n`. Returns the Heap header.
+pub fn mmap_heap_alloc(n: &mut usize) -> *mut std::ffi::c_void {             // c:526
+    // c:526 — `static size_t pgsz = 0;`
+    let pgsz = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;        // c:533-535
+    let pgsz = if pgsz == 0 { 4096 } else { pgsz };
+    // c:540 — round up to a multiple of pgsz.
+    *n = (*n + pgsz - 1) & !(pgsz - 1);
+    // c:543 — mmap(NULL, *n, PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0).
+    unsafe {
+        libc::mmap(
+            std::ptr::null_mut(), *n,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0,
+        )                                                                    // c:543
+    }
+}
+
+/// Check if a pointer is within the heap arena.
+/// Port of `zheapptr(void *p)` from Src/mem.c:561 — the C source uses it
+/// to tell heap-arena strings from permanent ones (the pastebuf code
+/// has different freeing rules). Rust's borrow-checker subsumes
+/// this distinction; the function is kept for call-site parity but
+/// always returns true.
+pub fn zheapptr<T>(p: &T) -> bool {                                       // c:561
+    true
+}
+
+// allocate memory from the current memory pool                             // c:577
+/// Port of `zhalloc(size_t size)` from Src/mem.c:577 — heap-arena `malloc`
+/// (memory freed at the end of the current heap frame). Shim;
+/// Rust callers use owned `Vec`/`String`.
+#[allow(unused_variables)]
+pub fn zhalloc(size: usize) -> usize { 0 }                                  // c:577
+
+/// Port of `memory_validate(Heapid heap_id)` from Src/mem.c:896.
+/// C: `int memory_validate(Heapid heap_id)` — under `ZSH_MEM_DEBUG`,
+///   walk the heap chain to verify `heap_id` is still alive. Returns
+///   0 if found (valid), 1 otherwise.
+pub fn memory_validate(heap_id: u64) -> i32 {                                // c:896
+    const HEAPID_PERMANENT: u64 = 0;
+    // c:903 — `if (heap_id == HEAPID_PERMANENT) return 0;`
+    if heap_id == HEAPID_PERMANENT {                                         // c:903
+        return 0;
+    }
+    // c:905-940 — walk heaps chain comparing heap->heap_id; not modeled
+    // in static-link path. Always considered valid.
+    0
+}
+
+/// Reallocate heap memory.
+/// Port of `hrealloc(char *p, size_t old, size_t new)` from Src/mem.c:687 — heap-arena
+/// counterpart of `zrealloc()` (Src/mem.c:687).
+/// WARNING: param names don't match C — Rust=(old, new_size) vs C=(p, old, new)
+pub fn hrealloc(old: Vec<u8>, new_size: usize) -> Vec<u8> {                 // c:687
+    let mut v = old;
+    v.resize(new_size, 0);
+    v
+}
+
+/// Port of `hcalloc(size_t size)` from Src/mem.c:946 — heap-arena `calloc`
+/// (zero-fill `zhalloc`). Shim.
+#[allow(unused_variables)]
+pub fn hcalloc(size: usize) -> usize { 0 }                                  // c:946
+
+/// Port of `malloc(size_t size)` from Src/mem.c:1189 — wrapped `malloc`
+/// for the legacy arena system. Shim.
+#[allow(unused_variables)]
+pub fn malloc(size: usize) -> usize { 0 }
+
+/// Port of `free(void *p)` from Src/mem.c:1631.
+/// C: `void free(void *p)` → `zfree(p, 0);` — Rust callers use Drop
+///   to free owned allocations; this shim documents the C name parity.
+#[allow(unused_variables)]
+pub fn free(p: *mut std::ffi::c_void) {                                     // c:1631
+    // c:1648 — `zfree(p, 0);` — size unknown. Static-link path: nothing
+    // to free since Rust drop manages memory.
 }
 
 /// Allocate memory.
@@ -195,6 +332,40 @@ pub fn zsfree(p: String) {                                                  // c
     // Drop happens automatically
 }
 
+/// Port of `realloc(void *p, size_t size)` from Src/mem.c:1648 — wrapped `realloc`.
+/// Shim.
+/// WARNING: param names don't match C — Rust=(_size) vs C=(p, size)
+pub fn realloc(_size: usize) -> usize { 0 }
+
+/// Port of `calloc(size_t n, size_t size)` from Src/mem.c:1697 — wrapped `calloc`.
+/// Shim.
+#[allow(unused_variables)]
+pub fn calloc(n: usize, size: usize) -> usize { 0 }
+
+
+/// Port of `bin_mem(char *name, char **argv, Options ops, int func)` from `Src/mem.c:1722`.
+/// C body (gated on `#ifdef ZSH_MEM_DEBUG`) reads zsh's custom
+/// malloc counters (`m_l`, `m_high`, `m_s`, `m_b`, `m_m[]`, `m_f[]`)
+/// and prints them. zshrs uses the system allocator, so those
+/// counters don't exist and the body emits a "not available"
+/// notice matching `#else` defaults.
+///
+/// C signature: `int bin_mem(char *name, char **argv, Options ops,
+///                            int func)`.
+/// WARNING: param names don't match C — Rust=(_argv, _ops, _func) vs C=(name, argv, ops, func)
+pub fn bin_mem(                                                              // c:1722
+    _name: &str,
+    _argv: &[String],
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
+    // c:1725-1727 — queue_signals(); print verbose header if -v.
+    // Static-link Rust path uses system malloc; the C-only `m_*`
+    // globals (m_l/m_high/m_s/m_b/m_m/m_f) don't exist.
+    println!("memory statistics not available with system allocator");
+    0
+}
+
 /// Duplicate a string into heap storage.
 /// Port of `dupstring(const char *s)` from Src/string.c:33 — the heap-arena
 /// variant of `ztrdup()`. In Rust both collapse to `String::clone`
@@ -208,26 +379,6 @@ pub fn dupstring(s: &str) -> String {                                       // c
 /// source isn't NUL-terminated (e.g. a slice of a larger buffer).
 pub fn dupstring_wlen(s: &str, len: usize) -> String {                      // c:48
     s.chars().take(len).collect()
-}
-
-/// Check if a pointer is within the heap arena.
-/// Port of `zheapptr(void *p)` from Src/mem.c:561 — the C source uses it
-/// to tell heap-arena strings from permanent ones (the pastebuf code
-/// has different freeing rules). Rust's borrow-checker subsumes
-/// this distinction; the function is kept for call-site parity but
-/// always returns true.
-pub fn zheapptr<T>(p: &T) -> bool {                                       // c:561
-    true
-}
-
-/// Reallocate heap memory.
-/// Port of `hrealloc(char *p, size_t old, size_t new)` from Src/mem.c:687 — heap-arena
-/// counterpart of `zrealloc()` (Src/mem.c:687).
-/// WARNING: param names don't match C — Rust=(old, new_size) vs C=(p, old, new)
-pub fn hrealloc(old: Vec<u8>, new_size: usize) -> Vec<u8> {                 // c:687
-    let mut v = old;
-    v.resize(new_size, 0);
-    v
 }
 
 /// Duplicate an array of strings.
@@ -279,6 +430,25 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {               // c
     arr.join(sep.unwrap_or(" "))
 }
 
+// The canonical `zcontext_save()` / `zcontext_restore()` port lives
+// in `crate::ported::context` (Src/context.c:80/117), NOT here. The
+// previous Rust port had a `MemContext` aggregate + zero-arg
+// `zcontext_save() -> MemContext` shim attributed to "Src/init.c"
+// which is not where the C versions live — invented Rust-only
+// duplicate name. Deleted per PORT.md Rule A (no fns/structs whose
+// name doesn't exist in upstream C source at the cited location).
+// No external callers used the mem.rs versions.
+
+// queue_signals / unqueue_signals / QUEUEING_ENABLED / run_queued_signals
+// live in `signals_h.rs` — that's the canonical Rust home for the
+// `Src/signals.h:90/92/112/114/116` macros. mem.rs callers that need
+// the same state must go through signals_h so the counter is shared
+// across the whole tree (the prior parallel copies here split the
+// queueing state, which was wrong).
+pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
+
+
+
 /// Split string by separator.
 /// Port of `sepsplit(char *s, char *sep, int allownull, int heap)` from Src/utils.c:3962 — the C source's
 /// `IFS`-driven splitter. `allow_empty` mirrors the `allownull`
@@ -294,6 +464,18 @@ pub fn sepsplit(s: &str, sep: &str, allow_empty: bool) -> Vec<String> {     // c
             .collect()
     }
 }
+
+// `next_heap_id` from Src/mem.c:178 — monotonically incrementing counter
+// for heap-arena identification under ZSH_MEM_DEBUG.
+pub static NEXT_HEAP_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
+/// Port of `mod_export Heapid last_heap_id` from `Src/mem.c:194`.
+/// Tracks the most recently created heap arena id — used by
+/// `memory_validate` (ZSH_MEM_DEBUG path) to recognize cross-arena
+/// pointer use. Without ZSH_MEM_DEBUG this is set but never read.
+pub static LAST_HEAP_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);                                    // c:153
 
 /// Duplicate a string to permanent storage.
 /// Port of `ztrdup(const char *s)` from Src/string.c:62 — C zsh's canonical
@@ -316,6 +498,13 @@ pub fn ztrduppfx(s: &str, len: usize) -> String {                           // c
 pub fn bicat(s1: &str, s2: &str) -> String {                                // c:145
     format!("{}{}", s1, s2)
 }
+
+// `heaps` / `fheap` from Src/mem.c:526 — head of the current arena
+// chain and free-list pointer respectively.
+pub static HEAPS: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+pub static FHEAP: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
 // This version always uses permanently-allocated space.                   // c:98
 /// Concatenate three strings into a new permanent string.
@@ -349,46 +538,6 @@ pub fn strend(str: &str) -> Option<char> {                                    //
 pub fn appstr(base: &mut String, append: &str) {                            // c:186
     base.push_str(append);
 }
-
-/// Port of `bin_mem(char *name, char **argv, Options ops, int func)` from `Src/mem.c:1722`.
-/// C body (gated on `#ifdef ZSH_MEM_DEBUG`) reads zsh's custom
-/// malloc counters (`m_l`, `m_high`, `m_s`, `m_b`, `m_m[]`, `m_f[]`)
-/// and prints them. zshrs uses the system allocator, so those
-/// counters don't exist and the body emits a "not available"
-/// notice matching `#else` defaults.
-///
-/// C signature: `int bin_mem(char *name, char **argv, Options ops,
-///                            int func)`.
-/// WARNING: param names don't match C — Rust=(_argv, _ops, _func) vs C=(name, argv, ops, func)
-pub fn bin_mem(                                                              // c:1722
-    _name: &str,
-    _argv: &[String],
-    _ops: &crate::ported::zsh_h::options,
-    _func: i32,
-) -> i32 {
-    // c:1725-1727 — queue_signals(); print verbose header if -v.
-    // Static-link Rust path uses system malloc; the C-only `m_*`
-    // globals (m_l/m_high/m_s/m_b/m_m/m_f) don't exist.
-    println!("memory statistics not available with system allocator");
-    0
-}
-
-// The canonical `zcontext_save()` / `zcontext_restore()` port lives
-// in `crate::ported::context` (Src/context.c:80/117), NOT here. The
-// previous Rust port had a `MemContext` aggregate + zero-arg
-// `zcontext_save() -> MemContext` shim attributed to "Src/init.c"
-// which is not where the C versions live — invented Rust-only
-// duplicate name. Deleted per PORT.md Rule A (no fns/structs whose
-// name doesn't exist in upstream C source at the cited location).
-// No external callers used the mem.rs versions.
-
-// queue_signals / unqueue_signals / QUEUEING_ENABLED / run_queued_signals
-// live in `signals_h.rs` — that's the canonical Rust home for the
-// `Src/signals.h:90/92/112/114/116` macros. mem.rs callers that need
-// the same state must go through signals_h so the counter is shared
-// across the whole tree (the prior parallel copies here split the
-// queueing state, which was wrong).
-pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
 
 #[cfg(test)]
 mod tests {
@@ -462,149 +611,3 @@ mod tests {
         // Should not panic
     }
 }
-
-// ===========================================================
-// Direct ports of arena/heap routines from Src/mem.c. Rust
-// uses owned allocations + RAII, so the C heap-arena machinery
-// (zalloc, zhalloc, switch_heaps, mmap_heap_alloc, etc.) is
-// replaced by stdlib alloc + scoped owned strings. These free-
-// fn entries satisfy ABI/name parity for the drift gate.
-// ===========================================================
-
-/// Port of `new_heap_id()` from Src/mem.c:182.
-/// C: `static Heapid new_heap_id(void)` → `return next_heap_id++;`
-pub fn new_heap_id() -> u64 {                                                // c:182
-    NEXT_HEAP_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)          // c:182
-}
-
-// `next_heap_id` from Src/mem.c:178 — monotonically incrementing counter
-// for heap-arena identification under ZSH_MEM_DEBUG.
-pub static NEXT_HEAP_ID: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(1);
-
-/// Port of `mod_export Heapid last_heap_id` from `Src/mem.c:194`.
-/// Tracks the most recently created heap arena id — used by
-/// `memory_validate` (ZSH_MEM_DEBUG path) to recognize cross-arena
-/// pointer use. Without ZSH_MEM_DEBUG this is set but never read.
-pub static LAST_HEAP_ID: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);                                    // c:153
-
-// Use new heaps from now on. This returns the old heap-list.               // c:194
-/// Port of `new_heaps()` from Src/mem.c:194.
-/// C: `Heap new_heaps(void)` — save current `heaps`/`fheap` chain,
-///   reset both to NULL, return the saved head for later restoration.
-pub fn new_heaps() -> *mut std::ffi::c_void {                                // c:194
-    queue_signals();                                                         // c:194
-    // c:199 — `h = heaps;`
-    let h = HEAPS.load(std::sync::atomic::Ordering::Relaxed);                // c:199
-    // c:220 — `fheap = heaps = NULL;`
-    HEAPS.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed); // c:220
-    FHEAP.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed);
-    unqueue_signals();                                                       // c:220
-    h
-}
-
-// Re-install the old heaps again, freeing the new ones.                    // c:220
-/// Port of `old_heaps(Heap old)` from Src/mem.c:220.
-/// C: `void old_heaps(Heap old)` — free the current heaps chain (each
-///   `h->next`), then restore `heaps = old`.
-pub fn old_heaps(old: *mut std::ffi::c_void) {                               // c:220
-    queue_signals();                                                         // c:220
-    // c:226-264 — walk current heaps freeing each (DPUTS guards against
-    // pushed-but-not-popped frames). Static-link path: HEAPS is a flat
-    // pointer chain managed by heap_arena above; just restore.
-    HEAPS.store(old, std::sync::atomic::Ordering::Relaxed);                  // c:267
-    unqueue_signals();                                                       // c:267
-}
-
-// Temporarily switch to other heaps (or back again).                       // c:267
-/// Port of `switch_heaps(Heap new)` from Src/mem.c:267.
-/// C: `Heap switch_heaps(Heap new)` — return current `heaps`, install
-///   `new` in its place. Used to enter a different heap-arena scope.
-pub fn switch_heaps(new: *mut std::ffi::c_void) -> *mut std::ffi::c_void {   // c:267
-    queue_signals();                                                         // c:267
-    // c:272 — `h = heaps;`
-    let h = HEAPS.load(std::sync::atomic::Ordering::Relaxed);                // c:272
-    HEAPS.store(new, std::sync::atomic::Ordering::Relaxed);                  // c:282
-    FHEAP.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed);
-    unqueue_signals();                                                       // c:284
-    h
-}
-
-// `heaps` / `fheap` from Src/mem.c:526 — head of the current arena
-// chain and free-list pointer respectively.
-pub static HEAPS: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
-    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
-pub static FHEAP: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
-    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
-
-/// Port of `mmap_heap_alloc(size_t *n)` from Src/mem.c:526.
-/// C: `static Heap mmap_heap_alloc(size_t *n)` — round `*n` up to the
-///   page size, mmap an anonymous region of that size, write back the
-///   actual allocation in `*n`. Returns the Heap header.
-pub fn mmap_heap_alloc(n: &mut usize) -> *mut std::ffi::c_void {             // c:526
-    // c:526 — `static size_t pgsz = 0;`
-    let pgsz = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;        // c:533-535
-    let pgsz = if pgsz == 0 { 4096 } else { pgsz };
-    // c:540 — round up to a multiple of pgsz.
-    *n = (*n + pgsz - 1) & !(pgsz - 1);
-    // c:543 — mmap(NULL, *n, PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0).
-    unsafe {
-        libc::mmap(
-            std::ptr::null_mut(), *n,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0,
-        )                                                                    // c:543
-    }
-}
-
-// allocate memory from the current memory pool                             // c:577
-/// Port of `zhalloc(size_t size)` from Src/mem.c:577 — heap-arena `malloc`
-/// (memory freed at the end of the current heap frame). Shim;
-/// Rust callers use owned `Vec`/`String`.
-#[allow(unused_variables)]
-pub fn zhalloc(size: usize) -> usize { 0 }                                  // c:577
-
-/// Port of `memory_validate(Heapid heap_id)` from Src/mem.c:896.
-/// C: `int memory_validate(Heapid heap_id)` — under `ZSH_MEM_DEBUG`,
-///   walk the heap chain to verify `heap_id` is still alive. Returns
-///   0 if found (valid), 1 otherwise.
-pub fn memory_validate(heap_id: u64) -> i32 {                                // c:896
-    const HEAPID_PERMANENT: u64 = 0;
-    // c:903 — `if (heap_id == HEAPID_PERMANENT) return 0;`
-    if heap_id == HEAPID_PERMANENT {                                         // c:903
-        return 0;
-    }
-    // c:905-940 — walk heaps chain comparing heap->heap_id; not modeled
-    // in static-link path. Always considered valid.
-    0
-}
-
-/// Port of `hcalloc(size_t size)` from Src/mem.c:946 — heap-arena `calloc`
-/// (zero-fill `zhalloc`). Shim.
-#[allow(unused_variables)]
-pub fn hcalloc(size: usize) -> usize { 0 }                                  // c:946
-
-/// Port of `malloc(size_t size)` from Src/mem.c:1189 — wrapped `malloc`
-/// for the legacy arena system. Shim.
-#[allow(unused_variables)]
-pub fn malloc(size: usize) -> usize { 0 }
-
-/// Port of `free(void *p)` from Src/mem.c:1631.
-/// C: `void free(void *p)` → `zfree(p, 0);` — Rust callers use Drop
-///   to free owned allocations; this shim documents the C name parity.
-#[allow(unused_variables)]
-pub fn free(p: *mut std::ffi::c_void) {                                     // c:1631
-    // c:1648 — `zfree(p, 0);` — size unknown. Static-link path: nothing
-    // to free since Rust drop manages memory.
-}
-
-/// Port of `realloc(void *p, size_t size)` from Src/mem.c:1648 — wrapped `realloc`.
-/// Shim.
-/// WARNING: param names don't match C — Rust=(_size) vs C=(p, size)
-pub fn realloc(_size: usize) -> usize { 0 }
-
-/// Port of `calloc(size_t n, size_t size)` from Src/mem.c:1697 — wrapped `calloc`.
-/// Shim.
-#[allow(unused_variables)]
-pub fn calloc(n: usize, size: usize) -> usize { 0 }

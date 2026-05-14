@@ -29,19 +29,6 @@ use crate::ported::zsh_h::{nameddir, ND_USERNAME, PRINT_LIST, PRINT_NAMEONLY};
 // table as a `Mutex<HashMap<String, nameddir>>` keyed on `node.nam`.
 static NAMEDDIRTAB_INNER: OnceLock<Mutex<HashMap<String, nameddir>>> = OnceLock::new();
 
-/// Accessor for the global `nameddirtab`. Mirrors the C global
-/// dereference (`nameddirtab->...`) by returning the underlying
-/// mutex; callers `.lock()` and operate on the map directly.
-#[allow(non_snake_case)]
-pub fn nameddirtab() -> &'static Mutex<HashMap<String, nameddir>> {        // c:48
-    NAMEDDIRTAB_INNER.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-// != 0 if all the usernames have already been *
-// added to the named directory hash table.    *                           // c:59-51
-#[allow(non_upper_case_globals)]
-pub static allusersadded: AtomicI32 = AtomicI32::new(0);                   // c:59
-
 /* Create new hash table for named directories */                          // c:59
 
 /// Port of `createnameddirtable()` from `Src/hashnameddir.c:59`.
@@ -58,6 +45,11 @@ pub fn createnameddirtable() {                                             // c:
     // c:84 — `finddir(NULL);` clear the finddir cache. The Rust
     // `finddir` port has no cache, so the call is a no-op here.
 }
+
+// != 0 if all the usernames have already been *
+// added to the named directory hash table.    *                           // c:59-51
+#[allow(non_upper_case_globals)]
+pub static allusersadded: AtomicI32 = AtomicI32::new(0);                   // c:59
 
 /* Empty the named directories table */                                    // c:84
 
@@ -181,6 +173,14 @@ pub fn printnameddirnode(hn: &nameddir, printflags: i32) {                 // c:
         crate::ported::utils::quotedzputs(&hn.dir),                        // c:180
     );
     let _ = writeln!(out);                                                 // c:181
+}
+
+/// Accessor for the global `nameddirtab`. Mirrors the C global
+/// dereference (`nameddirtab->...`) by returning the underlying
+/// mutex; callers `.lock()` and operate on the map directly.
+#[allow(non_snake_case)]
+pub fn nameddirtab() -> &'static Mutex<HashMap<String, nameddir>> {        // c:48
+    NAMEDDIRTAB_INNER.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[cfg(test)]

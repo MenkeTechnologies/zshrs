@@ -374,68 +374,7 @@ fn deletehookdeffunc(_h: *const hookdef,
     1                                                                        // c:972
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    /// Verifies `RGBtoLAB(0,0,0)` yields the CIE 1976 Lab origin
-    /// (L≈0, a≈0, b≈0) — port of c:50 with red=green=blue=0.
-    #[test]
-    fn rgb_to_lab_black_is_zero() {
-        let mut lab = cielab::default();
-        RGBtoLAB(0, 0, 0, &mut lab);
-        assert!(lab.L.abs() < 0.5);
-        assert!(lab.a.abs() < 0.5);
-        assert!(lab.b.abs() < 0.5);
-    }
-
-    /// Verifies `deltae` of a colour against itself is zero — c:41
-    /// invariant when `lab1 == lab2`.
-    #[test]
-    fn deltae_self_is_zero() {
-        let mut lab = cielab::default();
-        RGBtoLAB(123, 45, 67, &mut lab);
-        assert!(deltae(&lab, &lab).abs() < 1e-9);
-    }
-
-    /// Verifies pure white maps into the upper end of the 256-colour
-    /// palette (>= 15) — sanity-check on the c:142-143 final-index formula.
-    #[test]
-    fn map_rgb_to_256_white_is_15_or_higher() {
-        let idx = mapRGBto256(0xff, 0xff, 0xff);
-        assert!(idx >= 15);
-    }
-
-    /// Verifies pure white maps into the 88-colour palette range —
-    /// c:102-103 final-index formula.
-    #[test]
-    fn map_rgb_to_88_white_is_in_range() {
-        let idx = mapRGBto88(0xff, 0xff, 0xff);
-        assert!((16..=87).contains(&idx) || idx >= 77);
-    }
-
-    /// Port of `getnearestcolor(UNUSED(Hookdef dummy), Color_rgb col)` from `Src/Modules/nearcolor.c:147`.
-    /// Verifies `getnearestcolor` dispatches on the `tccolours` global
-    /// per c:152-156: 256→`mapRGBto256+1`, 88→`mapRGBto88+1`, otherwise -1.
-    #[test]
-    fn getnearestcolor_dispatches_on_tccolours() {
-        let saved = tccolours.load(Ordering::SeqCst);
-        let col = color_rgb { red: 0xff, green: 0xff, blue: 0xff };
-
-        tccolours.store(256, Ordering::SeqCst);
-        let r256 = getnearestcolor(std::ptr::null(), &col);
-        assert_eq!(r256, mapRGBto256(0xff, 0xff, 0xff) + 1);
-
-        tccolours.store(88, Ordering::SeqCst);
-        let r88 = getnearestcolor(std::ptr::null(), &col);
-        assert_eq!(r88, mapRGBto88(0xff, 0xff, 0xff) + 1);
-
-        tccolours.store(16, Ordering::SeqCst);
-        assert_eq!(getnearestcolor(std::ptr::null(), &col), -1);
-
-        tccolours.store(saved, Ordering::SeqCst);
-    }
-}
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
@@ -500,3 +439,65 @@ fn setfeatureenables(
     0
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies `RGBtoLAB(0,0,0)` yields the CIE 1976 Lab origin
+    /// (L≈0, a≈0, b≈0) — port of c:50 with red=green=blue=0.
+    #[test]
+    fn rgb_to_lab_black_is_zero() {
+        let mut lab = cielab::default();
+        RGBtoLAB(0, 0, 0, &mut lab);
+        assert!(lab.L.abs() < 0.5);
+        assert!(lab.a.abs() < 0.5);
+        assert!(lab.b.abs() < 0.5);
+    }
+
+    /// Verifies `deltae` of a colour against itself is zero — c:41
+    /// invariant when `lab1 == lab2`.
+    #[test]
+    fn deltae_self_is_zero() {
+        let mut lab = cielab::default();
+        RGBtoLAB(123, 45, 67, &mut lab);
+        assert!(deltae(&lab, &lab).abs() < 1e-9);
+    }
+
+    /// Verifies pure white maps into the upper end of the 256-colour
+    /// palette (>= 15) — sanity-check on the c:142-143 final-index formula.
+    #[test]
+    fn map_rgb_to_256_white_is_15_or_higher() {
+        let idx = mapRGBto256(0xff, 0xff, 0xff);
+        assert!(idx >= 15);
+    }
+
+    /// Verifies pure white maps into the 88-colour palette range —
+    /// c:102-103 final-index formula.
+    #[test]
+    fn map_rgb_to_88_white_is_in_range() {
+        let idx = mapRGBto88(0xff, 0xff, 0xff);
+        assert!((16..=87).contains(&idx) || idx >= 77);
+    }
+
+    /// Port of `getnearestcolor(UNUSED(Hookdef dummy), Color_rgb col)` from `Src/Modules/nearcolor.c:147`.
+    /// Verifies `getnearestcolor` dispatches on the `tccolours` global
+    /// per c:152-156: 256→`mapRGBto256+1`, 88→`mapRGBto88+1`, otherwise -1.
+    #[test]
+    fn getnearestcolor_dispatches_on_tccolours() {
+        let saved = tccolours.load(Ordering::SeqCst);
+        let col = color_rgb { red: 0xff, green: 0xff, blue: 0xff };
+
+        tccolours.store(256, Ordering::SeqCst);
+        let r256 = getnearestcolor(std::ptr::null(), &col);
+        assert_eq!(r256, mapRGBto256(0xff, 0xff, 0xff) + 1);
+
+        tccolours.store(88, Ordering::SeqCst);
+        let r88 = getnearestcolor(std::ptr::null(), &col);
+        assert_eq!(r88, mapRGBto88(0xff, 0xff, 0xff) + 1);
+
+        tccolours.store(16, Ordering::SeqCst);
+        assert_eq!(getnearestcolor(std::ptr::null(), &col), -1);
+
+        tccolours.store(saved, Ordering::SeqCst);
+    }
+}

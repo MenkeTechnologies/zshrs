@@ -229,20 +229,6 @@ pub fn shingetline() -> String {                                             // 
     }
 }
 
-// Read a line from the current command stream and store it as input         // c:366
-/// Read one line into the input stack.
-/// Port of `inputline()` from Src/input.c:366. C source dispatches
-/// between zle / non-zle paths and `shingetline` /
-/// `zleentry(READ)`. Rust port reads via shingetline (no zle yet),
-/// returns "" on EOF and sets lexstop the same way.
-pub fn inputline() -> String {                                               // c:366
-    let line = shingetline();
-    if line.is_empty() {
-        lexstop.with(|c| c.set(true));
-    }
-    line
-}
-
 // ---------------------------------------------------------------------------
 // ingetc / inungetc / inpush / inpop / inpopalias — Src/input.c:318+/546/675/785/804.
 // ---------------------------------------------------------------------------
@@ -302,6 +288,34 @@ pub fn ingetc() -> Option<char> {                                            // 
     }
 }
 
+// Read a line from the current command stream and store it as input         // c:366
+/// Read one line into the input stack.
+/// Port of `inputline()` from Src/input.c:366. C source dispatches
+/// between zle / non-zle paths and `shingetline` /
+/// `zleentry(READ)`. Rust port reads via shingetline (no zle yet),
+/// returns "" on EOF and sets lexstop the same way.
+pub fn inputline() -> String {                                               // c:366
+    let line = shingetline();
+    if line.is_empty() {
+        lexstop.with(|c| c.set(true));
+    }
+    line
+}
+
+/// Replace the current input line.
+/// Port of `inputsetline(char *str, int flags)` from Src/input.c:510.
+pub fn inputsetline(str: &str, flags: i32) {                               // c:510
+    inbuf.with(|b| *b.borrow_mut() = str.to_string());
+    inbufpos.with(|p| p.set(0));
+    let len = str.len() as i32;
+    if (flags & INP_CONT) != 0 {
+        inbufct.with(|c| c.set(c.get() + len));
+    } else {
+        inbufct.with(|c| c.set(len));
+    }
+    inbufflags.with(|f| f.set(flags));
+}
+
 /// Push a character back onto the input stream.
 /// Port of `inungetc(int c)` from Src/input.c:546.
 pub fn inungetc(c: char) {                                                   // c:546
@@ -321,6 +335,43 @@ pub fn inungetc(c: char) {                                                   // 
         raw_input.with(|r| { r.borrow_mut().pop(); });
     } else {
         pushback.with(|p| p.borrow_mut().push_front(c));
+    }
+}
+
+/// Read entire file into memory
+/// Read a file as a string for `source`/`stuff` semantics.
+/// Port of `zstuff(char **out, const char *fn)` from Src/input.c:614 — the C source uses
+/// it for `Functions/Misc/run-help` and similar autoload paths.
+/// WARNING: param names don't match C — Rust=(path) vs C=(out, fn)
+pub fn zstuff(path: &str) -> io::Result<String> {                            // c:614
+    std::fs::read_to_string(path)
+}
+
+// `input_has_alias` / `take_raw_input` deleted — Rust-only helpers
+// with zero callers in this tree. C uses different mechanisms
+// (the lexer walks `instack` inline for alias detection; raw input
+// for history accumulates through `chline` / `addtoline`).
+
+/// Stuff a whole file into the input queue.
+/// Port of `stuff(char *fn)` from Src/input.c:647 — read the file, echo
+/// it to stderr, push onto the input stack.
+/// WARNING: param names don't match C — Rust=(filename) vs C=(fn)
+pub fn stuff(filename: &str) -> i32 {                                        // c:647
+    let buf = match std::fs::read_to_string(filename) {
+        Ok(b) => b,
+        Err(_) => return 1,
+    };
+    let _ = std::io::stderr().write_all(buf.as_bytes());
+    let _ = std::io::stderr().flush();
+    inpush(&buf, INP_FREE, None);
+    0
+}
+
+/// Discard pending input after a parse error.
+/// Port of `inerrflush()` from Src/input.c:665.
+pub fn inerrflush() {                                                        // c:665
+    while !lexstop.with(|c| c.get()) && inbufct.with(|c| c.get()) > 0 {
+        let _ = ingetc();
     }
 }
 
@@ -403,27 +454,8 @@ pub fn inpopalias() {                                                        // 
     }
 }
 
-/// Replace the current input line.
-/// Port of `inputsetline(char *str, int flags)` from Src/input.c:510.
-pub fn inputsetline(str: &str, flags: i32) {                               // c:510
-    inbuf.with(|b| *b.borrow_mut() = str.to_string());
-    inbufpos.with(|p| p.set(0));
-    let len = str.len() as i32;
-    if (flags & INP_CONT) != 0 {
-        inbufct.with(|c| c.set(c.get() + len));
-    } else {
-        inbufct.with(|c| c.set(len));
-    }
-    inbufflags.with(|f| f.set(flags));
-}
-
-/// Discard pending input after a parse error.
-/// Port of `inerrflush()` from Src/input.c:665.
-pub fn inerrflush() {                                                        // c:665
-    while !lexstop.with(|c| c.get()) && inbufct.with(|c| c.get()) > 0 {
-        let _ = ingetc();
-    }
-}
+/// Meta character marker
+pub const META: char = '\u{83}';
 
 /// Get a slice of the unread portion of the current input.
 /// Port of `ingetptr()` from Src/input.c:817.
@@ -439,42 +471,10 @@ pub fn ingetptr() -> String {                                                // 
     })
 }
 
-// `input_has_alias` / `take_raw_input` deleted — Rust-only helpers
-// with zero callers in this tree. C uses different mechanisms
-// (the lexer walks `instack` inline for alias detection; raw input
-// for history accumulates through `chline` / `addtoline`).
-
-/// Stuff a whole file into the input queue.
-/// Port of `stuff(char *fn)` from Src/input.c:647 — read the file, echo
-/// it to stderr, push onto the input stack.
-/// WARNING: param names don't match C — Rust=(filename) vs C=(fn)
-pub fn stuff(filename: &str) -> i32 {                                        // c:647
-    let buf = match std::fs::read_to_string(filename) {
-        Ok(b) => b,
-        Err(_) => return 1,
-    };
-    let _ = std::io::stderr().write_all(buf.as_bytes());
-    let _ = std::io::stderr().flush();
-    inpush(&buf, INP_FREE, None);
-    0
-}
-
-/// Meta character marker
-pub const META: char = '\u{83}';
-
 /// Check if a character needs meta encoding
 fn imeta(c: char) -> bool {
     let b = c as u32;
     b < 32 || (0x83..=0x9b).contains(&b)
-}
-
-/// Read entire file into memory
-/// Read a file as a string for `source`/`stuff` semantics.
-/// Port of `zstuff(char **out, const char *fn)` from Src/input.c:614 — the C source uses
-/// it for `Functions/Misc/run-help` and similar autoload paths.
-/// WARNING: param names don't match C — Rust=(path) vs C=(out, fn)
-pub fn zstuff(path: &str) -> io::Result<String> {                            // c:614
-    std::fs::read_to_string(path)
 }
 
 // `InputBuffer` aggregate + thread_local INPUT singleton deleted.

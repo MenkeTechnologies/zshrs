@@ -53,6 +53,68 @@ impl ptycmd {
     }
 }
 
+/// Set non-blocking mode on a file descriptor.
+/// Port of `ptynonblock(int fd)` from Src/Modules/zpty.c:65 — wraps
+/// `fcntl(F_GETFL)` + `fcntl(F_SETFL, |O_NONBLOCK)`.
+#[cfg(unix)]
+pub fn ptynonblock(fd: RawFd) -> io::Result<()> {                           // c:65
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFL);
+        if flags < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        if libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
+/// Port of `ptygettyinfo(int fd, struct ttyinfo *ti)` from `Src/Modules/zpty.c:97`. Calls
+/// `tcgetattr(fd, &ti->tio)` to capture the pty's termios state.
+/// Returns 0 on success, 1 on failure or when fd == -1.
+///
+/// C signature: `static int ptygettyinfo(int fd, struct ttyinfo *ti)`.
+/// Rust port takes a mutable `&mut libc::termios` directly since
+/// `struct ttyinfo` (zsh.h) wraps termios + a few legacy fields.
+pub fn ptygettyinfo(fd: i32, ti: &mut libc::termios) -> i32 {            // c:97
+    if fd == -1 {                                                        // c:97 inverted
+        return 1;                                                        // c:118
+    }
+    // c:101 — `tcgetattr(fd, &ti->tio)`.
+    let r = unsafe { libc::tcgetattr(fd, ti as *mut libc::termios) };
+    if r == -1 {                                                         // c:103
+        return 1;                                                        // c:103
+    }
+    0                                                                    // c:124
+}
+
+/// Port of `ptysettyinfo(int fd, struct ttyinfo *ti)` from `Src/Modules/zpty.c:124`. Calls
+/// `tcsetattr(fd, TCSADRAIN, &ti->tio)` to install the captured
+/// termios state on the pty.
+///
+/// C signature: `static void ptysettyinfo(int fd, struct ttyinfo *ti)`.
+pub fn ptysettyinfo(fd: i32, ti: &libc::termios) {                       // c:124
+    if fd == -1 {                                                        // c:124 inverted
+        return;
+    }
+    // c:128-132 — `tcsetattr(fd, TCSADRAIN, &ti->tio);`
+    unsafe { libc::tcsetattr(fd, libc::TCSADRAIN, ti as *const libc::termios); }
+}
+
+// === auto-generated stubs ===
+/// Port of `getptycmd(char *name)` from `Src/Modules/zpty.c:153`. Linear
+/// scan over the `ptycmds` linked list looking for one matching
+/// `name`.
+///
+/// C signature: `static Ptycmd getptycmd(char *name)`. Returns
+/// the Ptycmd or NULL.
+/// WARNING: param names don't match C — Rust=(cmds, name) vs C=(name)
+pub fn getptycmd<'a>(cmds: &'a HashMap<String, ptycmd>, name: &str) -> Option<&'a ptycmd> {  // c:153
+    cmds.get(name)                                                       // c:153-160 strcmp loop
+}
+
 
 /// Open a pseudo-terminal master/slave pair.
 /// Port of `get_pty(int master, int *retfd)` from Src/Modules/zpty.c:191 (or :255 for
@@ -96,22 +158,140 @@ pub fn get_pty() -> io::Result<(RawFd, RawFd)> {                            // c
     }
 }
 
-/// Set non-blocking mode on a file descriptor.
-/// Port of `ptynonblock(int fd)` from Src/Modules/zpty.c:65 — wraps
-/// `fcntl(F_GETFL)` + `fcntl(F_SETFL, |O_NONBLOCK)`.
-#[cfg(unix)]
-pub fn ptynonblock(fd: RawFd) -> io::Result<()> {                           // c:65
-    unsafe {
-        let flags = libc::fcntl(fd, libc::F_GETFL);
-        if flags < 0 {
-            return Err(io::Error::last_os_error());
-        }
 
-        if libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
-            return Err(io::Error::last_os_error());
-        }
+
+// ===========================================================
+// Methods moved verbatim from src/ported/exec.rs because their
+// C counterpart's source file maps 1:1 to this Rust module.
+// Phase: module-shims
+// ===========================================================
+
+// BEGIN moved-from-exec-rs
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
+// END moved-from-exec-rs
+
+
+// ─── moved from src/ported/exec.rs (drift extraction) ───
+
+// Note: dead `ZptyState` aggregate deleted per PORT_PLAN Phase 2.
+// It was a duplicate of `ptycmd` (zpty.rs:19), which is the correct
+// faithful port of C `struct ptycmd` (Src/Modules/zpty.c:48). The
+// dead `ZptyState` was wired into ShellExecutor as
+// `pub zptys: HashMap<String, ZptyState>` but never inserted or
+// read. Use `ptycmd` + `HashMap<String, ptycmd>` (the port of the file-static
+// `static Ptycmd ptycmds;` linked list at zpty.c:62) for any
+// real wiring.
+
+// =====================================================================
+// static struct features module_features                            c:884 (zpty.c)
+// =====================================================================
+
+use std::sync::Mutex;
+use std::sync::OnceLock;
+use crate::ported::zsh_h::module;
+
+/// Port of `newptycmd(char *nam, char *pname, char **args, int echo, int nblock)` from `Src/Modules/zpty.c:310`. Forks a
+/// new pty session, exec'ing `args` in the child. Allocates a
+/// fresh `Ptycmd` record, configures the master fd, sets up the
+/// echo / nonblock flags, and links it into `ptycmds`.
+///
+/// C signature: `static int newptycmd(char *nam, char *pname,
+///                                     char **args, int echo, int nblock)`.
+///
+/// **Approximation:** the full pty-allocation path uses
+/// `posix_openpt`/`grantpt`/`unlockpt`/`ptsname` (zpty.c:191-309)
+/// and forks via `zfork()` with an extensive child-side reset
+/// sequence. zshrs's port wires through `std::process::Command`
+/// + a libc pty-spawn helper which doesn't preserve the full C
+/// child-init contract. Returns 0 on success, 1 on failure.
+pub fn newptycmd(cmds: &mut HashMap<String, ptycmd>, _nam: &str, pname: &str,                // c:310
+                 args: &[String], echo: bool, nblock: bool) -> i32 {     // c:310
+    if args.is_empty() { return 1; }
+    let cmd_path = &args[0];
+    let cmd_args = &args[1..];
+
+    // Spawn under a forkpty wrapper. Approximation: use
+    // openpty + fork via std::process::Command stdin/stdout
+    // redirection. A faithful port needs forkpty(3) integration.
+    let child = match Command::new(cmd_path)
+        .args(cmd_args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return 1,
+    };
+    let pid = child.id() as i32;
+    let stdin = child.stdin.expect("piped").into_raw_fd();
+
+    let new = ptycmd::new(pname, args.to_vec(), stdin, pid, echo, nblock);
+    cmds.insert(new.name.clone(), new);
+    0
+}
+
+/// Port of `deleteptycmd(Ptycmd cmd)` from `Src/Modules/zpty.c:490`. Removes
+/// `cmd` from the `ptycmds` linked list, frees its name + args,
+/// closes the master fd, and kills the process group via
+/// `kill(-pid, SIGHUP)`.
+///
+/// C signature: `static void deleteptycmd(Ptycmd cmd)`.
+/// WARNING: param names don't match C — Rust=(cmds, name) vs C=(cmd)
+pub fn deleteptycmd(cmds: &mut HashMap<String, ptycmd>, name: &str) {                    // c:490
+    if let Some(cmd) = cmds.remove(name) {                               // c:490-503 list-unlink
+        // c:505 — `zsfree(p->name)` + c:506 `freearray(p->args)` —
+        // Rust drops String/Vec automatically on `cmd` going out
+        // of scope.
+        // c:508 — `zclose(cmd->fd)`.
+        unsafe { libc::close(cmd.master_fd); }
+        // c:517 — `kill(-(p->pid), SIGHUP);` — kill the process group.
+        unsafe { libc::kill(-cmd.pid, libc::SIGHUP); }
+        // c:517 — `zfree(p, sizeof(*p))` — Rust drop handles.
     }
-    Ok(())
+}
+
+/// Port of `deleteallptycmds()` from `Src/Modules/zpty.c:517`.
+/// Walks the `ptycmds` list and deletes every entry.
+///
+/// C signature: `static void deleteallptycmds(void)`.
+/// WARNING: param names don't match C — Rust=(cmds) vs C=()
+pub fn deleteallptycmds(cmds: &mut HashMap<String, ptycmd>) {                            // c:517
+    let names: Vec<String> = cmds.keys().cloned().collect();
+    for n in names {                                                     // c:530-525
+        deleteptycmd(cmds, &n);                                          // c:530
+    }
+}
+
+/// Global `ptycmds` linked-list from `Src/Modules/zpty.c:36`.
+/// C declares `static Ptycmd ptycmds;` and mutates it through the
+/// whole module. Rust uses OnceLock<Mutex<>> for thread-safe access.
+pub static PTYCMDS: std::sync::OnceLock<Mutex<HashMap<String, ptycmd>>> = std::sync::OnceLock::new();
+
+/// Port of `checkptycmd(Ptycmd cmd)` from `Src/Modules/zpty.c:530`. Polls
+/// the master fd with a 1-byte non-blocking read; if read fails
+/// AND `kill(pid, 0)` confirms the process is gone, marks the
+/// command as finished and closes the fd.
+///
+/// C signature: `static void checkptycmd(Ptycmd cmd)`.
+pub fn checkptycmd(cmd: &mut ptycmd) {                                   // c:530
+    if cmd.finished {                                                    // c:530 cmd->fin
+        return;
+    }
+    let mut c: u8 = 0;
+    let r = unsafe { libc::read(cmd.master_fd, &mut c as *mut u8 as *mut _, 1) };
+    if r <= 0 {                                                          // c:538
+        // c:539 — `if (kill(cmd->pid, 0) < 0)` — process gone.
+        if unsafe { libc::kill(cmd.pid, 0) } < 0 {
+            cmd.finished = true;                                         // c:540 cmd->fin = 1
+            unsafe { libc::close(cmd.master_fd); }                       // c:541 zclose
+        }
+        return;
+    }
+    // c:544 — `cmd->read = (int) c;` — buffer the read byte for
+    // the next read-builtin call. zshrs's ptycmd uses Vec<u8>.
+    cmd.buffer.push(c);
 }
 
 /// Read from a pty, optionally matching a pattern.
@@ -196,6 +376,44 @@ pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {            // c
     {
         Err(io::Error::new(io::ErrorKind::Unsupported, "not supported"))
     }
+}
+
+/// Port of `ptywrite(Ptycmd cmd, char **args, int nonl)` from `Src/Modules/zpty.c:743`. Writes
+/// the joined argv to the pty master fd (or copies stdin to the
+/// pty when argv is empty). `nonl` suppresses the trailing
+/// newline.
+///
+/// C signature: `static int ptywrite(Ptycmd cmd, char **args, int nonl)`.
+pub fn ptywrite(cmd: &ptycmd, args: &[&str], nonl: i32) -> i32 {         // c:743
+    if !args.is_empty() {                                                // c:743
+        for (i, a) in args.iter().enumerate() {                          // c:751
+            // c:752 — unmetafy + ptywritestr.
+            let unmeta = crate::ported::utils::unmeta(a);
+            let bytes = unmeta.as_bytes();
+            let r = unsafe { libc::write(cmd.master_fd, bytes.as_ptr() as *const _, bytes.len()) };
+            if r < 0 { return 1; }                                       // c:753
+            if i + 1 < args.len() {                                      // c:754 sp = ' '
+                let sp = b' ';
+                let r = unsafe { libc::write(cmd.master_fd, &sp as *const u8 as *const _, 1) };
+                if r < 0 { return 1; }
+            }
+        }
+        if nonl == 0 {                                                   // c:757
+            let nl = b'\n';                                              // c:758
+            let r = unsafe { libc::write(cmd.master_fd, &nl as *const u8 as *const _, 1) };
+            if r < 0 { return 1; }                                       // c:760
+        }
+    } else {                                                             // c:763
+        // c:764-768 — `while ((n = read(0, buf, BUFSIZ)) > 0)` copy stdin.
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = unsafe { libc::read(0, buf.as_mut_ptr() as *mut _, buf.len()) };
+            if n <= 0 { break; }
+            let r = unsafe { libc::write(cmd.master_fd, buf.as_ptr() as *const _, n as usize) };
+            if r < 0 { return 1; }                                       // c:768
+        }
+    }
+    0                                                                    // c:771
 }
 
 /// Port of `bin_zpty(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/zpty.c:773`.
@@ -417,6 +635,138 @@ pub fn bin_zpty(_nam: &str, args: &[String],                                 // 
     status
 }
 
+/// Port of `ptyhook(UNUSED(Hookdef d), UNUSED(void *dummy))` from `Src/Modules/zpty.c:874`. The cleanup
+/// hook installed at `boot_()` time — runs `deleteallptycmds()`
+/// when the shell is exiting (via the `before_trap` hook).
+///
+/// C signature: `static int ptyhook(Hookdef d, void *dummy)`.
+/// WARNING: param names don't match C — Rust=(cmds) vs C=(d, dummy)
+pub fn ptyhook(cmds: &mut HashMap<String, ptycmd>) -> i32 {                              // c:874
+    deleteallptycmds(cmds);                                              // c:874
+    0                                                                    // c:879
+}
+
+// `bintab` — port of `static struct builtin bintab[]` (zpty.c).
+
+
+// `module_features` — port of `static struct features module_features`
+// from zpty.c:884.
+
+
+
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/zpty.c:896`.
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:896
+    // C body c:898-899 — `return 0`. Faithful empty-body port.
+    0
+}
+
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/zpty.c:903`.
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:903
+    *features = featuresarray(m, module_features());
+    0
+}
+
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/zpty.c:911`.
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:911
+    handlefeatures(m, module_features(), enables)
+}
+
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/zpty.c:918`.
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                 // c:918
+    // C body c:921-922 — `ptycmds = NULL; addhookfunc("exit", ptyhook)`.
+    *ptycmds().lock().unwrap() = HashMap::<String, ptycmd>::new();
+    let _ = ptyhook(&mut ptycmds().lock().unwrap());                     // c:928 (hook handle)
+    0
+}
+
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/zpty.c:928`.
+pub fn cleanup_(m: *const module) -> i32 {                              // c:928
+    // c:937 — `deletehookfunc("exit", ptyhook)`. We have no live hook
+    //          registry, so this is a no-op.
+    // c:937 — `deleteallptycmds()`.
+    deleteallptycmds(&mut ptycmds().lock().unwrap());
+    // c:937 — `return setfeatureenables(m, &module_features, NULL)`.
+    setfeatureenables(m, module_features(), None)
+}
+
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/zpty.c:937`.
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:937
+    // C body c:939-940 — `return 0`. Faithful empty-body port; the
+    //                    pty session teardown happens in cleanup_.
+    0
+}
+
+/// WARNING: NOT IN ZPTY.C — OnceLock<Mutex> accessor for ptycmd registry; C uses static linked list `ptycmds`
+/// (equivalent C logic at Src/Modules/zpty.c:48).
+fn ptycmds() -> &'static Mutex<HashMap<String, ptycmd>> {
+    PTYCMDS.get_or_init(|| Mutex::new(HashMap::<String, ptycmd>::new()))
+}
+
+use crate::ported::zsh_h::features as features_t;
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+// WARNING: NOT IN ZPTY.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 1,
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 0,
+        pd_list: None,
+        pd_size: 0,
+        n_abstract: 0,
+    }))
+}
+
+// Local stubs for the per-module entry points. C uses generic
+// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
+// 3275/3370/3445) but those take `Builtin` + `Features` pointer
+// fields the Rust port doesn't carry. The hardcoded descriptor
+// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+// WARNING: NOT IN ZPTY.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:zpty".to_string()]
+}
+
+// WARNING: NOT IN ZPTY.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1; 1]);
+    }
+    0
+}
+
+// WARNING: NOT IN ZPTY.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,352 +853,3 @@ mod tests {
         assert_eq!(status, 1);
     }
 }
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Phase: module-shims
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
-
-// END moved-from-exec-rs
-
-
-// ─── moved from src/ported/exec.rs (drift extraction) ───
-
-// Note: dead `ZptyState` aggregate deleted per PORT_PLAN Phase 2.
-// It was a duplicate of `ptycmd` (zpty.rs:19), which is the correct
-// faithful port of C `struct ptycmd` (Src/Modules/zpty.c:48). The
-// dead `ZptyState` was wired into ShellExecutor as
-// `pub zptys: HashMap<String, ZptyState>` but never inserted or
-// read. Use `ptycmd` + `HashMap<String, ptycmd>` (the port of the file-static
-// `static Ptycmd ptycmds;` linked list at zpty.c:62) for any
-// real wiring.
-
-// =====================================================================
-// static struct features module_features                            c:884 (zpty.c)
-// =====================================================================
-
-use std::sync::Mutex;
-use std::sync::OnceLock;
-use crate::ported::zsh_h::module;
-
-// `bintab` — port of `static struct builtin bintab[]` (zpty.c).
-
-
-// `module_features` — port of `static struct features module_features`
-// from zpty.c:884.
-
-
-
-/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/zpty.c:896`.
-#[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:896
-    // C body c:898-899 — `return 0`. Faithful empty-body port.
-    0
-}
-
-/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/zpty.c:903`.
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:903
-    *features = featuresarray(m, module_features());
-    0
-}
-
-/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/zpty.c:911`.
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:911
-    handlefeatures(m, module_features(), enables)
-}
-
-/// Global `ptycmds` linked-list from `Src/Modules/zpty.c:36`.
-/// C declares `static Ptycmd ptycmds;` and mutates it through the
-/// whole module. Rust uses OnceLock<Mutex<>> for thread-safe access.
-pub static PTYCMDS: std::sync::OnceLock<Mutex<HashMap<String, ptycmd>>> = std::sync::OnceLock::new();
-
-/// WARNING: NOT IN ZPTY.C — OnceLock<Mutex> accessor for ptycmd registry; C uses static linked list `ptycmds`
-/// (equivalent C logic at Src/Modules/zpty.c:48).
-fn ptycmds() -> &'static Mutex<HashMap<String, ptycmd>> {
-    PTYCMDS.get_or_init(|| Mutex::new(HashMap::<String, ptycmd>::new()))
-}
-
-/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/zpty.c:918`.
-#[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                 // c:918
-    // C body c:921-922 — `ptycmds = NULL; addhookfunc("exit", ptyhook)`.
-    *ptycmds().lock().unwrap() = HashMap::<String, ptycmd>::new();
-    let _ = ptyhook(&mut ptycmds().lock().unwrap());                     // c:928 (hook handle)
-    0
-}
-
-/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/zpty.c:928`.
-pub fn cleanup_(m: *const module) -> i32 {                              // c:928
-    // c:937 — `deletehookfunc("exit", ptyhook)`. We have no live hook
-    //          registry, so this is a no-op.
-    // c:937 — `deleteallptycmds()`.
-    deleteallptycmds(&mut ptycmds().lock().unwrap());
-    // c:937 — `return setfeatureenables(m, &module_features, NULL)`.
-    setfeatureenables(m, module_features(), None)
-}
-
-/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/zpty.c:937`.
-#[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:937
-    // C body c:939-940 — `return 0`. Faithful empty-body port; the
-    //                    pty session teardown happens in cleanup_.
-    0
-}
-
-// === auto-generated stubs ===
-/// Port of `getptycmd(char *name)` from `Src/Modules/zpty.c:153`. Linear
-/// scan over the `ptycmds` linked list looking for one matching
-/// `name`.
-///
-/// C signature: `static Ptycmd getptycmd(char *name)`. Returns
-/// the Ptycmd or NULL.
-/// WARNING: param names don't match C — Rust=(cmds, name) vs C=(name)
-pub fn getptycmd<'a>(cmds: &'a HashMap<String, ptycmd>, name: &str) -> Option<&'a ptycmd> {  // c:153
-    cmds.get(name)                                                       // c:153-160 strcmp loop
-}
-
-/// Port of `deleteptycmd(Ptycmd cmd)` from `Src/Modules/zpty.c:490`. Removes
-/// `cmd` from the `ptycmds` linked list, frees its name + args,
-/// closes the master fd, and kills the process group via
-/// `kill(-pid, SIGHUP)`.
-///
-/// C signature: `static void deleteptycmd(Ptycmd cmd)`.
-/// WARNING: param names don't match C — Rust=(cmds, name) vs C=(cmd)
-pub fn deleteptycmd(cmds: &mut HashMap<String, ptycmd>, name: &str) {                    // c:490
-    if let Some(cmd) = cmds.remove(name) {                               // c:490-503 list-unlink
-        // c:505 — `zsfree(p->name)` + c:506 `freearray(p->args)` —
-        // Rust drops String/Vec automatically on `cmd` going out
-        // of scope.
-        // c:508 — `zclose(cmd->fd)`.
-        unsafe { libc::close(cmd.master_fd); }
-        // c:517 — `kill(-(p->pid), SIGHUP);` — kill the process group.
-        unsafe { libc::kill(-cmd.pid, libc::SIGHUP); }
-        // c:517 — `zfree(p, sizeof(*p))` — Rust drop handles.
-    }
-}
-
-/// Port of `deleteallptycmds()` from `Src/Modules/zpty.c:517`.
-/// Walks the `ptycmds` list and deletes every entry.
-///
-/// C signature: `static void deleteallptycmds(void)`.
-/// WARNING: param names don't match C — Rust=(cmds) vs C=()
-pub fn deleteallptycmds(cmds: &mut HashMap<String, ptycmd>) {                            // c:517
-    let names: Vec<String> = cmds.keys().cloned().collect();
-    for n in names {                                                     // c:530-525
-        deleteptycmd(cmds, &n);                                          // c:530
-    }
-}
-
-/// Port of `checkptycmd(Ptycmd cmd)` from `Src/Modules/zpty.c:530`. Polls
-/// the master fd with a 1-byte non-blocking read; if read fails
-/// AND `kill(pid, 0)` confirms the process is gone, marks the
-/// command as finished and closes the fd.
-///
-/// C signature: `static void checkptycmd(Ptycmd cmd)`.
-pub fn checkptycmd(cmd: &mut ptycmd) {                                   // c:530
-    if cmd.finished {                                                    // c:530 cmd->fin
-        return;
-    }
-    let mut c: u8 = 0;
-    let r = unsafe { libc::read(cmd.master_fd, &mut c as *mut u8 as *mut _, 1) };
-    if r <= 0 {                                                          // c:538
-        // c:539 — `if (kill(cmd->pid, 0) < 0)` — process gone.
-        if unsafe { libc::kill(cmd.pid, 0) } < 0 {
-            cmd.finished = true;                                         // c:540 cmd->fin = 1
-            unsafe { libc::close(cmd.master_fd); }                       // c:541 zclose
-        }
-        return;
-    }
-    // c:544 — `cmd->read = (int) c;` — buffer the read byte for
-    // the next read-builtin call. zshrs's ptycmd uses Vec<u8>.
-    cmd.buffer.push(c);
-}
-
-/// Port of `ptygettyinfo(int fd, struct ttyinfo *ti)` from `Src/Modules/zpty.c:97`. Calls
-/// `tcgetattr(fd, &ti->tio)` to capture the pty's termios state.
-/// Returns 0 on success, 1 on failure or when fd == -1.
-///
-/// C signature: `static int ptygettyinfo(int fd, struct ttyinfo *ti)`.
-/// Rust port takes a mutable `&mut libc::termios` directly since
-/// `struct ttyinfo` (zsh.h) wraps termios + a few legacy fields.
-pub fn ptygettyinfo(fd: i32, ti: &mut libc::termios) -> i32 {            // c:97
-    if fd == -1 {                                                        // c:97 inverted
-        return 1;                                                        // c:118
-    }
-    // c:101 — `tcgetattr(fd, &ti->tio)`.
-    let r = unsafe { libc::tcgetattr(fd, ti as *mut libc::termios) };
-    if r == -1 {                                                         // c:103
-        return 1;                                                        // c:103
-    }
-    0                                                                    // c:124
-}
-
-/// Port of `ptysettyinfo(int fd, struct ttyinfo *ti)` from `Src/Modules/zpty.c:124`. Calls
-/// `tcsetattr(fd, TCSADRAIN, &ti->tio)` to install the captured
-/// termios state on the pty.
-///
-/// C signature: `static void ptysettyinfo(int fd, struct ttyinfo *ti)`.
-pub fn ptysettyinfo(fd: i32, ti: &libc::termios) {                       // c:124
-    if fd == -1 {                                                        // c:124 inverted
-        return;
-    }
-    // c:128-132 — `tcsetattr(fd, TCSADRAIN, &ti->tio);`
-    unsafe { libc::tcsetattr(fd, libc::TCSADRAIN, ti as *const libc::termios); }
-}
-
-/// Port of `ptywrite(Ptycmd cmd, char **args, int nonl)` from `Src/Modules/zpty.c:743`. Writes
-/// the joined argv to the pty master fd (or copies stdin to the
-/// pty when argv is empty). `nonl` suppresses the trailing
-/// newline.
-///
-/// C signature: `static int ptywrite(Ptycmd cmd, char **args, int nonl)`.
-pub fn ptywrite(cmd: &ptycmd, args: &[&str], nonl: i32) -> i32 {         // c:743
-    if !args.is_empty() {                                                // c:743
-        for (i, a) in args.iter().enumerate() {                          // c:751
-            // c:752 — unmetafy + ptywritestr.
-            let unmeta = crate::ported::utils::unmeta(a);
-            let bytes = unmeta.as_bytes();
-            let r = unsafe { libc::write(cmd.master_fd, bytes.as_ptr() as *const _, bytes.len()) };
-            if r < 0 { return 1; }                                       // c:753
-            if i + 1 < args.len() {                                      // c:754 sp = ' '
-                let sp = b' ';
-                let r = unsafe { libc::write(cmd.master_fd, &sp as *const u8 as *const _, 1) };
-                if r < 0 { return 1; }
-            }
-        }
-        if nonl == 0 {                                                   // c:757
-            let nl = b'\n';                                              // c:758
-            let r = unsafe { libc::write(cmd.master_fd, &nl as *const u8 as *const _, 1) };
-            if r < 0 { return 1; }                                       // c:760
-        }
-    } else {                                                             // c:763
-        // c:764-768 — `while ((n = read(0, buf, BUFSIZ)) > 0)` copy stdin.
-        let mut buf = [0u8; 4096];
-        loop {
-            let n = unsafe { libc::read(0, buf.as_mut_ptr() as *mut _, buf.len()) };
-            if n <= 0 { break; }
-            let r = unsafe { libc::write(cmd.master_fd, buf.as_ptr() as *const _, n as usize) };
-            if r < 0 { return 1; }                                       // c:768
-        }
-    }
-    0                                                                    // c:771
-}
-
-/// Port of `ptyhook(UNUSED(Hookdef d), UNUSED(void *dummy))` from `Src/Modules/zpty.c:874`. The cleanup
-/// hook installed at `boot_()` time — runs `deleteallptycmds()`
-/// when the shell is exiting (via the `before_trap` hook).
-///
-/// C signature: `static int ptyhook(Hookdef d, void *dummy)`.
-/// WARNING: param names don't match C — Rust=(cmds) vs C=(d, dummy)
-pub fn ptyhook(cmds: &mut HashMap<String, ptycmd>) -> i32 {                              // c:874
-    deleteallptycmds(cmds);                                              // c:874
-    0                                                                    // c:879
-}
-
-/// Port of `newptycmd(char *nam, char *pname, char **args, int echo, int nblock)` from `Src/Modules/zpty.c:310`. Forks a
-/// new pty session, exec'ing `args` in the child. Allocates a
-/// fresh `Ptycmd` record, configures the master fd, sets up the
-/// echo / nonblock flags, and links it into `ptycmds`.
-///
-/// C signature: `static int newptycmd(char *nam, char *pname,
-///                                     char **args, int echo, int nblock)`.
-///
-/// **Approximation:** the full pty-allocation path uses
-/// `posix_openpt`/`grantpt`/`unlockpt`/`ptsname` (zpty.c:191-309)
-/// and forks via `zfork()` with an extensive child-side reset
-/// sequence. zshrs's port wires through `std::process::Command`
-/// + a libc pty-spawn helper which doesn't preserve the full C
-/// child-init contract. Returns 0 on success, 1 on failure.
-pub fn newptycmd(cmds: &mut HashMap<String, ptycmd>, _nam: &str, pname: &str,                // c:310
-                 args: &[String], echo: bool, nblock: bool) -> i32 {     // c:310
-    if args.is_empty() { return 1; }
-    let cmd_path = &args[0];
-    let cmd_args = &args[1..];
-
-    // Spawn under a forkpty wrapper. Approximation: use
-    // openpty + fork via std::process::Command stdin/stdout
-    // redirection. A faithful port needs forkpty(3) integration.
-    let child = match Command::new(cmd_path)
-        .args(cmd_args)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(_) => return 1,
-    };
-    let pid = child.id() as i32;
-    let stdin = child.stdin.expect("piped").into_raw_fd();
-
-    let new = ptycmd::new(pname, args.to_vec(), stdin, pid, echo, nblock);
-    cmds.insert(new.name.clone(), new);
-    0
-}
-
-use crate::ported::zsh_h::features as features_t;
-
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
-// WARNING: NOT IN ZPTY.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 1,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
-}
-
-// Local stubs for the per-module entry points. C uses generic
-// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
-// 3275/3370/3445) but those take `Builtin` + `Features` pointer
-// fields the Rust port doesn't carry. The hardcoded descriptor
-// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-// WARNING: NOT IN ZPTY.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:zpty".to_string()]
-}
-
-// WARNING: NOT IN ZPTY.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
-    if enables.is_none() {
-        *enables = Some(vec![1; 1]);
-    }
-    0
-}
-
-// WARNING: NOT IN ZPTY.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
-    0
-}
-

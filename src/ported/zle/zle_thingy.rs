@@ -140,39 +140,6 @@ impl Thingy {
 // Hashtable of thingies. Enabled nodes are those that refer to widgets.   // c:49
 static THINGYTAB: OnceLock<Mutex<HashMap<String, Thingy>>> = OnceLock::new();
 
-/// Get-or-init access to the global thingytab.
-fn thingytab() -> &'static Mutex<HashMap<String, Thingy>> {
-    THINGYTAB.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// Look up a Thingy by name via `gethashnode2(thingytab, name)` —
-/// the C zle.h dispatch for `Th(X)` lookup. Direct port of the
-/// open-coded `gethashnode2()` call shape at `Src/Zle/zle_thingy.c:160`.
-pub fn gethashnode2(name: &str) -> Option<Thingy> {                           // c:gethashtable.c (open-coded)
-    thingytab().lock().ok()?.get(name).cloned()
-}
-
-/// List every Thingy name. Used by `${widgets[@]}` parameter expansion.
-/// Replaces the legacy `ZleManager::list_widgets()` accessor.
-pub fn listwidgets() -> Vec<String> {
-    thingytab().lock().map(|t| t.keys().cloned().collect()).unwrap_or_default()
-}
-
-/// Look up the dispatch target for a widget name. Built-in widgets
-/// resolve to their own name (matching `${widgets[name]}` returning
-/// "builtin"); user-defined ones resolve to the bound shell-function
-/// name. Replaces the legacy `ZleManager::get_widget()` accessor.
-pub fn getwidgettarget(name: &str) -> Option<String> {
-    let tab = thingytab().lock().ok()?;
-    let t = tab.get(name)?;
-    let w = t.widget.as_ref()?;
-    match &w.u {
-        super::zle_h::WidgetImpl::Internal(_) => Some(name.to_string()),
-        super::zle_h::WidgetImpl::UserFunc(s) => Some(s.clone()),
-        super::zle_h::WidgetImpl::Comp { func, .. } => Some(func.clone()),
-    }
-}
-
 // =====================================================================
 // hashtable management — `Src/Zle/zle_thingy.c:58-124`.
 // =====================================================================
@@ -707,36 +674,285 @@ pub fn bin_zle(_nam: &str, args: &[String],                                  // 
     bin_zle_call(args)
 }
 
-/// Port of `bin_zle_call(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:702`.
+/// Port of `bin_zle_list(UNUSED(char *name), char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:393`.
 /// ```c
 /// static int
-/// bin_zle_call(...) {
-///     ...
-///     char *wname = *args++;
-///     if (!wname) return !zle_usable();
-///     if (!zle_usable()) { zwarnnam(name, "..."); return 1; }
-///     ...
+/// bin_zle_list(...) {
+///     if (!*args) { scanhashtable(thingytab, 1, 0, DISABLED, scanlistwidgets, ...); return 0; }
+///     for (; *args && !ret; args++) {
+///         HashNode hn = thingytab->getnode2(thingytab, *args);
+///         if (!t || (!ALL && t->widget->flags & WIDGET_INT)) ret = 1;
+///         else if (LONG) scanlistwidgets(hn, 1);
+///     }
+///     return ret;
 /// }
 /// ```
-/// Bare-args invocation of `zle widget args...` from inside another
-/// widget. The full path (flag parse + execzlefunc) needs ZLE
-/// session substrate; this port covers the empty-args probe and
-/// the !zle_usable guard.
+/// `zle -l` — list widget bindings (or check existence per arg).
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_call(args: &[String]) -> i32 {                                // c:703
-    // c:703-716 — `if (!wname) return !zle_usable(); if (!zle_usable())
-    //                  zwarnnam; return 1`. The flag-parsing loop +
-    // execzlefunc dispatch needs full ZLE session substrate.
+pub fn bin_zle_list(args: &[String]) -> i32 {                                // c:393
+    // c:393-413 — `if (!*args) scan all` else look up each in turn.
+    // Returns 0 if all found and listable; 1 if any missing.
+    // Simplified: ignore the OPT_ISSET dispatch (-a / -L) for now.
     if args.is_empty() {
-        // c:711 — `return !zle_usable()`. Returns 0 when usable, 1 when not.
-        return if zle_usable() != 0 { 0 } else { 1 };
+        // c:396-397 — walk thingytab, call scanlistwidgets per node.
+        let _ = scanlistwidgets();
+        return 0;
     }
-    if zle_usable() == 0 {                                                   // c:713
-        return 1;                                                            // c:715
+    let mut ret = 0;
+    for arg in args {                                                        // c:403-411
+        let exists = thingytab().lock().unwrap().contains_key(arg);
+        if !exists {
+            ret = 1;
+            break;
+        }
     }
-    // Full dispatch path (flag parse + execzlefunc) needs more
-    // substrate. Treat as success once usable + widget name given.
+    ret                                                                      // c:412
+}
+
+/// Direct port of `int bin_zle_refresh(char *name, char **args,
+///                                      Options ops, UNUSED(char func))`
+/// from `Src/Zle/zle_thingy.c:416-454`.
+/// ```c
+/// if (!zleactive) { zwarnnam(name, "no line editor"); return 1; }
+/// // optional statusline/listlist install via -p flag
+/// zrefresh();
+/// return 0;
+/// ```
+///
+/// **Substrate tradeoff:** `zrefresh()` is a free fn in
+/// zle_refresh.rs reading the file-scope ZLE statics. To keep this
+/// bin_zle_refresh path lightweight (and to drop work to the next
+/// zlecore tick when it's available), we set the `ZLE_RESET_NEEDED`
+/// flag instead of calling `zrefresh()` directly — same observable
+/// effect as the C direct call.
+/// Port of `bin_zle_refresh(UNUSED(char *name), char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:418`.
+/// WARNING: param names don't match C — Rust=() vs C=(name, args, ops, func)
+pub fn bin_zle_refresh() -> i32 {                                            // c:418
+    use std::sync::atomic::Ordering;
+    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
+        return 1;                                                            // c:424
+    }
+    // c:450 — `zrefresh()`. Flag the next tick.
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
+    0                                                                        // c:454
+}
+
+/// Port of `bin_zle_mesg(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:459`.
+/// ```c
+/// static int
+/// bin_zle_mesg(...) {
+///     if (!zleactive) { zwarnnam; return 1; }
+///     showmsg(*args);
+///     if (sfcontext != SFC_WIDGET) zrefresh();
+///     return 0;
+/// }
+/// ```
+/// `zle -M msg` — display a transient message during widget run.
+/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
+pub fn bin_zle_mesg(args: &[String]) -> i32 {                                // c:459
+    // c:459-468 — `if (!zleactive) { zwarnnam; return 1; }
+    //               showmsg(*args); if (sfcontext != SFC_WIDGET)
+    //                   zrefresh(); return 0`.
+    use std::sync::atomic::Ordering;
+    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
+        return 1;                                                            // c:463
+    }
+    // c:465 — `showmsg(*args); zrefresh()`. zshrs's status-line
+    // display is host-driven (the prompt drawer reads from
+    // `$STATUSLINE`); zrefresh fires on the next event loop tick.
+    0                                                                        // c:468
+}
+
+/// Port of `bin_zle_unget(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:473`.
+/// ```c
+/// static int
+/// bin_zle_unget(char *name, char **args, ...) {
+///     char *b = unmeta(*args), *p = b + strlen(b);
+///     if (!zleactive) { zwarnnam(name, "..."); return 1; }
+///     while (p > b)
+///         ungetbyte((int) *--p);
+///     return 0;
+/// }
+/// ```
+/// `zle -U str` — push string bytes back onto input queue in
+/// reverse so subsequent reads return them in original order.
+/// WARNING: param names don't match C — Rust=(zle, args) vs C=(name, args, ops, func)
+pub fn bin_zle_unget(args: &[String]) -> i32 {  // c:473
+    use std::sync::atomic::Ordering;
+    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
+        return 1;                                                            // c:479
+    }
+    if let Some(arg) = args.first() {
+        // c:481-482 — push bytes back in reverse.
+        for byte in arg.bytes().rev() {
+            ungetbyte(byte);
+        }
+    }
+    0                                                                        // c:483
+}
+
+/// Port of `bin_zle_keymap(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:488`.
+/// ```c
+/// static int
+/// bin_zle_keymap(...) {
+///     if (!zleactive) { zwarnnam(name, "..."); return 1; }
+///     return selectkeymap(*args, 0);
+/// }
+/// ```
+/// `zle -K keymap` — switch the current keymap (only valid from
+/// inside a widget callback).
+/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
+pub fn bin_zle_keymap(args: &[String]) -> i32 {                              // c:488
+    // c:488-494 — `if (!zleactive) return 1 with warning;
+    //               return selectkeymap(*args, 0)`.
+    use std::sync::atomic::Ordering;
+    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
+        return 1;                                                            // c:492
+    }
+    // c:494 — `selectkeymap()` returns 0 on success (C body falls
+    // through to `return 0` after the zleactive check).
+    0                                                                        // c:494
+}
+
+/// Port of `scanlistwidgets(HashNode hn, int list)` from `Src/Zle/zle_thingy.c:505`.
+/// WARNING: param names don't match C — Rust=() vs C=(hn, list)
+pub fn scanlistwidgets() -> i32 {                                            // c:505
+    // c:505-543 — pretty-print one Thingy: WIDGET_INT skipped (built-in,
+    // not user-visible). User widgets print as either `zle -N name [fn]`
+    // or just `name (fn)` depending on `list` arg. Returns the
+    // formatted string instead of writing to stdout.
+    let tab = thingytab().lock().unwrap();
+    let lines: Vec<String> = tab.iter()
+        .filter_map(|(name, t)| {
+            let w = t.widget.as_ref()?;
+            // c:514-515 — skip internal widgets.
+            if (w.flags & WIDGET_INT) != 0 {
+                return None;
+            }
+            // c:530-541 — abbreviated format: name (fn) when fn != name.
+            let fn_name = match &w.u {
+                WidgetFunc::UserFunc(s) => s.clone(),
+                WidgetFunc::Internal(_) => return None,
+                _ => return None,
+            };
+            if fn_name == *name {
+                Some(name.clone())
+            } else {
+                Some(format!("{} ({})", name, fn_name))
+            }
+        })
+        .collect();
+    let _ = lines;
     0
+}
+
+/// Port of `bin_zle_del(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:547`.
+/// ```c
+/// static int
+/// bin_zle_del(char *name, char **args, ...) {
+///     int ret = 0;
+///     do {
+///         Thingy t = thingytab->getnode(thingytab, *args);
+///         if (!t) { zwarnnam(name, "no such widget"); ret = 1; }
+///         else if (unbindwidget(t, 0)) {
+///             zwarnnam(name, "widget name `%s' is protected"); ret = 1;
+///         }
+///     } while (*++args);
+///     return ret;
+/// }
+/// ```
+/// `zle -D widget...` — unbind one or more widgets from the
+/// thingytab. Returns 1 if any widget was missing or protected
+/// (TH_IMMORTAL), else 0.
+/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
+pub fn bin_zle_del(args: &[String]) -> i32 {                                 // c:548
+    let mut ret = 0;
+    for arg in args {                                                        // c:552-561 do-while
+        let exists = thingytab().lock().unwrap().contains_key(arg);
+        if !exists {
+            ret = 1;                                                         // c:556
+        } else if unbindwidget(arg, 0) != 0 {                                // c:557
+            ret = 1;                                                         // c:559
+        }
+    }
+    ret                                                                      // c:562
+}
+
+/// Port of `bin_zle_link(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:567`.
+/// ```c
+/// static int
+/// bin_zle_link(char *name, char **args, ...) {
+///     Thingy t = thingytab->getnode(thingytab, args[0]);
+///     if (!t) { zwarnnam(name, "no such widget `%s'", args[0]); return 1; }
+///     else if (bindwidget(t->widget, rthingy(args[1]))) {
+///         zwarnnam(name, "widget name `%s' is protected", args[1]);
+///         return 1;
+///     }
+///     return 0;
+/// }
+/// ```
+/// `zle -A old new` — alias `new` to point at the same widget as `old`.
+/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
+pub fn bin_zle_link(args: &[String]) -> i32 {                                // c:567
+    // c:567-578 — `t = thingytab.getnode(args[0]); if(!t) ret=1; else
+    //              if(bindwidget(t->widget, rthingy(args[1]))) ret=1`.
+    if args.len() < 2 {
+        return 1;
+    }
+    let src = &args[0];
+    let dst = &args[1];
+    let widget = {
+        let tab = thingytab().lock().unwrap();
+        tab.get(src).and_then(|t| t.widget.clone())
+    };
+    let Some(w) = widget else {
+        return 1;                                                            // c:573
+    };
+    rthingy(dst);                                                            // c:574 rthingy(args[1])
+    if bindwidget(w, dst) != 0 {                                             // c:574 bindwidget(...)
+        return 1;                                                            // c:575
+    }
+    0                                                                        // c:578
+}
+
+/// Port of `bin_zle_new(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:583`.
+/// ```c
+/// static int
+/// bin_zle_new(char *name, char **args, ...) {
+///     Widget w = zalloc(sizeof(*w));
+///     w->flags = 0;
+///     w->first = NULL;
+///     w->u.fnnam = ztrdup(args[1] ? args[1] : args[0]);
+///     if (!bindwidget(w, rthingy(args[0]))) return 0;
+///     freewidget(w);
+///     zwarnnam(name, "widget name `%s' is protected", args[0]);
+///     return 1;
+/// }
+/// ```
+/// `zle -N name [func]` — bind a user-defined widget. `func`
+/// defaults to `name` when omitted.
+/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
+pub fn bin_zle_new(args: &[String]) -> i32 {                                 // c:584
+    // c:584-595 — `Widget w = zalloc; w->flags=0; w->u.fnnam = ztrdup(args[1]?args[1]:args[0]);
+    //              if(!bindwidget(w, rthingy(args[0]))) return 0;
+    //              freewidget(w); zwarnnam(...); return 1;`.
+    if args.is_empty() {
+        return 1;
+    }
+    // c:590 — fn name is args[1] if present, else args[0].
+    let fname = if args.len() >= 2 { args[1].clone() } else { args[0].clone() };
+    let w = std::sync::Arc::new(Widget {
+        flags: 0i32,                                         // c:588
+        first: None,
+        u: WidgetFunc::UserFunc(fname),                                          // c:590 fnnam
+    });
+    rthingy(&args[0]);                                                       // c:591 rthingy(args[0])
+    if bindwidget(w.clone(), &args[0]) == 0 {                                // c:591 bindwidget(...)
+        return 0;                                                            // c:592
+    }
+    // c:593-594 — bindwidget failed (TH_IMMORTAL) → free + warn.
+    freewidget(w);
+    1                                                                        // c:595
 }
 
 /// Port of `bin_zle_complete(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:599`.
@@ -799,77 +1015,24 @@ pub fn bin_zle_complete(args: &[String]) -> i32 {                            // 
     0                                                                        // c:629
 }
 
-/// Port of `bin_zle_del(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:547`.
+/// Port of `zle_usable()` from `Src/Zle/zle_thingy.c:634`.
 /// ```c
 /// static int
-/// bin_zle_del(char *name, char **args, ...) {
-///     int ret = 0;
-///     do {
-///         Thingy t = thingytab->getnode(thingytab, *args);
-///         if (!t) { zwarnnam(name, "no such widget"); ret = 1; }
-///         else if (unbindwidget(t, 0)) {
-///             zwarnnam(name, "widget name `%s' is protected"); ret = 1;
-///         }
-///     } while (*++args);
-///     return ret;
+/// zle_usable(void)
+/// {
+///     return zleactive && !incompctlfunc && !incompfunc;
 /// }
 /// ```
-/// `zle -D widget...` — unbind one or more widgets from the
-/// thingytab. Returns 1 if any widget was missing or protected
-/// (TH_IMMORTAL), else 0.
-/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_del(args: &[String]) -> i32 {                                 // c:548
-    let mut ret = 0;
-    for arg in args {                                                        // c:552-561 do-while
-        let exists = thingytab().lock().unwrap().contains_key(arg);
-        if !exists {
-            ret = 1;                                                         // c:556
-        } else if unbindwidget(arg, 0) != 0 {                                // c:557
-            ret = 1;                                                         // c:559
-        }
-    }
-    ret                                                                      // c:562
-}
-
-/// Port of `bin_zle_fd(char *name, char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:857`.
-/// `zle -F fd handler` — register an fd watcher invoked when the
-/// fd becomes readable while the editor is idle.
-/// Direct port of `int bin_zle_fd(char *name, char **args, Options ops,
-///                                 UNUSED(char func))` from
-/// `Src/Zle/zle_thingy.c:857`. Manages the per-Zle `watch_fds`
-/// table: `-d` removes, single-arg lists, two-args register a
-/// handler.
-///
-/// Mutates the global `WATCH_FDS` (`Src/Zle/zle_main.c:204`)
-/// directly so the poll loop in `zle_main::raw_getbyte` sees the
-/// new registration on the next iteration.
-/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_fd(args: &[String]) -> i32 {                                  // c:857
-    if args.is_empty() {                                                     // c:857-905
-        return 0;                                                            // list-all path
-    }
-    // c:863-867 — parse fd; reject negative.
-    let fd: i32 = args[0].parse().unwrap_or(-1);
-    if fd < 0 { return 1; }                                                  // c:866
-
-    if let Ok(mut tab) = crate::ported::zle::zle_main::WATCH_FDS.lock() {
-        match args.len() {
-            1 => {
-                // c:935 — `zle -F -d fd` remove.
-                tab.retain(|w| w.fd != fd);
-            }
-            _ => {
-                // c:921 — install / replace.
-                tab.retain(|w| w.fd != fd);
-                tab.push(crate::ported::zle::zle_h::watch_fd {
-                    func: args[1].clone(),
-                    fd,
-                    widget: 0,
-                });
-            }
-        }
-    }
-    0                                                                        // c:952
+/// True iff a ZLE session is currently active and we're not
+/// inside a compctl-fn or comp-fn call (zle widgets can't run
+/// from inside completion functions).
+pub fn zle_usable() -> i32 {                                                 // c:634
+    use std::sync::atomic::Ordering;
+    let active = crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0;
+    let incompctlfunc = crate::ported::zle::compctl::INCOMPCTLFUNC               // c:636
+        .with(|c| c.get());
+    let incompfunc = crate::ported::zle::complete::INCOMPFUNC.load(Ordering::Relaxed) != 0;
+    if active && !incompctlfunc && !incompfunc { 1 } else { 0 }
 }
 
 /// Port of `bin_zle_flags(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:650`.
@@ -913,6 +1076,38 @@ pub fn bin_zle_flags(args: &[String]) -> i32 {                               // 
     ret
 }
 
+/// Port of `bin_zle_call(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:702`.
+/// ```c
+/// static int
+/// bin_zle_call(...) {
+///     ...
+///     char *wname = *args++;
+///     if (!wname) return !zle_usable();
+///     if (!zle_usable()) { zwarnnam(name, "..."); return 1; }
+///     ...
+/// }
+/// ```
+/// Bare-args invocation of `zle widget args...` from inside another
+/// widget. The full path (flag parse + execzlefunc) needs ZLE
+/// session substrate; this port covers the empty-args probe and
+/// the !zle_usable guard.
+/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
+pub fn bin_zle_call(args: &[String]) -> i32 {                                // c:703
+    // c:703-716 — `if (!wname) return !zle_usable(); if (!zle_usable())
+    //                  zwarnnam; return 1`. The flag-parsing loop +
+    // execzlefunc dispatch needs full ZLE session substrate.
+    if args.is_empty() {
+        // c:711 — `return !zle_usable()`. Returns 0 when usable, 1 when not.
+        return if zle_usable() != 0 { 0 } else { 1 };
+    }
+    if zle_usable() == 0 {                                                   // c:713
+        return 1;                                                            // c:715
+    }
+    // Full dispatch path (flag parse + execzlefunc) needs more
+    // substrate. Treat as success once usable + widget name given.
+    0
+}
+
 /// Direct port of `int bin_zle_invalidate(char *name, char **args,
 ///                                         Options ops, UNUSED(char func))`
 /// from `Src/Zle/zle_thingy.c:828-852`.
@@ -947,193 +1142,45 @@ pub fn bin_zle_invalidate() -> i32 {                                         // 
     }
 }
 
-/// Port of `bin_zle_keymap(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:488`.
-/// ```c
-/// static int
-/// bin_zle_keymap(...) {
-///     if (!zleactive) { zwarnnam(name, "..."); return 1; }
-///     return selectkeymap(*args, 0);
-/// }
-/// ```
-/// `zle -K keymap` — switch the current keymap (only valid from
-/// inside a widget callback).
+/// Port of `bin_zle_fd(char *name, char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:857`.
+/// `zle -F fd handler` — register an fd watcher invoked when the
+/// fd becomes readable while the editor is idle.
+/// Direct port of `int bin_zle_fd(char *name, char **args, Options ops,
+///                                 UNUSED(char func))` from
+/// `Src/Zle/zle_thingy.c:857`. Manages the per-Zle `watch_fds`
+/// table: `-d` removes, single-arg lists, two-args register a
+/// handler.
+///
+/// Mutates the global `WATCH_FDS` (`Src/Zle/zle_main.c:204`)
+/// directly so the poll loop in `zle_main::raw_getbyte` sees the
+/// new registration on the next iteration.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_keymap(args: &[String]) -> i32 {                              // c:488
-    // c:488-494 — `if (!zleactive) return 1 with warning;
-    //               return selectkeymap(*args, 0)`.
-    use std::sync::atomic::Ordering;
-    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
-        return 1;                                                            // c:492
+pub fn bin_zle_fd(args: &[String]) -> i32 {                                  // c:857
+    if args.is_empty() {                                                     // c:857-905
+        return 0;                                                            // list-all path
     }
-    // c:494 — `selectkeymap()` returns 0 on success (C body falls
-    // through to `return 0` after the zleactive check).
-    0                                                                        // c:494
-}
+    // c:863-867 — parse fd; reject negative.
+    let fd: i32 = args[0].parse().unwrap_or(-1);
+    if fd < 0 { return 1; }                                                  // c:866
 
-/// Port of `bin_zle_link(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:567`.
-/// ```c
-/// static int
-/// bin_zle_link(char *name, char **args, ...) {
-///     Thingy t = thingytab->getnode(thingytab, args[0]);
-///     if (!t) { zwarnnam(name, "no such widget `%s'", args[0]); return 1; }
-///     else if (bindwidget(t->widget, rthingy(args[1]))) {
-///         zwarnnam(name, "widget name `%s' is protected", args[1]);
-///         return 1;
-///     }
-///     return 0;
-/// }
-/// ```
-/// `zle -A old new` — alias `new` to point at the same widget as `old`.
-/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_link(args: &[String]) -> i32 {                                // c:567
-    // c:567-578 — `t = thingytab.getnode(args[0]); if(!t) ret=1; else
-    //              if(bindwidget(t->widget, rthingy(args[1]))) ret=1`.
-    if args.len() < 2 {
-        return 1;
-    }
-    let src = &args[0];
-    let dst = &args[1];
-    let widget = {
-        let tab = thingytab().lock().unwrap();
-        tab.get(src).and_then(|t| t.widget.clone())
-    };
-    let Some(w) = widget else {
-        return 1;                                                            // c:573
-    };
-    rthingy(dst);                                                            // c:574 rthingy(args[1])
-    if bindwidget(w, dst) != 0 {                                             // c:574 bindwidget(...)
-        return 1;                                                            // c:575
-    }
-    0                                                                        // c:578
-}
-
-/// Port of `bin_zle_list(UNUSED(char *name), char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:393`.
-/// ```c
-/// static int
-/// bin_zle_list(...) {
-///     if (!*args) { scanhashtable(thingytab, 1, 0, DISABLED, scanlistwidgets, ...); return 0; }
-///     for (; *args && !ret; args++) {
-///         HashNode hn = thingytab->getnode2(thingytab, *args);
-///         if (!t || (!ALL && t->widget->flags & WIDGET_INT)) ret = 1;
-///         else if (LONG) scanlistwidgets(hn, 1);
-///     }
-///     return ret;
-/// }
-/// ```
-/// `zle -l` — list widget bindings (or check existence per arg).
-/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_list(args: &[String]) -> i32 {                                // c:393
-    // c:393-413 — `if (!*args) scan all` else look up each in turn.
-    // Returns 0 if all found and listable; 1 if any missing.
-    // Simplified: ignore the OPT_ISSET dispatch (-a / -L) for now.
-    if args.is_empty() {
-        // c:396-397 — walk thingytab, call scanlistwidgets per node.
-        let _ = scanlistwidgets();
-        return 0;
-    }
-    let mut ret = 0;
-    for arg in args {                                                        // c:403-411
-        let exists = thingytab().lock().unwrap().contains_key(arg);
-        if !exists {
-            ret = 1;
-            break;
+    if let Ok(mut tab) = crate::ported::zle::zle_main::WATCH_FDS.lock() {
+        match args.len() {
+            1 => {
+                // c:935 — `zle -F -d fd` remove.
+                tab.retain(|w| w.fd != fd);
+            }
+            _ => {
+                // c:921 — install / replace.
+                tab.retain(|w| w.fd != fd);
+                tab.push(crate::ported::zle::zle_h::watch_fd {
+                    func: args[1].clone(),
+                    fd,
+                    widget: 0,
+                });
+            }
         }
     }
-    ret                                                                      // c:412
-}
-
-/// Port of `bin_zle_mesg(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:459`.
-/// ```c
-/// static int
-/// bin_zle_mesg(...) {
-///     if (!zleactive) { zwarnnam; return 1; }
-///     showmsg(*args);
-///     if (sfcontext != SFC_WIDGET) zrefresh();
-///     return 0;
-/// }
-/// ```
-/// `zle -M msg` — display a transient message during widget run.
-/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_mesg(args: &[String]) -> i32 {                                // c:459
-    // c:459-468 — `if (!zleactive) { zwarnnam; return 1; }
-    //               showmsg(*args); if (sfcontext != SFC_WIDGET)
-    //                   zrefresh(); return 0`.
-    use std::sync::atomic::Ordering;
-    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
-        return 1;                                                            // c:463
-    }
-    // c:465 — `showmsg(*args); zrefresh()`. zshrs's status-line
-    // display is host-driven (the prompt drawer reads from
-    // `$STATUSLINE`); zrefresh fires on the next event loop tick.
-    0                                                                        // c:468
-}
-
-/// Port of `bin_zle_new(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:583`.
-/// ```c
-/// static int
-/// bin_zle_new(char *name, char **args, ...) {
-///     Widget w = zalloc(sizeof(*w));
-///     w->flags = 0;
-///     w->first = NULL;
-///     w->u.fnnam = ztrdup(args[1] ? args[1] : args[0]);
-///     if (!bindwidget(w, rthingy(args[0]))) return 0;
-///     freewidget(w);
-///     zwarnnam(name, "widget name `%s' is protected", args[0]);
-///     return 1;
-/// }
-/// ```
-/// `zle -N name [func]` — bind a user-defined widget. `func`
-/// defaults to `name` when omitted.
-/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_new(args: &[String]) -> i32 {                                 // c:584
-    // c:584-595 — `Widget w = zalloc; w->flags=0; w->u.fnnam = ztrdup(args[1]?args[1]:args[0]);
-    //              if(!bindwidget(w, rthingy(args[0]))) return 0;
-    //              freewidget(w); zwarnnam(...); return 1;`.
-    if args.is_empty() {
-        return 1;
-    }
-    // c:590 — fn name is args[1] if present, else args[0].
-    let fname = if args.len() >= 2 { args[1].clone() } else { args[0].clone() };
-    let w = std::sync::Arc::new(Widget {
-        flags: 0i32,                                         // c:588
-        first: None,
-        u: WidgetFunc::UserFunc(fname),                                          // c:590 fnnam
-    });
-    rthingy(&args[0]);                                                       // c:591 rthingy(args[0])
-    if bindwidget(w.clone(), &args[0]) == 0 {                                // c:591 bindwidget(...)
-        return 0;                                                            // c:592
-    }
-    // c:593-594 — bindwidget failed (TH_IMMORTAL) → free + warn.
-    freewidget(w);
-    1                                                                        // c:595
-}
-
-/// Direct port of `int bin_zle_refresh(char *name, char **args,
-///                                      Options ops, UNUSED(char func))`
-/// from `Src/Zle/zle_thingy.c:416-454`.
-/// ```c
-/// if (!zleactive) { zwarnnam(name, "no line editor"); return 1; }
-/// // optional statusline/listlist install via -p flag
-/// zrefresh();
-/// return 0;
-/// ```
-///
-/// **Substrate tradeoff:** `zrefresh()` is a free fn in
-/// zle_refresh.rs reading the file-scope ZLE statics. To keep this
-/// bin_zle_refresh path lightweight (and to drop work to the next
-/// zlecore tick when it's available), we set the `ZLE_RESET_NEEDED`
-/// flag instead of calling `zrefresh()` directly — same observable
-/// effect as the C direct call.
-/// Port of `bin_zle_refresh(UNUSED(char *name), char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:418`.
-/// WARNING: param names don't match C — Rust=() vs C=(name, args, ops, func)
-pub fn bin_zle_refresh() -> i32 {                                            // c:418
-    use std::sync::atomic::Ordering;
-    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
-        return 1;                                                            // c:424
-    }
-    // c:450 — `zrefresh()`. Flag the next tick.
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
-    0                                                                        // c:454
+    0                                                                        // c:952
 }
 
 /// Direct port of `int bin_zle_transform(char *name, char **args,
@@ -1178,34 +1225,6 @@ pub fn bin_zle_transform(args: &[String]) -> i32 {                           // 
     0
 }
 
-/// Port of `bin_zle_unget(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:473`.
-/// ```c
-/// static int
-/// bin_zle_unget(char *name, char **args, ...) {
-///     char *b = unmeta(*args), *p = b + strlen(b);
-///     if (!zleactive) { zwarnnam(name, "..."); return 1; }
-///     while (p > b)
-///         ungetbyte((int) *--p);
-///     return 0;
-/// }
-/// ```
-/// `zle -U str` — push string bytes back onto input queue in
-/// reverse so subsequent reads return them in original order.
-/// WARNING: param names don't match C — Rust=(zle, args) vs C=(name, args, ops, func)
-pub fn bin_zle_unget(args: &[String]) -> i32 {  // c:473
-    use std::sync::atomic::Ordering;
-    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
-        return 1;                                                            // c:479
-    }
-    if let Some(arg) = args.first() {
-        // c:481-482 — push bytes back in reverse.
-        for byte in arg.bytes().rev() {
-            ungetbyte(byte);
-        }
-    }
-    0                                                                        // c:483
-}
-
 /// Port of `init_thingies()` from `Src/Zle/zle_thingy.c:1022`.
 /// Boot-time thingytab population from the built-in widget table.
 /// Walks the static `thingies[]` array in zle_thingy.c and inserts
@@ -1221,56 +1240,37 @@ pub fn init_thingies() -> i32 {                                              // 
     0
 }
 
-/// Port of `scanlistwidgets(HashNode hn, int list)` from `Src/Zle/zle_thingy.c:505`.
-/// WARNING: param names don't match C — Rust=() vs C=(hn, list)
-pub fn scanlistwidgets() -> i32 {                                            // c:505
-    // c:505-543 — pretty-print one Thingy: WIDGET_INT skipped (built-in,
-    // not user-visible). User widgets print as either `zle -N name [fn]`
-    // or just `name (fn)` depending on `list` arg. Returns the
-    // formatted string instead of writing to stdout.
-    let tab = thingytab().lock().unwrap();
-    let lines: Vec<String> = tab.iter()
-        .filter_map(|(name, t)| {
-            let w = t.widget.as_ref()?;
-            // c:514-515 — skip internal widgets.
-            if (w.flags & WIDGET_INT) != 0 {
-                return None;
-            }
-            // c:530-541 — abbreviated format: name (fn) when fn != name.
-            let fn_name = match &w.u {
-                WidgetFunc::UserFunc(s) => s.clone(),
-                WidgetFunc::Internal(_) => return None,
-                _ => return None,
-            };
-            if fn_name == *name {
-                Some(name.clone())
-            } else {
-                Some(format!("{} ({})", name, fn_name))
-            }
-        })
-        .collect();
-    let _ = lines;
-    0
+/// Get-or-init access to the global thingytab.
+fn thingytab() -> &'static Mutex<HashMap<String, Thingy>> {
+    THINGYTAB.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Port of `zle_usable()` from `Src/Zle/zle_thingy.c:634`.
-/// ```c
-/// static int
-/// zle_usable(void)
-/// {
-///     return zleactive && !incompctlfunc && !incompfunc;
-/// }
-/// ```
-/// True iff a ZLE session is currently active and we're not
-/// inside a compctl-fn or comp-fn call (zle widgets can't run
-/// from inside completion functions).
-pub fn zle_usable() -> i32 {                                                 // c:634
-    use std::sync::atomic::Ordering;
-    let active = crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0;
-    let incompctlfunc = crate::ported::zle::compctl::INCOMPCTLFUNC               // c:636
-        .with(|c| c.get());
-    let incompfunc = crate::ported::zle::complete::INCOMPFUNC.load(Ordering::Relaxed) != 0;
-    if active && !incompctlfunc && !incompfunc { 1 } else { 0 }
+/// Look up a Thingy by name via `gethashnode2(thingytab, name)` —
+/// the C zle.h dispatch for `Th(X)` lookup. Direct port of the
+/// open-coded `gethashnode2()` call shape at `Src/Zle/zle_thingy.c:160`.
+pub fn gethashnode2(name: &str) -> Option<Thingy> {                           // c:gethashtable.c (open-coded)
+    thingytab().lock().ok()?.get(name).cloned()
+}
+
+/// List every Thingy name. Used by `${widgets[@]}` parameter expansion.
+/// Replaces the legacy `ZleManager::list_widgets()` accessor.
+pub fn listwidgets() -> Vec<String> {
+    thingytab().lock().map(|t| t.keys().cloned().collect()).unwrap_or_default()
+}
+
+/// Look up the dispatch target for a widget name. Built-in widgets
+/// resolve to their own name (matching `${widgets[name]}` returning
+/// "builtin"); user-defined ones resolve to the bound shell-function
+/// name. Replaces the legacy `ZleManager::get_widget()` accessor.
+pub fn getwidgettarget(name: &str) -> Option<String> {
+    let tab = thingytab().lock().ok()?;
+    let t = tab.get(name)?;
+    let w = t.widget.as_ref()?;
+    match &w.u {
+        super::zle_h::WidgetImpl::Internal(_) => Some(name.to_string()),
+        super::zle_h::WidgetImpl::UserFunc(s) => Some(s.clone()),
+        super::zle_h::WidgetImpl::Comp { func, .. } => Some(func.clone()),
+    }
 }
 
 #[cfg(test)]

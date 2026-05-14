@@ -466,26 +466,113 @@ fn save_state() -> xyy_locals {
     }
 }
 
-// WARNING: NOT IN MATH.C — Rust-only helper. See save_state above.
-fn restore_state(saved: xyy_locals) {
-    m_input_set(saved.input);
-    m_pos_set(saved.pos);
-    m_tok_start_set(saved.tok_start);
-    m_yyval_set(saved.yyval);
-    m_yylval_set(saved.yylval);
-    M_STACK.with(|c| *c.borrow_mut() = saved.stack);
-    m_mtok_set(saved.mtok);
-    m_unary_set(saved.unary);
-    m_noeval_set(saved.noeval);
-    M_ERROR.with(|c| *c.borrow_mut() = saved.error);
-    m_variables_set(saved.variables);
-    m_string_variables_set(saved.string_variables);
-    m_prec_set(saved.prec);
-    m_c_precedences_set(saved.c_precedences);
-    m_force_float_set(saved.force_float);
-    m_octal_zeroes_set(saved.octal_zeroes);
-    M_LASTBASE.with(|c| c.set(saved.lastbase));
-}
+/// Port of `getmathparam(struct mathvalue *mptr)` from `Src/math.c:337`.
+///
+/// Look up a parameter by name from inside math context. zsh
+/// auto-typesets a missing-but-referenced name (its mathparam
+/// flag), but the Rust port keeps the variables map separate from
+/// the param table so a miss returns `Integer(0)` and skips the
+/// type-coercion. Indirect-string mode (`a="3+2"; $((a))`) is
+/// handled by recursively evaluating the string value.
+/// WARNING: param names don't match C — Rust=() vs C=(mptr)
+pub(crate) fn getmathparam(name: &str) -> mnumber {
+    // Strip array subscript if present
+        let base_name = if let Some(bracket) = name.find('[') {
+            &name[..bracket]
+        } else {
+            name
+        };
+        if let Some(v) = m_variables_get(base_name) {
+            return v;
+        }
+        // c:Src/math.c:337 getmathparam — falls back to `getvalue(s)`
+        // which parses the full subscript syntax (params.c:2180).
+        // The Rust port previously required callers to seed
+        // `with_string_variables` (a pre-populate pattern that
+        // diverged from C). Read paramtab + array subscripts here
+        // so matheval works without seeding.
+        if let Some(bracket) = name.find('[') {
+            let close = name.rfind(']').unwrap_or(name.len());
+            let arr_name = &name[..bracket];
+            let idx_str = &name[bracket + 1..close];
+            // Recursively eval the index (so a[i+1], h[$k], etc work).
+            let idx_val = matheval(idx_str)
+                .map(|n| if n.type_ == crate::ported::zsh_h::MN_FLOAT { n.d as i64 } else { n.l })
+                .unwrap_or(0);
+            // Read paramtab directly: PM_ARRAY → u_arr indexed by 1-based pos.
+            if let Ok(tab) = crate::ported::params::paramtab().read() {
+                if let Some(pm) = tab.get(arr_name) {
+                    if let Some(arr) = &pm.u_arr {
+                        let len = arr.len() as i64;
+                        let pos = if idx_val < 0 { len + idx_val } else { idx_val - 1 };
+                        if pos >= 0 && (pos as usize) < arr.len() {
+                            let raw = &arr[pos as usize];
+                            if let Ok(n) = raw.parse::<i64>() {
+                                return mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
+                            }
+                            if let Ok(f) = raw.parse::<f64>() {
+                                return mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
+                            }
+                        }
+                    }
+                }
+            }
+            // PM_HASHED via paramtab_hashed_storage.
+            if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
+                if let Some(map) = m.get(arr_name) {
+                    if let Some(v) = map.get(idx_str) {
+                        if let Ok(n) = v.parse::<i64>() {
+                            return mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
+                        }
+                        if let Ok(f) = v.parse::<f64>() {
+                            return mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
+                        }
+                    }
+                }
+            }
+            return mnumber { l: 0, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
+        }
+        if let Some(raw) = crate::ported::params::getsparam(base_name) {
+            if let Ok(n) = raw.parse::<i64>() {
+                return mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
+            }
+            if let Ok(f) = raw.parse::<f64>() {
+                return mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
+            }
+            // Non-numeric string: fall through to recursive-eval below.
+        }
+        // Recursive eval: if the var holds a non-numeric string, evaluate
+        // it AS an arith expression. zsh: `a="3+2"; $((a))` → 5. Bound
+        // to one level of indirection — fresh evaluator each call so we
+        // don't accidentally pollute s.variables.
+        if let Some(raw) = m_string_variables_get(base_name) {
+            // Save parent's eval state — `new(&raw)` resets thread_locals
+            // for the sub-eval, which would otherwise clobber the parent.
+            // Mirrors C `mathevall()` xyy* save/restore pattern (math.c:367).
+            let saved = save_state();
+            // Inherit caller's variables/string_variables/prec into the
+            // sub-eval, with `base_name` removed from the indirect map to
+            // prevent infinite recursion on `a="$a"`-style cycles.
+            let inherited_vars = saved.variables.clone();
+            let mut inherited_strs = saved.string_variables.clone();
+            inherited_strs.remove(base_name);
+            let inherited_prec = saved.prec;
+            let inherited_c_prec = saved.c_precedences;
+
+            new(&raw);
+            m_variables_set(inherited_vars);
+            m_string_variables_set(inherited_strs);
+            m_prec_set(inherited_prec);
+            m_c_precedences_set(inherited_c_prec);
+
+            let result = mathevall();
+            restore_state(saved);
+            if let Ok(r) = result {
+                return r;
+            }
+        }
+        mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+    }
 
 /// Port of `struct mathvalue` from `Src/math.c`:
 ///
@@ -518,143 +605,60 @@ impl Default for mathvalue {
     }
 }
 
-// MathState struct DELETED — state now lives in M_* thread_locals
-// (matching C math.c's module statics + mathevall's xyy* save/restore).
+    /// Evaluate the expression
+/// Port of `mathevall(char *s, enum prec_type prec_tp, char **ep)` from `Src/math.c:367`.
+    /// WARNING: param names don't match C — Rust=() vs C=(s, prec_tp, ep)
+    pub(crate) fn mathevall() -> Result<mnumber, String> {
+        m_prec_set(if m_c_precedences() { &C_PREC } else { &Z_PREC });
 
-// WARNING: NOT IN MATH.C — Rust-only initializer. C `mathevall()`
-// (math.c:367) takes the input as a parameter and seeds the module
-// statics inline at function entry; Rust port factors that seeding
-// out so call sites can chain `with_*` setters before invoking
-// `mathevall()`.
-/// Initialize thread_local math state from a fresh input string.
-/// Mirrors the entry-side state setup in C `mathevall()` (math.c:367).
-pub(crate) fn new(input: &str) {
-    m_input_set(input.to_string());
-    m_pos_set(0);
-    m_tok_start_set(0);
-    m_yyval_set(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
-    m_yylval_set(String::new());
-    M_STACK.with(|c| { c.borrow_mut().clear(); });
-    m_mtok_set(EOI);
-    m_unary_set(true);
-    m_noeval_set(0);
-    m_lastbase_set(-1);
-    m_prec_set(&Z_PREC);
-    m_c_precedences_set(false);
-    m_force_float_set(false);
-    m_octal_zeroes_set(false);
-    m_variables_set(HashMap::new());
-    m_string_variables_set(HashMap::new());
-    m_lastval_set(0);
-    m_pid_set(std::process::id() as i64);
-    m_error_clear();
-}
-
-// WARNING: NOT IN MATH.C — Rust-only setter. zsh C reads parameters
-// directly from the global param table on demand; the Rust port
-// caller seeds an in-memory map up front via this fn.
-pub(crate) fn with_variables(vars: HashMap<String, mnumber>) {
-    m_variables_set(vars);
-}
-
-// WARNING: NOT IN MATH.C — Rust-only setter. Parses each value as
-// numeric → `mnumber` if possible, otherwise stores the raw string
-// for `getmathparam`'s recursive-eval path (e.g. `a="3+2"; $((a))`).
-/// Inject variables from string->string mapping (for shell integration)
-pub(crate) fn with_string_variables(vars: &HashMap<String, String>) {
-    for (k, v) in vars {
-        if let Ok(i) = v.parse::<i64>() {
-            m_variables_insert(k.clone(), mnumber { l: i, d: 0.0, type_: MN_INTEGER });
-        } else if let Ok(f) = v.parse::<f64>() {
-            m_variables_insert(k.clone(), mnumber { l: 0, d: f, type_: MN_FLOAT });
-        } else if !v.is_empty() {
-            // Non-numeric string — keep raw so getmathparam can
-            // recursively evaluate it as an arith expression.
-            // zsh: `a="3+2"; $((a))` returns 5.
-            m_string_variables_insert(k.clone(), v.clone());
+        // Skip leading whitespace and Nularg
+        while let Some(c) = peek() {
+            if c.is_whitespace() || c == '\u{a1}' {
+                advance();
+            } else {
+                break;
+            }
         }
-    }
-}
 
-// WARNING: NOT IN MATH.C — Rust-only accessor. zsh C writes back
-// to the global param table during evaluation; ShellExecutor
-// integration uses this to harvest the post-eval variables map and
-// merge it into its own `variables` table.
-/// Extract modified variables as string->string mapping (for shell integration)
-pub(crate) fn extract_string_variables() -> HashMap<String, String> {
-    M_VARIABLES.with(|c| {
-        c.borrow()
-            .iter()
-            .map(|(k, v)| (k.clone(), match v.type_ {
-                MN_INTEGER => v.l.to_string(),
-                MN_FLOAT => {
-                    let f = v.d;
-                    if isnan(f) { "NaN".to_string() }
-                    else if isinf(f) { if f > 0.0 { "Inf".to_string() } else { "-Inf".to_string() } }
-                    else { format!("{:.10}", f) }
-                }
-                _ => "0".to_string(),
-            }))
-            .collect()
-    })
-}
+        if m_pos() >= m_input_len() {
+            return Ok(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
+        }
 
-// WARNING: NOT IN MATH.C — Rust-only setopt mirror. zsh C reads
-// the option flag directly from `isset(CPRECEDENCES)` inside
-// `mathevall()`; this setter caches the bit so the evaluator
-// avoids re-reading the option tree on every token.
-pub(crate) fn with_c_precedences(enable: bool) {
-    m_c_precedences_set(enable);
-    m_prec_set(if enable { &C_PREC } else { &Z_PREC });
-}
+        mathparse(top_prec());
 
-// WARNING: NOT IN MATH.C — Rust-only setopt mirror for FORCE_FLOAT.
-pub(crate) fn with_force_float(enable: bool) {
-    m_force_float_set(enable);
-}
+        if let Some(err) = m_error_take() {
+            return Err(err);
+        }
 
-// WARNING: NOT IN MATH.C — Rust-only setopt mirror for OCTAL_ZEROES.
-pub(crate) fn with_octal_zeroes(enable: bool) {
-    m_octal_zeroes_set(enable);
-}
+        // Check for trailing characters
+        while let Some(c) = peek() {
+            if c.is_whitespace() {
+                advance();
+            } else if c == ')' {
+                // zsh's specific wording for the unmatched-close
+                // case: `bad math expression: unexpected ')'`.
+                return Err("bad math expression: unexpected ')'".to_string());
+            } else {
+                return Err(format!("illegal character: {}", c));
+            }
+        }
 
-// WARNING: NOT IN MATH.C — Rust-only setter for `$?` (last command
-// status) so the `?`-token in unary position can read it. zsh C
-// reads `lastval` directly as a global.
-pub(crate) fn with_lastval(val: i32) {
-    m_lastval_set(val);
-}
+        if m_stack_is_empty() {
+            return Ok(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
+        }
 
-    // WARNING: NOT IN MATH.C — Rust-only cursor read. C uses `*ptr`
-    // directly without an fn-shaped wrapper.
-    pub(crate) fn peek() -> Option<char> {
-        m_input_clone()[m_pos()..].chars().next()
-    }
+        let mv = m_stack_pop().unwrap();
+        let result = if (mv.val.type_ == MN_UNSET) {
+            if let Some(ref name) = mv.lval {
+                getmathparam(name)
+            } else {
+                mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+            }
+        } else {
+            mv.val
+        };
 
-    // WARNING: NOT IN MATH.C — Rust-only cursor advance. C uses
-    // `*ptr++` directly.
-    pub(crate) fn advance() -> Option<char> {
-        let c = peek()?;
-        m_pos_add(c.len_utf8());
-        Some(c)
-    }
-
-    // WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
-    // ctype.h `idigit()` macro directly.
-    fn is_digit(c: char) -> bool {
-        c.is_ascii_digit()
-    }
-
-    // WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
-    // `iident()` / `isalpha()` macros directly.
-    fn is_ident_start(c: char) -> bool {
-        c.is_ascii_alphabetic() || c == '_'
-    }
-
-    // WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
-    // `iident()` macro directly.
-    fn is_ident(c: char) -> bool {
-        c.is_ascii_alphanumeric() || c == '_'
+        Ok(result)
     }
 
 /// Port of `lexconstant()` from `Src/math.c:462`.
@@ -911,6 +915,81 @@ pub(crate) fn lexconstant() -> i32 {
         });
         NUM
     }
+
+// ===========================================================
+// Remaining stubs from Src/math.c that don't yet have a faithful
+// implementation in the migrated free-fn evaluator. The
+// in-place implementations (mathevall, getmathparam, lexconstant,
+// setmathvar, callmathfunc, checkunary) replaced their stubs;
+// the names below correspond to C helpers the evaluator uses
+// internally below — bodies wire to existing Rust idioms while
+// preserving the C name + citation.
+// ===========================================================
+
+/// Port of `isinf(double x)` from Src/math.c:588 — IEEE +/-Infinity test.
+/// Wraps Rust's `f64::is_infinite`.
+/// WARNING: param names don't match C — Rust=() vs C=(x)
+pub(crate) fn isinf(x: f64) -> bool { x.is_infinite() }
+
+/// Port of `isnan(double x)` from Src/math.c:608 — IEEE NaN test. C
+/// implements it as `store(&x) != store(&x)` to defeat compiler
+/// folding of the canonical `x != x` NaN test; we route through
+/// `store` for parity, but Rust's `f64::is_nan` is the
+/// correctness path.
+/// WARNING: param names don't match C — Rust=() vs C=(x)
+pub(crate) fn isnan(x: f64) -> bool { store(x) != store(x) || x.is_nan() }
+
+/// Port of `notzero(mnumber a)` from Src/math.c:1142 — error-on-zero check
+/// used by `/` and `%` operators. Returns true when `a` is non-
+/// zero (caller continues), false when zero (caller raises
+/// "division by zero"). Float zero is treated as non-zero per
+/// IEEE 754 (1/0.0 → Inf, not an error) — only integer zero
+/// trips the check, matching math.c's `if (!a.u.l) zerr(…)`.
+/// WARNING: param names don't match C — Rust=() vs C=(a)
+pub(crate) fn notzero(a: mnumber) -> bool {
+    if (a.type_ == MN_UNSET) {
+        return false;
+    }
+    if (a.type_ == MN_INTEGER) {
+        return a.l != 0;
+    }
+    true
+}
+
+/// Port of `store(double *x)` from Src/math.c:601 — load/store a double
+/// via a pointer to defeat compilers that mis-optimize the
+/// canonical `x != x` NaN test. zsh only compiles this path when
+/// `HAVE_ISNAN` is undefined; we keep it as a name-parity shim
+/// so `isnan()` can route through it (matching the C source's
+/// `store(&x) != store(&x)` idiom).
+/// WARNING: param names don't match C — Rust=() vs C=(x)
+pub(crate) fn store(x: f64) -> f64 { x }
+
+/// Port of `getcvar(char *s)` from Src/math.c:943 — character-constant
+/// lookup. Reads the named shell variable and returns the
+/// codepoint of its first character. Used for `#varname` token
+/// (CId): `x="hello"; (( y = #x ))` puts 104 (`'h'`) into y.
+/// On miss or empty value, returns 0 (matches zsh's `*s ? *s : 0`).
+/// WARNING: param names don't match C — Rust=() vs C=(s)
+pub(crate) fn getcvar(name: &str) -> mnumber {
+    if let Some(raw) = m_string_variables_get(name) {
+        return mnumber { l: raw.chars().next().map(|c| c as i64).unwrap_or(0), d: 0.0, type_: MN_INTEGER };
+    }
+    if let Some(v) = m_variables_get(name) {
+        let s = match v.type_ {
+            MN_INTEGER => v.l.to_string(),
+            MN_FLOAT => {
+                let f = v.d;
+                if isnan(f) { "NaN".to_string() }
+                else if isinf(f) { if f > 0.0 { "Inf".to_string() } else { "-Inf".to_string() } }
+                else { format!("{:.10}", f) }
+            }
+            _ => "0".to_string(),
+        };
+        return mnumber { l: s.chars().next().map(|c| c as i64).unwrap_or(0), d: 0.0, type_: MN_INTEGER };
+    }
+    mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+}
 
 /// Port of `zzlex()` from `Src/math.c:617`.
 ///
@@ -1340,136 +1419,6 @@ pub(crate) fn pop() -> mnumber {
     }
     }
 
-    // WARNING: NOT IN MATH.C — Rust-only stack helper. C inlines
-    // this inside `pop()` (math.c:931) — its `noget` flag controls
-    // whether to resolve the deferred Unset+lval read; zshrs splits
-    // the two paths into separate fns so the resolved-vs-raw choice
-    // is at the call site.
-    pub(crate) fn pop_with_lval() -> mathvalue {
-        m_stack_pop().unwrap_or_default()
-    }
-
-    // WARNING: NOT IN MATH.C — Rust-only value-resolver. C inlines
-    // the deferred-variable-read pattern inside `pop()` and `op()`
-    // (math.c:931, 1154); the Rust port factors it out for `bop`
-    // and `mathparse` to inspect-without-consuming.
-    pub(crate) fn get_value(mv: &mathvalue) -> mnumber {
-        if (mv.val.type_ == MN_UNSET) {
-            if let Some(ref name) = mv.lval {
-                return getmathparam(name);
-            }
-        }
-        mv.val
-    }
-
-/// Port of `getmathparam(struct mathvalue *mptr)` from `Src/math.c:337`.
-///
-/// Look up a parameter by name from inside math context. zsh
-/// auto-typesets a missing-but-referenced name (its mathparam
-/// flag), but the Rust port keeps the variables map separate from
-/// the param table so a miss returns `Integer(0)` and skips the
-/// type-coercion. Indirect-string mode (`a="3+2"; $((a))`) is
-/// handled by recursively evaluating the string value.
-/// WARNING: param names don't match C — Rust=() vs C=(mptr)
-pub(crate) fn getmathparam(name: &str) -> mnumber {
-    // Strip array subscript if present
-        let base_name = if let Some(bracket) = name.find('[') {
-            &name[..bracket]
-        } else {
-            name
-        };
-        if let Some(v) = m_variables_get(base_name) {
-            return v;
-        }
-        // c:Src/math.c:337 getmathparam — falls back to `getvalue(s)`
-        // which parses the full subscript syntax (params.c:2180).
-        // The Rust port previously required callers to seed
-        // `with_string_variables` (a pre-populate pattern that
-        // diverged from C). Read paramtab + array subscripts here
-        // so matheval works without seeding.
-        if let Some(bracket) = name.find('[') {
-            let close = name.rfind(']').unwrap_or(name.len());
-            let arr_name = &name[..bracket];
-            let idx_str = &name[bracket + 1..close];
-            // Recursively eval the index (so a[i+1], h[$k], etc work).
-            let idx_val = matheval(idx_str)
-                .map(|n| if n.type_ == crate::ported::zsh_h::MN_FLOAT { n.d as i64 } else { n.l })
-                .unwrap_or(0);
-            // Read paramtab directly: PM_ARRAY → u_arr indexed by 1-based pos.
-            if let Ok(tab) = crate::ported::params::paramtab().read() {
-                if let Some(pm) = tab.get(arr_name) {
-                    if let Some(arr) = &pm.u_arr {
-                        let len = arr.len() as i64;
-                        let pos = if idx_val < 0 { len + idx_val } else { idx_val - 1 };
-                        if pos >= 0 && (pos as usize) < arr.len() {
-                            let raw = &arr[pos as usize];
-                            if let Ok(n) = raw.parse::<i64>() {
-                                return mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
-                            }
-                            if let Ok(f) = raw.parse::<f64>() {
-                                return mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
-                            }
-                        }
-                    }
-                }
-            }
-            // PM_HASHED via paramtab_hashed_storage.
-            if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
-                if let Some(map) = m.get(arr_name) {
-                    if let Some(v) = map.get(idx_str) {
-                        if let Ok(n) = v.parse::<i64>() {
-                            return mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
-                        }
-                        if let Ok(f) = v.parse::<f64>() {
-                            return mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
-                        }
-                    }
-                }
-            }
-            return mnumber { l: 0, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
-        }
-        if let Some(raw) = crate::ported::params::getsparam(base_name) {
-            if let Ok(n) = raw.parse::<i64>() {
-                return mnumber { l: n, d: 0.0, type_: crate::ported::zsh_h::MN_INTEGER };
-            }
-            if let Ok(f) = raw.parse::<f64>() {
-                return mnumber { l: 0, d: f, type_: crate::ported::zsh_h::MN_FLOAT };
-            }
-            // Non-numeric string: fall through to recursive-eval below.
-        }
-        // Recursive eval: if the var holds a non-numeric string, evaluate
-        // it AS an arith expression. zsh: `a="3+2"; $((a))` → 5. Bound
-        // to one level of indirection — fresh evaluator each call so we
-        // don't accidentally pollute s.variables.
-        if let Some(raw) = m_string_variables_get(base_name) {
-            // Save parent's eval state — `new(&raw)` resets thread_locals
-            // for the sub-eval, which would otherwise clobber the parent.
-            // Mirrors C `mathevall()` xyy* save/restore pattern (math.c:367).
-            let saved = save_state();
-            // Inherit caller's variables/string_variables/prec into the
-            // sub-eval, with `base_name` removed from the indirect map to
-            // prevent infinite recursion on `a="$a"`-style cycles.
-            let inherited_vars = saved.variables.clone();
-            let mut inherited_strs = saved.string_variables.clone();
-            inherited_strs.remove(base_name);
-            let inherited_prec = saved.prec;
-            let inherited_c_prec = saved.c_precedences;
-
-            new(&raw);
-            m_variables_set(inherited_vars);
-            m_string_variables_set(inherited_strs);
-            m_prec_set(inherited_prec);
-            m_c_precedences_set(inherited_c_prec);
-
-            let result = mathevall();
-            restore_state(saved);
-            if let Ok(r) = result {
-                return r;
-            }
-        }
-        mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
-    }
-
 /// Port of `setmathvar(struct mathvalue *mvp, mnumber v)` from `Src/math.c:972`.
 ///
 /// Write `val` to the named parameter from inside math context.
@@ -1487,6 +1436,132 @@ pub(crate) fn setmathvar(name: &str, val: mnumber) -> mnumber {
     m_variables_insert(base_name.to_string(), val);
     val
 }
+
+    /// Call a math function
+/// Port of `callmathfunc(char *o)` from `Src/math.c:1037`.
+    /// WARNING: param names don't match C — Rust=() vs C=(o)
+    pub(crate) fn callmathfunc(call: &str) -> mnumber {
+        // Parse function name and args
+        let paren = call.find('(').unwrap_or(call.len());
+        let name = &call[..paren];
+        let args_str = if paren < call.len() {
+            &call[paren + 1..call.len() - 1]
+        } else {
+            ""
+        };
+
+        // Parse arguments. Keep both the float view (for trig) and the
+        // original mnumber so int-preserving functions (abs/min/max/
+        // int/floor/ceil/trunc) can return integer when all inputs
+        // were integer.
+        let arg_nums: Vec<mnumber> = if args_str.is_empty() {
+            vec![]
+        } else {
+            args_str
+                .split(',')
+                .filter_map(|arg| {
+                    // Save caller's eval state, sub-eval each arg in a
+                    // fresh state inheriting caller's variables, restore.
+                    // C `mathevall()` xyy* save/restore (math.c:367).
+                    let saved = save_state();
+                    let inherited_vars = saved.variables.clone();
+                    new(arg.trim());
+                    m_variables_set(inherited_vars);
+                    let result = mathevall().ok();
+                    restore_state(saved);
+                    result
+                })
+                .collect()
+        };
+        let args: Vec<f64> = arg_nums.iter().map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).collect();
+        let all_int =
+            !arg_nums.is_empty() && arg_nums.iter().all(|n| (n.type_ == MN_INTEGER));
+
+        // Functions that preserve int-ness: when all args are int,
+        // return mnumber::Integer instead of Float to avoid the
+        // trailing "." in the string output ("5." instead of "5").
+        //
+        // `int`/`floor`/`ceil`/`trunc` ALWAYS return Integer per zsh
+        // (mathfunc.c:bin_zmathfn) — `$(( int(2.7) ))` prints "2",
+        // not "2.". The truncation to int happens regardless of
+        // whether the input was already an integer. `abs`/`min`/`max`
+        // preserve the input type (int args → int result, float arg
+        // anywhere → float result) since their semantics don't
+        // inherently change the value's representation.
+        let always_int = matches!(name, "int" | "floor" | "ceil" | "trunc");
+        if always_int {
+            let i = match name {
+                "int" | "trunc" => arg_nums.first().map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).unwrap_or(0),
+                "floor" => args.first().map(|x| x.floor() as i64).unwrap_or(0),
+                "ceil" => args.first().map(|x| x.ceil() as i64).unwrap_or(0),
+                _ => 0,
+            };
+            return mnumber { l: i, d: 0.0, type_: MN_INTEGER };
+        }
+        let int_preserving = matches!(name, "abs" | "min" | "max");
+        if all_int && int_preserving {
+            let i = match name {
+                "abs" => arg_nums.first().map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }).abs()).unwrap_or(0),
+                "min" => arg_nums.iter().map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).min().unwrap_or(0),
+                "max" => arg_nums.iter().map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).max().unwrap_or(0),
+                _ => 0,
+            };
+            return mnumber { l: i, d: 0.0, type_: MN_INTEGER };
+        }
+
+        // Built-in math functions
+        let result = match name {
+            "abs" => args.first().map(|x| x.abs()).unwrap_or(0.0),
+            "acos" => args.first().map(|x| x.acos()).unwrap_or(0.0),
+            "asin" => args.first().map(|x| x.asin()).unwrap_or(0.0),
+            "atan" => args.first().map(|x| x.atan()).unwrap_or(0.0),
+            "atan2" => {
+                let y = args.first().copied().unwrap_or(0.0);
+                let x = args.get(1).copied().unwrap_or(1.0);
+                y.atan2(x)
+            }
+            "ceil" => args.first().map(|x| x.ceil()).unwrap_or(0.0),
+            "cos" => args.first().map(|x| x.cos()).unwrap_or(1.0),
+            "cosh" => args.first().map(|x| x.cosh()).unwrap_or(1.0),
+            "exp" => args.first().map(|x| x.exp()).unwrap_or(1.0),
+            "floor" => args.first().map(|x| x.floor()).unwrap_or(0.0),
+            "hypot" => {
+                let x = args.first().copied().unwrap_or(0.0);
+                let y = args.get(1).copied().unwrap_or(0.0);
+                x.hypot(y)
+            }
+            "int" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
+            "log" => args.first().map(|x| x.ln()).unwrap_or(0.0),
+            "log10" => args.first().map(|x| x.log10()).unwrap_or(0.0),
+            "log2" => args.first().map(|x| x.log2()).unwrap_or(0.0),
+            "max" => args.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+            "min" => args.iter().copied().fold(f64::INFINITY, f64::min),
+            "pow" => {
+                let base = args.first().copied().unwrap_or(0.0);
+                let exp = args.get(1).copied().unwrap_or(1.0);
+                base.powf(exp)
+            }
+            "rand" => rand::random::<f64>(),
+            "round" => args.first().map(|x| x.round()).unwrap_or(0.0),
+            "sin" => args.first().map(|x| x.sin()).unwrap_or(0.0),
+            "sinh" => args.first().map(|x| x.sinh()).unwrap_or(0.0),
+            "sqrt" => args.first().map(|x| x.sqrt()).unwrap_or(0.0),
+            "tan" => args.first().map(|x| x.tan()).unwrap_or(0.0),
+            "tanh" => args.first().map(|x| x.tanh()).unwrap_or(0.0),
+            "trunc" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
+            // `float(x)` — widen int/float to float. Identity on
+            // floats; on ints, returns same value tagged as float so
+            // `printf "%.4f"` prints "3.0000" instead of "3". Direct
+            // port of mathfunc.c's `to_float()`.
+            "float" => args.first().copied().unwrap_or(0.0),
+            _ => {
+                m_error_set(format!("unknown function: {}", name));
+                0.0
+            }
+        };
+
+        mnumber { l: 0, d: result, type_: MN_FLOAT }
+    }
 
 /// Port of `op(int what)` from `Src/math.c:1154`.
 ///
@@ -1867,12 +1942,28 @@ pub(crate) fn bop(tk: i32) {
         }
     }
 
-    // WARNING: NOT IN MATH.C — Rust-only helper. C inlines the
-    // expression `prec[Comma] + 1` directly in mathparse() and
-    // mathevall() everywhere it's needed (math.c:1594, 367).
-    pub(crate) fn top_prec() -> u8 {
-        m_prec()[Comma as usize] + 1
-    }
+/// Convenience function to evaluate a math expression
+/// Top-level math-expression evaluator.
+/// Port of `matheval(char *s)` from Src/math.c:1480 — wraps `mathevall()`\n/// (line 367) with the C source's standard error-message\n/// formatting.
+pub fn matheval(s: &str) -> Result<mnumber, String> {                     // c:1480
+    new(s);
+    mathevall()
+}
+
+/// Evaluate and return integer
+/// Math evaluator that coerces the result to integer.
+/// Port of `mathevali(char *s)` from Src/math.c:1505.
+pub fn mathevali(s: &str) -> Result<i64, String> {                        // c:1505
+    matheval(s).map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
+}
+
+/// Port of `mathevalarg(char *s, char **ss)` from Src/math.c:1514 — evaluate one
+/// arg expression and return as integer. Used by `let` builtin
+/// and others that take an arith-expr argument.
+/// WARNING: param names don't match C — Rust=() vs C=(s, ss)
+pub(crate) fn mathevalarg(expr: &str) -> i64 {
+    matheval(expr).map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).unwrap_or(0)
+}
 
 /// Port of `checkunary(int mtokc, char *mptr)` from `Src/math.c:1548`.
 ///
@@ -2105,186 +2196,195 @@ pub(crate) fn checkunary() {
         }
     }
 
-    /// Call a math function
-/// Port of `callmathfunc(char *o)` from `Src/math.c:1037`.
-    /// WARNING: param names don't match C — Rust=() vs C=(o)
-    pub(crate) fn callmathfunc(call: &str) -> mnumber {
-        // Parse function name and args
-        let paren = call.find('(').unwrap_or(call.len());
-        let name = &call[..paren];
-        let args_str = if paren < call.len() {
-            &call[paren + 1..call.len() - 1]
-        } else {
-            ""
-        };
+// WARNING: NOT IN MATH.C — Rust-only helper. See save_state above.
+fn restore_state(saved: xyy_locals) {
+    m_input_set(saved.input);
+    m_pos_set(saved.pos);
+    m_tok_start_set(saved.tok_start);
+    m_yyval_set(saved.yyval);
+    m_yylval_set(saved.yylval);
+    M_STACK.with(|c| *c.borrow_mut() = saved.stack);
+    m_mtok_set(saved.mtok);
+    m_unary_set(saved.unary);
+    m_noeval_set(saved.noeval);
+    M_ERROR.with(|c| *c.borrow_mut() = saved.error);
+    m_variables_set(saved.variables);
+    m_string_variables_set(saved.string_variables);
+    m_prec_set(saved.prec);
+    m_c_precedences_set(saved.c_precedences);
+    m_force_float_set(saved.force_float);
+    m_octal_zeroes_set(saved.octal_zeroes);
+    M_LASTBASE.with(|c| c.set(saved.lastbase));
+}
 
-        // Parse arguments. Keep both the float view (for trig) and the
-        // original mnumber so int-preserving functions (abs/min/max/
-        // int/floor/ceil/trunc) can return integer when all inputs
-        // were integer.
-        let arg_nums: Vec<mnumber> = if args_str.is_empty() {
-            vec![]
-        } else {
-            args_str
-                .split(',')
-                .filter_map(|arg| {
-                    // Save caller's eval state, sub-eval each arg in a
-                    // fresh state inheriting caller's variables, restore.
-                    // C `mathevall()` xyy* save/restore (math.c:367).
-                    let saved = save_state();
-                    let inherited_vars = saved.variables.clone();
-                    new(arg.trim());
-                    m_variables_set(inherited_vars);
-                    let result = mathevall().ok();
-                    restore_state(saved);
-                    result
-                })
-                .collect()
-        };
-        let args: Vec<f64> = arg_nums.iter().map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).collect();
-        let all_int =
-            !arg_nums.is_empty() && arg_nums.iter().all(|n| (n.type_ == MN_INTEGER));
+// MathState struct DELETED — state now lives in M_* thread_locals
+// (matching C math.c's module statics + mathevall's xyy* save/restore).
 
-        // Functions that preserve int-ness: when all args are int,
-        // return mnumber::Integer instead of Float to avoid the
-        // trailing "." in the string output ("5." instead of "5").
-        //
-        // `int`/`floor`/`ceil`/`trunc` ALWAYS return Integer per zsh
-        // (mathfunc.c:bin_zmathfn) — `$(( int(2.7) ))` prints "2",
-        // not "2.". The truncation to int happens regardless of
-        // whether the input was already an integer. `abs`/`min`/`max`
-        // preserve the input type (int args → int result, float arg
-        // anywhere → float result) since their semantics don't
-        // inherently change the value's representation.
-        let always_int = matches!(name, "int" | "floor" | "ceil" | "trunc");
-        if always_int {
-            let i = match name {
-                "int" | "trunc" => arg_nums.first().map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).unwrap_or(0),
-                "floor" => args.first().map(|x| x.floor() as i64).unwrap_or(0),
-                "ceil" => args.first().map(|x| x.ceil() as i64).unwrap_or(0),
-                _ => 0,
-            };
-            return mnumber { l: i, d: 0.0, type_: MN_INTEGER };
+// WARNING: NOT IN MATH.C — Rust-only initializer. C `mathevall()`
+// (math.c:367) takes the input as a parameter and seeds the module
+// statics inline at function entry; Rust port factors that seeding
+// out so call sites can chain `with_*` setters before invoking
+// `mathevall()`.
+/// Initialize thread_local math state from a fresh input string.
+/// Mirrors the entry-side state setup in C `mathevall()` (math.c:367).
+pub(crate) fn new(input: &str) {
+    m_input_set(input.to_string());
+    m_pos_set(0);
+    m_tok_start_set(0);
+    m_yyval_set(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
+    m_yylval_set(String::new());
+    M_STACK.with(|c| { c.borrow_mut().clear(); });
+    m_mtok_set(EOI);
+    m_unary_set(true);
+    m_noeval_set(0);
+    m_lastbase_set(-1);
+    m_prec_set(&Z_PREC);
+    m_c_precedences_set(false);
+    m_force_float_set(false);
+    m_octal_zeroes_set(false);
+    m_variables_set(HashMap::new());
+    m_string_variables_set(HashMap::new());
+    m_lastval_set(0);
+    m_pid_set(std::process::id() as i64);
+    m_error_clear();
+}
+
+// WARNING: NOT IN MATH.C — Rust-only setter. zsh C reads parameters
+// directly from the global param table on demand; the Rust port
+// caller seeds an in-memory map up front via this fn.
+pub(crate) fn with_variables(vars: HashMap<String, mnumber>) {
+    m_variables_set(vars);
+}
+
+// WARNING: NOT IN MATH.C — Rust-only setter. Parses each value as
+// numeric → `mnumber` if possible, otherwise stores the raw string
+// for `getmathparam`'s recursive-eval path (e.g. `a="3+2"; $((a))`).
+/// Inject variables from string->string mapping (for shell integration)
+pub(crate) fn with_string_variables(vars: &HashMap<String, String>) {
+    for (k, v) in vars {
+        if let Ok(i) = v.parse::<i64>() {
+            m_variables_insert(k.clone(), mnumber { l: i, d: 0.0, type_: MN_INTEGER });
+        } else if let Ok(f) = v.parse::<f64>() {
+            m_variables_insert(k.clone(), mnumber { l: 0, d: f, type_: MN_FLOAT });
+        } else if !v.is_empty() {
+            // Non-numeric string — keep raw so getmathparam can
+            // recursively evaluate it as an arith expression.
+            // zsh: `a="3+2"; $((a))` returns 5.
+            m_string_variables_insert(k.clone(), v.clone());
         }
-        let int_preserving = matches!(name, "abs" | "min" | "max");
-        if all_int && int_preserving {
-            let i = match name {
-                "abs" => arg_nums.first().map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }).abs()).unwrap_or(0),
-                "min" => arg_nums.iter().map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).min().unwrap_or(0),
-                "max" => arg_nums.iter().map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).max().unwrap_or(0),
-                _ => 0,
-            };
-            return mnumber { l: i, d: 0.0, type_: MN_INTEGER };
-        }
+    }
+}
 
-        // Built-in math functions
-        let result = match name {
-            "abs" => args.first().map(|x| x.abs()).unwrap_or(0.0),
-            "acos" => args.first().map(|x| x.acos()).unwrap_or(0.0),
-            "asin" => args.first().map(|x| x.asin()).unwrap_or(0.0),
-            "atan" => args.first().map(|x| x.atan()).unwrap_or(0.0),
-            "atan2" => {
-                let y = args.first().copied().unwrap_or(0.0);
-                let x = args.get(1).copied().unwrap_or(1.0);
-                y.atan2(x)
-            }
-            "ceil" => args.first().map(|x| x.ceil()).unwrap_or(0.0),
-            "cos" => args.first().map(|x| x.cos()).unwrap_or(1.0),
-            "cosh" => args.first().map(|x| x.cosh()).unwrap_or(1.0),
-            "exp" => args.first().map(|x| x.exp()).unwrap_or(1.0),
-            "floor" => args.first().map(|x| x.floor()).unwrap_or(0.0),
-            "hypot" => {
-                let x = args.first().copied().unwrap_or(0.0);
-                let y = args.get(1).copied().unwrap_or(0.0);
-                x.hypot(y)
-            }
-            "int" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
-            "log" => args.first().map(|x| x.ln()).unwrap_or(0.0),
-            "log10" => args.first().map(|x| x.log10()).unwrap_or(0.0),
-            "log2" => args.first().map(|x| x.log2()).unwrap_or(0.0),
-            "max" => args.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-            "min" => args.iter().copied().fold(f64::INFINITY, f64::min),
-            "pow" => {
-                let base = args.first().copied().unwrap_or(0.0);
-                let exp = args.get(1).copied().unwrap_or(1.0);
-                base.powf(exp)
-            }
-            "rand" => rand::random::<f64>(),
-            "round" => args.first().map(|x| x.round()).unwrap_or(0.0),
-            "sin" => args.first().map(|x| x.sin()).unwrap_or(0.0),
-            "sinh" => args.first().map(|x| x.sinh()).unwrap_or(0.0),
-            "sqrt" => args.first().map(|x| x.sqrt()).unwrap_or(0.0),
-            "tan" => args.first().map(|x| x.tan()).unwrap_or(0.0),
-            "tanh" => args.first().map(|x| x.tanh()).unwrap_or(0.0),
-            "trunc" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
-            // `float(x)` — widen int/float to float. Identity on
-            // floats; on ints, returns same value tagged as float so
-            // `printf "%.4f"` prints "3.0000" instead of "3". Direct
-            // port of mathfunc.c's `to_float()`.
-            "float" => args.first().copied().unwrap_or(0.0),
-            _ => {
-                m_error_set(format!("unknown function: {}", name));
-                0.0
-            }
-        };
+// WARNING: NOT IN MATH.C — Rust-only accessor. zsh C writes back
+// to the global param table during evaluation; ShellExecutor
+// integration uses this to harvest the post-eval variables map and
+// merge it into its own `variables` table.
+/// Extract modified variables as string->string mapping (for shell integration)
+pub(crate) fn extract_string_variables() -> HashMap<String, String> {
+    M_VARIABLES.with(|c| {
+        c.borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), match v.type_ {
+                MN_INTEGER => v.l.to_string(),
+                MN_FLOAT => {
+                    let f = v.d;
+                    if isnan(f) { "NaN".to_string() }
+                    else if isinf(f) { if f > 0.0 { "Inf".to_string() } else { "-Inf".to_string() } }
+                    else { format!("{:.10}", f) }
+                }
+                _ => "0".to_string(),
+            }))
+            .collect()
+    })
+}
 
-        mnumber { l: 0, d: result, type_: MN_FLOAT }
+// WARNING: NOT IN MATH.C — Rust-only setopt mirror. zsh C reads
+// the option flag directly from `isset(CPRECEDENCES)` inside
+// `mathevall()`; this setter caches the bit so the evaluator
+// avoids re-reading the option tree on every token.
+pub(crate) fn with_c_precedences(enable: bool) {
+    m_c_precedences_set(enable);
+    m_prec_set(if enable { &C_PREC } else { &Z_PREC });
+}
+
+// WARNING: NOT IN MATH.C — Rust-only setopt mirror for FORCE_FLOAT.
+pub(crate) fn with_force_float(enable: bool) {
+    m_force_float_set(enable);
+}
+
+// WARNING: NOT IN MATH.C — Rust-only setopt mirror for OCTAL_ZEROES.
+pub(crate) fn with_octal_zeroes(enable: bool) {
+    m_octal_zeroes_set(enable);
+}
+
+// WARNING: NOT IN MATH.C — Rust-only setter for `$?` (last command
+// status) so the `?`-token in unary position can read it. zsh C
+// reads `lastval` directly as a global.
+pub(crate) fn with_lastval(val: i32) {
+    m_lastval_set(val);
+}
+
+    // WARNING: NOT IN MATH.C — Rust-only cursor read. C uses `*ptr`
+    // directly without an fn-shaped wrapper.
+    pub(crate) fn peek() -> Option<char> {
+        m_input_clone()[m_pos()..].chars().next()
     }
 
-    /// Evaluate the expression
-/// Port of `mathevall(char *s, enum prec_type prec_tp, char **ep)` from `Src/math.c:367`.
-    /// WARNING: param names don't match C — Rust=() vs C=(s, prec_tp, ep)
-    pub(crate) fn mathevall() -> Result<mnumber, String> {
-        m_prec_set(if m_c_precedences() { &C_PREC } else { &Z_PREC });
+    // WARNING: NOT IN MATH.C — Rust-only cursor advance. C uses
+    // `*ptr++` directly.
+    pub(crate) fn advance() -> Option<char> {
+        let c = peek()?;
+        m_pos_add(c.len_utf8());
+        Some(c)
+    }
 
-        // Skip leading whitespace and Nularg
-        while let Some(c) = peek() {
-            if c.is_whitespace() || c == '\u{a1}' {
-                advance();
-            } else {
-                break;
-            }
-        }
+    // WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
+    // ctype.h `idigit()` macro directly.
+    fn is_digit(c: char) -> bool {
+        c.is_ascii_digit()
+    }
 
-        if m_pos() >= m_input_len() {
-            return Ok(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
-        }
+    // WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
+    // `iident()` / `isalpha()` macros directly.
+    fn is_ident_start(c: char) -> bool {
+        c.is_ascii_alphabetic() || c == '_'
+    }
 
-        mathparse(top_prec());
+    // WARNING: NOT IN MATH.C — Rust-only char classifier. C uses
+    // `iident()` macro directly.
+    fn is_ident(c: char) -> bool {
+        c.is_ascii_alphanumeric() || c == '_'
+    }
 
-        if let Some(err) = m_error_take() {
-            return Err(err);
-        }
+    // WARNING: NOT IN MATH.C — Rust-only stack helper. C inlines
+    // this inside `pop()` (math.c:931) — its `noget` flag controls
+    // whether to resolve the deferred Unset+lval read; zshrs splits
+    // the two paths into separate fns so the resolved-vs-raw choice
+    // is at the call site.
+    pub(crate) fn pop_with_lval() -> mathvalue {
+        m_stack_pop().unwrap_or_default()
+    }
 
-        // Check for trailing characters
-        while let Some(c) = peek() {
-            if c.is_whitespace() {
-                advance();
-            } else if c == ')' {
-                // zsh's specific wording for the unmatched-close
-                // case: `bad math expression: unexpected ')'`.
-                return Err("bad math expression: unexpected ')'".to_string());
-            } else {
-                return Err(format!("illegal character: {}", c));
-            }
-        }
 
-        if m_stack_is_empty() {
-            return Ok(mnumber { l: 0, d: 0.0, type_: MN_INTEGER });
-        }
 
-        let mv = m_stack_pop().unwrap();
-        let result = if (mv.val.type_ == MN_UNSET) {
+    // WARNING: NOT IN MATH.C — Rust-only value-resolver. C inlines
+    // the deferred-variable-read pattern inside `pop()` and `op()`
+    // (math.c:931, 1154); the Rust port factors it out for `bop`
+    // and `mathparse` to inspect-without-consuming.
+    pub(crate) fn get_value(mv: &mathvalue) -> mnumber {
+        if (mv.val.type_ == MN_UNSET) {
             if let Some(ref name) = mv.lval {
-                getmathparam(name)
-            } else {
-                mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
+                return getmathparam(name);
             }
-        } else {
-            mv.val
-        };
+        }
+        mv.val
+    }
 
-        Ok(result)
+    // WARNING: NOT IN MATH.C — Rust-only helper. C inlines the
+    // expression `prec[Comma] + 1` directly in mathparse() and
+    // mathevall() everywhere it's needed (math.c:1594, 367).
+    pub(crate) fn top_prec() -> u8 {
+        m_prec()[Comma as usize] + 1
     }
 
 // WARNING: NOT IN MATH.C — Rust-only accessor (note plural — singular
@@ -2294,187 +2394,6 @@ pub(crate) fn checkunary() {
 /// Get updated variables after evaluation
 pub(crate) fn getmathparams() -> HashMap<String, mnumber> {
     m_variables_clone()
-}
-
-/// Convenience function to evaluate a math expression
-/// Top-level math-expression evaluator.
-/// Port of `matheval(char *s)` from Src/math.c:1480 — wraps `mathevall()`\n/// (line 367) with the C source's standard error-message\n/// formatting.
-pub fn matheval(s: &str) -> Result<mnumber, String> {                     // c:1480
-    new(s);
-    mathevall()
-}
-
-/// Evaluate and return integer
-/// Math evaluator that coerces the result to integer.
-/// Port of `mathevali(char *s)` from Src/math.c:1505.
-pub fn mathevali(s: &str) -> Result<i64, String> {                        // c:1505
-    matheval(s).map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_basic_arithmetic() {
-        assert_eq!(mathevali("1 + 2").unwrap(), 3);
-        assert_eq!(mathevali("10 - 3").unwrap(), 7);
-        assert_eq!(mathevali("4 * 5").unwrap(), 20);
-        assert_eq!(mathevali("20 / 4").unwrap(), 5);
-        assert_eq!(mathevali("17 % 5").unwrap(), 2);
-    }
-
-    #[test]
-    fn test_precedence() {
-        assert_eq!(mathevali("2 + 3 * 4").unwrap(), 14);
-        assert_eq!(mathevali("(2 + 3) * 4").unwrap(), 20);
-        assert_eq!(mathevali("2 ** 3 ** 2").unwrap(), 512); // Right associative
-    }
-
-    #[test]
-    fn test_comparison() {
-        assert_eq!(mathevali("5 > 3").unwrap(), 1);
-        assert_eq!(mathevali("5 < 3").unwrap(), 0);
-        assert_eq!(mathevali("5 == 5").unwrap(), 1);
-        assert_eq!(mathevali("5 != 3").unwrap(), 1);
-        assert_eq!(mathevali("5 >= 5").unwrap(), 1);
-        assert_eq!(mathevali("5 <= 5").unwrap(), 1);
-    }
-
-    #[test]
-    fn test_logical() {
-        assert_eq!(mathevali("1 && 1").unwrap(), 1);
-        assert_eq!(mathevali("1 && 0").unwrap(), 0);
-        assert_eq!(mathevali("1 || 0").unwrap(), 1);
-        assert_eq!(mathevali("0 || 0").unwrap(), 0);
-        assert_eq!(mathevali("!0").unwrap(), 1);
-        assert_eq!(mathevali("!1").unwrap(), 0);
-    }
-
-    #[test]
-    fn test_bitwise() {
-        assert_eq!(mathevali("5 & 3").unwrap(), 1);
-        assert_eq!(mathevali("5 | 3").unwrap(), 7);
-        assert_eq!(mathevali("5 ^ 3").unwrap(), 6);
-        assert_eq!(mathevali("~0").unwrap(), -1);
-        assert_eq!(mathevali("1 << 4").unwrap(), 16);
-        assert_eq!(mathevali("16 >> 2").unwrap(), 4);
-    }
-
-    #[test]
-    fn test_ternary() {
-        assert_eq!(mathevali("1 ? 10 : 20").unwrap(), 10);
-        assert_eq!(mathevali("0 ? 10 : 20").unwrap(), 20);
-        assert_eq!(mathevali("(5 > 3) ? 100 : 200").unwrap(), 100);
-    }
-
-    #[test]
-    fn test_power() {
-        assert_eq!(mathevali("2 ** 10").unwrap(), 1024);
-        assert_eq!(mathevali("3 ** 3").unwrap(), 27);
-        assert!((matheval("2.0 ** 0.5").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - std::f64::consts::SQRT_2).abs() < 0.0001);
-    }
-
-    #[test]
-    fn test_float() {
-        assert!((matheval("3.14 + 0.01").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 3.15).abs() < 0.0001);
-        assert!((matheval("1.5 * 2.0").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 3.0).abs() < 0.0001);
-    }
-
-    #[test]
-    fn test_unary() {
-        assert_eq!(mathevali("-5").unwrap(), -5);
-        assert_eq!(mathevali("- -5").unwrap(), 5); // space needed to avoid --
-        assert_eq!(mathevali("+5").unwrap(), 5);
-        assert_eq!(mathevali("-(-5)").unwrap(), 5);
-    }
-
-    #[test]
-    fn test_base() {
-        assert_eq!(mathevali("0xFF").unwrap(), 255);
-        assert_eq!(mathevali("0b1010").unwrap(), 10);
-        assert_eq!(mathevali("16#FF").unwrap(), 255);
-        assert_eq!(mathevali("2#1010").unwrap(), 10);
-        assert_eq!(mathevali("[16]FF").unwrap(), 255);
-    }
-
-    #[test]
-    fn test_variables() {
-        let mut vars = HashMap::new();
-        vars.insert("x".to_string(), mnumber { l: 10, d: 0.0, type_: MN_INTEGER });
-        vars.insert("y".to_string(), mnumber { l: 20, d: 0.0, type_: MN_INTEGER });
-
-        new("x + y");
-        with_variables(vars);
-        assert_eq!(({ let __m = mathevall().unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 30);
-    }
-
-    #[test]
-    fn test_assignment() {
-        new("x = 5");
-        mathevall().unwrap();
-        assert_eq!(({ let __m = m_variables_get("x").unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 5);
-
-        new("x = 5, x += 3");
-        let result = mathevall().unwrap();
-        assert_eq!((if result.type_ == MN_FLOAT { result.d as i64 } else { result.l }), 8);
-    }
-
-    #[test]
-    fn test_increment() {
-        let mut vars = HashMap::new();
-        vars.insert("x".to_string(), mnumber { l: 5, d: 0.0, type_: MN_INTEGER });
-
-        new("++x");
-        with_variables(vars.clone());
-        assert_eq!(({ let __m = mathevall().unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 6);
-        assert_eq!(({ let __m = m_variables_get("x").unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 6);
-
-        new("x++");
-        with_variables(vars.clone());
-        assert_eq!(({ let __m = mathevall().unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 5);
-        assert_eq!(({ let __m = m_variables_get("x").unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 6);
-    }
-
-    #[test]
-    fn test_functions() {
-        assert!((matheval("sqrt(4)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 2.0).abs() < 0.0001);
-        assert!((matheval("sin(0)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap()).abs() < 0.0001);
-        assert!((matheval("cos(0)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 1.0).abs() < 0.0001);
-        assert!((matheval("abs(-5)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 5.0).abs() < 0.0001);
-        assert!((matheval("floor(3.7)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 3.0).abs() < 0.0001);
-        assert!((matheval("ceil(3.2)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 4.0).abs() < 0.0001);
-    }
-
-    #[test]
-    fn test_special_values() {
-        assert!(matheval("Inf").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap().is_infinite());
-        assert!(matheval("NaN").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap().is_nan());
-    }
-
-    #[test]
-    fn test_errors() {
-        assert!(matheval("1 / 0").is_err());
-        assert!(matheval("1 +").is_err());
-        // Empty arith expression is a parse error in zsh:
-        //   $ zsh -c '(( ))'; echo $?   →   1
-        // The previous comment claimed "Empty parens are valid" — that
-        // was wrong. Real zsh aborts with `bad math expression: empty
-        // parentheses`; our matheval matches.
-        assert!(matheval("()").is_err());
-    }
-
-    #[test]
-    fn test_underscore_in_numbers() {
-        assert_eq!(mathevali("1_000_000").unwrap(), 1000000);
-        assert_eq!(mathevali("0xFF_FF").unwrap(), 65535);
-    }
-
-    #[test]
-    fn test_comma_operator() {
-        assert_eq!(mathevali("1, 2, 3").unwrap(), 3);
-        assert_eq!(mathevali("(x = 1, y = 2, x + y)").unwrap(), 3);
-    }
 }
 
 // ===========================================================
@@ -2743,85 +2662,168 @@ pub fn convbase(n: i64, base: u32) -> String {                               // 
     }
 }
 
-// ===========================================================
-// Remaining stubs from Src/math.c that don't yet have a faithful
-// implementation in the migrated free-fn evaluator. The
-// in-place implementations (mathevall, getmathparam, lexconstant,
-// setmathvar, callmathfunc, checkunary) replaced their stubs;
-// the names below correspond to C helpers the evaluator uses
-// internally below — bodies wire to existing Rust idioms while
-// preserving the C name + citation.
-// ===========================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Port of `isinf(double x)` from Src/math.c:588 — IEEE +/-Infinity test.
-/// Wraps Rust's `f64::is_infinite`.
-/// WARNING: param names don't match C — Rust=() vs C=(x)
-pub(crate) fn isinf(x: f64) -> bool { x.is_infinite() }
-
-/// Port of `isnan(double x)` from Src/math.c:608 — IEEE NaN test. C
-/// implements it as `store(&x) != store(&x)` to defeat compiler
-/// folding of the canonical `x != x` NaN test; we route through
-/// `store` for parity, but Rust's `f64::is_nan` is the
-/// correctness path.
-/// WARNING: param names don't match C — Rust=() vs C=(x)
-pub(crate) fn isnan(x: f64) -> bool { store(x) != store(x) || x.is_nan() }
-
-/// Port of `notzero(mnumber a)` from Src/math.c:1142 — error-on-zero check
-/// used by `/` and `%` operators. Returns true when `a` is non-
-/// zero (caller continues), false when zero (caller raises
-/// "division by zero"). Float zero is treated as non-zero per
-/// IEEE 754 (1/0.0 → Inf, not an error) — only integer zero
-/// trips the check, matching math.c's `if (!a.u.l) zerr(…)`.
-/// WARNING: param names don't match C — Rust=() vs C=(a)
-pub(crate) fn notzero(a: mnumber) -> bool {
-    if (a.type_ == MN_UNSET) {
-        return false;
+    #[test]
+    fn test_basic_arithmetic() {
+        assert_eq!(mathevali("1 + 2").unwrap(), 3);
+        assert_eq!(mathevali("10 - 3").unwrap(), 7);
+        assert_eq!(mathevali("4 * 5").unwrap(), 20);
+        assert_eq!(mathevali("20 / 4").unwrap(), 5);
+        assert_eq!(mathevali("17 % 5").unwrap(), 2);
     }
-    if (a.type_ == MN_INTEGER) {
-        return a.l != 0;
-    }
-    true
-}
 
-/// Port of `store(double *x)` from Src/math.c:601 — load/store a double
-/// via a pointer to defeat compilers that mis-optimize the
-/// canonical `x != x` NaN test. zsh only compiles this path when
-/// `HAVE_ISNAN` is undefined; we keep it as a name-parity shim
-/// so `isnan()` can route through it (matching the C source's
-/// `store(&x) != store(&x)` idiom).
-/// WARNING: param names don't match C — Rust=() vs C=(x)
-pub(crate) fn store(x: f64) -> f64 { x }
-
-/// Port of `getcvar(char *s)` from Src/math.c:943 — character-constant
-/// lookup. Reads the named shell variable and returns the
-/// codepoint of its first character. Used for `#varname` token
-/// (CId): `x="hello"; (( y = #x ))` puts 104 (`'h'`) into y.
-/// On miss or empty value, returns 0 (matches zsh's `*s ? *s : 0`).
-/// WARNING: param names don't match C — Rust=() vs C=(s)
-pub(crate) fn getcvar(name: &str) -> mnumber {
-    if let Some(raw) = m_string_variables_get(name) {
-        return mnumber { l: raw.chars().next().map(|c| c as i64).unwrap_or(0), d: 0.0, type_: MN_INTEGER };
+    #[test]
+    fn test_precedence() {
+        assert_eq!(mathevali("2 + 3 * 4").unwrap(), 14);
+        assert_eq!(mathevali("(2 + 3) * 4").unwrap(), 20);
+        assert_eq!(mathevali("2 ** 3 ** 2").unwrap(), 512); // Right associative
     }
-    if let Some(v) = m_variables_get(name) {
-        let s = match v.type_ {
-            MN_INTEGER => v.l.to_string(),
-            MN_FLOAT => {
-                let f = v.d;
-                if isnan(f) { "NaN".to_string() }
-                else if isinf(f) { if f > 0.0 { "Inf".to_string() } else { "-Inf".to_string() } }
-                else { format!("{:.10}", f) }
-            }
-            _ => "0".to_string(),
-        };
-        return mnumber { l: s.chars().next().map(|c| c as i64).unwrap_or(0), d: 0.0, type_: MN_INTEGER };
-    }
-    mnumber { l: 0, d: 0.0, type_: MN_INTEGER }
-}
 
-/// Port of `mathevalarg(char *s, char **ss)` from Src/math.c:1514 — evaluate one
-/// arg expression and return as integer. Used by `let` builtin
-/// and others that take an arith-expr argument.
-/// WARNING: param names don't match C — Rust=() vs C=(s, ss)
-pub(crate) fn mathevalarg(expr: &str) -> i64 {
-    matheval(expr).map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })).unwrap_or(0)
+    #[test]
+    fn test_comparison() {
+        assert_eq!(mathevali("5 > 3").unwrap(), 1);
+        assert_eq!(mathevali("5 < 3").unwrap(), 0);
+        assert_eq!(mathevali("5 == 5").unwrap(), 1);
+        assert_eq!(mathevali("5 != 3").unwrap(), 1);
+        assert_eq!(mathevali("5 >= 5").unwrap(), 1);
+        assert_eq!(mathevali("5 <= 5").unwrap(), 1);
+    }
+
+    #[test]
+    fn test_logical() {
+        assert_eq!(mathevali("1 && 1").unwrap(), 1);
+        assert_eq!(mathevali("1 && 0").unwrap(), 0);
+        assert_eq!(mathevali("1 || 0").unwrap(), 1);
+        assert_eq!(mathevali("0 || 0").unwrap(), 0);
+        assert_eq!(mathevali("!0").unwrap(), 1);
+        assert_eq!(mathevali("!1").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_bitwise() {
+        assert_eq!(mathevali("5 & 3").unwrap(), 1);
+        assert_eq!(mathevali("5 | 3").unwrap(), 7);
+        assert_eq!(mathevali("5 ^ 3").unwrap(), 6);
+        assert_eq!(mathevali("~0").unwrap(), -1);
+        assert_eq!(mathevali("1 << 4").unwrap(), 16);
+        assert_eq!(mathevali("16 >> 2").unwrap(), 4);
+    }
+
+    #[test]
+    fn test_ternary() {
+        assert_eq!(mathevali("1 ? 10 : 20").unwrap(), 10);
+        assert_eq!(mathevali("0 ? 10 : 20").unwrap(), 20);
+        assert_eq!(mathevali("(5 > 3) ? 100 : 200").unwrap(), 100);
+    }
+
+    #[test]
+    fn test_power() {
+        assert_eq!(mathevali("2 ** 10").unwrap(), 1024);
+        assert_eq!(mathevali("3 ** 3").unwrap(), 27);
+        assert!((matheval("2.0 ** 0.5").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - std::f64::consts::SQRT_2).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_float() {
+        assert!((matheval("3.14 + 0.01").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 3.15).abs() < 0.0001);
+        assert!((matheval("1.5 * 2.0").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 3.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_unary() {
+        assert_eq!(mathevali("-5").unwrap(), -5);
+        assert_eq!(mathevali("- -5").unwrap(), 5); // space needed to avoid --
+        assert_eq!(mathevali("+5").unwrap(), 5);
+        assert_eq!(mathevali("-(-5)").unwrap(), 5);
+    }
+
+    #[test]
+    fn test_base() {
+        assert_eq!(mathevali("0xFF").unwrap(), 255);
+        assert_eq!(mathevali("0b1010").unwrap(), 10);
+        assert_eq!(mathevali("16#FF").unwrap(), 255);
+        assert_eq!(mathevali("2#1010").unwrap(), 10);
+        assert_eq!(mathevali("[16]FF").unwrap(), 255);
+    }
+
+    #[test]
+    fn test_variables() {
+        let mut vars = HashMap::new();
+        vars.insert("x".to_string(), mnumber { l: 10, d: 0.0, type_: MN_INTEGER });
+        vars.insert("y".to_string(), mnumber { l: 20, d: 0.0, type_: MN_INTEGER });
+
+        new("x + y");
+        with_variables(vars);
+        assert_eq!(({ let __m = mathevall().unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 30);
+    }
+
+    #[test]
+    fn test_assignment() {
+        new("x = 5");
+        mathevall().unwrap();
+        assert_eq!(({ let __m = m_variables_get("x").unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 5);
+
+        new("x = 5, x += 3");
+        let result = mathevall().unwrap();
+        assert_eq!((if result.type_ == MN_FLOAT { result.d as i64 } else { result.l }), 8);
+    }
+
+    #[test]
+    fn test_increment() {
+        let mut vars = HashMap::new();
+        vars.insert("x".to_string(), mnumber { l: 5, d: 0.0, type_: MN_INTEGER });
+
+        new("++x");
+        with_variables(vars.clone());
+        assert_eq!(({ let __m = mathevall().unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 6);
+        assert_eq!(({ let __m = m_variables_get("x").unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 6);
+
+        new("x++");
+        with_variables(vars.clone());
+        assert_eq!(({ let __m = mathevall().unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 5);
+        assert_eq!(({ let __m = m_variables_get("x").unwrap(); if __m.type_ == MN_FLOAT { __m.d as i64 } else { __m.l } }), 6);
+    }
+
+    #[test]
+    fn test_functions() {
+        assert!((matheval("sqrt(4)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 2.0).abs() < 0.0001);
+        assert!((matheval("sin(0)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap()).abs() < 0.0001);
+        assert!((matheval("cos(0)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 1.0).abs() < 0.0001);
+        assert!((matheval("abs(-5)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 5.0).abs() < 0.0001);
+        assert!((matheval("floor(3.7)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 3.0).abs() < 0.0001);
+        assert!((matheval("ceil(3.2)").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap() - 4.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_special_values() {
+        assert!(matheval("Inf").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap().is_infinite());
+        assert!(matheval("NaN").map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 })).unwrap().is_nan());
+    }
+
+    #[test]
+    fn test_errors() {
+        assert!(matheval("1 / 0").is_err());
+        assert!(matheval("1 +").is_err());
+        // Empty arith expression is a parse error in zsh:
+        //   $ zsh -c '(( ))'; echo $?   →   1
+        // The previous comment claimed "Empty parens are valid" — that
+        // was wrong. Real zsh aborts with `bad math expression: empty
+        // parentheses`; our matheval matches.
+        assert!(matheval("()").is_err());
+    }
+
+    #[test]
+    fn test_underscore_in_numbers() {
+        assert_eq!(mathevali("1_000_000").unwrap(), 1000000);
+        assert_eq!(mathevali("0xFF_FF").unwrap(), 65535);
+    }
+
+    #[test]
+    fn test_comma_operator() {
+        assert_eq!(mathevali("1, 2, 3").unwrap(), 3);
+        assert_eq!(mathevali("(x = 1, y = 2, x + y)").unwrap(), 3);
+    }
 }

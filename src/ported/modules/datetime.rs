@@ -20,51 +20,6 @@ use crate::ported::utils::zwarnnam;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
 
-/// Port of `getcurrentsecs(UNUSED(Param pm))` from `Src/Modules/datetime.c:206`.
-/// Returns the current epoch seconds — backs `$EPOCHSECONDS`.
-/// C body: `return (zlong) time(NULL);`
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn getcurrentsecs() -> i64 {                                         // c:206
-    // c:206 — `return (zlong) time(NULL);`
-    unsafe { libc::time(std::ptr::null_mut()) as i64 }
-}
-
-/// Port of `getcurrentrealtime(UNUSED(Param pm))` from `Src/Modules/datetime.c:212`.
-/// Returns the current high-resolution epoch time as f64 — backs
-/// `$EPOCHREALTIME`.
-///
-/// C body:
-/// ```c
-/// struct timespec now;
-/// zgettime(&now);
-/// return (double)now.tv_sec + (double)now.tv_nsec * 1e-9;
-/// ```
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn getcurrentrealtime() -> f64 {                                     // c:212
-    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() };          // c:212
-    crate::ported::compat::zgettime(&mut now);                            // c:215
-    (now.tv_sec as f64) + (now.tv_nsec as f64) * 1e-9                    // c:216
-}
-
-/// Port of `getcurrenttime(UNUSED(Param pm))` from `Src/Modules/datetime.c:220`.
-/// Returns the current epoch as `(secs, nanos)` — backs the
-/// `$epochtime` two-element array param.
-///
-/// C body:
-/// ```c
-/// struct timespec now;
-/// zgettime(&now);
-/// arr[0] = sprintf "%ld" now.tv_sec
-/// arr[1] = sprintf "%ld" now.tv_nsec
-/// return arr;
-/// ```
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn getcurrenttime() -> (i64, i64) {                                  // c:220
-    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() };          // c:220
-    crate::ported::compat::zgettime(&mut now);                            // c:226
-    (now.tv_sec as i64, now.tv_nsec as i64)                              // c:228-231 sprintf %ld
-}
-
 /// Port of `reverse_strftime(char *nam, char **argv, char *scalar, int quiet)` from `Src/Modules/datetime.c:42`.
 /// Parses a time string per the format string and assigns the
 /// resulting epoch seconds to `scalar` (or stdout if NULL).
@@ -254,24 +209,50 @@ pub fn bin_strftime(nam: &str, argv: &[&str],                                // 
     result                                                                // c:202
 }
 
-/// WARNING: NOT IN DATETIME.C — Rust char predicate equivalent to C `iident()`
-/// (equivalent C logic at Src/Modules/zsh.h:1700).
-/// Identifier validity check matching zsh's `isident()` (Src/utils.c).
-fn is_ident(s: &str) -> bool {
-    if s.is_empty() { return false; }
-    let mut chars = s.chars();
-    let first = chars.next().unwrap();
-    if first.is_ascii_digit() { return false; }
-    if !(first.is_alphanumeric() || first == '_') { return false; }
-    chars.all(|c| c.is_alphanumeric() || c == '_')
+/// Port of `getcurrentsecs(UNUSED(Param pm))` from `Src/Modules/datetime.c:206`.
+/// Returns the current epoch seconds — backs `$EPOCHSECONDS`.
+/// C body: `return (zlong) time(NULL);`
+/// WARNING: param names don't match C — Rust=() vs C=(pm)
+pub fn getcurrentsecs() -> i64 {                                         // c:206
+    // c:206 — `return (zlong) time(NULL);`
+    unsafe { libc::time(std::ptr::null_mut()) as i64 }
 }
 
-// =====================================================================
-// static struct builtin bintab[]                                    c:255
-// static struct features module_features                            c:262
-// =====================================================================
+/// Port of `getcurrentrealtime(UNUSED(Param pm))` from `Src/Modules/datetime.c:212`.
+/// Returns the current high-resolution epoch time as f64 — backs
+/// `$EPOCHREALTIME`.
+///
+/// C body:
+/// ```c
+/// struct timespec now;
+/// zgettime(&now);
+/// return (double)now.tv_sec + (double)now.tv_nsec * 1e-9;
+/// ```
+/// WARNING: param names don't match C — Rust=() vs C=(pm)
+pub fn getcurrentrealtime() -> f64 {                                     // c:212
+    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() };          // c:212
+    crate::ported::compat::zgettime(&mut now);                            // c:215
+    (now.tv_sec as f64) + (now.tv_nsec as f64) * 1e-9                    // c:216
+}
 
-use crate::ported::zsh_h::module;
+/// Port of `getcurrenttime(UNUSED(Param pm))` from `Src/Modules/datetime.c:220`.
+/// Returns the current epoch as `(secs, nanos)` — backs the
+/// `$epochtime` two-element array param.
+///
+/// C body:
+/// ```c
+/// struct timespec now;
+/// zgettime(&now);
+/// arr[0] = sprintf "%ld" now.tv_sec
+/// arr[1] = sprintf "%ld" now.tv_nsec
+/// return arr;
+/// ```
+/// WARNING: param names don't match C — Rust=() vs C=(pm)
+pub fn getcurrenttime() -> (i64, i64) {                                  // c:220
+    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() };          // c:220
+    crate::ported::compat::zgettime(&mut now);                            // c:226
+    (now.tv_sec as i64, now.tv_nsec as i64)                              // c:228-231 sprintf %ld
+}
 
 // `bintab` — port of `static struct builtin bintab[]` (datetime.c:255).
 
@@ -290,6 +271,13 @@ pub fn setup_(m: *const module) -> i32 {                                    // c
     // C body c:272-273 — `return 0`. Faithful empty-body port.
     0
 }
+
+// =====================================================================
+// static struct builtin bintab[]                                    c:255
+// static struct features module_features                            c:262
+// =====================================================================
+
+use crate::ported::zsh_h::module;
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/datetime.c:277`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -325,6 +313,83 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     // C body c:308-309 — `return 0`. Faithful empty-body port; the
     //                    strftime builtin + EPOCHREALTIME unregister
     //                    via cleanup_'s setfeatureenables(...).
+    0
+}
+
+/// WARNING: NOT IN DATETIME.C — Rust char predicate equivalent to C `iident()`
+/// (equivalent C logic at Src/Modules/zsh.h:1700).
+/// Identifier validity check matching zsh's `isident()` (Src/utils.c).
+fn is_ident(s: &str) -> bool {
+    if s.is_empty() { return false; }
+    let mut chars = s.chars();
+    let first = chars.next().unwrap();
+    if first.is_ascii_digit() { return false; }
+    if !(first.is_alphanumeric() || first == '_') { return false; }
+    chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+
+
+use crate::ported::zsh_h::features as features_t;
+use std::sync::{Mutex, OnceLock};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+// WARNING: NOT IN DATETIME.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 1,
+        cd_list: None,
+        cd_size: 0,
+        mf_list: None,
+        mf_size: 0,
+        pd_list: None,
+        pd_size: 3,
+        n_abstract: 0,
+    }))
+}
+
+// Local stubs for the per-module entry points. C uses generic
+// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
+// 3275/3370/3445) but those take `Builtin` + `Features` pointer
+// fields the Rust port doesn't carry. The hardcoded descriptor
+// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+// WARNING: NOT IN DATETIME.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:strftime".to_string(), "p:EPOCHSECONDS".to_string(), "p:EPOCHREALTIME".to_string(), "p:epochtime".to_string()]
+}
+
+// WARNING: NOT IN DATETIME.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1; 4]);
+    }
+    0
+}
+
+// WARNING: NOT IN DATETIME.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
     0
 }
 
@@ -405,67 +470,3 @@ mod tests {
         assert_eq!(r, 1);
     }
 }
-
-use crate::ported::zsh_h::features as features_t;
-use std::sync::{Mutex, OnceLock};
-
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
-// WARNING: NOT IN DATETIME.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 1,
-        cd_list: None,
-        cd_size: 0,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 3,
-        n_abstract: 0,
-    }))
-}
-
-// Local stubs for the per-module entry points. C uses generic
-// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
-// 3275/3370/3445) but those take `Builtin` + `Features` pointer
-// fields the Rust port doesn't carry. The hardcoded descriptor
-// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-// WARNING: NOT IN DATETIME.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:strftime".to_string(), "p:EPOCHSECONDS".to_string(), "p:EPOCHREALTIME".to_string(), "p:epochtime".to_string()]
-}
-
-// WARNING: NOT IN DATETIME.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
-    if enables.is_none() {
-        *enables = Some(vec![1; 4]);
-    }
-    0
-}
-
-// WARNING: NOT IN DATETIME.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
-    0
-}
-

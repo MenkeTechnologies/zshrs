@@ -71,6 +71,763 @@ pub static VIINREPEAT: std::sync::atomic::AtomicI32 =                        // 
 pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // c:78
     std::sync::atomic::AtomicI32::new(0);
 
+/// Direct port of `void startvichange(int im)` from
+/// `Src/Zle/zle_vi.c:90`.
+/// ```c
+/// if (im > -1) insmode = im;
+/// if (viinrepeat && im != -2) { zmod = lastvichg.mod; vichgflag = 0; }
+/// else if (!vichgflag) { curvichg.buf = ...; vichgflag = 1; }
+/// ```
+///
+/// **Substrate trade-off:** the change-replay machinery (viinrepeat
+/// flag + lastvichg buffered command + curvichg accumulator) lives
+/// in the live ZLE widget dispatcher. From compcore call context
+/// we apply the primary effect (insmode set) which the change-
+/// recording branch leaves to a later widget tick.
+pub fn startvichange(im: i32) { // c:90
+    if im > -1 {                                                             // c:90
+        crate::ported::zle::zle_main::INSMODE.store(if im != 0 { 1 } else { 0 }, std::sync::atomic::Ordering::SeqCst);                                               // c:91
+    }
+}
+
+/// Direct port of `static void startvitext(int im)` from
+/// `Src/Zle/zle_vi.c:118`.
+/// ```c
+/// startvitext(int im) {
+///     startvichange(im);
+///     selectkeymap("main", 1);
+///     vistartchange = undo_changeno;
+///     viinsbegin = zlecs;
+/// }
+/// ```
+pub fn startvitext(im: i32) {   // c:118
+    startvichange(im);                                                  // c:118
+    crate::ported::zle::zle_keymap::selectkeymap("main", 1);                 // c:121
+    crate::ported::zle::zle_main::VISTARTCHANGE.store(crate::ported::zle::zle_main::UNDO_CHANGENO.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);                                   // c:122
+    crate::ported::zle::zle_main::VIINSBEGIN.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);                                           // c:123
+}
+
+/// Port of `vigetkey()` from Src/Zle/zle_vi.c:128.
+/// WARNING: param names don't match C — Rust=(zle) vs C=()
+pub fn vigetkey() -> i32 {        // c:128
+    // C body (c:128-170): `mn = openkeymap("main"); ... if (getbyte(0,
+    //                    NULL, 1) == EOF) return ZLEEOF; ... resolve
+    //                    Thingy via main keymap; if self-insert, return
+    //                    the byte; else return -1`.
+    // Without getbyte interactive read, drain unget_buf; -1 if empty.
+    if let Some(b) = crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front() {
+        b as i32
+    } else {
+        -1                                                                   // c:138 ZLEEOF
+    }
+}
+
+/// Direct port of `int getvirange(int wf)` from
+/// `Src/Zle/zle_vi.c:172`. Drives the vi-range read by
+/// interpreting a follow-up keystroke (motion command), invoking
+/// it with `virangeflag` set, and returning the resulting cursor
+/// position.
+///
+/// **Substrate trade-off:** the full driver depends on a live
+/// `getkeycmd` input loop (`virangeflag` global + `execzlefunc`
+/// dispatch). In compcore-call-context fns we don't have a live
+/// key reader — the Rust port returns the current `crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)`
+/// which is the C "no-motion fallback" (motion never consumed
+/// anything, range is empty). Live ZLE widget dispatch reads keys
+/// against the ZLE file-scope statics directly.
+pub fn getvirange(wf: i32) -> i32 {  // c:172
+    use std::sync::atomic::Ordering;
+    // c:186-187 — set the virangeflag / wordflag globals so the
+    // movement-cmd dispatch (read by zle_word / zle_move) knows to
+    // place cursor at the END of the range rather than where the
+    // motion would normally land. The interactive `getkeycmd()`
+    // read at c:208 is substrate-deferred (needs live ZLE input);
+    // we set the flags and return the current cursor — caller's
+    // motion fn picks them up via WORDFLAG/VIRANGEFLAG loads.
+    VIRANGEFLAG.store(1, Ordering::Relaxed);                                  // c:186
+    WORDFLAG.store(wf, Ordering::Relaxed);                                    // c:187
+    // c:188 — `mark = -1` (cleared; usize::MAX represents "no mark").
+    crate::ported::zle::zle_main::MARK.store(usize::MAX, Ordering::Relaxed);
+    crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32        // c:299
+}
+
+/// Port of `dovilinerange()` from Src/Zle/zle_vi.c:302.
+/// WARNING: param names don't match C — Rust=(zle) vs C=()
+pub fn dovilinerange() -> (usize, usize) {  // c:302
+    // C body (c:304-333): expands the current vi range to whole lines
+    //                    (includes leading/trailing newlines). Returns
+    //                    a [start, end) byte pair.
+    let bol = crate::ported::zle::zle_utils::findbol();
+    let eol = crate::ported::zle::zle_utils::findeol();
+    // Include the trailing newline if present.
+    let end = if eol < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) { eol + 1 } else { eol };
+    (bol, end)
+}
+
+/// Port of `viaddnext(UNUSED(char **args))` from Src/Zle/zle_vi.c:336.
+pub fn viaddnext() -> i32 {       // c:336
+    // C body (c:337-341): `if (zlecs != findeol()) INCCS();
+    //                     startvitext(1); return 0`.
+    let eol = crate::ported::zle::zle_utils::findeol();
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) != eol {
+        crate::ported::zle::zle_move::inccs();
+    }
+    startvitext(1);
+    0
+}
+
+/// Port of `viaddeol(UNUSED(char **args))` from Src/Zle/zle_vi.c:346.
+pub fn viaddeol() -> i32 {        // c:346
+    // C body (c:347-350): `zlecs = findeol(); startvitext(1); return 0`.
+    crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_utils::findeol(), std::sync::atomic::Ordering::SeqCst);
+    startvitext(1);
+    0
+}
+
+/// Port of `viinsert(UNUSED(char **args))` from Src/Zle/zle_vi.c:355.
+pub fn viinsert() -> i32 {        // c:355
+    // C body (c:356-358): `startvitext(1); return 0`.
+    startvitext(1);
+    0
+}
+
+/// Port of `viinsert_init()` from Src/Zle/zle_vi.c:368.
+/// WARNING: param names don't match C — Rust=(zle) vs C=()
+pub fn viinsert_init() {          // c:368
+    // C body (c:369-371): `startvitext(-2)`. Special init flag for
+    // first-time vi insert mode entry from zle session start.
+    startvitext(-2);
+}
+
+/// Port of `viinsertbol(UNUSED(char **args))` from Src/Zle/zle_vi.c:375.
+pub fn viinsertbol() -> i32 {     // c:375
+    // C body (c:376-379): `vifirstnonblank(zlenoargs); startvitext(1);
+    //                     return 0`.
+    crate::ported::zle::zle_move::vifirstnonblank();
+    startvitext(1);
+    0
+}
+
+/// Direct port of `int videlete(UNUSED(char **args))` from
+/// `Src/Zle/zle_vi.c:384`. vi `d{motion}` — deletes the range covered
+/// by the motion via `getvirange` + `forekill`. The line-wise vilinerange
+/// arm (c:392-398) drops the trailing newline.
+pub fn videlete() -> i32 {        // c:384
+    use std::sync::atomic::Ordering;
+    startvichange(1);                                                         // c:388
+    let c2 = getvirange(0);                                                   // c:389
+    if c2 == -1 { return 1; }
+    let cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
+    crate::ported::zle::zle_utils::forekill(c2 - cs,
+        crate::ported::zle::zle_h::CUT_RAW);                                  // c:390
+    // c:392-398 — line-wise: drop trailing newline.
+    if VILINERANGE.load(Ordering::Relaxed) != 0 {
+        let ll = crate::ported::zle::zle_main::ZLELL.load(Ordering::SeqCst);
+        if ll != 0 {
+            crate::ported::zle::zle_main::LASTCOL.store(-1, Ordering::Relaxed);
+            let cs_now = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst);
+            if cs_now == ll {
+                crate::ported::zle::zle_move::deccs();                        // c:395
+            }
+            crate::ported::zle::zle_utils::foredel(1, 0);                     // c:396
+            crate::ported::zle::zle_move::vifirstnonblank();                  // c:397
+        }
+    }
+    0                                                                          // c:391 ret = 0
+}
+
+/// Port of `videletechar(char **args)` from Src/Zle/zle_vi.c:405.
+pub fn videletechar() -> i32 {    // c:405
+    // C body (c:406-433): `startvichange(-1); n = zmult; ... if (zlecs
+    //                     == zlell || zleline[zlecs] == '\\n') return 1;
+    //                     forekill(n, ...)`. Approximation: startvichange
+    //                     + deletechar with EOL check.
+    startvichange(-1);
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) || crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) == Some(&'\n') {
+        return 1;                                                            // c:421-422
+    }
+    crate::ported::zle::zle_misc::deletechar()
+}
+
+/// Direct port of `int vichange(UNUSED(char **args))` from
+/// `Src/Zle/zle_vi.c:438`. vi `c{motion}` — delete the range covered
+/// by the motion, then enter insert mode. The motion-driven range
+/// comes from `getvirange`; on success forekill+startvitext, else
+/// startvitext at the current position.
+pub fn vichange() -> i32 {        // c:438
+    use std::sync::atomic::Ordering;
+    startvichange(1);                                                         // c:440
+    let c2 = getvirange(0);                                                   // c:441
+    if c2 != -1 {
+        let cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
+        crate::ported::zle::zle_utils::forekill(c2 - cs,                      // c:443
+            crate::ported::zle::zle_h::CUT_RAW);
+        startvitext(1);                                                       // c:444
+        return 0;
+    }
+    1                                                                          // c:453 ret=1
+}
+
+/// Port of `visubstitute(UNUSED(char **args))` from Src/Zle/zle_vi.c:455.
+pub fn visubstitute() -> i32 {    // c:455
+    // C body (c:457-475): startvichange(1); n=zmult; if(n<0) return 1;
+    //                    error if at eol; forekill(n, CUT_RAW);
+    //                    startvitext(1); return 0.
+    startvichange(1);
+    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
+    if n < 0 {
+        return 1;
+    }
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) || crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) == Some(&'\n') {
+        return 1;
+    }
+    let eol = crate::ported::zle::zle_utils::findeol();
+    let count = (n as usize).min(eol - crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    if count > 0 {
+        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + count).collect();
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
+        }
+        crate::ported::zle::zle_main::ZLELL.fetch_sub(count, std::sync::atomic::Ordering::SeqCst);
+    }
+    startvitext(1);
+    0
+}
+
+/// Port of `vichangeeol(UNUSED(char **args))` from Src/Zle/zle_vi.c:482.
+pub fn vichangeeol() -> i32 {     // c:482
+    // C body (c:483-498): `if (region_active) { regionlines(...);
+    //                     zlecs = a; region_active = 0; ... } else
+    //                     forekill(findeol() - zlecs, CUT_RAW);
+    //                     startvitext(1); return 0`.
+    let eol = crate::ported::zle::zle_utils::findeol();
+    if eol > crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
+        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..eol).collect();
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
+        }
+        crate::ported::zle::zle_main::ZLELL.fetch_sub(eol - crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
+    }
+    startvitext(1);
+    0
+}
+
+/// Port of `vichangewholeline(char **args)` from Src/Zle/zle_vi.c:499.
+pub fn vichangewholeline() -> i32 {  // c:499
+    // C body (c:500-503): `vifirstnonblank(); return vichangeeol(...)`.
+    crate::ported::zle::zle_move::vifirstnonblank();
+    vichangeeol()
+}
+
+/// Port of `viyank(UNUSED(char **args))` from `Src/Zle/zle_vi.c:546`.
+/// ```c
+/// int viyank(UNUSED(char **args)) {
+///     int c2, ret = 1;
+///     startvichange(1);
+///     if ((c2 = getvirange(0)) != -1) {
+///         cut(zlecs, c2 - zlecs, CUT_YANK);
+///         ret = 0;
+///     }
+///     if (vilinerange && lastcol != -1) {
+///         int x = findeol();
+///         if ((zlecs += lastcol) >= x) {
+///             zlecs = x;
+///             if (zlecs > findbol() && invicmdmode()) DECCS();
+///         }
+///         lastcol = -1;
+///     }
+///     return ret;
+/// }
+/// ```
+pub fn viyank(_args: &[String]) -> i32 {                                     // c:zle_vi.c:546
+    use std::sync::atomic::Ordering::SeqCst;
+    let mut ret = 1;
+    startvichange(1);                                                        // c:550
+    let c2 = getvirange(0);                                                  // c:551
+    if c2 != -1 {
+        let zlecs_now = crate::ported::zle::zle_main::ZLECS.load(SeqCst) as i32;
+        crate::ported::zle::zle_utils::cut(                                  // c:552
+            zlecs_now,
+            c2 - zlecs_now,
+            crate::ported::zle::zle_h::CUT_YANK,
+        );
+        ret = 0;
+    }
+    // c:557 — line-mode column restoration.
+    if VILINERANGE.load(SeqCst) != 0
+        && crate::ported::zle::zle_main::LASTCOL.load(SeqCst) != -1
+    {
+        let x = crate::ported::zle::zle_utils::findeol() as i32;
+        let new_cs = crate::ported::zle::zle_main::ZLECS.load(SeqCst) as i32
+            + crate::ported::zle::zle_main::LASTCOL.load(SeqCst);
+        if new_cs >= x {
+            crate::ported::zle::zle_main::ZLECS.store(x as usize, SeqCst);
+            let bol = crate::ported::zle::zle_utils::findbol() as i32;
+            let cmname = crate::ported::zle::zle_keymap::curkeymapname().clone();
+            if x > bol && crate::ported::zle::zle_h::invicmdmode(&cmname) {
+                crate::ported::zle::zle_move::deccs();
+            }
+        } else {
+            crate::ported::zle::zle_main::ZLECS.store(new_cs as usize, SeqCst);
+        }
+        crate::ported::zle::zle_main::LASTCOL.store(-1, SeqCst);             // c:570
+    }
+    ret
+}
+
+/// Port of `viyankeol(UNUSED(char **args))` from Src/Zle/zle_vi.c:537.
+pub fn viyankeol() -> i32 {       // c:537
+    // C body (c:539-547): `x = findeol(); startvichange(-1); if (x ==
+    //                     zlecs) return 1; cut(zlecs, x-zlecs, CUT_YANK);
+    //                     return 0`.
+    let x = crate::ported::zle::zle_utils::findeol();
+    startvichange(-1);
+    if x == crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
+        return 1;                                                            // c:550
+    }
+    let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..x].to_vec();
+    crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+    if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
+    }
+    0                                                                        // c:550
+}
+
+/// Port of `viyankwholeline(UNUSED(char **args))` from Src/Zle/zle_vi.c:550.
+pub fn viyankwholeline() -> i32 {  // c:550
+    // C body (c:553-572): `bol = findbol(); startvichange(-1); n = zmult;
+    //                     if (n < 1) return 1; for (i=n; i--; ) zlecs =
+    //                     findeol() + 1; if (zlecs > zlell) zlecs = zlell;
+    //                     cut(bol, zlecs - bol, CUT_YANK); zlecs = bol +
+    //                     oldcs - bol; return 0`.
+    let bol = crate::ported::zle::zle_utils::findbol();
+    let oldcs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    startvichange(-1);
+    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
+    if n < 1 {
+        return 1;
+    }
+    for _ in 0..n {
+        crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_utils::findeol() + 1, std::sync::atomic::Ordering::SeqCst);
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let end = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[bol..end].to_vec();
+    crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+    if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
+    }
+    crate::ported::zle::zle_main::ZLECS.store(oldcs, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// Port of `vireplace(UNUSED(char **args))` from Src/Zle/zle_vi.c:574.
+pub fn vireplace() -> i32 {       // c:574
+    // C body (c:575-577): `startvitext(0); return 0`. Enter overwrite-
+    // style insert mode (insmode=0).
+    startvitext(0);
+    0
+}
+
+/// Port of `vireplacechars(UNUSED(char **args))` from Src/Zle/zle_vi.c:594.
+pub fn vireplacechars() -> i32 {  // c:594
+    // C body (c:596-675): read one char (vigetkey), replace next zmult
+    //                    chars with it (clamped to eol). Without
+    //                    vigetkey reading from terminal, use lastchar
+    //                    as the replacement source.
+    startvichange(1);
+    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult.max(1) as usize;
+    let eol = crate::ported::zle::zle_utils::findeol();
+    let avail = eol.saturating_sub(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
+    if n > avail {
+        return 1;                                                            // not enough chars
+    }
+    if let Some(c) = char::from_u32(crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) as u32) {
+        for i in 0..n {
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i] = c;
+        }
+        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    0
+}
+
+/// Port of `vicmdmode(UNUSED(char **args))` from Src/Zle/zle_vi.c:677.
+pub fn vicmdmode() -> i32 {       // c:677
+    // C body (c:678-694): `if (invicmdmode() || selectkeymap("vicmd",
+    //                     0)) return 1; mergeundo(); insmode = unset(
+    //                     OVERSTRIKE); ...; if (zlecs != findbol())
+    //                     DECCS()`.
+    if *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd" {
+        return 1;
+    }
+    if crate::ported::zle::zle_keymap::selectkeymap("vicmd", 0) != 0 {
+        return 1;
+    }
+    let bol = crate::ported::zle::zle_utils::findbol();
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) != bol {
+        crate::ported::zle::zle_move::deccs();
+    }
+    0
+}
+
+/// Port of `viopenlinebelow(UNUSED(char **args))` from Src/Zle/zle_vi.c:699.
+pub fn viopenlinebelow() -> i32 {  // c:699
+    // C body (c:700-707): `zlecs = findeol(); spaceinline(1);
+    //                     zleline[zlecs++] = '\\n'; startvitext(1);
+    //                     clearlist = 1; return 0`.
+    crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_utils::findeol(), std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), '\n');
+    crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    startvitext(1);
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+
+
+/// Port of `viopenlineabove(UNUSED(char **args))` from Src/Zle/zle_vi.c:711.
+pub fn viopenlineabove() -> i32 {  // c:711
+    // C body (c:712-718): `zlecs = findbol(); spaceinline(1);
+    //                     zleline[zlecs] = '\\n'; startvitext(1);
+    //                     clearlist = 1; return 0`.
+    crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_utils::findbol(), std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), '\n');
+    crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    startvitext(1);
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// Port of `vioperswapcase(UNUSED(char **args))` from Src/Zle/zle_vi.c:723.
+pub fn vioperswapcase() -> i32 {  // c:723
+    // C body (c:725-746): startvichange(1); if (getvirange(0) != -1)
+    //                    swap case in range. Without getvirange, use
+    //                    [zlecs, eol) as implicit range.
+    startvichange(1);
+    let eol = crate::ported::zle::zle_utils::findeol();
+    let oldcs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+    while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < eol {
+        let c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)];
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)] = if c.is_ascii_uppercase() {
+            c.to_ascii_lowercase()
+        } else if c.is_ascii_lowercase() {
+            c.to_ascii_uppercase()
+        } else {
+            c
+        };
+        crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    crate::ported::zle::zle_main::ZLECS.store(oldcs, std::sync::atomic::Ordering::SeqCst);
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// Port of `viupcase(UNUSED(char **args))` from Src/Zle/zle_vi.c:751.
+pub fn viupcase() -> i32 {        // c:751
+    // C body (c:753-771): same as vidowncase but uppercase.
+    startvichange(1);
+    let eol = crate::ported::zle::zle_utils::findeol();
+    for i in crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..eol {
+        { let mut __g = crate::ported::zle::zle_main::ZLELINE.lock().unwrap(); __g[i] = __g[i].to_ascii_uppercase(); }
+    }
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// Port of `vidowncase(UNUSED(char **args))` from Src/Zle/zle_vi.c:773.
+pub fn vidowncase() -> i32 {      // c:773
+    // C body (c:775-794): startvichange(1); if ((c2 = getvirange(0))
+    //                    != -1) { lowercase all letters in [zlecs, c2);
+    //                    return 0; } else return 1.
+    // Without getvirange we use [zlecs, eol) as the implicit range.
+    startvichange(1);
+    let eol = crate::ported::zle::zle_utils::findeol();
+    for i in crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..eol {
+        { let mut __g = crate::ported::zle::zle_main::ZLELINE.lock().unwrap(); __g[i] = __g[i].to_ascii_lowercase(); }
+    }
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// Direct port of `int virepeatchange(char **args)` from
+/// `Src/Zle/zle_vi.c:795-820`.
+/// ```c
+/// if (!lastvichg.buf || vichgflag || virangeflag) return 1;
+/// // (restore zmod from lastvichg.mod, advance vibuf if numbered)
+/// viinrepeat = 3;
+/// ungetbytes(lastvichg.buf, lastvichg.bufptr);
+/// return 0;
+/// ```
+///
+/// **Substrate trade-off:** the change-replay state machine
+/// (`lastvichg` struct holding the buffered command + count + vibuf
+/// register, plus the `viinrepeat`/`vichgflag`/`virangeflag`
+/// globals) is part of the live ZLE widget loop. Compcore call
+/// context returns 1 to signal "no change to repeat" — the live
+/// widget tick has its own copy of this fn that touches the
+/// active state.
+/// Port of `virepeatchange(UNUSED(char **args))` from `Src/Zle/zle_vi.c:795`.
+/// WARNING: param names don't match C — Rust=() vs C=(args)
+pub fn virepeatchange() -> i32 {                                             // c:795
+    1                                                                        // c:795 no change to repeat
+}
+
+/// Port of `viindent(UNUSED(char **args))` from Src/Zle/zle_vi.c:820.
+pub fn viindent() -> i32 {        // c:820
+    // C body (c:822-855): startvichange(1); insert SHIFTWIDTH spaces
+    //                    at start of each line in range. Default
+    //                    SHIFTWIDTH = 4 (per zsh's iwidgets.list).
+    startvichange(1);
+    let bol = crate::ported::zle::zle_utils::findbol();
+    for _ in 0..4 {
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(bol, ' ');
+        crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) >= bol {
+        crate::ported::zle::zle_main::ZLECS.fetch_add(4, std::sync::atomic::Ordering::SeqCst);
+    }
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// Port of `viunindent(UNUSED(char **args))` from Src/Zle/zle_vi.c:856.
+pub fn viunindent() -> i32 {      // c:856
+    // C body: remove up to SHIFTWIDTH (4) leading spaces from each
+    //         line in range.
+    startvichange(1);
+    let bol = crate::ported::zle::zle_utils::findbol();
+    let mut removed = 0;
+    while removed < 4 && bol < crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len() && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[bol] == ' ' {
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(bol);
+        crate::ported::zle::zle_main::ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        removed += 1;
+    }
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) >= bol + removed {
+        crate::ported::zle::zle_main::ZLECS.fetch_sub(removed, std::sync::atomic::Ordering::SeqCst);
+    }
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// Direct port of `int vibackwarddeletechar(char **args)` from
+/// `Src/Zle/zle_vi.c:888`. Backspace, vi-command-mode-aware. Negative
+/// zmult routes through `videletechar` with the absolute count; else
+/// kills up to `findbol()`'s worth of characters.
+pub fn vibackwarddeletechar() -> i32 {  // c:888
+    use std::sync::atomic::Ordering;
+    let curkm = crate::ported::zle::zle_keymap::curkeymapname()
+        .as_str().to_string();
+    let in_cmd = crate::ported::zle::zle_h::invicmdmode(&curkm);
+    // c:892-893 — startvichange(-1) only in cmd mode.
+    if in_cmd { startvichange(-1); }
+    // c:896 — `n = zmult`.
+    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult as i32;
+    // c:897-903 — negative count → videletechar with abs(n).
+    if n < 0 {
+        let prev = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = (-n) as i32;
+        let ret = videletechar();
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = prev;
+        return ret;
+    }
+    // c:906 — bail if at start of line / past viinsbegin.
+    let bol = crate::ported::zle::zle_utils::findbol();
+    let cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst);
+    let viib = VIINSBEGIN.load(Ordering::Relaxed) as usize;
+    if cs == bol || (!in_cmd && cs.saturating_sub(n as usize) < viib) {
+        return 1;
+    }
+    // c:912-919 — clamp count + backkill.
+    let mut nn = n as usize;
+    if nn > cs - bol { nn = cs - bol; }
+    crate::ported::zle::zle_utils::backkill(nn as i32,
+        crate::ported::zle::zle_h::CUT_FRONT |
+        crate::ported::zle::zle_h::CUT_RAW);
+    0
+}
+
+/// Port of `vikillline(UNUSED(char **args))` from Src/Zle/zle_vi.c:923.
+pub fn vikillline() -> i32 {      // c:vikillline
+    // C body: kill from cursor back to bol.
+    startvichange(1);
+    let bol = crate::ported::zle::zle_utils::findbol();
+    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > bol {
+        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(bol..crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)).collect();
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
+        }
+        crate::ported::zle::zle_main::ZLELL.fetch_sub(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - bol, std::sync::atomic::Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLECS.store(bol, std::sync::atomic::Ordering::SeqCst);
+    }
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// Port of `vijoin(UNUSED(char **args))` from Src/Zle/zle_vi.c:933.
+pub fn vijoin() -> i32 {          // c:vijoin
+    // C body: replace next '\\n' with ' ', skipping leading whitespace
+    //         on the joined line. Repeat zmult times.
+    startvichange(-1);
+    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult.max(1);
+    for _ in 0..n {
+        let eol = crate::ported::zle::zle_utils::findeol();
+        if eol >= crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) || crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(eol) != Some(&'\n') {
+            return 1;
+        }
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[eol] = ' ';
+        // Strip leading whitespace on the joined-in line.
+        let mut p = eol + 1;
+        while p < crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len() && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[p].is_whitespace() {
+            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(p);
+            crate::ported::zle::zle_main::ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        let _ = p;
+        crate::ported::zle::zle_main::ZLECS.store(eol, std::sync::atomic::Ordering::SeqCst);
+    }
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// Port of `viswapcase(UNUSED(char **args))` from Src/Zle/zle_vi.c:977.
+pub fn viswapcase() -> i32 {      // c:viswapcase
+    // C body: walk zmult chars, swap case of each; advance cursor.
+    startvichange(-1);
+    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
+    if n < 1 {
+        return 1;
+    }
+    let eol = crate::ported::zle::zle_utils::findeol();
+    for _ in 0..n {
+        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) >= eol {
+            break;
+        }
+        let c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)];
+        let swapped = if c.is_ascii_uppercase() {
+            c.to_ascii_lowercase()
+        } else if c.is_ascii_lowercase() {
+            c.to_ascii_uppercase()
+        } else {
+            c
+        };
+        crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)] = swapped;
+        crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// Direct port of `int vicapslockpanic(char **args)` from
+/// `Src/Zle/zle_vi.c:1002`.
+/// ```c
+/// int vicapslockpanic(char **args) {
+///     clearlist = 1;
+///     zbeep();
+///     statusline = "press a lowercase key to continue";
+///     zrefresh();
+///     while (!ZC_ilower(getfullchar(0))) ;
+///     statusline = NULL;
+///     return 0;
+/// }
+/// ```
+pub fn vicapslockpanic() -> i32 {                                            // c:1002
+    use std::sync::atomic::Ordering;
+    // c:1004 — clearlist = 1.
+    crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);
+    // c:1005 — zbeep().
+    crate::ported::utils::zbeep();
+    // c:1006 — statusline = "press a lowercase key to continue".
+    // The canonical home for the message is the file-scope `STATUSLINE`
+    // static (zle_main.rs); we also mirror to the paramtab so the
+    // prompt drawer picks it up via `$STATUSLINE`.
+    let _ = crate::ported::params::setsparam(
+        "STATUSLINE", "press a lowercase key to continue",
+    );
+    // c:1007 — zrefresh() — flushes paramtab/buffer state to the
+    // refresh layer. The CLEARLIST flag set above is the trigger
+    // the draw path watches; the actual repaint runs on the next
+    // ZLE event loop iteration via `zrefresh()` in `zle_refresh.rs`.
+    // c:1008-1009 — `while (!ZC_ilower(getfullchar(0))) ;`.
+    // Without a live key-read loop we cannot block here; the live
+    // ZLE input path (getfullchar) does the wait. The flag
+    // state above triggers the correct draw, and the live read
+    // continues normally.
+    // c:1010 — clear statusline.
+    let _ = crate::ported::params::setsparam("STATUSLINE", "");
+    0                                                                        // c:1011
+}
+
+/// Port of `visetbuffer(char **args)` from Src/Zle/zle_vi.c:1015.
+pub fn visetbuffer() -> i32 {     // c:visetbuffer
+    // C body: read one char as the vi buffer name (a-z or 1-9 or '"');
+    //         set zmod.vibuf for the next yank/cut. Without vigetkey
+    //         interactive read, use lastchar.
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+    let c = (crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) & 0xff) as u8;
+    let idx: i32 = if c.is_ascii_digit() {
+        (c - b'0') as i32 + 26
+    } else if c.is_ascii_lowercase() {
+        (c - b'a') as i32
+    } else if c.is_ascii_uppercase() {
+        // uppercase = append to register
+        crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_VIAPP;
+        (c - b'A') as i32
+    } else {
+        return 1;
+    };
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().vibuf = idx;
+    crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_VIBUF;
+    crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// Port of `vikilleol(UNUSED(char **args))` from Src/Zle/zle_vi.c:1056.
+pub fn vikilleol() -> i32 {       // c:vikilleol
+    // C body: kill from cursor to eol; start vi cmd-mode change.
+    startvichange(1);
+    let eol = crate::ported::zle::zle_utils::findeol();
+    if eol > crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
+        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..eol).collect();
+        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
+        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
+        }
+        crate::ported::zle::zle_main::ZLELL.fetch_sub(eol - crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
+    }
+    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// Port of `vipoundinsert(UNUSED(char **args))` from Src/Zle/zle_vi.c:1072.
+pub fn vipoundinsert() -> i32 {   // c:vipoundinsert
+    // C body: same as poundinsert (toggle # comment) but in vi cmdmode.
+    crate::ported::zle::zle_misc::poundinsert()
+}
+
+/// Port of `viquotedinsert(char **args)` from Src/Zle/zle_vi.c:1099.
+pub fn viquotedinsert() -> i32 {  // c:viquotedinsert
+    // C body: same as quotedinsert with vi insmode setup.
+    startvichange(-1);
+    crate::ported::zle::zle_misc::quotedinsert()
+}
+
+/// Port of `vidigitorbeginningofline(char **args)` from Src/Zle/zle_vi.c:1129.
+pub fn vidigitorbeginningofline() -> i32 {  // c:vidigitorbeginningofline
+    // C body: `if (zmod.flags & MOD_TMULT) return digitargument();
+    //          else { removesuffix(); invalidatelist();
+    //                 return vibeginningofline(); }`.
+    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
+    if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_TMULT != 0 {
+        return crate::ported::zle::zle_misc::digitargument();
+    }
+    crate::ported::zle::zle_move::vibeginningofline()
+}
+
     /// Read the active numeric multiplier.
     /// Port of `zmult` macro at Src/Zle/zle.h:267 (`#define zmult
     /// (zmod.mult)`). Returns the explicit MULT prefix when set,
@@ -747,62 +1504,6 @@ fn vimark_slot(name: char) -> Option<usize> {
     }
 }
 
-/// Port of `viyank(UNUSED(char **args))` from `Src/Zle/zle_vi.c:546`.
-/// ```c
-/// int viyank(UNUSED(char **args)) {
-///     int c2, ret = 1;
-///     startvichange(1);
-///     if ((c2 = getvirange(0)) != -1) {
-///         cut(zlecs, c2 - zlecs, CUT_YANK);
-///         ret = 0;
-///     }
-///     if (vilinerange && lastcol != -1) {
-///         int x = findeol();
-///         if ((zlecs += lastcol) >= x) {
-///             zlecs = x;
-///             if (zlecs > findbol() && invicmdmode()) DECCS();
-///         }
-///         lastcol = -1;
-///     }
-///     return ret;
-/// }
-/// ```
-pub fn viyank(_args: &[String]) -> i32 {                                     // c:zle_vi.c:546
-    use std::sync::atomic::Ordering::SeqCst;
-    let mut ret = 1;
-    startvichange(1);                                                        // c:550
-    let c2 = getvirange(0);                                                  // c:551
-    if c2 != -1 {
-        let zlecs_now = crate::ported::zle::zle_main::ZLECS.load(SeqCst) as i32;
-        crate::ported::zle::zle_utils::cut(                                  // c:552
-            zlecs_now,
-            c2 - zlecs_now,
-            crate::ported::zle::zle_h::CUT_YANK,
-        );
-        ret = 0;
-    }
-    // c:557 — line-mode column restoration.
-    if VILINERANGE.load(SeqCst) != 0
-        && crate::ported::zle::zle_main::LASTCOL.load(SeqCst) != -1
-    {
-        let x = crate::ported::zle::zle_utils::findeol() as i32;
-        let new_cs = crate::ported::zle::zle_main::ZLECS.load(SeqCst) as i32
-            + crate::ported::zle::zle_main::LASTCOL.load(SeqCst);
-        if new_cs >= x {
-            crate::ported::zle::zle_main::ZLECS.store(x as usize, SeqCst);
-            let bol = crate::ported::zle::zle_utils::findbol() as i32;
-            let cmname = crate::ported::zle::zle_keymap::curkeymapname().clone();
-            if x > bol && crate::ported::zle::zle_h::invicmdmode(&cmname) {
-                crate::ported::zle::zle_move::deccs();
-            }
-        } else {
-            crate::ported::zle::zle_main::ZLECS.store(new_cs as usize, SeqCst);
-        }
-        crate::ported::zle::zle_main::LASTCOL.store(-1, SeqCst);             // c:570
-    }
-    ret
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1090,703 +1791,4 @@ mod tests {
         assert_eq!(virevrepeatfind(), 0);
         assert_eq!(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
-}
-
-/// Port of `dovilinerange()` from Src/Zle/zle_vi.c:302.
-/// WARNING: param names don't match C — Rust=(zle) vs C=()
-pub fn dovilinerange() -> (usize, usize) {  // c:302
-    // C body (c:304-333): expands the current vi range to whole lines
-    //                    (includes leading/trailing newlines). Returns
-    //                    a [start, end) byte pair.
-    let bol = crate::ported::zle::zle_utils::findbol();
-    let eol = crate::ported::zle::zle_utils::findeol();
-    // Include the trailing newline if present.
-    let end = if eol < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) { eol + 1 } else { eol };
-    (bol, end)
-}
-
-/// Direct port of `int getvirange(int wf)` from
-/// `Src/Zle/zle_vi.c:172`. Drives the vi-range read by
-/// interpreting a follow-up keystroke (motion command), invoking
-/// it with `virangeflag` set, and returning the resulting cursor
-/// position.
-///
-/// **Substrate trade-off:** the full driver depends on a live
-/// `getkeycmd` input loop (`virangeflag` global + `execzlefunc`
-/// dispatch). In compcore-call-context fns we don't have a live
-/// key reader — the Rust port returns the current `crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)`
-/// which is the C "no-motion fallback" (motion never consumed
-/// anything, range is empty). Live ZLE widget dispatch reads keys
-/// against the ZLE file-scope statics directly.
-pub fn getvirange(wf: i32) -> i32 {  // c:172
-    use std::sync::atomic::Ordering;
-    // c:186-187 — set the virangeflag / wordflag globals so the
-    // movement-cmd dispatch (read by zle_word / zle_move) knows to
-    // place cursor at the END of the range rather than where the
-    // motion would normally land. The interactive `getkeycmd()`
-    // read at c:208 is substrate-deferred (needs live ZLE input);
-    // we set the flags and return the current cursor — caller's
-    // motion fn picks them up via WORDFLAG/VIRANGEFLAG loads.
-    VIRANGEFLAG.store(1, Ordering::Relaxed);                                  // c:186
-    WORDFLAG.store(wf, Ordering::Relaxed);                                    // c:187
-    // c:188 — `mark = -1` (cleared; usize::MAX represents "no mark").
-    crate::ported::zle::zle_main::MARK.store(usize::MAX, Ordering::Relaxed);
-    crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32        // c:299
-}
-
-/// Direct port of `void startvichange(int im)` from
-/// `Src/Zle/zle_vi.c:90`.
-/// ```c
-/// if (im > -1) insmode = im;
-/// if (viinrepeat && im != -2) { zmod = lastvichg.mod; vichgflag = 0; }
-/// else if (!vichgflag) { curvichg.buf = ...; vichgflag = 1; }
-/// ```
-///
-/// **Substrate trade-off:** the change-replay machinery (viinrepeat
-/// flag + lastvichg buffered command + curvichg accumulator) lives
-/// in the live ZLE widget dispatcher. From compcore call context
-/// we apply the primary effect (insmode set) which the change-
-/// recording branch leaves to a later widget tick.
-pub fn startvichange(im: i32) { // c:90
-    if im > -1 {                                                             // c:90
-        crate::ported::zle::zle_main::INSMODE.store(if im != 0 { 1 } else { 0 }, std::sync::atomic::Ordering::SeqCst);                                               // c:91
-    }
-}
-
-/// Direct port of `static void startvitext(int im)` from
-/// `Src/Zle/zle_vi.c:118`.
-/// ```c
-/// startvitext(int im) {
-///     startvichange(im);
-///     selectkeymap("main", 1);
-///     vistartchange = undo_changeno;
-///     viinsbegin = zlecs;
-/// }
-/// ```
-pub fn startvitext(im: i32) {   // c:118
-    startvichange(im);                                                  // c:118
-    crate::ported::zle::zle_keymap::selectkeymap("main", 1);                 // c:121
-    crate::ported::zle::zle_main::VISTARTCHANGE.store(crate::ported::zle::zle_main::UNDO_CHANGENO.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);                                   // c:122
-    crate::ported::zle::zle_main::VIINSBEGIN.store(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);                                           // c:123
-}
-
-/// Port of `viaddeol(UNUSED(char **args))` from Src/Zle/zle_vi.c:346.
-pub fn viaddeol() -> i32 {        // c:346
-    // C body (c:347-350): `zlecs = findeol(); startvitext(1); return 0`.
-    crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_utils::findeol(), std::sync::atomic::Ordering::SeqCst);
-    startvitext(1);
-    0
-}
-
-/// Port of `viaddnext(UNUSED(char **args))` from Src/Zle/zle_vi.c:336.
-pub fn viaddnext() -> i32 {       // c:336
-    // C body (c:337-341): `if (zlecs != findeol()) INCCS();
-    //                     startvitext(1); return 0`.
-    let eol = crate::ported::zle::zle_utils::findeol();
-    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) != eol {
-        crate::ported::zle::zle_move::inccs();
-    }
-    startvitext(1);
-    0
-}
-
-/// Direct port of `int vibackwarddeletechar(char **args)` from
-/// `Src/Zle/zle_vi.c:888`. Backspace, vi-command-mode-aware. Negative
-/// zmult routes through `videletechar` with the absolute count; else
-/// kills up to `findbol()`'s worth of characters.
-pub fn vibackwarddeletechar() -> i32 {  // c:888
-    use std::sync::atomic::Ordering;
-    let curkm = crate::ported::zle::zle_keymap::curkeymapname()
-        .as_str().to_string();
-    let in_cmd = crate::ported::zle::zle_h::invicmdmode(&curkm);
-    // c:892-893 — startvichange(-1) only in cmd mode.
-    if in_cmd { startvichange(-1); }
-    // c:896 — `n = zmult`.
-    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult as i32;
-    // c:897-903 — negative count → videletechar with abs(n).
-    if n < 0 {
-        let prev = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
-        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = (-n) as i32;
-        let ret = videletechar();
-        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult = prev;
-        return ret;
-    }
-    // c:906 — bail if at start of line / past viinsbegin.
-    let bol = crate::ported::zle::zle_utils::findbol();
-    let cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst);
-    let viib = VIINSBEGIN.load(Ordering::Relaxed) as usize;
-    if cs == bol || (!in_cmd && cs.saturating_sub(n as usize) < viib) {
-        return 1;
-    }
-    // c:912-919 — clamp count + backkill.
-    let mut nn = n as usize;
-    if nn > cs - bol { nn = cs - bol; }
-    crate::ported::zle::zle_utils::backkill(nn as i32,
-        crate::ported::zle::zle_h::CUT_FRONT |
-        crate::ported::zle::zle_h::CUT_RAW);
-    0
-}
-
-/// Direct port of `int vicapslockpanic(char **args)` from
-/// `Src/Zle/zle_vi.c:1002`.
-/// ```c
-/// int vicapslockpanic(char **args) {
-///     clearlist = 1;
-///     zbeep();
-///     statusline = "press a lowercase key to continue";
-///     zrefresh();
-///     while (!ZC_ilower(getfullchar(0))) ;
-///     statusline = NULL;
-///     return 0;
-/// }
-/// ```
-pub fn vicapslockpanic() -> i32 {                                            // c:1002
-    use std::sync::atomic::Ordering;
-    // c:1004 — clearlist = 1.
-    crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::Relaxed);
-    // c:1005 — zbeep().
-    crate::ported::utils::zbeep();
-    // c:1006 — statusline = "press a lowercase key to continue".
-    // The canonical home for the message is the file-scope `STATUSLINE`
-    // static (zle_main.rs); we also mirror to the paramtab so the
-    // prompt drawer picks it up via `$STATUSLINE`.
-    let _ = crate::ported::params::setsparam(
-        "STATUSLINE", "press a lowercase key to continue",
-    );
-    // c:1007 — zrefresh() — flushes paramtab/buffer state to the
-    // refresh layer. The CLEARLIST flag set above is the trigger
-    // the draw path watches; the actual repaint runs on the next
-    // ZLE event loop iteration via `zrefresh()` in `zle_refresh.rs`.
-    // c:1008-1009 — `while (!ZC_ilower(getfullchar(0))) ;`.
-    // Without a live key-read loop we cannot block here; the live
-    // ZLE input path (getfullchar) does the wait. The flag
-    // state above triggers the correct draw, and the live read
-    // continues normally.
-    // c:1010 — clear statusline.
-    let _ = crate::ported::params::setsparam("STATUSLINE", "");
-    0                                                                        // c:1011
-}
-
-/// Direct port of `int vichange(UNUSED(char **args))` from
-/// `Src/Zle/zle_vi.c:438`. vi `c{motion}` — delete the range covered
-/// by the motion, then enter insert mode. The motion-driven range
-/// comes from `getvirange`; on success forekill+startvitext, else
-/// startvitext at the current position.
-pub fn vichange() -> i32 {        // c:438
-    use std::sync::atomic::Ordering;
-    startvichange(1);                                                         // c:440
-    let c2 = getvirange(0);                                                   // c:441
-    if c2 != -1 {
-        let cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
-        crate::ported::zle::zle_utils::forekill(c2 - cs,                      // c:443
-            crate::ported::zle::zle_h::CUT_RAW);
-        startvitext(1);                                                       // c:444
-        return 0;
-    }
-    1                                                                          // c:453 ret=1
-}
-
-/// Port of `vichangeeol(UNUSED(char **args))` from Src/Zle/zle_vi.c:482.
-pub fn vichangeeol() -> i32 {     // c:482
-    // C body (c:483-498): `if (region_active) { regionlines(...);
-    //                     zlecs = a; region_active = 0; ... } else
-    //                     forekill(findeol() - zlecs, CUT_RAW);
-    //                     startvitext(1); return 0`.
-    let eol = crate::ported::zle::zle_utils::findeol();
-    if eol > crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
-        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..eol).collect();
-        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
-        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
-            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
-        }
-        crate::ported::zle::zle_main::ZLELL.fetch_sub(eol - crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
-    }
-    startvitext(1);
-    0
-}
-
-/// Port of `vichangewholeline(char **args)` from Src/Zle/zle_vi.c:499.
-pub fn vichangewholeline() -> i32 {  // c:499
-    // C body (c:500-503): `vifirstnonblank(); return vichangeeol(...)`.
-    crate::ported::zle::zle_move::vifirstnonblank();
-    vichangeeol()
-}
-
-/// Port of `vicmdmode(UNUSED(char **args))` from Src/Zle/zle_vi.c:677.
-pub fn vicmdmode() -> i32 {       // c:677
-    // C body (c:678-694): `if (invicmdmode() || selectkeymap("vicmd",
-    //                     0)) return 1; mergeundo(); insmode = unset(
-    //                     OVERSTRIKE); ...; if (zlecs != findbol())
-    //                     DECCS()`.
-    if *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd" {
-        return 1;
-    }
-    if crate::ported::zle::zle_keymap::selectkeymap("vicmd", 0) != 0 {
-        return 1;
-    }
-    let bol = crate::ported::zle::zle_utils::findbol();
-    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) != bol {
-        crate::ported::zle::zle_move::deccs();
-    }
-    0
-}
-
-/// Direct port of `int videlete(UNUSED(char **args))` from
-/// `Src/Zle/zle_vi.c:384`. vi `d{motion}` — deletes the range covered
-/// by the motion via `getvirange` + `forekill`. The line-wise vilinerange
-/// arm (c:392-398) drops the trailing newline.
-pub fn videlete() -> i32 {        // c:384
-    use std::sync::atomic::Ordering;
-    startvichange(1);                                                         // c:388
-    let c2 = getvirange(0);                                                   // c:389
-    if c2 == -1 { return 1; }
-    let cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
-    crate::ported::zle::zle_utils::forekill(c2 - cs,
-        crate::ported::zle::zle_h::CUT_RAW);                                  // c:390
-    // c:392-398 — line-wise: drop trailing newline.
-    if VILINERANGE.load(Ordering::Relaxed) != 0 {
-        let ll = crate::ported::zle::zle_main::ZLELL.load(Ordering::SeqCst);
-        if ll != 0 {
-            crate::ported::zle::zle_main::LASTCOL.store(-1, Ordering::Relaxed);
-            let cs_now = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst);
-            if cs_now == ll {
-                crate::ported::zle::zle_move::deccs();                        // c:395
-            }
-            crate::ported::zle::zle_utils::foredel(1, 0);                     // c:396
-            crate::ported::zle::zle_move::vifirstnonblank();                  // c:397
-        }
-    }
-    0                                                                          // c:391 ret = 0
-}
-
-/// Port of `videletechar(char **args)` from Src/Zle/zle_vi.c:405.
-pub fn videletechar() -> i32 {    // c:405
-    // C body (c:406-433): `startvichange(-1); n = zmult; ... if (zlecs
-    //                     == zlell || zleline[zlecs] == '\\n') return 1;
-    //                     forekill(n, ...)`. Approximation: startvichange
-    //                     + deletechar with EOL check.
-    startvichange(-1);
-    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) || crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) == Some(&'\n') {
-        return 1;                                                            // c:421-422
-    }
-    crate::ported::zle::zle_misc::deletechar()
-}
-
-/// Port of `vidigitorbeginningofline(char **args)` from Src/Zle/zle_vi.c:1129.
-pub fn vidigitorbeginningofline() -> i32 {  // c:vidigitorbeginningofline
-    // C body: `if (zmod.flags & MOD_TMULT) return digitargument();
-    //          else { removesuffix(); invalidatelist();
-    //                 return vibeginningofline(); }`.
-    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
-    if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags & MOD_TMULT != 0 {
-        return crate::ported::zle::zle_misc::digitargument();
-    }
-    crate::ported::zle::zle_move::vibeginningofline()
-}
-
-/// Port of `vidowncase(UNUSED(char **args))` from Src/Zle/zle_vi.c:773.
-pub fn vidowncase() -> i32 {      // c:773
-    // C body (c:775-794): startvichange(1); if ((c2 = getvirange(0))
-    //                    != -1) { lowercase all letters in [zlecs, c2);
-    //                    return 0; } else return 1.
-    // Without getvirange we use [zlecs, eol) as the implicit range.
-    startvichange(1);
-    let eol = crate::ported::zle::zle_utils::findeol();
-    for i in crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..eol {
-        { let mut __g = crate::ported::zle::zle_main::ZLELINE.lock().unwrap(); __g[i] = __g[i].to_ascii_lowercase(); }
-    }
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-    0
-}
-
-/// Port of `vigetkey()` from Src/Zle/zle_vi.c:128.
-/// WARNING: param names don't match C — Rust=(zle) vs C=()
-pub fn vigetkey() -> i32 {        // c:128
-    // C body (c:128-170): `mn = openkeymap("main"); ... if (getbyte(0,
-    //                    NULL, 1) == EOF) return ZLEEOF; ... resolve
-    //                    Thingy via main keymap; if self-insert, return
-    //                    the byte; else return -1`.
-    // Without getbyte interactive read, drain unget_buf; -1 if empty.
-    if let Some(b) = crate::ported::zle::zle_main::KUNGETBUF.lock().unwrap().pop_front() {
-        b as i32
-    } else {
-        -1                                                                   // c:138 ZLEEOF
-    }
-}
-
-/// Port of `viindent(UNUSED(char **args))` from Src/Zle/zle_vi.c:820.
-pub fn viindent() -> i32 {        // c:820
-    // C body (c:822-855): startvichange(1); insert SHIFTWIDTH spaces
-    //                    at start of each line in range. Default
-    //                    SHIFTWIDTH = 4 (per zsh's iwidgets.list).
-    startvichange(1);
-    let bol = crate::ported::zle::zle_utils::findbol();
-    for _ in 0..4 {
-        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(bol, ' ');
-        crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    }
-    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) >= bol {
-        crate::ported::zle::zle_main::ZLECS.fetch_add(4, std::sync::atomic::Ordering::SeqCst);
-    }
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-    0
-}
-
-/// Port of `viinsert(UNUSED(char **args))` from Src/Zle/zle_vi.c:355.
-pub fn viinsert() -> i32 {        // c:355
-    // C body (c:356-358): `startvitext(1); return 0`.
-    startvitext(1);
-    0
-}
-
-/// Port of `viinsert_init()` from Src/Zle/zle_vi.c:368.
-/// WARNING: param names don't match C — Rust=(zle) vs C=()
-pub fn viinsert_init() {          // c:368
-    // C body (c:369-371): `startvitext(-2)`. Special init flag for
-    // first-time vi insert mode entry from zle session start.
-    startvitext(-2);
-}
-
-/// Port of `viinsertbol(UNUSED(char **args))` from Src/Zle/zle_vi.c:375.
-pub fn viinsertbol() -> i32 {     // c:375
-    // C body (c:376-379): `vifirstnonblank(zlenoargs); startvitext(1);
-    //                     return 0`.
-    crate::ported::zle::zle_move::vifirstnonblank();
-    startvitext(1);
-    0
-}
-
-/// Port of `vijoin(UNUSED(char **args))` from Src/Zle/zle_vi.c:933.
-pub fn vijoin() -> i32 {          // c:vijoin
-    // C body: replace next '\\n' with ' ', skipping leading whitespace
-    //         on the joined line. Repeat zmult times.
-    startvichange(-1);
-    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult.max(1);
-    for _ in 0..n {
-        let eol = crate::ported::zle::zle_utils::findeol();
-        if eol >= crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) || crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(eol) != Some(&'\n') {
-            return 1;
-        }
-        crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[eol] = ' ';
-        // Strip leading whitespace on the joined-in line.
-        let mut p = eol + 1;
-        while p < crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len() && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[p].is_whitespace() {
-            crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(p);
-            crate::ported::zle::zle_main::ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-        }
-        let _ = p;
-        crate::ported::zle::zle_main::ZLECS.store(eol, std::sync::atomic::Ordering::SeqCst);
-    }
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-    0
-}
-
-/// Port of `vikilleol(UNUSED(char **args))` from Src/Zle/zle_vi.c:1056.
-pub fn vikilleol() -> i32 {       // c:vikilleol
-    // C body: kill from cursor to eol; start vi cmd-mode change.
-    startvichange(1);
-    let eol = crate::ported::zle::zle_utils::findeol();
-    if eol > crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
-        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..eol).collect();
-        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
-        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
-            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
-        }
-        crate::ported::zle::zle_main::ZLELL.fetch_sub(eol - crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
-    }
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-    0
-}
-
-/// Port of `vikillline(UNUSED(char **args))` from Src/Zle/zle_vi.c:923.
-pub fn vikillline() -> i32 {      // c:vikillline
-    // C body: kill from cursor back to bol.
-    startvichange(1);
-    let bol = crate::ported::zle::zle_utils::findbol();
-    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > bol {
-        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(bol..crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)).collect();
-        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
-        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
-            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
-        }
-        crate::ported::zle::zle_main::ZLELL.fetch_sub(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) - bol, std::sync::atomic::Ordering::SeqCst);
-        crate::ported::zle::zle_main::ZLECS.store(bol, std::sync::atomic::Ordering::SeqCst);
-    }
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-    0
-}
-
-/// Port of `viopenlineabove(UNUSED(char **args))` from Src/Zle/zle_vi.c:711.
-pub fn viopenlineabove() -> i32 {  // c:711
-    // C body (c:712-718): `zlecs = findbol(); spaceinline(1);
-    //                     zleline[zlecs] = '\\n'; startvitext(1);
-    //                     clearlist = 1; return 0`.
-    crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_utils::findbol(), std::sync::atomic::Ordering::SeqCst);
-    crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), '\n');
-    crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    startvitext(1);
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-    0
-}
-
-/// Port of `viopenlinebelow(UNUSED(char **args))` from Src/Zle/zle_vi.c:699.
-pub fn viopenlinebelow() -> i32 {  // c:699
-    // C body (c:700-707): `zlecs = findeol(); spaceinline(1);
-    //                     zleline[zlecs++] = '\\n'; startvitext(1);
-    //                     clearlist = 1; return 0`.
-    crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_utils::findeol(), std::sync::atomic::Ordering::SeqCst);
-    crate::ported::zle::zle_main::ZLELINE.lock().unwrap().insert(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst), '\n');
-    crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    crate::ported::zle::zle_main::ZLELL.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    startvitext(1);
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-    0
-}
-
-/// Port of `vioperswapcase(UNUSED(char **args))` from Src/Zle/zle_vi.c:723.
-pub fn vioperswapcase() -> i32 {  // c:723
-    // C body (c:725-746): startvichange(1); if (getvirange(0) != -1)
-    //                    swap case in range. Without getvirange, use
-    //                    [zlecs, eol) as implicit range.
-    startvichange(1);
-    let eol = crate::ported::zle::zle_utils::findeol();
-    let oldcs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-    while crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) < eol {
-        let c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)];
-        crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)] = if c.is_ascii_uppercase() {
-            c.to_ascii_lowercase()
-        } else if c.is_ascii_lowercase() {
-            c.to_ascii_uppercase()
-        } else {
-            c
-        };
-        crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    }
-    crate::ported::zle::zle_main::ZLECS.store(oldcs, std::sync::atomic::Ordering::SeqCst);
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-    0
-}
-
-/// Port of `vipoundinsert(UNUSED(char **args))` from Src/Zle/zle_vi.c:1072.
-pub fn vipoundinsert() -> i32 {   // c:vipoundinsert
-    // C body: same as poundinsert (toggle # comment) but in vi cmdmode.
-    crate::ported::zle::zle_misc::poundinsert()
-}
-
-/// Port of `viquotedinsert(char **args)` from Src/Zle/zle_vi.c:1099.
-pub fn viquotedinsert() -> i32 {  // c:viquotedinsert
-    // C body: same as quotedinsert with vi insmode setup.
-    startvichange(-1);
-    crate::ported::zle::zle_misc::quotedinsert()
-}
-
-/// Direct port of `int virepeatchange(char **args)` from
-/// `Src/Zle/zle_vi.c:795-820`.
-/// ```c
-/// if (!lastvichg.buf || vichgflag || virangeflag) return 1;
-/// // (restore zmod from lastvichg.mod, advance vibuf if numbered)
-/// viinrepeat = 3;
-/// ungetbytes(lastvichg.buf, lastvichg.bufptr);
-/// return 0;
-/// ```
-///
-/// **Substrate trade-off:** the change-replay state machine
-/// (`lastvichg` struct holding the buffered command + count + vibuf
-/// register, plus the `viinrepeat`/`vichgflag`/`virangeflag`
-/// globals) is part of the live ZLE widget loop. Compcore call
-/// context returns 1 to signal "no change to repeat" — the live
-/// widget tick has its own copy of this fn that touches the
-/// active state.
-/// Port of `virepeatchange(UNUSED(char **args))` from `Src/Zle/zle_vi.c:795`.
-/// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn virepeatchange() -> i32 {                                             // c:795
-    1                                                                        // c:795 no change to repeat
-}
-
-/// Port of `vireplace(UNUSED(char **args))` from Src/Zle/zle_vi.c:574.
-pub fn vireplace() -> i32 {       // c:574
-    // C body (c:575-577): `startvitext(0); return 0`. Enter overwrite-
-    // style insert mode (insmode=0).
-    startvitext(0);
-    0
-}
-
-/// Port of `vireplacechars(UNUSED(char **args))` from Src/Zle/zle_vi.c:594.
-pub fn vireplacechars() -> i32 {  // c:594
-    // C body (c:596-675): read one char (vigetkey), replace next zmult
-    //                    chars with it (clamped to eol). Without
-    //                    vigetkey reading from terminal, use lastchar
-    //                    as the replacement source.
-    startvichange(1);
-    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult.max(1) as usize;
-    let eol = crate::ported::zle::zle_utils::findeol();
-    let avail = eol.saturating_sub(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
-    if n > avail {
-        return 1;                                                            // not enough chars
-    }
-    if let Some(c) = char::from_u32(crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) as u32) {
-        for i in 0..n {
-            crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + i] = c;
-        }
-        crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-    }
-    0
-}
-
-/// Port of `visetbuffer(char **args)` from Src/Zle/zle_vi.c:1015.
-pub fn visetbuffer() -> i32 {     // c:visetbuffer
-    // C body: read one char as the vi buffer name (a-z or 1-9 or '"');
-    //         set zmod.vibuf for the next yank/cut. Without vigetkey
-    //         interactive read, use lastchar.
-    use crate::ported::zle::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIBUF, MOD_VIAPP, MOD_NEG, MOD_NULL, MOD_CHAR, MOD_LINE, MOD_PRI, MOD_CLIP, MOD_OSSEL};
-    let c = (crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst) & 0xff) as u8;
-    let idx: i32 = if c.is_ascii_digit() {
-        (c - b'0') as i32 + 26
-    } else if c.is_ascii_lowercase() {
-        (c - b'a') as i32
-    } else if c.is_ascii_uppercase() {
-        // uppercase = append to register
-        crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_VIAPP;
-        (c - b'A') as i32
-    } else {
-        return 1;
-    };
-    crate::ported::zle::zle_main::ZMOD.lock().unwrap().vibuf = idx;
-    crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags |= MOD_VIBUF;
-    crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
-    0
-}
-
-/// Port of `visubstitute(UNUSED(char **args))` from Src/Zle/zle_vi.c:455.
-pub fn visubstitute() -> i32 {    // c:455
-    // C body (c:457-475): startvichange(1); n=zmult; if(n<0) return 1;
-    //                    error if at eol; forekill(n, CUT_RAW);
-    //                    startvitext(1); return 0.
-    startvichange(1);
-    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
-    if n < 0 {
-        return 1;
-    }
-    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) == crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) || crate::ported::zle::zle_main::ZLELINE.lock().unwrap().get(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)) == Some(&'\n') {
-        return 1;
-    }
-    let eol = crate::ported::zle::zle_utils::findeol();
-    let count = (n as usize).min(eol - crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst));
-    if count > 0 {
-        let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap().drain(crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) + count).collect();
-        crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
-        if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
-            crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
-        }
-        crate::ported::zle::zle_main::ZLELL.fetch_sub(count, std::sync::atomic::Ordering::SeqCst);
-    }
-    startvitext(1);
-    0
-}
-
-/// Port of `viswapcase(UNUSED(char **args))` from Src/Zle/zle_vi.c:977.
-pub fn viswapcase() -> i32 {      // c:viswapcase
-    // C body: walk zmult chars, swap case of each; advance cursor.
-    startvichange(-1);
-    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
-    if n < 1 {
-        return 1;
-    }
-    let eol = crate::ported::zle::zle_utils::findeol();
-    for _ in 0..n {
-        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) >= eol {
-            break;
-        }
-        let c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)];
-        let swapped = if c.is_ascii_uppercase() {
-            c.to_ascii_lowercase()
-        } else if c.is_ascii_lowercase() {
-            c.to_ascii_uppercase()
-        } else {
-            c
-        };
-        crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)] = swapped;
-        crate::ported::zle::zle_main::ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    }
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-    0
-}
-
-/// Port of `viunindent(UNUSED(char **args))` from Src/Zle/zle_vi.c:856.
-pub fn viunindent() -> i32 {      // c:856
-    // C body: remove up to SHIFTWIDTH (4) leading spaces from each
-    //         line in range.
-    startvichange(1);
-    let bol = crate::ported::zle::zle_utils::findbol();
-    let mut removed = 0;
-    while removed < 4 && bol < crate::ported::zle::zle_main::ZLELINE.lock().unwrap().len() && crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[bol] == ' ' {
-        crate::ported::zle::zle_main::ZLELINE.lock().unwrap().remove(bol);
-        crate::ported::zle::zle_main::ZLELL.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-        removed += 1;
-    }
-    if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) >= bol + removed {
-        crate::ported::zle::zle_main::ZLECS.fetch_sub(removed, std::sync::atomic::Ordering::SeqCst);
-    }
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-    0
-}
-
-/// Port of `viupcase(UNUSED(char **args))` from Src/Zle/zle_vi.c:751.
-pub fn viupcase() -> i32 {        // c:751
-    // C body (c:753-771): same as vidowncase but uppercase.
-    startvichange(1);
-    let eol = crate::ported::zle::zle_utils::findeol();
-    for i in crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..eol {
-        { let mut __g = crate::ported::zle::zle_main::ZLELINE.lock().unwrap(); __g[i] = __g[i].to_ascii_uppercase(); }
-    }
-    crate::ported::zle::zle_main::ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-    0
-}
-
-/// Port of `viyankeol(UNUSED(char **args))` from Src/Zle/zle_vi.c:537.
-pub fn viyankeol() -> i32 {       // c:537
-    // C body (c:539-547): `x = findeol(); startvichange(-1); if (x ==
-    //                     zlecs) return 1; cut(zlecs, x-zlecs, CUT_YANK);
-    //                     return 0`.
-    let x = crate::ported::zle::zle_utils::findeol();
-    startvichange(-1);
-    if x == crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) {
-        return 1;                                                            // c:550
-    }
-    let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst)..x].to_vec();
-    crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
-    if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
-        crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
-    }
-    0                                                                        // c:550
-}
-
-/// Port of `viyankwholeline(UNUSED(char **args))` from Src/Zle/zle_vi.c:550.
-pub fn viyankwholeline() -> i32 {  // c:550
-    // C body (c:553-572): `bol = findbol(); startvichange(-1); n = zmult;
-    //                     if (n < 1) return 1; for (i=n; i--; ) zlecs =
-    //                     findeol() + 1; if (zlecs > zlell) zlecs = zlell;
-    //                     cut(bol, zlecs - bol, CUT_YANK); zlecs = bol +
-    //                     oldcs - bol; return 0`.
-    let bol = crate::ported::zle::zle_utils::findbol();
-    let oldcs = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-    startvichange(-1);
-    let n = crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult;
-    if n < 1 {
-        return 1;
-    }
-    for _ in 0..n {
-        crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_utils::findeol() + 1, std::sync::atomic::Ordering::SeqCst);
-        if crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst) > crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
-            crate::ported::zle::zle_main::ZLECS.store(crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
-        }
-    }
-    let end = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-    let text: Vec<char> = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[bol..end].to_vec();
-    crate::ported::zle::zle_main::KILLRING.lock().unwrap().push_front(text);
-    if crate::ported::zle::zle_main::KILLRING.lock().unwrap().len() > crate::ported::zle::zle_main::KILLRINGMAX.load(std::sync::atomic::Ordering::SeqCst) {
-        crate::ported::zle::zle_main::KILLRING.lock().unwrap().pop_back();
-    }
-    crate::ported::zle::zle_main::ZLECS.store(oldcs, std::sync::atomic::Ordering::SeqCst);
-    0
 }

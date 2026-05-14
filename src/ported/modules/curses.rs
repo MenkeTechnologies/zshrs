@@ -330,45 +330,19 @@ static zcurses_colorpairs: OnceLock<Mutex<HashMap<String, i16>>> = OnceLock::new
 /// `init_pair()` allocations.
 static next_cp: OnceLock<Mutex<i16>> = OnceLock::new();
 
-// WARNING: NOT IN CURSES.C — Rust-only OnceLock get-or-init for
-// each module static. C dereferences globals directly.
-fn windows_lock() -> &'static Mutex<HashMap<String, zc_win>> {
-    zcurses_windows.get_or_init(|| Mutex::new(HashMap::new()))
-}
+// =====================================================================
+// Special-parameter accessors — `Src/Modules/curses.c:213`.
+// Each backs one of zsh's `$zcurses_*` magic-assoc/array params.
+// =====================================================================
 
-// WARNING: NOT IN CURSES.C — see windows_lock above.
-fn order_lock() -> &'static Mutex<Vec<String>> {
-    WINDOW_ORDER.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-// WARNING: NOT IN CURSES.C — see windows_lock above.
-fn errno_lock() -> &'static Mutex<i32> {
-    zc_errno_cell.get_or_init(|| Mutex::new(0))
-}
-
-// WARNING: NOT IN CURSES.C — see windows_lock above.
-fn colorpairs_lock() -> &'static Mutex<HashMap<String, i16>> {
-    zcurses_colorpairs.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-// WARNING: NOT IN CURSES.C — see windows_lock above.
-fn next_cp_lock() -> &'static Mutex<i16> {
-    next_cp.get_or_init(|| Mutex::new(0))
-}
-
-/// WARNING: NOT IN CURSES.C — Mutex-based errno accessor; C reads `zc_errno` directly
-/// (equivalent C logic at Src/Modules/curses.c:107).
-/// Read the current `zc_errno` value. C dereferences the global
-/// directly; Rust port wraps the lock acquire.
-fn zc_errno_get() -> i32 {
-    *errno_lock().lock().unwrap()
-}
-
-/// WARNING: NOT IN CURSES.C — Mutex-based errno setter; C writes `zc_errno` directly
-/// (equivalent C logic at Src/Modules/curses.c:107).
-/// Set `zc_errno`. Used by `zcurses_validate_window`.
-fn zc_errno_set(v: i32) {
-    *errno_lock().lock().unwrap() = v;
+/// Direct port of `zcurses_pairs_to_array(nnps)` from `Src/Modules/
+/// curses.c:213`. C body (c:215-228): walk the namenumberpair table,
+/// allocate a `char **` of length+1, fill with `dupstring(name)` per
+/// entry, NULL-terminate. Rust returns `Vec<String>` directly.
+pub fn zcurses_pairs_to_array(nnps: &[zcurses_namenumberpair])               // c:213
+    -> Vec<String>
+{
+    nnps.iter().map(|p| p.name.to_string()).collect()                        // c:222 dupstring
 }
 
 // =====================================================================
@@ -441,6 +415,28 @@ pub(crate) fn zcurses_validate_window(win: &str, criteria: i32) -> bool {
 }
 
 // =====================================================================
+// Port of `zcurses_free_window(ZCWin w)` from `Src/Modules/curses.c:285`.
+// =====================================================================
+
+/// Port of `zcurses_free_window(ZCWin w)` from `Src/Modules/curses.c:285`.
+///
+/// Refuses to free permanent (`ZCWF_PERMANENT`) windows. Removes
+/// from the windows map and the order tracker.
+/// WARNING: param names don't match C — Rust=() vs C=(w)
+pub(crate) fn zcurses_free_window(name: &str) -> i32 {
+    let mut wins = windows_lock().lock().unwrap();
+    if let Some(w) = wins.get(name) {
+        if w.flags & ZCWF_PERMANENT != 0 {
+            return 1;
+        }
+    }
+    wins.remove(name);
+    let mut order = order_lock().lock().unwrap();
+    order.retain(|n| n != name);
+    0
+}
+
+// =====================================================================
 // Port of `zcurses_attrget(UNUSED(WINDOW *w), char *attr)` from `Src/Modules/curses.c:302`.
 // =====================================================================
 
@@ -475,26 +471,106 @@ pub(crate) fn zcurses_color(color: &str) -> i32 {
     -2
 }
 
-// =====================================================================
-// Port of `zcurses_free_window(ZCWin w)` from `Src/Modules/curses.c:285`.
-// =====================================================================
-
-/// Port of `zcurses_free_window(ZCWin w)` from `Src/Modules/curses.c:285`.
+/// Port of `zcurses_colorget(const char *nam, char *colorpair)` from `Src/Modules/curses.c:331`.
+/// C body parses `"fg/bg"` (numeric or named on each side), resolves
+/// both via `zcurses_color`, allocates a new color-pair slot via
+/// `init_pair(next_cp, fg, bg)`, and caches the result keyed by the
+/// `"fg/bg"` string in `zcurses_colorpairs`. Returns the pair index.
 ///
-/// Refuses to free permanent (`ZCWF_PERMANENT`) windows. Removes
-/// from the windows map and the order tracker.
-/// WARNING: param names don't match C — Rust=() vs C=(w)
-pub(crate) fn zcurses_free_window(name: &str) -> i32 {
-    let mut wins = windows_lock().lock().unwrap();
-    if let Some(w) = wins.get(name) {
-        if w.flags & ZCWF_PERMANENT != 0 {
-            return 1;
+/// C signature: `static Colorpairnode zcurses_colorget(const char *nam,
+/// char *colorpair)`. Rust port returns `Option<i16>` (the pair slot)
+/// since the Colorpairnode struct is collapsed into the
+/// `HashMap<String, i16>` colorpairs store.
+pub fn zcurses_colorget(nam: &str, colorpair: &str) -> Option<i16> {         // c:331
+    // c:331-342 — cache hit?
+    {
+        let g = colorpairs_lock().lock().ok()?;
+        if let Some(&cp) = g.get(colorpair) {                                // c:342 gethashnode2
+            return Some(cp);
         }
     }
-    wins.remove(name);
-    let mut order = order_lock().lock().unwrap();
-    order.retain(|n| n != name);
-    0
+    // c:347 — parse "fg/bg".
+    let (cp_str, bg_str) = match colorpair.split_once('/') {                 // c:351
+        Some(t) => t,
+        None => return None,                                                 // c:354
+    };
+    // c:359-369 — resolve foreground.
+    let f: i16 = if !cp_str.is_empty()
+        && cp_str.chars().next().unwrap_or('x').is_ascii_digit() {           // c:360
+        cp_str.parse::<i16>().unwrap_or(-2)                                  // c:361 atoi
+    } else {
+        zcurses_color(cp_str) as i16                                         // c:363
+    };
+    // c:365-369 — resolve background.
+    let b: i16 = if !bg_str.is_empty()
+        && bg_str.chars().next().unwrap_or('x').is_ascii_digit() {           // c:365
+        bg_str.parse::<i16>().unwrap_or(-2)                                  // c:366
+    } else {
+        zcurses_color(bg_str) as i16                                         // c:368
+    };
+    // c:370-378 — error on unknown names.
+    if f == -2 || b == -2 {                                                  // c:370
+        if f == -2 {
+            crate::ported::utils::zwarnnam(nam,                              // c:372
+                &format!("foreground color `{}' not known", cp_str));
+        }
+        if b == -2 {
+            crate::ported::utils::zwarnnam(nam,                              // c:374
+                &format!("background color `{}' not known", bg_str));
+        }
+        return None;                                                         // c:377
+    }
+    // c:381 — ++next_cp.
+    let mut np = next_cp_lock().lock().ok()?;
+    *np += 1;                                                                // c:381
+    let cp_slot = *np;
+    // c:382 — COLOR_PAIRS limit / init_pair check. Without a live
+    // ncurses link we accept any slot up to a large bound and skip
+    // the actual init_pair call; the colorpairs map is what callers
+    // consult to know the slot exists.
+    if cp_slot < 0 || cp_slot >= 1024 {                                      // c:382 COLOR_PAIRS
+        return None;
+    }
+    let _ = (f, b);                                                          // init_pair would consume
+    drop(np);
+    // c:387-394 — calloc cpn + addhashnode.
+    let mut g = colorpairs_lock().lock().ok()?;
+    g.insert(colorpair.to_string(), cp_slot);                                // c:393 addhashnode
+    Some(cp_slot)                                                            // c:397
+}
+
+/// Direct port of `zcurses_colornode(HashNode hn, int cp)` from `Src/Modules/curses.c:402`.
+/// C body (c:404-407): scanhashtable callback that compares each
+/// Colorpairnode's `colorpair` short field against `cp` and stashes
+/// the matching node in the global `cpn_match`. Static-link path:
+/// the Rust port returns the matching name directly so callers
+/// don't need a side-channel global.
+/// WARNING: param names don't match C — Rust=(name, pair, cp) vs C=(hn, cp)
+pub fn zcurses_colornode(name: &str, pair: i16, cp: i16) -> Option<String> { // c:402
+    if pair == cp { Some(name.to_string()) } else { None }                   // c:410
+}
+
+/// Direct port of `zcurses_colorget_reverse(cp)` from `Src/Modules/
+/// curses.c:410`. C body (c:412-419): scanhashtable over
+/// `zcurses_colorpairs`, calling zcurses_colornode per node; returns
+/// `cpn_match`. Static-link path: walk the colorpairs table and
+/// return the first name whose pair matches.
+pub fn zcurses_colorget_reverse(cp: i16) -> Option<String> {                 // c:410
+    let g = colorpairs_lock().lock().ok()?;                                  // c:410
+    if g.is_empty() { return None; }                                         // c:413
+    for (name, pair) in g.iter() {                                           // c:417 scanhashtable
+        if let Some(matched) = zcurses_colornode(name, *pair, cp) {          // c:417
+            return Some(matched);                                            // c:418 cpn_match
+        }
+    }
+    None
+}
+
+/// Direct port of `freecolorpairnode(HashNode hn)` from `Src/Modules/curses.c:422`.
+/// C body (c:424-427): `zsfree(hn->nam); zfree(hn, sizeof(struct
+/// colorpairnode));`. Rust drop handles both via Box ownership.
+pub fn freecolorpairnode(hn: &str) {                                      // c:422
+    // c:422-426 — frees handled by Rust drop; nothing to do.
 }
 
 // =====================================================================
@@ -546,13 +622,6 @@ pub(crate) fn zccmd_init(_nam: &str, _args: &[String]) -> i32 {
         .insert("default/default".into(), 0);
     0
 }
-
-/// `curses_tty_state` — file-static `struct ttyinfo curses_tty_state;`
-/// from Src/Modules/curses.c:75. Snapshotted by gettyinfo at first
-/// init (c:443), restored by settyinfo on re-entry (c:438).
-#[allow(non_upper_case_globals)]
-static curses_tty_state: std::sync::Mutex<Option<libc::termios>> =
-    std::sync::Mutex::new(None);                                              // c:75
 
 // =====================================================================
 // Port of `zccmd_addwin(const char *nam, char **args)` from `Src/Modules/curses.c:503`.
@@ -621,6 +690,13 @@ pub(crate) fn zccmd_delwin(nam: &str, args: &[String]) -> i32 {
     }
     0
 }
+
+/// `curses_tty_state` — file-static `struct ttyinfo curses_tty_state;`
+/// from Src/Modules/curses.c:75. Snapshotted by gettyinfo at first
+/// init (c:443), restored by settyinfo on re-entry (c:438).
+#[allow(non_upper_case_globals)]
+static curses_tty_state: std::sync::Mutex<Option<libc::termios>> =
+    std::sync::Mutex::new(None);                                              // c:75
 
 // =====================================================================
 // Port of `zccmd_refresh(const char *nam, char **args)` from `Src/Modules/curses.c:632`.
@@ -709,6 +785,39 @@ pub(crate) fn zccmd_clear(nam: &str, args: &[String]) -> i32 {
 }
 
 // =====================================================================
+// Port of `zccmd_char(const char *nam, char **args)` from `Src/Modules/curses.c:723`.
+// =====================================================================
+
+/// Port of `zccmd_char(const char *nam, char **args)` from `Src/Modules/curses.c:723`. Writes
+/// one character into the window buffer at the current cursor.
+/// WARNING: param names don't match C — Rust=(args) vs C=(nam, args)
+pub(crate) fn zccmd_char(nam: &str, args: &[String]) -> i32 {
+    if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
+        zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
+        return 1;
+    }
+    let ch = match args[1].chars().next() {
+        Some(c) => c,
+        None => return 1,
+    };
+    let mut wins = windows_lock().lock().unwrap();
+    if let Some(w) = wins.get_mut(args[0].as_str()) {
+        if w.cursor_y < w.rows && w.cursor_x < w.cols {
+            w.buffer[w.cursor_y][w.cursor_x] = ch;
+            // C: wadd_wch advances the cursor.
+            w.cursor_x += 1;
+            if w.cursor_x >= w.cols {
+                w.cursor_x = 0;
+                if w.cursor_y + 1 < w.rows {
+                    w.cursor_y += 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+// =====================================================================
 // Port of `zccmd_string(const char *nam, char **args)` from `Src/Modules/curses.c:759`.
 // =====================================================================
 
@@ -737,6 +846,66 @@ pub(crate) fn zccmd_string(nam: &str, args: &[String]) -> i32 {
             }
         }
     }
+    0
+}
+
+// =====================================================================
+// Port of `zccmd_border(const char *nam, char **args)` from `Src/Modules/curses.c:802`.
+// =====================================================================
+
+/// Port of `zccmd_border(const char *nam, char **args)` from `Src/Modules/curses.c:802`.
+///
+/// C calls libncurses's `wborder(w, 0, 0, 0, 0, 0, 0, 0, 0)` which
+/// draws default ACS line-drawing chars around the window. The
+/// Rust port writes Unicode box-drawing equivalents to the buffer
+/// perimeter — the closest faithful match without libncurses ACS
+/// codepoint dispatch.
+/// WARNING: param names don't match C — Rust=(args) vs C=(nam, args)
+pub(crate) fn zccmd_border(nam: &str, args: &[String]) -> i32 {
+    if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
+        zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
+        return 1;
+    }
+    let mut wins = windows_lock().lock().unwrap();
+    if let Some(w) = wins.get_mut(args[0].as_str()) {
+        if w.rows < 2 || w.cols < 2 {
+            return 0;
+        }
+        // Top + bottom horizontal runs.
+        for x in 1..w.cols.saturating_sub(1) {
+            w.buffer[0][x] = '─';
+            w.buffer[w.rows - 1][x] = '─';
+        }
+        // Left + right vertical runs.
+        for y in 1..w.rows.saturating_sub(1) {
+            w.buffer[y][0] = '│';
+            w.buffer[y][w.cols - 1] = '│';
+        }
+        // Corners.
+        w.buffer[0][0] = '┌';
+        w.buffer[0][w.cols - 1] = '┐';
+        w.buffer[w.rows - 1][0] = '└';
+        w.buffer[w.rows - 1][w.cols - 1] = '┘';
+    }
+    0
+}
+
+// =====================================================================
+// Port of `zccmd_endwin(UNUSED(const char *nam), UNUSED(char **args))` from `Src/Modules/curses.c:823`.
+// =====================================================================
+
+/// Port of `zccmd_endwin(UNUSED(const char *nam), UNUSED(char **args))` from `Src/Modules/curses.c:823`.
+/// WARNING: param names don't match C — Rust=(_args) vs C=(nam, args)
+pub(crate) fn zccmd_endwin(_nam: &str, _args: &[String]) -> i32 {
+    if !zcurses_getwindowbyname("stdscr") {
+        return 0;
+    }
+    let mut stdout = io::stdout();
+    let _ = write!(stdout, "\x1b[?1049l\x1b[0m");
+    let _ = stdout.flush();
+    windows_lock().lock().unwrap().clear();
+    order_lock().lock().unwrap().clear();
+    colorpairs_lock().lock().unwrap().clear();
     0
 }
 
@@ -782,99 +951,6 @@ pub(crate) fn zccmd_attr(nam: &str, args: &[String]) -> i32 {
             ZCURSES_ATTROFF => w.attrs &= !(entry.number as u32),
             _ => {}
         }
-    }
-    0
-}
-
-// =====================================================================
-// Port of `zccmd_endwin(UNUSED(const char *nam), UNUSED(char **args))` from `Src/Modules/curses.c:823`.
-// =====================================================================
-
-/// Port of `zccmd_endwin(UNUSED(const char *nam), UNUSED(char **args))` from `Src/Modules/curses.c:823`.
-/// WARNING: param names don't match C — Rust=(_args) vs C=(nam, args)
-pub(crate) fn zccmd_endwin(_nam: &str, _args: &[String]) -> i32 {
-    if !zcurses_getwindowbyname("stdscr") {
-        return 0;
-    }
-    let mut stdout = io::stdout();
-    let _ = write!(stdout, "\x1b[?1049l\x1b[0m");
-    let _ = stdout.flush();
-    windows_lock().lock().unwrap().clear();
-    order_lock().lock().unwrap().clear();
-    colorpairs_lock().lock().unwrap().clear();
-    0
-}
-
-// =====================================================================
-// Port of `zccmd_char(const char *nam, char **args)` from `Src/Modules/curses.c:723`.
-// =====================================================================
-
-/// Port of `zccmd_char(const char *nam, char **args)` from `Src/Modules/curses.c:723`. Writes
-/// one character into the window buffer at the current cursor.
-/// WARNING: param names don't match C — Rust=(args) vs C=(nam, args)
-pub(crate) fn zccmd_char(nam: &str, args: &[String]) -> i32 {
-    if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
-        zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
-        return 1;
-    }
-    let ch = match args[1].chars().next() {
-        Some(c) => c,
-        None => return 1,
-    };
-    let mut wins = windows_lock().lock().unwrap();
-    if let Some(w) = wins.get_mut(args[0].as_str()) {
-        if w.cursor_y < w.rows && w.cursor_x < w.cols {
-            w.buffer[w.cursor_y][w.cursor_x] = ch;
-            // C: wadd_wch advances the cursor.
-            w.cursor_x += 1;
-            if w.cursor_x >= w.cols {
-                w.cursor_x = 0;
-                if w.cursor_y + 1 < w.rows {
-                    w.cursor_y += 1;
-                }
-            }
-        }
-    }
-    0
-}
-
-// =====================================================================
-// Port of `zccmd_border(const char *nam, char **args)` from `Src/Modules/curses.c:802`.
-// =====================================================================
-
-/// Port of `zccmd_border(const char *nam, char **args)` from `Src/Modules/curses.c:802`.
-///
-/// C calls libncurses's `wborder(w, 0, 0, 0, 0, 0, 0, 0, 0)` which
-/// draws default ACS line-drawing chars around the window. The
-/// Rust port writes Unicode box-drawing equivalents to the buffer
-/// perimeter — the closest faithful match without libncurses ACS
-/// codepoint dispatch.
-/// WARNING: param names don't match C — Rust=(args) vs C=(nam, args)
-pub(crate) fn zccmd_border(nam: &str, args: &[String]) -> i32 {
-    if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
-        zwarnnam(nam, &format!("{}: {}", zcurses_strerror(zc_errno_get()), args[0]));
-        return 1;
-    }
-    let mut wins = windows_lock().lock().unwrap();
-    if let Some(w) = wins.get_mut(args[0].as_str()) {
-        if w.rows < 2 || w.cols < 2 {
-            return 0;
-        }
-        // Top + bottom horizontal runs.
-        for x in 1..w.cols.saturating_sub(1) {
-            w.buffer[0][x] = '─';
-            w.buffer[w.rows - 1][x] = '─';
-        }
-        // Left + right vertical runs.
-        for y in 1..w.rows.saturating_sub(1) {
-            w.buffer[y][0] = '│';
-            w.buffer[y][w.cols - 1] = '│';
-        }
-        // Corners.
-        w.buffer[0][0] = '┌';
-        w.buffer[0][w.cols - 1] = '┐';
-        w.buffer[w.rows - 1][0] = '└';
-        w.buffer[w.rows - 1][w.cols - 1] = '┘';
     }
     0
 }
@@ -1089,39 +1165,6 @@ pub(crate) fn zccmd_timeout(nam: &str, args: &[String]) -> i32 {
     0
 }
 
-// =====================================================================
-// Port of `zccmd_mouse(const char *nam, char **args)` from `Src/Modules/curses.c:1294`.
-// =====================================================================
-
-/// `static int zcurses_flags` mouse mask, port of `curses.c:99`.
-static zcurses_flags: OnceLock<Mutex<u32>> = OnceLock::new();
-
-/// `static mmask_t zcurses_mouse_mask`, port of `curses.c:205`.
-static zcurses_mouse_mask: OnceLock<Mutex<u32>> = OnceLock::new();
-
-/// `ZCF_MOUSE_ACTIVE` flag (curses.c:116).
-pub const ZCF_MOUSE_ACTIVE: u32 = 1 << 0;
-/// `ZCF_MOUSE_MASK_CHANGED` flag (curses.c:117).
-pub const ZCF_MOUSE_MASK_CHANGED: u32 = 1 << 1;
-
-// WARNING: NOT IN CURSES.C — OnceLock get-or-init for `zcurses_flags`
-// and `zcurses_mouse_mask` (C dereferences globals directly).
-fn flags_lock() -> &'static Mutex<u32> {
-    zcurses_flags.get_or_init(|| Mutex::new(0))
-}
-// WARNING: NOT IN CURSES.C — see flags_lock above.
-/// Port of `zccmd_input(const char *nam, char **args)` from `Src/Modules/curses.c:1029`.
-fn mouse_mask_lock() -> &'static Mutex<u32> {
-    // ALL_MOUSE_EVENTS in ncurses ≈ 0x07ffffff for the standard
-    // event set. Default to that until a `mouse delay`/`mouse motion`
-    // command flips it.
-    zcurses_mouse_mask.get_or_init(|| Mutex::new(0x07ffffff))
-}
-
-/// `REPORT_MOUSE_POSITION` libncurses constant. Port of the bit
-/// `zcurses_mouse_mask` toggles for `mouse motion`.
-pub const REPORT_MOUSE_POSITION: u32 = 1 << 28;
-
 /// Port of `zccmd_mouse(const char *nam, char **args)` from `Src/Modules/curses.c:1294`.
 ///
 /// `mouse [+motion|-motion|delay N]...`: toggle the mouse mode.
@@ -1209,6 +1252,21 @@ pub(crate) fn zccmd_position(nam: &str, args: &[String]) -> i32 {
 }
 
 // =====================================================================
+// Port of `zccmd_mouse(const char *nam, char **args)` from `Src/Modules/curses.c:1294`.
+// =====================================================================
+
+/// `static int zcurses_flags` mouse mask, port of `curses.c:99`.
+static zcurses_flags: OnceLock<Mutex<u32>> = OnceLock::new();
+
+/// `static mmask_t zcurses_mouse_mask`, port of `curses.c:205`.
+static zcurses_mouse_mask: OnceLock<Mutex<u32>> = OnceLock::new();
+
+/// `ZCF_MOUSE_ACTIVE` flag (curses.c:116).
+pub const ZCF_MOUSE_ACTIVE: u32 = 1 << 0;
+/// `ZCF_MOUSE_MASK_CHANGED` flag (curses.c:117).
+pub const ZCF_MOUSE_MASK_CHANGED: u32 = 1 << 1;
+
+// =====================================================================
 // Port of `zccmd_querychar(const char *nam, char **args)` from `Src/Modules/curses.c:1382`.
 // =====================================================================
 
@@ -1272,6 +1330,10 @@ pub(crate) fn zccmd_touch(nam: &str, args: &[String]) -> i32 {
     0
 }
 
+/// `REPORT_MOUSE_POSITION` libncurses constant. Port of the bit
+/// `zcurses_mouse_mask` toggles for `mouse motion`.
+pub const REPORT_MOUSE_POSITION: u32 = 1 << 28;
+
 // =====================================================================
 // Port of `zccmd_resize(const char *nam, char **args)` from `Src/Modules/curses.c:1494`.
 // =====================================================================
@@ -1317,78 +1379,6 @@ pub(crate) fn zccmd_resize(nam: &str, args: &[String]) -> i32 {
         w.cursor_x = w.cursor_x.min(x.saturating_sub(1));
     }
     0
-}
-
-// =====================================================================
-// Port of `struct zcurses_subcommand` (curses.c:83) + dispatch
-// table inside `bin_zcurses` (curses.c:1574).
-// =====================================================================
-
-/// Subcommand table entry. Port of `struct zcurses_subcommand`
-/// from `Src/Modules/curses.c:83`.
-struct zcurses_subcommand {
-    name: &'static str,
-    cmd: fn(&str, &[String]) -> i32,                                         // c:84-85
-    minargs: i32,
-    maxargs: i32,
-}
-
-/// Port of the `struct zcurses_subcommand scs[]` array inside
-/// `bin_zcurses` (curses.c:1574). Order + min/max args match C.
-static SCS: &[zcurses_subcommand] = &[
-    zcurses_subcommand { name: "init", cmd: zccmd_init, minargs: 0, maxargs: 0 },
-    zcurses_subcommand { name: "addwin", cmd: zccmd_addwin, minargs: 5, maxargs: 6 },
-    zcurses_subcommand { name: "delwin", cmd: zccmd_delwin, minargs: 1, maxargs: 1 },
-    zcurses_subcommand { name: "refresh", cmd: zccmd_refresh, minargs: 0, maxargs: -1 },
-    zcurses_subcommand { name: "move", cmd: zccmd_move, minargs: 3, maxargs: 3 },
-    zcurses_subcommand { name: "clear", cmd: zccmd_clear, minargs: 1, maxargs: 2 },
-    zcurses_subcommand { name: "position", cmd: zccmd_position, minargs: 2, maxargs: 2 },
-    zcurses_subcommand { name: "char", cmd: zccmd_char, minargs: 2, maxargs: 2 },
-    zcurses_subcommand { name: "string", cmd: zccmd_string, minargs: 2, maxargs: 2 },
-    zcurses_subcommand { name: "border", cmd: zccmd_border, minargs: 1, maxargs: 1 },
-    zcurses_subcommand { name: "end", cmd: zccmd_endwin, minargs: 0, maxargs: 0 },
-    zcurses_subcommand { name: "attr", cmd: zccmd_attr, minargs: 2, maxargs: -1 },
-    zcurses_subcommand { name: "bg", cmd: zccmd_bg, minargs: 2, maxargs: -1 },
-    zcurses_subcommand { name: "scroll", cmd: zccmd_scroll, minargs: 2, maxargs: 2 },
-    zcurses_subcommand { name: "input", cmd: zccmd_input, minargs: 1, maxargs: 4 },
-    zcurses_subcommand { name: "timeout", cmd: zccmd_timeout, minargs: 2, maxargs: 2 },
-    zcurses_subcommand { name: "mouse", cmd: zccmd_mouse, minargs: 0, maxargs: -1 },
-    zcurses_subcommand { name: "querychar", cmd: zccmd_querychar, minargs: 1, maxargs: 2 },
-    zcurses_subcommand { name: "touch", cmd: zccmd_touch, minargs: 1, maxargs: -1 },
-    zcurses_subcommand { name: "resize", cmd: zccmd_resize, minargs: 2, maxargs: 3 },
-];
-
-// =====================================================================
-// Port of `zcurses_colorget(const char *nam, char *colorpair)` from `Src/Modules/curses.c:331`.
-// =====================================================================
-
-/// Port of `zcurses_colorget(const char *nam, char *colorpair)` from `Src/Modules/curses.c:331`.
-///
-/// Resolve `"fg/bg"` to a color-pair index, allocating a new pair
-/// via `init_pair()` semantics (incrementing `next_cp`) on first
-/// use. C uses libncurses's `init_pair`; Rust port stores the
-/// mapping in the `zcurses_colorpairs` HashMap for later SGR.
-pub(crate) fn colorpair_get_or_alloc(spec: &str) -> i32 {
-    let mut pairs = colorpairs_lock().lock().unwrap();
-    if let Some(&n) = pairs.get(spec) {
-        return n as i32;
-    }
-    let slash = match spec.find('/') {
-        Some(p) => p,
-        None => return -1,
-    };
-    let fg = &spec[..slash];
-    let bg = &spec[slash + 1..];
-    let _fg_n = zcurses_color(fg);
-    let _bg_n = zcurses_color(bg);
-    if _fg_n == -2 || _bg_n == -2 {
-        return -1;
-    }
-    let mut np = next_cp_lock().lock().unwrap();
-    *np = np.saturating_add(1);
-    let cp = *np;
-    pairs.insert(spec.to_string(), cp);
-    cp as i32
 }
 
 // =====================================================================
@@ -1442,6 +1432,266 @@ pub(crate) fn bin_zcurses(nam: &str, args: &[String],
         return 1;
     }
     (entry.cmd)(nam, sub_args)
+}
+
+/// Direct port of `zcurses_colorsarrgetfn()` from `Src/Modules/
+/// curses.c:1641`. C body: `return zcurses_pairs_to_array(zcurses_colors);`
+pub fn zcurses_colorsarrgetfn() -> Vec<String> {                             // c:1641
+    zcurses_pairs_to_array(zcurses_colors)                                   // c:1651
+}
+
+/// Direct port of `zcurses_attrgetfn()` from `Src/Modules/
+/// curses.c:1651`. C body: `return zcurses_pairs_to_array(zcurses_attributes);`
+pub fn zcurses_attrgetfn() -> Vec<String> {                                  // c:1651
+    zcurses_pairs_to_array(zcurses_attributes)                               // c:1661
+}
+
+/// Direct port of `zcurses_keycodesgetfn()` from `Src/Modules/
+/// curses.c:1661`. C body: `return zcurses_pairs_to_array(keypad_names);`
+/// Static-link path: walk the canonical KEY_* set the Rust port
+/// already enumerates via keypad_name.
+pub fn zcurses_keycodesgetfn() -> Vec<String> {                              // c:1661
+    let mut out = Vec::new();
+    for code in [KEY_DOWN, KEY_UP, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END,
+                 KEY_DC, KEY_IC, KEY_NPAGE, KEY_PPAGE] {
+        if let Some(n) = keypad_name(code) { out.push(n); }
+    }
+    for f in 1..=64 {                                                        // F-keys
+        if let Some(n) = keypad_name(KEY_F0 + f) { out.push(n); }
+    }
+    out
+}
+
+// =====================================================================
+// Port of `struct zcurses_subcommand` (curses.c:83) + dispatch
+// table inside `bin_zcurses` (curses.c:1574).
+// =====================================================================
+
+/// Subcommand table entry. Port of `struct zcurses_subcommand`
+/// from `Src/Modules/curses.c:83`.
+struct zcurses_subcommand {
+    name: &'static str,
+    cmd: fn(&str, &[String]) -> i32,                                         // c:84-85
+    minargs: i32,
+    maxargs: i32,
+}
+
+/// Port of the `struct zcurses_subcommand scs[]` array inside
+/// `bin_zcurses` (curses.c:1574). Order + min/max args match C.
+static SCS: &[zcurses_subcommand] = &[
+    zcurses_subcommand { name: "init", cmd: zccmd_init, minargs: 0, maxargs: 0 },
+    zcurses_subcommand { name: "addwin", cmd: zccmd_addwin, minargs: 5, maxargs: 6 },
+    zcurses_subcommand { name: "delwin", cmd: zccmd_delwin, minargs: 1, maxargs: 1 },
+    zcurses_subcommand { name: "refresh", cmd: zccmd_refresh, minargs: 0, maxargs: -1 },
+    zcurses_subcommand { name: "move", cmd: zccmd_move, minargs: 3, maxargs: 3 },
+    zcurses_subcommand { name: "clear", cmd: zccmd_clear, minargs: 1, maxargs: 2 },
+    zcurses_subcommand { name: "position", cmd: zccmd_position, minargs: 2, maxargs: 2 },
+    zcurses_subcommand { name: "char", cmd: zccmd_char, minargs: 2, maxargs: 2 },
+    zcurses_subcommand { name: "string", cmd: zccmd_string, minargs: 2, maxargs: 2 },
+    zcurses_subcommand { name: "border", cmd: zccmd_border, minargs: 1, maxargs: 1 },
+    zcurses_subcommand { name: "end", cmd: zccmd_endwin, minargs: 0, maxargs: 0 },
+    zcurses_subcommand { name: "attr", cmd: zccmd_attr, minargs: 2, maxargs: -1 },
+    zcurses_subcommand { name: "bg", cmd: zccmd_bg, minargs: 2, maxargs: -1 },
+    zcurses_subcommand { name: "scroll", cmd: zccmd_scroll, minargs: 2, maxargs: 2 },
+    zcurses_subcommand { name: "input", cmd: zccmd_input, minargs: 1, maxargs: 4 },
+    zcurses_subcommand { name: "timeout", cmd: zccmd_timeout, minargs: 2, maxargs: 2 },
+    zcurses_subcommand { name: "mouse", cmd: zccmd_mouse, minargs: 0, maxargs: -1 },
+    zcurses_subcommand { name: "querychar", cmd: zccmd_querychar, minargs: 1, maxargs: 2 },
+    zcurses_subcommand { name: "touch", cmd: zccmd_touch, minargs: 1, maxargs: -1 },
+    zcurses_subcommand { name: "resize", cmd: zccmd_resize, minargs: 2, maxargs: 3 },
+];
+
+/// Direct port of `zcurses_windowsgetfn()` from `Src/Modules/
+/// curses.c:1671`. C body (c:1675-1683): walk the `zcurses_windows`
+/// LinkList collecting each ZCWin's `name`. Rust port reads from
+/// the `order_lock` insertion-order tracker so the result preserves
+/// creation order matching C's LinkList walk.
+pub fn zcurses_windowsgetfn() -> Vec<String> {                               // c:1671
+    order_lock().lock().map(|g| g.clone()).unwrap_or_default()               // c:1691
+}
+
+/// Direct port of `zcurses_colorsintgetfn()` from `Src/Modules/
+/// curses.c:1691`. C body: `return COLORS;` (the ncurses global).
+/// Static-link path: probe the live ncurses COLORS via tigetnum.
+pub fn zcurses_colorsintgetfn() -> i64 {                                     // c:1691
+    let cap = std::ffi::CString::new("colors").unwrap();
+    let n = unsafe { libc_tigetnum(cap.as_ptr()) };                          // c:1701 COLORS
+    if n < 0 { 0 } else { n as i64 }
+}
+
+/// Direct port of `zcurses_colorpairsintgetfn()` from `Src/Modules/
+/// curses.c:1701`. C body: `return COLOR_PAIRS;`. Same probe as above
+/// against the `pairs` capability.
+pub fn zcurses_colorpairsintgetfn() -> i64 {                                 // c:1701
+    let cap = std::ffi::CString::new("pairs").unwrap();
+    let n = unsafe { libc_tigetnum(cap.as_ptr()) };                          // c:1703 COLOR_PAIRS
+    if n < 0 { 0 } else { n as i64 }
+}
+
+// =====================================================================
+// Module entry points (curses.c:1744+).
+// =====================================================================
+
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/curses.c:1744`. C body:
+/// `return 0;`.
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:1744
+    0
+}
+
+/// libncurses keypad code constants. Subset of the
+/// autogenerated `curses_keys.h` table the C source includes.
+pub const KEY_DOWN: i32 = 0o402;
+pub const KEY_UP: i32 = 0o403;
+pub const KEY_LEFT: i32 = 0o404;
+pub const KEY_RIGHT: i32 = 0o405;
+pub const KEY_HOME: i32 = 0o406;
+pub const KEY_DC: i32 = 0o512;
+pub const KEY_IC: i32 = 0o513;
+pub const KEY_NPAGE: i32 = 0o522;
+pub const KEY_PPAGE: i32 = 0o523;
+pub const KEY_END: i32 = 0o550;
+pub const KEY_F0: i32 = 0o410;
+
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/curses.c:1751`.
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:1751
+    *features = featuresarray(m, module_features());
+    0
+}
+
+// =====================================================================
+// Module paraphernalia (curses.c:1631-).
+// =====================================================================
+
+// Port of `static struct builtin bintab[]` from `curses.c:1631`:
+//   BUILTIN("zcurses", 0, bin_zcurses, 1, -1, 0, "", NULL)
+// The Rust port keeps the descriptor inline in the local
+// `featuresarray` stub below — the static-link path doesn't
+// need a `static [builtin]` array since `bin_zcurses` is
+// invoked through the canonical builtin dispatcher, not the
+// per-module bintab pointer C uses for dlopen.
+
+/// Port of `static struct features module_features` from
+/// `Src/Modules/curses.c:1638`. C builds it as a stack literal;
+/// Rust port keeps the OnceLock<Mutex> shape so callers consume
+/// the same `*const module, &Mutex<features_t>` handle other
+/// modules use.
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/curses.c`.
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:1759
+    handlefeatures(m, module_features(), enables)
+}
+
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/curses.c`. C body: `return 0;`.
+/// WARNING: param names don't match C — Rust=(_m) vs C=(m)
+pub fn boot_(_m: *const module) -> i32 {                                     // c:1766
+    0
+}
+
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/curses.c`.
+pub fn cleanup_(m: *const module) -> i32 {                                   // c:1775
+    setfeatureenables(m, module_features(), None)
+}
+
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/curses.c`. C body: `return 0;`.
+/// WARNING: param names don't match C — Rust=(_m) vs C=(m)
+pub fn finish_(_m: *const module) -> i32 {                                   // c:1785
+    0
+}
+
+// WARNING: NOT IN CURSES.C — Rust-only OnceLock get-or-init for
+// each module static. C dereferences globals directly.
+fn windows_lock() -> &'static Mutex<HashMap<String, zc_win>> {
+    zcurses_windows.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// WARNING: NOT IN CURSES.C — see windows_lock above.
+fn order_lock() -> &'static Mutex<Vec<String>> {
+    WINDOW_ORDER.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+// WARNING: NOT IN CURSES.C — see windows_lock above.
+fn errno_lock() -> &'static Mutex<i32> {
+    zc_errno_cell.get_or_init(|| Mutex::new(0))
+}
+
+// WARNING: NOT IN CURSES.C — see windows_lock above.
+fn colorpairs_lock() -> &'static Mutex<HashMap<String, i16>> {
+    zcurses_colorpairs.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// WARNING: NOT IN CURSES.C — see windows_lock above.
+fn next_cp_lock() -> &'static Mutex<i16> {
+    next_cp.get_or_init(|| Mutex::new(0))
+}
+
+/// WARNING: NOT IN CURSES.C — Mutex-based errno accessor; C reads `zc_errno` directly
+/// (equivalent C logic at Src/Modules/curses.c:107).
+/// Read the current `zc_errno` value. C dereferences the global
+/// directly; Rust port wraps the lock acquire.
+fn zc_errno_get() -> i32 {
+    *errno_lock().lock().unwrap()
+}
+
+/// WARNING: NOT IN CURSES.C — Mutex-based errno setter; C writes `zc_errno` directly
+/// (equivalent C logic at Src/Modules/curses.c:107).
+/// Set `zc_errno`. Used by `zcurses_validate_window`.
+fn zc_errno_set(v: i32) {
+    *errno_lock().lock().unwrap() = v;
+}
+
+// WARNING: NOT IN CURSES.C — OnceLock get-or-init for `zcurses_flags`
+// and `zcurses_mouse_mask` (C dereferences globals directly).
+fn flags_lock() -> &'static Mutex<u32> {
+    zcurses_flags.get_or_init(|| Mutex::new(0))
+}
+
+#[link(name = "ncurses")]
+extern "C" {
+    #[link_name = "tigetnum"]
+    fn libc_tigetnum(name: *const libc::c_char) -> libc::c_int;
+}
+// WARNING: NOT IN CURSES.C — see flags_lock above.
+/// Port of `zccmd_input(const char *nam, char **args)` from `Src/Modules/curses.c:1029`.
+fn mouse_mask_lock() -> &'static Mutex<u32> {
+    // ALL_MOUSE_EVENTS in ncurses ≈ 0x07ffffff for the standard
+    // event set. Default to that until a `mouse delay`/`mouse motion`
+    // command flips it.
+    zcurses_mouse_mask.get_or_init(|| Mutex::new(0x07ffffff))
+}
+
+// =====================================================================
+// Port of `zcurses_colorget(const char *nam, char *colorpair)` from `Src/Modules/curses.c:331`.
+// =====================================================================
+
+/// Port of `zcurses_colorget(const char *nam, char *colorpair)` from `Src/Modules/curses.c:331`.
+///
+/// Resolve `"fg/bg"` to a color-pair index, allocating a new pair
+/// via `init_pair()` semantics (incrementing `next_cp`) on first
+/// use. C uses libncurses's `init_pair`; Rust port stores the
+/// mapping in the `zcurses_colorpairs` HashMap for later SGR.
+pub(crate) fn colorpair_get_or_alloc(spec: &str) -> i32 {
+    let mut pairs = colorpairs_lock().lock().unwrap();
+    if let Some(&n) = pairs.get(spec) {
+        return n as i32;
+    }
+    let slash = match spec.find('/') {
+        Some(p) => p,
+        None => return -1,
+    };
+    let fg = &spec[..slash];
+    let bg = &spec[slash + 1..];
+    let _fg_n = zcurses_color(fg);
+    let _bg_n = zcurses_color(bg);
+    if _fg_n == -2 || _bg_n == -2 {
+        return -1;
+    }
+    let mut np = next_cp_lock().lock().unwrap();
+    *np = np.saturating_add(1);
+    let cp = *np;
+    pairs.insert(spec.to_string(), cp);
+    cp as i32
 }
 
 // =====================================================================
@@ -1539,20 +1789,6 @@ fn csi_to_keypad(seq: &[u8]) -> Option<i32> {
     }
 }
 
-/// libncurses keypad code constants. Subset of the
-/// autogenerated `curses_keys.h` table the C source includes.
-pub const KEY_DOWN: i32 = 0o402;
-pub const KEY_UP: i32 = 0o403;
-pub const KEY_LEFT: i32 = 0o404;
-pub const KEY_RIGHT: i32 = 0o405;
-pub const KEY_HOME: i32 = 0o406;
-pub const KEY_DC: i32 = 0o512;
-pub const KEY_IC: i32 = 0o513;
-pub const KEY_NPAGE: i32 = 0o522;
-pub const KEY_PPAGE: i32 = 0o523;
-pub const KEY_END: i32 = 0o550;
-pub const KEY_F0: i32 = 0o410;
-
 // WARNING: NOT IN CURSES.C — Rust-only reverse lookup of the
 // keypad-code → name table. C uses `keypad_names[]` from
 // `curses_keys.h`; Rust port hardcodes the most common keys to
@@ -1575,25 +1811,6 @@ fn keypad_name(code: i32) -> Option<String> {
     Some(name.to_string())
 }
 
-// =====================================================================
-// Module paraphernalia (curses.c:1631-).
-// =====================================================================
-
-// Port of `static struct builtin bintab[]` from `curses.c:1631`:
-//   BUILTIN("zcurses", 0, bin_zcurses, 1, -1, 0, "", NULL)
-// The Rust port keeps the descriptor inline in the local
-// `featuresarray` stub below — the static-link path doesn't
-// need a `static [builtin]` array since `bin_zcurses` is
-// invoked through the canonical builtin dispatcher, not the
-// per-module bintab pointer C uses for dlopen.
-
-/// Port of `static struct features module_features` from
-/// `Src/Modules/curses.c:1638`. C builds it as a stack literal;
-/// Rust port keeps the OnceLock<Mutex> shape so callers consume
-/// the same `*const module, &Mutex<features_t>` handle other
-/// modules use.
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 // WARNING: NOT IN CURSES.C — Rust-only module-framework shim.
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
@@ -1612,223 +1829,6 @@ fn module_features() -> &'static Mutex<features_t> {
             n_abstract: 0,                                                    // c:1643
         })
     })
-}
-
-// =====================================================================
-// Special-parameter accessors — `Src/Modules/curses.c:213`.
-// Each backs one of zsh's `$zcurses_*` magic-assoc/array params.
-// =====================================================================
-
-/// Direct port of `zcurses_pairs_to_array(nnps)` from `Src/Modules/
-/// curses.c:213`. C body (c:215-228): walk the namenumberpair table,
-/// allocate a `char **` of length+1, fill with `dupstring(name)` per
-/// entry, NULL-terminate. Rust returns `Vec<String>` directly.
-pub fn zcurses_pairs_to_array(nnps: &[zcurses_namenumberpair])               // c:213
-    -> Vec<String>
-{
-    nnps.iter().map(|p| p.name.to_string()).collect()                        // c:222 dupstring
-}
-
-/// Direct port of `zcurses_colornode(HashNode hn, int cp)` from `Src/Modules/curses.c:402`.
-/// C body (c:404-407): scanhashtable callback that compares each
-/// Colorpairnode's `colorpair` short field against `cp` and stashes
-/// the matching node in the global `cpn_match`. Static-link path:
-/// the Rust port returns the matching name directly so callers
-/// don't need a side-channel global.
-/// WARNING: param names don't match C — Rust=(name, pair, cp) vs C=(hn, cp)
-pub fn zcurses_colornode(name: &str, pair: i16, cp: i16) -> Option<String> { // c:402
-    if pair == cp { Some(name.to_string()) } else { None }                   // c:410
-}
-
-/// Direct port of `zcurses_colorget_reverse(cp)` from `Src/Modules/
-/// curses.c:410`. C body (c:412-419): scanhashtable over
-/// `zcurses_colorpairs`, calling zcurses_colornode per node; returns
-/// `cpn_match`. Static-link path: walk the colorpairs table and
-/// return the first name whose pair matches.
-pub fn zcurses_colorget_reverse(cp: i16) -> Option<String> {                 // c:410
-    let g = colorpairs_lock().lock().ok()?;                                  // c:410
-    if g.is_empty() { return None; }                                         // c:413
-    for (name, pair) in g.iter() {                                           // c:417 scanhashtable
-        if let Some(matched) = zcurses_colornode(name, *pair, cp) {          // c:417
-            return Some(matched);                                            // c:418 cpn_match
-        }
-    }
-    None
-}
-
-/// Port of `zcurses_colorget(const char *nam, char *colorpair)` from `Src/Modules/curses.c:331`.
-/// C body parses `"fg/bg"` (numeric or named on each side), resolves
-/// both via `zcurses_color`, allocates a new color-pair slot via
-/// `init_pair(next_cp, fg, bg)`, and caches the result keyed by the
-/// `"fg/bg"` string in `zcurses_colorpairs`. Returns the pair index.
-///
-/// C signature: `static Colorpairnode zcurses_colorget(const char *nam,
-/// char *colorpair)`. Rust port returns `Option<i16>` (the pair slot)
-/// since the Colorpairnode struct is collapsed into the
-/// `HashMap<String, i16>` colorpairs store.
-pub fn zcurses_colorget(nam: &str, colorpair: &str) -> Option<i16> {         // c:331
-    // c:331-342 — cache hit?
-    {
-        let g = colorpairs_lock().lock().ok()?;
-        if let Some(&cp) = g.get(colorpair) {                                // c:342 gethashnode2
-            return Some(cp);
-        }
-    }
-    // c:347 — parse "fg/bg".
-    let (cp_str, bg_str) = match colorpair.split_once('/') {                 // c:351
-        Some(t) => t,
-        None => return None,                                                 // c:354
-    };
-    // c:359-369 — resolve foreground.
-    let f: i16 = if !cp_str.is_empty()
-        && cp_str.chars().next().unwrap_or('x').is_ascii_digit() {           // c:360
-        cp_str.parse::<i16>().unwrap_or(-2)                                  // c:361 atoi
-    } else {
-        zcurses_color(cp_str) as i16                                         // c:363
-    };
-    // c:365-369 — resolve background.
-    let b: i16 = if !bg_str.is_empty()
-        && bg_str.chars().next().unwrap_or('x').is_ascii_digit() {           // c:365
-        bg_str.parse::<i16>().unwrap_or(-2)                                  // c:366
-    } else {
-        zcurses_color(bg_str) as i16                                         // c:368
-    };
-    // c:370-378 — error on unknown names.
-    if f == -2 || b == -2 {                                                  // c:370
-        if f == -2 {
-            crate::ported::utils::zwarnnam(nam,                              // c:372
-                &format!("foreground color `{}' not known", cp_str));
-        }
-        if b == -2 {
-            crate::ported::utils::zwarnnam(nam,                              // c:374
-                &format!("background color `{}' not known", bg_str));
-        }
-        return None;                                                         // c:377
-    }
-    // c:381 — ++next_cp.
-    let mut np = next_cp_lock().lock().ok()?;
-    *np += 1;                                                                // c:381
-    let cp_slot = *np;
-    // c:382 — COLOR_PAIRS limit / init_pair check. Without a live
-    // ncurses link we accept any slot up to a large bound and skip
-    // the actual init_pair call; the colorpairs map is what callers
-    // consult to know the slot exists.
-    if cp_slot < 0 || cp_slot >= 1024 {                                      // c:382 COLOR_PAIRS
-        return None;
-    }
-    let _ = (f, b);                                                          // init_pair would consume
-    drop(np);
-    // c:387-394 — calloc cpn + addhashnode.
-    let mut g = colorpairs_lock().lock().ok()?;
-    g.insert(colorpair.to_string(), cp_slot);                                // c:393 addhashnode
-    Some(cp_slot)                                                            // c:397
-}
-
-/// Direct port of `freecolorpairnode(HashNode hn)` from `Src/Modules/curses.c:422`.
-/// C body (c:424-427): `zsfree(hn->nam); zfree(hn, sizeof(struct
-/// colorpairnode));`. Rust drop handles both via Box ownership.
-pub fn freecolorpairnode(hn: &str) {                                      // c:422
-    // c:422-426 — frees handled by Rust drop; nothing to do.
-}
-
-/// Direct port of `zcurses_colorsarrgetfn()` from `Src/Modules/
-/// curses.c:1641`. C body: `return zcurses_pairs_to_array(zcurses_colors);`
-pub fn zcurses_colorsarrgetfn() -> Vec<String> {                             // c:1641
-    zcurses_pairs_to_array(zcurses_colors)                                   // c:1651
-}
-
-/// Direct port of `zcurses_attrgetfn()` from `Src/Modules/
-/// curses.c:1651`. C body: `return zcurses_pairs_to_array(zcurses_attributes);`
-pub fn zcurses_attrgetfn() -> Vec<String> {                                  // c:1651
-    zcurses_pairs_to_array(zcurses_attributes)                               // c:1661
-}
-
-/// Direct port of `zcurses_keycodesgetfn()` from `Src/Modules/
-/// curses.c:1661`. C body: `return zcurses_pairs_to_array(keypad_names);`
-/// Static-link path: walk the canonical KEY_* set the Rust port
-/// already enumerates via keypad_name.
-pub fn zcurses_keycodesgetfn() -> Vec<String> {                              // c:1661
-    let mut out = Vec::new();
-    for code in [KEY_DOWN, KEY_UP, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END,
-                 KEY_DC, KEY_IC, KEY_NPAGE, KEY_PPAGE] {
-        if let Some(n) = keypad_name(code) { out.push(n); }
-    }
-    for f in 1..=64 {                                                        // F-keys
-        if let Some(n) = keypad_name(KEY_F0 + f) { out.push(n); }
-    }
-    out
-}
-
-/// Direct port of `zcurses_windowsgetfn()` from `Src/Modules/
-/// curses.c:1671`. C body (c:1675-1683): walk the `zcurses_windows`
-/// LinkList collecting each ZCWin's `name`. Rust port reads from
-/// the `order_lock` insertion-order tracker so the result preserves
-/// creation order matching C's LinkList walk.
-pub fn zcurses_windowsgetfn() -> Vec<String> {                               // c:1671
-    order_lock().lock().map(|g| g.clone()).unwrap_or_default()               // c:1691
-}
-
-/// Direct port of `zcurses_colorsintgetfn()` from `Src/Modules/
-/// curses.c:1691`. C body: `return COLORS;` (the ncurses global).
-/// Static-link path: probe the live ncurses COLORS via tigetnum.
-pub fn zcurses_colorsintgetfn() -> i64 {                                     // c:1691
-    let cap = std::ffi::CString::new("colors").unwrap();
-    let n = unsafe { libc_tigetnum(cap.as_ptr()) };                          // c:1701 COLORS
-    if n < 0 { 0 } else { n as i64 }
-}
-
-/// Direct port of `zcurses_colorpairsintgetfn()` from `Src/Modules/
-/// curses.c:1701`. C body: `return COLOR_PAIRS;`. Same probe as above
-/// against the `pairs` capability.
-pub fn zcurses_colorpairsintgetfn() -> i64 {                                 // c:1701
-    let cap = std::ffi::CString::new("pairs").unwrap();
-    let n = unsafe { libc_tigetnum(cap.as_ptr()) };                          // c:1703 COLOR_PAIRS
-    if n < 0 { 0 } else { n as i64 }
-}
-
-#[link(name = "ncurses")]
-extern "C" {
-    #[link_name = "tigetnum"]
-    fn libc_tigetnum(name: *const libc::c_char) -> libc::c_int;
-}
-
-// =====================================================================
-// Module entry points (curses.c:1744+).
-// =====================================================================
-
-/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/curses.c:1744`. C body:
-/// `return 0;`.
-#[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:1744
-    0
-}
-
-/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/curses.c:1751`.
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {      // c:1751
-    *features = featuresarray(m, module_features());
-    0
-}
-
-/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/curses.c`.
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {   // c:1759
-    handlefeatures(m, module_features(), enables)
-}
-
-/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/curses.c`. C body: `return 0;`.
-/// WARNING: param names don't match C — Rust=(_m) vs C=(m)
-pub fn boot_(_m: *const module) -> i32 {                                     // c:1766
-    0
-}
-
-/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/curses.c`.
-pub fn cleanup_(m: *const module) -> i32 {                                   // c:1775
-    setfeatureenables(m, module_features(), None)
-}
-
-/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/curses.c`. C body: `return 0;`.
-/// WARNING: param names don't match C — Rust=(_m) vs C=(m)
-pub fn finish_(_m: *const module) -> i32 {                                   // c:1785
-    0
 }
 
 // Local stubs mirroring the C `featuresarray` / `handlefeatures` /

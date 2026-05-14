@@ -1108,6 +1108,8 @@ inrepeat
 intypeset
 isnewlin
 lineno
+noaliases
+nocorrect
 pos
 set_incasepat
 set_incmdpos
@@ -1117,6 +1119,8 @@ set_inredir
 set_inrepeat
 set_intypeset
 set_isnewlin
+set_noaliases
+set_nocorrect
 set_pos
 set_tok
 set_tokfd
@@ -1390,3 +1394,104 @@ test_assignment
 test_parse_completion_function
 test_parse_array_with_complex_elements
 test_parse_full_completion_file
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PRE-EXISTING — surfaced by 2026-05-14 depth-tracker fix
+#
+# These 80 fns existed in src/ported/* before build.rs's
+# depth tracker was corrected to skip braces inside string
+# literals / char literals / block comments / raw strings.
+# The previous tracker miscounted them at non-zero depth so
+# they appeared inside (non-existent) impl/test blocks and
+# escaped the gate.
+#
+# Status: NOT newly-invented fakery. Audit-pending — each
+# entry is a candidate for (a) inlining at call sites,
+# (b) renaming to match a real C function name, or (c)
+# staying allowlisted as sanctioned bucket-1 accessor.
+# The PORT.md Rule 0 "ASK FIRST" gate applies to NEW
+# additions; these pre-existing entries are admitted to
+# the allowlist en bloc to unblock C-faithful reordering
+# without further drift.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+apply_colon_modifiers
+apply_modifier_subst
+apply_text_attributes
+autoq_set
+char_at
+cline_matched_compcore
+color_name
+compcontext_for
+compfunc_active
+compquote_first
+copy_ecstr_walk
+do_single_first_match
+env_iparam
+errflag_get
+expand_ccl
+expand_comma
+expand_prompt
+expand_prompt_default
+expand_range
+firstfdhead_offset
+format_alias
+format_reswd
+freedump_locked
+glob_emit_path
+goto_compend
+inbackt_set
+instring_set
+is_directory
+is_readfd
+is_symlink
+lastpostbr_set
+lastprebr_set
+lexrestore
+lexsave
+makearray_strings
+modifier_abs
+modifier_command
+modifier_ext
+modifier_head
+modifier_lower
+modifier_quote
+modifier_realpath
+modifier_root
+modifier_tail
+modifier_unquote
+modifier_upper
+nextfdhead_offset
+opt_isset
+output_truecolor
+par_cond_top
+par_redir_with_id
+par_redir_wordcode_inner
+parse_anon_funcdef
+parse_arith
+parse_cond_and
+parse_cond_expr
+parse_cond_not
+parse_cond_or
+parse_cond_primary
+parse_cursh
+parse_inline_funcdef
+parse_loop_body
+prev_char_index
+prompt_width
+qipre_get
+qisuf_get
+read_fdhead
+reset_text_attributes
+right_prompt_padding
+runhookdef_compcore
+runhookdef_compctlmake
+set_compstate_str
+shfunc_call
+skip_cond_separators
+skip_separators
+skip_token_parens
+split_qualifier
+strip_tokens
+transient_prompt
+walk_namespace

@@ -21,6 +21,19 @@
 /// `zcond_regex_match` for the only currently-supported flavour.
 pub const ZREGEX_EXTENDED: i32 = 0;                                      // c:36
 
+/// Port of static helper `zregex_regerrwarn()` from
+/// `Src/Modules/regex.c:40`. C wraps libc `regerror(3)` to format
+/// a regex compilation/match error and emit it via `zwarn`. Rust
+/// uses the `regex` crate so `regex::Error` already carries a
+/// formatted message — collapse C's two `regerror()` size+fill
+/// calls into a single `zwarnnam` with the supplied prefix +
+/// already-formatted error string.
+///
+/// C signature: `static void zregex_regerrwarn(int r, regex_t *re, char *msg)`.
+pub fn zregex_regerrwarn(prefix: &str, err_msg: &str) {                  // c:40
+    crate::ported::utils::zwarnnam(prefix, err_msg);                     // c:40
+}
+
 /// Port of `zcond_regex_match(char **a, int id)` from `Src/Modules/regex.c:54`.
 ///
 /// C signature: `static int zcond_regex_match(char **a, int id)`.
@@ -152,69 +165,7 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {                       // 
     return_value                                                         // c:200
 }
 
-/// Port of static helper `zregex_regerrwarn()` from
-/// `Src/Modules/regex.c:40`. C wraps libc `regerror(3)` to format
-/// a regex compilation/match error and emit it via `zwarn`. Rust
-/// uses the `regex` crate so `regex::Error` already carries a
-/// formatted message — collapse C's two `regerror()` size+fill
-/// calls into a single `zwarnnam` with the supplied prefix +
-/// already-formatted error string.
-///
-/// C signature: `static void zregex_regerrwarn(int r, regex_t *re, char *msg)`.
-pub fn zregex_regerrwarn(prefix: &str, err_msg: &str) {                  // c:40
-    crate::ported::utils::zwarnnam(prefix, err_msg);                     // c:40
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Port of `zcond_regex_match(char **a, int id)` from `Src/Modules/regex.c:54`.
-    #[test]
-    fn match_returns_one() {
-        let r = zcond_regex_match(&["hello world", "wor.d"], ZREGEX_EXTENDED);
-        assert_eq!(r, 1);
-        // Side-effect params (MATCH/MBEGIN/MEND) flow through
-        // ksh93::setsparam env-var bridge; they're verified at the
-        // integration level (tests/zsh_compat_parity_gaps.rs) rather
-        // than here against an in-memory executor map.
-    }
-
-    #[test]
-    fn captures_returns_one() {
-        let r = zcond_regex_match(&["foo=42", "([a-z]+)=([0-9]+)"], ZREGEX_EXTENDED);
-        assert_eq!(r, 1);
-    }
-
-    #[test]
-    fn no_match_returns_zero() {
-        let r = zcond_regex_match(&["abc", "xyz"], ZREGEX_EXTENDED);
-        assert_eq!(r, 0);
-    }
-
-    #[test]
-    fn invalid_pattern_returns_zero() {
-        assert_eq!(
-            zcond_regex_match(&["anything", "["], ZREGEX_EXTENDED),
-            0
-        );
-    }
-
-    #[test]
-    fn missing_args_returns_zero() {
-        assert_eq!(zcond_regex_match(&[], ZREGEX_EXTENDED), 0);
-        assert_eq!(zcond_regex_match(&["only_lhs"], ZREGEX_EXTENDED), 0);
-    }
-
-    #[test]
-    fn casematch_off_is_case_insensitive() {
-        // casematch flag now consults the global options table via
-        // optlookup("casematch"); leaving it at default (1) means
-        // case-sensitive — `HELLO` vs `hello` should NOT match.
-        let r = zcond_regex_match(&["HELLO", "hello"], ZREGEX_EXTENDED);
-        assert_eq!(r, 0);
-    }
-}
 
 // =====================================================================
 // static struct features module_features                            c:217 (regex.c)
@@ -331,3 +282,53 @@ fn setfeatureenables(
     0
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Port of `zcond_regex_match(char **a, int id)` from `Src/Modules/regex.c:54`.
+    #[test]
+    fn match_returns_one() {
+        let r = zcond_regex_match(&["hello world", "wor.d"], ZREGEX_EXTENDED);
+        assert_eq!(r, 1);
+        // Side-effect params (MATCH/MBEGIN/MEND) flow through
+        // ksh93::setsparam env-var bridge; they're verified at the
+        // integration level (tests/zsh_compat_parity_gaps.rs) rather
+        // than here against an in-memory executor map.
+    }
+
+    #[test]
+    fn captures_returns_one() {
+        let r = zcond_regex_match(&["foo=42", "([a-z]+)=([0-9]+)"], ZREGEX_EXTENDED);
+        assert_eq!(r, 1);
+    }
+
+    #[test]
+    fn no_match_returns_zero() {
+        let r = zcond_regex_match(&["abc", "xyz"], ZREGEX_EXTENDED);
+        assert_eq!(r, 0);
+    }
+
+    #[test]
+    fn invalid_pattern_returns_zero() {
+        assert_eq!(
+            zcond_regex_match(&["anything", "["], ZREGEX_EXTENDED),
+            0
+        );
+    }
+
+    #[test]
+    fn missing_args_returns_zero() {
+        assert_eq!(zcond_regex_match(&[], ZREGEX_EXTENDED), 0);
+        assert_eq!(zcond_regex_match(&["only_lhs"], ZREGEX_EXTENDED), 0);
+    }
+
+    #[test]
+    fn casematch_off_is_case_insensitive() {
+        // casematch flag now consults the global options table via
+        // optlookup("casematch"); leaving it at default (1) means
+        // case-sensitive — `HELLO` vs `hello` should NOT match.
+        let r = zcond_regex_match(&["HELLO", "hello"], ZREGEX_EXTENDED);
+        assert_eq!(r, 0);
+    }
+}

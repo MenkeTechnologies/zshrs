@@ -195,6 +195,123 @@ pub fn is_private(pm: *const crate::ported::zsh_h::param) -> i32 {       // c:18
     }
 }
 
+// ---------------------------------------------------------------------------
+// Builtin entry + scope/wrap helpers (c:217-660).
+// ---------------------------------------------------------------------------
+
+/// Port of `bin_private(char *nam, char **args, LinkList assigns, Options ops, int func)` from `Src/Modules/param_private.c:217`.
+///
+/// C signature: `static int bin_private(char *nam, char **args,
+///                                       LinkList assigns, Options ops,
+///                                       int func)`. C body opens a
+/// new `locallevel`, calls `bin_typeset` to do the actual parameter
+/// creation, then runs `makeprivate` over the new scope to promote
+/// or reject each entry.
+///
+/// **Strict status: PARTIAL.** Without `bin_typeset`/`locallevel`/
+/// `makeprivate` ported, the Rust port falls back to plain `local`-
+/// style assignment via `exec.variables`/`exec.arrays`. This is
+/// observable behavior-equivalent for the simple `private name=value`
+/// form (no shadowing) but cannot reject promotions or detect
+/// scope-conflict cases the C body handles at c:140-178.
+///
+/// Builtin spec from c:702: `"AE:%F:HL:R:TUZ:afhi:lprtuxmM"`. Most
+/// flags are typeset's; `private` adds nothing of its own that isn't
+/// in typeset.
+pub fn bin_private(nam: &str, args: &[String],                               // c:217
+                   ops: &mut crate::ported::zsh_h::options, func: i32,
+                   assigns: &mut Vec<(String, String)>) -> i32 {
+    // c:220 — `int from_typeset = 1;`
+    let mut from_typeset: i32 = 1;                                            // c:220
+    // c:221 — `int ofake = fakelevel;`
+    let ofake = FAKELEVEL.load(Ordering::Relaxed);                            // c:221
+    // c:222 — `int hasargs = (assigns && firstnode(assigns));`
+    let hasargs = !assigns.is_empty();                                        // c:222
+    // c:223 — `makeprivate_error = 0;`
+    MAKEPRIVATE_ERROR.store(0, Ordering::Relaxed);                            // c:223
+
+    // c:225-230 — `if (!OPT_ISSET(ops, 'P'))` straight-through to bin_typeset.
+    if !OPT_ISSET(ops, b'P') {                                                // c:225
+        FAKELEVEL.store(0, Ordering::Relaxed);                                // c:226
+        from_typeset = crate::ported::builtin::bin_typeset(nam, args, ops, func);       // c:227
+        FAKELEVEL.store(ofake, Ordering::Relaxed);                            // c:228
+        return from_typeset;                                                  // c:229
+    }
+    // c:231-233 — refuse `-P -T`.
+    if OPT_ISSET(ops, b'T') {                                                 // c:231
+        crate::ported::utils::zwarn("bad option: -T");                        // c:232
+        return 1;                                                             // c:233
+    }
+
+    // c:235-239 — outside a function: WARNCREATEGLOBAL, then bin_typeset.
+    let locallevel = crate::ported::builtin::LOCALLEVEL.load(Ordering::Relaxed);
+    if locallevel == 0 {                                                      // c:235
+        let warn = crate::ported::zsh_h::isset(crate::ported::options::optlookup("warncreateglobal"));
+        if warn {                                                             // c:236
+            zwarnnam(nam, "invalid local scope, using globals");              // c:237
+        }
+        return crate::ported::builtin::bin_typeset("private", args, ops, func);         // c:238
+    }
+
+    // c:241-242 — `if (!(OPT_ISSET(ops,'m') || OPT_ISSET(ops,'+'))) ops->ind['g'] = 2;`
+    if !(OPT_ISSET(ops, b'm') || OPT_ISSET(ops, b'+')) {                      // c:241
+        ops.ind[b'g' as usize] = 2;                                           // c:242
+    }
+    // c:243-247 — `if (OPT_ISSET('p') || OPT_ISSET('m') || (!hasargs && OPT_ISSET('+')))`
+    if OPT_ISSET(ops, b'p') || OPT_ISSET(ops, b'm')                           // c:243
+        || (!hasargs && OPT_ISSET(ops, b'+'))
+    {
+        return crate::ported::builtin::bin_typeset("private", args, ops, func);         // c:245
+    }
+
+    // c:248-256 — queue_signals + startparamscope + bin_typeset + scan + endparamscope.
+    crate::ported::mem::queue_signals();                                      // c:248
+    FAKELEVEL.store(locallevel, Ordering::Relaxed);                           // c:249
+    // c:250 — startparamscope(): increment locallevel via the canonical
+    // params.rs helper. C's `scanhashtable(paramtab, …)` walk over a
+    // typed paramtab isn't possible without the typed-table port — the
+    // scope counter advance is the core observable side effect.
+    let mut paramscope_buf = crate::ported::params::newparamtable(17, "private_scope")
+        .unwrap_or_else(|| Box::new(crate::ported::zsh_h::hashtable {
+            hsize: 0, ct: 0, nodes: Vec::new(), tmpdata: 0,
+            hash: None, emptytable: None, filltable: None, cmpnodes: None,
+            addnode: None, getnode: None, getnode2: None, removenode: None,
+            disablenode: None, enablenode: None, freenode: None,
+            printnode: None, scantab: None,
+        }));
+    crate::ported::params::startparamscope(&mut paramscope_buf);              // c:250
+    from_typeset = crate::ported::builtin::bin_typeset("private", args, ops, func);     // c:251
+    // c:252 — `scanhashtable(paramtab, 0, 0, 0, makeprivate, 0);` —
+    // walks paramtab calling makeprivate on each entry to promote
+    // assignments made during bin_typeset. The typed paramtab walk
+    // isn't reachable; with executor-backed param storage the
+    // assignment paths in bin_typeset write through directly.
+    crate::ported::params::endparamscope();                                   // c:253
+    FAKELEVEL.store(ofake, Ordering::Relaxed);                                // c:254
+    crate::ported::mem::unqueue_signals();                                    // c:255
+
+    let mpe = MAKEPRIVATE_ERROR.load(Ordering::Relaxed);
+    mpe | from_typeset                                                        // c:257
+}
+
+/// Registry of currently-active private params. Port of the implicit
+/// state the C source tracks via `pm->gsu.X->unsetfn == pp{X}_unsetfn`
+/// pointer comparisons. Static-link path uses a name-set since the
+/// per-type GSU vtable pointers aren't a clean Rust mapping.
+// Static-link path: name registry of params marked PM_PRIVATE.
+// C tracks private-ness via PM_PRIVATE bit on each Param's
+// node.flags directly; this side-set is the bridge until paramtab
+// reads/writes use the real flag.
+pub static PRIVATE_PARAMS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>>
+    = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+/// `private_wraplevel` — file-scope global from
+/// `Src/Modules/param_private.c`. Tracks the locallevel at which
+/// `bin_private` started a scope; the `*_setfn` family compares
+/// `locallevel` against this to decide whether assignment is allowed.
+pub static private_wraplevel: std::sync::atomic::AtomicI32
+    = std::sync::atomic::AtomicI32::new(0);
+
 /// Port of `setfn_error(Param pm)` from `Src/Modules/param_private.c:260`.
 ///
 /// C body:
@@ -217,71 +334,6 @@ pub fn setfn_error(pm: *mut crate::ported::zsh_h::param) {               // c:26
         "{}: attempt to assign private in nested scope",
         name,
     ));
-}
-
-/// Registry of currently-active private params. Port of the implicit
-/// state the C source tracks via `pm->gsu.X->unsetfn == pp{X}_unsetfn`
-/// pointer comparisons. Static-link path uses a name-set since the
-/// per-type GSU vtable pointers aren't a clean Rust mapping.
-// Static-link path: name registry of params marked PM_PRIVATE.
-// C tracks private-ness via PM_PRIVATE bit on each Param's
-// node.flags directly; this side-set is the bridge until paramtab
-// reads/writes use the real flag.
-pub static PRIVATE_PARAMS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>>
-    = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
-
-/// `private_wraplevel` — file-scope global from
-/// `Src/Modules/param_private.c`. Tracks the locallevel at which
-/// `bin_private` started a scope; the `*_setfn` family compares
-/// `locallevel` against this to decide whether assignment is allowed.
-pub static private_wraplevel: std::sync::atomic::AtomicI32
-    = std::sync::atomic::AtomicI32::new(0);
-
-// `locallevel` is the global from `Src/init.c:166`, mirrored as
-// `crate::ported::params::locallevel: AtomicI32`. Read inline
-// at every call site below — `ksh93::locallevel.load(Relaxed)`.
-
-/// Port of `printprivatenode(HashNode hn, int printflags)` from `Src/Modules/param_private.c:632`.
-///
-/// C body:
-/// ```c
-/// printprivatenode(HashNode hn, int printflags) {
-///     Param pm = (Param) hn;
-///     while (pm && (!fakelevel ||
-///                   (fakelevel > pm->level && (pm->node.flags & PM_UNSET))) &&
-///            locallevel > pm->level && is_private(pm))
-///         pm = pm->old;
-///     if (pm)
-///         printparamnode((HashNode)pm, printflags);
-/// }
-/// ```
-///
-/// Custom printnode hook for private params. Walks `pm->old` chain
-/// to find the visible Param at the current scope before delegating
-/// to the standard `printparamnode`.
-#[allow(unused_variables)]
-pub fn printprivatenode(hn: *mut crate::ported::zsh_h::param, printflags: i32) {  // c:632
-    // c:632-638 — walk hn->old chain
-    let mut cur = hn;
-    while !cur.is_null() {
-        let pm_level = unsafe { (*cur).level };
-        let pm_flags = unsafe { (*cur).node.flags };
-        let fakelvl = FAKELEVEL.load(std::sync::atomic::Ordering::Relaxed);
-        let unset_in_fake = fakelvl != 0
-            && fakelvl > pm_level
-            && (pm_flags & crate::ported::zsh_h::PM_UNSET as i32) != 0;
-        let cond = (fakelvl == 0 || unset_in_fake)
-            && crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > pm_level
-            && is_private(cur) != 0;
-        if !cond { break; }
-        // c:638 — hn = hn->old
-        cur = unsafe { (*cur).old.as_ref().map(|b| b.as_ref() as *const _ as *mut _).unwrap_or(std::ptr::null_mut()) };
-    }
-    // c:642-643 — printparamnode
-    if !cur.is_null() {
-        let hn: &mut crate::ported::zsh_h::param = unsafe { &mut *cur };
-        crate::ported::params::printparamnode(hn, printflags);              // c:643
-    }
 }
 
 // `fakelevel` — file-scope global from `Src/Modules/param_private.c:215`.
@@ -541,103 +593,50 @@ pub fn pph_unsetfn(pm: *mut crate::ported::zsh_h::param, explicit: i32) {  // c:
     }
 }
 
-// ---------------------------------------------------------------------------
-// Builtin entry + scope/wrap helpers (c:217-660).
-// ---------------------------------------------------------------------------
-
-/// Port of `bin_private(char *nam, char **args, LinkList assigns, Options ops, int func)` from `Src/Modules/param_private.c:217`.
+/// Port of `scopeprivate(HashNode hn, int onoff)` from `Src/Modules/param_private.c:512`.
 ///
-/// C signature: `static int bin_private(char *nam, char **args,
-///                                       LinkList assigns, Options ops,
-///                                       int func)`. C body opens a
-/// new `locallevel`, calls `bin_typeset` to do the actual parameter
-/// creation, then runs `makeprivate` over the new scope to promote
-/// or reject each entry.
-///
-/// **Strict status: PARTIAL.** Without `bin_typeset`/`locallevel`/
-/// `makeprivate` ported, the Rust port falls back to plain `local`-
-/// style assignment via `exec.variables`/`exec.arrays`. This is
-/// observable behavior-equivalent for the simple `private name=value`
-/// form (no shadowing) but cannot reject promotions or detect
-/// scope-conflict cases the C body handles at c:140-178.
-///
-/// Builtin spec from c:702: `"AE:%F:HL:R:TUZ:afhi:lprtuxmM"`. Most
-/// flags are typeset's; `private` adds nothing of its own that isn't
-/// in typeset.
-pub fn bin_private(nam: &str, args: &[String],                               // c:217
-                   ops: &mut crate::ported::zsh_h::options, func: i32,
-                   assigns: &mut Vec<(String, String)>) -> i32 {
-    // c:220 — `int from_typeset = 1;`
-    let mut from_typeset: i32 = 1;                                            // c:220
-    // c:221 — `int ofake = fakelevel;`
-    let ofake = FAKELEVEL.load(Ordering::Relaxed);                            // c:221
-    // c:222 — `int hasargs = (assigns && firstnode(assigns));`
-    let hasargs = !assigns.is_empty();                                        // c:222
-    // c:223 — `makeprivate_error = 0;`
-    MAKEPRIVATE_ERROR.store(0, Ordering::Relaxed);                            // c:223
-
-    // c:225-230 — `if (!OPT_ISSET(ops, 'P'))` straight-through to bin_typeset.
-    if !OPT_ISSET(ops, b'P') {                                                // c:225
-        FAKELEVEL.store(0, Ordering::Relaxed);                                // c:226
-        from_typeset = crate::ported::builtin::bin_typeset(nam, args, ops, func);       // c:227
-        FAKELEVEL.store(ofake, Ordering::Relaxed);                            // c:228
-        return from_typeset;                                                  // c:229
-    }
-    // c:231-233 — refuse `-P -T`.
-    if OPT_ISSET(ops, b'T') {                                                 // c:231
-        crate::ported::utils::zwarn("bad option: -T");                        // c:232
-        return 1;                                                             // c:233
-    }
-
-    // c:235-239 — outside a function: WARNCREATEGLOBAL, then bin_typeset.
-    let locallevel = crate::ported::builtin::LOCALLEVEL.load(Ordering::Relaxed);
-    if locallevel == 0 {                                                      // c:235
-        let warn = crate::ported::zsh_h::isset(crate::ported::options::optlookup("warncreateglobal"));
-        if warn {                                                             // c:236
-            zwarnnam(nam, "invalid local scope, using globals");              // c:237
+/// C body: per-param hook called via `scanhashtable` to mark/unmark
+/// private params with PM_UNSET+PM_READONLY (entry) or restore
+/// previous state (exit). The `onoff` arg is `PM_UNSET` on entry,
+/// `0` on exit (matching `wrap_private`'s c:555/557 calls).
+pub fn scopeprivate(hn: *mut crate::ported::zsh_h::param, onoff: i32) {  // c:512
+    if hn.is_null() { return; }
+    let pm_level = unsafe { (*hn).level };
+    let local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
+    if pm_level != local { return; }                                      // c:515
+    if is_private(hn) == 0 { return; }                                    // c:516-517
+    unsafe {
+        let f = (*hn).node.flags;
+        if onoff == crate::ported::zsh_h::PM_UNSET as i32 {              // c:518
+            // c:519-520 — save current PM_UNSET
+            if (f & crate::ported::zsh_h::PM_UNSET as i32) != 0 {
+                (*hn).node.flags |= PM_WAS_UNSET as i32;
+            } else {
+                (*hn).node.flags |= crate::ported::zsh_h::PM_UNSET as i32;
+            }
+            // c:523-526 — save current PM_READONLY
+            if (f & crate::ported::zsh_h::PM_READONLY as i32) != 0 {
+                (*hn).node.flags |= PM_WAS_RONLY as i32;
+            } else {
+                (*hn).node.flags |= crate::ported::zsh_h::PM_READONLY as i32;
+            }
+        } else {                                                          // c:527
+            // c:528-531 — restore PM_UNSET
+            if (f & PM_WAS_UNSET as i32) != 0 {
+                (*hn).node.flags |= crate::ported::zsh_h::PM_UNSET as i32;
+            } else {
+                (*hn).node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+            }
+            // c:532-535 — restore PM_READONLY
+            if (f & PM_WAS_RONLY as i32) != 0 {
+                (*hn).node.flags |= crate::ported::zsh_h::PM_READONLY as i32;
+            } else {
+                (*hn).node.flags &= !(crate::ported::zsh_h::PM_READONLY as i32);
+            }
+            // c:536 — clear save bits
+            (*hn).node.flags &= !((PM_WAS_UNSET | PM_WAS_RONLY) as i32);
         }
-        return crate::ported::builtin::bin_typeset("private", args, ops, func);         // c:238
     }
-
-    // c:241-242 — `if (!(OPT_ISSET(ops,'m') || OPT_ISSET(ops,'+'))) ops->ind['g'] = 2;`
-    if !(OPT_ISSET(ops, b'm') || OPT_ISSET(ops, b'+')) {                      // c:241
-        ops.ind[b'g' as usize] = 2;                                           // c:242
-    }
-    // c:243-247 — `if (OPT_ISSET('p') || OPT_ISSET('m') || (!hasargs && OPT_ISSET('+')))`
-    if OPT_ISSET(ops, b'p') || OPT_ISSET(ops, b'm')                           // c:243
-        || (!hasargs && OPT_ISSET(ops, b'+'))
-    {
-        return crate::ported::builtin::bin_typeset("private", args, ops, func);         // c:245
-    }
-
-    // c:248-256 — queue_signals + startparamscope + bin_typeset + scan + endparamscope.
-    crate::ported::mem::queue_signals();                                      // c:248
-    FAKELEVEL.store(locallevel, Ordering::Relaxed);                           // c:249
-    // c:250 — startparamscope(): increment locallevel via the canonical
-    // params.rs helper. C's `scanhashtable(paramtab, …)` walk over a
-    // typed paramtab isn't possible without the typed-table port — the
-    // scope counter advance is the core observable side effect.
-    let mut paramscope_buf = crate::ported::params::newparamtable(17, "private_scope")
-        .unwrap_or_else(|| Box::new(crate::ported::zsh_h::hashtable {
-            hsize: 0, ct: 0, nodes: Vec::new(), tmpdata: 0,
-            hash: None, emptytable: None, filltable: None, cmpnodes: None,
-            addnode: None, getnode: None, getnode2: None, removenode: None,
-            disablenode: None, enablenode: None, freenode: None,
-            printnode: None, scantab: None,
-        }));
-    crate::ported::params::startparamscope(&mut paramscope_buf);              // c:250
-    from_typeset = crate::ported::builtin::bin_typeset("private", args, ops, func);     // c:251
-    // c:252 — `scanhashtable(paramtab, 0, 0, 0, makeprivate, 0);` —
-    // walks paramtab calling makeprivate on each entry to promote
-    // assignments made during bin_typeset. The typed paramtab walk
-    // isn't reachable; with executor-backed param storage the
-    // assignment paths in bin_typeset write through directly.
-    crate::ported::params::endparamscope();                                   // c:253
-    FAKELEVEL.store(ofake, Ordering::Relaxed);                                // c:254
-    crate::ported::mem::unqueue_signals();                                    // c:255
-
-    let mpe = MAKEPRIVATE_ERROR.load(Ordering::Relaxed);
-    mpe | from_typeset                                                        // c:257
 }
 
 /// `PM_WAS_UNSET` / `PM_WAS_RONLY` — file-scope `#define` aliases
@@ -645,6 +644,51 @@ pub fn bin_private(nam: &str, args: &[String],                               // 
 /// flag bits the private-scope save/restore code repurposes.
 pub const PM_WAS_UNSET: u32 = crate::ported::zsh_h::PM_NORESTORE;        // c:508
 pub const PM_WAS_RONLY: u32 = crate::ported::zsh_h::PM_RESTRICTED;       // c:509
+
+/// Port of `wrap_private(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/param_private.c:550`.
+///
+/// C body:
+/// ```c
+/// wrap_private(Eprog prog, FuncWrap w, char *name) {
+///     if (private_wraplevel < locallevel) {
+///         int owl = private_wraplevel;
+///         private_wraplevel = locallevel;
+///         scanhashtable(paramtab, 0, 0, 0, scopeprivate, PM_UNSET);
+///         runshfunc(prog, w, name);
+///         scanhashtable(paramtab, 0, 0, 0, scopeprivate, 0);
+///         private_wraplevel = owl;
+///         return 0;
+///     }
+///     return 1;
+/// }
+/// ```
+///
+/// Function-wrapper hook installed via `addwrapper`. On entry, marks
+/// every private param `PM_UNSET|PM_READONLY` so the wrapped function
+/// can't see them; on exit, restores their saved state. Returns 0
+/// when the wrapper ran (private_wraplevel < locallevel), 1 otherwise.
+/// WARNING: param names don't match C — Rust=(_prog, _name) vs C=(prog, w, name)
+pub fn wrap_private(_prog: *const crate::ported::zsh_h::eprog,               // c:550
+                    _w: *const crate::ported::zsh_h::funcwrap,
+                    _name: *mut libc::c_char) -> i32 {                    // c:550
+    let local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
+    let pwl = private_wraplevel.load(std::sync::atomic::Ordering::Relaxed);
+    if pwl < local {                                                      // c:552
+        let owl = pwl;                                                    // c:553
+        private_wraplevel.store(local, std::sync::atomic::Ordering::Relaxed); // c:554
+        // c:555 — scopeprivate(PM_UNSET) on every private param.
+        // Iterate the registry — each entry is a private param name
+        // we'd need a `*mut param` for. Static-link path skips the
+        // per-param scope flip since we don't have the global paramtab
+        // wired. The wraplevel bookkeeping below preserves correctness
+        // for the locallevel == private_wraplevel test in `*_setfn`.
+        // c:556 — runshfunc(prog, w, name) — handled by caller.
+        // c:557 — scopeprivate(0) restore on exit.
+        private_wraplevel.store(owl, std::sync::atomic::Ordering::Relaxed); // c:558
+        return 0;                                                         // c:559
+    }
+    1                                                                     // c:561
+}
 
 /// Port of `getprivatenode(HashTable ht, const char *nam)` from `Src/Modules/param_private.c:568`.
 ///
@@ -705,95 +749,51 @@ pub fn getprivatenode2(pm: *mut crate::ported::zsh_h::param)              // c:6
     cur                                                                   // c:627
 }
 
-/// Port of `scopeprivate(HashNode hn, int onoff)` from `Src/Modules/param_private.c:512`.
-///
-/// C body: per-param hook called via `scanhashtable` to mark/unmark
-/// private params with PM_UNSET+PM_READONLY (entry) or restore
-/// previous state (exit). The `onoff` arg is `PM_UNSET` on entry,
-/// `0` on exit (matching `wrap_private`'s c:555/557 calls).
-pub fn scopeprivate(hn: *mut crate::ported::zsh_h::param, onoff: i32) {  // c:512
-    if hn.is_null() { return; }
-    let pm_level = unsafe { (*hn).level };
-    let local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
-    if pm_level != local { return; }                                      // c:515
-    if is_private(hn) == 0 { return; }                                    // c:516-517
-    unsafe {
-        let f = (*hn).node.flags;
-        if onoff == crate::ported::zsh_h::PM_UNSET as i32 {              // c:518
-            // c:519-520 — save current PM_UNSET
-            if (f & crate::ported::zsh_h::PM_UNSET as i32) != 0 {
-                (*hn).node.flags |= PM_WAS_UNSET as i32;
-            } else {
-                (*hn).node.flags |= crate::ported::zsh_h::PM_UNSET as i32;
-            }
-            // c:523-526 — save current PM_READONLY
-            if (f & crate::ported::zsh_h::PM_READONLY as i32) != 0 {
-                (*hn).node.flags |= PM_WAS_RONLY as i32;
-            } else {
-                (*hn).node.flags |= crate::ported::zsh_h::PM_READONLY as i32;
-            }
-        } else {                                                          // c:527
-            // c:528-531 — restore PM_UNSET
-            if (f & PM_WAS_UNSET as i32) != 0 {
-                (*hn).node.flags |= crate::ported::zsh_h::PM_UNSET as i32;
-            } else {
-                (*hn).node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-            }
-            // c:532-535 — restore PM_READONLY
-            if (f & PM_WAS_RONLY as i32) != 0 {
-                (*hn).node.flags |= crate::ported::zsh_h::PM_READONLY as i32;
-            } else {
-                (*hn).node.flags &= !(crate::ported::zsh_h::PM_READONLY as i32);
-            }
-            // c:536 — clear save bits
-            (*hn).node.flags &= !((PM_WAS_UNSET | PM_WAS_RONLY) as i32);
-        }
-    }
-}
+// `locallevel` is the global from `Src/init.c:166`, mirrored as
+// `crate::ported::params::locallevel: AtomicI32`. Read inline
+// at every call site below — `ksh93::locallevel.load(Relaxed)`.
 
-/// Port of `wrap_private(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/param_private.c:550`.
+/// Port of `printprivatenode(HashNode hn, int printflags)` from `Src/Modules/param_private.c:632`.
 ///
 /// C body:
 /// ```c
-/// wrap_private(Eprog prog, FuncWrap w, char *name) {
-///     if (private_wraplevel < locallevel) {
-///         int owl = private_wraplevel;
-///         private_wraplevel = locallevel;
-///         scanhashtable(paramtab, 0, 0, 0, scopeprivate, PM_UNSET);
-///         runshfunc(prog, w, name);
-///         scanhashtable(paramtab, 0, 0, 0, scopeprivate, 0);
-///         private_wraplevel = owl;
-///         return 0;
-///     }
-///     return 1;
+/// printprivatenode(HashNode hn, int printflags) {
+///     Param pm = (Param) hn;
+///     while (pm && (!fakelevel ||
+///                   (fakelevel > pm->level && (pm->node.flags & PM_UNSET))) &&
+///            locallevel > pm->level && is_private(pm))
+///         pm = pm->old;
+///     if (pm)
+///         printparamnode((HashNode)pm, printflags);
 /// }
 /// ```
 ///
-/// Function-wrapper hook installed via `addwrapper`. On entry, marks
-/// every private param `PM_UNSET|PM_READONLY` so the wrapped function
-/// can't see them; on exit, restores their saved state. Returns 0
-/// when the wrapper ran (private_wraplevel < locallevel), 1 otherwise.
-/// WARNING: param names don't match C — Rust=(_prog, _name) vs C=(prog, w, name)
-pub fn wrap_private(_prog: *const crate::ported::zsh_h::eprog,               // c:550
-                    _w: *const crate::ported::zsh_h::funcwrap,
-                    _name: *mut libc::c_char) -> i32 {                    // c:550
-    let local = crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed);
-    let pwl = private_wraplevel.load(std::sync::atomic::Ordering::Relaxed);
-    if pwl < local {                                                      // c:552
-        let owl = pwl;                                                    // c:553
-        private_wraplevel.store(local, std::sync::atomic::Ordering::Relaxed); // c:554
-        // c:555 — scopeprivate(PM_UNSET) on every private param.
-        // Iterate the registry — each entry is a private param name
-        // we'd need a `*mut param` for. Static-link path skips the
-        // per-param scope flip since we don't have the global paramtab
-        // wired. The wraplevel bookkeeping below preserves correctness
-        // for the locallevel == private_wraplevel test in `*_setfn`.
-        // c:556 — runshfunc(prog, w, name) — handled by caller.
-        // c:557 — scopeprivate(0) restore on exit.
-        private_wraplevel.store(owl, std::sync::atomic::Ordering::Relaxed); // c:558
-        return 0;                                                         // c:559
+/// Custom printnode hook for private params. Walks `pm->old` chain
+/// to find the visible Param at the current scope before delegating
+/// to the standard `printparamnode`.
+#[allow(unused_variables)]
+pub fn printprivatenode(hn: *mut crate::ported::zsh_h::param, printflags: i32) {  // c:632
+    // c:632-638 — walk hn->old chain
+    let mut cur = hn;
+    while !cur.is_null() {
+        let pm_level = unsafe { (*cur).level };
+        let pm_flags = unsafe { (*cur).node.flags };
+        let fakelvl = FAKELEVEL.load(std::sync::atomic::Ordering::Relaxed);
+        let unset_in_fake = fakelvl != 0
+            && fakelvl > pm_level
+            && (pm_flags & crate::ported::zsh_h::PM_UNSET as i32) != 0;
+        let cond = (fakelvl == 0 || unset_in_fake)
+            && crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) > pm_level
+            && is_private(cur) != 0;
+        if !cond { break; }
+        // c:638 — hn = hn->old
+        cur = unsafe { (*cur).old.as_ref().map(|b| b.as_ref() as *const _ as *mut _).unwrap_or(std::ptr::null_mut()) };
     }
-    1                                                                     // c:561
+    // c:642-643 — printparamnode
+    if !cur.is_null() {
+        let hn: &mut crate::ported::zsh_h::param = unsafe { &mut *cur };
+        crate::ported::params::printparamnode(hn, printflags);              // c:643
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -890,63 +890,7 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     0                                                                         // c:744
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    fn empty_ops_pp() -> crate::ported::zsh_h::options {
-        use crate::ported::zsh_h::{options, MAX_OPS};
-        options { ind: [0u8; MAX_OPS], args: Vec::new(),
-                  argscount: 0, argsalloc: 0 }
-    }
-
-    /// Verifies `bin_private` with no args returns 0 (c:225-229 short-
-    /// circuit when -P is unset → bin_typeset returns 0).
-    #[test]
-    fn bin_private_no_args_returns_zero() {
-        let mut ops = empty_ops_pp();
-        let mut assigns: Vec<(String, String)> = Vec::new();
-        assert_eq!(bin_private("private", &[], &mut ops, 0, &mut assigns), 0);
-    }
-
-    /// Port of `bin_private(char *nam, char **args, LinkList assigns, Options ops, int func)` from `Src/Modules/param_private.c:217`.
-    /// Verifies `bin_private` returns 0 with -P 'foo=bar' (c:248-256
-    /// queue_signals + bin_typeset path).
-    #[test]
-    fn bin_private_scalar_assign() {
-        let mut ops = empty_ops_pp();
-        ops.ind[b'P' as usize] = 1;
-        let mut assigns: Vec<(String, String)> = Vec::new();
-        let r = bin_private("private",
-            &["foo=bar".to_string()], &mut ops, 0, &mut assigns);
-        assert_eq!(r, 0);
-    }
-
-    /// Port of `bin_private(char *nam, char **args, LinkList assigns, Options ops, int func)` from `Src/Modules/param_private.c:217`.
-    /// Verifies the -P -T combination is refused per c:231-233.
-    #[test]
-    fn bin_private_minus_p_minus_t_refused() {
-        let mut ops = empty_ops_pp();
-        ops.ind[b'P' as usize] = 1;
-        ops.ind[b'T' as usize] = 1;
-        let mut assigns: Vec<(String, String)> = Vec::new();
-        assert_eq!(bin_private("private", &[], &mut ops, 0, &mut assigns), 1);
-    }
-
-    /// Verifies module loaders return 0.
-    #[test]
-    fn module_loaders_return_zero() {
-        let m: *const module = std::ptr::null();
-        let mut features: Vec<String> = Vec::new();
-        let mut enables: Option<Vec<i32>> = None;
-        assert_eq!(setup_(m), 0);
-        assert_eq!(features_(m, &mut features), 0);
-        assert_eq!(enables_(m, &mut enables), 0);
-        assert_eq!(boot_(m), 0);
-        assert_eq!(cleanup_(m), 0);
-        assert_eq!(finish_(m), 0);
-    }
-}
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
@@ -1011,3 +955,60 @@ fn setfeatureenables(
     0
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_ops_pp() -> crate::ported::zsh_h::options {
+        use crate::ported::zsh_h::{options, MAX_OPS};
+        options { ind: [0u8; MAX_OPS], args: Vec::new(),
+                  argscount: 0, argsalloc: 0 }
+    }
+
+    /// Verifies `bin_private` with no args returns 0 (c:225-229 short-
+    /// circuit when -P is unset → bin_typeset returns 0).
+    #[test]
+    fn bin_private_no_args_returns_zero() {
+        let mut ops = empty_ops_pp();
+        let mut assigns: Vec<(String, String)> = Vec::new();
+        assert_eq!(bin_private("private", &[], &mut ops, 0, &mut assigns), 0);
+    }
+
+    /// Port of `bin_private(char *nam, char **args, LinkList assigns, Options ops, int func)` from `Src/Modules/param_private.c:217`.
+    /// Verifies `bin_private` returns 0 with -P 'foo=bar' (c:248-256
+    /// queue_signals + bin_typeset path).
+    #[test]
+    fn bin_private_scalar_assign() {
+        let mut ops = empty_ops_pp();
+        ops.ind[b'P' as usize] = 1;
+        let mut assigns: Vec<(String, String)> = Vec::new();
+        let r = bin_private("private",
+            &["foo=bar".to_string()], &mut ops, 0, &mut assigns);
+        assert_eq!(r, 0);
+    }
+
+    /// Port of `bin_private(char *nam, char **args, LinkList assigns, Options ops, int func)` from `Src/Modules/param_private.c:217`.
+    /// Verifies the -P -T combination is refused per c:231-233.
+    #[test]
+    fn bin_private_minus_p_minus_t_refused() {
+        let mut ops = empty_ops_pp();
+        ops.ind[b'P' as usize] = 1;
+        ops.ind[b'T' as usize] = 1;
+        let mut assigns: Vec<(String, String)> = Vec::new();
+        assert_eq!(bin_private("private", &[], &mut ops, 0, &mut assigns), 1);
+    }
+
+    /// Verifies module loaders return 0.
+    #[test]
+    fn module_loaders_return_zero() {
+        let m: *const module = std::ptr::null();
+        let mut features: Vec<String> = Vec::new();
+        let mut enables: Option<Vec<i32>> = None;
+        assert_eq!(setup_(m), 0);
+        assert_eq!(features_(m, &mut features), 0);
+        assert_eq!(enables_(m, &mut enables), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
+}

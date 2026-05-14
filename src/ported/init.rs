@@ -124,55 +124,6 @@ const tccapnams: [&str; 39] = [                                              // 
     "ku", "kd", "kl", "kr", "sc", "rc", "bc", "AF", "AB", "vi", "ve",
 ];
 
-// =========================================================================
-// Functions from init.c
-// =========================================================================
-
-/// Port of `enum loop_return loop(int toplevel, int justonce)` from Src/init.c:113.
-///
-/// Keep executing lists until EOF found.                                    // c:109
-pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {                         // c:113
-    let mut err: i32;                                                        // c:116
-    let mut non_empty: i32 = 0;                                              // c:116
-
-    crate::ported::signals::queue_signals();                                 // c:118
-    crate::ported::mem::pushheap();                                          // c:119
-    if toplevel == 0 {                                                       // c:120
-        // zcontext_save();                                                  // c:121
-    }
-    loop {                                                                   // c:122
-        crate::ported::mem::freeheap();                                      // c:123
-        // if (stophist == 3) hend(NULL);                                    // c:124-125
-        // hbegin(1);                                                        // c:126
-        // if (isset(SHINSTDIN)) {                                           // c:127
-        //     setblock_stdin();                                             // c:128
-        //     if (interact && toplevel) { ... preprompt() ... }             // c:129-151
-        // }
-        use_exit_printed.store(0, Ordering::SeqCst);                         // c:153
-        crate::ported::signals::intr();                                      // c:154
-        // lexinit();                                                        // c:155
-        // if (!(prog = parse_event(ENDINPUT))) { ... }                      // c:156-175
-        // if (hend(prog)) { ... execode(prog,...) ... }                     // c:176-227
-        // if (subsh) realexit();                                            // c:232-233
-        // if (((!interact || sourcelevel) && errflag) || retflag) break;    // c:234-235
-        // if (isset(SINGLECOMMAND) && toplevel) { ... realexit(); }         // c:236-241
-        if justonce != 0 { break; }                                          // c:242-243
-        // The actual REPL is owned by the binary; without parser/exec
-        // dispatch we cannot run another iteration, so break here.
-        break;
-    }
-    err = 0;                                                                 // c:245 (errflag stub)
-    if toplevel == 0 {                                                       // c:263
-        // zcontext_restore();                                               // c:263
-    }
-    crate::ported::mem::popheap();                                           // c:263
-    crate::ported::signals::unqueue_signals();                               // c:263
-
-    if err != 0 { return 2; /* LOOP_ERROR */ }                               // c:263-252
-    if non_empty == 0 { return 1; /* LOOP_EMPTY */ }                         // c:263-254
-    0 /* LOOP_OK */                                                          // c:263
-}
-
 /// Port of `static void parseargs(...)` from Src/init.c:263.
 fn parseargs(zsh_name: &str, argv: &mut Vec<String>,                         // c:263
              runscript: &mut Option<String>, cmdptr: &mut Option<String>) {
@@ -222,16 +173,6 @@ fn parseopts_insert(optlist: &mut Vec<usize>, base: usize, optno: i32) {     // 
         }
     }
     optlist.push(ptr);                                                       // c:348
-}
-
-/// Port of `static void parseopts_setemulate(...)` from Src/init.c:348.
-fn parseopts_setemulate(_nam: &str, _flags: i32) {                           // c:348
-    // emulate(nam, 1, &emulation, opts);                                    // c:348
-    // opts[LOGINSHELL] = ((flags & PARSEARGS_LOGIN) != 0);                  // c:351
-    // opts[PRIVILEGED] = (getuid() != geteuid() || getgid() != getegid()); // c:352
-    // opts[INTERACTIVE] = isatty(0) ? 2 : 0;                                // c:361
-    // opts[MONITOR] = 2; opts[HASHDIRS] = 2; opts[USEZLE] = 1;              // c:366-368
-    // opts[SHINSTDIN] = 0; opts[SINGLECOMMAND] = 0;                         // c:369-370
 }
 
 /// Port of `mod_export int parseopts(...)` from Src/init.c:390.
@@ -901,4 +842,63 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {                        // 
         // if (!(isset(IGNOREEOF) && interact)) zexit(...);                  // c:1943-1949
         std::process::exit(0);
     }
+}
+
+// =========================================================================
+// Functions from init.c
+// =========================================================================
+
+/// Port of `enum loop_return loop(int toplevel, int justonce)` from Src/init.c:113.
+///
+/// Keep executing lists until EOF found.                                    // c:109
+pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {                         // c:113
+    let mut err: i32;                                                        // c:116
+    let mut non_empty: i32 = 0;                                              // c:116
+
+    crate::ported::signals::queue_signals();                                 // c:118
+    crate::ported::mem::pushheap();                                          // c:119
+    if toplevel == 0 {                                                       // c:120
+        // zcontext_save();                                                  // c:121
+    }
+    loop {                                                                   // c:122
+        crate::ported::mem::freeheap();                                      // c:123
+        // if (stophist == 3) hend(NULL);                                    // c:124-125
+        // hbegin(1);                                                        // c:126
+        // if (isset(SHINSTDIN)) {                                           // c:127
+        //     setblock_stdin();                                             // c:128
+        //     if (interact && toplevel) { ... preprompt() ... }             // c:129-151
+        // }
+        use_exit_printed.store(0, Ordering::SeqCst);                         // c:153
+        crate::ported::signals::intr();                                      // c:154
+        // lexinit();                                                        // c:155
+        // if (!(prog = parse_event(ENDINPUT))) { ... }                      // c:156-175
+        // if (hend(prog)) { ... execode(prog,...) ... }                     // c:176-227
+        // if (subsh) realexit();                                            // c:232-233
+        // if (((!interact || sourcelevel) && errflag) || retflag) break;    // c:234-235
+        // if (isset(SINGLECOMMAND) && toplevel) { ... realexit(); }         // c:236-241
+        if justonce != 0 { break; }                                          // c:242-243
+        // The actual REPL is owned by the binary; without parser/exec
+        // dispatch we cannot run another iteration, so break here.
+        break;
+    }
+    err = 0;                                                                 // c:245 (errflag stub)
+    if toplevel == 0 {                                                       // c:263
+        // zcontext_restore();                                               // c:263
+    }
+    crate::ported::mem::popheap();                                           // c:263
+    crate::ported::signals::unqueue_signals();                               // c:263
+
+    if err != 0 { return 2; /* LOOP_ERROR */ }                               // c:263-252
+    if non_empty == 0 { return 1; /* LOOP_EMPTY */ }                         // c:263-254
+    0 /* LOOP_OK */                                                          // c:263
+}
+
+/// Port of `static void parseopts_setemulate(...)` from Src/init.c:348.
+fn parseopts_setemulate(_nam: &str, _flags: i32) {                           // c:348
+    // emulate(nam, 1, &emulation, opts);                                    // c:348
+    // opts[LOGINSHELL] = ((flags & PARSEARGS_LOGIN) != 0);                  // c:351
+    // opts[PRIVILEGED] = (getuid() != geteuid() || getgid() != getegid()); // c:352
+    // opts[INTERACTIVE] = isatty(0) ? 2 : 0;                                // c:361
+    // opts[MONITOR] = 2; opts[HASHDIRS] = 2; opts[USEZLE] = 1;              // c:366-368
+    // opts[SHINSTDIN] = 0; opts[SINGLECOMMAND] = 0;                         // c:369-370
 }

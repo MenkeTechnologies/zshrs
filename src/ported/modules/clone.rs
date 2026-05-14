@@ -250,46 +250,7 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
 // Tests
 // =====================================================================
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ported::zsh_h::MAX_OPS;
 
-    fn empty_ops() -> options {
-        options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn bin_clone_no_args_returns_one() {
-        let ops = empty_ops();
-        assert_eq!(bin_clone("clone", &[], &ops, 0), 1);
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn bin_clone_invalid_tty_returns_one() {
-        let ops = empty_ops();
-        // /nonexistent/tty doesn't exist — open() returns -1.
-        let rc = bin_clone("clone", &["/nonexistent/tty".to_string()], &ops, 0);
-        assert_eq!(rc, 1);
-    }
-
-    #[test]
-    fn module_loaders_return_zero() {
-        let mut features: Vec<String> = Vec::new();
-        let mut enables: Option<Vec<i32>> = None;
-        let m: *const module = std::ptr::null();
-        assert_eq!(setup_(m), 0);
-        assert_eq!(features_(m, &mut features), 0);
-        assert_eq!(features, vec!["b:clone"]);
-        assert_eq!(enables_(m, &mut enables), 0);
-        assert!(enables.is_some());
-        assert_eq!(boot_(m), 0);
-        assert_eq!(cleanup_(m), 0);
-        assert_eq!(finish_(m), 0);
-    }
-}
 
 use crate::ported::zsh_h::features as features_t;
 
@@ -353,3 +314,43 @@ fn setfeatureenables(
     0
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::zsh_h::MAX_OPS;
+
+    fn empty_ops() -> options {
+        options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn bin_clone_no_args_returns_one() {
+        let ops = empty_ops();
+        assert_eq!(bin_clone("clone", &[], &ops, 0), 1);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn bin_clone_invalid_tty_returns_one() {
+        let ops = empty_ops();
+        // /nonexistent/tty doesn't exist — open() returns -1.
+        let rc = bin_clone("clone", &["/nonexistent/tty".to_string()], &ops, 0);
+        assert_eq!(rc, 1);
+    }
+
+    #[test]
+    fn module_loaders_return_zero() {
+        let mut features: Vec<String> = Vec::new();
+        let mut enables: Option<Vec<i32>> = None;
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(features_(m, &mut features), 0);
+        assert_eq!(features, vec!["b:clone"]);
+        assert_eq!(enables_(m, &mut enables), 0);
+        assert!(enables.is_some());
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
+}

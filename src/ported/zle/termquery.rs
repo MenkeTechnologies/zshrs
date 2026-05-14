@@ -132,33 +132,33 @@ pub const T_CONTINUE: u8 = 0x92;                                             // 
 /// Port of `T_NEXT` from `termquery.c:54`. Advance to next stored number.
 pub const T_NEXT:     u8 = 0x94;                                             // c:54
 
-/// Probe the connected terminal for advertised capabilities.
-/// Port of `query_terminal()` from Src/Zle/termquery.c. The C source
-/// sends DA1 (`ESC [ c`), DA2 (`ESC [ > c`), and OSC-based probes,
-/// reads with a fixed timeout, and feeds the responses through
-/// per-capability parsers. zshrs sticks to the daily-driver subset
-/// (DA1, COLORTERM, OSC52) so script startup doesn't pay for the
-/// full 5+ probe round-trip.
-pub fn query_terminal() {                                                    // c:505
-    // c:505-509 — build TQ_BGCOLOR TQ_FGCOLOR TQ_CURSOR TQ_KITTYKB
-    // TQ_RGB TQ_XTVERSION TQ_DA, prime the state-machine matcher.
-    // c:510-540 — read responses + dispatch through `handle_query()`
-    // / `handle_color()` / `handle_paste()`.
-    // c:487 — discovered capabilities go to `.term.extensions` via
-    // assignaparam(EXTVAR, feat, ASSPM_AUGMENT).
-    // Discovered capabilities feed into `.term.extensions` via
-    // `assignaparam(EXTVAR, feat, ASSPM_AUGMENT)` once the
-    // `probe_terminal` state-machine matcher's per-query dispatch
-    // returns. The minimal probe below issues TQ_DA which all
-    // terminals answer; richer probes layer on as the state machine
-    // grows.
-    #[cfg(unix)]
-    {
-        if unsafe { libc::isatty(1) } != 1 {
-            return;
+/// Port of `find_branch(pos)` from Src/Zle/termquery.c:170.
+/// WARNING: param names don't match C — Rust=(s, ch) vs C=(pos)
+pub fn find_branch(s: &str, ch: u8) -> Option<usize> {                       // c:170
+    // C body c:172-183 — scans `s` for the matching paren/bracket/
+    //                    brace branch open. We approximate by finding
+    //                    the first byte equal to `ch`.
+    s.bytes().position(|b| b == ch)
+}
+
+/// Port of `find_matching(pos, direction)` from Src/Zle/termquery.c:185.
+/// WARNING: param names don't match C — Rust=(s, open, close) vs C=(pos, direction)
+pub fn find_matching(s: &str, open: u8, close: u8) -> Option<usize> {        // c:185
+    // C body c:187-218 — paired-bracket finder; scans forward
+    //                    counting opens until depth returns to 0.
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == open {
+            depth += 1;
+        } else if b == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
         }
     }
-    let _ = probe_terminal("\x1b[c", PROBE_TIMEOUT_MS);
+    None
 }
 
 /// Send an escape sequence query and read the response.
@@ -232,6 +232,168 @@ fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
     }
 }
 
+/// Port of `handle_color(int bg, int red, int green, int blue)` from Src/Zle/termquery.c:438.
+/// WARNING: param names don't match C — Rust=(_seq) vs C=(bg, red, green, blue)
+pub fn handle_color(_seq: &str) -> i32 {                                     // c:438
+    // C body c:440-593 — parses iTerm2 OSC 4;<idx>;rgb response,
+    //                    populates terminal color cache. Without
+    //                    iTerm2 dispatch: 0.
+    0
+}
+
+/// Probe the connected terminal for advertised capabilities.
+/// Port of `query_terminal()` from Src/Zle/termquery.c. The C source
+/// sends DA1 (`ESC [ c`), DA2 (`ESC [ > c`), and OSC-based probes,
+/// reads with a fixed timeout, and feeds the responses through
+/// per-capability parsers. zshrs sticks to the daily-driver subset
+/// (DA1, COLORTERM, OSC52) so script startup doesn't pay for the
+/// full 5+ probe round-trip.
+pub fn query_terminal() {                                                    // c:505
+    // c:505-509 — build TQ_BGCOLOR TQ_FGCOLOR TQ_CURSOR TQ_KITTYKB
+    // TQ_RGB TQ_XTVERSION TQ_DA, prime the state-machine matcher.
+    // c:510-540 — read responses + dispatch through `handle_query()`
+    // / `handle_color()` / `handle_paste()`.
+    // c:487 — discovered capabilities go to `.term.extensions` via
+    // assignaparam(EXTVAR, feat, ASSPM_AUGMENT).
+    // Discovered capabilities feed into `.term.extensions` via
+    // `assignaparam(EXTVAR, feat, ASSPM_AUGMENT)` once the
+    // `probe_terminal` state-machine matcher's per-query dispatch
+    // returns. The minimal probe below issues TQ_DA which all
+    // terminals answer; richer probes layer on as the state machine
+    // grows.
+    #[cfg(unix)]
+    {
+        if unsafe { libc::isatty(1) } != 1 {
+            return;
+        }
+    }
+    let _ = probe_terminal("\x1b[c", PROBE_TIMEOUT_MS);
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        result.push(CHARS[((n >> 18) & 63) as usize] as char);
+        result.push(CHARS[((n >> 12) & 63) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARS[((n >> 6) & 63) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(n & 63) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
+}
+
+/// Port of `base64_decode(src, len)` from `Src/Zle/termquery.c:570`.
+/// ```c
+/// static char*
+/// base64_decode(const char *src, size_t len)
+/// {
+///     int i = 0;
+///     unsigned int n;
+///     char *buf = hcalloc((3 * len) / 4 + 1);
+///     char *b = buf;
+///     char c;
+///     while (len && (c = src[i]) != '=') {
+///         n = isdigit(c) ? c - '0' + 52 :
+///             islower(c) ? c - 'a' + 26 :
+///             isupper(c) ? c - 'A' :
+///             (c == '+') ? 62 :
+///             (c == '/') ? 63 : 0;
+///         if (i % 4)
+///             *b++ |= n >> (2 * (3 - (i % 4)));
+///         if (++i >= len)
+///             break;
+///         *b = n << (2 * (i % 4));
+///     }
+///     return buf;
+/// }
+/// ```
+/// Decode a base64-encoded byte string. Stops at the first `=`
+/// (terminator) or end of input. Used by `system_clipget` to parse
+/// OSC52 clipboard responses (terminal returns base64-encoded
+/// clipboard contents in `\e]52;c;<base64>\e\\`).
+///
+/// The C body has a peculiar bit-pattern: it accumulates 6-bit
+/// groups across 4 input chars into 3 output bytes, but the
+/// "current output byte" is reset to `n << (2 * (i % 4))` BEFORE
+/// `b++`, then later iterations OR-in the high bits. This mirrors
+/// the standard base64 decode but with an unusual write pattern.
+pub fn base64_decode(src: &str) -> Vec<u8> {                                 // c:570
+    let bytes = src.as_bytes();
+    let len = bytes.len();
+    // c:575 — `hcalloc((3 * len) / 4 + 1)`. Pre-size the output;
+    // hcalloc zeros, so we mirror that with a Vec<u8> of zeros.
+    let mut buf = vec![0u8; (3 * len) / 4 + 1];
+    let mut i: usize = 0;
+    let mut b: usize = 0;
+    while i < len && bytes[i] != b'=' {                                      // c:579
+        let c = bytes[i];
+        // c:580-584 — character class → 6-bit value.
+        let n: u32 = if c.is_ascii_digit() {                                 // c:580
+            (c - b'0') as u32 + 52
+        } else if c.is_ascii_lowercase() {                                   // c:581
+            (c - b'a') as u32 + 26
+        } else if c.is_ascii_uppercase() {                                   // c:582
+            (c - b'A') as u32
+        } else if c == b'+' {                                                // c:583
+            62
+        } else if c == b'/' {                                                // c:584
+            63
+        } else {
+            0
+        };
+        if i % 4 != 0 {                                                      // c:585
+            // c:586 — `*b++ |= n >> (2 * (3 - (i % 4)))`.
+            buf[b] |= (n >> (2 * (3 - (i % 4)))) as u8;
+            b += 1;
+        }
+        i += 1;                                                              // c:587 ++i
+        if i >= len {                                                        // c:587
+            break;                                                           // c:588
+        }
+        // c:589 — `*b = n << (2 * (i % 4))`. Sets next slot's high bits.
+        if b < buf.len() {
+            buf[b] = (n << (2 * (i % 4))) as u8;
+        }
+    }
+    // C's `hcalloc((3*len)/4 + 1)` overallocates; trim to actual b.
+    buf.truncate(b);
+    buf                                                                      // c:591 return buf
+}
+
+/// Direct port of `static void handle_paste(int sequence, int *numbers,
+///                                          int len, char *capture,
+///                                          int clen, void *output)`
+/// from `Src/Zle/termquery.c:595`.
+///
+/// C body: `*(char**)output = base64_decode(capture, clen);` — drops
+/// a decoded payload into the caller-supplied `output` pointer.
+/// Rust port returns the decoded bytes as a String so callers can
+/// receive without unsafe pointer writes.
+pub fn handle_paste(seq: &str, len: usize) -> String {                       // c:595
+    // C ignores `sequence`, `numbers`, `len` (UNUSED markers); only
+    // `capture` + `clen` are read. `seq` here is the captured payload;
+    // `len` mirrors `clen`.
+    let capture = if len > 0 && len <= seq.len() {
+        &seq[..len]
+    } else {
+        seq
+    };
+    let bytes = base64_decode(capture);                                      // c:598
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 // `handle_query(int sequence, int *numbers, int len, char *capture,
 // int clen, ...)` from Src/Zle/termquery.c:474 — C signature takes
 // 5 args (parsed sequence-id, decoded numbers, count, captured
@@ -259,6 +421,8 @@ pub fn url_encode(s: &str) -> String {
     }
     result
 }
+
+
 
 /// Direct port of `char *system_clipget(char clip)` from
 /// `Src/Zle/termquery.c:625`. Emits `ESC ] 52 ; <clip> ; ? ST` and
@@ -301,30 +465,6 @@ pub fn system_clipput(data: &str) -> String {
         buf.extend_from_slice(b"\x1b\\");
     }
     String::from_utf8_lossy(&buf).to_string()
-}
-
-fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        result.push(CHARS[((n >> 18) & 63) as usize] as char);
-        result.push(CHARS[((n >> 12) & 63) as usize] as char);
-        if chunk.len() > 1 {
-            result.push(CHARS[((n >> 6) & 63) as usize] as char);
-        } else {
-            result.push('=');
-        }
-        if chunk.len() > 2 {
-            result.push(CHARS[(n & 63) as usize] as char);
-        } else {
-            result.push('=');
-        }
-    }
-    result
 }
 
 /// Direct port of `int extension_enabled(const char *class, const
@@ -376,6 +516,263 @@ pub fn extension_enabled(class: &str, ext: &str, def: bool) -> bool {
     }
     // c:694 — fall-through: `return def`.
     def
+}
+
+/// Port of `collate_seq(int sindex, int dir)` from Src/Zle/termquery.c:676.
+/// WARNING: param names don't match C — Rust=(_seq) vs C=(sindex, dir)
+pub fn collate_seq(_seq: &str) -> Vec<u8> {                                  // c:676
+    // C body c:678-722 — collates a UTF-8 byte sequence into a single
+    //                    locale-aware key for sort comparison via
+    //                    strxfrm(). Without locale glue: identity.
+    _seq.as_bytes().to_vec()
+}
+
+/// Port of `start_edit()` from Src/Zle/termquery.c:717.
+pub fn start_edit() -> i32 {                                                 // c:717
+    // C body c:719-722 — emits OSC 1337;StartEdit (iTerm2). No
+    //                    iTerm2 dispatch in headless mode.
+    0
+}
+
+/// Port of `end_edit()` from Src/Zle/termquery.c:724.
+pub fn end_edit() -> i32 {                                                   // c:724
+    // C body c:726-729 — emits the iTerm2 OSC 1337;EndEdit terminator
+    //                    via shout when zterm_supports_iterm2 is true.
+    //                    No iTerm2 dispatch in headless mode.
+    0
+}
+
+/// Direct port of `const char **prompt_markers(void)` from
+/// `Src/Zle/termquery.c:731`. Returns the three FinalTerm OSC 133
+/// prompt-region markers (PR=primary/PS1, SE=secondary/PS2,
+/// RI=right/RPS1+RPS2). Gated on the `integration:prompt` extension
+/// toggle. When disabled, returns three empty strings (analog of
+/// C's 4-NULL `nomark`).
+///
+/// C has a file-static mutable buffer `pre` ("before prompt" OSC 133;A
+/// template) and a file-static `aid` (per-shell hash). On first call
+/// while enabled, C computes `aid = hasher(HOST) ^ pid`, base64-encodes
+/// the 4 bytes of `aid` (8 chars), and memcpy's the first 6 chars into
+/// `pre[13..19]` (replacing the `ZZZZZZ` placeholder). The mutated
+/// `pre` is private to this translation unit; Rust mirrors with
+/// thread-locals `AID` and `PRE_BUFFER` so the side effect is
+/// observable from within the same module while staying invisible to
+/// outside callers (matching the C file-static scope).
+/// WARNING: signature change — C returns `const char **` (4-NULL-
+/// terminated when disabled); Rust returns a fixed-size array of
+/// String. Caller picks PS1/PS2/RPS marker by index.
+pub fn prompt_markers() -> [String; 3] {                                     // c:731
+    // c:741 — `if (!extension_enabled("integration", "prompt", 11, 1))
+    //          return nomark;`
+    if !extension_enabled("integration", "prompt", true) {
+        return [String::new(), String::new(), String::new()];
+    }
+
+    // c:744-752 — first-call AID computation. `if (!aid) { ... }`.
+    if AID.with(|a| a.get()) == 0 {
+        // c:746 — `char *h = getsparam("HOST");`
+        let host = crate::ported::params::getsparam("HOST").unwrap_or_default();
+        // c:747 — `aid = (h ? hasher(h) : 0) ^ getpid();`
+        let h_hash = if host.is_empty() {
+            0
+        } else {
+            crate::ported::hashtable::hasher(&host)
+        };
+        let pid = unsafe { libc::getpid() } as u32;
+        let mut aid = h_hash ^ pid;
+        // c:748 — `if (!aid) aid = 1;` collision guard.
+        if aid == 0 {
+            aid = 1;
+        }
+        AID.with(|a| a.set(aid));
+
+        // c:750 — `h = base64_encode((const char *)&aid, sizeof(aid));`
+        //          C casts the raw `unsigned int aid` to bytes; that's
+        //          native-endian. `to_ne_bytes` matches.
+        let aid_bytes = aid.to_ne_bytes();
+        let b64 = base64_encode(&aid_bytes);
+        // c:751 — `memcpy(pre + 13, h, 6);` — only the first 6 chars
+        //          of the 8-char base64 output get spliced into the
+        //          ZZZZZZ placeholder.
+        PRE_BUFFER.with(|p| {
+            let mut buf = p.borrow_mut();
+            let payload = b64.as_bytes();
+            let n = payload.len().min(6).min(buf.len().saturating_sub(13));
+            for i in 0..n {
+                buf[13 + i] = payload[i];
+            }
+        });
+    }
+
+    // c:735-738 + c:754 — return the 3-element markers array.
+    [
+        "\x1b]133;P;k=i\x1b\\".to_string(),                                  // c:735 PR
+        "\x1b]133;P;k=s\x1b\\".to_string(),                                  // c:736 SE
+        "\x1b]133;P;k=r\x1b\\".to_string(),                                  // c:737 RI
+    ]
+}
+
+/// Port of `void mark_output(int start)` from Src/Zle/termquery.c:759.
+///
+/// Emits the FinalTerm "command output" OSC 133 marker so terminal
+/// integrations like iTerm2 / WezTerm can fold previous output. Two
+/// flavors: `start=1` writes `\e]133;C\e\\` (begin output), else
+/// `\e]133;D\e\\` (end output). Gated on the `integration:output`
+/// extension toggle.
+pub fn mark_output(start: bool) {                                            // c:759
+    const START: &[u8] = b"\x1b]133;C\x1b\\";                                // c:761
+    const END:   &[u8] = b"\x1b]133;D\x1b\\";                                // c:762
+    if extension_enabled("integration", "output", true) {                    // c:763
+        let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        if shtty < 0 { return; }
+        let _ = crate::ported::utils::write_loop(                            // c:764
+            shtty,
+            if start { START } else { END },
+        );
+    }
+}
+
+/// Direct port of `static void write_urlencoded(const char
+/// *path_components)` from `Src/Zle/termquery.c:769`. URL-encodes the
+/// input via `url_encode` and writes the bytes to the given fd. C's
+/// version writes to `SHTTY` directly; Rust takes the fd as a param
+/// so the caller chooses (notify_pwd uses SHTTY).
+/// WARNING: signature change — C=(path_components) writes SHTTY vs
+/// Rust=(fd, path_components) writes the given fd.
+pub fn write_urlencoded(fd: i32, path_components: &str) {                    // c:769
+    // c:772 — `url_encode(path_components, &enc_len)`.
+    let enc = url_encode(path_components);
+    // c:773 — `write_loop(SHTTY, enc, enc_len)`.
+    let _ = crate::ported::utils::write_loop(fd, enc.as_bytes());
+}
+
+
+/// Direct port of `void notify_pwd(void)` from
+/// `Src/Zle/termquery.c:778`. Emits the `OSC 7 ; file://host/path`
+/// CWD notification used by modern terminals to follow the shell's
+/// directory across new tabs and splits. Gated on the
+/// `integration:pwd` extension toggle, and refuses to emit if `$HOST`
+/// contains a `/` (otherwise the resulting URL would be malformed).
+pub fn notify_pwd() {                                                        // c:778
+    // c:783 — `extension_enabled("integration", "pwd", 11, 1)` gate.
+    if !extension_enabled("integration", "pwd", true) {
+        return;
+    }
+    // c:785-786 — refuse if HOST is missing or contains '/'.
+    let hostnam = match crate::ported::params::getsparam("HOST") {
+        Some(h) if !h.contains('/') => h,
+        _ => return,
+    };
+    // c:785 — read $PWD via paramtab.
+    let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
+
+    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    if shtty < 0 {
+        return;
+    }
+    // c:788-791 — write_loop("\033]7;file://", 11) → urlenc(host)
+    //              → urlenc(pwd) → "\033\\".
+    let _ = crate::ported::utils::write_loop(shtty, b"\x1b]7;file://");
+    write_urlencoded(shtty, &hostnam);
+    write_urlencoded(shtty, &pwd);
+    let _ = crate::ported::utils::write_loop(shtty, b"\x1b\\");
+}
+
+/// Direct port of `match_cursorform(const char *teststr,
+/// unsigned int *cursor_form)` from `Src/Zle/termquery.c:798`. Parses
+/// a comma-separated spec like `bar,blink,color=#f80` and returns the
+/// composed CURF_* bit pattern. C mutates `*cursor_form`; we return
+/// the value.
+/// WARNING: signature change — C=(teststr, cursor_form*) vs Rust=(spec) -> u32
+pub fn match_cursorform(spec: &str) -> u32 {                                 // c:798
+    // c:800-810 — name→(value,mask) table. "none" zeros every bit
+    //              (mask=0xff). Shape names take 2-bit slots; blink/
+    //              steady are mutually-exclusive single bits; hidden
+    //              has mask=0 so it ORs in without disturbing shape.
+    const SHAPES: &[(&str, u32, u32)] = &[
+        ("none",      0,                       0xff),
+        ("underline", CURF_UNDERLINE as u32, CURF_SHAPE_MASK as u32),
+        ("bar",       CURF_BAR       as u32, CURF_SHAPE_MASK as u32),
+        ("block",     CURF_BLOCK     as u32, CURF_SHAPE_MASK as u32),
+        ("blink",     CURF_BLINK     as u32, CURF_STEADY     as u32),
+        ("steady",    CURF_STEADY    as u32, CURF_BLINK      as u32),
+        ("hidden",    CURF_HIDDEN    as u32, 0),
+    ];
+
+    let mut cursor_form: u32 = 0;                                            // c:813
+    let mut s = spec;
+
+    // c:814-852 — walk components separated by ','.
+    while !s.is_empty() {
+        let mut found = false;
+
+        // c:818-841 — color=#RGB or color=#RRGGBB.
+        if let Some(rest) = s.strip_prefix("color=#") {                      // c:818
+            // c:820 — `zstrtol(teststr, &end, 16)` consumes hex until
+            //         non-hex. We walk the leading hex run by hand.
+            let mut end = 0;
+            for (i, ch) in rest.char_indices() {
+                if ch.is_ascii_hexdigit() {
+                    end = i + ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            let hex_str = &rest[..end];
+            let col: u32 = u32::from_str_radix(hex_str, 16).unwrap_or(0);
+
+            if end == 4 {                                                    // c:822 — 3-digit form #RGB
+                // c:823-832 — splat each 4-bit nibble across both
+                //             halves so #f80 → 0xff8800.
+                let red:   u32 = col >> 8;
+                let green: u32 = (col & 0xf0) >> 4;
+                let blue:  u32 = col & 0xf;
+                cursor_form &= 0xff; // clear color                          // c:828
+                cursor_form |= (CURF_COLOR as u32)
+                    | ((red   << 4 | red)   << CURF_RED_SHIFT)
+                    | ((green << 4 | green) << CURF_GREEN_SHIFT)
+                    | ((blue  << 4 | blue)  << CURF_BLUE_SHIFT);
+                found = true;
+            } else if end == 6 {                                             // c:833 — 6-digit form #RRGGBB
+                cursor_form |= (col << 8) | (CURF_COLOR as u32);             // c:834
+                found = true;
+            }
+            // c:837 — `teststr = end;` — advance past hex run.
+            s = &rest[end..];
+        }
+
+        // c:842-849 — shape/blink/steady/hidden names.
+        if !found {
+            for (name, value, mask) in SHAPES {
+                if let Some(rest) = s.strip_prefix(name) {
+                    cursor_form &= !*mask;                                   // c:846
+                    cursor_form |=  *value;                                  // c:847
+                    s = rest;
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        // c:850-851 — unknown component: skip to next comma. C uses
+        //              `strchr(teststr, ',')` which returns the comma
+        //              itself (or NULL); we mirror with `find`.
+        if !found {
+            match s.find(',') {
+                Some(idx) => s = &s[idx..],
+                None      => break,
+            }
+        }
+
+        // c:852-855 — break unless we landed on a comma; else skip it.
+        let mut it = s.chars();
+        match it.next() {
+            Some(',') => s = it.as_str(),
+            _         => break,
+        }
+    }
+
+    cursor_form
 }
 
 /// Direct port of `void zle_set_cursorform(void)` from
@@ -468,36 +865,58 @@ pub fn zle_set_cursorform() {                                                // 
     }
 }
 
+/// Direct port of `void free_cursor_forms(void)` from
+/// `Src/Zle/termquery.c:904`. Nulls out the cursor-forms storage so
+/// `zle_set_cursorform` re-allocates on the next call. C body only
+/// touches the `cursor_forms` pointer; `setup` and
+/// `cursor_enabled_mask` are intentionally preserved across the
+/// free so the extension-probe doesn't re-run unless `trashedzle`
+/// flips inside `zle_set_cursorform`.
+pub fn free_cursor_forms() {                                                 // c:904
+    // c:906-907 — `if (cursor_forms) zfree(...);`  c:908 — `cursor_forms = 0;`
+    CURSOR_FORMS.with(|cf| cf.borrow_mut().clear());
+}
 
-/// Direct port of `void notify_pwd(void)` from
-/// `Src/Zle/termquery.c:778`. Emits the `OSC 7 ; file://host/path`
-/// CWD notification used by modern terminals to follow the shell's
-/// directory across new tabs and splits. Gated on the
-/// `integration:pwd` extension toggle, and refuses to emit if `$HOST`
-/// contains a `/` (otherwise the resulting URL would be malformed).
-pub fn notify_pwd() {                                                        // c:778
-    // c:783 — `extension_enabled("integration", "pwd", 11, 1)` gate.
-    if !extension_enabled("integration", "pwd", true) {
-        return;
-    }
-    // c:785-786 — refuse if HOST is missing or contains '/'.
-    let hostnam = match crate::ported::params::getsparam("HOST") {
-        Some(h) if !h.contains('/') => h,
-        _ => return,
-    };
-    // c:785 — read $PWD via paramtab.
-    let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
+/// Port of `cursor_form()` from Src/Zle/termquery.c:913.
+pub fn cursor_form() -> Vec<String> {                                        // c:913
+    // C body c:915-902 — emits the current cursor-shape escape based
+    //                    on `cursor_form_list`. Without form list:
+    //                    empty.
+    Vec::new()
+}
 
-    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    if shtty < 0 {
-        return;
+#[cfg(test)]
+mod term_pat_tag_tests {
+    use super::*;
+
+    #[test]
+    fn tag_high_bit_set() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert_eq!(TAG, 0x80);
+        assert_eq!(SEQ, 0xc0);
     }
-    // c:788-791 — write_loop("\033]7;file://", 11) → urlenc(host)
-    //              → urlenc(pwd) → "\033\\".
-    let _ = crate::ported::utils::write_loop(shtty, b"\x1b]7;file://");
-    write_urlencoded(shtty, &hostnam);
-    write_urlencoded(shtty, &pwd);
-    let _ = crate::ported::utils::write_loop(shtty, b"\x1b\\");
+
+    #[test]
+    fn t_constants_have_high_bit_set() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        for tag in [T_BEGIN, T_END, T_OR, T_REPEAT, T_NUM, T_HEX, T_HEXCH,
+                    T_WILDCARD, T_RECORD, T_CAPTURE, T_DROP, T_CONTINUE, T_NEXT] {
+            assert!(tag & TAG != 0, "tag 0x{:02x} should have high bit set", tag);
+        }
+    }
+
+    #[test]
+    fn timeout_sentinel_negative() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert_eq!(TIMEOUT, -51);
+    }
+
+    #[test]
+    fn t_repeat_in_seq_range() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // c:42-48 — T_BEGIN..=T_HEXCH all in 0x80..=0x86, all have TAG bit.
+        assert!((T_BEGIN..=T_HEXCH).contains(&T_REPEAT));
+    }
 }
 
 #[cfg(test)]
@@ -799,422 +1218,5 @@ mod tests {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:579 — `len && ...` guards against zero-length input.
         assert_eq!(base64_decode(""), Vec::<u8>::new());
-    }
-}
-
-/// Port of `base64_decode(src, len)` from `Src/Zle/termquery.c:570`.
-/// ```c
-/// static char*
-/// base64_decode(const char *src, size_t len)
-/// {
-///     int i = 0;
-///     unsigned int n;
-///     char *buf = hcalloc((3 * len) / 4 + 1);
-///     char *b = buf;
-///     char c;
-///     while (len && (c = src[i]) != '=') {
-///         n = isdigit(c) ? c - '0' + 52 :
-///             islower(c) ? c - 'a' + 26 :
-///             isupper(c) ? c - 'A' :
-///             (c == '+') ? 62 :
-///             (c == '/') ? 63 : 0;
-///         if (i % 4)
-///             *b++ |= n >> (2 * (3 - (i % 4)));
-///         if (++i >= len)
-///             break;
-///         *b = n << (2 * (i % 4));
-///     }
-///     return buf;
-/// }
-/// ```
-/// Decode a base64-encoded byte string. Stops at the first `=`
-/// (terminator) or end of input. Used by `system_clipget` to parse
-/// OSC52 clipboard responses (terminal returns base64-encoded
-/// clipboard contents in `\e]52;c;<base64>\e\\`).
-///
-/// The C body has a peculiar bit-pattern: it accumulates 6-bit
-/// groups across 4 input chars into 3 output bytes, but the
-/// "current output byte" is reset to `n << (2 * (i % 4))` BEFORE
-/// `b++`, then later iterations OR-in the high bits. This mirrors
-/// the standard base64 decode but with an unusual write pattern.
-pub fn base64_decode(src: &str) -> Vec<u8> {                                 // c:570
-    let bytes = src.as_bytes();
-    let len = bytes.len();
-    // c:575 — `hcalloc((3 * len) / 4 + 1)`. Pre-size the output;
-    // hcalloc zeros, so we mirror that with a Vec<u8> of zeros.
-    let mut buf = vec![0u8; (3 * len) / 4 + 1];
-    let mut i: usize = 0;
-    let mut b: usize = 0;
-    while i < len && bytes[i] != b'=' {                                      // c:579
-        let c = bytes[i];
-        // c:580-584 — character class → 6-bit value.
-        let n: u32 = if c.is_ascii_digit() {                                 // c:580
-            (c - b'0') as u32 + 52
-        } else if c.is_ascii_lowercase() {                                   // c:581
-            (c - b'a') as u32 + 26
-        } else if c.is_ascii_uppercase() {                                   // c:582
-            (c - b'A') as u32
-        } else if c == b'+' {                                                // c:583
-            62
-        } else if c == b'/' {                                                // c:584
-            63
-        } else {
-            0
-        };
-        if i % 4 != 0 {                                                      // c:585
-            // c:586 — `*b++ |= n >> (2 * (3 - (i % 4)))`.
-            buf[b] |= (n >> (2 * (3 - (i % 4)))) as u8;
-            b += 1;
-        }
-        i += 1;                                                              // c:587 ++i
-        if i >= len {                                                        // c:587
-            break;                                                           // c:588
-        }
-        // c:589 — `*b = n << (2 * (i % 4))`. Sets next slot's high bits.
-        if b < buf.len() {
-            buf[b] = (n << (2 * (i % 4))) as u8;
-        }
-    }
-    // C's `hcalloc((3*len)/4 + 1)` overallocates; trim to actual b.
-    buf.truncate(b);
-    buf                                                                      // c:591 return buf
-}
-
-/// Port of `collate_seq(int sindex, int dir)` from Src/Zle/termquery.c:676.
-/// WARNING: param names don't match C — Rust=(_seq) vs C=(sindex, dir)
-pub fn collate_seq(_seq: &str) -> Vec<u8> {                                  // c:676
-    // C body c:678-722 — collates a UTF-8 byte sequence into a single
-    //                    locale-aware key for sort comparison via
-    //                    strxfrm(). Without locale glue: identity.
-    _seq.as_bytes().to_vec()
-}
-
-/// Port of `cursor_form()` from Src/Zle/termquery.c:913.
-pub fn cursor_form() -> Vec<String> {                                        // c:913
-    // C body c:915-902 — emits the current cursor-shape escape based
-    //                    on `cursor_form_list`. Without form list:
-    //                    empty.
-    Vec::new()
-}
-
-/// Port of `end_edit()` from Src/Zle/termquery.c:724.
-pub fn end_edit() -> i32 {                                                   // c:724
-    // C body c:726-729 — emits the iTerm2 OSC 1337;EndEdit terminator
-    //                    via shout when zterm_supports_iterm2 is true.
-    //                    No iTerm2 dispatch in headless mode.
-    0
-}
-
-/// Port of `find_branch(pos)` from Src/Zle/termquery.c:170.
-/// WARNING: param names don't match C — Rust=(s, ch) vs C=(pos)
-pub fn find_branch(s: &str, ch: u8) -> Option<usize> {                       // c:170
-    // C body c:172-183 — scans `s` for the matching paren/bracket/
-    //                    brace branch open. We approximate by finding
-    //                    the first byte equal to `ch`.
-    s.bytes().position(|b| b == ch)
-}
-
-/// Port of `find_matching(pos, direction)` from Src/Zle/termquery.c:185.
-/// WARNING: param names don't match C — Rust=(s, open, close) vs C=(pos, direction)
-pub fn find_matching(s: &str, open: u8, close: u8) -> Option<usize> {        // c:185
-    // C body c:187-218 — paired-bracket finder; scans forward
-    //                    counting opens until depth returns to 0.
-    let bytes = s.as_bytes();
-    let mut depth = 0i32;
-    for (i, &b) in bytes.iter().enumerate() {
-        if b == open {
-            depth += 1;
-        } else if b == close {
-            depth -= 1;
-            if depth == 0 {
-                return Some(i);
-            }
-        }
-    }
-    None
-}
-
-/// Direct port of `void free_cursor_forms(void)` from
-/// `Src/Zle/termquery.c:904`. Nulls out the cursor-forms storage so
-/// `zle_set_cursorform` re-allocates on the next call. C body only
-/// touches the `cursor_forms` pointer; `setup` and
-/// `cursor_enabled_mask` are intentionally preserved across the
-/// free so the extension-probe doesn't re-run unless `trashedzle`
-/// flips inside `zle_set_cursorform`.
-pub fn free_cursor_forms() {                                                 // c:904
-    // c:906-907 — `if (cursor_forms) zfree(...);`  c:908 — `cursor_forms = 0;`
-    CURSOR_FORMS.with(|cf| cf.borrow_mut().clear());
-}
-
-/// Port of `handle_color(int bg, int red, int green, int blue)` from Src/Zle/termquery.c:438.
-/// WARNING: param names don't match C — Rust=(_seq) vs C=(bg, red, green, blue)
-pub fn handle_color(_seq: &str) -> i32 {                                     // c:438
-    // C body c:440-593 — parses iTerm2 OSC 4;<idx>;rgb response,
-    //                    populates terminal color cache. Without
-    //                    iTerm2 dispatch: 0.
-    0
-}
-
-/// Direct port of `static void handle_paste(int sequence, int *numbers,
-///                                          int len, char *capture,
-///                                          int clen, void *output)`
-/// from `Src/Zle/termquery.c:595`.
-///
-/// C body: `*(char**)output = base64_decode(capture, clen);` — drops
-/// a decoded payload into the caller-supplied `output` pointer.
-/// Rust port returns the decoded bytes as a String so callers can
-/// receive without unsafe pointer writes.
-pub fn handle_paste(seq: &str, len: usize) -> String {                       // c:595
-    // C ignores `sequence`, `numbers`, `len` (UNUSED markers); only
-    // `capture` + `clen` are read. `seq` here is the captured payload;
-    // `len` mirrors `clen`.
-    let capture = if len > 0 && len <= seq.len() {
-        &seq[..len]
-    } else {
-        seq
-    };
-    let bytes = base64_decode(capture);                                      // c:598
-    String::from_utf8_lossy(&bytes).into_owned()
-}
-
-/// Port of `void mark_output(int start)` from Src/Zle/termquery.c:759.
-///
-/// Emits the FinalTerm "command output" OSC 133 marker so terminal
-/// integrations like iTerm2 / WezTerm can fold previous output. Two
-/// flavors: `start=1` writes `\e]133;C\e\\` (begin output), else
-/// `\e]133;D\e\\` (end output). Gated on the `integration:output`
-/// extension toggle.
-pub fn mark_output(start: bool) {                                            // c:759
-    const START: &[u8] = b"\x1b]133;C\x1b\\";                                // c:761
-    const END:   &[u8] = b"\x1b]133;D\x1b\\";                                // c:762
-    if extension_enabled("integration", "output", true) {                    // c:763
-        let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-        if shtty < 0 { return; }
-        let _ = crate::ported::utils::write_loop(                            // c:764
-            shtty,
-            if start { START } else { END },
-        );
-    }
-}
-
-/// Direct port of `match_cursorform(const char *teststr,
-/// unsigned int *cursor_form)` from `Src/Zle/termquery.c:798`. Parses
-/// a comma-separated spec like `bar,blink,color=#f80` and returns the
-/// composed CURF_* bit pattern. C mutates `*cursor_form`; we return
-/// the value.
-/// WARNING: signature change — C=(teststr, cursor_form*) vs Rust=(spec) -> u32
-pub fn match_cursorform(spec: &str) -> u32 {                                 // c:798
-    // c:800-810 — name→(value,mask) table. "none" zeros every bit
-    //              (mask=0xff). Shape names take 2-bit slots; blink/
-    //              steady are mutually-exclusive single bits; hidden
-    //              has mask=0 so it ORs in without disturbing shape.
-    const SHAPES: &[(&str, u32, u32)] = &[
-        ("none",      0,                       0xff),
-        ("underline", CURF_UNDERLINE as u32, CURF_SHAPE_MASK as u32),
-        ("bar",       CURF_BAR       as u32, CURF_SHAPE_MASK as u32),
-        ("block",     CURF_BLOCK     as u32, CURF_SHAPE_MASK as u32),
-        ("blink",     CURF_BLINK     as u32, CURF_STEADY     as u32),
-        ("steady",    CURF_STEADY    as u32, CURF_BLINK      as u32),
-        ("hidden",    CURF_HIDDEN    as u32, 0),
-    ];
-
-    let mut cursor_form: u32 = 0;                                            // c:813
-    let mut s = spec;
-
-    // c:814-852 — walk components separated by ','.
-    while !s.is_empty() {
-        let mut found = false;
-
-        // c:818-841 — color=#RGB or color=#RRGGBB.
-        if let Some(rest) = s.strip_prefix("color=#") {                      // c:818
-            // c:820 — `zstrtol(teststr, &end, 16)` consumes hex until
-            //         non-hex. We walk the leading hex run by hand.
-            let mut end = 0;
-            for (i, ch) in rest.char_indices() {
-                if ch.is_ascii_hexdigit() {
-                    end = i + ch.len_utf8();
-                } else {
-                    break;
-                }
-            }
-            let hex_str = &rest[..end];
-            let col: u32 = u32::from_str_radix(hex_str, 16).unwrap_or(0);
-
-            if end == 4 {                                                    // c:822 — 3-digit form #RGB
-                // c:823-832 — splat each 4-bit nibble across both
-                //             halves so #f80 → 0xff8800.
-                let red:   u32 = col >> 8;
-                let green: u32 = (col & 0xf0) >> 4;
-                let blue:  u32 = col & 0xf;
-                cursor_form &= 0xff; // clear color                          // c:828
-                cursor_form |= (CURF_COLOR as u32)
-                    | ((red   << 4 | red)   << CURF_RED_SHIFT)
-                    | ((green << 4 | green) << CURF_GREEN_SHIFT)
-                    | ((blue  << 4 | blue)  << CURF_BLUE_SHIFT);
-                found = true;
-            } else if end == 6 {                                             // c:833 — 6-digit form #RRGGBB
-                cursor_form |= (col << 8) | (CURF_COLOR as u32);             // c:834
-                found = true;
-            }
-            // c:837 — `teststr = end;` — advance past hex run.
-            s = &rest[end..];
-        }
-
-        // c:842-849 — shape/blink/steady/hidden names.
-        if !found {
-            for (name, value, mask) in SHAPES {
-                if let Some(rest) = s.strip_prefix(name) {
-                    cursor_form &= !*mask;                                   // c:846
-                    cursor_form |=  *value;                                  // c:847
-                    s = rest;
-                    found = true;
-                    break;
-                }
-            }
-        }
-
-        // c:850-851 — unknown component: skip to next comma. C uses
-        //              `strchr(teststr, ',')` which returns the comma
-        //              itself (or NULL); we mirror with `find`.
-        if !found {
-            match s.find(',') {
-                Some(idx) => s = &s[idx..],
-                None      => break,
-            }
-        }
-
-        // c:852-855 — break unless we landed on a comma; else skip it.
-        let mut it = s.chars();
-        match it.next() {
-            Some(',') => s = it.as_str(),
-            _         => break,
-        }
-    }
-
-    cursor_form
-}
-
-/// Direct port of `const char **prompt_markers(void)` from
-/// `Src/Zle/termquery.c:731`. Returns the three FinalTerm OSC 133
-/// prompt-region markers (PR=primary/PS1, SE=secondary/PS2,
-/// RI=right/RPS1+RPS2). Gated on the `integration:prompt` extension
-/// toggle. When disabled, returns three empty strings (analog of
-/// C's 4-NULL `nomark`).
-///
-/// C has a file-static mutable buffer `pre` ("before prompt" OSC 133;A
-/// template) and a file-static `aid` (per-shell hash). On first call
-/// while enabled, C computes `aid = hasher(HOST) ^ pid`, base64-encodes
-/// the 4 bytes of `aid` (8 chars), and memcpy's the first 6 chars into
-/// `pre[13..19]` (replacing the `ZZZZZZ` placeholder). The mutated
-/// `pre` is private to this translation unit; Rust mirrors with
-/// thread-locals `AID` and `PRE_BUFFER` so the side effect is
-/// observable from within the same module while staying invisible to
-/// outside callers (matching the C file-static scope).
-/// WARNING: signature change — C returns `const char **` (4-NULL-
-/// terminated when disabled); Rust returns a fixed-size array of
-/// String. Caller picks PS1/PS2/RPS marker by index.
-pub fn prompt_markers() -> [String; 3] {                                     // c:731
-    // c:741 — `if (!extension_enabled("integration", "prompt", 11, 1))
-    //          return nomark;`
-    if !extension_enabled("integration", "prompt", true) {
-        return [String::new(), String::new(), String::new()];
-    }
-
-    // c:744-752 — first-call AID computation. `if (!aid) { ... }`.
-    if AID.with(|a| a.get()) == 0 {
-        // c:746 — `char *h = getsparam("HOST");`
-        let host = crate::ported::params::getsparam("HOST").unwrap_or_default();
-        // c:747 — `aid = (h ? hasher(h) : 0) ^ getpid();`
-        let h_hash = if host.is_empty() {
-            0
-        } else {
-            crate::ported::hashtable::hasher(&host)
-        };
-        let pid = unsafe { libc::getpid() } as u32;
-        let mut aid = h_hash ^ pid;
-        // c:748 — `if (!aid) aid = 1;` collision guard.
-        if aid == 0 {
-            aid = 1;
-        }
-        AID.with(|a| a.set(aid));
-
-        // c:750 — `h = base64_encode((const char *)&aid, sizeof(aid));`
-        //          C casts the raw `unsigned int aid` to bytes; that's
-        //          native-endian. `to_ne_bytes` matches.
-        let aid_bytes = aid.to_ne_bytes();
-        let b64 = base64_encode(&aid_bytes);
-        // c:751 — `memcpy(pre + 13, h, 6);` — only the first 6 chars
-        //          of the 8-char base64 output get spliced into the
-        //          ZZZZZZ placeholder.
-        PRE_BUFFER.with(|p| {
-            let mut buf = p.borrow_mut();
-            let payload = b64.as_bytes();
-            let n = payload.len().min(6).min(buf.len().saturating_sub(13));
-            for i in 0..n {
-                buf[13 + i] = payload[i];
-            }
-        });
-    }
-
-    // c:735-738 + c:754 — return the 3-element markers array.
-    [
-        "\x1b]133;P;k=i\x1b\\".to_string(),                                  // c:735 PR
-        "\x1b]133;P;k=s\x1b\\".to_string(),                                  // c:736 SE
-        "\x1b]133;P;k=r\x1b\\".to_string(),                                  // c:737 RI
-    ]
-}
-
-/// Port of `start_edit()` from Src/Zle/termquery.c:717.
-pub fn start_edit() -> i32 {                                                 // c:717
-    // C body c:719-722 — emits OSC 1337;StartEdit (iTerm2). No
-    //                    iTerm2 dispatch in headless mode.
-    0
-}
-
-/// Direct port of `static void write_urlencoded(const char
-/// *path_components)` from `Src/Zle/termquery.c:769`. URL-encodes the
-/// input via `url_encode` and writes the bytes to the given fd. C's
-/// version writes to `SHTTY` directly; Rust takes the fd as a param
-/// so the caller chooses (notify_pwd uses SHTTY).
-/// WARNING: signature change — C=(path_components) writes SHTTY vs
-/// Rust=(fd, path_components) writes the given fd.
-pub fn write_urlencoded(fd: i32, path_components: &str) {                    // c:769
-    // c:772 — `url_encode(path_components, &enc_len)`.
-    let enc = url_encode(path_components);
-    // c:773 — `write_loop(SHTTY, enc, enc_len)`.
-    let _ = crate::ported::utils::write_loop(fd, enc.as_bytes());
-}
-
-#[cfg(test)]
-mod term_pat_tag_tests {
-    use super::*;
-
-    #[test]
-    fn tag_high_bit_set() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        assert_eq!(TAG, 0x80);
-        assert_eq!(SEQ, 0xc0);
-    }
-
-    #[test]
-    fn t_constants_have_high_bit_set() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        for tag in [T_BEGIN, T_END, T_OR, T_REPEAT, T_NUM, T_HEX, T_HEXCH,
-                    T_WILDCARD, T_RECORD, T_CAPTURE, T_DROP, T_CONTINUE, T_NEXT] {
-            assert!(tag & TAG != 0, "tag 0x{:02x} should have high bit set", tag);
-        }
-    }
-
-    #[test]
-    fn timeout_sentinel_negative() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        assert_eq!(TIMEOUT, -51);
-    }
-
-    #[test]
-    fn t_repeat_in_seq_range() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:42-48 — T_BEGIN..=T_HEXCH all in 0x80..=0x86, all have TAG bit.
-        assert!((T_BEGIN..=T_HEXCH).contains(&T_REPEAT));
     }
 }

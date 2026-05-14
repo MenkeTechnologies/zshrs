@@ -42,6 +42,31 @@ thread_local! {
     };
 }
 
+/// Port of `zpcre_utf8_enabled()` from Src/Modules/pcre.c:45.
+/// C: `static int zpcre_utf8_enabled(void)` — returns 1 iff PCRE2 was
+/// built with Unicode AND MULTIBYTE option is set AND nl_langinfo(CODESET)
+/// reports "UTF-8".
+#[allow(non_snake_case)]
+pub fn zpcre_utf8_enabled() -> i32 {                                         // c:45
+    // c:45-67 — under MULTIBYTE_SUPPORT && HAVE_NL_LANGINFO && CODESET.
+    // Static-link path: zshrs hosts on macOS/Linux where PCRE2 ships with
+    // Unicode by default; check MULTIBYTE option + LANG/LC_ALL CODESET.
+    let multibyte = crate::ported::zsh_h::isset(crate::ported::options::optlookup("multibyte"));      // c:53
+    if !multibyte {
+        return 0;                                                            // c:54
+    }
+    // c:62 — nl_langinfo(CODESET) check.
+    let lc = std::env::var("LC_ALL")
+        .or_else(|_| std::env::var("LC_CTYPE"))
+        .or_else(|_| std::env::var("LANG"))
+        .unwrap_or_default();
+    if lc.to_uppercase().contains("UTF-8") || lc.to_uppercase().contains("UTF8") {
+        1                                                                    // c:62
+    } else {
+        0
+    }
+}
+
 /// Port of `bin_pcre_compile(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/pcre.c:70`.
 /// C: `static int bin_pcre_compile(char *nam, char **args, Options ops,
 /// UNUSED(int func))` — compile *args into the file-static
@@ -107,6 +132,83 @@ pub fn bin_pcre_study(nam: &str, args: &[String], ops: &options, func: i32) -> i
         return 1;                                                            // c:117
     }
     0
+}
+
+/// Port of `pcre_callout(pcre2_callout_block_8 *block, UNUSED(void *callout_data))` from Src/Modules/pcre.c:132.
+/// C: `static int pcre_callout(pcre2_callout_block_8 *block,
+///     UNUSED(void *callout_data))` — eval the callout string as zsh code,
+///     bind .pcre.subject and .pcre.pos parameters, return $? | errflag.
+#[allow(non_snake_case)]
+/// WARNING: param names don't match C — Rust=(_block) vs C=(block, callout_data)
+pub fn pcre_callout(_block: *mut std::ffi::c_void,                           // c:132
+                    _callout_data: *mut std::ffi::c_void) -> i32 {
+    // c:138-152 — parse_string(callout_string), setsparam(".pcre.subject"),
+    // setiparam(".pcre.pos"), execode(prog, ..., "pcre"), return lastval|errflag.
+    // Static-link path: zshrs's pcre integration uses the `regex` crate
+    // directly; native pcre callouts arrive only when the C pcre2 backend
+    // is wired in. Until then return success-no-callout.
+    0                                                                        // c:157
+}
+
+
+
+// ===========================================================
+// Methods moved verbatim from src/ported/exec.rs because their
+// C counterpart's source file maps 1:1 to this Rust module.
+// Phase: module-shims
+// ===========================================================
+
+// BEGIN moved-from-exec-rs
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
+// END moved-from-exec-rs
+
+// =====================================================================
+// static struct features module_features                            c:530 (pcre.c)
+// =====================================================================
+
+use crate::ported::zsh_h::module;
+
+/// Port of `zpcre_get_substrings(pcre2_code *pat, char *arg, pcre2_match_data *mdata, int captured_count, char *matchvar, char *substravar, char *namedassoc, int want_offset_pair, int matchedinarr, int want_begin_end)` from Src/Modules/pcre.c:157.
+/// C: `static int zpcre_get_substrings(pcre2_code *pat, char *arg,
+///     pcre2_match_data *mdata, int captured_count, char *matchvar,
+///     char *substravar, char *namedassoc, int want_offset_pair,
+///     int matchedinarr, int want_begin_end)` — extract submatches
+///     into shell parameters.
+#[allow(non_snake_case)]
+/// WARNING: param names don't match C — Rust=(_pat, _arg, _captured_count, _matchvar, _substravar, _namedassoc, _want_offset_pair, _matchedinarr, _want_begin_end) vs C=(pat, arg, mdata, captured_count, matchvar, substravar, namedassoc, want_offset_pair, matchedinarr, want_begin_end)
+pub fn zpcre_get_substrings(_pat: *mut std::ffi::c_void, _arg: &str,         // c:157
+                            _mdata: *mut std::ffi::c_void,
+                            _captured_count: i32,
+                            _matchvar: Option<&str>, _substravar: Option<&str>,
+                            _namedassoc: Option<&str>,
+                            _want_offset_pair: i32, _matchedinarr: i32,
+                            _want_begin_end: i32) -> i32 {
+    // c:170-310 — pcre2_get_ovector_pointer + setsparam("ZPCRE_OP"/match/etc).
+    // Static-link path: implementation lives in the regex-backed bin_pcre_match
+    // dispatcher; this stub is reserved for the future native backend.
+    0
+}
+
+// === auto-generated stubs ===
+// Direct ports of static helpers from Src/Modules/pcre.c not
+// yet covered above. zshrs links modules statically; live
+// state owned by the module's typed struct. Name-parity shims.
+
+/// Port of `getposint(char *instr, char *nam)` from Src/Modules/pcre.c:312.
+/// C: `static int getposint(char *instr, char *nam)` — parse positive
+/// decimal integer; emit "integer expected" warning + return -1 on bad input.
+#[allow(non_snake_case)]
+pub fn getposint(instr: &str, nam: &str) -> i32 {                            // c:312
+    // c:312 — `ret = (int)zstrtol(instr, &eptr, 10);`
+    match instr.trim().parse::<i32>() {                                      // c:317
+        Ok(n) if n >= 0 => n,                                                // c:323
+        _ => {
+            // c:319-321 — zwarnnam(nam, "integer expected: %s", instr);
+            crate::ported::utils::zwarnnam(nam, &format!("integer expected: {}", instr)); // c:320
+            -1                                                               // c:321
+        }
+    }
 }
 
 /// Port of `bin_pcre_match(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/pcre.c:328`. Runs
@@ -245,6 +347,120 @@ pub fn cond_pcre_match(a: &[String], _id: i32)                                //
     }
 }
 
+// `bintab` — port of `static struct builtin bintab[]` (pcre.c).
+
+
+// `cotab` — port of `static struct conddef cotab[]` (pcre.c).
+
+
+// `module_features` — port of `static struct features module_features`
+// from pcre.c:530.
+
+
+
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/pcre.c:542`.
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:542
+    // C body c:544-545 — `return 0`. Faithful empty-body port.
+    0
+}
+
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/pcre.c:549`.
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:549
+    *features = featuresarray(m, module_features());
+    0
+}
+
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/pcre.c:557`.
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:557
+    handlefeatures(m, module_features(), enables)
+}
+
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/pcre.c:564`.
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:564
+    // C body c:566-567 — `return 0`. Faithful empty-body port; the
+    //                    pcre_compile/pcre_match/pcre_study builtins
+    //                    register via the bn_list dispatch.
+    0
+}
+
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/pcre.c:571`.
+pub fn cleanup_(m: *const module) -> i32 {                                  // c:571
+    setfeatureenables(m, module_features(), None)
+}
+
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/pcre.c:578`.
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:578
+    // C body c:580-581 — `return 0`. Faithful empty-body port; the
+    //                    builtins unregister via cleanup_'s setfeatureenables.
+    0
+}
+
+use crate::ported::zsh_h::features as features_t;
+use std::sync::{Mutex, OnceLock};
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
+
+// WARNING: NOT IN PCRE.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn module_features() -> &'static Mutex<features_t> {
+    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
+        bn_list: None,
+        bn_size: 3,
+        cd_list: None,
+        cd_size: 1,
+        mf_list: None,
+        mf_size: 0,
+        pd_list: None,
+        pd_size: 0,
+        n_abstract: 0,
+    }))
+}
+
+// Local stubs for the per-module entry points. C uses generic
+// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
+// 3275/3370/3445) but those take `Builtin` + `Features` pointer
+// fields the Rust port doesn't carry. The hardcoded descriptor
+// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
+// WARNING: NOT IN PCRE.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
+    vec!["b:pcre_compile".to_string(), "b:pcre_match".to_string(), "b:pcre_study".to_string(), "c:pcre-match".to_string()]
+}
+
+// WARNING: NOT IN PCRE.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn handlefeatures(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    enables: &mut Option<Vec<i32>>,
+) -> i32 {
+    if enables.is_none() {
+        *enables = Some(vec![1; 4]);
+    }
+    0
+}
+
+// WARNING: NOT IN PCRE.C — Rust-only module-framework shim.
+// C uses generic featuresarray/handlefeatures/setfeatureenables from
+// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
+// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<features_t>,
+    _e: Option<&[i32]>,
+) -> i32 {
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,218 +588,3 @@ mod tests {
         assert_eq!(status, 1);
     }
 }
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Phase: module-shims
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
-
-// END moved-from-exec-rs
-
-// =====================================================================
-// static struct features module_features                            c:530 (pcre.c)
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
-// `bintab` — port of `static struct builtin bintab[]` (pcre.c).
-
-
-// `cotab` — port of `static struct conddef cotab[]` (pcre.c).
-
-
-// `module_features` — port of `static struct features module_features`
-// from pcre.c:530.
-
-
-
-/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/pcre.c:542`.
-#[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:542
-    // C body c:544-545 — `return 0`. Faithful empty-body port.
-    0
-}
-
-/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/pcre.c:549`.
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:549
-    *features = featuresarray(m, module_features());
-    0
-}
-
-/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/pcre.c:557`.
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:557
-    handlefeatures(m, module_features(), enables)
-}
-
-/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/pcre.c:564`.
-#[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:564
-    // C body c:566-567 — `return 0`. Faithful empty-body port; the
-    //                    pcre_compile/pcre_match/pcre_study builtins
-    //                    register via the bn_list dispatch.
-    0
-}
-
-/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/pcre.c:571`.
-pub fn cleanup_(m: *const module) -> i32 {                                  // c:571
-    setfeatureenables(m, module_features(), None)
-}
-
-/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/pcre.c:578`.
-#[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:578
-    // C body c:580-581 — `return 0`. Faithful empty-body port; the
-    //                    builtins unregister via cleanup_'s setfeatureenables.
-    0
-}
-
-// === auto-generated stubs ===
-// Direct ports of static helpers from Src/Modules/pcre.c not
-// yet covered above. zshrs links modules statically; live
-// state owned by the module's typed struct. Name-parity shims.
-
-/// Port of `getposint(char *instr, char *nam)` from Src/Modules/pcre.c:312.
-/// C: `static int getposint(char *instr, char *nam)` — parse positive
-/// decimal integer; emit "integer expected" warning + return -1 on bad input.
-#[allow(non_snake_case)]
-pub fn getposint(instr: &str, nam: &str) -> i32 {                            // c:312
-    // c:312 — `ret = (int)zstrtol(instr, &eptr, 10);`
-    match instr.trim().parse::<i32>() {                                      // c:317
-        Ok(n) if n >= 0 => n,                                                // c:323
-        _ => {
-            // c:319-321 — zwarnnam(nam, "integer expected: %s", instr);
-            crate::ported::utils::zwarnnam(nam, &format!("integer expected: {}", instr)); // c:320
-            -1                                                               // c:321
-        }
-    }
-}
-
-/// Port of `pcre_callout(pcre2_callout_block_8 *block, UNUSED(void *callout_data))` from Src/Modules/pcre.c:132.
-/// C: `static int pcre_callout(pcre2_callout_block_8 *block,
-///     UNUSED(void *callout_data))` — eval the callout string as zsh code,
-///     bind .pcre.subject and .pcre.pos parameters, return $? | errflag.
-#[allow(non_snake_case)]
-/// WARNING: param names don't match C — Rust=(_block) vs C=(block, callout_data)
-pub fn pcre_callout(_block: *mut std::ffi::c_void,                           // c:132
-                    _callout_data: *mut std::ffi::c_void) -> i32 {
-    // c:138-152 — parse_string(callout_string), setsparam(".pcre.subject"),
-    // setiparam(".pcre.pos"), execode(prog, ..., "pcre"), return lastval|errflag.
-    // Static-link path: zshrs's pcre integration uses the `regex` crate
-    // directly; native pcre callouts arrive only when the C pcre2 backend
-    // is wired in. Until then return success-no-callout.
-    0                                                                        // c:157
-}
-
-/// Port of `zpcre_get_substrings(pcre2_code *pat, char *arg, pcre2_match_data *mdata, int captured_count, char *matchvar, char *substravar, char *namedassoc, int want_offset_pair, int matchedinarr, int want_begin_end)` from Src/Modules/pcre.c:157.
-/// C: `static int zpcre_get_substrings(pcre2_code *pat, char *arg,
-///     pcre2_match_data *mdata, int captured_count, char *matchvar,
-///     char *substravar, char *namedassoc, int want_offset_pair,
-///     int matchedinarr, int want_begin_end)` — extract submatches
-///     into shell parameters.
-#[allow(non_snake_case)]
-/// WARNING: param names don't match C — Rust=(_pat, _arg, _captured_count, _matchvar, _substravar, _namedassoc, _want_offset_pair, _matchedinarr, _want_begin_end) vs C=(pat, arg, mdata, captured_count, matchvar, substravar, namedassoc, want_offset_pair, matchedinarr, want_begin_end)
-pub fn zpcre_get_substrings(_pat: *mut std::ffi::c_void, _arg: &str,         // c:157
-                            _mdata: *mut std::ffi::c_void,
-                            _captured_count: i32,
-                            _matchvar: Option<&str>, _substravar: Option<&str>,
-                            _namedassoc: Option<&str>,
-                            _want_offset_pair: i32, _matchedinarr: i32,
-                            _want_begin_end: i32) -> i32 {
-    // c:170-310 — pcre2_get_ovector_pointer + setsparam("ZPCRE_OP"/match/etc).
-    // Static-link path: implementation lives in the regex-backed bin_pcre_match
-    // dispatcher; this stub is reserved for the future native backend.
-    0
-}
-
-/// Port of `zpcre_utf8_enabled()` from Src/Modules/pcre.c:45.
-/// C: `static int zpcre_utf8_enabled(void)` — returns 1 iff PCRE2 was
-/// built with Unicode AND MULTIBYTE option is set AND nl_langinfo(CODESET)
-/// reports "UTF-8".
-#[allow(non_snake_case)]
-pub fn zpcre_utf8_enabled() -> i32 {                                         // c:45
-    // c:45-67 — under MULTIBYTE_SUPPORT && HAVE_NL_LANGINFO && CODESET.
-    // Static-link path: zshrs hosts on macOS/Linux where PCRE2 ships with
-    // Unicode by default; check MULTIBYTE option + LANG/LC_ALL CODESET.
-    let multibyte = crate::ported::zsh_h::isset(crate::ported::options::optlookup("multibyte"));      // c:53
-    if !multibyte {
-        return 0;                                                            // c:54
-    }
-    // c:62 — nl_langinfo(CODESET) check.
-    let lc = std::env::var("LC_ALL")
-        .or_else(|_| std::env::var("LC_CTYPE"))
-        .or_else(|_| std::env::var("LANG"))
-        .unwrap_or_default();
-    if lc.to_uppercase().contains("UTF-8") || lc.to_uppercase().contains("UTF8") {
-        1                                                                    // c:62
-    } else {
-        0
-    }
-}
-
-use crate::ported::zsh_h::features as features_t;
-use std::sync::{Mutex, OnceLock};
-
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
-// WARNING: NOT IN PCRE.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<features_t> {
-    MODULE_FEATURES.get_or_init(|| Mutex::new(features_t {
-        bn_list: None,
-        bn_size: 3,
-        cd_list: None,
-        cd_size: 1,
-        mf_list: None,
-        mf_size: 0,
-        pd_list: None,
-        pd_size: 0,
-        n_abstract: 0,
-    }))
-}
-
-// Local stubs for the per-module entry points. C uses generic
-// `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
-// 3275/3370/3445) but those take `Builtin` + `Features` pointer
-// fields the Rust port doesn't carry. The hardcoded descriptor
-// list mirrors the C bintab/conddefs/mathfuncs/paramdefs.
-// WARNING: NOT IN PCRE.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<features_t>) -> Vec<String> {
-    vec!["b:pcre_compile".to_string(), "b:pcre_match".to_string(), "b:pcre_study".to_string(), "c:pcre-match".to_string()]
-}
-
-// WARNING: NOT IN PCRE.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
-    if enables.is_none() {
-        *enables = Some(vec![1; 4]);
-    }
-    0
-}
-
-// WARNING: NOT IN PCRE.C — Rust-only module-framework shim.
-// C uses generic featuresarray/handlefeatures/setfeatureenables from
-// Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
-// Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features_t>,
-    _e: Option<&[i32]>,
-) -> i32 {
-    0
-}
-

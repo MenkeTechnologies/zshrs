@@ -250,61 +250,6 @@ pub const COMMON_STRING_CAPS: &[&str] = &[
 
 use crate::ported::zsh_h::module;
 
-// `bintab` — port of `static struct builtin bintab[]` (terminfo.c).
-
-
-// `partab` — port of `static struct paramdef partab[]` (terminfo.c).
-
-
-// `module_features` — port of `static struct features module_features`
-// from terminfo.c:307.
-
-
-
-/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/terminfo.c:316`.
-#[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:316
-    // C body c:318-319 — `return 0`. Faithful empty-body port.
-    0
-}
-
-/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/terminfo.c:323`.
-/// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:323
-    *features = featuresarray(m, module_features());
-    0
-}
-
-/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/terminfo.c:331`.
-/// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:331
-    handlefeatures(m, module_features(), enables)
-}
-
-/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/terminfo.c:338`.
-#[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:338
-    // C body c:340-344 — `#ifdef USE_TERMINFO_MODULE zsetupterm(); #endif
-    //                     return 0`. Initializes the terminfo database
-    //                     for echoti/$terminfo to use.
-    let _ = crate::ported::utils::zsetupterm();                              // c:359
-    0
-}
-
-/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/terminfo.c:349`.
-/// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                                  // c:349
-    setfeatureenables(m, module_features(), None)
-}
-
-/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/terminfo.c:359`.
-#[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:359
-    // C body c:361-362 — `return 0`. Faithful empty-body port; the
-    //                    terminfo database is process-lifetime.
-    0
-}
-
 // === auto-generated stubs ===
 /// Port of `scanterminfo(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/terminfo.c:177`. The
 /// magic-assoc scan callback for `${(k)terminfo}` /
@@ -437,6 +382,61 @@ pub fn scanterminfo() -> Vec<(String, String)> {                         // c:17
         }
     }
     out
+}
+
+// `bintab` — port of `static struct builtin bintab[]` (terminfo.c).
+
+
+// `partab` — port of `static struct paramdef partab[]` (terminfo.c).
+
+
+// `module_features` — port of `static struct features module_features`
+// from terminfo.c:307.
+
+
+
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/terminfo.c:316`.
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:316
+    // C body c:318-319 — `return 0`. Faithful empty-body port.
+    0
+}
+
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/terminfo.c:323`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:323
+    *features = featuresarray(m, module_features());
+    0
+}
+
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/terminfo.c:331`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:331
+    handlefeatures(m, module_features(), enables)
+}
+
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/terminfo.c:338`.
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:338
+    // C body c:340-344 — `#ifdef USE_TERMINFO_MODULE zsetupterm(); #endif
+    //                     return 0`. Initializes the terminfo database
+    //                     for echoti/$terminfo to use.
+    let _ = crate::ported::utils::zsetupterm();                              // c:359
+    0
+}
+
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/terminfo.c:349`.
+/// C body: `return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {                                  // c:349
+    setfeatureenables(m, module_features(), None)
+}
+
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/terminfo.c:359`.
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:359
+    // C body c:361-362 — `return 0`. Faithful empty-body port; the
+    //                    terminfo database is process-lifetime.
+    0
 }
 
 use crate::ported::zsh_h::features as features_t;

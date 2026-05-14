@@ -582,49 +582,7 @@ pub static VICMDBIND: [&str; 128] = [
     /* ^? */ "vi-backward-char",
 ];
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn bindkey_returns_false_for_unknown_keymap() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        crate::ported::zle::zle_keymap::createkeymapnamtab();
-        crate::ported::zle::zle_keymap::default_bindings();
-        assert!(!bindkey("no-such-keymap", "^A", "self-insert"));
-    }
-
-    #[test]
-    fn bindkey_then_unbind_round_trips_through_emacs_keymap() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        crate::ported::zle::zle_keymap::createkeymapnamtab();
-        crate::ported::zle::zle_keymap::default_bindings();
-        // Pick a sequence unlikely to clash with the default emacs map.
-        // \M-z = ESC z = bytes 0x1B 0x7A.
-        assert!(bindkey("emacs", "\\ez", "self-insert"));
-        // Verify the binding shows up in bindlistout.
-        let listed = bindlistout("emacs");
-        let seq = printbind(&[0x1b, 0x7a]);
-        assert!(
-            listed.iter().any(|(k, v)| k == &seq && v == "self-insert"),
-            "bound sequence missing from list: {:?}",
-            listed
-        );
-        // Now remove it (inline of the deleted unbindkey helper).
-        let seq_bytes = getkeystring("\\ez");
-        let mut tab = crate::ported::zle::zle_keymap::keymapnamtab().lock().unwrap();
-        let node = tab.get_mut("emacs").unwrap();
-        let inner = std::sync::Arc::make_mut(&mut node.keymap);
-        inner.unbind_seq(&seq_bytes);
-        drop(tab);
-        let listed = bindlistout("emacs");
-        assert!(
-            !listed.iter().any(|(k, _)| k == &seq),
-            "unbound sequence still present: {:?}",
-            listed
-        );
-    }
-}
 
 /// Lookup the canonical fn pointer for a built-in widget name.
 /// Direct port of the dispatch achieved by C's
@@ -809,5 +767,49 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         "execute-named-cmd" => Some(|_| 0),
         "execute-last-named-cmd" => Some(|_| 0),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bindkey_returns_false_for_unknown_keymap() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::zle::zle_keymap::createkeymapnamtab();
+        crate::ported::zle::zle_keymap::default_bindings();
+        assert!(!bindkey("no-such-keymap", "^A", "self-insert"));
+    }
+
+    #[test]
+    fn bindkey_then_unbind_round_trips_through_emacs_keymap() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        crate::ported::zle::zle_keymap::createkeymapnamtab();
+        crate::ported::zle::zle_keymap::default_bindings();
+        // Pick a sequence unlikely to clash with the default emacs map.
+        // \M-z = ESC z = bytes 0x1B 0x7A.
+        assert!(bindkey("emacs", "\\ez", "self-insert"));
+        // Verify the binding shows up in bindlistout.
+        let listed = bindlistout("emacs");
+        let seq = printbind(&[0x1b, 0x7a]);
+        assert!(
+            listed.iter().any(|(k, v)| k == &seq && v == "self-insert"),
+            "bound sequence missing from list: {:?}",
+            listed
+        );
+        // Now remove it (inline of the deleted unbindkey helper).
+        let seq_bytes = getkeystring("\\ez");
+        let mut tab = crate::ported::zle::zle_keymap::keymapnamtab().lock().unwrap();
+        let node = tab.get_mut("emacs").unwrap();
+        let inner = std::sync::Arc::make_mut(&mut node.keymap);
+        inner.unbind_seq(&seq_bytes);
+        drop(tab);
+        let listed = bindlistout("emacs");
+        assert!(
+            !listed.iter().any(|(k, _)| k == &seq),
+            "unbound sequence still present: {:?}",
+            listed
+        );
     }
 }

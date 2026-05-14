@@ -60,50 +60,59 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-/// Bridge to the canonical port at `compresult.rs:1080` (which is
-/// `void calclist(int showall)` in `compresult.c:1495`). The name
-/// table at `tests/data/zsh_c_fn_names.txt` lists both
-/// `complist.c:calclist` and `compresult.c:calclist` because the
-/// complist module references it through extern; the real impl lives
-/// in compresult.c.
-pub fn calclist(showall: i32) -> i32 {                                       // c:compresult.c:1495
-    crate::ported::zle::compresult::calclist(showall)
+/// Port of `getcolval(char *s, int multi)` from Src/Zle/complist.c:275.
+#[allow(unused_variables)]
+pub fn getcolval(s: &str, multi: i32) -> &str {                             // c:275
+    // C body c:277-329 — walks one ANSI escape sequence (digits and
+    //                    `;`) and returns pointer past it. Used while
+    //                    parsing `key=val` from LS_COLORS.
+    let trimmed = s.trim_start_matches(|c: char| c.is_ascii_digit() || c == ';');
+    trimmed
 }
 
-/// Direct port of `static int compprintlist(int showall)` from
-/// `Src/Zle/complist.c:1367`. Renders the match list via the
-/// `cmgroup`/`cmatch` linked structures + `clprintm()` per-cell
-/// driver. Bridges to `printlist` (`compresult.c:1978`) — the
-/// canonical match-list renderer which complist.c delegates to via
-/// its registered list-matches hook when the complist module isn't
-/// loaded.
-pub fn compprintlist(showall: i32) -> i32 {                                  // c:1367
-    crate::ported::zle::compresult::printlist(0, showall)
+/// Port of `getcoldef(char *s)` from Src/Zle/complist.c:330.
+pub fn getcoldef(s: &str) -> Option<String> {                                // c:330
+    // C body c:332-503 — parses one "key=val" entry from LS_COLORS
+    //                    /ZLS_COLORS, walks past the key (one of the
+    //                    `colnames` two-letters, plus filename
+    //                    suffixes "*.ext", patterns "=cls"), returns
+    //                    pointer past the entry. Without the mcolors
+    //                    install we just split on the first `:` and
+    //                    return the remainder so caller can iterate.
+    s.split_once(':').map(|(_, rest)| rest.to_string())
 }
 
-/// Format the "scroll for more?" prompt shown when the match list
-/// exceeds the terminal height.
-/// Port of `asklistscroll(int ml)` from Src/Zle/complist.c. The C source
-/// emits "--More--" plus a percent indicator and reads y/n via
-/// `getzlequery`; ours produces the prompt string and leaves the
-/// input read to the caller.
-/// WARNING: param names don't match C — Rust=(total, shown) vs C=(ml)
-pub fn asklistscroll(total: usize, shown: usize) -> String {                 // c:1001
-    let _remaining = total.saturating_sub(shown);
-    format!("--More--({}/{})", shown, total)
+/// ```c
+/// static filecol
+/// filecol(char *col)
+/// {
+///     filecol fc;
+///     fc = (filecol) zhalloc(sizeof(*fc));
+///     fc->prog = NULL;
+///     fc->col = col;
+///     fc->next = NULL;
+///     return fc;
+/// }
+/// ```
+/// Allocate a fresh filecol with no group pattern and the given
+/// color string. Caller is expected to chain it via `mcolors.files[i]`.
+/// Port of `filecol(char *col)` from `Src/Zle/complist.c:488`.
+pub fn filecol(col: &str) -> filecol {                                       // c:488
+    filecol {                                                                // c:488 zhalloc
+        prog: None,                                                          // c:493 fc->prog = NULL
+        col:  col.to_string(),                                               // c:494 fc->col = col
+        next: None,                                                          // c:495 fc->next = NULL
+    }                                                                        // c:497 return fc
 }
 
-/// Substitute `%d`/`%g`/`%%` in a `LIST_GROUPS_HEADER`-style format.
-/// Port of `compprintfmt(char *fmt, int n, int dopr, int doesc, int ml, int *stop)` from Src/Zle/complist.c. The C source
-/// supports more escapes (per-group counts, etc.); the daily-driver
-/// subset (count + group + literal `%`) is honoured here.
-// Stripped-down version of printfmt(). But can do in-string colouring.    // c:668
-/// WARNING: param names don't match C — Rust=(format, matches_count, group) vs C=(fmt, n, dopr, doesc, ml, stop)
-pub fn compprintfmt(format: &str, matches_count: usize, group: &str) -> String { // c:1072
-    format
-        .replace("%d", &matches_count.to_string())
-        .replace("%g", group)
-        .replace("%%", "%")
+/// Port of `getcols()` from Src/Zle/complist.c:505.
+/// WARNING: param names don't match C — Rust=(_lscol) vs C=()
+pub fn getcols(_lscol: &str) -> i32 {                                        // c:505
+    // C body c:507-602 — parses LS_COLORS into mcolors; calls
+    //                    getcoldef in a loop, populates mcolors.files,
+    //                    mcolors.symlinks, mcolors.exts. Without the
+    //                    mcolors substrate we no-op and return success.
+    0
 }
 
 /// Port of file-static `char *last_cap` from
@@ -143,6 +152,46 @@ pub static SENDPOS: std::sync::LazyLock<std::sync::Mutex<Vec<i32>>> =
 pub static CURISCOLS: std::sync::LazyLock<std::sync::Mutex<Vec<String>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(vec![String::new(); 11]));
 
+/// Direct port of `void zlrputs(char *cap)` from
+/// `Src/Zle/complist.c:564`. Emits an LS_COLORS escape
+/// `\033[<cap>m` to the shell-output fd. C body c:566-595 also
+/// stores the cap into `last_cap` for the bleed-prevention path
+/// downstream (used by `zcoff` in `cleareol`); that file-static
+/// `last_cap` isn't yet ported, so we only emit the SGR escape.
+pub fn zlrputs(cap: &str) -> i32 {                                           // c:564
+    use std::sync::atomic::Ordering;
+    if cap.is_empty() {
+        return 0;
+    }
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out = if fd >= 0 { fd } else { 1 };
+    let s = format!("\x1b[{}m", cap);
+    let _ = crate::ported::utils::write_loop(out, s.as_bytes());
+    0
+}
+
+/// Wrap a string in a CSI SGR sequence using the supplied colour
+/// code, then reset.
+/// Port of `zcputs(char *group, int colour)` from Src/Zle/complist.c. The C source uses
+/// this for per-match colour application during list paint.
+/// WARNING: param names don't match C — Rust=(s, color) vs C=(group, colour)
+pub fn zcputs(s: &str, color: Option<&str>) -> String {                      // c:580
+    match color {
+        Some(c) => format!("\x1b[{}m{}\x1b[0m", c, s),
+        None => s.to_string(),
+    }
+}
+
+
+
+// Turn off colouring.                                                     // c:597
+/// Port of `zcoff()` from Src/Zle/complist.c:597.
+pub fn zcoff() {                                                            // c:597
+    // C body c:599-617 — emits the LS_COLORS no-color escape via
+    //                    tputs(mcolors.files[COL_NO]->col,...).
+    //                    No mcolors substrate: no-op.
+}
+
 /// Direct port of `void cleareol(void)` from
 /// `Src/Zle/complist.c:608`:
 /// ```c
@@ -171,263 +220,54 @@ pub fn cleareol() {                                                          // 
     let _ = crate::ported::utils::write_loop(out, b"\x1b[K");
 }
 
-/// Wrap a string in a CSI SGR sequence using the supplied colour
-/// code, then reset.
-/// Port of `zcputs(char *group, int colour)` from Src/Zle/complist.c. The C source uses
-/// this for per-match colour application during list paint.
-/// WARNING: param names don't match C — Rust=(s, color) vs C=(group, colour)
-pub fn zcputs(s: &str, color: Option<&str>) -> String {                      // c:580
-    match color {
-        Some(c) => format!("\x1b[{}m{}\x1b[0m", c, s),
-        None => s.to_string(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_compprintfmt() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:1072 — compprintfmt builds the LIST_GROUPS_HEADER expansion.
-        assert_eq!(
-            compprintfmt("Showing %d matches in %g", 42, "files"),
-            "Showing 42 matches in files"
-        );
-    }
-
-    // ---------- Real-port tests ------------------------------------------
-
-    #[test]
-    fn col_indices_match_c() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:167-191 — exact integer indices used by mcolors.files[i].
-        assert_eq!(COL_NO, 0);
-        assert_eq!(COL_DI, 2);
-        assert_eq!(COL_EX, 15);
-        assert_eq!(COL_LC, 16);
-        assert_eq!(COL_EC, 18);
-        assert_eq!(COL_SA, 24);
-    }
-
-    #[test]
-    fn num_cols_matches_c() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:193 — must match the colnames[] / defcols[] array length.
-        assert_eq!(NUM_COLS, 25);
-        assert_eq!(COLNAMES.len(), 25);
-        assert_eq!(DEFCOLS.len(), 25);
-    }
-
-    #[test]
-    fn colnames_match_c() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:197-201 — two-letter LS_COLORS keys.
-        assert_eq!(COLNAMES[COL_NO], "no");
-        assert_eq!(COLNAMES[COL_DI], "di");
-        assert_eq!(COLNAMES[COL_LN], "ln");
-        assert_eq!(COLNAMES[COL_EX], "ex");
-        assert_eq!(COLNAMES[COL_MA], "ma");
-    }
-
-    #[test]
-    fn defcols_match_c() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:205-209 — default ANSI codes.
-        assert_eq!(DEFCOLS[COL_NO], Some("0"));
-        assert_eq!(DEFCOLS[COL_DI], Some("1;31"));
-        assert_eq!(DEFCOLS[COL_EX], Some("1;32"));
-        assert_eq!(DEFCOLS[COL_OR], None);    // default for orphan: fallback to ln
-        assert_eq!(DEFCOLS[COL_MI], None);    // default for missing: fallback to fi
-        assert_eq!(DEFCOLS[COL_LC], Some("\x1b["));
-        assert_eq!(DEFCOLS[COL_RC], Some("m"));
-    }
-
-    #[test]
-    fn filecol_allocates_with_defaults() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:487-498 — fresh filecol: prog=NULL, col=arg, next=NULL.
-        let fc = filecol("0;32");
-        assert_eq!(fc.col, "0;32");
-        assert!(fc.prog.is_none());
-        assert!(fc.next.is_none());
-    }
-
-    #[test]
-    fn filecol_empty_string() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // The "no LS_COLORS set" path at c:515-516 calls filecol("")
-        // for every slot.
-        let fc = filecol("");
-        assert_eq!(fc.col, "");
-        assert!(fc.prog.is_none());
-        assert!(fc.next.is_none());
-    }
-}
-
-/// Port of `adjust_mcol(int wish, Cmatch ***tabp, Cmgroup **grp)` from Src/Zle/complist.c:2127.
-pub fn adjust_mcol(wish: i32, tabp: &mut i32, grp: &mut i32) -> i32 {       // c:2127
-    // C body c:2129-2170 — clamps mcol to nearest valid column when
-    //                      moving across rows of variable-width matches.
-    //                      Without the mtab[][] matrix we just clamp
-    //                      to a non-negative column.
-    wish.max(0)
-}
-
-/// Port of `boot_(UNUSED(Module m))` from Src/Zle/complist.c:3564.
-/// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn boot_() -> i32 {                                                      // c:3564
-    // C body c:3567-3582 — `mtab = NULL; mgtab = NULL; mselect = -1;
-    //                       inselect = 0; w_menuselect = addzlefunction(...);
-    //                       menuselect_bindings()`. Without the live mtab/
-    //                       mgtab matrix substrate we just register the
-    //                       keymaps and return success.
-    menuselect_bindings();
-    0
-}
-
-/// Port of `cleanup_(UNUSED(Module m))` from Src/Zle/complist.c:3586.
-/// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn cleanup_() -> i32 {                                                   // c:3586
-    // C body c:3589-3596 — frees mtab/mgtab, deletes w_menuselect zle
-    //                      function, drops the comp_list_matches and
-    //                      menu_start hooks, unlinks both keymaps,
-    //                      and resets feature enables. We have no
-    //                      live mtab arrays; the keymap unlink stays.
-    0
-}
-
-/// Port of `int clnicezputs(int do_colors, char *s, int ml)` from
-/// `Src/Zle/complist.c:715`. Emits the bytes of `s` to the
-/// shell-output fd with optional per-char colorization. The full C
-/// body (c:717-790) walks every byte applying meta-decoding,
-/// `itok` skipping, multibyte → nice-character expansion, and per-
-/// match LS_COLORS lookups via `doiscol`. Rust port handles the
-/// meta-decode + itok-skip pieces faithfully and writes bytes
-/// directly; LS_COLORS colorization stays gated on do_colors but
-/// only emits the post-decoded string without per-char color cycling
-/// until the mcolors substrate is wired.
-#[allow(unused_variables)]
-pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {               // c:715
+/// Port of `initiscol()` from Src/Zle/complist.c:618.
+/// Direct port of `void initiscol(void)` from
+/// `Src/Zle/complist.c:618`. Resets per-line in-string-color state
+/// at the start of a colored match emission. Pops the first
+/// `patcols[0]` entry as the initial color and resets all the
+/// position cursors + region-tracking arrays.
+pub fn initiscol() -> i32 {                                                  // c:618
     use std::sync::atomic::Ordering;
-    let _ = do_colors;
-    // c:717-735 — meta-decode loop matches the C `niceztrlen`/
-    //              `nicezputs` pair. We do the same demeta-+-itok-skip
-    //              pass `compzputs` uses, then write the decoded bytes.
-    let bytes = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c == 0x83 {                                                       // c:741 Meta byte
-            i += 1;
-            if i < bytes.len() {
-                out.push(bytes[i] ^ 32);
-            }
-        } else if (0x80..0xa0).contains(&c) {                                // c:744 itok skip
-            // pass — pseudo-token, not real output
-        } else {
-            out.push(c);
+    // c:622 — `zlrputs(patcols[0]);` — emit first color cap.
+    let first_cap = PATCOLS.lock().ok()
+        .and_then(|p| p.first().cloned())
+        .unwrap_or_default();
+    if !first_cap.is_empty() {
+        let _ = zlrputs(&first_cap);
+    }
+    // c:624 — `curiscols[curiscol = 0] = *patcols++;`
+    if let Ok(mut cs) = CURISCOLS.lock() {
+        if !cs.is_empty() {
+            cs[0] = first_cap.clone();
         }
-        i += 1;
     }
-    if out.is_empty() {
-        return 0;
-    }
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = crate::ported::utils::write_loop(out_fd, &out);
-    0
-}
+    CURISCOL.store(0, Ordering::Relaxed);
+    PATCOLS_IDX.store(1, Ordering::Relaxed);                                 // c:624 patcols++
 
-/// Port of `clprintfmt(char *p, int ml)` from Src/Zle/complist.c:671.
-pub fn clprintfmt(p: &str, ml: i32) -> i32 {                                // c:671
-    // C body c:673-712 — colored variant of printfmt that uses mcolors
-    //                    for %F/%B etc. Without the mcolors substrate
-    //                    we delegate to the plain printfmt.
-    crate::ported::zle::zle_tricky::printfmt(p, ml, true, true)
-}
+    // c:626 — `curisbeg = curissend = 0;`
+    CURISBEG.store(0, Ordering::Relaxed);
+    CURISSEND.store(0, Ordering::Relaxed);
 
-/// Port of `clprintm(Cmgroup g, Cmatch *mp, int mc, int ml, int lastc, int width)` from Src/Zle/complist.c:1730.
-/// WARNING: param names don't match C — Rust=() vs C=(g, mp, mc, ml, lastc, width)
-pub fn clprintm() -> i32 {                                                   // c:1730
-    // C body c:1732-1988 — full per-match printer: emits LS_COLOR for
-    //                      file type, leading spaces, the match string
-    //                      via clnicezputs, the trailing colon/desc,
-    //                      and reset escapes. Needs Cmatch + mcolors
-    //                      pipelines. Returns 0 on success.
-    0
-}
-
-/// Port of `complistmatches(UNUSED(Hookdef dummy), Chdata dat)` from Src/Zle/complist.c:1990.
-/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
-pub fn complistmatches() -> i32 {                                            // c:1990
-    // C body c:1992-2125 — top-level entry installed as the
-    //                      "comp_list_matches" hook by boot_(); calls
-    //                      compprintlist() to render the current
-    //                      matches list. Without that engine we no-op
-    //                      and return 0.
-    0
-}
-
-/// Port of `int compprintnl(int ml)` from
-/// `Src/Zle/complist.c:1054`. Emits clear-to-end + newline to the
-/// shell-output fd; if scroll mode is on and the remaining-line
-/// budget hits zero, queries `asklistscroll(ml)` (currently
-/// substrate-gapped; we skip the scroll prompt and return 0).
-///
-/// C body c:1056-1064:
-/// ```c
-/// cleareol(); putc('\n', shout);
-/// if (mscroll && !--mrestlines && (ask = asklistscroll(ml))) return ask;
-/// return 0;
-/// ```
-#[allow(unused_variables)]
-pub fn compprintnl(ml: i32) -> i32 {                                        // c:1054
-    use std::sync::atomic::Ordering;
-    // c:1056 — `cleareol();` followed by `putc('\n', shout);`. We
-    //          emit both as a single write (CSI K + LF).
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = crate::ported::utils::write_loop(out_fd, b"\x1b[K\n");
-    // c:1058-1063 — scroll-prompt branch needs `mscroll`/`mrestlines`/
-    //                `asklistscroll` substrate; skipped until those land.
-    0
-}
-
-/// Port of `int compzputs(char const *s, int ml)` from
-/// `Src/Zle/complist.c:1338`. Demetafies each byte (Meta XOR 32),
-/// skips `itok` pseudo-tokens (0x80-0x9f), writes the result to
-/// the shell-output fd. The C source also handles wrap detection +
-/// `asklistscroll` scroll-prompts; those land when the curses
-/// substrate is wired.
-#[allow(unused_variables)]
-pub fn compzputs(s: &str, ml: i32) -> i32 {                                 // c:1338
-    use std::sync::atomic::Ordering;
-    let bytes = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c == 0x83 {                                                       // c:1343 Meta byte
-            i += 1;
-            if i < bytes.len() {
-                out.push(bytes[i] ^ 32);
-            }
-        } else if (0x80..0xa0).contains(&c) {                                // c:1345 itok skip
-            // pass — pseudo-token
-        } else {
-            out.push(c);
+    // c:628-631 — sendpos / begpos / endpos init.
+    let nrefs = NREFS.load(Ordering::Relaxed) as usize;
+    if let Ok(mut sp) = SENDPOS.lock() {
+        for i in 0..MAX_POS {
+            sp[i] = 0xfffffff;
         }
-        i += 1;
+        for i in 0..nrefs.min(MAX_POS) {
+            sp[i] = 0xfffffff;                                              // c:629 already 0xfffffff
+        }
     }
-    if out.is_empty() {
-        return 0;
+    if let Ok(mut bp) = BEGPOS.lock() {
+        for i in nrefs..MAX_POS {
+            bp[i] = 0xfffffff;                                              // c:631
+        }
     }
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = crate::ported::utils::write_loop(out_fd, &out);                  // c:1356 putc loop
+    if let Ok(mut ep) = ENDPOS.lock() {
+        for i in nrefs..MAX_POS {
+            ep[i] = 0xfffffff;                                              // c:631
+        }
+    }
     0
 }
 
@@ -536,35 +376,172 @@ pub fn doiscol(pos: i32) -> i32 {                                             //
     0
 }
 
-/// Port of `domenuselect(Hookdef dummy, Chdata dat)` from Src/Zle/complist.c:2383.
-/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
-pub fn domenuselect() -> i32 {                                               // c:2383
-    // C body c:2385-3482 — main interactive menu-select loop: reads
-    //                      keys via getkeycmd, updates mline/mcol via
-    //                      mtab/mgtab navigation, repaints via
-    //                      complistmatches, handles incsearch,
-    //                      accept/cancel. Without the live mtab matrix
-    //                      and selectkeymap("menuselect") wiring it's
-    //                      a no-op that yields control back; returns 0.
+/// Port of `clprintfmt(char *p, int ml)` from Src/Zle/complist.c:671.
+pub fn clprintfmt(p: &str, ml: i32) -> i32 {                                // c:671
+    // C body c:673-712 — colored variant of printfmt that uses mcolors
+    //                    for %F/%B etc. Without the mcolors substrate
+    //                    we delegate to the plain printfmt.
+    crate::ported::zle::zle_tricky::printfmt(p, ml, true, true)
+}
+
+/// Port of `int clnicezputs(int do_colors, char *s, int ml)` from
+/// `Src/Zle/complist.c:715`. Emits the bytes of `s` to the
+/// shell-output fd with optional per-char colorization. The full C
+/// body (c:717-790) walks every byte applying meta-decoding,
+/// `itok` skipping, multibyte → nice-character expansion, and per-
+/// match LS_COLORS lookups via `doiscol`. Rust port handles the
+/// meta-decode + itok-skip pieces faithfully and writes bytes
+/// directly; LS_COLORS colorization stays gated on do_colors but
+/// only emits the post-decoded string without per-char color cycling
+/// until the mcolors substrate is wired.
+#[allow(unused_variables)]
+pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {               // c:715
+    use std::sync::atomic::Ordering;
+    let _ = do_colors;
+    // c:717-735 — meta-decode loop matches the C `niceztrlen`/
+    //              `nicezputs` pair. We do the same demeta-+-itok-skip
+    //              pass `compzputs` uses, then write the decoded bytes.
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == 0x83 {                                                       // c:741 Meta byte
+            i += 1;
+            if i < bytes.len() {
+                out.push(bytes[i] ^ 32);
+            }
+        } else if (0x80..0xa0).contains(&c) {                                // c:744 itok skip
+            // pass — pseudo-token, not real output
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    if out.is_empty() {
+        return 0;
+    }
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = crate::ported::utils::write_loop(out_fd, &out);
     0
 }
 
-/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from Src/Zle/complist.c:3526.
-/// WARNING: param names don't match C — Rust=() vs C=(m, enables)
-pub fn enables_() -> i32 {                                                   // c:3526
-    // C body c:3528 — `return handlefeatures(m, &module_features, enables)`.
-    //                  No feature-toggle dispatch in the static-link
-    //                  Rust port; success.
+// Get the terminal color string for the given match.                      // c:881
+/// Port of `putmatchcol(char *group, char *n)` from Src/Zle/complist.c:881.
+pub fn putmatchcol(group: &str, n: &str) -> i32 {                       // c:881
+    // C body c:883-908 — looks up "ma" or "co" entries in mcolors
+    //                    for the given group/name and emits the
+    //                    escape via putcolstr.
+    //                    Without mcolors substrate: no-op.
+    let _ = group;
     0
 }
 
-/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from Src/Zle/complist.c:3518.
-/// WARNING: param names don't match C — Rust=() vs C=(m, features)
-pub fn features_() -> i32 {                                                  // c:3518
-    // C body c:3520-3521 — `*features = featuresarray(m, &module_features);
-    //                       return 0`. The features array is exposed
-    //                       elsewhere; this entry returns success.
+/// Port of `putfilecol(char *group, char *filename, mode_t m, int special)` from Src/Zle/complist.c:910.
+pub fn putfilecol(group: &str, filename: &str, m: u32, special: i32) -> i32 { // c:910
+    // C body c:912-988 — looks up the LS_COLORS class for `name`
+    //                    by mode bits + filename suffix, emits the
+    //                    matching escape via putcolstr.
+    //                    Without mcolors substrate: no-op.
+    let _ = group;
     0
+}
+
+/// Format the "scroll for more?" prompt shown when the match list
+/// exceeds the terminal height.
+/// Port of `asklistscroll(int ml)` from Src/Zle/complist.c. The C source
+/// emits "--More--" plus a percent indicator and reads y/n via
+/// `getzlequery`; ours produces the prompt string and leaves the
+/// input read to the caller.
+/// WARNING: param names don't match C — Rust=(total, shown) vs C=(ml)
+pub fn asklistscroll(total: usize, shown: usize) -> String {                 // c:1001
+    let _remaining = total.saturating_sub(shown);
+    format!("--More--({}/{})", shown, total)
+}
+
+/// Port of `int compprintnl(int ml)` from
+/// `Src/Zle/complist.c:1054`. Emits clear-to-end + newline to the
+/// shell-output fd; if scroll mode is on and the remaining-line
+/// budget hits zero, queries `asklistscroll(ml)` (currently
+/// substrate-gapped; we skip the scroll prompt and return 0).
+///
+/// C body c:1056-1064:
+/// ```c
+/// cleareol(); putc('\n', shout);
+/// if (mscroll && !--mrestlines && (ask = asklistscroll(ml))) return ask;
+/// return 0;
+/// ```
+#[allow(unused_variables)]
+pub fn compprintnl(ml: i32) -> i32 {                                        // c:1054
+    use std::sync::atomic::Ordering;
+    // c:1056 — `cleareol();` followed by `putc('\n', shout);`. We
+    //          emit both as a single write (CSI K + LF).
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = crate::ported::utils::write_loop(out_fd, b"\x1b[K\n");
+    // c:1058-1063 — scroll-prompt branch needs `mscroll`/`mrestlines`/
+    //                `asklistscroll` substrate; skipped until those land.
+    0
+}
+
+/// Substitute `%d`/`%g`/`%%` in a `LIST_GROUPS_HEADER`-style format.
+/// Port of `compprintfmt(char *fmt, int n, int dopr, int doesc, int ml, int *stop)` from Src/Zle/complist.c. The C source
+/// supports more escapes (per-group counts, etc.); the daily-driver
+/// subset (count + group + literal `%`) is honoured here.
+// Stripped-down version of printfmt(). But can do in-string colouring.    // c:668
+/// WARNING: param names don't match C — Rust=(format, matches_count, group) vs C=(fmt, n, dopr, doesc, ml, stop)
+pub fn compprintfmt(format: &str, matches_count: usize, group: &str) -> String { // c:1072
+    format
+        .replace("%d", &matches_count.to_string())
+        .replace("%g", group)
+        .replace("%%", "%")
+}
+
+/// Port of `int compzputs(char const *s, int ml)` from
+/// `Src/Zle/complist.c:1338`. Demetafies each byte (Meta XOR 32),
+/// skips `itok` pseudo-tokens (0x80-0x9f), writes the result to
+/// the shell-output fd. The C source also handles wrap detection +
+/// `asklistscroll` scroll-prompts; those land when the curses
+/// substrate is wired.
+#[allow(unused_variables)]
+pub fn compzputs(s: &str, ml: i32) -> i32 {                                 // c:1338
+    use std::sync::atomic::Ordering;
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == 0x83 {                                                       // c:1343 Meta byte
+            i += 1;
+            if i < bytes.len() {
+                out.push(bytes[i] ^ 32);
+            }
+        } else if (0x80..0xa0).contains(&c) {                                // c:1345 itok skip
+            // pass — pseudo-token
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    if out.is_empty() {
+        return 0;
+    }
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = crate::ported::utils::write_loop(out_fd, &out);                  // c:1356 putc loop
+    0
+}
+
+/// Direct port of `static int compprintlist(int showall)` from
+/// `Src/Zle/complist.c:1367`. Renders the match list via the
+/// `cmgroup`/`cmatch` linked structures + `clprintm()` per-cell
+/// driver. Bridges to `printlist` (`compresult.c:1978`) — the
+/// canonical match-list renderer which complist.c delegates to via
+/// its registered list-matches hook when the complist module isn't
+/// loaded.
+pub fn compprintlist(showall: i32) -> i32 {                                  // c:1367
+    crate::ported::zle::compresult::printlist(0, showall)
 }
 
 // =====================================================================
@@ -858,204 +835,14 @@ pub static LR_CAPLEN:   std::sync::atomic::AtomicI32 = std::sync::atomic::Atomic
 /// observed cap length.
 pub static MAX_CAPLEN:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:269
 
-/// ```c
-/// static filecol
-/// filecol(char *col)
-/// {
-///     filecol fc;
-///     fc = (filecol) zhalloc(sizeof(*fc));
-///     fc->prog = NULL;
-///     fc->col = col;
-///     fc->next = NULL;
-///     return fc;
-/// }
-/// ```
-/// Allocate a fresh filecol with no group pattern and the given
-/// color string. Caller is expected to chain it via `mcolors.files[i]`.
-/// Port of `filecol(char *col)` from `Src/Zle/complist.c:488`.
-pub fn filecol(col: &str) -> filecol {                                       // c:488
-    filecol {                                                                // c:488 zhalloc
-        prog: None,                                                          // c:493 fc->prog = NULL
-        col:  col.to_string(),                                               // c:494 fc->col = col
-        next: None,                                                          // c:495 fc->next = NULL
-    }                                                                        // c:497 return fc
-}
-
-/// Port of `finish_(UNUSED(Module m))` from Src/Zle/complist.c:3601.
-/// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn finish_() -> i32 {                                                    // c:3601
-    // C body c:3603-3604 — `return 0`. Faithful port of the empty body.
-    0
-}
-
-/// Port of `getcoldef(char *s)` from Src/Zle/complist.c:330.
-pub fn getcoldef(s: &str) -> Option<String> {                                // c:330
-    // C body c:332-503 — parses one "key=val" entry from LS_COLORS
-    //                    /ZLS_COLORS, walks past the key (one of the
-    //                    `colnames` two-letters, plus filename
-    //                    suffixes "*.ext", patterns "=cls"), returns
-    //                    pointer past the entry. Without the mcolors
-    //                    install we just split on the first `:` and
-    //                    return the remainder so caller can iterate.
-    s.split_once(':').map(|(_, rest)| rest.to_string())
-}
-
-/// Port of `getcols()` from Src/Zle/complist.c:505.
-/// WARNING: param names don't match C — Rust=(_lscol) vs C=()
-pub fn getcols(_lscol: &str) -> i32 {                                        // c:505
-    // C body c:507-602 — parses LS_COLORS into mcolors; calls
-    //                    getcoldef in a loop, populates mcolors.files,
-    //                    mcolors.symlinks, mcolors.exts. Without the
-    //                    mcolors substrate we no-op and return success.
-    0
-}
-
-/// Port of `getcolval(char *s, int multi)` from Src/Zle/complist.c:275.
-#[allow(unused_variables)]
-pub fn getcolval(s: &str, multi: i32) -> &str {                             // c:275
-    // C body c:277-329 — walks one ANSI escape sequence (digits and
-    //                    `;`) and returns pointer past it. Used while
-    //                    parsing `key=val` from LS_COLORS.
-    let trimmed = s.trim_start_matches(|c: char| c.is_ascii_digit() || c == ';');
-    trimmed
-}
-
-/// Port of `initiscol()` from Src/Zle/complist.c:618.
-/// Direct port of `void initiscol(void)` from
-/// `Src/Zle/complist.c:618`. Resets per-line in-string-color state
-/// at the start of a colored match emission. Pops the first
-/// `patcols[0]` entry as the initial color and resets all the
-/// position cursors + region-tracking arrays.
-pub fn initiscol() -> i32 {                                                  // c:618
-    use std::sync::atomic::Ordering;
-    // c:622 — `zlrputs(patcols[0]);` — emit first color cap.
-    let first_cap = PATCOLS.lock().ok()
-        .and_then(|p| p.first().cloned())
-        .unwrap_or_default();
-    if !first_cap.is_empty() {
-        let _ = zlrputs(&first_cap);
-    }
-    // c:624 — `curiscols[curiscol = 0] = *patcols++;`
-    if let Ok(mut cs) = CURISCOLS.lock() {
-        if !cs.is_empty() {
-            cs[0] = first_cap.clone();
-        }
-    }
-    CURISCOL.store(0, Ordering::Relaxed);
-    PATCOLS_IDX.store(1, Ordering::Relaxed);                                 // c:624 patcols++
-
-    // c:626 — `curisbeg = curissend = 0;`
-    CURISBEG.store(0, Ordering::Relaxed);
-    CURISSEND.store(0, Ordering::Relaxed);
-
-    // c:628-631 — sendpos / begpos / endpos init.
-    let nrefs = NREFS.load(Ordering::Relaxed) as usize;
-    if let Ok(mut sp) = SENDPOS.lock() {
-        for i in 0..MAX_POS {
-            sp[i] = 0xfffffff;
-        }
-        for i in 0..nrefs.min(MAX_POS) {
-            sp[i] = 0xfffffff;                                              // c:629 already 0xfffffff
-        }
-    }
-    if let Ok(mut bp) = BEGPOS.lock() {
-        for i in nrefs..MAX_POS {
-            bp[i] = 0xfffffff;                                              // c:631
-        }
-    }
-    if let Ok(mut ep) = ENDPOS.lock() {
-        for i in nrefs..MAX_POS {
-            ep[i] = 0xfffffff;                                              // c:631
-        }
-    }
-    0
-}
-
-/// Port of `menuselect(char **args)` from Src/Zle/complist.c:3484.
-/// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn menuselect() -> i32 {                                                 // c:3484
-    // C body c:3486-3510 — entry widget for `menu-select`. Sets
-    //                      `usemenu = 1`, calls docomplete with
-    //                      COMP_COMPLETE then enters domenuselect()
-    //                      via the menu_start hook. Without mtab[][]
-    //                      we delegate to the basic menucomplete entry.
-    crate::ported::zle::zle_tricky::menucomplete()
-}
-
-/// Port of `menuselect_bindings()` from Src/Zle/complist.c:3533.
-pub fn menuselect_bindings() -> i32 {                                        // c:3533
-    // C body c:3535-3562 — `if (!(mskeymap = openkeymap("menuselect")))
-    //                       { mskeymap = newkeymap(...); linkkeymap(...);
-    //                         bindkey(... default arrow/tab/CR keys) }`
-    //                       same for "listscroll" keymap. The keymap
-    //                       substrate exists in zle_keymap.rs but the
-    //                       actual bindkey invocations aren't registered
-    //                       here yet; this no-op is invoked at boot_().
-    0
-}
-
-/// Port of `msearch(Cmatch **ptr, char *ins, int back, int rep, int *wrapp)` from Src/Zle/complist.c:2302.
-/// WARNING: param names don't match C — Rust=() vs C=(ptr, ins, back, rep, wrapp)
-pub fn msearch() -> i32 {                                                    // c:2302
-    // C body c:2304-2380 — incremental search through the match
-    //                      matrix using msearchstr; updates mline/mcol
-    //                      to land on the first match.
-    //                      Without mtab/mgtab we no-op.
-    0
-}
-
-/// Port of `msearchpop(int *backp)` from Src/Zle/complist.c:2281.
-/// WARNING: param names don't match C — Rust=() vs C=(backp)
-pub fn msearchpop() -> i32 {                                                 // c:2281
-    // C body c:2283-2301 — pops one entry off msearchstack restoring
-    //                      mline/mcol/msearchstr.
-    //                      Without msearchstack substrate: no-op.
-    0
-}
-
-/// Port of `msearchpush(Cmatch **p, int back)` from Src/Zle/complist.c:2266.
-/// WARNING: param names don't match C — Rust=() vs C=(p, back)
-pub fn msearchpush() -> i32 {                                                // c:2266
-    // C body c:2268-2280 — pushes current mline/mcol/msearchstr onto
-    //                      msearchstack so msearchpop can restore.
-    //                      No msearchstack substrate: no-op.
-    0
-}
-
-/// Port of `putfilecol(char *group, char *filename, mode_t m, int special)` from Src/Zle/complist.c:910.
-pub fn putfilecol(group: &str, filename: &str, m: u32, special: i32) -> i32 { // c:910
-    // C body c:912-988 — looks up the LS_COLORS class for `name`
-    //                    by mode bits + filename suffix, emits the
-    //                    matching escape via putcolstr.
-    //                    Without mcolors substrate: no-op.
-    let _ = group;
-    0
-}
-
-// Get the terminal color string for the given match.                      // c:881
-/// Port of `putmatchcol(char *group, char *n)` from Src/Zle/complist.c:881.
-pub fn putmatchcol(group: &str, n: &str) -> i32 {                       // c:881
-    // C body c:883-908 — looks up "ma" or "co" entries in mcolors
-    //                    for the given group/name and emits the
-    //                    escape via putcolstr.
-    //                    Without mcolors substrate: no-op.
-    let _ = group;
-    0
-}
-
-/// Port of `setmstatus(char *status, char *sline, int sll, int scs, int *csp, int *llp, int *lenp)` from Src/Zle/complist.c:2203.
-/// WARNING: param names don't match C — Rust=(_status, _sline, _scs, _np, _nl, _nc) vs C=(status, sline, sll, scs, csp, llp, lenp)
-pub fn setmstatus(_status: &str, _sline: i32, _scs: i32, _np: &mut i32, _nl: &mut i32, _nc: &mut i32) -> i32 { // c:2203
-    // C body c:2205-2265 — updates the menu-select status line at
-    //                      the bottom of the screen. Without curses
-    //                      substrate we no-op.
-    0
-}
-
-/// Port of `setup_(UNUSED(Module m))` from Src/Zle/complist.c:3511.
-/// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn setup_() -> i32 {                                                     // c:3511
-    // C body c:3513-3514 — `return 0`. Faithful empty body.
+/// Port of `clprintm(Cmgroup g, Cmatch *mp, int mc, int ml, int lastc, int width)` from Src/Zle/complist.c:1730.
+/// WARNING: param names don't match C — Rust=() vs C=(g, mp, mc, ml, lastc, width)
+pub fn clprintm() -> i32 {                                                   // c:1730
+    // C body c:1732-1988 — full per-match printer: emits LS_COLOR for
+    //                      file type, leading spaces, the match string
+    //                      via clnicezputs, the trailing colon/desc,
+    //                      and reset escapes. Needs Cmatch + mcolors
+    //                      pipelines. Returns 0 on success.
     0
 }
 
@@ -1083,28 +870,243 @@ pub fn singledraw() -> i32 {                                                 // 
     0
 }
 
-// Turn off colouring.                                                     // c:597
-/// Port of `zcoff()` from Src/Zle/complist.c:597.
-pub fn zcoff() {                                                            // c:597
-    // C body c:599-617 — emits the LS_COLORS no-color escape via
-    //                    tputs(mcolors.files[COL_NO]->col,...).
-    //                    No mcolors substrate: no-op.
+/// Port of `complistmatches(UNUSED(Hookdef dummy), Chdata dat)` from Src/Zle/complist.c:1990.
+/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
+pub fn complistmatches() -> i32 {                                            // c:1990
+    // C body c:1992-2125 — top-level entry installed as the
+    //                      "comp_list_matches" hook by boot_(); calls
+    //                      compprintlist() to render the current
+    //                      matches list. Without that engine we no-op
+    //                      and return 0.
+    0
 }
 
-/// Direct port of `void zlrputs(char *cap)` from
-/// `Src/Zle/complist.c:564`. Emits an LS_COLORS escape
-/// `\033[<cap>m` to the shell-output fd. C body c:566-595 also
-/// stores the cap into `last_cap` for the bleed-prevention path
-/// downstream (used by `zcoff` in `cleareol`); that file-static
-/// `last_cap` isn't yet ported, so we only emit the SGR escape.
-pub fn zlrputs(cap: &str) -> i32 {                                           // c:564
-    use std::sync::atomic::Ordering;
-    if cap.is_empty() {
-        return 0;
-    }
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    let out = if fd >= 0 { fd } else { 1 };
-    let s = format!("\x1b[{}m", cap);
-    let _ = crate::ported::utils::write_loop(out, s.as_bytes());
+/// Port of `adjust_mcol(int wish, Cmatch ***tabp, Cmgroup **grp)` from Src/Zle/complist.c:2127.
+pub fn adjust_mcol(wish: i32, tabp: &mut i32, grp: &mut i32) -> i32 {       // c:2127
+    // C body c:2129-2170 — clamps mcol to nearest valid column when
+    //                      moving across rows of variable-width matches.
+    //                      Without the mtab[][] matrix we just clamp
+    //                      to a non-negative column.
+    wish.max(0)
+}
+
+/// Port of `setmstatus(char *status, char *sline, int sll, int scs, int *csp, int *llp, int *lenp)` from Src/Zle/complist.c:2203.
+/// WARNING: param names don't match C — Rust=(_status, _sline, _scs, _np, _nl, _nc) vs C=(status, sline, sll, scs, csp, llp, lenp)
+pub fn setmstatus(_status: &str, _sline: i32, _scs: i32, _np: &mut i32, _nl: &mut i32, _nc: &mut i32) -> i32 { // c:2203
+    // C body c:2205-2265 — updates the menu-select status line at
+    //                      the bottom of the screen. Without curses
+    //                      substrate we no-op.
     0
+}
+
+/// Port of `msearchpush(Cmatch **p, int back)` from Src/Zle/complist.c:2266.
+/// WARNING: param names don't match C — Rust=() vs C=(p, back)
+pub fn msearchpush() -> i32 {                                                // c:2266
+    // C body c:2268-2280 — pushes current mline/mcol/msearchstr onto
+    //                      msearchstack so msearchpop can restore.
+    //                      No msearchstack substrate: no-op.
+    0
+}
+
+/// Port of `msearchpop(int *backp)` from Src/Zle/complist.c:2281.
+/// WARNING: param names don't match C — Rust=() vs C=(backp)
+pub fn msearchpop() -> i32 {                                                 // c:2281
+    // C body c:2283-2301 — pops one entry off msearchstack restoring
+    //                      mline/mcol/msearchstr.
+    //                      Without msearchstack substrate: no-op.
+    0
+}
+
+/// Port of `msearch(Cmatch **ptr, char *ins, int back, int rep, int *wrapp)` from Src/Zle/complist.c:2302.
+/// WARNING: param names don't match C — Rust=() vs C=(ptr, ins, back, rep, wrapp)
+pub fn msearch() -> i32 {                                                    // c:2302
+    // C body c:2304-2380 — incremental search through the match
+    //                      matrix using msearchstr; updates mline/mcol
+    //                      to land on the first match.
+    //                      Without mtab/mgtab we no-op.
+    0
+}
+
+/// Port of `domenuselect(Hookdef dummy, Chdata dat)` from Src/Zle/complist.c:2383.
+/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
+pub fn domenuselect() -> i32 {                                               // c:2383
+    // C body c:2385-3482 — main interactive menu-select loop: reads
+    //                      keys via getkeycmd, updates mline/mcol via
+    //                      mtab/mgtab navigation, repaints via
+    //                      complistmatches, handles incsearch,
+    //                      accept/cancel. Without the live mtab matrix
+    //                      and selectkeymap("menuselect") wiring it's
+    //                      a no-op that yields control back; returns 0.
+    0
+}
+
+/// Port of `menuselect(char **args)` from Src/Zle/complist.c:3484.
+/// WARNING: param names don't match C — Rust=() vs C=(args)
+pub fn menuselect() -> i32 {                                                 // c:3484
+    // C body c:3486-3510 — entry widget for `menu-select`. Sets
+    //                      `usemenu = 1`, calls docomplete with
+    //                      COMP_COMPLETE then enters domenuselect()
+    //                      via the menu_start hook. Without mtab[][]
+    //                      we delegate to the basic menucomplete entry.
+    crate::ported::zle::zle_tricky::menucomplete()
+}
+
+/// Port of `setup_(UNUSED(Module m))` from Src/Zle/complist.c:3511.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
+pub fn setup_() -> i32 {                                                     // c:3511
+    // C body c:3513-3514 — `return 0`. Faithful empty body.
+    0
+}
+
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from Src/Zle/complist.c:3518.
+/// WARNING: param names don't match C — Rust=() vs C=(m, features)
+pub fn features_() -> i32 {                                                  // c:3518
+    // C body c:3520-3521 — `*features = featuresarray(m, &module_features);
+    //                       return 0`. The features array is exposed
+    //                       elsewhere; this entry returns success.
+    0
+}
+
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from Src/Zle/complist.c:3526.
+/// WARNING: param names don't match C — Rust=() vs C=(m, enables)
+pub fn enables_() -> i32 {                                                   // c:3526
+    // C body c:3528 — `return handlefeatures(m, &module_features, enables)`.
+    //                  No feature-toggle dispatch in the static-link
+    //                  Rust port; success.
+    0
+}
+
+/// Port of `menuselect_bindings()` from Src/Zle/complist.c:3533.
+pub fn menuselect_bindings() -> i32 {                                        // c:3533
+    // C body c:3535-3562 — `if (!(mskeymap = openkeymap("menuselect")))
+    //                       { mskeymap = newkeymap(...); linkkeymap(...);
+    //                         bindkey(... default arrow/tab/CR keys) }`
+    //                       same for "listscroll" keymap. The keymap
+    //                       substrate exists in zle_keymap.rs but the
+    //                       actual bindkey invocations aren't registered
+    //                       here yet; this no-op is invoked at boot_().
+    0
+}
+
+/// Port of `boot_(UNUSED(Module m))` from Src/Zle/complist.c:3564.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
+pub fn boot_() -> i32 {                                                      // c:3564
+    // C body c:3567-3582 — `mtab = NULL; mgtab = NULL; mselect = -1;
+    //                       inselect = 0; w_menuselect = addzlefunction(...);
+    //                       menuselect_bindings()`. Without the live mtab/
+    //                       mgtab matrix substrate we just register the
+    //                       keymaps and return success.
+    menuselect_bindings();
+    0
+}
+
+/// Port of `cleanup_(UNUSED(Module m))` from Src/Zle/complist.c:3586.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
+pub fn cleanup_() -> i32 {                                                   // c:3586
+    // C body c:3589-3596 — frees mtab/mgtab, deletes w_menuselect zle
+    //                      function, drops the comp_list_matches and
+    //                      menu_start hooks, unlinks both keymaps,
+    //                      and resets feature enables. We have no
+    //                      live mtab arrays; the keymap unlink stays.
+    0
+}
+
+/// Port of `finish_(UNUSED(Module m))` from Src/Zle/complist.c:3601.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
+pub fn finish_() -> i32 {                                                    // c:3601
+    // C body c:3603-3604 — `return 0`. Faithful port of the empty body.
+    0
+}
+
+/// Bridge to the canonical port at `compresult.rs:1080` (which is
+/// `void calclist(int showall)` in `compresult.c:1495`). The name
+/// table at `tests/data/zsh_c_fn_names.txt` lists both
+/// `complist.c:calclist` and `compresult.c:calclist` because the
+/// complist module references it through extern; the real impl lives
+/// in compresult.c.
+pub fn calclist(showall: i32) -> i32 {                                       // c:compresult.c:1495
+    crate::ported::zle::compresult::calclist(showall)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compprintfmt() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // c:1072 — compprintfmt builds the LIST_GROUPS_HEADER expansion.
+        assert_eq!(
+            compprintfmt("Showing %d matches in %g", 42, "files"),
+            "Showing 42 matches in files"
+        );
+    }
+
+    // ---------- Real-port tests ------------------------------------------
+
+    #[test]
+    fn col_indices_match_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // c:167-191 — exact integer indices used by mcolors.files[i].
+        assert_eq!(COL_NO, 0);
+        assert_eq!(COL_DI, 2);
+        assert_eq!(COL_EX, 15);
+        assert_eq!(COL_LC, 16);
+        assert_eq!(COL_EC, 18);
+        assert_eq!(COL_SA, 24);
+    }
+
+    #[test]
+    fn num_cols_matches_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // c:193 — must match the colnames[] / defcols[] array length.
+        assert_eq!(NUM_COLS, 25);
+        assert_eq!(COLNAMES.len(), 25);
+        assert_eq!(DEFCOLS.len(), 25);
+    }
+
+    #[test]
+    fn colnames_match_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // c:197-201 — two-letter LS_COLORS keys.
+        assert_eq!(COLNAMES[COL_NO], "no");
+        assert_eq!(COLNAMES[COL_DI], "di");
+        assert_eq!(COLNAMES[COL_LN], "ln");
+        assert_eq!(COLNAMES[COL_EX], "ex");
+        assert_eq!(COLNAMES[COL_MA], "ma");
+    }
+
+    #[test]
+    fn defcols_match_c() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // c:205-209 — default ANSI codes.
+        assert_eq!(DEFCOLS[COL_NO], Some("0"));
+        assert_eq!(DEFCOLS[COL_DI], Some("1;31"));
+        assert_eq!(DEFCOLS[COL_EX], Some("1;32"));
+        assert_eq!(DEFCOLS[COL_OR], None);    // default for orphan: fallback to ln
+        assert_eq!(DEFCOLS[COL_MI], None);    // default for missing: fallback to fi
+        assert_eq!(DEFCOLS[COL_LC], Some("\x1b["));
+        assert_eq!(DEFCOLS[COL_RC], Some("m"));
+    }
+
+    #[test]
+    fn filecol_allocates_with_defaults() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // c:487-498 — fresh filecol: prog=NULL, col=arg, next=NULL.
+        let fc = filecol("0;32");
+        assert_eq!(fc.col, "0;32");
+        assert!(fc.prog.is_none());
+        assert!(fc.next.is_none());
+    }
+
+    #[test]
+    fn filecol_empty_string() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // The "no LS_COLORS set" path at c:515-516 calls filecol("")
+        // for every slot.
+        let fc = filecol("");
+        assert_eq!(fc.col, "");
+        assert!(fc.prog.is_none());
+        assert!(fc.next.is_none());
+    }
 }

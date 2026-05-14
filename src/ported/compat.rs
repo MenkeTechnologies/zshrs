@@ -103,6 +103,33 @@ pub fn difftime(t2: i64, t1: i64) -> f64 {                                   // 
     (t2 - t1) as f64
 }
 
+// `metafy` / `unmetafy` moved out — canonical ports live at
+// `crate::ported::utils::metafy` and `::unmetafy` (Src/utils.c
+// is the C source, not compat.c). Callers wanting an owned
+// `String` route through `utils::unmeta(&str) -> String` (the
+// real port of `unmeta(const char *file_name)` at Src/utils.c:4994).
+//
+// `strstr` / `gettimeofday` / `strtoul` removed — compat.c
+// provides them as `#ifndef HAVE_*` fallback shims. On all
+// targets zshrs supports (modern Linux/macOS/BSD with libc),
+// the libc versions are linked directly; the compat.c shims
+// are dead code on those targets.
+//
+// `zpathmax` removed — the C source has the entire body wrapped
+// in `#if 0` (disabled since 2003 per compat.c:204 comment:
+// "pathconf(_PC_PATH_MAX) is not currently useful to zsh").
+// Rust port had it active for a dead C function.
+
+/// Render an errno value as a human-readable string.
+/// Port of `strerror(int errnum)` from Src/compat.c:194 (`#ifndef
+/// HAVE_STRERROR` fallback shim). C body: `return
+/// sys_errlist[errnum]`. On HAVE_STRERROR systems the libc one
+/// is used directly; Rust's `std::io::Error::from_raw_os_error`
+/// routes through libc strerror internally.
+pub fn strerror(errnum: i32) -> String {                                     // c:194
+    std::io::Error::from_raw_os_error(errnum).to_string()
+}
+
 // Neither of these should happen, but resort to OPEN_MAX rather            // c:291
 // than return 0 or -1 just in case.                                        // c:292
 //                                                                          // c:293
@@ -171,16 +198,6 @@ pub fn zopenmax() -> i64 {                                                   // 
     }
 }
 
-/// Get the current working directory.
-/// Port of `zgetcwd()` from Src/compat.c:559 — wraps
-/// `getcwd(3)` with a long-path-tolerant fallback. Rust's
-/// `current_dir()` covers the same range.
-pub fn zgetcwd() -> Option<String> {                                        // c:559
-    env::current_dir()
-        .ok()
-        .and_then(|p| p.to_str().map(|s| s.to_string()))
-}
-
 /// Saved-directory state (name + inode + device).
 /// Port of `struct dirsav` from Src/zsh.h — populated by
 // `struct dirsav` lives in `crate::ported::zsh_h::dirsav` per Rule C
@@ -216,6 +233,16 @@ pub fn zgetdir(d: Option<&mut crate::ported::zsh_h::dirsav>) -> Option<String> {
     }
 
     Some(cwd_str)
+}
+
+/// Get the current working directory.
+/// Port of `zgetcwd()` from Src/compat.c:559 — wraps
+/// `getcwd(3)` with a long-path-tolerant fallback. Rust's
+/// `current_dir()` covers the same range.
+pub fn zgetcwd() -> Option<String> {                                        // c:559
+    env::current_dir()
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.to_string()))
 }
 
 /// Change directory with long-pathname support.
@@ -268,22 +295,6 @@ pub fn output64(val: i64) -> String {                                        // 
     val.to_string()
 }
 
-// `convbase` moved out — canonical port lives at
-// `crate::ported::utils::convbase` (Src/utils.c is the C source).
-// `gethostname` moved out — canonical port lives at
-// `crate::ported::utils::gethostname` (compat.c's body is
-// `#ifndef HAVE_GETHOSTNAME` fallback shim; the active code path
-// goes through libc directly via utils.rs).
-
-/// Check whether an ASCII byte is printable.
-/// Port of `isprint_ascii(int c)` from Src/compat.c:785 — locale-
-/// independent printable check the C source uses when locale
-/// data isn't safe to read (signal handlers, early init).
-pub fn isprint_ascii(c: char) -> bool {                                      // c:785
-    let b = c as u32;
-    (0x20..=0x7e).contains(&b)
-}
-
 /// Get the column width of a Unicode character.
 /// Port of `u9_wcwidth(wchar_t ucs)` from Src/compat.c:760 — the C source
 /// ships its own Unicode 9 u9_wcwidth fallback because system
@@ -301,31 +312,20 @@ pub fn u9_iswprint(ucs: char) -> bool {                                        /
     !ucs.is_control() && u9_wcwidth(ucs) >= 0
 }
 
-// `metafy` / `unmetafy` moved out — canonical ports live at
-// `crate::ported::utils::metafy` and `::unmetafy` (Src/utils.c
-// is the C source, not compat.c). Callers wanting an owned
-// `String` route through `utils::unmeta(&str) -> String` (the
-// real port of `unmeta(const char *file_name)` at Src/utils.c:4994).
-//
-// `strstr` / `gettimeofday` / `strtoul` removed — compat.c
-// provides them as `#ifndef HAVE_*` fallback shims. On all
-// targets zshrs supports (modern Linux/macOS/BSD with libc),
-// the libc versions are linked directly; the compat.c shims
-// are dead code on those targets.
-//
-// `zpathmax` removed — the C source has the entire body wrapped
-// in `#if 0` (disabled since 2003 per compat.c:204 comment:
-// "pathconf(_PC_PATH_MAX) is not currently useful to zsh").
-// Rust port had it active for a dead C function.
+// `convbase` moved out — canonical port lives at
+// `crate::ported::utils::convbase` (Src/utils.c is the C source).
+// `gethostname` moved out — canonical port lives at
+// `crate::ported::utils::gethostname` (compat.c's body is
+// `#ifndef HAVE_GETHOSTNAME` fallback shim; the active code path
+// goes through libc directly via utils.rs).
 
-/// Render an errno value as a human-readable string.
-/// Port of `strerror(int errnum)` from Src/compat.c:194 (`#ifndef
-/// HAVE_STRERROR` fallback shim). C body: `return
-/// sys_errlist[errnum]`. On HAVE_STRERROR systems the libc one
-/// is used directly; Rust's `std::io::Error::from_raw_os_error`
-/// routes through libc strerror internally.
-pub fn strerror(errnum: i32) -> String {                                     // c:194
-    std::io::Error::from_raw_os_error(errnum).to_string()
+/// Check whether an ASCII byte is printable.
+/// Port of `isprint_ascii(int c)` from Src/compat.c:785 — locale-
+/// independent printable check the C source uses when locale
+/// data isn't safe to read (signal handlers, early init).
+pub fn isprint_ascii(c: char) -> bool {                                      // c:785
+    let b = c as u32;
+    (0x20..=0x7e).contains(&b)
 }
 
 #[cfg(test)]

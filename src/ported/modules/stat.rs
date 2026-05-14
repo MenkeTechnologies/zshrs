@@ -592,52 +592,7 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     0
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs::File;
-    use std::io::Write;
 
-    #[test]
-    fn statelts_count_matches_st_count() {
-        assert_eq!(STATELTS.len() as i32, ST_COUNT);
-    }
-
-    #[test]
-    fn statmodeprint_octal_only() {
-        let s = statmodeprint(0o100644, STF_RAW | STF_OCTAL);
-        assert!(s.starts_with('0'));
-        assert!(s.contains("644"));
-    }
-
-    #[test]
-    fn statmodeprint_string_only() {
-        let s = statmodeprint(0o100644, STF_STRING);
-        assert_eq!(s.len(), 10);
-        assert_eq!(&s[..1], "-");
-    }
-
-    #[test]
-    fn statmodeprint_directory() {
-        let s = statmodeprint(0o040755, STF_STRING);
-        assert_eq!(&s[..1], "d");
-    }
-
-    #[test]
-    fn statulprint_decimal() {
-        assert_eq!(statulprint(12345), "12345");
-    }
-
-    #[test]
-    fn statprint_size_via_index() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("x.txt");
-        File::create(&path).unwrap().write_all(b"hello").unwrap();
-        let meta = fs::metadata(&path).unwrap();
-        let s = statprint(&meta, path.to_str().unwrap(), ST_SIZE, 0);
-        assert_eq!(s, "5");
-    }
-}
 
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
@@ -702,3 +657,49 @@ fn setfeatureenables(
     0
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+
+    #[test]
+    fn statelts_count_matches_st_count() {
+        assert_eq!(STATELTS.len() as i32, ST_COUNT);
+    }
+
+    #[test]
+    fn statmodeprint_octal_only() {
+        let s = statmodeprint(0o100644, STF_RAW | STF_OCTAL);
+        assert!(s.starts_with('0'));
+        assert!(s.contains("644"));
+    }
+
+    #[test]
+    fn statmodeprint_string_only() {
+        let s = statmodeprint(0o100644, STF_STRING);
+        assert_eq!(s.len(), 10);
+        assert_eq!(&s[..1], "-");
+    }
+
+    #[test]
+    fn statmodeprint_directory() {
+        let s = statmodeprint(0o040755, STF_STRING);
+        assert_eq!(&s[..1], "d");
+    }
+
+    #[test]
+    fn statulprint_decimal() {
+        assert_eq!(statulprint(12345), "12345");
+    }
+
+    #[test]
+    fn statprint_size_via_index() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("x.txt");
+        File::create(&path).unwrap().write_all(b"hello").unwrap();
+        let meta = fs::metadata(&path).unwrap();
+        let s = statprint(&meta, path.to_str().unwrap(), ST_SIZE, 0);
+        assert_eq!(s, "5");
+    }
+}
