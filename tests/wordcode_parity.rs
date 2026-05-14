@@ -157,7 +157,8 @@ fn dump_via_zshrs(src: &str) -> String {
     zsh::parse::init_parse();
     zsh::lex::zshlex();
     // Mirror C parse_list (parse.c:691-708) — par_list, not par_event.
-    zsh::parse::par_list_wordcode();
+    let mut cmplx: i32 = 0;
+    zsh::parse::par_list_wordcode(&mut cmplx);
     if zsh::lex::tok() != ENDINPUT {
         return "PARSE_ERR\n".to_string();
     }
