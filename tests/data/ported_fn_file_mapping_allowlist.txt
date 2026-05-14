@@ -78,7 +78,6 @@ src/ported/modules/watch.rs::printtime  # jobs.c (watch.c calls but doesn't defi
 src/ported/zle/zle_bindings.rs::bindkey
 src/ported/zle/zle_bindings.rs::bindlistout
 src/ported/zle/zle_bindings.rs::getkeystring
-src/ported/zle/zle_bindings.rs::printbind
 
 # Port of `#define zistype(X,Y)` macro from Src/ztype.h:47. C indexes
 # it as `utils.c:zistype` because the macro is consumed inline in
