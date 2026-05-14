@@ -1146,6 +1146,13 @@ par_while_wordcode
 # is impractical to repeat at 12+ sites without a helper.
 par_save_list_wordcode
 par_save_list1_wordcode
+# Wordcode-emitting variants of `par_wordlist`/`par_nl_wordlist`
+# (parse.c:2362, parse.c:2379). The bare names already exist as
+# AST-path functions (parse.rs:808, 823) returning Vec<String>; the
+# wordcode path needs sibling functions that emit via ecstr/ecadd
+# and return the count. Same C source, different Rust signature.
+par_wordlist_wordcode
+par_nl_wordlist_wordcode
 ecgetstr_wordcode
 invoke_argv_wordcode
 skip_form
