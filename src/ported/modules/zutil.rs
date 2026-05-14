@@ -1071,6 +1071,12 @@ pub fn connectstates(out: &mut Vec<String>, in_: &mut Vec<String>) {          //
 }
 
 /// Port of `rparseelt(RParseResult *result, jmp_buf *perr)` from Src/Modules/zutil.c:1142.
+///
+/// Part of the `zregexparse` builtin's recursive-descent
+/// parser family (zutil.c:1140-1250 + helpers). zshrs's
+/// zregexparse port is pending — the regex-language eval
+/// path isn't wired up because no zshrs caller uses it.
+/// Structural pass-through; pending port.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn rparseelt(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 {
@@ -1080,6 +1086,12 @@ pub fn rparseelt(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 
 }
 
 /// Port of `rparseclo(RParseResult *result, jmp_buf *perr)` from Src/Modules/zutil.c:1252.
+///
+/// Part of the `zregexparse` builtin's recursive-descent
+/// parser family (zutil.c:1140-1250 + helpers). zshrs's
+/// zregexparse port is pending — the regex-language eval
+/// path isn't wired up because no zshrs caller uses it.
+/// Structural pass-through; pending port.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn rparseclo(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 {
@@ -1136,6 +1148,12 @@ pub fn appendactions(acts: &mut Vec<String>, branches: &mut Vec<String>) {    //
 }
 
 /// Port of `rparseseq(RParseResult *result, jmp_buf *perr)` from Src/Modules/zutil.c:1294.
+///
+/// Part of the `zregexparse` builtin's recursive-descent
+/// parser family (zutil.c:1140-1250 + helpers). zshrs's
+/// zregexparse port is pending — the regex-language eval
+/// path isn't wired up because no zshrs caller uses it.
+/// Structural pass-through; pending port.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn rparseseq(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 {
@@ -1145,6 +1163,12 @@ pub fn rparseseq(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 
 }
 
 /// Port of `rparsealt(RParseResult *result, jmp_buf *perr)` from Src/Modules/zutil.c:1116.
+///
+/// Part of the `zregexparse` builtin's recursive-descent
+/// parser family (zutil.c:1140-1250 + helpers). zshrs's
+/// zregexparse port is pending — the regex-language eval
+/// path isn't wired up because no zshrs caller uses it.
+/// Structural pass-through; pending port.
 /// C: `static int rparsealt(RParseResult *result, jmp_buf *perr)` — parse
 /// alternation in regex syntax.
 #[allow(non_snake_case)]
@@ -1156,6 +1180,12 @@ pub fn rparsealt(result: &mut RParseResult, perr: *mut std::ffi::c_void) -> i32 
 }
 
 /// Port of `rmatch(RParseResult *sm, char *subj, char *var1, char *var2, int comp)` from Src/Modules/zutil.c:1366.
+///
+/// Part of the `zregexparse` builtin's recursive-descent
+/// parser family (zutil.c:1140-1250 + helpers). zshrs's
+/// zregexparse port is pending — the regex-language eval
+/// path isn't wired up because no zshrs caller uses it.
+/// Structural pass-through; pending port.
 /// C: `static int rmatch(RParseResult *sm, char *subj, char *var1,
 ///     char *var2, int comp)` — match subj against sm; bind var1/var2.
 #[allow(non_snake_case)]

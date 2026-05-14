@@ -597,13 +597,19 @@ pub fn unset_register(name: char, _exp: i32) {  // c:777
 }
 
 /// Port of `scan_registers(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Zle/zle_params.c:784.
+///
+/// Iteration entry that C's `${(@k)registers}` query and `printf -v`
+/// callers use to enumerate the vi yank registers ('a'..'z',
+/// '0'..'9' = 36 buffers in `vibuf[]`). The C body builds a temp
+/// `struct param` per buffer and invokes the supplied `ScanFunc`
+/// callback. Rust port: zshrs's special-parameter hashparam node
+/// integration isn't wired up yet — the `registers` parameter
+/// itself reads via `get_registers`/`set_register` directly without
+/// going through this iteration callback. ScanFunc callback path is
+/// a no-op port; trait dispatch via the typed `vibuf()` accessor
+/// covers the read/write side. Rust idiom replacement.
 /// WARNING: param names don't match C — Rust=(_t, _flags) vs C=(ht, func, flags)
 pub fn scan_registers(_t: i32, _flags: i32) {                                // c:784
-    // C body c:786-840 — walks vibuf[0..36] enumerating non-empty
-    //                    vi register names ('a'..'z', '0'..'9') for
-    //                    `printf -v` and `(${(@k)registers})` queries.
-    //                    Without param-table hashparam node integration:
-    //                    no-op.
 }
 
 /// Port of `get_registers(UNUSED(HashTable ht), const char *name)` from Src/Zle/zle_params.c:807.

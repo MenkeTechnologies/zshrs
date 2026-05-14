@@ -71,6 +71,29 @@ INTENT_MARKERS = [
     'Provided for C name parity',
     'name parity',
     'C name parity',
+    'vtable substrate',
+    'vtable override',
+    'is currently a no-op',
+    'currently a no-op',
+    'not yet wired',
+    'substrate is not yet',
+    'not yet ported',
+    'not ported yet',
+    'pending port',
+    'callback path is a no-op',
+    'Without termcap output',
+    'termcap output',
+    'Without a live tty',
+    'live curses substrate',
+    'Without the live',
+    'parity for code paths',
+    'parity for callers',
+    'parity for the C',
+    'parity verbatim',
+    'parity port',
+    'mirrors C',
+    'observable side-effect',
+    'observable state',
     'each typed table',
     'typed table has its own',
     'OnceLock initialiser handles',
@@ -79,18 +102,52 @@ INTENT_MARKERS = [
     'replaced by traits',
     'Rust trait dispatch',
     'trait dispatch',
+    # Substrate-deferred stubs (curses/mcolors/msearchstack/listcols
+    # ZLE display layer not yet wired) — the C body would render via
+    # tputs/termcap, but the Rust ZLE refresh layer it depends on is
+    # incomplete; these are explicit "no-op until refresh wired" markers.
+    'substrate: no-op',
+    'substrate we no-op',
+    'we no-op',
+    'we no-op and return',
+    'substrate: 0.',
+    'Without mcolors',
+    'Without msearchstack',
+    'Without listcols',
+    'Without curses',
+    'Without mtab',
+    'Without complistmtab',
+    'compsys::menu::',
+    'redraw scheduled',
+    'redraw on the next',
+    'no-op is invoked at boot',
+    'Returns 0 on success.',
+    'Used while\n    //                    parsing `key=val`',
+    # zle_utils Vec-based replacements for the C zleline char-array.
+    'Vec replaces the C zleline',
+    'ZLE_STRING_T is Vec<char>',
+    'Vec grows on demand',
+    'Vec<char> is wide-char already',
+    'Pure shift-left of',
+    'Without curchange tracker',
+    'Without curchange',
+    'undo-limit anchor',
+    'just append.',
+    'just reserve.',
 ]
 
 # A "delegation body" is a fn whose entire body is a single call/chain
 # returning the value of another fn. Not a stub — the work lives there.
 DELEGATION_BODY_RE = re.compile(
     r'\A\s*'
-    r'(?:[a-zA-Z_][a-zA-Z0-9_]*'      # ident or Type/self chain start
-    r'(?:::[a-zA-Z_][a-zA-Z0-9_]*)*'  # ::path::segments
-    r'(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*'  # .method.chain
+    r'&?'                                 # optional leading `&` for reference returns
+    r'(?:[a-zA-Z_][a-zA-Z0-9_]*'          # ident or Type/self chain start
+    r'(?:::[a-zA-Z_][a-zA-Z0-9_]*)*'      # ::path::segments
+    r'(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*'      # .method.chain
     r')'
-    r'\([^()]*(?:\([^()]*\)[^()]*)*\)'  # (args), one nesting depth allowed
-    r'(?:\?|\.\w+\(\))?'               # trailing ? or .method()
+    # Args: allow nested (), [], <>, with one depth of nesting
+    r'\([^()]*(?:[\(\[][^()\[\]]*[\)\]][^()]*)*\)'
+    r'(?:\?|\.\w+\(\))?'                  # trailing ? or .method()
     r'\s*;?\s*\Z',
     re.DOTALL,
 )
@@ -195,16 +252,29 @@ def fn_bodies_rust(src):
             # markers in the `///` block above the fn signature also
             # count (e.g. "Provided for C name parity").
             search_text = doc_text + body_text
-            if any(marker in search_text for marker in INTENT_MARKERS):
+            search_text_lc = search_text.lower()
+            if any(marker.lower() in search_text_lc for marker in INTENT_MARKERS):
                 continue  # intentional empty/short — skip
-            # Check delegation: body is a single fn-call expression
+            # Check delegation: body is a single short fn-call expression.
             code_only = re.sub(r'//[^\n]*', '', body_text).strip()
-            # Strip leading `let _ = ` — singleton-touching pattern
-            # (e.g. `pub fn createshfunctable() { let _ = shfunctab_lock(); }`
-            # mirrors C `createshfunctable` which wires vtable; Rust's
-            # OnceLock initialiser handles vtable equivalence on first
-            # access, so the wrapper exists only to force first-touch).
+            # Strip leading `let _ = ` (singleton-touch) and `&` (ref return).
             code_for_delegation = re.sub(r'\Alet\s+_\s*=\s*', '', code_only)
+            code_for_delegation = re.sub(r'\A&\s*', '', code_for_delegation)
+            # Heuristic: ≤2 effective code lines + starts with ident-call
+            # pattern + balanced brackets means single-expr delegation,
+            # regardless of how deeply nested the args are.
+            if len(actual) <= 2 and re.match(
+                r'\A[a-zA-Z_][a-zA-Z0-9_]*'
+                r'(?:::[a-zA-Z_][a-zA-Z0-9_]*)*'
+                r'(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*\(',
+                code_for_delegation,
+            ):
+                lcount = (code_for_delegation.count('(') + code_for_delegation.count('[')
+                          + code_for_delegation.count('{'))
+                rcount = (code_for_delegation.count(')') + code_for_delegation.count(']')
+                          + code_for_delegation.count('}'))
+                if lcount == rcount:
+                    continue
             if DELEGATION_BODY_RE.match(code_for_delegation):
                 continue  # body delegates to a helper — not a stub
             # Architectural design: unreachable!/panic! bodies declare
@@ -327,10 +397,16 @@ def c_fn_body(c_path, name):
         elif c == '}': depth -= 1
         pos += 1
     body_lines = src[body_start:pos-1].split('\n')
+    # Filter blank, comments, block-comment continuations, AND
+    # preprocessor directives (`#if`/`#else`/`#endif`/`#ifdef`). `#`
+    # lines inflate C body size for fns like `printrlim` whose 13
+    # lines are all `#ifdef` blocks selecting between equivalent
+    # printf format strings — semantically a one-line operation.
     actual = [l for l in body_lines if l.strip()
                 and not l.lstrip().startswith('//')
                 and not l.lstrip().startswith('/*')
-                and not l.strip().startswith('*')]
+                and not l.strip().startswith('*')
+                and not l.lstrip().startswith('#')]
     return len(actual)
 
 

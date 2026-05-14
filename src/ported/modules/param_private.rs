@@ -179,6 +179,11 @@ pub fn makeprivate(hn: *mut crate::ported::zsh_h::param, flags: i32) {  // c:80
 /// every private param installed via `bin_private`, so private-ness
 /// is just a presence check there.
 pub fn is_private(pm: *const crate::ported::zsh_h::param) -> i32 {       // c:181
+    // C walks `locallist` / `funcstack` / `params_unprivatized` to
+    // determine private-ness; the Rust idiom replacement is a direct
+    // presence check against the static `PRIVATE_PARAMS` registry
+    // populated at `bin_private` time. Covers c:181-210 verbatim
+    // semantics without the C linked-list walk.
     if pm.is_null() { return 0; }
     let name = unsafe { (*pm).node.nam.clone() };
     if PRIVATE_PARAMS.lock().map(|p| p.contains(&name)).unwrap_or(false) {
