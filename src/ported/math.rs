@@ -296,7 +296,7 @@ thread_local! {
 // fn-shaped wrapper. The wrappers exist solely because Rust's
 // `thread_local!` requires `.with(|c| ...)` for any access, and
 // scattering 600 such closures throughout the evaluator would be
-// unreadable. Allowlisted in tests/data/ported_fn_allowlist.txt.
+// unreadable. Allowlisted in tests/data/fake_fn_allowlist.txt.
 // ============================================================
 // Accessor helpers — each thread_local reads/writes via these so the
 // migration from `s.X` → free-fn-only access is mechanical.

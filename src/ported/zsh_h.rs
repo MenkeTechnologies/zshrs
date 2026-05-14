@@ -1131,6 +1131,7 @@ pub struct parse_stack {
 /// Port of `struct heredocs` from `Src/zsh.h:1152-1157`. Used by
 /// parse_stack above.
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
 pub struct heredocs {
     // c:1152
     pub next: Option<Box<heredocs>>, // c:1153

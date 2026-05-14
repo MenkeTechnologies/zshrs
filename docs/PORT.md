@@ -16,6 +16,84 @@ deleted on sight by the maintainer. No exceptions.
 If you read nothing else in this file, read this. Every violation is
 deleted on sight; the maintainer does not negotiate.
 
+### Rule 0 — ASK BEFORE INVENTING ANY NEW FN/STRUCT/STATIC NAME
+
+**This rule overrides every other rule below.** If you (the bot) catch
+yourself about to write a `fn`, `struct`, `enum`, `type`, or `static`
+under `src/ported/` whose name does NOT exist in upstream zsh C
+source, you must **STOP and ASK THE MAINTAINER FIRST**. You do not
+get to:
+
+- "just add a tiny helper because it's only 3 lines"
+- "factor out a Rust-only wrapper for borrow-checker reasons"
+- "add a `_take`/`_set`/`_get`/`_clear`/`_is_some`/`_fill_*`/
+  `_check_*` accessor for a thread_local"
+- "split one C function into `foo` + `foo_impl` for argument routing"
+- "add a Rust-only sentinel like `LEX_TABS_INITED` or `PARSER_*_DEPTH`"
+- "introduce a `*State`/`*Table`/`*Builder`/`*Config`/`*Context`
+  aggregate"
+- "add an `error()`/`set_error()`/`check_limit()`/`check_recursion()`
+  paranoia helper"
+
+even if the helper looks "obviously useful," "trivially small,"
+"locally scoped," "obviously safe," or "what any reasonable Rust
+programmer would do." **None of those are reasons. Permission is
+the only reason.**
+
+**The required flow when you think a Rust-only helper is needed:**
+
+1. **STOP**. Do not write the helper.
+2. State to the maintainer: *"I'm about to add `fn <name>` (or
+   `struct <Name>` / `static <NAME>`) under `src/ported/<file>.rs`
+   because <one-sentence reason>. This name does not exist in
+   upstream zsh C. May I proceed?"*
+3. **Wait for explicit permission.** Phrases that count as
+   permission: "yes", "y", "ok", "go", "approved", "fine". Anything
+   else — silence, "let me think", "why?", "what about X instead?"
+   — is NOT permission.
+4. If permission is granted, add the name AND immediately also add
+   it to `tests/data/fake_fn_allowlist.txt` with the maintainer's
+   approval recorded in the commit message ("approved 2026-MM-DD").
+5. If permission is denied, the work goes back to either (a) using a
+   real C-named port, (b) inlining the logic at call sites, or
+   (c) abandoning the change.
+
+**Past damage caused by skipping this gate** (each of these was a
+bot inventing a fn without asking; all deleted in 2026-05 cleanup
+sessions):
+
+- `process_heredocs`, `read_line` (lex.rs) — fake heredoc body
+  collector, replaced by real port of `gethere()` (exec.c:4573)
+- `heredocs_take`/`heredocs_set`/`heredocs_clear`/`heredocs_len`/
+  `heredocs_clone`/`heredocs_push`/`heredocs_is_empty`/
+  `heredocs_fill_next_unprocessed` — 8 fake thread_local accessors
+- `hdocs_push_back`/`hdocs_pop_front`/`hdocs_clear` — 3 fake
+  linked-list helpers (C inlines the walk at call sites)
+- `check_limit`/`check_recursion` + `PARSER_RECURSION_DEPTH`/
+  `PARSER_GLOBAL_ITERATIONS` thread_locals — Rust-only paranoia
+  counters; C has none
+- `tokstr_is_none`/`tokstr_is_some`/`tokstr_eq`/`tokstr_take` —
+  4 fake convenience wrappers around `LEX_TOKSTR.with_borrow(...)`
+- `error`/`set_error`/`tokens_to_printable`/`read_cond_num`/
+  `par_cmd_wordcode_noargs`/`resolve_redir`/`peek_inoutpar` —
+  7 more fakery wrappers
+- 14 `*Table` / `*State` aggregates in parameter.rs (2026-05-10
+  dissolution) — bag-of-globals anti-pattern
+
+Total cleanup cost of past unauthorized helpers: **30+ fns deleted,
+700+ lines of dead Rust-only paranoia + glue, weeks of audit work.**
+The permission gate exists because that cost is real.
+
+**Test enforcement:** `tests/ported_fn_names_match_c.rs` rejects any
+fn under `src/ported/` whose name is neither in
+`docs/zsh_c_functions.txt` nor in
+`tests/data/fake_fn_allowlist.txt`. Adding a new name to the
+allowlist without prior maintainer approval is itself a violation —
+the allowlist is not a free pass, it's the audit trail of granted
+exceptions.
+
+---
+
 **Rule A — Names must exist in upstream zsh C.** This applies to
 **every declaration** in `src/ported/`, not just functions:
 
@@ -1006,6 +1084,13 @@ Before writing any code:
 
 ## TL;DR
 
+> **Rule 0: ASK FIRST.** Adding any `fn`/`struct`/`enum`/`static`
+> under `src/ported/` whose name does NOT exist in upstream zsh C
+> requires EXPLICIT MAINTAINER PERMISSION before you write the
+> code. No "tiny helpers," no "obvious wrappers," no "thread_local
+> accessors." Stop, ask, wait for an explicit yes. See Rule 0 at
+> the top of this file for the required flow + past-damage list.
+>
 > **`src/ported/` is FROZEN. The 89 existing files are the legal set —
 > no new files, no new directories, ever.**
 >

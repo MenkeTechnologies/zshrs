@@ -139,6 +139,130 @@ pub mod zsh_version {
     include!(concat!(env!("OUT_DIR"), "/zsh_version.rs"));
 }
 
+/// Convert a here-document into a here-string. Line-by-line port of
+/// `gethere()` from `Src/exec.c:4569-4652`. Reads the body from the
+/// input stream via `hgetc()` until the terminator line is matched,
+/// returning the collected body as a string. `strp` is in/out: on
+/// entry the raw terminator (possibly with token markers + leading
+/// tabs); on return the munged terminator (after `quotesubst` +
+/// `untokenize` and, for `REDIR_HEREDOCDASH`, leading-tab strip).
+///
+/// Returns `None` on out-of-memory (C `zalloc`/`realloc` failure).
+/// Rust's `String` auto-grows so the OOM branch is effectively
+/// unreachable, but the return type stays `Option<String>` to mirror
+/// the C signature which can return NULL.
+///
+/// Port of `gethere(char **strp, int typ)` from `Src/exec.c:4573`.
+pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {                  // c:4573 (Src/exec.c)
+    let mut buf: String;                                                          // c:4575 char *buf
+    let mut bsiz: usize;                                                          // c:4576 int bsiz
+    let mut qt: i32 = 0;                                                          // c:4576 int qt = 0
+    let mut strip: i32 = 0;                                                       // c:4576 int strip = 0
+    // c:4577 — char *s, *t, *bptr, c. zshrs uses byte-offsets into
+    // `buf` for `t` and tracks `bptr` implicitly as `buf.len()` (the
+    // C `bptr++` increment is `buf.push(c)`; `bptr--` is `buf.pop()`).
+    // `s` (the loop iterator for the inull-scan) stays local to its
+    // for-loop. `c` mirrors the C `char c`.
+    let mut t: usize;                                                             // c:4577 char *t
+    let mut c: Option<char>;                                                      // c:4577 char c
+    let mut str: String = strp.clone();                                           // c:4578 char *str = *strp
+
+    // c:4580-4584 — for (s = str; *s; s++) if (inull(*s)) { qt = 1; break; }
+    for s in str.bytes() {
+        if crate::ported::ztype_h::inull(s) {                                     // c:4581
+            qt = 1;                                                               // c:4582
+            break;                                                                // c:4583
+        }
+    }
+    str = crate::ported::subst::quotesubst(&str);                                 // c:4585
+    str = crate::ported::lex::untokenize(&str);                                   // c:4586
+    if typ == crate::ported::zsh_h::REDIR_HEREDOCDASH {                           // c:4587
+        strip = 1;                                                                // c:4588
+        // c:4589-4590 — while (*str == '\t') str++;
+        while str.starts_with('\t') {
+            str.remove(0);
+        }
+    }
+    *strp = str.clone();                                                          // c:4592 *strp = str
+
+    // c:4593 — bptr = buf = zalloc(bsiz = 256);
+    bsiz = 256;
+    buf = String::with_capacity(bsiz);
+    let _ = bsiz; // bsiz is tracked by C for zfree; Rust drops automatically
+
+    // c:4594 — for (;;)
+    loop {
+        t = buf.len();                                                            // c:4595 t = bptr
+
+        // c:4597-4598 — while ((c = hgetc()) == '\t' && strip) ;
+        loop {
+            c = crate::ported::lex::hgetc();
+            if !(c == Some('\t') && strip != 0) {
+                break;
+            }
+        }
+
+        // c:4599 — for (;;) — inner body-read loop
+        loop {
+            // c:4600-4613 — buffer-growth realloc dance. Rust's
+            // String auto-grows; nothing to do.
+            // c:4614 — if (lexstop || c == '\n') break;
+            if crate::ported::lex::LEX_LEXSTOP.with(|f| f.get()) || c == Some('\n') || c.is_none() {
+                break;
+            }
+            // c:4616 — if (!qt && c == '\\')
+            if qt == 0 && c == Some('\\') {
+                buf.push('\\');                                                   // c:4617 *bptr++ = c
+                c = crate::ported::lex::hgetc();                                  // c:4618
+                if c == Some('\n') {                                              // c:4619
+                    buf.pop();                                                    // c:4620 bptr--
+                    c = crate::ported::lex::hgetc();                              // c:4621
+                    continue;                                                     // c:4622
+                }
+            }
+            if let Some(ch) = c {                                                 // c:4625 *bptr++ = c
+                buf.push(ch);
+            }
+            c = crate::ported::lex::hgetc();                                      // c:4626
+        }
+        // c:4628 — *bptr = '\0'; (implicit — Rust String tracks len)
+
+        // c:4629-4630 — if (!strcmp(t, str)) break;
+        if &buf[t..] == str.as_str() {
+            break;
+        }
+        // c:4631-4634 — if (lexstop) { t = bptr; break; }
+        if crate::ported::lex::LEX_LEXSTOP.with(|f| f.get()) {
+            t = buf.len();
+            break;
+        }
+        // c:4635 — *bptr++ = '\n';
+        buf.push('\n');
+    }
+    // c:4637 — *t = '\0';
+    buf.truncate(t);
+
+    // c:4638-4640 — s = buf; buf = dupstring(buf); zfree(s, bsiz);
+    // The C dance frees the realloc'd block and re-allocates via the
+    // string-heap allocator. Rust drops the old String when reassigned.
+    buf = crate::ported::mem::dupstring(&buf);
+
+    if qt == 0 {                                                                  // c:4641
+        // c:4642 — int ef = errflag;
+        let ef = errflag.load(Ordering::Relaxed);
+        // c:4644 — parsestr(&buf);
+        if let Ok(parsed) = crate::ported::lex::parsestr(&buf) {
+            buf = parsed;
+        }
+        // c:4646-4649 — if (!(errflag & ERRFLAG_ERROR)) errflag = ef | (errflag & ERRFLAG_INT);
+        if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) == 0 {
+            let cur = errflag.load(Ordering::Relaxed);
+            errflag.store(ef | (cur & crate::ported::zsh_h::ERRFLAG_INT), Ordering::Relaxed);
+        }
+    }
+    Some(buf)                                                                     // c:4651 return buf
+}
+
 /// Free-function wrapper for `getoutput()` from `Src/exec.c:4712`.
 /// Runs a command-substitution body in the active executor and
 /// returns its captured stdout. The C signature is `LinkList

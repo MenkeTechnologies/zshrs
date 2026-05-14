@@ -63,6 +63,17 @@ struct EccstrNode {
     hashval: u32,
 }
 
+// Pending-here-document list — direct port of `Src/parse.c:84
+// struct heredocs *hdocs;`. Per-parser file-static (bucket-1 in
+// PORT_PLAN.md): each worker thread parsing a separate program needs
+// its own pending-heredoc list. Saved/restored across nested parses
+// by `parse_context_save`/`parse_context_restore` (parse.c:299/337).
+thread_local! {
+    /// Port of file-static `struct heredocs *hdocs;` from `Src/parse.c:84`.
+    pub static HDOCS: std::cell::RefCell<Option<Box<crate::ported::zsh_h::heredocs>>>
+        = const { std::cell::RefCell::new(None) };
+}
+
 // Wordcode-buffer thread-locals — direct port of `Src/parse.c:269-285`
 // file-statics. Per-evaluator (bucket-1 in PORT_PLAN.md): each worker
 // thread parsing a separate program needs its own wordcode buffer.
@@ -116,13 +127,6 @@ thread_local! {
 const EC_INIT_SIZE: i32 = 256;
 const EC_DOUBLE_THRESHOLD: i32 = 32768;
 const EC_INCREMENT: i32 = 1024;
-
-// Parser recursion + iteration safety counters as file-scope
-// thread_locals (Rust-only — no C analog; C uses OS stack overflow).
-thread_local! {
-    pub static PARSER_RECURSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub static PARSER_GLOBAL_ITERATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
 
 // =============================================================================
 // Wordcode read helpers — used by text.rs's `gettext2` and exec dispatch
@@ -267,12 +271,10 @@ pub use crate::zsh_ast::{
     ZshTry, ZshWhile,
 };
 use crate::ported::lex::{
-    heredocs_clear, heredocs_clone, heredocs_is_empty, heredocs_len, heredocs_push, heredocs_set,
-    heredocs_take, incasepat, incmdpos, incond, infor, input_slice, inredir, inrepeat, intypeset,
+    incasepat, incmdpos, incond, infor, input_slice, inredir, inrepeat, intypeset,
     isnewlin, lex_init, lineno, noaliases, nocorrect, pos, set_incasepat, set_incmdpos, set_incond, set_lineno,
     set_infor, set_inredir, set_inrepeat, set_intypeset, set_isnewlin, set_noaliases,
-    set_nocorrect, set_pos, set_tokfd, set_toklineno, set_tokstr, tok, tokfd, toklineno, tokstr,
-    tokstr_eq, tokstr_is_none, tokstr_is_some, tokstr_take, zshlex,
+    set_nocorrect, set_pos, set_tokfd, set_toklineno, set_tokstr, tok, tokfd, toklineno, tokstr, zshlex,
 };
 use crate::prompt::{cmdpop, cmdpush};
 use crate::zsh_h::{
@@ -295,8 +297,6 @@ use crate::zsh_h::{
 //   - ECBUF / ECLEN / ECUSED / ECNPATS / ECSOFFS / ECSSUB / ECNFUNC /
 //     ECSTRS_INDEX / ECSTRS_REVERSE (wordcode-emission state, matching
 //     Src/parse.c file-statics)
-//   - PARSER_RECURSION_DEPTH / PARSER_GLOBAL_ITERATIONS (Rust-only
-//     safety counters; no C analog — C relies on OS stack overflow).
 //
 // Callers use the free-fn entry points directly:
 //   crate::ported::parse::parse_init(input);
@@ -321,9 +321,17 @@ const MAX_RECURSION_DEPTH: usize = 500;
 #[derive(Debug, Default, Clone)]
 pub struct parse_stack {
     // ── Direct port of struct parse_stack at zsh.h:3099-3109 ──
-    /// Pending heredocs awaiting body collection. C: `struct heredocs *hdocs` (zsh.h:3100).
-    /// zshrs uses `Vec<HereDoc>` until Phase 9b (PORT_PLAN.md) reinstates C's linked-list shape.
-    pub hdocs: Vec<HereDoc>,
+    /// Pending heredocs awaiting body collection (canonical C
+    /// linked-list shape). C: `struct heredocs *hdocs` (zsh.h:3100).
+    /// Mirrors `parse::HDOCS` thread_local across nested parses.
+    pub hdocs: Option<Box<crate::ported::zsh_h::heredocs>>,
+    /// !!! WARNING: NOT IN PARSE_STACK — Rust-only AST-glue !!!
+    /// Snapshot of `lex::LEX_HEREDOCS` (the parallel Rust-only Vec
+    /// carrying terminator / strip_tabs / quoted metadata).
+    /// Saved/restored alongside the canonical `hdocs` so nested
+    /// parses get a clean AST view. C's parse_stack has no analog
+    /// because C tracks terminator metadata implicitly via tokstr.
+    pub lex_heredocs: Vec<HereDoc>,
     /// C: `int incmdpos` (zsh.h:3102).
     pub incmdpos: bool,
     /// C: `int aliasspaceflag` (zsh.h:3103).
@@ -355,10 +363,6 @@ pub struct parse_stack {
     pub ecsoffs: i32,
     pub ecssub: i32,
     pub ecnfunc: i32,
-    // P8: Rust-only safety counters (recursion_depth, global_iterations)
-    // migrated to PARSER_RECURSION_DEPTH + PARSER_GLOBAL_ITERATIONS
-    // thread_locals. parse_stack no longer carries them — matches C
-    // exactly (C's struct parse_stack has no analog).
 }
 
 // Old uppercase Rust-only `ParseStack` is gone. Compat alias so
@@ -395,7 +399,11 @@ fn fill_in_command(cmd: &mut ZshCommand, bodies: &[HereDocInfo]) {
     match cmd {
         ZshCommand::Simple(s) => {
             for r in &mut s.redirs {
-                resolve_redir(r, bodies);
+                if let Some(idx) = r.heredoc_idx {
+                    if let Some(info) = bodies.get(idx) {
+                        r.heredoc = Some(info.clone());
+                    }
+                }
             }
         }
         ZshCommand::Subsh(p) | ZshCommand::Cursh(p) => fill_heredoc_bodies(p, bodies),
@@ -429,19 +437,15 @@ fn fill_in_command(cmd: &mut ZshCommand, bodies: &[HereDocInfo]) {
         }
         ZshCommand::Redirected(inner, redirs) => {
             for r in redirs {
-                resolve_redir(r, bodies);
+                if let Some(idx) = r.heredoc_idx {
+                    if let Some(info) = bodies.get(idx) {
+                        r.heredoc = Some(info.clone());
+                    }
+                }
             }
             fill_in_command(inner, bodies);
         }
         ZshCommand::Time(None) | ZshCommand::Cond(_) | ZshCommand::Arith(_) => {}
-    }
-}
-
-fn resolve_redir(r: &mut ZshRedir, bodies: &[HereDocInfo]) {
-    if let Some(idx) = r.heredoc_idx {
-        if let Some(info) = bodies.get(idx) {
-            r.heredoc = Some(info.clone());
-        }
     }
 }
 
@@ -506,9 +510,6 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>
 /// Initialize parser state for a fresh parse of `input`.
 /// Free-fn entry point — resets parser thread_locals and loads input.
 pub fn parse_init(input: &str) {
-    // P8: reset Rust-only safety counters at parser construction.
-    PARSER_GLOBAL_ITERATIONS.set(0);
-    PARSER_RECURSION_DEPTH.set(0);
     // Seed the option defaults the parser/lexer inspect. Real zsh
     // installs these via `install_emulation_defaults` (options.c:172)
     // at shell startup; zshrs's parse-only test entry path bypasses
@@ -534,24 +535,6 @@ pub fn parse_init(input: &str) {
     lex_init(input);
 }
 
-/// C zsh's parser has no iteration cap — it trusts itself. The
-/// Rust-only `check_limit` was a paranoia counter that fired
-/// spuriously under nested cmdsubst (parse_context_save resets the
-/// counter to 0 mid-parse, then the outer frame's tear-down decrement
-/// underflowed). Now a no-op for C fidelity; mirrors the Phase 1
-/// removal in lex.rs.
-#[inline]
-fn check_limit() -> bool {
-    false
-}
-
-/// Same story as `check_limit` — C has no recursion cap, and the
-/// Rust counter underflowed across nested-context boundaries. Stub.
-#[inline]
-fn check_recursion() -> bool {
-    false
-}
-
 /// Direct port of `parse_context_save(struct parse_stack *ps, int toplevel)` at `Src/parse.c:295`.
 /// Snapshots the lexer-side file-statics (which currently live on
 /// `lexer` until Phase 7 dissolution makes them file-scope
@@ -560,8 +543,13 @@ fn check_recursion() -> bool {
 /// recursion counters too so nested parses get fresh limits.
 /// WARNING: param names don't match C — Rust=(ps) vs C=(ps, toplevel)
 pub fn parse_context_save(ps: &mut parse_stack) {
-    // parse.c:299 — `ps->hdocs = hdocs; hdocs = NULL;`
-    ps.hdocs = heredocs_take();
+    // parse.c:299 — `ps->hdocs = hdocs; hdocs = NULL;` — save the
+    // canonical C linked-list and clear it for the nested parse.
+    ps.hdocs = HDOCS.with_borrow_mut(|h| h.take());
+    // zshrs-only: save the parallel AST-glue Vec the same way.
+    // LEX_HEREDOCS carries terminator/strip_tabs/quoted metadata
+    // that has no C analog (C stores it implicitly via tokstr).
+    ps.lex_heredocs = crate::ported::lex::LEX_HEREDOCS.with_borrow_mut(|v| std::mem::take(v));
     // parse.c:302-310 — save lexer-side state.
     ps.incmdpos = incmdpos();
     // parse.c:303 — aliasspaceflag — not yet a LEX_* thread_local.
@@ -584,12 +572,6 @@ pub fn parse_context_save(ps: &mut parse_stack) {
     ps.ecsoffs = 0;
     ps.ecssub = 0;
     ps.ecnfunc = 0;
-    // P8: counters are file-scope thread_locals; reset them on save
-    // (matches the C parse_context_save clear-buffer semantics).
-    // Nested parses get a fresh limit; outer parse's count is lost
-    // — acceptable since the counters are safety nets, not state.
-    PARSER_RECURSION_DEPTH.set(0);
-    PARSER_GLOBAL_ITERATIONS.set(0);
     set_incmdpos(true);
     set_incond(0);
     set_inredir(false);
@@ -611,7 +593,10 @@ pub fn parse_context_restore(ps: &parse_stack) {
     // frees them.
 
     // parse.c:333-352 — restore saved state.
-    heredocs_set(ps.hdocs.clone());
+    // parse.c:337 — `hdocs = ps->hdocs;`
+    HDOCS.with_borrow_mut(|h| *h = ps.hdocs.clone());
+    // zshrs-only: restore the parallel AST-glue Vec.
+    crate::ported::lex::LEX_HEREDOCS.with_borrow_mut(|v| *v = ps.lex_heredocs.clone());
     set_incmdpos(ps.incmdpos);
     // aliasspaceflag STUB until Phase 7.
     set_incond(ps.incond);
@@ -623,7 +608,6 @@ pub fn parse_context_restore(ps: &parse_stack) {
     set_intypeset(ps.intypeset);
     // ecbuf/eclen/ecused/ecnpats/ecstrs/ecsoffs/ecssub/ecnfunc
     // STUB until Phase 9b.
-    // P8: counters not restored — see parse_context_save comment.
 
     // parse.c:354 — `errflag &= ~ERRFLAG_ERROR;` — clear the
     // error flag so the outer parse sees a clean state.
@@ -676,8 +660,6 @@ pub fn init_parse() {
     ECSTRS_REVERSE.with_borrow_mut(|m| m.clear());
     ECSTRS_TREE.with_borrow_mut(|t| *t = None);
 
-    PARSER_RECURSION_DEPTH.set(0);
-    PARSER_GLOBAL_ITERATIONS.set(0);
     // parse.c:522 — `init_parse_status();`
     init_parse_status();
 }
@@ -693,12 +675,16 @@ pub fn empty_eprog(p: &crate::ported::zsh_h::eprog) -> bool {
 }
 
 /// Clear pending here-document list. Direct port of
-/// zsh/Src/parse.c:591 `clear_hdocs`. The C version walks
-/// the global `hdocs` linked list and frees each node. zshrs
-/// stores pending heredocs on the lexer's `heredocs` Vec —
-/// truncating it has the same effect.
-pub fn clear_hdocs() {
-    heredocs_clear();
+/// `clear_hdocs(void)` from `Src/parse.c:591`. The C version walks
+/// `hdocs` and frees each node; Rust drops the `Box<heredocs>`
+/// chain automatically when the head is replaced with None.
+pub fn clear_hdocs() {                                                            // c:591
+    // c:593-598 — for (p = hdocs; p; p = n) { n = p->next; zfree(p); }
+    // c:599 — hdocs = NULL;
+    HDOCS.with_borrow_mut(|h| *h = None);
+    // zshrs-only: also drop the parallel AST-glue Vec. No C
+    // analog — LEX_HEREDOCS is Rust-only working-set state.
+    crate::ported::lex::LEX_HEREDOCS.with_borrow_mut(|v| v.clear());
 }
 
 /// Top-level parse-event entry. Direct port of zsh/Src/parse.c:
@@ -797,7 +783,7 @@ pub fn par_list1() -> Option<ZshSublist> {
 /// zshrs port note: zsh's setheredoc patches the wordcode
 /// in-place via `pc[1] = ecstrcode(doc); pc[2] = ecstrcode(term);`.
 /// zshrs threads heredoc bodies through `HereDocInfo` structs
-/// that resolve_redir applies during the post-parse fill_in pass.
+/// attached inline during the post-parse `fill_heredoc_bodies` walk.
 /// This method is the AST-side equivalent: writes back to the
 /// matching redir node by index.
 /// Port of `setheredoc(int pc, int type, char *str, char *termstr,
@@ -805,6 +791,13 @@ pub fn par_list1() -> Option<ZshSublist> {
 /// pending heredoc redir at `pc` with its body string + raw and
 /// munged terminator forms.
 pub fn setheredoc(pc: usize, redir_type: i32, doc: &str, term: &str, munged_term: &str) {
+    // zshrs-only guard: AST-path heredocs use `pc = -1 as usize`
+    // (i.e. `usize::MAX`) as a sentinel meaning "no wordcode slot to
+    // patch". C never passes a negative pc since the wordcode emitter
+    // is always active. Skip silently for the AST-only case.
+    if pc == usize::MAX {
+        return;
+    }
     // c:2350 — `int varid = WC_REDIR_VARID(ecbuf[pc]) ? REDIR_VARID_MASK : 0;`
     let cur = ECBUF.with_borrow(|b| b.get(pc).copied().unwrap_or(0));
     let varid = if WC_REDIR_VARID(cur) != 0 {
@@ -859,21 +852,6 @@ pub fn par_nl_wordlist() -> Vec<String> {
     out
 }
 
-/// Read an integer from the next cond token. NOT a direct C port —
-/// the C `get_cond_num(char *tst)` (parse.c:2643) is the
-/// string-lookup helper ported below. This Rust-only helper exists
-/// to support the AST cond-walker (`par_cond_*` analogs) when it
-/// needs a numeric literal from the current lex position.
-pub fn read_cond_num() -> Option<i64> {
-    if tok() != STRING_LEX {
-        return None;
-    }
-    let text = tokstr()?;
-    let parsed = text.parse::<i64>().ok()?;
-    zshlex();
-    Some(parsed)
-}
-
 /// Port of `get_cond_num(char *tst)` from `Src/parse.c:2643`. Returns
 /// the index of `tst` in `{"nt","ot","ef","eq","ne","lt","gt","le","ge"}`
 /// or `-1` if not a recognized binary cond operator.
@@ -896,9 +874,9 @@ pub fn get_cond_num(tst: &str) -> i32 {
 /// caller drains via parse()'s Result return.
 pub fn yyerror(msg: &str) {
     // parse.c:2735-2765 — zsh's yyerror collects the offending
-    // token's literal text + line number. zshrs already does
-    // this via error() with the lexer's toklineno.
-    error(msg);
+    // token's literal text + line number. zshrs forwards directly
+    // to `zerr` (utils.rs) which prints to stderr and sets errflag.
+    crate::ported::utils::zerr(msg);
 }
 
 // ============================================================
@@ -1694,16 +1672,12 @@ pub fn parse() -> ZshProgram {
 
     let mut program = parse_program_until(None);
 
-    // Surface lexer-level errors (unmatched quote/heredoc/etc.)
-    // that the parser silently rolls past. zsh aborts with a
-    // diagnostic via `zerr` which sets `errflag |= ERRFLAG_ERROR`.
-    if let Some(msg) = crate::ported::lex::error() {
-        crate::ported::utils::zerr(&msg);
-    }
-
-    // Post-pass: wire heredoc bodies (collected by lexer.process_heredocs)
-    // back into ZshRedir.heredoc fields via heredoc_idx.
-    let bodies: Vec<HereDocInfo> = heredocs_clone()
+    // Post-pass: wire heredoc bodies (collected by the inline NEWLIN
+    // walk in zshlex into LEX_HEREDOCS) back into ZshRedir.heredoc
+    // fields via heredoc_idx. No C analog — LEX_HEREDOCS is the
+    // Rust-only AST-glue Vec.
+    let bodies: Vec<HereDocInfo> = crate::ported::lex::LEX_HEREDOCS
+        .with_borrow(|v| v.clone())
         .into_iter()
         .map(|h| HereDocInfo {
             content: h.content,
@@ -2189,13 +2163,6 @@ pub fn par_cmd_wordcode(cmplx: &mut i32, zsh_construct: i32) -> bool {
     true
 }
 
-/// Adapter: par_cmd_wordcode wrapper for callers without cmplx
-/// (currently only legacy paths). Allocates a throwaway local.
-pub fn par_cmd_wordcode_noargs() {
-    let mut cmplx: i32 = 0;
-    par_cmd_wordcode(&mut cmplx, 0);
-}
-
 /// Port of `par_for(int *cmplx)` from `Src/parse.c:1086-1198`.
 pub fn par_for_wordcode(cmplx: &mut i32) {
     // c:1089 — `int oecused = ecused, csh = (tok == FOREACH), p, sel = (tok == SELECT);`
@@ -2221,7 +2188,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
         zshlex();
         // c:1099-1100 — `if (tok != DINPAR) YYERRORV(oecused);`
         if tok() != DINPAR {
-            error("par_for: expected init");
+            crate::ported::utils::zerr("par_for: expected init");
             return;
         }
         // c:1101 — `ecstr(tokstr);`
@@ -2230,7 +2197,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
         zshlex();
         // c:1103-1104
         if tok() != DINPAR {
-            error("par_for: expected cond");
+            crate::ported::utils::zerr("par_for: expected cond");
             return;
         }
         // c:1105
@@ -2239,7 +2206,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
         zshlex();
         // c:1107-1108
         if tok() != DOUTPAR {
-            error("par_for: expected ))");
+            crate::ported::utils::zerr("par_for: expected ))");
             return;
         }
         // c:1109
@@ -2265,7 +2232,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
         if tok() != STRING_LEX
             || !crate::ported::utils::isident(&tokstr().unwrap_or_default())
         {
-            error("par_for: expected identifier");
+            crate::ported::utils::zerr("par_for: expected identifier");
             return;
         }
         // c:1119-1120 — `if (!sel) np = ecadd(0);`
@@ -2300,7 +2267,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
             {
                 set_noaliases(ona);
                 set_nocorrect(onc);
-                error("par_for: expected identifier in name list");
+                crate::ported::utils::zerr("par_for: expected identifier in name list");
                 return;
             }
         }
@@ -2331,7 +2298,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
             let n2 = par_wordlist_wordcode();
             // c:1149-1150 — `if (tok != SEPER) YYERRORV(oecused);`
             if tok() != SEPER {
-                error("par_for: expected separator after `in`");
+                crate::ported::utils::zerr("par_for: expected separator after `in`");
                 return;
             }
             // c:1151 — `ecbuf[np] = n;`
@@ -2352,7 +2319,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
             let n2 = par_nl_wordlist_wordcode();
             // c:1158-1159 — `if (tok != OUTPAR) YYERRORV(oecused);`
             if tok() != OUTPAR_TOK {
-                error("par_for: expected `)`");
+                crate::ported::utils::zerr("par_for: expected `)`");
                 return;
             }
             // c:1160 — `ecbuf[np] = n;`
@@ -2438,7 +2405,7 @@ fn par_loop_body_wordcode(cmplx: &mut i32, csh: bool) {
         // c:1172 — `par_save_list(cmplx);`
         par_save_list_wordcode(cmplx);
         if tok() != DONE {
-            error("missing `done`");
+            crate::ported::utils::zerr("missing `done`");
             return;
         }
         set_incmdpos(false);
@@ -2448,7 +2415,7 @@ fn par_loop_body_wordcode(cmplx: &mut i32, csh: bool) {
         // c:1179 — `par_save_list(cmplx);`
         par_save_list_wordcode(cmplx);
         if tok() != OUTBRACE_TOK {
-            error("missing `}`");
+            crate::ported::utils::zerr("missing `}`");
             return;
         }
         set_incmdpos(false);
@@ -2457,13 +2424,13 @@ fn par_loop_body_wordcode(cmplx: &mut i32, csh: bool) {
         // c:1185 — `par_save_list(cmplx);`
         par_save_list_wordcode(cmplx);
         if tok() != ZEND {
-            error("missing `end`");
+            crate::ported::utils::zerr("missing `end`");
             return;
         }
         set_incmdpos(false);
         zshlex();
     } else if unset(SHORTLOOPS) {
-        error("short loop form requires SHORTLOOPS");
+        crate::ported::utils::zerr("short loop form requires SHORTLOOPS");
     } else {
         // c:1193 — `par_save_list1(cmplx);`
         par_save_list1_wordcode(cmplx);
@@ -2498,7 +2465,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
     zshlex();
     // c:1218-1219 — `if (tok != STRING) YYERRORV(oecused);`
     if tok() != STRING_LEX {
-        error("par_case: expected scrutinee");
+        crate::ported::utils::zerr("par_case: expected scrutinee");
         return;
     }
     // c:1220 — `ecstr(tokstr);`
@@ -2523,7 +2490,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
         // c:1231-1233 — restore noaliases/nocorrect + ERROR
         set_noaliases(ona);
         set_nocorrect(onc);
-        error("par_case: expected `in` or `{`");
+        crate::ported::utils::zerr("par_case: expected `in` or `{`");
         return;
     }
     // c:1235 — `brflag = (tok == INBRACE);`
@@ -2564,7 +2531,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
         } else {
             // c:1256-1257 — `if (tok != STRING) YYERRORV(oecused);`
             if tok() != STRING_LEX {
-                error("par_case: expected pattern");
+                crate::ported::utils::zerr("par_case: expected pattern");
                 return;
             }
             // c:1258-1259 — `if (!strcmp(tokstr, "esac")) break;`
@@ -2628,7 +2595,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
             // (Inpar at str[0]); else YYERRORV. Not yet ported —
             // err out on unexpected. }
             else {
-                error("par_case: expected `)` or `|`");
+                crate::ported::utils::zerr("par_case: expected `)` or `|`");
                 return;
             }
 
@@ -2647,7 +2614,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
                 }
                 _ => {
                     // c:1374-1376 — `YYERRORV(oecused);`
-                    error("par_case: expected pattern, `)` or `|`");
+                    crate::ported::utils::zerr("par_case: expected pattern, `)` or `|`");
                     return;
                 }
             }
@@ -2677,7 +2644,7 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
         }
         // c:1389-1390 — `if (tok != DSEMI && tok != SEMIAMP && tok != SEMIBAR) YYERRORV;`
         if tok() != DSEMI && tok() != SEMIAMP && tok() != SEMIBAR {
-            error("par_case: expected `;;`, `;&`, or `;|`");
+            crate::ported::utils::zerr("par_case: expected `;;`, `;&`, or `;|`");
             return;
         }
         // c:1391 — `incasepat = 1;`
@@ -2743,7 +2710,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
         // c:1432-1435 — `if (!(xtok == IF || xtok == ELIF)) { cmdpop(); YYERRORV; }`
         if !(xtok == IF || xtok == ELIF) {
             cmdpop();
-            error("par_if: expected `if` or `elif`");
+            crate::ported::utils::zerr("par_if: expected `if` or `elif`");
             return;
         }
         // c:1436 — `pp = ecadd(0);`
@@ -2757,7 +2724,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
         // c:1440-1443 — `if (tok == ENDINPUT) { cmdpop(); YYERRORV; }`
         if tok() == ENDINPUT {
             cmdpop();
-            error("par_if: unexpected end-of-input after condition");
+            crate::ported::utils::zerr("par_if: unexpected end-of-input after condition");
             return;
         }
         // c:1444-1445 — `while (tok == SEPER) zshlex();`
@@ -2810,7 +2777,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
             // c:1463-1466 — `if (tok != OUTBRACE) { cmdpop(); YYERRORV; }`
             if tok() != OUTBRACE_TOK {
                 cmdpop();
-                error("par_if: expected `}`");
+                crate::ported::utils::zerr("par_if: expected `}`");
                 return;
             }
             // c:1467 — `ecbuf[pp] = WCB_IF(type, ecused - 1 - pp);`
@@ -2831,7 +2798,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
         } else if unset(SHORTLOOPS) {
             // c:1474-1476 — `cmdpop(); YYERRORV;`
             cmdpop();
-            error("par_if: short body requires SHORTLOOPS");
+            crate::ported::utils::zerr("par_if: short body requires SHORTLOOPS");
             return;
         } else {
             // c:1477-1484 — short loop form
@@ -2873,7 +2840,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
             // c:1495-1498 — `if (tok != OUTBRACE) { cmdpop(); YYERRORV; }`
             if tok() != OUTBRACE_TOK {
                 cmdpop();
-                error("par_if: else expected `}`");
+                crate::ported::utils::zerr("par_if: else expected `}`");
                 return;
             }
         } else {
@@ -2882,7 +2849,7 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
             // c:1501-1504 — `if (tok != FI) { cmdpop(); YYERRORV; }`
             if tok() != FI {
                 cmdpop();
-                error("par_if: else expected `fi`");
+                crate::ported::utils::zerr("par_if: else expected `fi`");
                 return;
             }
         }
@@ -2939,7 +2906,7 @@ pub fn par_while_wordcode(cmplx: &mut i32) {
         par_save_list_wordcode(cmplx);
         // c:1535-1536 — `if (tok != DONE) YYERRORV(oecused);`
         if tok() != DONE {
-            error("par_while: expected `done`");
+            crate::ported::utils::zerr("par_while: expected `done`");
             return;
         }
         // c:1537 — `incmdpos = 0;`
@@ -2953,7 +2920,7 @@ pub fn par_while_wordcode(cmplx: &mut i32) {
         par_save_list_wordcode(cmplx);
         // c:1542-1543 — `if (tok != OUTBRACE) YYERRORV(oecused);`
         if tok() != OUTBRACE_TOK {
-            error("par_while: expected `}`");
+            crate::ported::utils::zerr("par_while: expected `}`");
             return;
         }
         // c:1544 — `incmdpos = 0;`
@@ -2964,13 +2931,13 @@ pub fn par_while_wordcode(cmplx: &mut i32) {
         // c:1546-1550
         par_save_list_wordcode(cmplx);
         if tok() != ZEND {
-            error("par_while: expected `end`");
+            crate::ported::utils::zerr("par_while: expected `end`");
             return;
         }
         zshlex();
     } else if unset(SHORTLOOPS) {
         // c:1551-1552 — `YYERRORV(oecused);`
-        error("par_while: short body requires SHORTLOOPS");
+        crate::ported::utils::zerr("par_while: short body requires SHORTLOOPS");
         return;
     } else {
         // c:1554 — `par_save_list1(cmplx);`
@@ -3005,7 +2972,7 @@ pub fn par_repeat_wordcode(cmplx: &mut i32) {
     zshlex();
     // c:1574-1575 — `if (tok != STRING) YYERRORV(oecused);`
     if tok() != STRING_LEX {
-        error("par_repeat: expected count");
+        crate::ported::utils::zerr("par_repeat: expected count");
         return;
     }
     // c:1576 — `ecstr(tokstr);`
@@ -3024,7 +2991,7 @@ pub fn par_repeat_wordcode(cmplx: &mut i32) {
         zshlex();
         par_save_list_wordcode(cmplx);
         if tok() != DONE {
-            error("par_repeat: expected `done`");
+            crate::ported::utils::zerr("par_repeat: expected `done`");
             return;
         }
         set_incmdpos(false);
@@ -3034,7 +3001,7 @@ pub fn par_repeat_wordcode(cmplx: &mut i32) {
         zshlex();
         par_save_list_wordcode(cmplx);
         if tok() != OUTBRACE_TOK {
-            error("par_repeat: expected `}`");
+            crate::ported::utils::zerr("par_repeat: expected `}`");
             return;
         }
         set_incmdpos(false);
@@ -3043,14 +3010,14 @@ pub fn par_repeat_wordcode(cmplx: &mut i32) {
         // c:1596-1599
         par_save_list_wordcode(cmplx);
         if tok() != ZEND {
-            error("par_repeat: expected `end`");
+            crate::ported::utils::zerr("par_repeat: expected `end`");
             return;
         }
         zshlex();
     } else if unset(SHORTLOOPS) && unset(SHORTREPEAT) {
         // c:1601-1602 — par_repeat needs BOTH SHORTLOOPS and SHORTREPEAT
         // unset to refuse short form (more permissive than par_while).
-        error("par_repeat: short body requires SHORTLOOPS or SHORTREPEAT");
+        crate::ported::utils::zerr("par_repeat: short body requires SHORTLOOPS or SHORTREPEAT");
         return;
     } else {
         // c:1604 — `par_save_list1(cmplx);`
@@ -3209,7 +3176,7 @@ pub fn par_funcdef_wordcode(cmplx: &mut i32) {
             set_lineno(lineno() + oldlineno);
             ECNPATS.with(|cc| cc.set(onp));
             ECSSUB.set(oecssub);
-            error("par_funcdef: expected `}`");
+            crate::ported::utils::zerr("par_funcdef: expected `}`");
             return;
         }
         // c:1737-1740 — `if (num == 0) { incmdpos = 0; }`
@@ -3223,7 +3190,7 @@ pub fn par_funcdef_wordcode(cmplx: &mut i32) {
         set_lineno(lineno() + oldlineno);
         ECNPATS.with(|cc| cc.set(onp));
         ECSSUB.set(oecssub);
-        error("par_funcdef: short body requires SHORTLOOPS");
+        crate::ported::utils::zerr("par_funcdef: short body requires SHORTLOOPS");
         return;
     } else {
         // c:1748 — `par_list1(&c);`
@@ -3313,7 +3280,7 @@ pub fn par_subsh_wordcode_impl(cmplx: &mut i32, zsh_construct: i32) {
     // c:1630-1631 — `if (tok != ((otok == INPAR) ? OUTPAR : OUTBRACE))
     // YYERRORV(oecused);`
     if tok() != (if otok == INPAR_TOK { OUTPAR_TOK } else { OUTBRACE_TOK }) {
-        error("par_subsh: missing closing token");
+        crate::ported::utils::zerr("par_subsh: missing closing token");
         return;
     }
     // c:1632 — `incmdpos = !zsh_construct;`
@@ -3341,7 +3308,7 @@ pub fn par_subsh_wordcode_impl(cmplx: &mut i32, zsh_construct: i32) {
 
         // c:1643-1644 — `if (tok != INBRACE) YYERRORV(oecused);`
         if tok() != INBRACE_TOK {
-            error("par_subsh: 'always' expects `{`");
+            crate::ported::utils::zerr("par_subsh: 'always' expects `{`");
             return;
         }
         // c:1645 — `cmdpop();`
@@ -3363,7 +3330,7 @@ pub fn par_subsh_wordcode_impl(cmplx: &mut i32, zsh_construct: i32) {
 
         // c:1655-1656 — `if (tok != OUTBRACE) YYERRORV(oecused);`
         if tok() != OUTBRACE_TOK {
-            error("par_subsh: 'always' block missing `}`");
+            crate::ported::utils::zerr("par_subsh: 'always' block missing `}`");
             return;
         }
         // c:1657 — `zshlex();`
@@ -3464,7 +3431,7 @@ pub fn par_cond_wordcode() {
     // c:1818-1819 — `if (tok != DOUTBRACK) YYERRORV(oecused);`
     if tok() != DOUTBRACK {
         let _ = oecused;
-        error("missing ]]");
+        crate::ported::utils::zerr("missing ]]");
         return;
     }
     // c:1820 — `incond = 0;`
@@ -3659,7 +3626,7 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                 cmdpop();
                 // c:1904-1905 — `if (tok != OUTPAR) YYERROR(oecused);`
                 if tok() != OUTPAR_TOK {
-                    error("par_simple: expected `)' after array assignment");
+                    crate::ported::utils::zerr("par_simple: expected `)' after array assignment");
                     return 0;
                 }
                 // c:1906 — `incmdpos = oldcmdpos;`
@@ -3690,7 +3657,7 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
 
     // c:1920-1921 — `if (tok == AMPER || tok == AMPERBANG) YYERROR;`
     if tok() == AMPER || tok() == AMPERBANG {
-        error("par_simple: unexpected &");
+        crate::ported::utils::zerr("par_simple: unexpected &");
         return 0;
     }
 
@@ -3884,7 +3851,7 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                 cmdpop();
                 set_intypeset(true);
                 if tok() != OUTPAR_TOK {
-                    error("expected `)' after array assignment");
+                    crate::ported::utils::zerr("expected `)' after array assignment");
                     return 0;
                 }
                 isnull = false;
@@ -3913,12 +3880,12 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                 let oecssub = ECSSUB.get();
                 // c:2055-2057 — `if (!isset(MULTIFUNCDEF) && argc > 1) YYERROR;`
                 if !isset(MULTIFUNCDEF) && argc > 1 {
-                    error("par_simple: too many function names for funcdef");
+                    crate::ported::utils::zerr("par_simple: too many function names for funcdef");
                     return 0;
                 }
                 // c:2058-2060 — `if (assignments || postassigns) YYERROR;`
                 if assignments || postassigns > 0 {
-                    error("par_simple: assignments before funcdef");
+                    crate::ported::utils::zerr("par_simple: assignments before funcdef");
                     return 0;
                 }
                 // c:2061-2068 — hasalias check + zwarn — skipped (no
@@ -3981,7 +3948,7 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                         set_lineno(lineno() + oldlineno);
                         ECNPATS.with(|cc| cc.set(onp));
                         ECSSUB.set(oecssub);
-                        error("par_simple: funcdef expected `}`");
+                        crate::ported::utils::zerr("par_simple: funcdef expected `}`");
                         return 0;
                     }
                     // c:2102-2105 — `if (argc == 0) incmdpos = 0;`
@@ -4001,7 +3968,7 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                     let ok = par_cmd_wordcode(&mut body_c, if argc == 0 { 1 } else { 0 });
                     if !ok {
                         cmdpop();
-                        error("par_simple: funcdef short-body: missing command");
+                        crate::ported::utils::zerr("par_simple: funcdef short-body: missing command");
                         return 0;
                     }
                     if argc == 0 {
@@ -4222,7 +4189,7 @@ fn par_redir_wordcode_inner(rp: &mut usize, idstring: Option<&str>) -> i32 {
     if tok() != STRING_LEX && tok() != ENVSTRING {
         set_incmdpos(oldcmdpos);
         set_nocorrect(oldnc);
-        error("expected word after redirection");
+        crate::ported::utils::zerr("expected word after redirection");
         return 0;
     }
     // c:2244 — `incmdpos = oldcmdpos;`
@@ -4253,7 +4220,7 @@ fn par_redir_wordcode_inner(rp: &mut usize, idstring: Option<&str>) -> i32 {
             let htype = r#type;
             // c:2260-2261 — `if (strchr(tokstr, '\n')) YYERROR(ecused);`
             if name.contains('\n') {
-                error("here-doc terminator contains newline");
+                crate::ported::utils::zerr("here-doc terminator contains newline");
                 return 0;
             }
             // c:2263-2273 — `ncodes = 5; if (idstring) { type |= MASK; ncodes = 6; }`
@@ -4281,12 +4248,24 @@ fn par_redir_wordcode_inner(rp: &mut usize, idstring: Option<&str>) -> i32 {
                     b[r + 5] = coded;
                 });
             }
-            // c:2290-2296 — register `struct heredocs` entry. The
-            // zshrs heredoc registration uses a different storage
-            // model (per-redir struct in the AST tree); skipping for
-            // wordcode-only parity. setheredoc patches r+2/r+3/r+4
-            // when the body is later collected.
-            let _ = htype;
+            // c:2290-2296 — `for (hd = &hdocs; *hd; hd = &(*hd)->next);
+            //                 *hd = zalloc(sizeof(struct heredocs));
+            //                 (*hd)->next = NULL;
+            //                 (*hd)->type = htype;
+            //                 (*hd)->pc = r;
+            //                 (*hd)->str = tokstr;`
+            HDOCS.with_borrow_mut(|head| {
+                let mut cur = head;
+                while cur.is_some() {
+                    cur = &mut cur.as_mut().unwrap().next;                        // c:2290
+                }
+                *cur = Some(Box::new(crate::ported::zsh_h::heredocs {             // c:2292-2296
+                    next: None,
+                    typ: htype,
+                    pc: r as i32,
+                    str: Some(name.clone()),
+                }));
+            });
             // c:2298 — `zshlex();`
             zshlex();
             // c:2299 — `return ncodes;`
@@ -4301,7 +4280,7 @@ fn par_redir_wordcode_inner(rp: &mut usize, idstring: Option<&str>) -> i32 {
                 r#type = REDIR_OUTPIPE;
             } else if nb.len() >= 2 && nb[0] == '\u{94}' && nb[1] == '\u{88}' {
                 // c:2306-2307 — `else if (tokstr[0] == Inang && tokstr[1] == Inpar) YYERROR;`
-                error("par_redir: < before >");
+                crate::ported::utils::zerr("par_redir: < before >");
                 return 0;
             }
         }
@@ -4311,7 +4290,7 @@ fn par_redir_wordcode_inner(rp: &mut usize, idstring: Option<&str>) -> i32 {
             if nb.len() >= 2 && nb[0] == '\u{94}' && nb[1] == '\u{88}' {
                 r#type = REDIR_INPIPE;
             } else if nb.len() >= 2 && nb[0] == '\u{96}' && nb[1] == '\u{88}' {
-                error("par_redir: > before <");
+                crate::ported::utils::zerr("par_redir: > before <");
                 return 0;
             }
         }
@@ -4399,17 +4378,8 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
     let mut lists = Vec::new();
 
     loop {
-        if check_limit() {
-            error("parser exceeded global iteration limit");
-            break;
-        }
-
         // Skip separators
         while tok() == SEPER || tok() == NEWLIN {
-            if check_limit() {
-                error("parser exceeded global iteration limit");
-                return ZshProgram { lists };
-            }
             zshlex();
         }
 
@@ -4660,13 +4630,6 @@ fn par_list() -> Option<ZshList> {
 /// is a Vec<(ConjOp, ZshSublist)> for chained && / ||. C uses
 /// flat wordcode with WC_SUBLIST_AND / WC_SUBLIST_OR markers.
 fn par_sublist() -> Option<ZshSublist> {
-    PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
-    if check_recursion() {
-        error("par_sublist: max recursion depth exceeded");
-        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-        return None;
-    }
-
     let mut flags = SublistFlags::default();
 
     // Handle coproc and !
@@ -4678,13 +4641,7 @@ fn par_sublist() -> Option<ZshSublist> {
         zshlex();
     }
 
-    let pipe = match par_pline() {
-        Some(p) => p,
-        None => {
-            PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-            return None;
-        }
-    };
+    let pipe = par_pline()?;
 
     // Check for && or ||
     let next = match tok() {
@@ -4701,7 +4658,6 @@ fn par_sublist() -> Option<ZshSublist> {
         _ => None,
     };
 
-    PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
     Some(ZshSublist { pipe, next, flags })
 }
 
@@ -4710,21 +4666,8 @@ fn par_sublist() -> Option<ZshSublist> {
 /// zsh/Src/parse.c:894 `par_pline`. AST: ZshPipe { cmds: Vec<ZshCommand> }.
 /// C emits WC_PIPE wordcodes per command; same flow.
 fn par_pline() -> Option<ZshPipe> {
-    PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
-    if check_recursion() {
-        error("par_pline: max recursion depth exceeded");
-        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-        return None;
-    }
-
     let lineno = toklineno();
-    let cmd = match par_cmd() {
-        Some(c) => c,
-        None => {
-            PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-            return None;
-        }
-    };
+    let cmd = par_cmd()?;
 
     // Check for | or |&
     let mut merge_stderr = false;
@@ -4738,7 +4681,6 @@ fn par_pline() -> Option<ZshPipe> {
         _ => None,
     };
 
-    PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
     Some(ZshPipe {
         cmd,
         next,
@@ -4836,8 +4778,6 @@ fn par_cmd() -> Option<ZshCommand> {
 fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     let mut assigns = Vec::new();
     let mut words = Vec::new();
-    const MAX_ITERATIONS: usize = 10_000;
-    let mut iterations = 0;
 
     // c:1934-1974 — `{var}>file` brace-FD detection is wired
     // INSIDE the words loop below (parse.rs:4940-4956) rather than
@@ -4848,11 +4788,6 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
 
     // Parse leading assignments
     while tok() == ENVSTRING || tok() == ENVARRAY {
-        iterations += 1;
-        if iterations > MAX_ITERATIONS {
-            error("par_simple: exceeded max iterations in assignments");
-            return None;
-        }
         if let Some(assign) = parse_assign() {
             assigns.push(assign);
         }
@@ -4861,11 +4796,6 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
 
     // Parse words and redirections
     loop {
-        iterations += 1;
-        if iterations > MAX_ITERATIONS {
-            error("par_simple: exceeded max iterations");
-            return None;
-        }
         match tok() {
             ENVSTRING | ENVARRAY => {
                 // Mid-command assignment-shape arg under typeset
@@ -4911,7 +4841,7 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 }
                 zshlex();
                 // Check for function definition foo() { ... }
-                if words.len() == 1 && peek_inoutpar() {
+                if words.len() == 1 && tok() == INOUTPAR {
                     return parse_inline_funcdef(words.pop().unwrap());
                 }
                 // `{name}>file` named-fd redirect: the lexer doesn't
@@ -4955,7 +4885,7 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 // `f1 f2() { ... }` defines f1 AND f2 to the same
                 // body, but only when MULTIFUNCDEF is set.
                 if !isset(MULTIFUNCDEF) && words.len() > 1 {
-                    error(
+                    crate::ported::utils::zerr(
                         "parse error: multiple names in function definition without MULTIFUNCDEF",
                     );
                     return None;
@@ -5088,7 +5018,7 @@ fn parse_assign() -> Option<ZshAssign> {
         while matches!(tok(), STRING_LEX | SEPER | NEWLIN) {
             arr_iters += 1;
             if arr_iters > MAX_ARRAY_ELEMENTS {
-                error("array assignment exceeded maximum elements");
+                crate::ported::utils::zerr("array assignment exceeded maximum elements");
                 break;
             }
             if tok() == STRING_LEX {
@@ -5219,18 +5149,20 @@ fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
         _ => {
             set_incmdpos(oldcmdpos);
             set_nocorrect(oldnc);
-            error("expected word after redirection");
+            crate::ported::utils::zerr("expected word after redirection");
             return None;
         }
     };
 
     // Heredoc terminator capture. C parse.c:2254-2317 par_redir builds
-    // a `struct heredocs` entry here for REDIR_HEREDOC[DASH]; zshrs
-    // pushes a HereDoc onto heredocs[] for process_heredocs (called
-    // by zshlex on the next NEWLIN) to fill in. Quoted terminators
-    // (`<<'EOF'` / `<<"EOF"` / `<<\EOF`) disable expansion in the
-    // body — Snull `\u{9d}` marks single-quote, Dnull `\u{9e}` marks
-    // double-quote, Bnull `\u{9f}` marks any backslash-escaped char.
+    // a `struct heredocs` entry here for REDIR_HEREDOC[DASH]. zshrs
+    // pushes onto HDOCS (canonical C linked list, c:2290-2296) AND
+    // onto LEX_HEREDOCS (Rust-only AST-glue Vec carrying parsed-out
+    // terminator/strip_tabs/quoted metadata for downstream AST
+    // consumers). Quoted terminators (`<<'EOF'` / `<<"EOF"` / `<<\EOF`)
+    // disable expansion in the body — Snull `\u{9d}` marks single-quote,
+    // Dnull `\u{9e}` marks double-quote, Bnull `\u{9f}` marks
+    // backslash-escaped chars.
     let heredoc_idx = if matches!(rtype, REDIR_HEREDOC | REDIR_HEREDOCDASH) {
         let strip_tabs = rtype == REDIR_HEREDOCDASH;
         let quoted = name.contains('\u{9d}')
@@ -5244,14 +5176,38 @@ fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
                 *c != '\'' && *c != '"' && *c != '\u{9d}' && *c != '\u{9e}' && *c != '\u{9f}'
             })
             .collect::<String>();
-        crate::ported::lex::heredocs_push(crate::ported::lex::HereDoc {
-            terminator: term,
-            strip_tabs,
-            content: String::new(),
-            quoted,
-            processed: false,
+        // c:2290-2296 — `for (hd = &hdocs; *hd; hd = &(*hd)->next);
+        //                 *hd = zalloc(sizeof(struct heredocs));
+        //                 (*hd)->next = NULL;
+        //                 (*hd)->type = htype;
+        //                 (*hd)->pc = r;
+        //                 (*hd)->str = tokstr;`
+        // AST path has no wordcode pc to patch; use -1 sentinel so the
+        // inline NEWLIN walk in `zshlex()` skips the setheredoc call.
+        HDOCS.with_borrow_mut(|head| {
+            let mut cur = head;
+            while cur.is_some() {
+                cur = &mut cur.as_mut().unwrap().next;                            // c:2290
+            }
+            *cur = Some(Box::new(crate::ported::zsh_h::heredocs {                 // c:2292-2296
+                next: None,
+                typ: rtype,
+                pc: -1,
+                str: Some(name.clone()),
+            }));
         });
-        Some(heredocs_len() - 1)
+        // zshrs-only: push parallel AST-glue entry onto LEX_HEREDOCS.
+        let idx = crate::ported::lex::LEX_HEREDOCS.with_borrow_mut(|v| {
+            v.push(crate::ported::lex::HereDoc {
+                terminator: term,
+                strip_tabs,
+                content: String::new(),
+                quoted,
+                processed: false,
+            });
+            v.len() - 1
+        });
+        Some(idx)
     } else {
         None
     };
@@ -5296,7 +5252,7 @@ fn par_for() -> Option<ZshCommand> {
         zshlex();
     }
     if names.is_empty() {
-        error("expected variable name in for");
+        crate::ported::utils::zerr("expected variable name in for");
         return None;
     }
     let var = names.join(" ");
@@ -5331,13 +5287,7 @@ fn par_for() -> Option<ZshCommand> {
         if s.map(|s| s == "in").unwrap_or(false) {
             zshlex();
             let mut words = Vec::new();
-            let mut word_count = 0;
             while tok() == STRING_LEX {
-                word_count += 1;
-                if word_count > 500 || check_limit() {
-                    error("for: too many words");
-                    return None;
-                }
                 let _ts_s = tokstr();
                 if let Some(s) = _ts_s.as_deref() {
                     words.push(s.to_string());
@@ -5352,13 +5302,7 @@ fn par_for() -> Option<ZshCommand> {
         // for var (...)
         zshlex();
         let mut words = Vec::new();
-        let mut word_count = 0;
         while tok() == STRING_LEX || tok() == SEPER {
-            word_count += 1;
-            if word_count > 500 || check_limit() {
-                error("for: too many words in parens");
-                return None;
-            }
             if tok() == STRING_LEX {
                 let _ts_s = tokstr();
                 if let Some(s) = _ts_s.as_deref() {
@@ -5385,7 +5329,7 @@ fn par_for() -> Option<ZshCommand> {
     skip_separators();
 
     // Parse body
-    let body = parse_loop_body(is_foreach)?;
+    let body = parse_loop_body(is_foreach, false)?;
 
     Some(ZshCommand::For(ZshFor {
         var,
@@ -5411,7 +5355,7 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
     zshlex(); // Get init: Dinpar "i=0"
 
     if tok() != DINPAR {
-        error("expected init expression in for ((");
+        crate::ported::utils::zerr("expected init expression in for ((");
         return None;
     }
     let init = tokstr().unwrap_or_default();
@@ -5419,7 +5363,7 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
     zshlex(); // Get cond: Dinpar "i<10"
 
     if tok() != DINPAR {
-        error("expected condition in for ((");
+        crate::ported::utils::zerr("expected condition in for ((");
         return None;
     }
     let cond = tokstr().unwrap_or_default();
@@ -5427,7 +5371,7 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
     zshlex(); // Get step: Doutpar "i++"
 
     if tok() != DOUTPAR {
-        error("expected )) in for");
+        crate::ported::utils::zerr("expected )) in for");
         return None;
     }
     let step = tokstr().unwrap_or_default();
@@ -5435,7 +5379,7 @@ fn parse_for_cstyle() -> Option<ZshCommand> {
     zshlex(); // Move past ))
 
     skip_separators();
-    let body = parse_loop_body(false)?;
+    let body = parse_loop_body(false, false)?;
 
     Some(ZshCommand::For(ZshFor {
         var: String::new(),
@@ -5498,7 +5442,7 @@ fn par_case() -> Option<ZshCommand> {
             (w, ona, onc, restore)
         }
         _ => {
-            error("expected word after case");
+            crate::ported::utils::zerr("expected word after case");
             return None;
         }
     };
@@ -5513,12 +5457,12 @@ fn par_case() -> Option<ZshCommand> {
         if s.map(|s| s != "in").unwrap_or(true) {
             // c:1228-1232 — restore noaliases/nocorrect on error path.
             restore(ona, onc);
-            error("expected 'in' in case");
+            crate::ported::utils::zerr("expected 'in' in case");
             return None;
         }
     } else if !use_brace {
         restore(ona, onc);
-        error("expected 'in' or '{' in case");
+        crate::ported::utils::zerr("expected 'in' or '{' in case");
         return None;
     }
     // c:1236-1239 — `incasepat = 1; incmdpos = 0; noaliases = ona;
@@ -5534,7 +5478,7 @@ fn par_case() -> Option<ZshCommand> {
 
     loop {
         if arms.len() > MAX_ARMS {
-            error("par_case: too many arms");
+            crate::ported::utils::zerr("par_case: too many arms");
             break;
         }
 
@@ -5574,15 +5518,7 @@ fn par_case() -> Option<ZshCommand> {
 
         // incasepat is already set above
         let mut patterns = Vec::new();
-        let mut pattern_iterations = 0;
         loop {
-            pattern_iterations += 1;
-            if pattern_iterations > 1000 {
-                error("par_case: too many pattern iterations");
-                set_incasepat(0);
-                return None;
-            }
-
             if tok() == STRING_LEX {
                 let s = tokstr();
                 if s.map(|s| s == "esac").unwrap_or(false) {
@@ -5628,7 +5564,7 @@ fn par_case() -> Option<ZshCommand> {
         // when the bare pattern was simple; the second is needed
         // when the body starts with `(`.
         if tok() != OUTPAR_TOK {
-            error("expected ')' in case pattern");
+            crate::ported::utils::zerr("expected ')' in case pattern");
             return None;
         }
         // Port of Src/parse.c:1310-1313 — when the case pattern
@@ -5703,7 +5639,7 @@ fn par_if() -> Option<ZshCommand> {
     // Expect 'then' or {
     let use_brace = tok() == INBRACE_TOK;
     if tok() != THEN && !use_brace {
-        error("expected 'then' or '{' after if condition");
+        crate::ported::utils::zerr("expected 'then' or '{' after if condition");
         return None;
     }
     zshlex();
@@ -5750,7 +5686,7 @@ fn par_if() -> Option<ZshCommand> {
 
                     let elif_use_brace = tok() == INBRACE_TOK;
                     if tok() != THEN && !elif_use_brace {
-                        error("expected 'then' after elif");
+                        crate::ported::utils::zerr("expected 'then' after elif");
                         return None;
                     }
                     zshlex();
@@ -5821,7 +5757,7 @@ fn par_while(until: bool) -> Option<ZshCommand> {
     let cond = Box::new(parse_program());
 
     skip_separators();
-    let body = parse_loop_body(false)?;
+    let body = parse_loop_body(false, false)?;
 
     Some(ZshCommand::While(ZshWhile {
         cond,
@@ -5845,7 +5781,7 @@ fn par_repeat() -> Option<ZshCommand> {
             c
         }
         _ => {
-            error("expected count after repeat");
+            crate::ported::utils::zerr("expected count after repeat");
             return None;
         }
     };
@@ -5853,9 +5789,9 @@ fn par_repeat() -> Option<ZshCommand> {
     skip_separators();
     // c:1600 — par_repeat's short-form gate is wider: it unlocks
     // when SHORTLOOPS OR SHORTREPEAT is set (vs SHORTLOOPS alone for
-    // for/while). Pass `is_repeat=true` so parse_loop_body_kind
+    // for/while). Pass `is_repeat=true` so parse_loop_body
     // applies that widened gate.
-    let body = parse_loop_body_kind(false, true)?;
+    let body = parse_loop_body(false, true)?;
 
     Some(ZshCommand::Repeat(ZshRepeat {
         count,
@@ -5871,14 +5807,11 @@ fn par_repeat() -> Option<ZshCommand> {
 /// flag signals foreach (where short-form `for NAME in WORDS;
 /// CMD` may skip do/done) vs c-style (which always requires
 /// do/done).
-fn parse_loop_body(foreach_style: bool) -> Option<ZshProgram> {
-    parse_loop_body_kind(foreach_style, false)
-}
-
-/// Body-dispatch helper. `is_repeat` widens the SHORTLOOPS gate so
-/// `SHORTREPEAT` also unlocks the short form for `repeat N CMD`
-/// (per c:1600 `unset(SHORTLOOPS) && unset(SHORTREPEAT)`).
-fn parse_loop_body_kind(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
+///
+/// `is_repeat` widens the SHORTLOOPS gate so `SHORTREPEAT` also
+/// unlocks the short form for `repeat N CMD` (per c:1600
+/// `unset(SHORTLOOPS) && unset(SHORTREPEAT)`).
+fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
     // c:1180-1194 — body dispatch order per par_for:
     //   `do ... done` (DOLOOP) — primary form.
     //   `{ ... }`   (INBRACE) — alternate.
@@ -5916,7 +5849,7 @@ fn parse_loop_body_kind(foreach_style: bool, is_repeat: bool) -> Option<ZshProgr
         // `install_emulation_defaults`, so this fires only when a
         // script explicitly disabled the option.
         if unset(SHORTLOOPS) && (!is_repeat || unset(SHORTREPEAT)) {
-            error("parse error: short loop form requires SHORTLOOPS option");
+            crate::ported::utils::zerr("parse error: short loop form requires SHORTLOOPS option");
             return None;
         }
         // c:1192-1193 — short form: single command body.
@@ -6110,7 +6043,8 @@ fn par_funcdef() -> Option<ZshCommand> {
     // `\u{8f}` (bct++ path post-switch add). C parse.c:1702 handles
     // both string forms via `*tokstr == Inbrace || *tokstr == '{'`.
     let body_opener_is_string_brace =
-        tok() == STRING_LEX && (tokstr_eq("{") || tokstr_eq("\u{8f}"));
+        tok() == STRING_LEX
+            && tokstr().map(|s| s == "{" || s == "\u{8f}").unwrap_or(false);
     if tok() == INBRACE_TOK || body_opener_is_string_brace {
         // Capture body_start BEFORE the lexer advances past the
         // first body token. After the previous zshlex consumed
@@ -6236,7 +6170,7 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
         // accepted when SHORTLOOPS is set. parse_init seeds
         // SHORTLOOPS=on so this fires only when a script
         // explicitly disabled the option.
-        error("parse error: short function body form requires SHORTLOOPS option");
+        crate::ported::utils::zerr("parse error: short function body form requires SHORTLOOPS option");
         None
     } else {
         match par_cmd() {
@@ -6290,7 +6224,7 @@ fn par_cond() -> Option<ZshCommand> {
     // non-zero exit. Without this, `[[ ]]` silently passed and
     // returned exit 0.
     if tok() == DOUTBRACK {
-        error("parse error near `]]'");
+        crate::ported::utils::zerr("parse error near `]]'");
         set_incond(0);
         set_incmdpos(true);
         zshlex();
@@ -6323,76 +6257,35 @@ fn parse_cond_expr() -> Option<ZshCond> {
 /// Cond-expression `||` level. C: inside par_cond_1 at
 /// parse.c:2434-2475 (the `cond_or` ladder).
 fn parse_cond_or() -> Option<ZshCond> {
-    PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
-    if check_recursion() {
-        error("parse_cond_or: max recursion depth exceeded");
-        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-        return None;
-    }
-
-    let left = match parse_cond_and() {
-        Some(l) => l,
-        None => {
-            PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-            return None;
-        }
-    };
-
+    let left = parse_cond_and()?;
     skip_cond_separators();
 
-    let result = if tok() == DBAR {
+    if tok() == DBAR {
         zshlex();
         skip_cond_separators();
         parse_cond_or().map(|right| ZshCond::Or(Box::new(left), Box::new(right)))
     } else {
         Some(left)
-    };
-
-    PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-    result
+    }
 }
 
 /// Cond-expression `&&` level. C: par_cond_2 at parse.c:2476-2625.
 fn parse_cond_and() -> Option<ZshCond> {
-    PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
-    if check_recursion() {
-        error("parse_cond_and: max recursion depth exceeded");
-        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-        return None;
-    }
-
-    let left = match parse_cond_not() {
-        Some(l) => l,
-        None => {
-            PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-            return None;
-        }
-    };
-
+    let left = parse_cond_not()?;
     skip_cond_separators();
 
-    let result = if tok() == DAMPER {
+    if tok() == DAMPER {
         zshlex();
         skip_cond_separators();
         parse_cond_and().map(|right| ZshCond::And(Box::new(left), Box::new(right)))
     } else {
         Some(left)
-    };
-
-    PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-    result
+    }
 }
 
 /// Cond-expression `!` negation level. C: handled inside
 /// par_cond_2 at parse.c:2476-2625 via the Bang token check.
 fn parse_cond_not() -> Option<ZshCond> {
-    PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get() + 1);
-    if check_recursion() {
-        error("parse_cond_not: max recursion depth exceeded");
-        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-        return None;
-    }
-
     skip_cond_separators();
 
     // ! can be either BANG_TOK or String "!"
@@ -6400,38 +6293,22 @@ fn parse_cond_not() -> Option<ZshCond> {
         tok() == BANG_TOK || (tok() == STRING_LEX && tokstr().map(|s| s == "!").unwrap_or(false));
     if is_not {
         zshlex();
-        let inner = match parse_cond_not() {
-            Some(i) => i,
-            None => {
-                PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-                return None;
-            }
-        };
-        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
+        let inner = parse_cond_not()?;
         return Some(ZshCond::Not(Box::new(inner)));
     }
 
     if tok() == INPAR_TOK {
         zshlex();
         skip_cond_separators();
-        let inner = match parse_cond_expr() {
-            Some(i) => i,
-            None => {
-                PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-                return None;
-            }
-        };
+        let inner = parse_cond_expr()?;
         skip_cond_separators();
         if tok() == OUTPAR_TOK {
             zshlex();
         }
-        PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
         return Some(inner);
     }
 
-    let result = parse_cond_primary();
-    PARSER_RECURSION_DEPTH.set(PARSER_RECURSION_DEPTH.get().saturating_sub(1));
-    result
+    parse_cond_primary()
 }
 
 /// Cond-expression primary: unary tests (-f, -d, ...), binary
@@ -6551,30 +6428,11 @@ fn par_time() -> Option<ZshCommand> {
     }
 }
 
-/// Check if next token is ()
-fn peek_inoutpar() -> bool {
-    tok() == INOUTPAR
-}
-
 /// Skip separator tokens
 fn skip_separators() {
-    let mut iterations = 0;
     while tok() == SEPER || tok() == NEWLIN {
-        iterations += 1;
-        if iterations > 100_000 {
-            error("skip_separators: too many iterations");
-            return;
-        }
         zshlex();
     }
-}
-
-/// Record a parse error. Direct port of zsh's `zerr` invocation
-/// from `Src/parse.c:625-633 yyerror`. Sets `errflag |=
-/// ERRFLAG_ERROR` (when `noerrs == 0`) and emits a diagnostic on
-/// stderr via `zwarning`.
-fn error(msg: &str) {
-    crate::ported::utils::zerr(msg);
 }
 
 // =====================================================================

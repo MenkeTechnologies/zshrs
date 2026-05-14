@@ -221,7 +221,7 @@ fn nlimits() -> usize {
 // the Rust port factors it out so `set_resinfo()`, `bin_limit()`,
 // etc. can lazily seed `LIMITS`/`CURRENT_LIMITS` on first use without
 // requiring a separate init pass. Allowlisted in
-// tests/data/ported_fn_allowlist.txt.
+// tests/data/fake_fn_allowlist.txt.
 #[cfg(unix)]
 fn ensure_limits_initialized() {
     let init = || {
