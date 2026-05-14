@@ -682,39 +682,6 @@ pub fn isnumglob(input: &str, pos: usize) -> bool {
 // from `reswds[]`). The lexer queries it via `reswdtab_lock()` from
 // `check_reserved_word()` below; no duplicate table here.
 
-#[cfg(test)]
-mod tokens_tests {
-    use crate::ported::hashtable::reswdtab_lock;
-    use crate::ported::zsh_h::{
-        Bnull, Dnull, Snull, DINANG, IF, IS_REDIROP, OUTANG_TOK, STRING_LEX, THEN,
-    };
-
-    #[test]
-    fn test_token_values() {
-        assert_eq!(Snull as u32, 0x9d);
-        assert_eq!(Dnull as u32, 0x9e);
-        assert_eq!(Bnull as u32, 0x9f);
-    }
-
-    #[test]
-    fn test_reserved_words() {
-        // Reserved-word lookup goes through the canonical `reswdtab`
-        // (port of `Src/hashtable.c:1076 reswds[]`).
-        let tab = reswdtab_lock().read().unwrap();
-        assert_eq!(tab.get("if").map(|r| r.token), Some(IF));
-        assert_eq!(tab.get("then").map(|r| r.token), Some(THEN));
-        assert!(tab.get("notakeyword").is_none());
-    }
-
-    #[test]
-    fn test_redirop() {
-        assert!(IS_REDIROP(OUTANG_TOK));
-        assert!(IS_REDIROP(DINANG));
-        assert!(!IS_REDIROP(IF));
-        assert!(!IS_REDIROP(STRING_LEX));
-    }
-}
-
 // =============================================================================
 // End of inlined `tokens.rs`. Original lex.rs body follows.
 // =============================================================================
@@ -4078,6 +4045,41 @@ pub fn has_token(s: &str) -> bool {
         (0x83..=0x9f).contains(&cu)
     })
 }
+
+
+#[cfg(test)]
+mod tokens_tests {
+    use crate::ported::hashtable::reswdtab_lock;
+    use crate::ported::zsh_h::{
+        Bnull, Dnull, Snull, DINANG, IF, IS_REDIROP, OUTANG_TOK, STRING_LEX, THEN,
+    };
+
+    #[test]
+    fn test_token_values() {
+        assert_eq!(Snull as u32, 0x9d);
+        assert_eq!(Dnull as u32, 0x9e);
+        assert_eq!(Bnull as u32, 0x9f);
+    }
+
+    #[test]
+    fn test_reserved_words() {
+        // Reserved-word lookup goes through the canonical `reswdtab`
+        // (port of `Src/hashtable.c:1076 reswds[]`).
+        let tab = reswdtab_lock().read().unwrap();
+        assert_eq!(tab.get("if").map(|r| r.token), Some(IF));
+        assert_eq!(tab.get("then").map(|r| r.token), Some(THEN));
+        assert!(tab.get("notakeyword").is_none());
+    }
+
+    #[test]
+    fn test_redirop() {
+        assert!(IS_REDIROP(OUTANG_TOK));
+        assert!(IS_REDIROP(DINANG));
+        assert!(!IS_REDIROP(IF));
+        assert!(!IS_REDIROP(STRING_LEX));
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
