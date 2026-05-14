@@ -351,12 +351,21 @@ def main() -> int:
         primary_c = c_locs[0][0]  # full rel path src/zsh/Src/...
         # short form for filter / display: drop "src/zsh/Src/"
         cf_short = primary_c.replace("src/zsh/Src/", "")
+        expected_for_row = expected_for(primary_c)
         rust_locs: list[tuple[str,int]] = []
-        if name not in generic:
+        if name in generic:
+            # Generic name (`setup_`, `boot_`, `cleanup_` etc. — defined
+            # in 40+ unrelated module files as the standard module-
+            # lifecycle hooks). Restrict the Rust hit to the file that
+            # actually corresponds to this C source's expected port
+            # destination — otherwise the row drags 40 noisy hits.
+            all_defs = rs_defs.get(name, [])
+            rust_locs = [loc for loc in all_defs if loc[0] in expected_for_row]
+        else:
             rust_locs = list(rs_defs.get(name, []))
         rust_files = {p for p,_ in rust_locs}
         rust_files |= port_mentions.get(name, set())
-        expected = expected_for(primary_c)
+        expected = expected_for_row
 
         if rust_files:
             if any(f in expected for f in rust_files):
