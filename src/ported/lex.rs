@@ -2443,19 +2443,21 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 if isset(SHGLOB) && sub {
                     break;
                 }
-                // In pattern context (incondpat), < is literal
-                if in_brace_param > 0 || sub || LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
+                // c:1201 — `if (!in_brace_param && isnumglob()) { ... }`.
+                // Empirical observation: real zsh's wordcode strs has
+                // Inang/Outang for `<N-M>` numglob shapes INSIDE
+                // `${var/pat/repl}` and `${var//pat/repl}` too. The
+                // C source's `!in_brace_param` gate would prevent that
+                // per literal reading, but zsh's runtime does emit
+                // markers — likely via a parser-side re-lex through
+                // `parsestrnoerr` (lex.c:1713) when the pattern is
+                // tokenized for storage. Mirror the empirical
+                // behavior by checking isnumglob in any context
+                // where the `<` could plausibly be the start of a
+                // numglob (NOT inside [[ ]] cond / case pattern).
+                if LEX_INCONDPAT.get() || LEX_INCASEPAT.get() > 0 {
                     add(c);
                 } else if {
-                    // c:1201 — `if(isnumglob()) { add(Inang); while
-                    // ((c = hgetc()) != '>') add(c); c = Outang; }`.
-                    // Our `isnumglob(input, pos)` scans the static
-                    // input slice rather than consuming via hgetc, so
-                    // we snapshot the input from the current pos. The
-                    // unget buffer (line-continuation push-backs etc.)
-                    // isn't consulted here — the range glob is a
-                    // word-internal shape so the unget buf is empty in
-                    // practice at this site.
                     let lookahead = LEX_INPUT.with_borrow(|s| {
                         s[LEX_POS.get()..].to_string()
                     });
