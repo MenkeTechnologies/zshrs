@@ -83,9 +83,15 @@ def walk_c() -> dict[str, list[tuple[str,int]]]:
 _body_cache_c: dict[str, dict[str, int]] = {}
 _body_cache_rs: dict[str, dict[str, int]] = {}
 
-def _skip_lex(src: str, pos: int) -> int:
+def _skip_lex(src: str, pos: int, is_rust: bool = False) -> int:
     """Skip past one string/char literal or line/block comment starting at pos.
-    Returns new pos (unchanged if pos isn't a lex boundary)."""
+    Returns new pos (unchanged if pos isn't a lex boundary).
+
+    Rust mode: distinguish char literals (`'a'`) from lifetimes
+    (`'static`, `'a`). A `'` followed by ident-char + non-`'` is a
+    lifetime — leave pos at the `'` and let the caller advance by
+    one char so we don't scan-forward looking for a non-existent
+    closing quote."""
     if pos >= len(src):
         return pos
     c = src[pos]
@@ -104,6 +110,25 @@ def _skip_lex(src: str, pos: int) -> int:
             pos += 1
         return pos
     if c == "'":
+        # Rust lifetime detection: `'<ident>` not followed by `'` is
+        # a lifetime, not a char literal. Probe the next ~12 chars
+        # for a closing `'`; if absent (and the first char is ident),
+        # treat as lifetime — pos stays, caller advances by 1.
+        if is_rust and pos + 1 < len(src):
+            nxt = src[pos + 1]
+            if nxt.isalpha() or nxt == '_':
+                # Look ahead for closing quote within reasonable
+                # char-literal length.
+                j = pos + 1
+                while j < len(src) and j - pos < 12:
+                    if src[j] == '\\': j += 2; continue
+                    if src[j] == "'":
+                        # Real char literal like `'\n'` or `'a'`.
+                        return j + 1
+                    j += 1
+                # No closing quote in range → lifetime annotation.
+                # Leave pos at the `'` so the caller advances 1 char.
+                return pos
         pos += 1
         while pos < len(src):
             if src[pos] == '\\': pos += 2; continue
@@ -127,7 +152,7 @@ def _index_bodies(src: str, fn_re: re.Pattern, is_rust: bool) -> dict[str, int]:
         pos = paren + 1
         depth = 1
         while pos < len(src) and depth > 0:
-            new_pos = _skip_lex(src, pos)
+            new_pos = _skip_lex(src, pos, is_rust)
             if new_pos != pos:
                 pos = new_pos
                 continue
@@ -142,7 +167,7 @@ def _index_bodies(src: str, fn_re: re.Pattern, is_rust: bool) -> dict[str, int]:
         sq_depth = 0
         ang_depth = 0
         while pos < len(src):
-            new_pos = _skip_lex(src, pos)
+            new_pos = _skip_lex(src, pos, is_rust)
             if new_pos != pos:
                 pos = new_pos
                 continue
@@ -168,7 +193,7 @@ def _index_bodies(src: str, fn_re: re.Pattern, is_rust: bool) -> dict[str, int]:
         depth = 1
         pos = body_start
         while pos < len(src) and depth > 0:
-            new_pos = _skip_lex(src, pos)
+            new_pos = _skip_lex(src, pos, is_rust)
             if new_pos != pos:
                 pos = new_pos
                 continue
