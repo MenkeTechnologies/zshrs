@@ -3655,6 +3655,8 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
     loop {
         match tok() {
             STRING_LEX | TYPESET => {
+                // c:1926 — `int redir_var = 0;`
+                let mut redir_var = false;
                 // c:1928-1929 — `*cmplx = 1; incmdpos = 0;`
                 *cmplx = 1;
                 set_incmdpos(false);
@@ -3664,10 +3666,82 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                     is_typeset = true;
                 }
                 let s = tokstr().unwrap_or_default();
-                ecstr(&s);
-                argc += 1;
+                // c:1934-1974 — `{var}>file` brace-FD detection.
+                // `if (!isset(IGNOREBRACES) && *tokstr == Inbrace)`
+                let bytes = s.as_bytes();
+                let first_is_inbrace = (bytes.len() >= 2 && bytes[0] == 0xc2 && bytes[1] == 0x8f)
+                    || (bytes.len() >= 1 && bytes[0] == b'{');
+                if !isset(IGNOREBRACES) && first_is_inbrace {
+                    // c:1937-1938 — `char *eptr = tokstr + strlen(tokstr) - 1;`
+                    //                `char *ptr = eptr;`
+                    // C tests `*eptr == Outbrace` (0x90 marker or `}`) AND
+                    // there's content between `{` and `}` (`ptr > tokstr + 1`).
+                    let last_two_outbrace = bytes.len() >= 2
+                        && (bytes.ends_with(&[0xc2, 0x90]) || bytes.last() == Some(&b'}'));
+                    let opener_len = if bytes.len() >= 2 && bytes[0] == 0xc2 && bytes[1] == 0x8f {
+                        2
+                    } else {
+                        1
+                    };
+                    let closer_len = if bytes.len() >= 2 && bytes.ends_with(&[0xc2, 0x90]) {
+                        2
+                    } else if bytes.last() == Some(&b'}') {
+                        1
+                    } else {
+                        0
+                    };
+                    if last_two_outbrace && bytes.len() > opener_len + closer_len {
+                        // c:1944 — `if (itype_end(tokstr+1, IIDENT, 0) >= ptr)`
+                        // Inner content is the identifier between `{` and `}`.
+                        let inner_start = opener_len;
+                        let inner_end = bytes.len() - closer_len;
+                        let inner = &s[inner_start..inner_end];
+                        if !inner.is_empty()
+                            && crate::ported::utils::isident(inner)
+                        {
+                            // c:1946-1948 — `char *idstring = dupstrpfx(...);`
+                            //                `redir_var = 1; zshlex();`
+                            let idstring = inner.to_string();
+                            redir_var = true;
+                            zshlex();
+                            // c:1953-1958 — `if (IS_REDIROP(tok) && tokfd == -1)
+                            //   { *cmplx = c = 1; nrediradd = par_redir(&r, id);
+                            //     p += nrediradd; sr += nrediradd; }`
+                            if IS_REDIROP(tok()) && tokfd() == -1 {
+                                *cmplx = 1;
+                                let nrediradd = par_redir_wordcode_inner(&mut r, Some(&idstring));
+                                p += nrediradd as usize;
+                                sr += nrediradd;
+                            } else if postassigns > 0 {
+                                // c:1959-1966 — postassigns path: emit
+                                // WCB_ASSIGN(SCALAR, INC, 0) + name + ""
+                                postassigns += 1;
+                                ecadd(WCB_ASSIGN(WC_ASSIGN_SCALAR, WC_ASSIGN_INC, 0));
+                                ecstr(&s);
+                                ecstr("");
+                            } else {
+                                // c:1968-1972 — `else { ecstr(toksave); argc++; }`
+                                ecstr(&s);
+                                argc += 1;
+                            }
+                        }
+                    }
+                }
+                if !redir_var {
+                    // c:1977-1996 — normal (non-redir-var) STRING/TYPESET.
+                    if postassigns > 0 {
+                        // c:1979-1989 — typeset with bare-name arg → INC
+                        postassigns += 1;
+                        ecadd(WCB_ASSIGN(WC_ASSIGN_SCALAR, WC_ASSIGN_INC, 0));
+                        ecstr(&s);
+                        ecstr("");
+                    } else {
+                        ecstr(&s);
+                        argc += 1;
+                    }
+                    zshlex();
+                }
                 isnull = false;
-                zshlex();
             }
             ENVSTRING => {
                 // c:2005-2026 — mid-cmd ENVSTRING (under intypeset
