@@ -623,24 +623,6 @@ Machine-readable surfaces (use these, not the rendered HTML):
        ]
      }
 
-2. HTML comment markers around each group:
-     <!-- BEGIN-GROUP cfile=... symbols=N ported=X unported=Y rust_only=Z -->
-       <!-- SYM name=... status=... placement=... cfile=... c_loc=path:line rust=a|b|c expected=a|b -->
-       <tr ...>...</tr>     # the visible row (may be display:none)
-       ... more SYM/<tr> pairs ...
-     <!-- END-GROUP cfile=... -->
-   The SYM comments carry the same data as the JSON entry; bots that
-   prefer regex/grep over JSON can pattern-match them directly.
-
-Status / placement vocabulary:
-* status = ported   : C symbol has a matching Rust fn or doc-comment pointer
-* status = unported : C symbol with no Rust counterpart yet
-* status = rust-only: Rust fn with no matching C symbol (helper/extension)
-* placement = correct   : Rust hits live only in expected file(s)
-* placement = split     : Rust hits include the expected file plus extras
-* placement = misplaced : expected destination exists, none of the rust hits land there
-* placement = unmapped  : no expected destination rule for this C source
-
 Excluded from this report by design:
 * src/extensions/ — features zsh C does NOT have
 * src/recorder/  — feature-gated recorder
