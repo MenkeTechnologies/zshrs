@@ -3781,41 +3781,35 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                 sr += added;
             }
             INOUTPAR => {
-                // c:2051-2168 — `name() { body }` funcdef detection.
-                // C rewrites the SIMPLE placeholder at `p` into a
-                // FUNCDEF header structure with multiple words:
-                //   p:        WCB_FUNCDEF(total_offset)
-                //   p+1:      argc (name count)
-                //   p+2..N:   the names already ecstr'd above
-                //   N+1:      0 (placeholder)
-                //   N+2:      0 (placeholder)
-                //   N+3:      0 (placeholder)
-                //   N+4:      0 (placeholder)
-                //   N+5:      WCB_END()
-                //   ...body wordcode...
-                //   ecbuf[p+argc+2] = so - oecssub; (string area)
-                //   ecbuf[p+argc+3] = ecsoffs - so;
-                //   ecbuf[p+argc+4] = ecnpats;
-                //   ecbuf[p+argc+5] = 0;
-                //
-                // This Rust port handles the common `name() { … }`
-                // case (single name + brace body); anonymous funcdef
-                // and short-body forms are stubbed for now.
+                // c:2051 — `} else if (tok == INOUTPAR) {`
+                // c:2052 — `zlong oldlineno = lineno;`
+                let oldlineno = lineno();
+                // c:2053 — `int onp, so, oecssub = ecssub;`
+                let oecssub = ECSSUB.get();
+                // c:2055-2057 — `if (!isset(MULTIFUNCDEF) && argc > 1) YYERROR;`
                 if !isset(MULTIFUNCDEF) && argc > 1 {
                     error("par_simple: too many function names for funcdef");
                     return 0;
                 }
+                // c:2058-2060 — `if (assignments || postassigns) YYERROR;`
                 if assignments || postassigns > 0 {
                     error("par_simple: assignments before funcdef");
                     return 0;
                 }
-                // c:2070 — `*cmplx = c;` — restore the saved initial
-                // cmplx so the enclosing list can apply Z_SIMPLE
-                // optimization to a single-funcdef cmd.
+                // c:2061-2068 — hasalias check + zwarn — skipped (no
+                // alias tracking on the wordcode path).
+
+                // c:2070 — `*cmplx = c;`
                 *cmplx = c_saved;
+                // c:2071 — `lineno = 0;`
+                set_lineno(0);
+                // c:2072 — `incmdpos = 1;`
                 set_incmdpos(true);
+                // c:2073 — `cmdpush(CS_FUNCDEF);`
                 cmdpush(CS_FUNCDEF as u8);
+                // c:2074 — `zshlex();`
                 zshlex();
+                // c:2075-2076 — `while (tok == SEPER) zshlex();`
                 while tok() == SEPER {
                     zshlex();
                 }
@@ -3828,34 +3822,48 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                         b[p + 1] = argc;
                     }
                 });
+                // c:2080-2083 — four metadata placeholder slots.
                 ecadd(0);
                 ecadd(0);
                 ecadd(0);
                 ecadd(0);
-                let so = ECSOFFS.get();
-                let onp = ECNPATS.with(|cc| cc.get());
-                ECNPATS.with(|cc| cc.set(0));
+
+                // c:2085 — `ecnfunc++;`
                 ECNFUNC.set(ECNFUNC.get() + 1);
-                let oecssub = ECSSUB.get();
+                // c:2086 — `ecssub = so = ecsoffs;`
+                let so = ECSOFFS.get();
                 ECSSUB.set(so);
-                // c:2091 — `int c = 0;` — INNER cmplx local to the
-                // body parse. C's enclosing *cmplx is NOT modified by
-                // the body. We use a stack-local `body_c` and pass
-                // `&mut body_c` so the inner cmplx is independent —
-                // exactly matching C's `&c` semantics.
+                // c:2087 — `onp = ecnpats;`
+                let onp = ECNPATS.with(|cc| cc.get());
+                // c:2088 — `ecnpats = 0;`
+                ECNPATS.with(|cc| cc.set(0));
+
+                // c:2091 — `int c = 0;` — INNER cmplx for the body
+                // parse. Local to each branch; C's enclosing *cmplx
+                // is NOT modified by the body.
                 let mut body_c: i32 = 0;
+                // c:2090 — `if (tok == INBRACE) {`
                 if tok() == INBRACE_TOK {
+                    // c:2093 — `zshlex();`
                     zshlex();
+                    // c:2094 — `par_list(&c);`
                     par_list_wordcode(&mut body_c);
+                    // c:2095-2101 — `if (tok != OUTBRACE) { cmdpop();
+                    //   lineno += oldlineno; ecnpats = onp;
+                    //   ecssub = oecssub; YYERROR; }`
                     if tok() != OUTBRACE_TOK {
                         cmdpop();
+                        set_lineno(lineno() + oldlineno);
+                        ECNPATS.with(|cc| cc.set(onp));
+                        ECSSUB.set(oecssub);
                         error("par_simple: funcdef expected `}`");
                         return 0;
                     }
+                    // c:2102-2105 — `if (argc == 0) incmdpos = 0;`
                     if argc == 0 {
-                        // Anonymous funcdef.
                         set_incmdpos(false);
                     }
+                    // c:2106 — `zshlex();`
                     zshlex();
                 } else {
                     // c:2107-2132 — short-body funcdef form: `f() cmd`
@@ -3888,28 +3896,80 @@ pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
                     set_list_code(ll, Z_SYNC | Z_END, body_c != 0);
                 }
                 let _ = body_c;
+                // c:2133 — `cmdpop();`
                 cmdpop();
+
+                // c:2135 — `ecadd(WCB_END());`
                 ecadd(WCB_END());
-                let used = ECUSED.get() as usize;
-                let header_off = used.saturating_sub(1 + p) as wordcode;
+                // c:2136-2139 — fill 4 metadata slots at p+argc+2..5
                 let p_argc = (p + (argc as usize) + 2) as usize;
                 let cur_so = ECSOFFS.get();
                 let np_now = ECNPATS.with(|cc| cc.get());
                 ECBUF.with_borrow_mut(|b| {
-                    if p_argc + 3 < b.len() {
-                        b[p_argc] = (so - oecssub) as wordcode;
-                        b[p_argc + 1] = (cur_so - so) as wordcode;
-                        b[p_argc + 2] = np_now as wordcode;
-                        b[p_argc + 3] = 0;
-                    }
-                    if p < b.len() {
-                        b[p] = WCB_FUNCDEF(header_off);
-                    }
+                    b[p_argc] = (so - oecssub) as wordcode;
+                    b[p_argc + 1] = (cur_so - so) as wordcode;
+                    b[p_argc + 2] = np_now as wordcode;
+                    b[p_argc + 3] = 0;
                 });
+
+                // c:2141-2143 — `ecnpats = onp; ecssub = oecssub; ecnfunc++;`
                 ECNPATS.with(|cc| cc.set(onp));
                 ECSSUB.set(oecssub);
                 ECNFUNC.set(ECNFUNC.get() + 1);
-                // c:2160-2162 — `isfunc = 1; isnull = 0; break;`.
+
+                // c:2145 — `ecbuf[p] = WCB_FUNCDEF(ecused - 1 - p);`
+                let used = ECUSED.get() as usize;
+                let header_off = used.saturating_sub(1 + p) as wordcode;
+                ECBUF.with_borrow_mut(|b| {
+                    b[p] = WCB_FUNCDEF(header_off);
+                });
+
+                // c:2147-2172 — `if (argc == 0) { /* anonymous fn args */ }`
+                if argc == 0 {
+                    // c:2150 — `int parg = ecadd(0);`
+                    let mut parg = ecadd(0);
+                    // c:2151 — `ecadd(0);`
+                    ecadd(0);
+                    // c:2152 — `while (tok == STRING || IS_REDIROP(tok)) {`
+                    while tok() == STRING_LEX || IS_REDIROP(tok()) {
+                        if tok() == STRING_LEX {
+                            // c:2155-2157
+                            ecstr(&tokstr().unwrap_or_default());
+                            argc += 1;
+                            zshlex();
+                        } else {
+                            // c:2159-2165 — *cmplx=c=1; nrediradd=par_redir;
+                            // p += nrediradd; ppost += nrediradd if ppost;
+                            // sr += nrediradd; parg += nrediradd;
+                            *cmplx = 1;
+                            let added = par_redir_wordcode(&mut r);
+                            if added == 0 {
+                                break;
+                            }
+                            p += added as usize;
+                            if ppost != 0 {
+                                ppost += added as usize;
+                            }
+                            sr += added;
+                            parg += added as usize;
+                        }
+                    }
+                    // c:2168-2169 — `if (argc > 0) *cmplx = 1;`
+                    if argc > 0 {
+                        *cmplx = 1;
+                    }
+                    // c:2170 — `ecbuf[parg] = ecused - parg;`
+                    // c:2171 — `ecbuf[parg+1] = argc;`
+                    let used2 = ECUSED.get() as usize;
+                    ECBUF.with_borrow_mut(|b| {
+                        b[parg] = (used2 - parg) as wordcode;
+                        b[parg + 1] = argc;
+                    });
+                }
+                // c:2173 — `lineno += oldlineno;`
+                set_lineno(lineno() + oldlineno);
+
+                // c:2175-2177 — `isfunc = 1; isnull = 0; break;`
                 isfunc = true;
                 isnull = false;
                 break;
