@@ -544,13 +544,10 @@ def main() -> int:
     # "which C fns have a big Rust body?" or "which short C fns are
     # bloated in Rust?" or "show me everything in glob.c sorted by C
     # body desc". Includes rust-only rows too (cfile = "(rust-only)").
+    # Two tables: lc_rows = C↔Rust pairs only, ro_rows = rust-only fns.
     lc_rows: list[str] = []
-    # Sort key: real C files first (group 0), `(rust-only)` last (group 1),
-    # tiebreak alphabetical by C file then fn name.
-    def _lc_key(r: dict) -> tuple:
-        rust_only = 1 if r["cfile"] == "(rust-only)" else 0
-        return (rust_only, r["cfile"], r["name"])
-    for r in sorted(rows, key=_lc_key):
+    ro_rows: list[str] = []
+    for r in sorted(rows, key=lambda r: (r["cfile"], r["name"])):
         c_first = r["c_locs"][0] if r["c_locs"] else ("", 0)
         rs_first = r["rust_locs"][0] if r["rust_locs"] else ("", 0)
         c_file_short = c_first[0].replace("src/zsh/Src/", "") if c_first[0] else ""
@@ -583,6 +580,19 @@ def main() -> int:
             f'{html.escape(rs_file)}:{rs_line}</a>'
             if rs_file else '<span class="expected">—</span>'
         )
+        # Rust-only rows go to a separate table — slimmer schema since
+        # the C columns / ratio are meaningless for them.
+        if r["cfile"] == "(rust-only)":
+            ro_rows.append(
+                f'<tr class="ro-row" '
+                f'data-name="{html.escape(r["name"])}" '
+                f'data-rbody="{r_body}" data-rline="{rs_line}">'
+                f'<td><b>{html.escape(r["name"])}</b></td>'
+                f'<td>{rs_cell}</td>'
+                f'<td class="num">{r_body or ""}</td>'
+                f'</tr>'
+            )
+            continue
         lc_rows.append(
             f'<tr class="lc-row" '
             f'style="{row_style}" '
@@ -786,6 +796,11 @@ Excluded from this report by design:
   table.lc-table tbody tr.lc-row:hover {{ filter:brightness(1.4); }}
   table.lc-table tbody tr.lc-row:hover td {{ background:transparent; }}
   table.lc-table tbody tr.lc-row td {{ background:transparent; }}
+  /* RUST-ONLY table: same sortable headers as lc-table, no gradient. */
+  table.ro-table th {{ cursor:pointer;user-select:none; }}
+  table.ro-table th:hover {{ background:var(--bg-hover);color:#fff; }}
+  table.ro-table th.sort-asc::after {{ content:" ▲";color:var(--cyan);font-size:9px; }}
+  table.ro-table th.sort-desc::after {{ content:" ▼";color:var(--cyan);font-size:9px; }}
   table.file-map td.num {{ text-align:right;font-family:'Share Tech Mono',monospace; }}
   table.file-map td.ported-num   {{ color:var(--green); }}
   table.file-map td.unported-num {{ color:#ff6b6b; }}
@@ -895,7 +910,7 @@ Excluded from this report by design:
       <label for="lcq">filter:</label><input id="lcq" placeholder="fn name or C file…" oninput="lcf()" size="28">
       <label for="lcst">status:</label>
       <select id="lcst" onchange="lcf()">
-        <option value="">all</option><option>ported</option><option>unported</option><option>rust-only</option>
+        <option value="">all</option><option>ported</option><option>unported</option>
       </select>
       <label for="lcrat">ratio:</label>
       <select id="lcrat" onchange="lcf()">
@@ -919,6 +934,27 @@ Excluded from this report by design:
       </tr></thead>
       <tbody id="lc-tbody">
 {chr(10).join(lc_rows)}
+      </tbody>
+    </table>
+
+    <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>RUST-ONLY FNS</h2>
+    <p class="legend">
+      Rust functions with no matching C symbol — feature-flag helpers,
+      test fns, extension code, AOP hooks. Not part of the 1:1 port,
+      kept here for visibility.
+    </p>
+    <div class="filter-bar">
+      <label for="roq">filter:</label><input id="roq" placeholder="fn name…" oninput="rof()" size="22">
+      <span id="roct" class="legend" style="margin-left:auto;font-size:10px;"></span>
+    </div>
+    <table class="fn-table ro-table">
+      <thead><tr>
+        <th data-sort="name"  onclick="ros('name')">fn name</th>
+        <th data-sort="rline" onclick="ros('rline')">Rust file:line</th>
+        <th data-sort="rbody" onclick="ros('rbody')">Rust lines</th>
+      </tr></thead>
+      <tbody id="ro-tbody">
+{chr(10).join(ro_rows)}
       </tbody>
     </table>
 
@@ -1064,7 +1100,45 @@ function lcs(key){{
   }});
 }}
 // Initialise the row counter on load.
-window.addEventListener('DOMContentLoaded', () => {{ if (document.getElementById('lcct')) lcf(); }});
+window.addEventListener('DOMContentLoaded', () => {{
+  if (document.getElementById('lcct')) lcf();
+  if (document.getElementById('roct')) rof();
+}});
+// ── RUST-ONLY table: filter + sort ──────────────────────────────────────
+function rof(){{
+  const q = document.getElementById('roq').value.toLowerCase();
+  let shown = 0;
+  document.querySelectorAll('#ro-tbody tr.ro-row').forEach(tr => {{
+    const ok = !q || tr.dataset.name.toLowerCase().includes(q);
+    tr.style.display = ok ? '' : 'none';
+    if (ok) shown++;
+  }});
+  const ct = document.getElementById('roct');
+  if (ct) ct.textContent = shown + ' / ' + document.querySelectorAll('#ro-tbody tr.ro-row').length + ' rows';
+}}
+let roSortKey = null, roSortDir = 1;
+function ros(key){{
+  if (roSortKey === key) roSortDir = -roSortDir;
+  else {{ roSortKey = key; roSortDir = 1; }}
+  const tbody = document.getElementById('ro-tbody');
+  const rows = Array.from(tbody.querySelectorAll('tr.ro-row'));
+  const num = ['rbody', 'rline'].includes(key);
+  rows.sort((a, b) => {{
+    let va, vb;
+    if (key === 'name')       {{ va = a.dataset.name;     vb = b.dataset.name; }}
+    else if (key === 'rbody') {{ va = +a.dataset.rbody;   vb = +b.dataset.rbody; }}
+    else if (key === 'rline') {{ va = +a.dataset.rline;   vb = +b.dataset.rline; }}
+    if (num) return (va - vb) * roSortDir;
+    return va.localeCompare(vb) * roSortDir;
+  }});
+  rows.forEach(r => tbody.appendChild(r));
+  document.querySelectorAll('table.ro-table thead th').forEach(th => {{
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.sort === key) {{
+      th.classList.add(roSortDir > 0 ? 'sort-asc' : 'sort-desc');
+    }}
+  }});
+}}
 </script>
 </body></html>
 """
