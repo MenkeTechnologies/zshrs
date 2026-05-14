@@ -545,7 +545,12 @@ def main() -> int:
     # bloated in Rust?" or "show me everything in glob.c sorted by C
     # body desc". Includes rust-only rows too (cfile = "(rust-only)").
     lc_rows: list[str] = []
-    for r in sorted(rows, key=lambda r: (r["cfile"], r["name"])):
+    # Sort key: real C files first (group 0), `(rust-only)` last (group 1),
+    # tiebreak alphabetical by C file then fn name.
+    def _lc_key(r: dict) -> tuple:
+        rust_only = 1 if r["cfile"] == "(rust-only)" else 0
+        return (rust_only, r["cfile"], r["name"])
+    for r in sorted(rows, key=_lc_key):
         c_first = r["c_locs"][0] if r["c_locs"] else ("", 0)
         rs_first = r["rust_locs"][0] if r["rust_locs"] else ("", 0)
         c_file_short = c_first[0].replace("src/zsh/Src/", "") if c_first[0] else ""
