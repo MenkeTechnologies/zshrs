@@ -881,7 +881,14 @@ def c_fn_body(c_path, name):
         if not l.strip(): continue
         if stripped.startswith('//'): continue
         if stripped.startswith('/*'): continue
-        if l.strip().startswith('*'): continue
+        # `*`-prefixed line is a block-comment continuation only when
+        # followed by a comment-context char (space, tab, newline, `/`,
+        # `*`); plain `*p=x` / `*(T*)y=z` pointer-deref lines are real
+        # code and must NOT be filtered.
+        if stripped.startswith('*'):
+            tail = stripped[1:2]
+            if tail in (' ', '\t', '\n', '/', '*', ''):
+                continue
         if stripped.startswith('#'): continue
         actual.append(l)
     return len(actual)

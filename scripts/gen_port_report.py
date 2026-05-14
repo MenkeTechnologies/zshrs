@@ -159,11 +159,23 @@ def _index_bodies(src: str, fn_re: re.Pattern, is_rust: bool) -> dict[str, int]:
             elif c == '}': depth -= 1
             pos += 1
         body_lines = src[body_start:max(pos - 1, body_start)].split('\n')
+        def _is_block_comment_cont(l: str) -> bool:
+            """A line is a block-comment continuation only when it
+            starts with `*` followed by a comment-context char
+            (space, tab, newline, `/`, another `*`). Avoids
+            misfiring on pointer-deref / assignment lines like
+            `*p = x;` or `*(char**)y = z;`."""
+            s = l.lstrip()
+            if not s.startswith('*'):
+                return False
+            if len(s) == 1:
+                return True
+            return s[1] in (' ', '\t', '\n', '/', '*')
         actual = [l for l in body_lines
                   if l.strip()
                   and not l.lstrip().startswith('//')
                   and not l.lstrip().startswith('/*')
-                  and not l.strip().startswith('*')
+                  and not _is_block_comment_cont(l)
                   and not l.lstrip().startswith('#')]
         # Same fn name may appear multiple times (e.g. `#[cfg(unix)]` vs
         # `#[cfg(not(unix))]` Rust variants, or `#if defined(...)` C
@@ -544,9 +556,12 @@ def main() -> int:
     # "which C fns have a big Rust body?" or "which short C fns are
     # bloated in Rust?" or "show me everything in glob.c sorted by C
     # body desc". Includes rust-only rows too (cfile = "(rust-only)").
-    # Two tables: lc_rows = C↔Rust pairs only, ro_rows = rust-only fns.
+    # Three tables: lc_rows = real C↔Rust pairs, ro_rows = rust-only fns,
+    # ex_rows = exec.c (tree-walker; replaced by fusevm bytecode, NOT a
+    # 1:1 port target — segregate so it doesn't drag the lc gradient).
     lc_rows: list[str] = []
     ro_rows: list[str] = []
+    ex_rows: list[str] = []
     for r in sorted(rows, key=lambda r: (r["cfile"], r["name"])):
         c_first = r["c_locs"][0] if r["c_locs"] else ("", 0)
         rs_first = r["rust_locs"][0] if r["rust_locs"] else ("", 0)
@@ -593,8 +608,14 @@ def main() -> int:
                 f'</tr>'
             )
             continue
-        lc_rows.append(
-            f'<tr class="lc-row" '
+        # exec.c rows go to their own table — the C tree-walker is
+        # replaced by fusevm bytecode, so per-fn ratios there are
+        # noise (a `walk_*` fn with 200 lines of C and no Rust hit
+        # is intentional, not a stub).
+        row_cls = "ex-row" if r["cfile"] == "exec.c" else "lc-row"
+        target_rows = ex_rows if r["cfile"] == "exec.c" else lc_rows
+        target_rows.append(
+            f'<tr class="{row_cls}" '
             f'style="{row_style}" '
             f'data-name="{html.escape(r["name"])}" '
             f'data-cfile="{html.escape(r["cfile"])}" '
@@ -793,9 +814,12 @@ Excluded from this report by design:
   /* Ratio-gradient rows: row tint is set inline via hsl(); keep the
      gradient visible on hover by overriding the generic .fn-table
      tr:hover background, and brighten the lightness instead. */
-  table.lc-table tbody tr.lc-row:hover {{ filter:brightness(1.4); }}
-  table.lc-table tbody tr.lc-row:hover td {{ background:transparent; }}
-  table.lc-table tbody tr.lc-row td {{ background:transparent; }}
+  table.lc-table tbody tr.lc-row:hover,
+  table.lc-table tbody tr.ex-row:hover {{ filter:brightness(1.4); }}
+  table.lc-table tbody tr.lc-row:hover td,
+  table.lc-table tbody tr.ex-row:hover td {{ background:transparent; }}
+  table.lc-table tbody tr.lc-row td,
+  table.lc-table tbody tr.ex-row td {{ background:transparent; }}
   /* RUST-ONLY table: same sortable headers as lc-table, no gradient. */
   table.ro-table th {{ cursor:pointer;user-select:none; }}
   table.ro-table th:hover {{ background:var(--bg-hover);color:#fff; }}
@@ -934,6 +958,34 @@ Excluded from this report by design:
       </tr></thead>
       <tbody id="lc-tbody">
 {chr(10).join(lc_rows)}
+      </tbody>
+    </table>
+
+    <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>EXEC.C (TREE-WALKER &mdash; SEGREGATED)</h2>
+    <p class="legend">
+      <code>exec.c</code> implements the C tree-walker interpreter
+      (<code>execlist</code>/<code>execpline</code>/<code>execcmd</code>
+      etc.). zshrs replaces the entire walker with <code>fusevm</code>
+      bytecode compilation, so per-fn ratios here are noise — a 200-line
+      <code>walk_*</code> with no Rust counterpart is intentional, not a
+      stub. Listed for visibility only.
+    </p>
+    <div class="filter-bar">
+      <label for="exq">filter:</label><input id="exq" placeholder="fn name…" oninput="exf()" size="22">
+      <span id="exct" class="legend" style="margin-left:auto;font-size:10px;"></span>
+    </div>
+    <table class="fn-table lc-table">
+      <thead><tr>
+        <th data-sort="name"   onclick="exs('name')">fn name</th>
+        <th data-sort="cline"  onclick="exs('cline')">C file:line</th>
+        <th data-sort="cbody"  onclick="exs('cbody')">C lines</th>
+        <th data-sort="rline"  onclick="exs('rline')">Rust file:line</th>
+        <th data-sort="rbody"  onclick="exs('rbody')">Rust lines</th>
+        <th data-sort="ratio"  onclick="exs('ratio')">ratio</th>
+        <th data-sort="status" onclick="exs('status')">status</th>
+      </tr></thead>
+      <tbody id="ex-tbody">
+{chr(10).join(ex_rows)}
       </tbody>
     </table>
 
@@ -1103,7 +1155,52 @@ function lcs(key){{
 window.addEventListener('DOMContentLoaded', () => {{
   if (document.getElementById('lcct')) lcf();
   if (document.getElementById('roct')) rof();
+  if (document.getElementById('exct')) exf();
 }});
+// ── EXEC.C (tree-walker, segregated) table: filter + sort ──────────────
+function exf(){{
+  const q = document.getElementById('exq').value.toLowerCase();
+  let shown = 0;
+  document.querySelectorAll('#ex-tbody tr.ex-row').forEach(tr => {{
+    const ok = !q || tr.dataset.name.toLowerCase().includes(q);
+    tr.style.display = ok ? '' : 'none';
+    if (ok) shown++;
+  }});
+  const ct = document.getElementById('exct');
+  if (ct) ct.textContent = shown + ' / ' + document.querySelectorAll('#ex-tbody tr.ex-row').length + ' rows';
+}}
+let exSortKey = null, exSortDir = 1;
+function exs(key){{
+  if (exSortKey === key) exSortDir = -exSortDir;
+  else {{ exSortKey = key; exSortDir = 1; }}
+  const tbody = document.getElementById('ex-tbody');
+  const rows = Array.from(tbody.querySelectorAll('tr.ex-row'));
+  const num = ['cbody','rbody','cline','rline','ratio'].includes(key);
+  rows.sort((a, b) => {{
+    let va, vb;
+    if (key === 'name')        {{ va = a.dataset.name;     vb = b.dataset.name; }}
+    else if (key === 'status') {{ va = a.dataset.status;   vb = b.dataset.status; }}
+    else if (key === 'cbody')  {{ va = +a.dataset.cbody;   vb = +b.dataset.cbody; }}
+    else if (key === 'rbody')  {{ va = +a.dataset.rbody;   vb = +b.dataset.rbody; }}
+    else if (key === 'cline')  {{ va = +a.dataset.cline;   vb = +b.dataset.cline; }}
+    else if (key === 'rline')  {{ va = +a.dataset.rline;   vb = +b.dataset.rline; }}
+    else if (key === 'ratio')  {{ va = +a.dataset.ratio;   vb = +b.dataset.ratio; }}
+    if (num) return (va - vb) * exSortDir;
+    return va.localeCompare(vb) * exSortDir;
+  }});
+  rows.forEach(r => tbody.appendChild(r));
+  // The exec.c table reuses .lc-table class but tags headers by data-sort;
+  // pick the right one via closest tbody match.
+  const tableHead = tbody.parentElement.querySelector('thead');
+  if (tableHead) {{
+    tableHead.querySelectorAll('th').forEach(th => {{
+      th.classList.remove('sort-asc', 'sort-desc');
+      if (th.dataset.sort === key) {{
+        th.classList.add(exSortDir > 0 ? 'sort-asc' : 'sort-desc');
+      }}
+    }});
+  }}
+}}
 // ── RUST-ONLY table: filter + sort ──────────────────────────────────────
 function rof(){{
   const q = document.getElementById('roq').value.toLowerCase();
