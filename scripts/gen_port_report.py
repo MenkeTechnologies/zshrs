@@ -77,6 +77,135 @@ def walk_c() -> dict[str, list[tuple[str,int]]]:
             idx[name].append((rel, i))
     return idx
 
+# ── Body-length helpers (count source lines between { and } for a fn) ────────
+# Cache `(rel_path, body_idx)` per file so the same source is parsed once even
+# when many fns reference it.
+_body_cache_c: dict[str, dict[str, int]] = {}
+_body_cache_rs: dict[str, dict[str, int]] = {}
+
+def _skip_lex(src: str, pos: int) -> int:
+    """Skip past one string/char literal or line/block comment starting at pos.
+    Returns new pos (unchanged if pos isn't a lex boundary)."""
+    if pos >= len(src):
+        return pos
+    c = src[pos]
+    if c == '/' and pos + 1 < len(src):
+        if src[pos+1] == '/':
+            nl = src.find('\n', pos + 2)
+            return nl + 1 if nl != -1 else len(src)
+        if src[pos+1] == '*':
+            end = src.find('*/', pos + 2)
+            return end + 2 if end != -1 else len(src)
+    if c == '"':
+        pos += 1
+        while pos < len(src):
+            if src[pos] == '\\': pos += 2; continue
+            if src[pos] == '"': return pos + 1
+            pos += 1
+        return pos
+    if c == "'":
+        pos += 1
+        while pos < len(src):
+            if src[pos] == '\\': pos += 2; continue
+            if src[pos] == "'": return pos + 1
+            pos += 1
+        return pos
+    return pos
+
+def _index_bodies(src: str, fn_re: re.Pattern, is_rust: bool) -> dict[str, int]:
+    """Return name -> body line count for every top-level fn defined in src.
+    Body line count = source lines between (and excluding) the matching
+    `{` and `}` braces, with blank/comment-only lines stripped."""
+    bodies: dict[str, int] = {}
+    for m in fn_re.finditer(src):
+        name = m.group(1)
+        # Locate the `(` after the name.
+        paren = src.find('(', m.end() - 1)
+        if paren == -1:
+            continue
+        # Skip balanced parens for the arg list.
+        pos = paren + 1
+        depth = 1
+        while pos < len(src) and depth > 0:
+            new_pos = _skip_lex(src, pos)
+            if new_pos != pos:
+                pos = new_pos
+                continue
+            c = src[pos]
+            if c == '(': depth += 1
+            elif c == ')': depth -= 1
+            pos += 1
+        # Skip return type / where-clause / attrs until `{` or `;`.
+        while pos < len(src) and src[pos] != '{' and src[pos] != ';':
+            new_pos = _skip_lex(src, pos)
+            if new_pos != pos:
+                pos = new_pos
+                continue
+            pos += 1
+        if pos >= len(src) or src[pos] == ';':
+            bodies[name] = 0
+            continue
+        # Walk to matching close brace.
+        body_start = pos + 1
+        depth = 1
+        pos = body_start
+        while pos < len(src) and depth > 0:
+            new_pos = _skip_lex(src, pos)
+            if new_pos != pos:
+                pos = new_pos
+                continue
+            c = src[pos]
+            if c == '{': depth += 1
+            elif c == '}': depth -= 1
+            pos += 1
+        body_lines = src[body_start:max(pos - 1, body_start)].split('\n')
+        actual = [l for l in body_lines
+                  if l.strip()
+                  and not l.lstrip().startswith('//')
+                  and not l.lstrip().startswith('/*')
+                  and not l.strip().startswith('*')
+                  and not l.lstrip().startswith('#')]
+        # Same fn name may appear multiple times (e.g. `#[cfg(unix)]` vs
+        # `#[cfg(not(unix))]` Rust variants, or `#if defined(...)` C
+        # variants) — keep the largest body so a 1-line platform shim
+        # doesn't shadow a 100-line real impl.
+        bodies[name] = max(bodies.get(name, 0), len(actual))
+    return bodies
+
+def c_body_lines(rel_path: str, name: str) -> int:
+    """Return body line count for C fn `name` in file `rel_path`."""
+    if rel_path not in _body_cache_c:
+        full = ROOT / rel_path
+        try:
+            src = full.read_text(errors="replace")
+        except Exception:
+            _body_cache_c[rel_path] = {}
+            return 0
+        _body_cache_c[rel_path] = _index_bodies(src, RE_C_FN_DEF, is_rust=False)
+    return _body_cache_c[rel_path].get(name, 0)
+
+def rs_body_lines(rel_path: str, name: str) -> int:
+    """Return body line count for Rust fn `name` in file `rel_path`."""
+    if rel_path not in _body_cache_rs:
+        full = ROOT / rel_path
+        try:
+            src = full.read_text(errors="replace")
+        except Exception:
+            _body_cache_rs[rel_path] = {}
+            return 0
+        _body_cache_rs[rel_path] = _index_bodies(src, RE_RS_FN_DEF, is_rust=True)
+    return _body_cache_rs[rel_path].get(name, 0)
+
+# Body-indexer needs a regex that finds fn definitions with their NAME group
+# at position 1. RE_C_FN above matches the line-prefix variant; the body
+# indexer wants any-position matches, so use a slightly different anchor.
+RE_C_FN_DEF = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\(", re.MULTILINE)
+RE_RS_FN_DEF = re.compile(
+    r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?"
+    r"(?:extern\s+\"[^\"]+\"\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+    re.MULTILINE,
+)
+
 # ── Rust function & port-comment index ───────────────────────────────────────
 RE_RS_FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+\"[^\"]+\"\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b")
 RE_PORT_COMMENT = re.compile(
@@ -208,10 +337,14 @@ def main() -> int:
         else:
             placement = "—"
             status = "unported"
+        # Body line counts: pick the primary (first) C and Rust hit.
+        c_body = c_body_lines(c_locs[0][0], name) if c_locs else 0
+        rs_body = rs_body_lines(rust_locs[0][0], name) if rust_locs else 0
         rows.append({
             "status": status, "placement": placement, "cfile": cf_short,
             "name": name,
             "c_locs": c_locs, "rust_locs": rust_locs,
+            "c_body": c_body, "rust_body": rs_body,
             "rust_pointer_files": sorted(port_mentions.get(name, set()) - {p for p,_ in rust_locs}),
             "expected": expected,
         })
@@ -223,9 +356,11 @@ def main() -> int:
         if name in generic:
             continue
         rust_locs = sorted(rs_defs[name])
+        rs_body = rs_body_lines(rust_locs[0][0], name) if rust_locs else 0
         rows.append({
             "status": "rust-only", "placement": "—", "cfile": "(rust-only)",
             "name": name, "c_locs": [], "rust_locs": rust_locs,
+            "c_body": 0, "rust_body": rs_body,
             "rust_pointer_files": [], "expected": [],
         })
 
@@ -404,6 +539,54 @@ def main() -> int:
     if last_cf is not None:
         body_rows.append(f'<!-- END-GROUP cfile={last_cf} -->')
 
+    # ── Per-fn line-count table (filterable + sortable) ───────────────────
+    # Flat row per (C-fn, primary Rust hit) pair. Lets you grep
+    # "which C fns have a big Rust body?" or "which short C fns are
+    # bloated in Rust?" or "show me everything in glob.c sorted by C
+    # body desc". Includes rust-only rows too (cfile = "(rust-only)").
+    lc_rows: list[str] = []
+    for r in sorted(rows, key=lambda r: (r["cfile"], r["name"])):
+        c_first = r["c_locs"][0] if r["c_locs"] else ("", 0)
+        rs_first = r["rust_locs"][0] if r["rust_locs"] else ("", 0)
+        c_file_short = c_first[0].replace("src/zsh/Src/", "") if c_first[0] else ""
+        c_line = c_first[1]
+        rs_file = rs_first[0]
+        rs_line = rs_first[1]
+        c_body = r.get("c_body", 0)
+        r_body = r.get("rust_body", 0)
+        # Ratio (Rust/C) as integer pct; 0/0 → blank.
+        if c_body > 0:
+            ratio = round(r_body / c_body * 100)
+        else:
+            ratio = ""
+        c_cell = (
+            f'<a href="../{html.escape(c_first[0])}#L{c_line}">'
+            f'{html.escape(c_file_short)}:{c_line}</a>'
+            if c_first[0] else '<span class="expected">—</span>'
+        )
+        rs_cell = (
+            f'<a href="../{html.escape(rs_file)}#L{rs_line}">'
+            f'{html.escape(rs_file)}:{rs_line}</a>'
+            if rs_file else '<span class="expected">—</span>'
+        )
+        lc_rows.append(
+            f'<tr class="lc-row" '
+            f'data-name="{html.escape(r["name"])}" '
+            f'data-cfile="{html.escape(r["cfile"])}" '
+            f'data-status="{r["status"]}" '
+            f'data-cbody="{c_body}" data-rbody="{r_body}" '
+            f'data-cline="{c_line}" data-rline="{rs_line}" '
+            f'data-ratio="{ratio if ratio != "" else -1}">'
+            f'<td><b>{html.escape(r["name"])}</b></td>'
+            f'<td>{c_cell}</td>'
+            f'<td class="num">{c_body or ""}</td>'
+            f'<td>{rs_cell}</td>'
+            f'<td class="num">{r_body or ""}</td>'
+            f'<td class="num">{(str(ratio) + "%") if ratio != "" else ""}</td>'
+            f'<td class="status">{r["status"]}</td>'
+            f'</tr>'
+        )
+
     # ── Bot-friendly JSON dataset + schema comment ────────────────────────
     schema_doc = """\
 <!--PORT-REPORT-SCHEMA
@@ -501,6 +684,8 @@ Excluded from this report by design:
                 "cfile": r["cfile"],
                 "c_locs": r["c_locs"],
                 "rust_locs": r["rust_locs"],
+                "c_body": r.get("c_body", 0),
+                "rust_body": r.get("rust_body", 0),
                 "rust_pointer_files": list(r["rust_pointer_files"]),
                 "expected": list(r["expected"]),
             }
@@ -593,6 +778,11 @@ Excluded from this report by design:
   .expected {{ color:#8b949e;font-style:italic;font-size:10.5px; }}
   .missing  {{ color:#ff6b6b;font-size:10px;letter-spacing:0.6px; }}
 
+  table.fn-table td.num {{ text-align:right;font-family:'Share Tech Mono',monospace; }}
+  table.lc-table th {{ cursor:pointer;user-select:none; }}
+  table.lc-table th:hover {{ background:var(--bg-hover);color:#fff; }}
+  table.lc-table th.sort-asc::after {{ content:" ▲";color:var(--cyan);font-size:9px; }}
+  table.lc-table th.sort-desc::after {{ content:" ▼";color:var(--cyan);font-size:9px; }}
   table.file-map td.num {{ text-align:right;font-family:'Share Tech Mono',monospace; }}
   table.file-map td.ported-num   {{ color:var(--green); }}
   table.file-map td.unported-num {{ color:#ff6b6b; }}
@@ -688,6 +878,47 @@ Excluded from this report by design:
       </tbody>
     </table>
 
+    <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>LINE COUNTS &mdash; PER FN</h2>
+    <p class="legend">
+      Every C function in <code>src/zsh/Src/**/*.c</code> with its primary
+      Rust counterpart. Line counts are non-blank/non-comment body lines
+      between the matching <code>&#123;</code>/<code>&#125;</code>.
+      Click any column header to sort &middot; filter by name / file /
+      status. Ratio = Rust body / C body, useful for spotting unported
+      bodies (low %) or Rust-idiom replacements (low % with a marker
+      comment).
+    </p>
+    <div class="filter-bar">
+      <label for="lcq">filter:</label><input id="lcq" placeholder="fn name or C file…" oninput="lcf()" size="28">
+      <label for="lcst">status:</label>
+      <select id="lcst" onchange="lcf()">
+        <option value="">all</option><option>ported</option><option>unported</option><option>rust-only</option>
+      </select>
+      <label for="lcrat">ratio:</label>
+      <select id="lcrat" onchange="lcf()">
+        <option value="">all</option>
+        <option value="lt10">&lt;10%</option>
+        <option value="lt30">&lt;30%</option>
+        <option value="ge100">≥100%</option>
+        <option value="empty">no rust</option>
+      </select>
+      <span id="lcct" class="legend" style="margin-left:auto;font-size:10px;"></span>
+    </div>
+    <table class="fn-table lc-table">
+      <thead><tr>
+        <th data-sort="name"      onclick="lcs('name')">fn name</th>
+        <th data-sort="cline"     onclick="lcs('cline')">C file:line</th>
+        <th data-sort="cbody"     onclick="lcs('cbody')">C lines</th>
+        <th data-sort="rline"     onclick="lcs('rline')">Rust file:line</th>
+        <th data-sort="rbody"     onclick="lcs('rbody')">Rust lines</th>
+        <th data-sort="ratio"     onclick="lcs('ratio')">ratio</th>
+        <th data-sort="status"    onclick="lcs('status')">status</th>
+      </tr></thead>
+      <tbody id="lc-tbody">
+{chr(10).join(lc_rows)}
+      </tbody>
+    </table>
+
     <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>SYMBOLS</h2>
     <div class="filter-bar">
       <label for="q">filter:</label><input id="q" placeholder="name…" oninput="f()" size="22">
@@ -779,6 +1010,58 @@ function ff(){{
     tr.style.display = (mq && mcv) ? '' : 'none';
   }});
 }}
+// ── LINE COUNTS table: filter + sort ─────────────────────────────────────
+function lcf(){{
+  const q  = document.getElementById('lcq').value.toLowerCase();
+  const st = document.getElementById('lcst').value;
+  const rt = document.getElementById('lcrat').value;
+  let shown = 0;
+  document.querySelectorAll('#lc-tbody tr.lc-row').forEach(tr => {{
+    const mq  = !q || tr.dataset.name.toLowerCase().includes(q)
+                   || tr.dataset.cfile.toLowerCase().includes(q);
+    const ms  = !st || tr.dataset.status === st;
+    const ratio = parseInt(tr.dataset.ratio, 10);
+    let mr = true;
+    if (rt === 'lt10')   mr = ratio >= 0 && ratio < 10;
+    else if (rt === 'lt30')  mr = ratio >= 0 && ratio < 30;
+    else if (rt === 'ge100') mr = ratio >= 100;
+    else if (rt === 'empty') mr = ratio < 0;
+    const ok = mq && ms && mr;
+    tr.style.display = ok ? '' : 'none';
+    if (ok) shown++;
+  }});
+  const ct = document.getElementById('lcct');
+  if (ct) ct.textContent = shown + ' / ' + document.querySelectorAll('#lc-tbody tr.lc-row').length + ' rows';
+}}
+let lcSortKey = null, lcSortDir = 1;
+function lcs(key){{
+  if (lcSortKey === key) lcSortDir = -lcSortDir;
+  else {{ lcSortKey = key; lcSortDir = 1; }}
+  const tbody = document.getElementById('lc-tbody');
+  const rows = Array.from(tbody.querySelectorAll('tr.lc-row'));
+  const num = ['cbody','rbody','cline','rline','ratio'].includes(key);
+  rows.sort((a, b) => {{
+    let va, vb;
+    if (key === 'name')   {{ va = a.dataset.name;   vb = b.dataset.name; }}
+    else if (key === 'status') {{ va = a.dataset.status; vb = b.dataset.status; }}
+    else if (key === 'cbody')  {{ va = +a.dataset.cbody; vb = +b.dataset.cbody; }}
+    else if (key === 'rbody')  {{ va = +a.dataset.rbody; vb = +b.dataset.rbody; }}
+    else if (key === 'cline')  {{ va = +a.dataset.cline; vb = +b.dataset.cline; }}
+    else if (key === 'rline')  {{ va = +a.dataset.rline; vb = +b.dataset.rline; }}
+    else if (key === 'ratio')  {{ va = +a.dataset.ratio; vb = +b.dataset.ratio; }}
+    if (num) return (va - vb) * lcSortDir;
+    return va.localeCompare(vb) * lcSortDir;
+  }});
+  rows.forEach(r => tbody.appendChild(r));
+  document.querySelectorAll('table.lc-table thead th').forEach(th => {{
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.sort === key) {{
+      th.classList.add(lcSortDir > 0 ? 'sort-asc' : 'sort-desc');
+    }}
+  }});
+}}
+// Initialise the row counter on load.
+window.addEventListener('DOMContentLoaded', () => {{ if (document.getElementById('lcct')) lcf(); }});
 </script>
 </body></html>
 """
