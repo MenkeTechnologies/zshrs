@@ -367,18 +367,29 @@ def main() -> int:
         rust_files |= port_mentions.get(name, set())
         expected = expected_for_row
 
+        # Body line counts: pick the primary (first) C and Rust hit.
+        c_body = c_body_lines(c_locs[0][0], name) if c_locs else 0
+        rs_body = rs_body_lines(rust_locs[0][0], name) if rust_locs else 0
         if rust_files:
             if any(f in expected for f in rust_files):
                 placement = "correct" if rust_files <= set(expected) else "split"
             else:
                 placement = "misplaced" if expected else "unmapped"
-            status = "ported"
+            # Status reflects implementation reality, not just name match:
+            #   ported  = real Rust fn defined with a real body
+            #   stub    = Rust fn defined, but body is empty / comment-
+            #             only while the C source has a real body
+            #   missing = only doc-comment mentions ("Port of foo()")
+            #             with no actual Rust fn definition
+            if not rust_locs:
+                status = "missing"
+            elif c_body > 0 and rs_body == 0:
+                status = "stub"
+            else:
+                status = "ported"
         else:
             placement = "—"
             status = "unported"
-        # Body line counts: pick the primary (first) C and Rust hit.
-        c_body = c_body_lines(c_locs[0][0], name) if c_locs else 0
-        rs_body = rs_body_lines(rust_locs[0][0], name) if rust_locs else 0
         rows.append({
             "status": status, "placement": placement, "cfile": cf_short,
             "name": name,
@@ -406,13 +417,15 @@ def main() -> int:
     # Stats
     total = len(rows)
     n_ported    = sum(1 for r in rows if r["status"]=="ported")
+    n_stub      = sum(1 for r in rows if r["status"]=="stub")
+    n_missing   = sum(1 for r in rows if r["status"]=="missing")
     n_unported  = sum(1 for r in rows if r["status"]=="unported")
     n_rustonly  = sum(1 for r in rows if r["status"]=="rust-only")
     n_correct   = sum(1 for r in rows if r["placement"]=="correct")
     n_split     = sum(1 for r in rows if r["placement"]=="split")
     n_misplaced = sum(1 for r in rows if r["placement"]=="misplaced")
     n_unmapped  = sum(1 for r in rows if r["placement"]=="unmapped")
-    print(f"  rows: {total} (ported={n_ported}, unported={n_unported}, rust-only={n_rustonly})", file=sys.stderr)
+    print(f"  rows: {total} (ported={n_ported}, stub={n_stub}, missing={n_missing}, unported={n_unported}, rust-only={n_rustonly})", file=sys.stderr)
     print(f"  placement: correct={n_correct}, split={n_split}, misplaced={n_misplaced}, unmapped={n_unmapped}", file=sys.stderr)
 
     cfiles = sorted({r["cfile"] for r in rows})
@@ -715,6 +728,8 @@ Excluded from this report by design:
         "stats": {
             "total": total,
             "ported": n_ported,
+            "stub": n_stub,
+            "missing": n_missing,
             "unported": n_unported,
             "rust_only": n_rustonly,
             "correct": n_correct,
@@ -830,6 +845,8 @@ Excluded from this report by design:
   }}
 
   tr.st-ported    td.status {{ color:var(--green);font-weight:700; }}
+  tr.st-stub      td.status {{ color:#ff8c66;font-weight:700; }}
+  tr.st-missing   td.status {{ color:#d300c5;font-weight:700; }}
   tr.st-unported  td.status {{ color:#ff6b6b;font-weight:700; }}
   tr.st-rust-only td.status {{ color:#ffb800;font-weight:700; }}
   tr.pl-correct   td.placement {{ color:var(--green); }}
@@ -909,6 +926,8 @@ Excluded from this report by design:
     <div class="stat-grid">
       <div class="stat-card"><div class="stat-val">{total:,}</div><div class="stat-label">Total Symbols</div></div>
       <div class="stat-card"><div class="stat-val green">{n_ported:,}</div><div class="stat-label">Ported</div></div>
+      <div class="stat-card"><div class="stat-val" style="color:#ff8c66;text-shadow:0 0 14px rgba(255,140,102,.35);">{n_stub:,}</div><div class="stat-label">Stub (Rust empty)</div></div>
+      <div class="stat-card"><div class="stat-val magenta">{n_missing:,}</div><div class="stat-label">Missing (cite only)</div></div>
       <div class="stat-card"><div class="stat-val red">{n_unported:,}</div><div class="stat-label">Unported (C-only)</div></div>
       <div class="stat-card"><div class="stat-val yellow">{n_rustonly:,}</div><div class="stat-label">Rust-only</div></div>
       <div class="stat-card"><div class="stat-val green">{n_correct:,}</div><div class="stat-label">Placement: Correct</div></div>
@@ -918,8 +937,10 @@ Excluded from this report by design:
     </div>
 
     <p class="legend">
-      <b>STATUS</b> <span style="color:var(--green)">ported</span> = C symbol has matching Rust fn or doc-comment pointer &middot;
-      <span style="color:#ff6b6b">unported</span> = C symbol with no Rust counterpart &middot;
+      <b>STATUS</b> <span style="color:var(--green)">ported</span> = real Rust fn defined with a real body &middot;
+      <span style="color:#ff8c66">stub</span> = Rust fn defined but body is empty / comment-only while C has a real body &middot;
+      <span style="color:#d300c5">missing</span> = only doc-comment "Port of foo()" mention; no Rust fn defined &middot;
+      <span style="color:#ff6b6b">unported</span> = C symbol with no Rust references at all &middot;
       <span style="color:#ffb800">rust-only</span> = Rust fn with no matching C symbol.<br>
       <b>PLACEMENT</b> <span style="color:var(--green)">correct</span> = lives only in expected file(s) &middot;
       <span style="color:#ffb800">split</span> = lives in expected file plus extras &middot;
@@ -968,7 +989,7 @@ Excluded from this report by design:
       <label for="lcq">filter:</label><input id="lcq" placeholder="fn name or C file…" oninput="lcf()" size="28">
       <label for="lcst">status:</label>
       <select id="lcst" onchange="lcf()">
-        <option value="">all</option><option>ported</option><option>unported</option>
+        <option value="">all</option><option>ported</option><option>stub</option><option>missing</option><option>unported</option>
       </select>
       <label for="lcrat">ratio:</label>
       <select id="lcrat" onchange="lcf()">
@@ -1049,7 +1070,7 @@ Excluded from this report by design:
       <label for="q">filter:</label><input id="q" placeholder="name…" oninput="f()" size="22">
       <label for="st">status:</label>
       <select id="st" onchange="f()">
-        <option value="">all</option><option>ported</option><option>unported</option><option>rust-only</option>
+        <option value="">all</option><option>ported</option><option>stub</option><option>missing</option><option>unported</option><option>rust-only</option>
       </select>
       <label for="pl">placement:</label>
       <select id="pl" onchange="f()">
