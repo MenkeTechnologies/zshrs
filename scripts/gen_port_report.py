@@ -376,14 +376,21 @@ def main() -> int:
             else:
                 placement = "misplaced" if expected else "unmapped"
             # Status reflects implementation reality, not just name match:
-            #   ported  = real Rust fn defined with a real body
-            #   stub    = Rust fn defined, but body is empty / comment-
-            #             only while the C source has a real body
+            #   ported  = real Rust fn whose body is at least 30% of the
+            #             C body (or C has no body — name-parity port).
+            #   stub    = Rust fn defined but body is empty / comment-
+            #             only, OR Rust body < 30% of C body (faithful
+            #             ports should not be that small). 30% is the
+            #             same threshold gen_port_stubs.py flags as a
+            #             stub.
             #   missing = only doc-comment mentions ("Port of foo()")
             #             with no actual Rust fn definition
+            STUB_RATIO_THRESHOLD = 30  # percent
             if not rust_locs:
                 status = "missing"
             elif c_body > 0 and rs_body == 0:
+                status = "stub"
+            elif c_body > 0 and (rs_body * 100 / c_body) < STUB_RATIO_THRESHOLD:
                 status = "stub"
             else:
                 status = "ported"
