@@ -7196,8 +7196,15 @@ pub fn bld_eprog(heap: bool) -> crate::ported::zsh_h::eprog {
     let ecnpats = ECNPATS.with(|c| c.get()) as usize;
     let ecsoffs = ECSOFFS.with(|c| c.get()) as usize;
 
-    let prog_bytes = ecused * 4; // c:559
-    let len = (ecnpats * 4) + prog_bytes + ecsoffs;
+    // c:557-559 — `ret->len = ((ecnpats * sizeof(Patprog)) +
+    //                            (ecused * sizeof(wordcode)) +
+    //                            ecsoffs);`
+    // sizeof(Patprog) = sizeof(struct patprog *) = pointer size.
+    // On 64-bit targets that's 8, on 32-bit that's 4. C's eprog
+    // ->len is the canonical value for parity tests, so we use
+    // the same arithmetic.
+    let prog_bytes = ecused * 4; // sizeof(wordcode) = 4
+    let len = (ecnpats * std::mem::size_of::<*const u8>()) + prog_bytes + ecsoffs;
 
     // Snapshot the wordcode buffer + string table.
     let prog_words: Vec<u32> = ECBUF.with(|c| c.borrow()[..ecused].to_vec());
