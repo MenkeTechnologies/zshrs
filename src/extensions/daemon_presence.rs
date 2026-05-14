@@ -44,6 +44,11 @@
 //! # "on"             = always skip dotfiles when the daemon is up;
 //! #                    don't even check for zshrs rows. Strict mode.
 //! skip_configs = "off"
+//!
+//! # Optional: zsh script sourced once after dotfiles / canonical_apply,
+//! # before compsys + first prompt (omit key for default: none).
+//! # Respects `-f` / `--no-rcs` (not sourced).
+//! # startup_config = "/path/to/init.zsh"
 //! ```
 //!
 //! Lives in `~/.zshrs/` alongside everything else (rkyv shards,
@@ -52,7 +57,9 @@
 //! (this is NOT cache-semantic state). `rm -rf ~/.zshrs/` is the
 //! one-verb total reset.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Mutex;
 
 /// Daemon-presence probe result.
 /// zshrs-original — no C counterpart.
@@ -139,21 +146,42 @@ impl SkipConfigs {
     }
 }
 
-/// Both knobs from `~/.zshrs/zshrs.toml`. Missing file / section
+/// Knobs from `~/.zshrs/zshrs.toml`. Missing file / section
 /// / key returns the safe defaults (`daemon=auto`,
-/// `skip_configs=off`). Unrecognized values fall back with a log
-/// warning.
+/// `skip_configs=off`, no `startup_config`). Unrecognized values
+/// fall back with a log warning.
 /// zshrs-original — no C counterpart.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub daemon: ConfigSetting,
     pub skip_configs: SkipConfigs,
+    /// Absolute or `~`-prefixed path to a zsh script sourced after
+    /// normal startup when set. `None` if the key is absent or empty.
+    pub startup_config: Option<PathBuf>,
+}
+
+/// Resolved `[shell].startup_config` from the last `probe()` (same
+/// process). `None` when unset, omitted, or probe has not run.
+static STARTUP_CONFIG_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+fn resolve_startup_config_path(raw: &str) -> PathBuf {
+    let s = raw.trim();
+    if let Some(rest) = s.strip_prefix("~/") {
+        return dirs::home_dir()
+            .map(|h| h.join(rest))
+            .unwrap_or_else(|| PathBuf::from(s));
+    }
+    if s == "~" {
+        return dirs::home_dir().unwrap_or_else(|| PathBuf::from(s));
+    }
+    PathBuf::from(s)
 }
 
 pub fn read_config_full() -> Config {
     let defaults = Config {
         daemon: ConfigSetting::Auto,
         skip_configs: SkipConfigs::Off,
+        startup_config: None,
     };
     let path = match config_file_path() {
         Some(p) => p,
@@ -194,10 +222,36 @@ pub fn read_config_full() -> Config {
             })
         })
         .unwrap_or(SkipConfigs::Off);
+    let startup_config = parsed
+        .get("shell")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("startup_config"))
+        .and_then(|v| {
+            if let Some(s) = v.as_str() {
+                let t = s.trim();
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(resolve_startup_config_path(t))
+                }
+            } else {
+                tracing::warn!(
+                    "zshrs.toml: [shell].startup_config must be a string; ignoring"
+                );
+                None
+            }
+        });
     Config {
         daemon,
         skip_configs,
+        startup_config,
     }
+}
+
+/// Path from `[shell].startup_config` captured during `probe()`.
+#[inline]
+pub fn startup_config_path() -> Option<PathBuf> {
+    STARTUP_CONFIG_PATH.lock().ok().and_then(|g| g.clone())
 }
 
 /// Back-compat wrapper kept for callers that only need the daemon knob.
@@ -250,7 +304,7 @@ static SHOULD_SKIP_CONFIGS: AtomicU8 = AtomicU8::new(0);
 /// Single-directory rule: every zshrs file lives under one root.
 /// Returns None if neither $ZSHRS_HOME nor $HOME is set, which is
 /// rare enough to treat as "no config file".
-fn config_file_path() -> Option<std::path::PathBuf> {
+pub fn config_file_path() -> Option<std::path::PathBuf> {
     let root = if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
         std::path::PathBuf::from(custom)
     } else {
@@ -273,6 +327,9 @@ fn config_file_path() -> Option<std::path::PathBuf> {
 /// daemon but didn't actually start one.
 pub fn probe() -> Mode {
     let cfg = read_config_full();
+    if let Ok(mut slot) = STARTUP_CONFIG_PATH.lock() {
+        *slot = cfg.startup_config.clone();
+    }
     SKIP_CONFIGS.store(cfg.skip_configs as u8, Ordering::Relaxed);
 
     match cfg.daemon {
@@ -426,6 +483,7 @@ pub fn is_present() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn config_setting_parses_common_aliases() {
@@ -446,5 +504,46 @@ mod tests {
         for m in [Mode::Unknown, Mode::Present, Mode::Absent, Mode::Disabled] {
             assert_eq!(Mode::from_u8(m as u8), m);
         }
+    }
+
+    #[test]
+    fn resolve_startup_config_path_absolute_trims() {
+        assert_eq!(
+            super::resolve_startup_config_path("  /tmp/x.zsh  "),
+            PathBuf::from("/tmp/x.zsh")
+        );
+    }
+
+    #[test]
+    fn resolve_startup_config_path_tilde() {
+        let home = dirs::home_dir().expect("HOME");
+        assert_eq!(
+            super::resolve_startup_config_path("~/init.zsh"),
+            home.join("init.zsh")
+        );
+    }
+
+    #[test]
+    fn read_config_full_startup_config_from_zshrs_home() {
+        use std::sync::Mutex;
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        let _lock = ENV_LOCK.lock().expect("env test lock");
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("zshrs.toml"),
+            "[shell]\nstartup_config = \"/tmp/zshrs-startup-test.zsh\"\n",
+        )
+        .expect("write zshrs.toml");
+        unsafe {
+            std::env::set_var("ZSHRS_HOME", dir.path());
+        }
+        let cfg = read_config_full();
+        unsafe {
+            std::env::remove_var("ZSHRS_HOME");
+        }
+        assert_eq!(
+            cfg.startup_config,
+            Some(PathBuf::from("/tmp/zshrs-startup-test.zsh"))
+        );
     }
 }

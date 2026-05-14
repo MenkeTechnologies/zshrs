@@ -924,6 +924,8 @@ pub fn zshrs_main() {
             let _applied = zsh::canonical_apply::apply_all(&mut executor);
         }
 
+        maybe_source_zshrs_startup_config(&mut executor, no_rcs_flag);
+
         // Long-cmd-started watchdog (-c path mirrors the interactive loop).
         #[cfg(feature = "daemon")]
         let completed_c = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1629,6 +1631,34 @@ fn source_startup_files(
     }
 }
 
+/// `[shell].startup_config` from `zshrs.toml` — sourced once after
+/// dotfiles or `canonical_apply`, unless `-f` / `--no-rcs`.
+/// Interactive: runs before compsys PATH indexing, reedline setup, and
+/// the `read_line` prompt loop.
+fn maybe_source_zshrs_startup_config(executor: &mut ShellExecutor, no_rcs: bool) {
+    if no_rcs {
+        return;
+    }
+    let Some(path) = zsh::daemon_presence::startup_config_path() else {
+        return;
+    };
+    if !path.is_file() {
+        tracing::warn!(
+            path = %path.display(),
+            "zshrs.toml [shell].startup_config: not a regular file"
+        );
+        return;
+    }
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        tracing::warn!(
+            path = %path.display(),
+            "zshrs.toml [shell].startup_config: read failed"
+        );
+        return;
+    };
+    source_from_memory(executor, path.as_path(), &contents);
+}
+
 /// Execute a startup file from pre-read memory contents.
 /// Mirrors source_file() logic but skips the fs::read_to_string.
 fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str) {
@@ -1823,6 +1853,79 @@ fn run_interactive() {
     })
     .expect("Error setting Ctrl-C handler");
 
+    // Executor + RC chain + `[shell].startup_config` run before compsys
+    // PATH indexing, reedline, and the read_line prompt loop so env
+    // from init scripts is visible to completion DB and the first prompt.
+    let mut executor = ShellExecutor::new();
+    executor.zsh_compat = is_zsh_mode();
+    executor.bash_compat = is_bash_mode();
+    if is_posix_mode() {
+        executor.enter_posix_mode();
+    }
+    if is_ksh_mode() {
+        executor.enter_ksh_mode();
+    }
+
+    // Determine shell type from invocation per zshall(1)
+    let args: Vec<String> = std::env::args().collect();
+
+    // -f: don't source startup files (except /etc/zshenv which is ALWAYS read)
+    let no_rcs = args.iter().any(|a| a == "-f" || a == "--no-rcs");
+
+    // -x / --xtrace: print each command before executing. zsh's
+    // `setopt XTRACE` is wired identically across `-c`, script-file,
+    // and interactive modes; the previous interactive-only branch
+    // skipped this flag so `zshrs -x` (no -c, no script) silently
+    // ran without xtrace. Mirror what apply_cli_flags does in the
+    // other modes — set the option BEFORE source_startup_files so
+    // every line of `.zshenv` / `.zshrc` is also traced, matching
+    // `zsh -x` (which sets XTRACE before init scripts run).
+    if args.iter().any(|a| a == "-x" || a == "--xtrace") {
+        zsh::ported::options::opt_state_set("xtrace", true);
+    }
+    if args.iter().any(|a| a == "-v" || a == "--verbose") {
+        zsh::ported::options::opt_state_set("verbose", true);
+    }
+
+    // Login shell detection:
+    // - explicit -l or --login flag
+    // - invoked as -zshrs (name starts with -)
+    // - $SHELL ends with zshrs (login shell)
+    let is_login = args.iter().any(|a| a == "-l" || a == "--login")
+        || args.first().map(|a| a.starts_with('-')).unwrap_or(false)
+        || std::env::var("SHELL")
+            .map(|s| s.ends_with("zshrs"))
+            .unwrap_or(false);
+
+    let is_interactive = true; // We're in run_interactive()
+
+    // Set default options (RCS and GLOBAL_RCS are on by default)
+    zsh::ported::options::opt_state_set("rcs", true);
+    zsh::ported::options::opt_state_set("globalrcs", true);
+
+    // Source startup files in correct zsh order per zshall(1).
+    // OR — if the daemon is up and serving zshrs canonical state, AND
+    // the user opted in via `[shell] skip_configs`, skip every dotfile
+    // (including /etc/zshenv) and apply canonical state from the
+    // daemon instead. This is the ~10ms cold-start path: no parse,
+    // no .zshrc evaluation, no plugin discovery.
+    #[cfg(feature = "daemon")]
+    {
+        if zsh::daemon_presence::should_skip_configs() {
+            let applied = zsh::canonical_apply::apply_all(&mut executor);
+            tracing::info!(
+                rows = applied,
+                "skip_configs: dotfile chain bypassed, canonical state applied from daemon"
+            );
+        } else {
+            source_startup_files(&mut executor, is_login, is_interactive, no_rcs);
+        }
+    }
+    #[cfg(not(feature = "daemon"))]
+    source_startup_files(&mut executor, is_login, is_interactive, no_rcs);
+
+    maybe_source_zshrs_startup_config(&mut executor, no_rcs);
+
     // Initialize compsys cache (single SQLite db for all completions)
     let cache_path = dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
@@ -1891,74 +1994,6 @@ fn run_interactive() {
         return;
     }
     let mut line_editor = line_editor.unwrap();
-
-    let mut executor = ShellExecutor::new();
-    executor.zsh_compat = is_zsh_mode();
-    executor.bash_compat = is_bash_mode();
-    if is_posix_mode() {
-        executor.enter_posix_mode();
-    }
-    if is_ksh_mode() {
-        executor.enter_ksh_mode();
-    }
-
-    // Determine shell type from invocation per zshall(1)
-    let args: Vec<String> = std::env::args().collect();
-
-    // -f: don't source startup files (except /etc/zshenv which is ALWAYS read)
-    let no_rcs = args.iter().any(|a| a == "-f" || a == "--no-rcs");
-
-    // -x / --xtrace: print each command before executing. zsh's
-    // `setopt XTRACE` is wired identically across `-c`, script-file,
-    // and interactive modes; the previous interactive-only branch
-    // skipped this flag so `zshrs -x` (no -c, no script) silently
-    // ran without xtrace. Mirror what apply_cli_flags does in the
-    // other modes — set the option BEFORE source_startup_files so
-    // every line of `.zshenv` / `.zshrc` is also traced, matching
-    // `zsh -x` (which sets XTRACE before init scripts run).
-    if args.iter().any(|a| a == "-x" || a == "--xtrace") {
-        zsh::ported::options::opt_state_set("xtrace", true);
-    }
-    if args.iter().any(|a| a == "-v" || a == "--verbose") {
-        zsh::ported::options::opt_state_set("verbose", true);
-    }
-
-    // Login shell detection:
-    // - explicit -l or --login flag
-    // - invoked as -zshrs (name starts with -)
-    // - $SHELL ends with zshrs (login shell)
-    let is_login = args.iter().any(|a| a == "-l" || a == "--login")
-        || args.first().map(|a| a.starts_with('-')).unwrap_or(false)
-        || std::env::var("SHELL")
-            .map(|s| s.ends_with("zshrs"))
-            .unwrap_or(false);
-
-    let is_interactive = true; // We're in run_interactive()
-
-    // Set default options (RCS and GLOBAL_RCS are on by default)
-    zsh::ported::options::opt_state_set("rcs", true);
-    zsh::ported::options::opt_state_set("globalrcs", true);
-
-    // Source startup files in correct zsh order per zshall(1).
-    // OR — if the daemon is up and serving zshrs canonical state, AND
-    // the user opted in via `[shell] skip_configs`, skip every dotfile
-    // (including /etc/zshenv) and apply canonical state from the
-    // daemon instead. This is the ~10ms cold-start path: no parse,
-    // no .zshrc evaluation, no plugin discovery.
-    #[cfg(feature = "daemon")]
-    {
-        if zsh::daemon_presence::should_skip_configs() {
-            let applied = zsh::canonical_apply::apply_all(&mut executor);
-            tracing::info!(
-                rows = applied,
-                "skip_configs: dotfile chain bypassed, canonical state applied from daemon"
-            );
-        } else {
-            source_startup_files(&mut executor, is_login, is_interactive, no_rcs);
-        }
-    }
-    #[cfg(not(feature = "daemon"))]
-    source_startup_files(&mut executor, is_login, is_interactive, no_rcs);
 
     // Banner goes to the log, not the user's terminal. A shell prompt should
     // appear immediately on launch — no version stripe, no "type exit" hint.

@@ -129,12 +129,12 @@ impl Default for LogConfig {
 
 // ── Loading ──
 
-/// Config file path: `~/.config/zshrs/config.toml`.
+/// Config file path: `~/.zshrs/zshrs.toml`.
 /// zshrs-original — C zsh has no analog. Closest C equivalent is
 /// the `ZDOTDIR`/`HOME` lookup chain Src/init.c uses for `.zshrc`,
 /// but that's a shell-script path, not a runtime config.
 pub fn config_path() -> PathBuf {
-    dirs::config_dir()
+    crate::daemon_presence::config_file_path()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("zshrs")
         .join("config.toml")
