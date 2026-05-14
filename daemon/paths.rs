@@ -109,6 +109,10 @@ enabled = \"auto\"
 #          all state)
 #   off  — never skip (canonical state ignored even when present)
 skip_configs = \"auto\"
+
+# Optional: zsh script run once after dotfiles (or after canonical_apply
+# when skip_configs applies). Omit entirely if unused.
+# startup_config = \"~/.zshrs/shell-init.zsh\"
 ";
 
 /// Default `zshrs-recorder.toml` written on first start. The recorder
