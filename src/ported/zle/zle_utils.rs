@@ -563,28 +563,17 @@ pub fn bindztrdup(str: &[u8]) -> String {
     buf
 }
 
-/// Print a key binding for display
-/// Port of printbind(char *str, FILE *stream) from zle_utils.c
-pub fn printbind(seq: &[u8]) -> String {
-    let mut result = String::new();
-
-    for &b in seq {
-        match b {
-            0x1b => result.push_str("^["),
-            0..=31 => {
-                result.push('^');
-                result.push((b + 64) as char);
-            }
-            127 => result.push_str("^?"),
-            128..=159 => {
-                result.push_str("^[^");
-                result.push((b - 64) as char);
-            }
-            _ => result.push(b as char),
-        }
-    }
-
-    result
+/// Port of `printbind(char *str, FILE *stream)` from zle_utils.c:1283.
+/// C body (4 lines):
+///     `char *b = bindztrdup(str);
+///      int ret = zputs(b, stream);
+///      zsfree(b);
+///      return ret;`
+/// Rust returns the formatted String (callers don't take a stream);
+/// the zputs call is dropped because callers compose the result
+/// into larger output via `format!` rather than streaming.
+pub fn printbind(seq: &[u8]) -> String {                                     // c:1283
+    bindztrdup(seq)                                                          // c:1285
 }
 
 /// Direct port of `void showmsg(char const *msg)` from

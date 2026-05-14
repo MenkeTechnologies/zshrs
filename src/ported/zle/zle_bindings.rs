@@ -145,45 +145,11 @@ pub fn getkeystring(s: &str) -> Vec<u8> {                                    // 
     result
 }
 
-/// Format a raw key-sequence byte slice for human-readable display.
-/// Port of `printbind(char *str, FILE *stream)` from Src/Zle/zle_utils.c:1283 — used by
-/// `bindkey -L` and the `where-is` widget to show key bindings in the
-/// same `^X` / `\\eX` form `getkeystring` accepts. C signature writes
-/// to a `FILE*` stream; this Rust port returns the formatted `String`.
-/// WARNING: param names don't match C — Rust=(seq) vs C=(str, stream)
-pub fn printbind(seq: &[u8]) -> String {                                     // c:zle_utils.c:1283
-    let mut result = String::new();
-    let mut i = 0;
-
-    while i < seq.len() {
-        let b = seq[i];
-        match b {
-            0x1b => {
-                // Escape — render as `^[` regardless of whether more
-                // bytes follow; downstream caller emits the rest.
-                result.push_str("^[");
-            }
-            0x00..=0x1f => {
-                // Control character
-                result.push('^');
-                result.push((b + b'@') as char);
-            }
-            0x7f => {
-                result.push_str("^?");
-            }
-            0x80..=0xff => {
-                // High byte
-                result.push_str(&format!("\\x{:02x}", b));
-            }
-            _ => {
-                result.push(b as char);
-            }
-        }
-        i += 1;
-    }
-
-    result
-}
+// `printbind` lives in zle_utils.rs (matching C: `Src/Zle/
+// zle_utils.c:1283`). The duplicate that used to live here was a
+// fake — its callers (zle_main.rs) already routed through
+// `super::zle_utils::printbind`. Removed to drop the stale
+// allowlist entry too.
 
 /// Bind a key sequence in a named keymap (port of bindkey from
 /// Src/Zle/zle_keymap.c). Returns true if the keymap exists and the binding
