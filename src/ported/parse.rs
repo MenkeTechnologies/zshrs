@@ -2141,141 +2141,238 @@ pub fn par_cmd_wordcode_noargs() {
     par_cmd_wordcode(&mut cmplx, 0);
 }
 
-/// Port of `par_for(int *cmplx)` from `Src/parse.c:1087-1198`.
+/// Port of `par_for(int *cmplx)` from `Src/parse.c:1086-1198`.
 pub fn par_for_wordcode(cmplx: &mut i32) {
+    // c:1089 — `int oecused = ecused, csh = (tok == FOREACH), p, sel = (tok == SELECT);`
+    let _oecused = ECUSED.get() as usize;
     let csh = tok() == FOREACH;
     let sel = tok() == SELECT;
-    let p = ecadd(0);
+    let p: usize;
+    // c:1090 — `int type;`
+    let r#type: wordcode;
+
+    // c:1092 — `p = ecadd(0);`
+    p = ecadd(0);
+
+    // c:1094 — `incmdpos = 0;`
     set_incmdpos(false);
+    // c:1095 — `infor = tok == FOR ? 2 : 0;`
     set_infor(if tok() == FOR { 2 } else { 0 });
+    // c:1096 — `zshlex();`
     zshlex();
-    let type_code: wordcode;
+    // c:1097 — `if (tok == DINPAR) {`
     if tok() == DINPAR {
+        // c:1098 — `zshlex();`
         zshlex();
+        // c:1099-1100 — `if (tok != DINPAR) YYERRORV(oecused);`
         if tok() != DINPAR {
             error("par_for: expected init");
             return;
         }
+        // c:1101 — `ecstr(tokstr);`
         ecstr(&tokstr().unwrap_or_default());
+        // c:1102 — `zshlex();`
         zshlex();
+        // c:1103-1104
         if tok() != DINPAR {
             error("par_for: expected cond");
             return;
         }
+        // c:1105
         ecstr(&tokstr().unwrap_or_default());
+        // c:1106
         zshlex();
+        // c:1107-1108
         if tok() != DOUTPAR {
             error("par_for: expected ))");
             return;
         }
+        // c:1109
         ecstr(&tokstr().unwrap_or_default());
+        // c:1110 — `infor = 0;`
         set_infor(0);
+        // c:1111 — `incmdpos = 1;`
         set_incmdpos(true);
+        // c:1112 — `zshlex();`
         zshlex();
-        type_code = WC_FOR_COND;
+        // c:1113 — `type = WC_FOR_COND;`
+        r#type = WC_FOR_COND;
     } else {
+        // c:1115 — `int np = 0, n, posix_in, ona = noaliases, onc = nocorrect;`
+        let mut np: usize = 0;
+        let mut n: u32;
+        let posix_in: bool;
+        let ona = noaliases();
+        let onc = nocorrect();
+        // c:1116 — `infor = 0;`
         set_infor(0);
-        if tok() != STRING_LEX {
+        // c:1117-1118 — `if (tok != STRING || !isident(tokstr)) YYERRORV(oecused);`
+        if tok() != STRING_LEX
+            || !crate::ported::utils::isident(&tokstr().unwrap_or_default())
+        {
             error("par_for: expected identifier");
             return;
         }
-        let np = if !sel { Some(ecadd(0)) } else { None };
-        let mut n = 0u32;
+        // c:1119-1120 — `if (!sel) np = ecadd(0);`
+        if !sel {
+            np = ecadd(0);
+        }
+        // c:1121 — `n = 0;`
+        n = 0;
+        // c:1122 — `incmdpos = 1;`
         set_incmdpos(true);
+        // c:1123 — `noaliases = nocorrect = 1;`
+        set_noaliases(true);
+        set_nocorrect(1);
+        // c:1124 — `for (;;) {`
         loop {
+            // c:1125 — `n++;`
             n += 1;
+            // c:1126 — `ecstr(tokstr);`
             ecstr(&tokstr().unwrap_or_default());
+            // c:1127 — `zshlex();`
             zshlex();
-            if tok() != STRING_LEX || sel {
+            // c:1128-1129 — `if (tok != STRING || !strcmp(tokstr, "in") || sel) break;`
+            if tok() != STRING_LEX
+                || tokstr().as_deref() == Some("in")
+                || sel
+            {
                 break;
             }
-            if tokstr().as_deref() == Some("in") {
-                break;
+            // c:1130-1135 — `if (!isident(tokstr) || errflag) { ... YYERRORV; }`
+            if !crate::ported::utils::isident(&tokstr().unwrap_or_default())
+                || (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) & 1) != 0
+            {
+                set_noaliases(ona);
+                set_nocorrect(onc);
+                error("par_for: expected identifier in name list");
+                return;
             }
         }
-        if let Some(np) = np {
+        // c:1137-1138 — `noaliases = ona; nocorrect = onc;`
+        set_noaliases(ona);
+        set_nocorrect(onc);
+        // c:1139-1140 — `if (!sel) ecbuf[np] = n;`
+        if !sel {
             ECBUF.with_borrow_mut(|b| {
-                if np < b.len() {
-                    b[np] = n;
-                }
+                b[np] = n;
             });
         }
-        let posix_in = isnewlin() != 0;
+        // c:1141 — `posix_in = isnewlin;`
+        posix_in = isnewlin() != 0;
+        // c:1142-1143 — `while (isnewlin) zshlex();`
         while isnewlin() != 0 {
             zshlex();
         }
+        // c:1144 — `if (tok == STRING && !strcmp(tokstr, "in")) {`
         if tok() == STRING_LEX && tokstr().as_deref() == Some("in") {
+            // c:1145 — `incmdpos = 0;`
             set_incmdpos(false);
+            // c:1146 — `zshlex();`
             zshlex();
-            let np = ecadd(0);
-            let mut n = 0u32;
-            while tok() == STRING_LEX {
-                if let Some(s) = tokstr() {
-                    ecstr(&s);
-                }
-                n += 1;
-                zshlex();
-            }
+            // c:1147 — `np = ecadd(0);`
+            np = ecadd(0);
+            // c:1148 — `n = par_wordlist();`
+            let n2 = par_wordlist_wordcode();
+            // c:1149-1150 — `if (tok != SEPER) YYERRORV(oecused);`
             if tok() != SEPER {
                 error("par_for: expected separator after `in`");
                 return;
             }
+            // c:1151 — `ecbuf[np] = n;`
             ECBUF.with_borrow_mut(|b| {
-                if np < b.len() {
-                    b[np] = n as wordcode;
-                }
+                b[np] = n2 as wordcode;
             });
-            type_code = if sel { WC_SELECT_LIST } else { WC_FOR_LIST };
+            // c:1152 — `type = (sel ? WC_SELECT_LIST : WC_FOR_LIST);`
+            r#type = if sel { WC_SELECT_LIST } else { WC_FOR_LIST };
         } else if !posix_in && tok() == INPAR_TOK {
+            // c:1153-1154 — `else if (!posix_in && tok == INPAR)`
+            // c:1154 — `incmdpos = 0;`
             set_incmdpos(false);
+            // c:1155 — `zshlex();`
             zshlex();
-            let np = ecadd(0);
-            let mut n = 0u32;
-            while tok() == NEWLIN {
-                zshlex();
-            }
-            while tok() == STRING_LEX {
-                if let Some(s) = tokstr() {
-                    ecstr(&s);
-                }
-                n += 1;
-                zshlex();
-            }
-            while tok() == NEWLIN {
-                zshlex();
-            }
+            // c:1156 — `np = ecadd(0);`
+            np = ecadd(0);
+            // c:1157 — `n = par_nl_wordlist();`
+            let n2 = par_nl_wordlist_wordcode();
+            // c:1158-1159 — `if (tok != OUTPAR) YYERRORV(oecused);`
             if tok() != OUTPAR_TOK {
                 error("par_for: expected `)`");
                 return;
             }
+            // c:1160 — `ecbuf[np] = n;`
             ECBUF.with_borrow_mut(|b| {
-                if np < b.len() {
-                    b[np] = n as wordcode;
-                }
+                b[np] = n2 as wordcode;
             });
+            // c:1161 — `incmdpos = 1;`
             set_incmdpos(true);
+            // c:1162 — `zshlex();`
             zshlex();
-            type_code = if sel { WC_SELECT_LIST } else { WC_FOR_LIST };
+            // c:1163 — `type = (sel ? WC_SELECT_LIST : WC_FOR_LIST);`
+            r#type = if sel { WC_SELECT_LIST } else { WC_FOR_LIST };
         } else {
-            type_code = if sel { WC_SELECT_PPARAM } else { WC_FOR_PPARAM };
+            // c:1165 — `type = (sel ? WC_SELECT_PPARAM : WC_FOR_PPARAM);`
+            r#type = if sel { WC_SELECT_PPARAM } else { WC_FOR_PPARAM };
         }
+        let _ = np;
     }
+    // c:1167 — `incmdpos = 1;`
     set_incmdpos(true);
+    // c:1168-1169 — `while (tok == SEPER) zshlex();`
     while tok() == SEPER {
         zshlex();
     }
+    // c:1170-1193 — body dispatch (inline in C, factored here for
+    // reuse by par_while/par_repeat — same control flow, same calls).
     par_loop_body_wordcode(cmplx, csh);
+    // c:1195-1197 — `ecbuf[p] = (sel ? WCB_SELECT(...) : WCB_FOR(...));`
     let used = ECUSED.get() as usize;
     let off = used.saturating_sub(1 + p) as wordcode;
     ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            b[p] = if sel {
-                WCB_SELECT(type_code, off)
-            } else {
-                WCB_FOR(type_code, off)
-            };
-        }
+        b[p] = if sel {
+            WCB_SELECT(r#type, off)
+        } else {
+            WCB_FOR(r#type, off)
+        };
     });
+}
+
+/// Port of `par_wordlist(void)` from `Src/parse.c:2361-2371` —
+/// emits wordcode form. Returns the number of strings emitted.
+fn par_wordlist_wordcode() -> u32 {
+    // c:2364 — `int num = 0;`
+    let mut num: u32 = 0;
+    // c:2365 — `while (tok == STRING) {`
+    while tok() == STRING_LEX {
+        // c:2366 — `ecstr(tokstr);`
+        ecstr(&tokstr().unwrap_or_default());
+        // c:2367 — `num++;`
+        num += 1;
+        // c:2368 — `zshlex();`
+        zshlex();
+    }
+    // c:2370 — `return num;`
+    num
+}
+
+/// Port of `par_nl_wordlist(void)` from `Src/parse.c:2378-2390` —
+/// emits wordcode form. Like par_wordlist but tolerates SEPER
+/// between words.
+fn par_nl_wordlist_wordcode() -> u32 {
+    // c:2381 — `int num = 0;`
+    let mut num: u32 = 0;
+    // c:2383 — `while (tok == STRING || tok == SEPER) {`
+    while tok() == STRING_LEX || tok() == SEPER || tok() == NEWLIN {
+        // c:2384-2387 — `if (tok != SEPER) { ecstr(tokstr); num++; }`
+        if tok() == STRING_LEX {
+            ecstr(&tokstr().unwrap_or_default());
+            num += 1;
+        }
+        // c:2388 — `zshlex();`
+        zshlex();
+    }
+    // c:2390 — `return num;`
+    num
 }
 
 /// Body dispatch shared by par_for / par_while / par_repeat.
