@@ -1106,6 +1106,10 @@ pub fn mb_patmatchindex(range: &[char], idx: usize) -> Option<char> {         //
 /// `ch` matches the bracket-range expression `range`.
 ///
 /// `range` is the bytes between `[...]` in the original pattern.
+/// Rust idiom replacement: `&[char]` slice walk with `range[i+1] == '-'`
+/// branch covers the C `PP_*` opcode table (PP_RANGE/PP_INCLASS/etc.);
+/// the C `indptr`/`mtp` out-args drop since callers in zshrs only
+/// need the bool match decision.
 /// WARNING: param names don't match C — Rust=(range, ch, igncase) vs C=(range, ch, indptr, mtp)
 pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {       // c:3856
     let test = |c: char| {

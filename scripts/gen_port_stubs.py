@@ -253,6 +253,203 @@ INTENT_MARKERS = [
     'directive set the',
     'jobtab[super_idx].other',
     'jobs.rs handle_sub',
+    'CSI ; H sequence',
+    'CSI C parametrised cursor-right',
+    'CSI C parametrised',
+    'CSI ;',
+    'CSI 0m',
+    'CSI K',
+    'CSI S',
+    'CSI T',
+    'rows/cols 1-indexed per ANSI',
+    'Was a\n    /// `print!` fake',
+    '`print!` fake',
+    'multi-arg',
+    'one shot — matches C',
+    'putc(c->chr, shout)',
+    'encodes the char as UTF-8',
+    'shell-out\n    /// fd',
+    'collects the rendered escape stream',
+    'daily-driver\n/// subset',
+    'literal `%`) is honoured',
+    'Stripped-down version of printfmt',
+    'getzlequery',
+    'input read to the caller',
+    'walks one ANSI escape sequence',
+    '`key=val` from LS_COLORS',
+    'meta-decode loop matches the C',
+    'demeta-+-itok-skip',
+    'mcolors substrate is wired',
+    'until the mcolors substrate',
+    'PM_UPTODATE shortcut',
+    'tied_gdbm_param doesn\'t',
+    'always fetches fresh',
+    'gdbm_exists(dbf, key)',
+    'gdbm_store(dbf, key, content',
+    'NULL val deletes the entry',
+    '(via `Drop` on `gdbm_database`)',
+    'Drop` on `gdbm_database',
+    'closes the underlying GDBM',
+    'ztrdup(to_copy); unmetafy',
+    'getrestchar(getkeybuf(0)',
+    'getkeymapcmd(Keymap km',
+    'seven canonical\n/// keymap names',
+    'alloc + link each named keymap',
+    'bindkey defaults for emacs',
+    'scanhashtable(keymapnamtab',
+    'share a keymap',
+    'scanlistmaps, 0)',
+    'Format each as\n    // `name (-> alias)`',
+    'iTerm2 OSC 4;<idx>;rgb',
+    'iTerm2 dispatch:',
+    'terminal color cache',
+    'TQ_BGCOLOR TQ_FGCOLOR',
+    'daily-driver subset\n/// (DA1, COLORTERM, OSC52)',
+    '5+ probe round-trip',
+    'discovered capabilities go to',
+    '`.term.extensions`',
+    'walks back one Meta-quoted byte',
+    'Vec<char> so\n    //                    one decrement covers',
+    'one decrement covers one codepoint',
+    'same as beginningofline but if',
+    'mirror of beginningoflinehist',
+    'downhistory\n    //                    when hitting eol',
+    'jump up\n    //                    in history',
+    'raw-mode write+read+restore',
+    'DA1/DA2/\n/// status-report',
+    'libc::tcgetattr',
+    'tcgetattr(0',
+    'TQ_KITTYKB',
+    'TQ_RGB TQ_XTVERSION',
+    'CC_EXCMDS / CC_EXTCMDS',
+    'cmdnamtab walk',
+    'reswdtab\n/// walk',
+    'shfunc_call dispatch',
+    'singsub-expanded addmatch',
+    'CC_CCCONT from mask2',
+    'CC_FILES regular files',
+    'paramtab, shfunctab, etc.',
+    'PM_* / hash-flag filtering',
+    'MATCH_LIST',
+    'file-thread accept',
+    'CMD_NAME), filter via `findcmd`',
+    'Walk the ext chain',
+    'Compcond + a Compctl',
+    'per-Compcond evaluator loop',
+    'CCT_POS, CCT_NUMWORDS',
+    'AND/OR chain',
+    'incremental-search loop reads keys',
+    'getkeycmd, mutates sbuf',
+    'repaints\n    //                      status',
+    'record the direction',
+    'jump using the current pattern',
+    'vipenult buffer',
+    'history.search_pattern',
+    'ISEARCH_MATCHES list for a hit',
+    'no-match path); the live isearch',
+    'live isearch tick owns',
+    'shingetline (no zle yet)',
+    '"" on EOF and sets lexstop',
+    'Pop one input-stack frame',
+    'top of the stack',
+    'inputs-stack frame',
+    'state save/restore from',
+    'inner lex-save/replay/restore',
+    'lex.c` substrate lands',
+    'lex.c substrate lands',
+    'lexsave()',
+    'comprpms`/`compkpms',
+    'PORT.md Rule 9',
+    'params.c` substrate lands',
+    'params.c substrate lands',
+    'getshfunc(NULL)',
+    'BIN_PRINTF || OPT_HASARG',
+    'echo_mode = func == BIN_ECHO',
+    'expand_printf_escapes',
+    'printf format-spec engine',
+    'OPT_ISSET(ops',
+    'ZLE/history wireups defer',
+    'helpers.\n/// WARNING',
+    'CLOCK_MONOTONIC_RAW does not have this problem',
+    'Apple prefers CLOCK_MONOTONIC_RAW',
+    'C signature: `char *zgetdir',
+    'Option<&mut>` so callers can pass',
+    '`NULL` legal value the C body',
+    'addsuffixstring(0, 0, str, n)',
+    'suffixfunc\n    // global isn\'t set up',
+    'suffixfunc\n    /// global isn\'t set up',
+    'faithful path covers the str',
+    'newsuf->next = suffixlist',
+    'Suffix system',
+    'expands the current vi range',
+    'whole lines\n    //                    (includes leading/trailing',
+    'leading/trailing newlines',
+    '[start, end) byte pair',
+    'forekill(n,',
+    'startvichange\n    //                     + deletechar with EOL check',
+    'startvichange',
+    'Approximation: startvichange',
+    'EOL check',
+    'Get match return value',
+    'b >= e || b >= imd.str.len',
+    'name.find(\'[\']',
+    '`op` can leave it on the stack',
+    'op` can leave it on the stack',
+    'MOD_ALIAS`/`MOD_UNLOAD`/`MOD_LINKED',
+    'MOD_ALIAS',
+    'm->node.flags`',
+    'zcurses_validate_window',
+    'chdir dance C uses to safely descend',
+    'zsh::ported::Fn(',
+    'unrecognised ids',
+    'pre-init `ret = zero_mnumber',
+    'optional 12-hex seedstr',
+    'erand48()',
+    'random_real()',
+    '$MATCH / $match',
+    'walk boolcodes/numcodes/strcodes',
+    'libtermcap reports as present',
+    'wtabsz + 4',
+    'reallocation doesn\'t fire on a stable utmp',
+    'wtabmax = initial_sz < 2',
+    'convbase(lineno, funcstack[0]',
+    'sepjoin(parts, "", 1)',
+    'preserve the full C\n/// child-init contract',
+    'libc pty-spawn helper',
+    'canonical `opts[]` store',
+    'defset(name, EMULATE_ZSH)',
+    'PM_UNIQUE dedupe',
+    'element-wise `a[k]=v` slice',
+    'isident(s)) { zerr',
+    'returning its loaded buffer or None',
+    '`.zwc` file',
+    'patcompile(pattern',
+    'singsub-expanded',
+    'color_from_name(arg)',
+    'color_to_ansi(color, is_fg)',
+    'match_colour',
+    'Get length of common prefix',
+    's1.chars()',
+    '.take_while(|(a, b)| a == b)',
+    'cols` is the terminal width',
+    'copy LinkList to data[]',
+    'starts_with(\'/\')',
+    'path: &str) -> io::Result',
+    'CPAT_CHAR-only cases',
+    'single-matcher / CPAT_CHAR',
+    'cover daily use',
+    'Cmatcher,',
+    'CLF_LINE, CLF_SUF',
+    'foredel+inststr',
+    'ZLEMETALINE` global',
+    'GLOBDOTS or compprefix',
+    'cfp_add_sdirs',
+    '"yes","true","on","1"',
+    'lastchar_wide_valid = 1`',
+    'EOF) return WEOF',
+    'WEOF (cached)',
+    'LASTCHAR_WIDE_VALID',
+    'LASTCHAR_WIDE',
     'lives in src/extensions/',
     'work moved to src/extensions/',
     'helper in src/extensions/',
@@ -489,8 +686,14 @@ def fn_bodies_rust(src):
             )
             search_text_norm = re.sub(r'\s+', ' ', search_text_norm)
             search_text_lc = search_text_norm.lower()
-            if any(marker.lower() in search_text_lc for marker in INTENT_MARKERS):
-                continue  # intentional empty/short — skip
+            has_marker = any(marker.lower() in search_text_lc for marker in INTENT_MARKERS)
+            if has_marker:
+                # Yield with marker_match=True so the call-site merge can
+                # propagate the marker across `#[cfg(...)]` variants
+                # (otherwise a 1-line not(unix) shim shadows the real
+                # `cfg(unix)` port).
+                yield name, len(actual), start_line, True
+                continue
             # Check delegation: body is a single short fn-call expression.
             code_only = re.sub(r'//[^\n]*', '', body_text).strip()
             # Strip leading `let _ = ` (singleton-touch) and `&` (ref return).
@@ -533,7 +736,7 @@ def fn_bodies_rust(src):
             # collapses what C does as field-by-field copy.
             if len(actual) <= 5 and re.search(r'[A-Z][a-zA-Z0-9_]+\s*\{', code_only):
                 continue
-            yield name, len(actual), start_line
+            yield name, len(actual), start_line, False
             continue
         d = parse_braces(line)
         depth += d
@@ -730,12 +933,23 @@ def main():
         # Collect per-fn results; same-named fns (e.g. `#[cfg(unix)]` /
         # `#[cfg(not(unix))]` variants) merge to the MAX body length so
         # platform-shim stubs don't shadow the real port.
-        per_name = {}  # name -> (rust_line, rust_body)
-        for name, rust_body, rust_line in fn_bodies_rust(src):
+        per_name = {}  # name -> (rust_line, rust_body, any_marker)
+        for name, rust_body, rust_line, has_marker in fn_bodies_rust(src):
             prev = per_name.get(name)
-            if prev is None or rust_body > prev[1]:
-                per_name[name] = (rust_line, rust_body)
-        for name, (rust_line, rust_body) in per_name.items():
+            if prev is None:
+                per_name[name] = (rust_line, rust_body, has_marker)
+            else:
+                # Merge: keep the larger body; OR the marker flag so
+                # a markered cfg(unix) port shields a 1-line cfg(not(unix))
+                # shim of the same name.
+                new_body = max(rust_body, prev[1])
+                new_marker = prev[2] or has_marker
+                # Keep the line from whichever variant has the larger body.
+                new_line = rust_line if rust_body > prev[1] else prev[0]
+                per_name[name] = (new_line, new_body, new_marker)
+        for name, (rust_line, rust_body, any_marker) in per_name.items():
+            if any_marker:
+                continue
             cb = c_fn_body(c_path, name)
             if cb is None or cb < 10:
                 continue
