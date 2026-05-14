@@ -2577,32 +2577,56 @@ pub fn par_repeat_wordcode() {
     });
 }
 
-/// Port of `par_funcdef(int *cmplx)` from `Src/parse.c:1672-1786`.
+/// Port of `par_funcdef(int *cmplx)` from `Src/parse.c:1672-1779`.
+///
+/// The `function NAME { ... }` form. Emits a WCB_FUNCDEF header
+/// followed by a names-count slot, the names themselves, four
+/// metadata slots (string-area start, string-area length, npats,
+/// do_tracing), then the body wordcode, then WCB_END.
+///
+/// Critical: saves/resets `ecnpats` + `ecssub` + `ecsoffs` around
+/// the body parse so per-function pattern counts don't leak into
+/// the enclosing scope's `ecnpats` accumulator (parse.c:1723-1758).
 pub fn par_funcdef_wordcode() {
+    let oecssub = ECSSUB.get();
+    // c:1684-1685 — `p = ecadd(0); ecadd(0); /* p+1 */`.
     let p = ecadd(0);
-    // c:1681-1683 — `nocorrect = 1; incmdpos = 0; zshlex();` —
-    // set BEFORE the zshlex past `function`, so the next-token
-    // lex doesn't promote `{` to INBRACE_TOK or recognise reswds.
+    let p1 = ecadd(0);
+    // c:1680-1682 — `nocorrect = 1; incmdpos = 0; zshlex();`.
     set_nocorrect(1);
     set_incmdpos(false);
     zshlex();
-    let np = ecadd(0);
+    // c:1687-1699 — optional `-T` (do_tracing) and `--` flags.
+    // The lex emits the `-` as the Dash token marker (0x9b) when
+    // it appears in this position.
+    let mut do_tracing: i32 = 0;
+    if tok() == STRING_LEX {
+        let s = tokstr().unwrap_or_default();
+        if !s.is_empty() && (s.starts_with('\u{9b}') || s.starts_with('-')) {
+            let body = &s[s.chars().next().map(|c| c.len_utf8()).unwrap_or(0)..];
+            if body == "T" {
+                do_tracing += 1;
+                zshlex();
+            }
+        }
+        let s2 = tokstr().unwrap_or_default();
+        if tok() == STRING_LEX
+            && !s2.is_empty()
+            && (s2.starts_with('\u{9b}') || s2.starts_with('-'))
+        {
+            let rest = &s2[s2.chars().next().map(|c| c.len_utf8()).unwrap_or(0)..];
+            if rest == "\u{9b}" || rest == "-" {
+                zshlex();
+            }
+        }
+    }
+    // c:1701-1709 — names loop. The first-BYTE check (not byte-count)
+    // matches the Inbrace token marker `\u{8f}` (2-byte UTF-8) which
+    // the lexer emits for a bare `{` while incmdpos=0.
     let mut n = 0u32;
-    // c:1701-1709 — names loop. C special-cases `tokstr[0] ==
-    // Inbrace || tokstr[0] == '{'` to break out and set tok =
-    // INBRACE, since a bare `{` at incmdpos=0 lexes as STRING
-    // but should still open the funcdef body. Without this,
-    // `function f { ... }` swallowed the `{` as a name and the
-    // body never started.
     while tok() == STRING_LEX {
         let s = tokstr().unwrap_or_default();
         let bytes = s.as_bytes();
-        // c:1701-1709 — `if (tokstr[0] == Inbrace || tokstr[0] == '{')
-        // { tok = INBRACE; break; }`. C tests the FIRST BYTE of tokstr,
-        // not its byte count. UTF-8: `\u{8f}` = `0xc2 0x8f` (2 bytes)
-        // but its first BYTE distinguishes the Inbrace marker form.
-        // Old `bytes.len() == 1` precondition rejected this 2-byte
-        // form and the funcdef body never started.
         if (bytes.len() == 1 && bytes[0] == b'{') || s == "\u{8f}" {
             set_tok(INBRACE_TOK);
             break;
@@ -2611,13 +2635,12 @@ pub fn par_funcdef_wordcode() {
         n += 1;
         zshlex();
     }
-    ECBUF.with_borrow_mut(|b| {
-        if np < b.len() {
-            b[np] = n;
-        }
-    });
-    // c:1715-1716 — `nocorrect = 0; incmdpos = 1;` — restore
-    // before the body parse.
+    // c:1711-1714 — `ecadd(0)*4` for p+num+2, p+num+3, p+num+4, p+num+5.
+    let m2 = ecadd(0);
+    let m3 = ecadd(0);
+    let m4 = ecadd(0);
+    let m5 = ecadd(0);
+    // c:1716-1717 — `nocorrect = 0; incmdpos = 1;`.
     set_nocorrect(0);
     set_incmdpos(true);
     if tok() == INOUTPAR {
@@ -2626,20 +2649,58 @@ pub fn par_funcdef_wordcode() {
     while tok() == SEPER {
         zshlex();
     }
+    // c:1723-1726 — `ecnfunc++; ecssub = so = ecsoffs; onp = ecnpats;
+    // ecnpats = 0;` — per-function scope for string-table offsets +
+    // pattern count.
+    ECNFUNC.set(ECNFUNC.get() + 1);
+    let so = ECSOFFS.get();
+    let onp = ECNPATS.with(|c| c.get());
+    ECNPATS.with(|c| c.set(0));
+    ECSSUB.set(so);
     if tok() == INBRACE_TOK {
         zshlex();
         par_list_wordcode();
         if tok() != OUTBRACE_TOK {
+            // c:1731-1735 — restore + error.
+            ECNPATS.with(|c| c.set(onp));
+            ECSSUB.set(oecssub);
             error("par_funcdef: expected `}`");
             return;
         }
+        if n == 0 {
+            // c:1737-1740 — anonymous funcdef args follow.
+            set_incmdpos(false);
+        }
         zshlex();
     } else if unset(SHORTLOOPS) {
+        // c:1742-1746 — restore + error.
+        ECNPATS.with(|c| c.set(onp));
+        ECSSUB.set(oecssub);
         error("par_funcdef: short body requires SHORTLOOPS");
         return;
     } else {
+        // c:1748 — `par_list1(&c);`
         par_list1_wordcode();
     }
+    // c:1750 — `ecadd(WCB_END());`
+    ecadd(WCB_END());
+    // c:1751-1755 — fill the 4 metadata slots + names-count slot.
+    let cur_sofs = ECSOFFS.get();
+    let body_npats = ECNPATS.with(|c| c.get());
+    ECBUF.with_borrow_mut(|b| {
+        if m5 < b.len() {
+            b[m2] = (so - oecssub) as wordcode;
+            b[m3] = (cur_sofs - so) as wordcode;
+            b[m4] = body_npats as wordcode;
+            b[m5] = do_tracing as wordcode;
+            b[p1] = n;
+        }
+    });
+    // c:1757-1759 — restore + ecnfunc++ (second bump).
+    ECNPATS.with(|c| c.set(onp));
+    ECSSUB.set(oecssub);
+    ECNFUNC.set(ECNFUNC.get() + 1);
+    // c:1761 — `ecbuf[p] = WCB_FUNCDEF(ecused - 1 - p);`.
     let used = ECUSED.get() as usize;
     let off = used.saturating_sub(1 + p) as wordcode;
     ECBUF.with_borrow_mut(|b| {
@@ -2647,6 +2708,28 @@ pub fn par_funcdef_wordcode() {
             b[p] = WCB_FUNCDEF(off);
         }
     });
+    // c:1763-1777 — anonymous-function trailing args: only when
+    // num == 0 (the `function() { body }` form).
+    if n == 0 {
+        let parg = ecadd(0);
+        ecadd(0);
+        let mut argc: u32 = 0;
+        while tok() == STRING_LEX {
+            ecstr(&tokstr().unwrap_or_default());
+            argc += 1;
+            zshlex();
+        }
+        if argc > 0 {
+            cmplx_set(true);
+        }
+        let used2 = ECUSED.get() as usize;
+        ECBUF.with_borrow_mut(|b| {
+            if parg + 1 < b.len() {
+                b[parg] = (used2 - parg) as wordcode;
+                b[parg + 1] = argc;
+            }
+        });
+    }
 }
 
 /// `Src/parse.c:1619-1665`. Handles both `(...)` subshell and
