@@ -1077,132 +1077,121 @@ pub fn igetmatch(_sp: &mut String, _p: *mut std::ffi::c_void,                // 
 // glob-metacharacter with its high-bit byte token; the Rust port now
 // matches.
 
-// This function tokenizes a zsh glob pattern                               // c:706
+// `ztokens[]` from `Src/lex.c:38` — the source-char ↔ token-byte
+// table the C tokenizer indexes with `(t - ztokens) + Pound`. Each
+// position N in the string maps to high-bit byte `Pound + N`.
+const ZTOKENS: &str = "#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\";
+
 /// Tokenize a glob pattern in place — port of `tokenize(char *s)` from
-/// `Src/glob.c:3548` (which calls `zshtokenize(s, 0)`).
-pub fn tokenize(s: &mut String) {
-    let chars: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        match c {
-            '\\' => {
-                if i + 1 < chars.len() {
-                    out.push(chars[i + 1]);
-                    i += 2;
-                    continue;
-                } else {
-                    out.push('\\');
-                }
-            }
-            '*' => out.push(Star),
-            '?' => out.push(Quest),
-            '[' => out.push(Inbrack),
-            ']' => out.push(Outbrack),
-            '(' => out.push(Inpar),
-            ')' => out.push(Outpar),
-            '|' => out.push(Bar),
-            '#' => out.push(Pound),
-            '~' => out.push(Tilde),
-            '^' => out.push(Hat),
-            '{' => out.push(Inbrace),
-            '}' => out.push(Outbrace),
-            ',' => out.push(Comma),
-            _ => out.push(c),
-        }
-        i += 1;
-    }
-    *s = out;
+/// `Src/glob.c:3548`. One-line C delegation: `zshtokenize(s, 0)`.
+pub fn tokenize(s: &mut String) {                                            // c:3548
+    zshtokenize(s, 0);                                                       // c:3552
 }
 
-/// Tokenize for shell (from glob.c shtokenize line 3565). Mutates
-/// `s` in place, replacing glob metacharacters with their high-bit
-/// byte tokens — `shtokenize` is `zshtokenize(s, ZSHTOK_SUBST | ...)`
-/// at `Src/glob.c:3565`.
-pub fn shtokenize(s: &mut String) {
-    let chars: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
+/// Tokenize for shell — port of `shtokenize(char *s)` from
+/// `Src/glob.c:3563`. Builds flags from SHGLOB option then delegates
+/// to `zshtokenize`.
+pub fn shtokenize(s: &mut String) {                                          // c:3563
+    let mut flags = crate::ported::zsh_h::ZSHTOK_SUBST;                      // c:3567
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::SHGLOB) {           // c:3568
+        flags |= crate::ported::zsh_h::ZSHTOK_SHGLOB;                        // c:3569
+    }
+    zshtokenize(s, flags);                                                   // c:3570
+}
+
+/// Port of `zshtokenize(char *s, int flags)` from `Src/glob.c:3575`.
+/// Walks `s` in place, replacing each glob-metachar with its high-bit
+/// byte token from the `ZTOKENS` table; respects ZSHTOK_SUBST (use
+/// Bnullkeep for escaped tokens) and ZSHTOK_SHGLOB (don't tokenize
+/// `<` / `(` / `|` / `)`).
+pub fn zshtokenize(s: &mut String, flags: i32) {                             // c:3575
+    use crate::ported::zsh_h::{Bnull, Bnullkeep, Inang, Outang,
+        ZSHTOK_SUBST, ZSHTOK_SHGLOB, META};
+    let ztokens: Vec<char> = ZTOKENS.chars().collect();
+    let mut chars: Vec<char> = s.chars().collect();
+    let mut bslash = false;                                                  // c:3578
     let mut i = 0;
-    let mut in_sq = false;
-    let mut in_dq = false;
-    while i < chars.len() {
+    while i < chars.len() {                                                  // c:3580 for (; *s; s++)
         let c = chars[i];
-        if in_sq {
-            if c == '\'' { in_sq = false; } else { out.push(c); }
-            i += 1;
-            continue;
-        }
-        if in_dq {
-            if c == '"' {
-                in_dq = false;
-            } else if c == '\\' && i + 1 < chars.len() {
-                out.push(chars[i + 1]);
-                i += 2;
+        match c {
+            x if x == META => {                                              // c:3583 case Meta
+                i += 2;                                                      // c:3585 skip both Meta and next
+                bslash = false;
                 continue;
-            } else {
-                out.push(c);
             }
-            i += 1;
-            continue;
-        }
-        match c {
-            '\'' => in_sq = true,
-            '"' => in_dq = true,
-            '\\' => {
-                if i + 1 < chars.len() {
-                    out.push(chars[i + 1]);
-                    i += 2;
-                    continue;
-                }
-            }
-            '*' => out.push(Star),
-            '?' => out.push(Quest),
-            '[' => out.push(Inbrack),
-            ']' => out.push(Outbrack),
-            _ => out.push(c),
-        }
-        i += 1;
-    }
-    *s = out;
-}
-
-/// Tokenize with zsh-specific flags. Port of `zshtokenize(char *s, int flags)`
-/// from `Src/glob.c:3575` — mutates `s` in place.
-pub fn zshtokenize(s: &mut String, extended_glob: bool, sh_glob: bool) {
-    let chars: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        match c {
-            '\\' => {
-                if i + 1 < chars.len() {
-                    out.push(chars[i + 1]);
-                    i += 2;
-                    continue;
+            x if x == Bnull || x == Bnullkeep || x == '\\' => {              // c:3587-3589
+                if bslash {                                                  // c:3590
+                    chars[i - 1] = if (flags & ZSHTOK_SUBST) != 0 {          // c:3591
+                        Bnullkeep
+                    } else {
+                        Bnull
+                    };
                 } else {
-                    out.push('\\');
+                    bslash = true;                                           // c:3595
+                    i += 1;
+                    continue;                                                // c:3596 (skip bslash=0 reset)
                 }
             }
-            '*' => out.push(Star),
-            '?' => out.push(Quest),
-            '[' => out.push(Inbrack),
-            ']' => out.push(Outbrack),
-            '#' if extended_glob => out.push(Pound),
-            '^' if extended_glob => out.push(Hat),
-            '~' if extended_glob => out.push(Tilde),
-            '(' if extended_glob => out.push(Inpar),
-            ')' if extended_glob => out.push(Outpar),
-            '|' if extended_glob => out.push(Bar),
-            '{' if !sh_glob => out.push(Inbrace),
-            '}' if !sh_glob => out.push(Outbrace),
-            ',' if !sh_glob => out.push(Comma),
-            _ => out.push(c),
+            '<' => {                                                         // c:3598
+                if (flags & ZSHTOK_SHGLOB) != 0 {                            // c:3599
+                    // break — no tokenization
+                } else if bslash {                                           // c:3601
+                    chars[i - 1] = if (flags & ZSHTOK_SUBST) != 0 {
+                        Bnullkeep
+                    } else {
+                        Bnull
+                    };
+                } else {
+                    // c:3605-3614 — try to parse `<N-N>` redirection.
+                    let t = i;                                               // c:3605
+                    let mut j = i + 1;
+                    while j < chars.len() && chars[j].is_ascii_digit() {     // c:3606 idigit
+                        j += 1;
+                    }
+                    if j < chars.len() && (chars[j] == '-') {                // c:3607 IS_DASH
+                        let mut k = j + 1;
+                        while k < chars.len() && chars[k].is_ascii_digit() { // c:3609
+                            k += 1;
+                        }
+                        if k < chars.len() && chars[k] == '>' {              // c:3611
+                            chars[t] = Inang;                                // c:3613
+                            chars[k] = Outang;                               // c:3614
+                            i = k + 1;
+                            bslash = false;
+                            continue;
+                        }
+                    }
+                    // c:3608/3611 `goto cont` — re-switch on current *s;
+                    // since none of the conditions matched, fall through.
+                }
+            }
+            '(' | '|' | ')' if (flags & ZSHTOK_SHGLOB) != 0 => {             // c:3617-3620
+                // no tokenization under SHGLOB
+            }
+            '>' | '^' | '#' | '~' | '[' | ']' | '*' | '?'                    // c:3621-3631
+            | '=' | '-' | '!' | '(' | '|' | ')' => {
+                for (n, &t) in ztokens.iter().enumerate() {                  // c:3633
+                    if t == c {                                              // c:3634
+                        if bslash {                                          // c:3635
+                            chars[i - 1] = if (flags & ZSHTOK_SUBST) != 0 {
+                                Bnullkeep
+                            } else {
+                                Bnull
+                            };
+                        } else {
+                            chars[i] = char::from_u32(Pound as u32 + n as u32)
+                                .unwrap_or(c);                                // c:3638
+                        }
+                        break;                                                // c:3639
+                    }
+                }
+            }
+            _ => {}
         }
+        bslash = false;                                                       // c:3646
         i += 1;
     }
-    *s = out;
+    *s = chars.into_iter().collect();
 }
 
 /// Port of `remnulargs(char *s)` from `Src/glob.c:3649` — strip
