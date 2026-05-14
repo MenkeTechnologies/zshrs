@@ -2850,26 +2850,80 @@ pub fn par_if_wordcode(cmplx: &mut i32) {
 
 /// Port of `par_while(int *cmplx)` from `Src/parse.c:1520-1557`.
 pub fn par_while_wordcode(cmplx: &mut i32) {
-    let until = tok() == UNTIL;
-    let p = ecadd(0);
-    zshlex();
-    // c:1528 — `par_save_list(cmplx);` — condition.
-    par_save_list_wordcode(cmplx);
-    while tok() == SEPER {
-        zshlex();
-    }
-    par_loop_body_wordcode(cmplx, false);
-    let type_code = if until {
+    // c:1523 — `int oecused = ecused, p;`
+    let _oecused = ECUSED.get() as usize;
+    let p: usize;
+    // c:1524 — `int type = (tok == UNTIL ? WC_WHILE_UNTIL : WC_WHILE_WHILE);`
+    let r#type: wordcode = if tok() == UNTIL {
         WC_WHILE_UNTIL
     } else {
         WC_WHILE_WHILE
     };
-    let used = ECUSED.get() as usize;
-    let off = used.saturating_sub(1 + p) as wordcode;
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            b[p] = WCB_WHILE(type_code, off);
+
+    // c:1526 — `p = ecadd(0);`
+    p = ecadd(0);
+    // c:1527 — `zshlex();`
+    zshlex();
+    // c:1528 — `par_save_list(cmplx);` — condition.
+    par_save_list_wordcode(cmplx);
+    // c:1529 — `incmdpos = 1;`
+    set_incmdpos(true);
+    // c:1530-1531 — `while (tok == SEPER) zshlex();`
+    while tok() == SEPER {
+        zshlex();
+    }
+    // c:1532-1545 — body dispatch (inlined in C; we factor via
+    // par_loop_body_wordcode since for/while/repeat share this
+    // identical block).
+    if tok() == DOLOOP {
+        // c:1533 — `zshlex();`
+        zshlex();
+        // c:1534 — `par_save_list(cmplx);`
+        par_save_list_wordcode(cmplx);
+        // c:1535-1536 — `if (tok != DONE) YYERRORV(oecused);`
+        if tok() != DONE {
+            error("par_while: expected `done`");
+            return;
         }
+        // c:1537 — `incmdpos = 0;`
+        set_incmdpos(false);
+        // c:1538 — `zshlex();`
+        zshlex();
+    } else if tok() == INBRACE_TOK {
+        // c:1540 — `zshlex();`
+        zshlex();
+        // c:1541 — `par_save_list(cmplx);`
+        par_save_list_wordcode(cmplx);
+        // c:1542-1543 — `if (tok != OUTBRACE) YYERRORV(oecused);`
+        if tok() != OUTBRACE_TOK {
+            error("par_while: expected `}`");
+            return;
+        }
+        // c:1544 — `incmdpos = 0;`
+        set_incmdpos(false);
+        // c:1545 — `zshlex();`
+        zshlex();
+    } else if isset(CSHJUNKIELOOPS) {
+        // c:1546-1550
+        par_save_list_wordcode(cmplx);
+        if tok() != ZEND {
+            error("par_while: expected `end`");
+            return;
+        }
+        zshlex();
+    } else if unset(SHORTLOOPS) {
+        // c:1551-1552 — `YYERRORV(oecused);`
+        error("par_while: short body requires SHORTLOOPS");
+        return;
+    } else {
+        // c:1554 — `par_save_list1(cmplx);`
+        par_save_list1_wordcode(cmplx);
+    }
+
+    // c:1556 — `ecbuf[p] = WCB_WHILE(type, ecused - 1 - p);`
+    let used = ECUSED.get() as usize;
+    ECBUF.with_borrow_mut(|b| {
+        b[p] = WCB_WHILE(r#type, (used.saturating_sub(1 + p)) as wordcode);
     });
 }
 
@@ -2880,26 +2934,76 @@ pub fn par_until_wordcode(cmplx: &mut i32) {
 
 /// Port of `par_repeat(int *cmplx)` from `Src/parse.c:1564-1606`.
 pub fn par_repeat_wordcode(cmplx: &mut i32) {
-    let p = ecadd(0);
+    // c:1567 — `/* ### what to do about inrepeat_ here? */`
+    // c:1568 — `int oecused = ecused, p;`
+    let _oecused = ECUSED.get() as usize;
+    let p: usize;
+
+    // c:1570 — `p = ecadd(0);`
+    p = ecadd(0);
+
+    // c:1572 — `incmdpos = 0;`
     set_incmdpos(false);
+    // c:1573 — `zshlex();`
     zshlex();
+    // c:1574-1575 — `if (tok != STRING) YYERRORV(oecused);`
     if tok() != STRING_LEX {
         error("par_repeat: expected count");
         return;
     }
+    // c:1576 — `ecstr(tokstr);`
     ecstr(&tokstr().unwrap_or_default());
+    // c:1577 — `incmdpos = 1;`
     set_incmdpos(true);
+    // c:1578 — `zshlex();`
     zshlex();
+    // c:1579-1580 — `while (tok == SEPER) zshlex();`
     while tok() == SEPER {
         zshlex();
     }
-    par_loop_body_wordcode(cmplx, false);
-    let used = ECUSED.get() as usize;
-    let off = used.saturating_sub(1 + p) as wordcode;
-    ECBUF.with_borrow_mut(|b| {
-        if p < b.len() {
-            b[p] = WCB_REPEAT(off);
+    // c:1581-1604 — body dispatch (inlined here matching C exactly).
+    if tok() == DOLOOP {
+        // c:1582-1587
+        zshlex();
+        par_save_list_wordcode(cmplx);
+        if tok() != DONE {
+            error("par_repeat: expected `done`");
+            return;
         }
+        set_incmdpos(false);
+        zshlex();
+    } else if tok() == INBRACE_TOK {
+        // c:1589-1594
+        zshlex();
+        par_save_list_wordcode(cmplx);
+        if tok() != OUTBRACE_TOK {
+            error("par_repeat: expected `}`");
+            return;
+        }
+        set_incmdpos(false);
+        zshlex();
+    } else if isset(CSHJUNKIELOOPS) {
+        // c:1596-1599
+        par_save_list_wordcode(cmplx);
+        if tok() != ZEND {
+            error("par_repeat: expected `end`");
+            return;
+        }
+        zshlex();
+    } else if unset(SHORTLOOPS) && unset(SHORTREPEAT) {
+        // c:1601-1602 — par_repeat needs BOTH SHORTLOOPS and SHORTREPEAT
+        // unset to refuse short form (more permissive than par_while).
+        error("par_repeat: short body requires SHORTLOOPS or SHORTREPEAT");
+        return;
+    } else {
+        // c:1604 — `par_save_list1(cmplx);`
+        par_save_list1_wordcode(cmplx);
+    }
+
+    // c:1606 — `ecbuf[p] = WCB_REPEAT(ecused - 1 - p);`
+    let used = ECUSED.get() as usize;
+    ECBUF.with_borrow_mut(|b| {
+        b[p] = WCB_REPEAT((used.saturating_sub(1 + p)) as wordcode);
     });
 }
 
