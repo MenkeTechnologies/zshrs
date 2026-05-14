@@ -18,24 +18,6 @@
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::io::Write;
 
-/// Number of nested loops.
-/// Port of the global `loops` counter from Src/loop.c — every
-/// `execfor`/`execwhile`/`execrepeat`/`execselect` entry bumps it
-/// and decrements on exit.
-static LOOP_DEPTH: AtomicI32 = AtomicI32::new(0);
-
-/// Continue flag / level.
-/// Port of the global `contflag` from Src/loop.c — set by the
-/// `continue` builtin (Src/builtin.c:bin_break) and consumed by
-/// the loop body's exit check.
-static CONT_FLAG: AtomicI32 = AtomicI32::new(0);
-
-/// Break level.
-/// Port of the global `breaks` counter from Src/loop.c — set by
-/// the `break` builtin (Src/builtin.c:bin_break) and tested by
-/// each enclosing loop on exit.
-static BREAK_LEVEL: AtomicI32 = AtomicI32::new(0);
-
 // ===========================================================
 // C `Src/loop.c` — wordcode VM helpers for control flow.
 //
@@ -243,6 +225,24 @@ pub fn execcase(_do_exec: i32) -> i32 {                                  // c:60
 pub fn exectry(_do_exec: i32) -> i32 {                                   // c:735
     unreachable!("exectry: tree-walker disabled — fusevm lowers `try`/`always` in compile_zsh.rs")
 }
+
+/// Number of nested loops.
+/// Port of the global `loops` counter from Src/loop.c — every
+/// `execfor`/`execwhile`/`execrepeat`/`execselect` entry bumps it
+/// and decrements on exit.
+static LOOP_DEPTH: AtomicI32 = AtomicI32::new(0);
+
+/// Continue flag / level.
+/// Port of the global `contflag` from Src/loop.c — set by the
+/// `continue` builtin (Src/builtin.c:bin_break) and consumed by
+/// the loop body's exit check.
+static CONT_FLAG: AtomicI32 = AtomicI32::new(0);
+
+/// Break level.
+/// Port of the global `breaks` counter from Src/loop.c — set by
+/// the `break` builtin (Src/builtin.c:bin_break) and tested by
+/// each enclosing loop on exit.
+static BREAK_LEVEL: AtomicI32 = AtomicI32::new(0);
 
 #[cfg(test)]
 mod tests {

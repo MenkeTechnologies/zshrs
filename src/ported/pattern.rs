@@ -50,6 +50,14 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 // =====================================================================
+// 6. ZPC_* enum from zsh.h:1644 — indexes into the active-pattern-
+// characters table that compile-time and runtime both consult.
+// =====================================================================
+
+/// Maximum captures, from `pattern.c:94 NSUBEXP`.
+pub const NSUBEXP: usize = 9;
+
+// =====================================================================
 // 1. P_* opcode constants — pattern.c:97-127
 //
 // Numbered identically to C so a buffer compiled by this port matches
@@ -85,39 +93,26 @@ pub const P_NUMANY:     u8 = 0x47;  // c:124 Match any set of decimal digits.
 pub const P_OPEN:       u8 = 0x80;  // c:126 Mark this point in input as start of n.
 pub const P_CLOSE:      u8 = 0x90;  // c:127 Analogous to OPEN.
 
+/// `P_ISBRANCH(p)` macro from pattern.c:200 — `(p->l & 0x20)`.
+#[inline]
+pub fn P_ISBRANCH(op: u8) -> bool { (op & 0x20) != 0 }
+
+/// `P_ISEXCLUDE(p)` macro from pattern.c:201 — `((p->l & 0x30) == 0x30)`.
+#[inline]
+pub fn P_ISEXCLUDE(op: u8) -> bool { (op & 0x30) == 0x30 }
+
+/// `P_NOTDOT(p)` macro from pattern.c:202 — `(p->l & 0x40)`.
+#[inline]
+pub fn P_NOTDOT(op: u8) -> bool { (op & 0x40) != 0 }
+
 // =====================================================================
-// 12. Char-decode helpers — pattern.c:327, :336, :1909-1997
+// 3. Flag-bit constants returned via flagp out-params during compile.
+// pattern.c:216-218
 // =====================================================================
 
-/// Port of `clear_shiftstate()` from `Src/pattern.c:327`. C uses
-/// `mbstate_t`; Rust `char` is already a code point, so no shift
-/// state to clear.
-pub fn clear_shiftstate() {}                                                  // c:327
-
-/// Port of `metacharinc(char **x)` from `Src/pattern.c:336`. Advances past
-/// the next char (Meta-escape aware in C; UTF-8-byte-len in Rust).
-/// WARNING: param names don't match C — Rust=(s, pos) vs C=(x)
-pub fn metacharinc(s: &str, pos: usize) -> usize {                            // c:336
-    s[pos..].chars().next().map(|c| pos + c.len_utf8()).unwrap_or(pos)
-}
+pub const P_SIMPLE:  i32 = 0x01;  // c:216 Simple enough to be # / ## operand.
 pub const P_HSTART:  i32 = 0x02;  // c:217 Starts with # or ##'d pattern.
 pub const P_PURESTR: i32 = 0x04;  // c:218 Can be matched with a strcmp.
-
-// =====================================================================
-// 4. struct patprog — zsh.h:1601
-// =====================================================================
-
-/// `typedef struct patprog *Patprog;` from `zsh.h:542`.
-#[allow(non_camel_case_types)]
-/// `typedef struct patprog *Patprog;` from `zsh.h:542`.
-///
-/// C zsh allocates the `struct patprog` header + bytecode as one
-/// contiguous `malloc` block, accessing bytecode via
-/// `(char *)prog + prog->startoff`. Rust has no flexible array
-/// members, so this typedef pairs the C-exact `patprog` header
-/// (zsh_h.rs:768) with an owned bytecode `Vec<u8>` — header at
-/// `.0`, bytecode at `.1`. `startoff`/`size` index into `.1`.
-pub type Patprog = Box<(patprog, Vec<u8>)>;
 
 // =====================================================================
 // 5. PAT_* flag constants — re-exports of zsh.h:1623-1640 already in
@@ -132,13 +127,9 @@ pub use crate::ported::zsh_h::{
     PAT_HAS_EXCLUDP, PAT_LCMATCHUC,
 };
 
-// =====================================================================
-// 6. ZPC_* enum from zsh.h:1644 — indexes into the active-pattern-
-// characters table that compile-time and runtime both consult.
-// =====================================================================
-
-/// Maximum captures, from `pattern.c:94 NSUBEXP`.
-pub const NSUBEXP: usize = 9;
+// C: `static int patnpar;` — number of active parens (1-indexed at
+// compile time; the *struct* patnpar is the actual count).
+pub static patnpar: AtomicI32 = AtomicI32::new(0);              // c:271
 
 // GF_* glob-flag bits live in `zsh.h:1763-1773`, ported to
 // `src/ported/zsh_h.rs:2287-2291` per Rule C. Re-export so pattern's
@@ -147,21 +138,6 @@ pub use crate::ported::zsh_h::{
     GF_LCMATCHUC, GF_IGNCASE, GF_BACKREF, GF_MATCHREF, GF_MULTIBYTE,
 };
 use crate::zsh_h::{patprog, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH, ZPC_HAT, ZPC_INANG, ZPC_INBRACK, ZPC_INPAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE};
-// =====================================================================
-// Bytecode field offsets within each instruction.
-//
-// Instruction layout in `patout`:
-//     +0       u8     opcode
-//     +1..+5   u32 LE next_off (offset of next instr in chain, 0 = end)
-//     +5..     u8...  opcode-specific payload
-//
-// C uses a different layout (Upat union = 4-byte or 8-byte slots);
-// the Rust port pins the layout to byte offsets for portability.
-// =====================================================================
-
-const I_OP:   usize = 0; // opcode byte
-const I_NEXT: usize = 1; // u32 next-offset starts here
-const I_BODY: usize = 5; // payload starts here
 
 // =====================================================================
 // 7. File-static globals — direct mirror of pattern.c file-scope
@@ -182,64 +158,27 @@ const I_BODY: usize = 5; // payload starts here
 // hold just the buffer; patcode/patsize/patalloc are derived.
 pub static patout: Mutex<Vec<u8>> = Mutex::new(Vec::new());     // c:267
 
-/// Serialises every entry into `patcompile`. The C source at
-/// `Src/pattern.c:267-281` declares `patout`, `patparse`, `patstart`,
-/// `patnpar`, `patflags`, `patglobflags`, `errsfound`, `forceerrs`,
-/// `zpc_special`, `patstrcache` as file-scope statics that the compile
-/// mutates in sequence; zsh-the-program is single-threaded so the C
-/// source is safe under that invariant. zshrs callers (zutil's
-/// `style_table::get` via `crate::ported::pattern::patmatch`, params.rs,
-/// subst.rs, options.rs) can invoke `patcompile` from concurrent test
-/// threads, so the lock restores the single-writer invariant. Held
-/// only for the compile phase; the matcher (`pattry`/`patmatch_internal`)
-/// operates on the returned `Patprog.code` and touches no globals.
-static PATCOMPILE_LOCK: Mutex<()> = Mutex::new(());
-
-// C: `static char *patparse, *patstart;` — pattern parsing cursors
-// into the *input* pattern string. patstart points to start of
-// pattern; patparse moves forward as we consume tokens.
-pub static patparse: Mutex<String> = Mutex::new(String::new()); // c:269
-pub static patstart: Mutex<String> = Mutex::new(String::new()); // c:269
-
-/// Position within `patparse` we're currently looking at. C source
-/// uses a `char *` cursor; Rust uses byte offset into the String.
-pub static patparse_off: AtomicUsize = AtomicUsize::new(0);
-
-// C: `static int patnpar;` — number of active parens (1-indexed at
-// compile time; the *struct* patnpar is the actual count).
-pub static patnpar: AtomicI32 = AtomicI32::new(0);              // c:271
-
 // C: `static int patflags;` — current PAT_* flag set during compile.
 pub static patflags: AtomicI32 = AtomicI32::new(0);             // c:272
 
 // C: `static int patglobflags;` — current globbing flags during compile.
 pub static patglobflags: AtomicI32 = AtomicI32::new(0);         // c:273
 
-// C: `static int errsfound;` — approximate-match error count.
-pub static errsfound: AtomicI32 = AtomicI32::new(0);            // c:274
+// =====================================================================
+// 12. Char-decode helpers — pattern.c:327, :336, :1909-1997
+// =====================================================================
 
-// C: `static int forceerrs;` — required error count for approximate match.
-pub static forceerrs: AtomicI32 = AtomicI32::new(-1);           // c:275
+/// Port of `clear_shiftstate()` from `Src/pattern.c:327`. C uses
+/// `mbstate_t`; Rust `char` is already a code point, so no shift
+/// state to clear.
+pub fn clear_shiftstate() {}                                                  // c:327
 
-// C: `static long patglobflags_orig;` — saved at branch entry.
-pub static patglobflags_orig: AtomicI32 = AtomicI32::new(0);    // c:276
-
-// C: `static const char *zpc_special;` — table of currently-special
-// characters during compile (indexed by ZPC_*).
-//
-// pattern.c uses `static char zpc_special[ZPC_COUNT];` and resets it
-// in patcompcharsset(). Rust mirrors as a Mutex-wrapped byte array.
-pub static zpc_special: Mutex<[u8; ZPC_COUNT as usize]> = Mutex::new([0u8; ZPC_COUNT as usize]); // c:278
-
-// C: `static char *patstrcache;` — caches the unmetafied trial string.
-// Rust port has no Meta encoding so the cache is unnecessary; we leave
-// the static declared for parity (Rule A — name exists in C).
-pub static patstrcache: Mutex<String> = Mutex::new(String::new()); // c:281
-
-/// `Marker` constant from pattern.c — used as a placeholder for the
-/// active-but-disabled slot. C is `\200` (0x80). The port keeps it
-/// distinguishable from valid pattern bytes.
-pub const Marker: u8 = 0x80;
+/// Port of `metacharinc(char **x)` from `Src/pattern.c:336`. Advances past
+/// the next char (Meta-escape aware in C; UTF-8-byte-len in Rust).
+/// WARNING: param names don't match C — Rust=(s, pos) vs C=(x)
+pub fn metacharinc(s: &str, pos: usize) -> usize {                            // c:336
+    s[pos..].chars().next().map(|c| pos + c.len_utf8()).unwrap_or(pos)
+}
 
 // =====================================================================
 // 8. Bytecode write helpers — pattern.c:412-1856
@@ -1006,6 +945,26 @@ fn patoptail(p: usize, val: usize) {                                          //
     }
 }
 
+// =====================================================================
+// 13/14. Matcher — pattern.c:2223-3579
+// =====================================================================
+
+/// State accumulated during a single `patmatch` walk. C uses
+/// per-thread globals (`patbeginp[]` / `patendp[]` for captures);
+/// the Rust port encapsulates them in this struct passed by `&mut`.
+/// Rule D: this struct represents matcher-internal scratch state
+/// (analogous to `struct rpat pattrystate` at pattern.c:248), not a
+/// bag-of-globals from unrelated subsystems.
+///
+/// **C counterpart**: `struct rpat` at `pattern.c:248`.
+#[derive(Clone)]
+#[allow(non_camel_case_types)]
+pub struct rpat {
+    pub patbeginp: [usize; NSUBEXP],   // c:241 capture starts (byte offsets)
+    pub patendp:   [usize; NSUBEXP],   // c:242 capture ends
+    pub captures_set: u16,              // bitmask of groups successfully captured
+}
+
 /// Port of `charref(char *x, char *y, int *zmb_ind)` from `Src/pattern.c:1909`. Decode the char at
 /// `pos` without advancing.
 /// WARNING: param names don't match C — Rust=(s, pos) vs C=(x, y, zmb_ind)
@@ -1035,11 +994,6 @@ pub fn charsub(x: &str, y: usize) -> usize {                                // c
     let w = x[..y].chars().next_back().map(|c| c.len_utf8()).unwrap_or(1);
     y - w
 }
-
-const POSIX_CLASS_NAMES: &[&str] = &[
-    "alpha", "alnum", "blank", "cntrl", "digit", "graph", "lower",
-    "print", "punct", "space", "upper", "xdigit",
-];
 
 // =====================================================================
 // 16. String pre-processing — pattern.c:2063, :2080, :2132
@@ -1110,36 +1064,6 @@ pub fn pattryrefs(prog: &Patprog, string: &str) -> Option<(bool, Vec<(usize, usi
 pub fn patmatchlen(prog: &Patprog, string: &str) -> Option<usize> {           // c:2649
     let mut state = rpat::new();
     patmatch_internal(&prog.1, 0, string, 0, &mut state, prog.0.flags)
-}
-
-// =====================================================================
-// 13/14. Matcher — pattern.c:2223-3579
-// =====================================================================
-
-/// State accumulated during a single `patmatch` walk. C uses
-/// per-thread globals (`patbeginp[]` / `patendp[]` for captures);
-/// the Rust port encapsulates them in this struct passed by `&mut`.
-/// Rule D: this struct represents matcher-internal scratch state
-/// (analogous to `struct rpat pattrystate` at pattern.c:248), not a
-/// bag-of-globals from unrelated subsystems.
-///
-/// **C counterpart**: `struct rpat` at `pattern.c:248`.
-#[derive(Clone)]
-#[allow(non_camel_case_types)]
-pub struct rpat {
-    pub patbeginp: [usize; NSUBEXP],   // c:241 capture starts (byte offsets)
-    pub patendp:   [usize; NSUBEXP],   // c:242 capture ends
-    pub captures_set: u16,              // bitmask of groups successfully captured
-}
-
-impl rpat {
-    fn new() -> Self {
-        Self {
-            patbeginp: [usize::MAX; NSUBEXP],
-            patendp:   [0; NSUBEXP],
-            captures_set: 0,
-        }
-    }
 }
 
 // =====================================================================
@@ -1285,19 +1209,106 @@ pub fn clearpatterndisables() {                                               //
     patterndisables.lock().unwrap().clear();
 }
 
-// =====================================================================
-// 17. Module-loader / disable mgmt — pattern.c:4161-4296
-// =====================================================================
-
-/// Disabled-pattern set, per pattern.c:4220 `savepatterndisables`.
-/// Tracks which named patterns are currently disabled by `disable -p`.
-pub static patterndisables: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
 /// Port of `haswilds(char *str)` from `Src/pattern.c:4306`. Quick check whether
 /// `s` contains any wildcard characters.
 pub fn haswilds(str: &str) -> bool {                                            // c:4306
     str.chars().any(|c| matches!(c, '*' | '?' | '[' | '\\' | '(' | '|' | '<' | '#' | '^'))
 }
+
+// =====================================================================
+// 4. struct patprog — zsh.h:1601
+// =====================================================================
+
+/// `typedef struct patprog *Patprog;` from `zsh.h:542`.
+#[allow(non_camel_case_types)]
+/// `typedef struct patprog *Patprog;` from `zsh.h:542`.
+///
+/// C zsh allocates the `struct patprog` header + bytecode as one
+/// contiguous `malloc` block, accessing bytecode via
+/// `(char *)prog + prog->startoff`. Rust has no flexible array
+/// members, so this typedef pairs the C-exact `patprog` header
+/// (zsh_h.rs:768) with an owned bytecode `Vec<u8>` — header at
+/// `.0`, bytecode at `.1`. `startoff`/`size` index into `.1`.
+pub type Patprog = Box<(patprog, Vec<u8>)>;
+// =====================================================================
+// Bytecode field offsets within each instruction.
+//
+// Instruction layout in `patout`:
+//     +0       u8     opcode
+//     +1..+5   u32 LE next_off (offset of next instr in chain, 0 = end)
+//     +5..     u8...  opcode-specific payload
+//
+// C uses a different layout (Upat union = 4-byte or 8-byte slots);
+// the Rust port pins the layout to byte offsets for portability.
+// =====================================================================
+
+const I_OP:   usize = 0; // opcode byte
+
+impl rpat {
+    fn new() -> Self {
+        Self {
+            patbeginp: [usize::MAX; NSUBEXP],
+            patendp:   [0; NSUBEXP],
+            captures_set: 0,
+        }
+    }
+}
+const I_NEXT: usize = 1; // u32 next-offset starts here
+const I_BODY: usize = 5; // payload starts here
+
+/// Serialises every entry into `patcompile`. The C source at
+/// `Src/pattern.c:267-281` declares `patout`, `patparse`, `patstart`,
+/// `patnpar`, `patflags`, `patglobflags`, `errsfound`, `forceerrs`,
+/// `zpc_special`, `patstrcache` as file-scope statics that the compile
+/// mutates in sequence; zsh-the-program is single-threaded so the C
+/// source is safe under that invariant. zshrs callers (zutil's
+/// `style_table::get` via `crate::ported::pattern::patmatch`, params.rs,
+/// subst.rs, options.rs) can invoke `patcompile` from concurrent test
+/// threads, so the lock restores the single-writer invariant. Held
+/// only for the compile phase; the matcher (`pattry`/`patmatch_internal`)
+/// operates on the returned `Patprog.code` and touches no globals.
+static PATCOMPILE_LOCK: Mutex<()> = Mutex::new(());
+
+// C: `static char *patparse, *patstart;` — pattern parsing cursors
+// into the *input* pattern string. patstart points to start of
+// pattern; patparse moves forward as we consume tokens.
+pub static patparse: Mutex<String> = Mutex::new(String::new()); // c:269
+pub static patstart: Mutex<String> = Mutex::new(String::new()); // c:269
+
+/// Position within `patparse` we're currently looking at. C source
+/// uses a `char *` cursor; Rust uses byte offset into the String.
+pub static patparse_off: AtomicUsize = AtomicUsize::new(0);
+
+// C: `static int errsfound;` — approximate-match error count.
+pub static errsfound: AtomicI32 = AtomicI32::new(0);            // c:274
+
+// C: `static int forceerrs;` — required error count for approximate match.
+pub static forceerrs: AtomicI32 = AtomicI32::new(-1);           // c:275
+
+// C: `static long patglobflags_orig;` — saved at branch entry.
+pub static patglobflags_orig: AtomicI32 = AtomicI32::new(0);    // c:276
+
+// C: `static const char *zpc_special;` — table of currently-special
+// characters during compile (indexed by ZPC_*).
+//
+// pattern.c uses `static char zpc_special[ZPC_COUNT];` and resets it
+// in patcompcharsset(). Rust mirrors as a Mutex-wrapped byte array.
+pub static zpc_special: Mutex<[u8; ZPC_COUNT as usize]> = Mutex::new([0u8; ZPC_COUNT as usize]); // c:278
+
+// C: `static char *patstrcache;` — caches the unmetafied trial string.
+// Rust port has no Meta encoding so the cache is unnecessary; we leave
+// the static declared for parity (Rule A — name exists in C).
+pub static patstrcache: Mutex<String> = Mutex::new(String::new()); // c:281
+
+/// `Marker` constant from pattern.c — used as a placeholder for the
+/// active-but-disabled slot. C is `\200` (0x80). The port keeps it
+/// distinguishable from valid pattern bytes.
+pub const Marker: u8 = 0x80;
+
+const POSIX_CLASS_NAMES: &[&str] = &[
+    "alpha", "alnum", "blank", "cntrl", "digit", "graph", "lower",
+    "print", "punct", "space", "upper", "xdigit",
+];
 
 /// Port of file-static `zpc_disables_stack` from `Src/pattern.c:4244`.
 /// Per-evaluator function-scope disable save-stack (bucket-1: each
@@ -1311,24 +1322,13 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// `P_ISBRANCH(p)` macro from pattern.c:200 — `(p->l & 0x20)`.
-#[inline]
-pub fn P_ISBRANCH(op: u8) -> bool { (op & 0x20) != 0 }
-
-/// `P_ISEXCLUDE(p)` macro from pattern.c:201 — `((p->l & 0x30) == 0x30)`.
-#[inline]
-pub fn P_ISEXCLUDE(op: u8) -> bool { (op & 0x30) == 0x30 }
-
-/// `P_NOTDOT(p)` macro from pattern.c:202 — `(p->l & 0x40)`.
-#[inline]
-pub fn P_NOTDOT(op: u8) -> bool { (op & 0x40) != 0 }
-
 // =====================================================================
-// 3. Flag-bit constants returned via flagp out-params during compile.
-// pattern.c:216-218
+// 17. Module-loader / disable mgmt — pattern.c:4161-4296
 // =====================================================================
 
-pub const P_SIMPLE:  i32 = 0x01;  // c:216 Simple enough to be # / ## operand.
+/// Disabled-pattern set, per pattern.c:4220 `savepatterndisables`.
+/// Tracks which named patterns are currently disabled by `disable -p`.
+pub static patterndisables: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Helper: when patinsert shifts a chunk of bytecode, any 4-byte
 /// next_off slot that previously pointed past `opnd` must be bumped

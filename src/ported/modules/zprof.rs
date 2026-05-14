@@ -88,42 +88,6 @@ pub struct Parc {                                                        // c:57
 }
 
 // ---------------------------------------------------------------------------
-// File-static globals — port of c:66-71.
-// ---------------------------------------------------------------------------
-
-/// Port of `static Pfunc calls;` from `Src/Modules/zprof.c:66`.
-/// Per-function aggregated table; the C linked list becomes a
-/// `Mutex<Vec<Pfunc>>` so `Pfunc *` becomes `usize` index.
-pub static CALLS: Mutex<Vec<Pfunc>> = Mutex::new(Vec::new());            // c:66
-
-/// Port of `static int ncalls;` from `Src/Modules/zprof.c:67`. Always
-/// equals `CALLS.lock().len()` — kept as an explicit counter to
-/// match C's `ncalls++` increment pattern.
-pub static NCALLS: AtomicI32 = AtomicI32::new(0);                        // c:67
-
-/// Port of `static Parc arcs;` from `Src/Modules/zprof.c:68`.
-pub static ARCS: Mutex<Vec<Parc>> = Mutex::new(Vec::new());              // c:68
-
-/// Port of `static int narcs;` from `Src/Modules/zprof.c:69`.
-pub static NARCS: AtomicI32 = AtomicI32::new(0);                         // c:69
-
-/// Port of `static Sfunc stack;` from `Src/Modules/zprof.c:70`. The
-/// C linked stack becomes a `Mutex<Vec<Sfunc>>` (top of stack at
-/// `last()`).
-pub static STACK: Mutex<Vec<Sfunc>> = Mutex::new(Vec::new());            // c:70
-
-/// Port of `static Module zprof_module;` from `Src/Modules/zprof.c:71`.
-/// C uses a `Module` (struct module *) pointer to track which module
-/// owns the wrapper; `zprof_wrapper` short-circuits when
-/// `MOD_UNLOAD` is set on it. Module is ported as
-/// `Box<crate::ported::zsh_h::module>` (zsh_h.rs:425) but recording
-/// the raw `*const module` would deadlock with Sync/Send for the
-/// static — `AtomicBool` captures the only state `zprof_wrapper`
-/// actually inspects (loaded vs. unloading), matching the C
-/// `MOD_UNLOAD` flag-check on the same pointer.
-pub static ZPROF_MODULE: AtomicBool = AtomicBool::new(false);            // c:74
-
-// ---------------------------------------------------------------------------
 // Helpers (port of c:73-136).
 // ---------------------------------------------------------------------------
 
@@ -386,18 +350,6 @@ pub fn zprof_wrapper(_name: &str) -> i32 {                               // c:23
     0                                                                    // c:311
 }
 
-// ---------------------------------------------------------------------------
-// Module loaders.
-// ---------------------------------------------------------------------------
-
-// =====================================================================
-// static struct builtin bintab[]                                    c:309
-// static struct features module_features                            c:323
-// static struct funcwrap wrapper[]                                  c:328
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
 // `bintab` — port of `static struct builtin bintab[]` (zprof.c:309).
 
 
@@ -460,6 +412,54 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     0
 }
 
+// ---------------------------------------------------------------------------
+// Module loaders.
+// ---------------------------------------------------------------------------
+
+// =====================================================================
+// static struct builtin bintab[]                                    c:309
+// static struct features module_features                            c:323
+// static struct funcwrap wrapper[]                                  c:328
+// =====================================================================
+
+use crate::ported::zsh_h::module;
+
+// ---------------------------------------------------------------------------
+// File-static globals — port of c:66-71.
+// ---------------------------------------------------------------------------
+
+/// Port of `static Pfunc calls;` from `Src/Modules/zprof.c:66`.
+/// Per-function aggregated table; the C linked list becomes a
+/// `Mutex<Vec<Pfunc>>` so `Pfunc *` becomes `usize` index.
+pub static CALLS: Mutex<Vec<Pfunc>> = Mutex::new(Vec::new());            // c:66
+
+/// Port of `static int ncalls;` from `Src/Modules/zprof.c:67`. Always
+/// equals `CALLS.lock().len()` — kept as an explicit counter to
+/// match C's `ncalls++` increment pattern.
+pub static NCALLS: AtomicI32 = AtomicI32::new(0);                        // c:67
+
+/// Port of `static Parc arcs;` from `Src/Modules/zprof.c:68`.
+pub static ARCS: Mutex<Vec<Parc>> = Mutex::new(Vec::new());              // c:68
+
+/// Port of `static int narcs;` from `Src/Modules/zprof.c:69`.
+pub static NARCS: AtomicI32 = AtomicI32::new(0);                         // c:69
+
+/// Port of `static Sfunc stack;` from `Src/Modules/zprof.c:70`. The
+/// C linked stack becomes a `Mutex<Vec<Sfunc>>` (top of stack at
+/// `last()`).
+pub static STACK: Mutex<Vec<Sfunc>> = Mutex::new(Vec::new());            // c:70
+
+/// Port of `static Module zprof_module;` from `Src/Modules/zprof.c:71`.
+/// C uses a `Module` (struct module *) pointer to track which module
+/// owns the wrapper; `zprof_wrapper` short-circuits when
+/// `MOD_UNLOAD` is set on it. Module is ported as
+/// `Box<crate::ported::zsh_h::module>` (zsh_h.rs:425) but recording
+/// the raw `*const module` would deadlock with Sync/Send for the
+/// static — `AtomicBool` captures the only state `zprof_wrapper`
+/// actually inspects (loaded vs. unloading), matching the C
+/// `MOD_UNLOAD` flag-check on the same pointer.
+pub static ZPROF_MODULE: AtomicBool = AtomicBool::new(false);            // c:74
+
 
 
 use crate::ported::zsh_h::features as features_t;
@@ -506,6 +506,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

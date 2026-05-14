@@ -19,62 +19,6 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicI32, Ordering};
 use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
 
-/// Serialises every call into libtermcap. C `Src/Modules/termcap.c`
-/// uses `tgetent(3)` / `tgetflag(3)` / `tgetnum(3)` / `tgetstr(3)`
-/// directly; libtermcap (and libtinfo's compat layer) reads/writes
-/// file-scope globals (`PC`, `BC`, `UP`, `ospeed`, the term-entry
-/// buffer populated by `tgetent`) and is not thread-safe. zsh is
-/// single-threaded so the C source is race-free under that invariant.
-/// Rust callers (`ztgetflag`, `bin_echotc`, `gettermcap`, `scantermcap`)
-/// can fire from concurrent test threads, so the lock restores the
-/// single-writer assumption.
-static TERMCAP_LOCK: Mutex<()> = Mutex::new(());
-
-/// `boolcodes[]` from libtermcap — list of all known boolean
-/// capability 2-char codes. The subset zshrs's in-memory table
-/// recognises; full libtermcap has more.
-static BOOLCODES: &[&str] = &[
-    "am", "bs", "bw", "da", "db", "eo", "es", "gn", "hc", "hs",
-    "in", "km", "mi", "ms", "nc", "ns", "os", "ul", "ut", "xb",
-    "xn", "xo", "xs", "xt",
-];
-
-/// `numcodes[]` from libtermcap — list of known numeric codes.
-static NUMCODES: &[&str] = &[
-    "co", "it", "lh", "lm", "lw", "li", "ma", "MW", "Nl", "pa",
-    "Nco", "sg", "tw", "ug", "vt", "ws",
-];
-
-/// `strcodes[]` from libtermcap — list of known string codes.
-static STRCODES: &[&str] = &[
-    "ae", "al", "AL", "ac", "as", "bc", "bl", "bt", "cb", "cd",
-    "ce", "cm", "cr", "cs", "ct", "cl", "cv", "DC", "DL", "DO",
-    "do", "ds", "ec", "ed", "ei", "fs", "ho", "hd", "hu", "i1",
-    "i3", "i2", "ic", "IC", "if", "im", "ip", "is", "kA", "kb",
-    "kB", "kC", "kd", "kD", "kE", "kF", "ke", "kh", "kH", "kI",
-    "kL", "kl", "kM", "km", "kN", "kP", "kr", "kR", "kS", "ks",
-    "kT", "kt", "ku", "l0", "l1", "l2", "l3", "l4", "l5", "l6",
-    "l7", "l8", "l9", "le", "ll", "ma", "mb", "MC", "md", "me",
-    "mh", "mk", "mm", "mo", "mp", "mr", "nd", "nl", "nw", "pc",
-    "pf", "pk", "pl", "pn", "po", "pO", "ps", "px", "rc", "rf",
-    "RI", "rp", "rs", "sa", "sc", "se", "SF", "sf", "so", "SR",
-    "sr", "st", "ta", "te", "ti", "ts", "uc", "ue", "up", "UP",
-    "us", "vb", "ve", "vi", "vs", "wi",
-];
-
-// `capability_lookup` removed — Rust-only invention with hardcoded
-// ANSI escapes that has no counterpart in Src/Modules/termcap.c.
-// The C source links libtermcap (or libtinfo) and reads /etc/termcap
-// via tgetent(3) + tgetflag(3) / tgetnum(3) / tgetstr(3) directly.
-// Each call site below now invokes those libc-level routines via FFI.
-
-unsafe extern "C" {
-    fn tgetent(bp: *mut libc::c_char, name: *const libc::c_char) -> libc::c_int;
-    fn tgetflag(id: *const libc::c_char) -> libc::c_int;
-    fn tgetnum(id: *const libc::c_char) -> libc::c_int;
-    fn tgetstr(id: *const libc::c_char, area: *mut *mut libc::c_char) -> *mut libc::c_char;
-}
-
 /// Port of `ztgetflag(char *s)` from `Src/Modules/termcap.c:54`. Wraps
 /// libtermcap's `tgetflag()` to disambiguate "off" from "not
 /// present" via the `boolcodes[]` table walk: if `tgetflag`
@@ -278,6 +222,19 @@ pub fn scantermcap() -> Vec<(String, String)> {                          // c:20
     out
 }
 
+// `capability_lookup` removed — Rust-only invention with hardcoded
+// ANSI escapes that has no counterpart in Src/Modules/termcap.c.
+// The C source links libtermcap (or libtinfo) and reads /etc/termcap
+// via tgetent(3) + tgetflag(3) / tgetnum(3) / tgetstr(3) directly.
+// Each call site below now invokes those libc-level routines via FFI.
+
+unsafe extern "C" {
+    fn tgetent(bp: *mut libc::c_char, name: *const libc::c_char) -> libc::c_int;
+    fn tgetflag(id: *const libc::c_char) -> libc::c_int;
+    fn tgetnum(id: *const libc::c_char) -> libc::c_int;
+    fn tgetstr(id: *const libc::c_char, area: *mut *mut libc::c_char) -> *mut libc::c_char;
+}
+
 // `bintab` — port of `static struct builtin bintab[]` (termcap.c).
 
 
@@ -295,12 +252,6 @@ pub fn setup_(m: *const module) -> i32 {                                    // c
     // C body c:325-326 — `return 0`. Faithful empty-body port.
     0
 }
-
-// =====================================================================
-// static struct features module_features                            c:314 (termcap.c)
-// =====================================================================
-
-use crate::ported::zsh_h::module;
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/termcap.c:330`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -331,6 +282,12 @@ pub fn cleanup_(m: *const module) -> i32 {                                  // c
     setfeatureenables(m, module_features(), None)
 }
 
+// =====================================================================
+// static struct features module_features                            c:314 (termcap.c)
+// =====================================================================
+
+use crate::ported::zsh_h::module;
+
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/termcap.c:365`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:365
@@ -339,6 +296,49 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     //                    module-lifetime.
     0
 }
+
+/// Serialises every call into libtermcap. C `Src/Modules/termcap.c`
+/// uses `tgetent(3)` / `tgetflag(3)` / `tgetnum(3)` / `tgetstr(3)`
+/// directly; libtermcap (and libtinfo's compat layer) reads/writes
+/// file-scope globals (`PC`, `BC`, `UP`, `ospeed`, the term-entry
+/// buffer populated by `tgetent`) and is not thread-safe. zsh is
+/// single-threaded so the C source is race-free under that invariant.
+/// Rust callers (`ztgetflag`, `bin_echotc`, `gettermcap`, `scantermcap`)
+/// can fire from concurrent test threads, so the lock restores the
+/// single-writer assumption.
+static TERMCAP_LOCK: Mutex<()> = Mutex::new(());
+
+/// `boolcodes[]` from libtermcap — list of all known boolean
+/// capability 2-char codes. The subset zshrs's in-memory table
+/// recognises; full libtermcap has more.
+static BOOLCODES: &[&str] = &[
+    "am", "bs", "bw", "da", "db", "eo", "es", "gn", "hc", "hs",
+    "in", "km", "mi", "ms", "nc", "ns", "os", "ul", "ut", "xb",
+    "xn", "xo", "xs", "xt",
+];
+
+/// `numcodes[]` from libtermcap — list of known numeric codes.
+static NUMCODES: &[&str] = &[
+    "co", "it", "lh", "lm", "lw", "li", "ma", "MW", "Nl", "pa",
+    "Nco", "sg", "tw", "ug", "vt", "ws",
+];
+
+/// `strcodes[]` from libtermcap — list of known string codes.
+static STRCODES: &[&str] = &[
+    "ae", "al", "AL", "ac", "as", "bc", "bl", "bt", "cb", "cd",
+    "ce", "cm", "cr", "cs", "ct", "cl", "cv", "DC", "DL", "DO",
+    "do", "ds", "ec", "ed", "ei", "fs", "ho", "hd", "hu", "i1",
+    "i3", "i2", "ic", "IC", "if", "im", "ip", "is", "kA", "kb",
+    "kB", "kC", "kd", "kD", "kE", "kF", "ke", "kh", "kH", "kI",
+    "kL", "kl", "kM", "km", "kN", "kP", "kr", "kR", "kS", "ks",
+    "kT", "kt", "ku", "l0", "l1", "l2", "l3", "l4", "l5", "l6",
+    "l7", "l8", "l9", "le", "ll", "ma", "mb", "MC", "md", "me",
+    "mh", "mk", "mm", "mo", "mp", "mr", "nd", "nl", "nw", "pc",
+    "pf", "pk", "pl", "pn", "po", "pO", "ps", "px", "rc", "rf",
+    "RI", "rp", "rs", "sa", "sc", "se", "SF", "sf", "so", "SR",
+    "sr", "st", "ta", "te", "ti", "ts", "uc", "ue", "up", "UP",
+    "us", "vb", "ve", "vi", "vs", "wi",
+];
 
 /// WARNING: NOT IN TERMCAP.C — AtomicI32-protected lazy termcap init; C uses libtermcap `tgetent` once at boot
 /// (equivalent C logic at Src/Modules/termcap.c:82).
@@ -418,6 +418,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

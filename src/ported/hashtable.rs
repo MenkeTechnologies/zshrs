@@ -124,27 +124,20 @@ pub fn addhashnode2<T>(ht: &mut HashMap<String, T>, nam: &str, nodeptr: T) -> Op
     ht.insert(nam.to_string(), nodeptr)
 }
 
-/// Command name hash table
-// hash table containing external commands                                  // c:587
-#[derive(Debug)]
-/// `$cmdtab` table of cached executable lookups.
-/// Port of `cmdnamtab` from Src/hashtable.c — `createcmdnamtable()`
-/// (line 601), `emptycmdnamtable()` (line 623), and `hashdir()`
-/// (line 634) drive populate/clear/fill cycles.
-/// **NOT C-FAITHFUL — Rust-only typed wrapper around HashMap.**
-/// C uses the generic `HashTable` struct (zsh.h:1530 / zsh_h.rs:535)
-/// with per-table GSU callback fn pointers (`hash`/`addnode`/
-/// `getnode`/`removenode`/`freenode`/`printnode`/`scantab`). Each
-/// per-table accessor (`cmdnamtab_lock`, `shfunctab_lock`, etc.)
-/// returns a `Mutex<HashTable>` instance with the appropriate
-/// callbacks wired. When the generic-HashTable substrate lands,
-/// cmdnam_table/shfunc_table/reswd_table/alias_table get deleted
-/// in favor of typed views over the shared `HashTable` storage.
-pub struct cmdnam_table {
-    table: HashMap<String, CmdName>,
-    path_checked_index: usize,
-    path: Vec<String>,
-    hash_executables_only: bool,
+/// Port of `gethashnode(HashTable ht, const char *nam)` from `Src/hashtable.c:231`.
+///
+/// C body returns NULL if the entry has the DISABLED flag set;
+// the hashnode.  If the node is DISABLED                                  // c:231
+// or isn't found, it returns NULL                                          // c:231
+/// otherwise returns the node. Generic lookup helper — `T` must
+/// expose its DISABLED flag via the [`HashNodeFlags`] trait so
+/// the disabled filter applies.
+/// WARNING: param names don't match C — Rust=(nam) vs C=(ht, nam)
+pub fn gethashnode<'a, T: HashNodeFlags>(                                    // c:231
+    ht: &'a HashMap<String, T>,
+    nam: &str,
+) -> Option<&'a T> {
+    ht.get(nam).filter(|t| !t.is_disabled())
 }
 
 impl cmdnam_table {
@@ -313,22 +306,6 @@ impl Default for cmdnam_table {
 // hashnode literal pre-populated.
 pub use crate::ported::zsh_h::shfunc as ShFunc;                              // c:1316
 
-/// Port of `gethashnode(HashTable ht, const char *nam)` from `Src/hashtable.c:231`.
-///
-/// C body returns NULL if the entry has the DISABLED flag set;
-// the hashnode.  If the node is DISABLED                                  // c:231
-// or isn't found, it returns NULL                                          // c:231
-/// otherwise returns the node. Generic lookup helper — `T` must
-/// expose its DISABLED flag via the [`HashNodeFlags`] trait so
-/// the disabled filter applies.
-/// WARNING: param names don't match C — Rust=(nam) vs C=(ht, nam)
-pub fn gethashnode<'a, T: HashNodeFlags>(                                    // c:231
-    ht: &'a HashMap<String, T>,
-    nam: &str,
-) -> Option<&'a T> {
-    ht.get(nam).filter(|t| !t.is_disabled())
-}
-
 /// Port of `gethashnode2(HashTable ht, const char *nam)` from `Src/hashtable.c:255`.
 ///
 /// Same as gethashnode but bypasses the DISABLED filter.
@@ -336,22 +313,28 @@ pub fn gethashnode2<'a, T>(ht: &'a HashMap<String, T>, nam: &str) -> Option<&'a 
     ht.get(nam)
 }
 
-// `impl ShFunc` deleted — methods replaced with inline flag checks
-// (`(shf.node.flags & FLAG as i32) != 0`) at callers, mirroring
-// C's idiom. Constructors `shfunc_with_body` / `shfunc_autoload`
-// above replace `ShFunc::with_body` / `::autoload` / `::new`.
+/// Port of `removehashnode(HashTable ht, const char *nam)` from `Src/hashtable.c:275`.
+///
+// table and returns a pointer to it.  If there                            // c:275
+// is no such node, then it returns NULL                                    // c:275
+/// C body removes the node from the bucket chain and returns the
+/// removed pointer (or NULL). Rust `HashMap::remove` has the
+/// matching shape.
+pub fn removehashnode<T>(ht: &mut HashMap<String, T>, nam: &str) -> Option<T> { // c:275
+    ht.remove(nam)
+}
 
-/// Shell function hash table
-// hash table containing the shell functions                                // c:805
-#[derive(Debug)]
-/// `$shfunctab` shell function table.
-/// Port of the `shfunctab` HashTable Src/hashtable.c builds —
-/// `printshfuncnode` / `freeshfuncnode` (Src/builtin.c) hang off
-/// the same shape.
-/// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
-/// `cmdnam_table` for the canonical-port direction.
-pub struct shfunc_table {
-    table: HashMap<String, ShFunc>,
+/// Port of `disablehashnode(HashNode hn, UNUSED(int flags))` from `Src/hashtable.c:323`.
+///
+/// C body: `hn->flags |= DISABLED;`. Generic helper that flips
+/// the DISABLED bit on the named entry via [`HashNodeFlags`].
+pub fn disablehashnode<T: HashNodeFlags>(hn: &mut HashMap<String, T>, flags: &str) -> bool {
+    if let Some(node) = hn.get_mut(flags) {
+        node.set_disabled(true);
+        true
+    } else {
+        false
+    }
 }
 
 impl shfunc_table {
@@ -448,16 +431,16 @@ impl Default for shfunc_table {
 // to in-file callers and external imports.
 pub use crate::ported::zsh_h::reswd as Reswd;                                // c:1246
 
-/// Reserved word hash table
-#[derive(Debug)]
-/// `$reswdtab` reserved-word table.
-// hash table containing the reserved words                                 // c:1111
-/// Port of the `reswdtab` HashTable from Src/hashtable.c — used
-/// by Src/lex.c to recognize keywords like `if`/`while`/`do`.
-/// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
-/// `cmdnam_table` for the canonical-port direction.
-pub struct reswd_table {
-    table: HashMap<String, Reswd>,
+/// Port of `enablehashnode(HashNode hn, UNUSED(int flags))` from `Src/hashtable.c:332`.
+///
+/// C body: `hn->flags &= ~DISABLED;`. Inverse of [`disablehashnode`].
+pub fn enablehashnode<T: HashNodeFlags>(hn: &mut HashMap<String, T>, flags: &str) -> bool {
+    if let Some(node) = hn.get_mut(flags) {
+        node.set_disabled(false);
+        true
+    } else {
+        false
+    }
 }
 
 impl reswd_table {
@@ -573,28 +556,54 @@ impl Default for reswd_table {
 pub use crate::ported::zsh_h::alias as Alias;
 use crate::zsh_h::{ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED, PM_LOADDIR, PM_TAGGED, PM_UNDEFINED};
 
-/// Port of `removehashnode(HashTable ht, const char *nam)` from `Src/hashtable.c:275`.
+/// Port of `hnamcmp(const void *ap, const void *bp)` from `Src/hashtable.c:341`.
 ///
-// table and returns a pointer to it.  If there                            // c:275
-// is no such node, then it returns NULL                                    // c:275
-/// C body removes the node from the bucket chain and returns the
-/// removed pointer (or NULL). Rust `HashMap::remove` has the
-/// matching shape.
-pub fn removehashnode<T>(ht: &mut HashMap<String, T>, nam: &str) -> Option<T> { // c:275
-    ht.remove(nam)
+/// `ztrcmp` over hash-node names — used by qsort for sorted
+/// scan output (`functions`, `alias`, etc.).
+pub fn hnamcmp(ap: &str, bp: &str) -> std::cmp::Ordering {
+    ap.cmp(bp)
 }
 
-/// Alias hash table
-#[derive(Debug)]
-/// `$aliastab` alias hash.
-/// Port of the `aliastab` HashTable from Src/hashtable.c —
-// hash table containing the aliases                                        // c:1174
-/// `bin_alias()` (Src/builtin.c) drives every mutation. Suffix
-/// aliases live in a separate `sufaliastab` instance.
-/// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
-/// `cmdnam_table` for the canonical-port direction.
-pub struct alias_table {
-    table: HashMap<String, Alias>,
+/// Port of `scanmatchtable(HashTable ht, Patprog pprog, int sorted, int flags1, int flags2, ScanFunc scanfunc, int scanflags)` from `Src/hashtable.c:373`.
+///
+/// C body walks every node calling `func(node, scanflags)` if
+/// the node satisfies (a) optional pattern match, (b) `flags1`
+/// require-at-least-one, (c) `flags2` require-none-of. The
+/// `sorted` flag pre-sorts entries before scanning.
+///
+/// Rust port: same shape with closure callback. Returns the
+/// match count.
+/// WARNING: param names don't match C — Rust=() vs C=(ht, pprog, sorted, flags1, flags2, scanfunc, scanflags)
+pub fn scanmatchtable<T: HashNodeFlags, F: FnMut(&str, &T)>(
+    ht: &HashMap<String, T>,
+    pattern: Option<&str>,
+    sorted: bool,
+    flags1: u32,
+    flags2: u32,
+    mut func: F,
+) -> i32 {
+    let mut entries: Vec<(&String, &T)> = ht.iter().collect();
+    if sorted {
+        entries.sort_by(|a, b| a.0.cmp(b.0));
+    }
+    let mut match_count = 0;
+    for (name, node) in entries {
+        if let Some(p) = pattern {
+            if !simple_glob_match(p, name) {
+                continue;
+            }
+        }
+        let f = node.flags();
+        if flags1 != 0 && (f & flags1) == 0 {
+            continue;
+        }
+        if flags2 != 0 && (f & flags2) != 0 {
+            continue;
+        }
+        func(name, node);
+        match_count += 1;
+    }
+    match_count
 }
 
 impl alias_table {
@@ -682,126 +691,6 @@ impl Default for alias_table {
     }
 }
 
-// `SuffixAliasTable` type alias deleted — Rust-only convenience.
-// C has no `SuffixAliasTable`; the same generic `HashTable` powers
-// both `aliastab` and `sufaliastab` (declared identically at
-// hashtable.c:1177-1182). Callers can use `alias_table` directly
-// for both. (When the canonical HashTable substrate is wired,
-// both will share the same generic type.)
-
-/// Port of `struct dircache_entry` from `Src/hashtable.c:1503-1509`.
-///
-/// C body:
-/// ```c
-/// struct dircache_entry {
-///     char *name;   /* Name of directory in cache */
-///     int   refs;   /* Number of references to it */
-/// };
-/// ```
-#[allow(non_camel_case_types)]
-#[derive(Debug, Clone)]
-pub struct dircache_entry {                                                  // c:1503
-    pub name: String,                                                        // c:1506
-    pub refs: i32,                                                           // c:1508
-}
-
-// Mirrors C's file-statics at hashtable.c:1517:
-//   `static struct dircache_entry *dircache, *dircache_lastentry;`
-//   `static int dircache_size;`
-// Rust port keeps the cache as a `Mutex<Vec<dircache_entry>>` plus
-// a lastentry index. dircache_size is implicit (Vec::len()).
-static DIRCACHE_INNER: std::sync::OnceLock<
-    std::sync::Mutex<Vec<dircache_entry>>,
-> = std::sync::OnceLock::new();
-static DIRCACHE_LASTENTRY: std::sync::atomic::AtomicUsize =                  // c:1517
-    std::sync::atomic::AtomicUsize::new(usize::MAX);                         // sentinel "no last"
-
-/// Port of `disablehashnode(HashNode hn, UNUSED(int flags))` from `Src/hashtable.c:323`.
-///
-/// C body: `hn->flags |= DISABLED;`. Generic helper that flips
-/// the DISABLED bit on the named entry via [`HashNodeFlags`].
-pub fn disablehashnode<T: HashNodeFlags>(hn: &mut HashMap<String, T>, flags: &str) -> bool {
-    if let Some(node) = hn.get_mut(flags) {
-        node.set_disabled(true);
-        true
-    } else {
-        false
-    }
-}
-
-/// Print flags for whence/type commands
-pub mod print_flags {
-    pub const NAMEONLY: u32 = 1 << 0;
-    pub const WHENCE_WORD: u32 = 1 << 1;
-    pub const WHENCE_SIMPLE: u32 = 1 << 2;
-    pub const WHENCE_CSH: u32 = 1 << 3;
-    pub const WHENCE_VERBOSE: u32 = 1 << 4;
-    pub const WHENCE_FUNCDEF: u32 = 1 << 5;
-    pub const LIST: u32 = 1 << 6;
-}
-
-/// Port of `enablehashnode(HashNode hn, UNUSED(int flags))` from `Src/hashtable.c:332`.
-///
-/// C body: `hn->flags &= ~DISABLED;`. Inverse of [`disablehashnode`].
-pub fn enablehashnode<T: HashNodeFlags>(hn: &mut HashMap<String, T>, flags: &str) -> bool {
-    if let Some(node) = hn.get_mut(flags) {
-        node.set_disabled(false);
-        true
-    } else {
-        false
-    }
-}
-
-/// Port of `hnamcmp(const void *ap, const void *bp)` from `Src/hashtable.c:341`.
-///
-/// `ztrcmp` over hash-node names — used by qsort for sorted
-/// scan output (`functions`, `alias`, etc.).
-pub fn hnamcmp(ap: &str, bp: &str) -> std::cmp::Ordering {
-    ap.cmp(bp)
-}
-
-/// Port of `scanmatchtable(HashTable ht, Patprog pprog, int sorted, int flags1, int flags2, ScanFunc scanfunc, int scanflags)` from `Src/hashtable.c:373`.
-///
-/// C body walks every node calling `func(node, scanflags)` if
-/// the node satisfies (a) optional pattern match, (b) `flags1`
-/// require-at-least-one, (c) `flags2` require-none-of. The
-/// `sorted` flag pre-sorts entries before scanning.
-///
-/// Rust port: same shape with closure callback. Returns the
-/// match count.
-/// WARNING: param names don't match C — Rust=() vs C=(ht, pprog, sorted, flags1, flags2, scanfunc, scanflags)
-pub fn scanmatchtable<T: HashNodeFlags, F: FnMut(&str, &T)>(
-    ht: &HashMap<String, T>,
-    pattern: Option<&str>,
-    sorted: bool,
-    flags1: u32,
-    flags2: u32,
-    mut func: F,
-) -> i32 {
-    let mut entries: Vec<(&String, &T)> = ht.iter().collect();
-    if sorted {
-        entries.sort_by(|a, b| a.0.cmp(b.0));
-    }
-    let mut match_count = 0;
-    for (name, node) in entries {
-        if let Some(p) = pattern {
-            if !simple_glob_match(p, name) {
-                continue;
-            }
-        }
-        let f = node.flags();
-        if flags1 != 0 && (f & flags1) == 0 {
-            continue;
-        }
-        if flags2 != 0 && (f & flags2) != 0 {
-            continue;
-        }
-        func(name, node);
-        match_count += 1;
-    }
-    match_count
-}
-
 /// Port of `scanhashtable(HashTable ht, int sorted, int flags1, int flags2, ScanFunc scanfunc, int scanflags)` from `Src/hashtable.c:446`.
 ///
 /// C body delegates to `scanmatchtable` with `pprog = NULL`. Rust
@@ -848,6 +737,17 @@ pub fn resizehashtable<T>(ht: &mut HashMap<String, T>, newsize: i32) {
 /// capacity, matching the semantic.
 pub fn emptyhashtable<T>(ht: &mut HashMap<String, T>) {                     // c:519
     ht.clear();
+}
+
+/// Print flags for whence/type commands
+pub mod print_flags {
+    pub const NAMEONLY: u32 = 1 << 0;
+    pub const WHENCE_WORD: u32 = 1 << 1;
+    pub const WHENCE_SIMPLE: u32 = 1 << 2;
+    pub const WHENCE_CSH: u32 = 1 << 3;
+    pub const WHENCE_VERBOSE: u32 = 1 << 4;
+    pub const WHENCE_FUNCDEF: u32 = 1 << 5;
+    pub const LIST: u32 = 1 << 6;
 }
 
 // Print info about hash table                                             // c:527
@@ -1213,73 +1113,6 @@ pub fn printshfuncnode(func: &ShFunc, print_flags: u32) -> String {
     result
 }
 
-/// Trait exposing the DISABLED flag on a hash-node value.
-///
-/// Implemented for the per-table value types so the generic ops
-/// (`gethashnode`/`disablehashnode`/etc.) can filter / mutate
-/// without per-table dispatch. Mirrors C's `HashNode->flags`
-/// field which every node struct embeds via the `struct hashnode`
-/// header.
-pub trait HashNodeFlags {
-    fn flags(&self) -> u32;
-    fn set_disabled(&mut self, disabled: bool);
-    fn is_disabled(&self) -> bool {
-        self.flags() & (DISABLED as u32) != 0
-    }
-}
-
-impl HashNodeFlags for Alias {  
-    fn flags(&self) -> u32 {
-        self.node.flags as u32
-    }
-    fn set_disabled(&mut self, disabled: bool) {
-        if disabled {
-            self.node.flags |= DISABLED as i32;
-        } else {
-            self.node.flags &= !(DISABLED as i32);
-        }
-    }
-}
-
-impl HashNodeFlags for ShFunc {
-    fn flags(&self) -> u32 {
-        self.node.flags as u32
-    }
-    fn set_disabled(&mut self, disabled: bool) {
-        if disabled {
-            self.node.flags |= DISABLED as i32;
-        } else {
-            self.node.flags &= !(DISABLED as i32);
-        }
-    }
-}
-
-impl HashNodeFlags for CmdName {
-    fn flags(&self) -> u32 {
-        self.node.flags as u32
-    }
-    fn set_disabled(&mut self, disabled: bool) {
-        if disabled {
-            self.node.flags |= DISABLED as i32;
-        } else {
-            self.node.flags &= !(DISABLED as i32);
-        }
-    }
-}
-
-impl HashNodeFlags for Reswd {
-    fn flags(&self) -> u32 {
-        self.node.flags as u32
-    }
-    fn set_disabled(&mut self, disabled: bool) {
-        if disabled {
-            self.node.flags |= DISABLED as i32;
-        } else {
-            self.node.flags &= !(DISABLED as i32);
-        }
-    }
-}
-
 /// Port of `scanmatchshfunc(Patprog pprog, int sorted, int flags1, int flags2, ScanFunc scanfunc, int scanflags, int expand)` from `Src/hashtable.c:1013`.
 ///
 /// C body iterates `shfunctab` and calls `func(node)` on every
@@ -1389,6 +1222,73 @@ pub fn printreswdnode(hn: &str, printflags: u32) -> String {
 pub fn createaliastable(ht: *mut crate::ported::zsh_h::hashtable) {         // c:1188
     // c:1188-1201 — vtable wireup. Rust path: alias_table already
     // exposes add/get/remove/disable/enable/free/print as inherent methods.
+}
+
+/// Trait exposing the DISABLED flag on a hash-node value.
+///
+/// Implemented for the per-table value types so the generic ops
+/// (`gethashnode`/`disablehashnode`/etc.) can filter / mutate
+/// without per-table dispatch. Mirrors C's `HashNode->flags`
+/// field which every node struct embeds via the `struct hashnode`
+/// header.
+pub trait HashNodeFlags {
+    fn flags(&self) -> u32;
+    fn set_disabled(&mut self, disabled: bool);
+    fn is_disabled(&self) -> bool {
+        self.flags() & (DISABLED as u32) != 0
+    }
+}
+
+impl HashNodeFlags for Alias {  
+    fn flags(&self) -> u32 {
+        self.node.flags as u32
+    }
+    fn set_disabled(&mut self, disabled: bool) {
+        if disabled {
+            self.node.flags |= DISABLED as i32;
+        } else {
+            self.node.flags &= !(DISABLED as i32);
+        }
+    }
+}
+
+impl HashNodeFlags for ShFunc {
+    fn flags(&self) -> u32 {
+        self.node.flags as u32
+    }
+    fn set_disabled(&mut self, disabled: bool) {
+        if disabled {
+            self.node.flags |= DISABLED as i32;
+        } else {
+            self.node.flags &= !(DISABLED as i32);
+        }
+    }
+}
+
+impl HashNodeFlags for CmdName {
+    fn flags(&self) -> u32 {
+        self.node.flags as u32
+    }
+    fn set_disabled(&mut self, disabled: bool) {
+        if disabled {
+            self.node.flags |= DISABLED as i32;
+        } else {
+            self.node.flags &= !(DISABLED as i32);
+        }
+    }
+}
+
+impl HashNodeFlags for Reswd {
+    fn flags(&self) -> u32 {
+        self.node.flags as u32
+    }
+    fn set_disabled(&mut self, disabled: bool) {
+        if disabled {
+            self.node.flags |= DISABLED as i32;
+        } else {
+            self.node.flags &= !(DISABLED as i32);
+        }
+    }
 }
 
 /// Port of `createaliastables()` from `Src/hashtable.c:1206`.
@@ -1731,6 +1631,106 @@ pub fn dircache_set(name: &str, value: Option<&str>) {
     }
 }
 
+// `SuffixAliasTable` type alias deleted — Rust-only convenience.
+// C has no `SuffixAliasTable`; the same generic `HashTable` powers
+// both `aliastab` and `sufaliastab` (declared identically at
+// hashtable.c:1177-1182). Callers can use `alias_table` directly
+// for both. (When the canonical HashTable substrate is wired,
+// both will share the same generic type.)
+
+/// Port of `struct dircache_entry` from `Src/hashtable.c:1503-1509`.
+///
+/// C body:
+/// ```c
+/// struct dircache_entry {
+///     char *name;   /* Name of directory in cache */
+///     int   refs;   /* Number of references to it */
+/// };
+/// ```
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
+pub struct dircache_entry {                                                  // c:1503
+    pub name: String,                                                        // c:1506
+    pub refs: i32,                                                           // c:1508
+}
+
+/// Command name hash table
+// hash table containing external commands                                  // c:587
+#[derive(Debug)]
+/// `$cmdtab` table of cached executable lookups.
+/// Port of `cmdnamtab` from Src/hashtable.c — `createcmdnamtable()`
+/// (line 601), `emptycmdnamtable()` (line 623), and `hashdir()`
+/// (line 634) drive populate/clear/fill cycles.
+/// **NOT C-FAITHFUL — Rust-only typed wrapper around HashMap.**
+/// C uses the generic `HashTable` struct (zsh.h:1530 / zsh_h.rs:535)
+/// with per-table GSU callback fn pointers (`hash`/`addnode`/
+/// `getnode`/`removenode`/`freenode`/`printnode`/`scantab`). Each
+/// per-table accessor (`cmdnamtab_lock`, `shfunctab_lock`, etc.)
+/// returns a `Mutex<HashTable>` instance with the appropriate
+/// callbacks wired. When the generic-HashTable substrate lands,
+/// cmdnam_table/shfunc_table/reswd_table/alias_table get deleted
+/// in favor of typed views over the shared `HashTable` storage.
+pub struct cmdnam_table {
+    table: HashMap<String, CmdName>,
+    path_checked_index: usize,
+    path: Vec<String>,
+    hash_executables_only: bool,
+}
+
+// `impl ShFunc` deleted — methods replaced with inline flag checks
+// (`(shf.node.flags & FLAG as i32) != 0`) at callers, mirroring
+// C's idiom. Constructors `shfunc_with_body` / `shfunc_autoload`
+// above replace `ShFunc::with_body` / `::autoload` / `::new`.
+
+/// Shell function hash table
+// hash table containing the shell functions                                // c:805
+#[derive(Debug)]
+/// `$shfunctab` shell function table.
+/// Port of the `shfunctab` HashTable Src/hashtable.c builds —
+/// `printshfuncnode` / `freeshfuncnode` (Src/builtin.c) hang off
+/// the same shape.
+/// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
+/// `cmdnam_table` for the canonical-port direction.
+pub struct shfunc_table {
+    table: HashMap<String, ShFunc>,
+}
+
+/// Reserved word hash table
+#[derive(Debug)]
+/// `$reswdtab` reserved-word table.
+// hash table containing the reserved words                                 // c:1111
+/// Port of the `reswdtab` HashTable from Src/hashtable.c — used
+/// by Src/lex.c to recognize keywords like `if`/`while`/`do`.
+/// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
+/// `cmdnam_table` for the canonical-port direction.
+pub struct reswd_table {
+    table: HashMap<String, Reswd>,
+}
+
+/// Alias hash table
+#[derive(Debug)]
+/// `$aliastab` alias hash.
+/// Port of the `aliastab` HashTable from Src/hashtable.c —
+// hash table containing the aliases                                        // c:1174
+/// `bin_alias()` (Src/builtin.c) drives every mutation. Suffix
+/// aliases live in a separate `sufaliastab` instance.
+/// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
+/// `cmdnam_table` for the canonical-port direction.
+pub struct alias_table {
+    table: HashMap<String, Alias>,
+}
+
+// Mirrors C's file-statics at hashtable.c:1517:
+//   `static struct dircache_entry *dircache, *dircache_lastentry;`
+//   `static int dircache_size;`
+// Rust port keeps the cache as a `Mutex<Vec<dircache_entry>>` plus
+// a lastentry index. dircache_size is implicit (Vec::len()).
+static DIRCACHE_INNER: std::sync::OnceLock<
+    std::sync::Mutex<Vec<dircache_entry>>,
+> = std::sync::OnceLock::new();
+static DIRCACHE_LASTENTRY: std::sync::atomic::AtomicUsize =                  // c:1517
+    std::sync::atomic::AtomicUsize::new(usize::MAX);                         // sentinel "no last"
+
 /// Build a hashed `cmdnam` carrying a resolved path. Mirrors C's
 /// inline `cn->u.cmd = ztrdup(path); cn->node.flags = HASHED;` at
 /// hashtable.c:704.
@@ -2011,6 +2011,17 @@ fn glob_match_inner(pat: &[u8], name: &[u8]) -> bool {
         c => !name.is_empty() && name[0] == c && glob_match_inner(&pat[1..], &name[1..]),
     }
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

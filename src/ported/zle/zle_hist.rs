@@ -54,201 +54,6 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-pub static ISEARCH_ACTIVE: AtomicI32 = AtomicI32::new(0);                    // c:1078
-
-/// Port of `int isearch_startpos` from `Src/Zle/zle_hist.c:1078`.
-/// Byte offset of the start of the current isearch match.
-pub static ISEARCH_STARTPOS: AtomicI32 = AtomicI32::new(0);                  // c:1078
-
-/// Port of `int isearch_endpos` from `Src/Zle/zle_hist.c:1078`.
-/// Byte offset of the end of the current isearch match.
-pub static ISEARCH_ENDPOS: AtomicI32 = AtomicI32::new(0);                    // c:1078
-
-// Per-session ZLE history state. Rust-side aggregate over zsh's C
-// flat-globals (`hist_ring`/`histline`/`searchstr`/`have_edits`/etc.
-// in `Src/hist.c` + `Src/Zle/zle_hist.c`). The C side spreads these
-// across file-scope statics; the zshrs port collects the subset the
-// ZLE widgets actually drive into one container so a `&mut Zle` can
-// hold it. Eventual unification: drop `History.entries` and read from
-// `crate::ported::hist::hist_ring`; the cursor/saved_line/search
-// fields stay as file-scope statics matching zsh's globals.
-
-/// Single history entry — the Rust-side subset the ZLE widgets need
-/// (line text, event number, optional time). Maps loosely to fields
-/// from `struct histent` (Src/zsh.h:2234): `node.nam` ↔ `line`,
-/// `histnum` ↔ `num`, `stim` ↔ `time`.
-#[derive(Debug, Clone)]
-pub struct HistEntry {
-    /// The command line.
-    pub line: String,
-    /// Event number (1-based; mirrors `histent.histnum`).
-    pub num: i64,
-    /// Insertion time (Unix epoch seconds; mirrors `histent.stim`).
-    pub time: Option<i64>,
-}
-
-/// Per-session ZLE history state — entries + cursor + search state.
-/// Aggregate over zsh's C flat-globals (`hist_ring`, `histline`,
-/// `searchstr`, `have_edits`).
-#[derive(Debug, Default)]
-pub struct History {
-    /// History entries (newest last).
-    pub entries: Vec<HistEntry>,
-    /// Current position in history (mirrors `histline`).
-    pub cursor: usize,
-    /// Maximum history size (mirrors `histsiz`).
-    pub max_size: usize,
-    /// Saved line when navigating history (mirrors the C `zle_text`
-    /// shadow on `Histent`).
-    pub saved_line: Option<crate::ported::zle::zle_main::ZleString>,
-    /// Saved cursor position pre-navigation.
-    pub saved_cs: usize,
-    /// Previous search string. Mirrors `searchstr`
-    /// (Src/Zle/zle_hist.c:44).
-    pub search_pattern: String,
-    /// Last search direction (true = backward).
-    pub search_backward: bool,
-    /// Originals of edited entries: when `remember_edits` mutates
-    /// `entries[i].line`, the pre-edit text lands here at index `i`.
-    /// `forget_edits` restores them. Mirrors the C `Histent->zle_text`
-    /// shadow string + the global `have_edits` flag in
-    /// Src/Zle/zle_hist.c.
-    pub originals: Vec<Option<String>>,
-    /// True if any entry has a recorded original — mirrors
-    /// `have_edits` in Src/Zle/zle_hist.c:76.
-    pub have_edits: bool,
-    /// History skip-flags state. Bit-equivalent of zsh's
-    /// `hist_skip_flags` in Src/Zle/zle_hist.c:794: `HIST_FOREIGN` (1)
-    /// hides entries from other sessions when set; `setlocalhistory`
-    /// toggles this.
-    pub hist_skip_flags: u32,
-}
-
-impl History {
-    /// Construct an empty history with a max-entry cap. Mirrors the
-    /// role of `inithist()` from Src/hist.c:1717 (which sizes the
-    /// global `hist_ring` at `$HISTSIZE`).
-    pub fn new(max_size: usize) -> Self {
-        History {
-            entries: Vec::new(),
-            cursor: 0,
-            max_size,
-            saved_line: None,
-            saved_cs: 0,
-            search_pattern: String::new(),
-            search_backward: true,
-            originals: Vec::new(),
-            have_edits: false,
-            hist_skip_flags: 0,
-        }
-    }
-
-    /// Append a new entry. Mirrors `addhistnode()` from Src/hist.c
-    /// (the inner add path invoked by `addhistline`/`hend`). Skips
-    /// empty input and consecutive-duplicate lines (same as zsh's
-    /// HIST_IGNORE_DUPS default). Trims from the front when over
-    /// `max_size`.
-    pub fn add(&mut self, line: String) {
-        if line.is_empty() {
-            return;
-        }
-        if let Some(last) = self.entries.last() {
-            if last.line == line {
-                return;
-            }
-        }
-
-        self.entries.push(HistEntry {
-            line,
-            num: self.entries.len() as i64 + 1,
-            time: Some(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0),
-            ),
-        });
-
-        while self.entries.len() > self.max_size {
-            self.entries.remove(0);
-        }
-
-        self.cursor = self.entries.len();
-    }
-
-    /// Look up the entry at a specific 0-based index. Mirrors
-    /// `quietgethist()` from Src/Zle/zle_hist.c:1712 (event-number
-    /// fetch); our entries Vec is 0-indexed so callers convert
-    /// num→index themselves.
-    pub fn get(&self, index: usize) -> Option<&HistEntry> {
-        self.entries.get(index)
-    }
-
-    /// Step the cursor one position older. Equivalent to the
-    /// cursor-decrement path of `zle_goto_hist()` at
-    /// Src/Zle/zle_hist.c:805 with n=-1.
-    pub fn up(&mut self) -> Option<&HistEntry> {
-        if self.cursor > 0 {
-            self.cursor -= 1;
-            self.entries.get(self.cursor)
-        } else {
-            None
-        }
-    }
-
-    /// Step the cursor one position newer. Mirrors
-    /// `zle_goto_hist()` at Src/Zle/zle_hist.c:805 with n=+1.
-    pub fn down(&mut self) -> Option<&HistEntry> {
-        if self.cursor < self.entries.len() {
-            self.cursor += 1;
-            self.entries.get(self.cursor)
-        } else {
-            None
-        }
-    }
-
-    /// Search history for the most recent entry containing `pattern`.
-    /// Substring-match equivalent of `historysearchbackward()` from
-    /// Src/Zle/zle_hist.c:484 (without the glob/HIST_PATTERN branch).
-    pub fn search_backward(&mut self, pattern: &str) -> Option<&HistEntry> {
-        let start = if self.cursor > 0 {
-            self.cursor - 1
-        } else {
-            return None;
-        };
-        for i in (0..=start).rev() {
-            if self.entries[i].line.contains(pattern) {
-                self.cursor = i;
-                return self.entries.get(i);
-            }
-        }
-        None
-    }
-
-    /// Search history forward for the next entry containing
-    /// `pattern`. Mirror of `search_backward` against
-    /// `historysearchforward()` at Src/Zle/zle_hist.c:541.
-    pub fn search_forward(&mut self, pattern: &str) -> Option<&HistEntry> {
-        for i in (self.cursor + 1)..self.entries.len() {
-            if self.entries[i].line.contains(pattern) {
-                self.cursor = i;
-                return self.entries.get(i);
-            }
-        }
-        None
-    }
-
-    /// Reset the cursor to the live-buffer sentinel position and
-    /// drop any saved pre-navigation line. Mirrors the
-    /// `histline = curhist; saved_line = NULL` reset path invoked by
-    /// `endofhistory()` (Src/Zle/zle_hist.c:478) and after
-    /// accept-line.
-    pub fn reset(&mut self) {
-        self.cursor = self.entries.len();
-        self.saved_line = None;
-    }
-}
-
     /// Snapshot the current line into the history entry at `cursor`,
     /// preserving the original on first edit.
     /// Port of `remember_edits()` from Src/Zle/zle_hist.c:80. The C source
@@ -436,6 +241,131 @@ pub fn uphistory() -> i32 {                                     // c:233
         return 1;
     }
     0                                                            // c:238
+}
+
+impl History {
+    /// Construct an empty history with a max-entry cap. Mirrors the
+    /// role of `inithist()` from Src/hist.c:1717 (which sizes the
+    /// global `hist_ring` at `$HISTSIZE`).
+    pub fn new(max_size: usize) -> Self {
+        History {
+            entries: Vec::new(),
+            cursor: 0,
+            max_size,
+            saved_line: None,
+            saved_cs: 0,
+            search_pattern: String::new(),
+            search_backward: true,
+            originals: Vec::new(),
+            have_edits: false,
+            hist_skip_flags: 0,
+        }
+    }
+
+    /// Append a new entry. Mirrors `addhistnode()` from Src/hist.c
+    /// (the inner add path invoked by `addhistline`/`hend`). Skips
+    /// empty input and consecutive-duplicate lines (same as zsh's
+    /// HIST_IGNORE_DUPS default). Trims from the front when over
+    /// `max_size`.
+    pub fn add(&mut self, line: String) {
+        if line.is_empty() {
+            return;
+        }
+        if let Some(last) = self.entries.last() {
+            if last.line == line {
+                return;
+            }
+        }
+
+        self.entries.push(HistEntry {
+            line,
+            num: self.entries.len() as i64 + 1,
+            time: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+            ),
+        });
+
+        while self.entries.len() > self.max_size {
+            self.entries.remove(0);
+        }
+
+        self.cursor = self.entries.len();
+    }
+
+    /// Look up the entry at a specific 0-based index. Mirrors
+    /// `quietgethist()` from Src/Zle/zle_hist.c:1712 (event-number
+    /// fetch); our entries Vec is 0-indexed so callers convert
+    /// num→index themselves.
+    pub fn get(&self, index: usize) -> Option<&HistEntry> {
+        self.entries.get(index)
+    }
+
+    /// Step the cursor one position older. Equivalent to the
+    /// cursor-decrement path of `zle_goto_hist()` at
+    /// Src/Zle/zle_hist.c:805 with n=-1.
+    pub fn up(&mut self) -> Option<&HistEntry> {
+        if self.cursor > 0 {
+            self.cursor -= 1;
+            self.entries.get(self.cursor)
+        } else {
+            None
+        }
+    }
+
+    /// Step the cursor one position newer. Mirrors
+    /// `zle_goto_hist()` at Src/Zle/zle_hist.c:805 with n=+1.
+    pub fn down(&mut self) -> Option<&HistEntry> {
+        if self.cursor < self.entries.len() {
+            self.cursor += 1;
+            self.entries.get(self.cursor)
+        } else {
+            None
+        }
+    }
+
+    /// Search history for the most recent entry containing `pattern`.
+    /// Substring-match equivalent of `historysearchbackward()` from
+    /// Src/Zle/zle_hist.c:484 (without the glob/HIST_PATTERN branch).
+    pub fn search_backward(&mut self, pattern: &str) -> Option<&HistEntry> {
+        let start = if self.cursor > 0 {
+            self.cursor - 1
+        } else {
+            return None;
+        };
+        for i in (0..=start).rev() {
+            if self.entries[i].line.contains(pattern) {
+                self.cursor = i;
+                return self.entries.get(i);
+            }
+        }
+        None
+    }
+
+    /// Search history forward for the next entry containing
+    /// `pattern`. Mirror of `search_backward` against
+    /// `historysearchforward()` at Src/Zle/zle_hist.c:541.
+    pub fn search_forward(&mut self, pattern: &str) -> Option<&HistEntry> {
+        for i in (self.cursor + 1)..self.entries.len() {
+            if self.entries[i].line.contains(pattern) {
+                self.cursor = i;
+                return self.entries.get(i);
+            }
+        }
+        None
+    }
+
+    /// Reset the cursor to the live-buffer sentinel position and
+    /// drop any saved pre-navigation line. Mirrors the
+    /// `histline = curhist; saved_line = NULL` reset path invoked by
+    /// `endofhistory()` (Src/Zle/zle_hist.c:478) and after
+    /// accept-line.
+    pub fn reset(&mut self) {
+        self.cursor = self.entries.len();
+        self.saved_line = None;
+    }
 }
 
     /// Move cursor up by `crate::ported::zle::zle_main::MULT.load(std::sync::atomic::Ordering::SeqCst)` lines within the multi-line buffer.
@@ -894,28 +824,6 @@ pub fn pushlineoredit() -> i32 {                                // c:852
     0
 }
 
-/// `struct isrch_spot` — port of `Src/Zle/zle_hist.c:954-963`.
-/// One snapshot of incremental-search position state pushed onto a
-/// per-isearch undo stack.
-#[derive(Debug, Default, Clone, Copy)]
-#[allow(non_camel_case_types)]
-pub struct isrch_spot {                                                       // c:948
-    pub hl: i32,
-    pub pos: u16,
-    pub pat_hl: i32,
-    pub pat_pos: u16,
-    pub end_pos: u16,
-    pub cs: u16,
-    pub len: u16,
-    pub flags: u16,
-}
-
-/// Port of `static struct isrch_spot *isrch_spots` and `static int max_spot`
-/// from `Src/Zle/zle_hist.c:946-947` — heap-grown stack of incremental
-/// search positions used to back-up after deleting search chars.
-pub static ISRCH_SPOTS: std::sync::OnceLock<std::sync::Mutex<Vec<isrch_spot>>> =
-    std::sync::OnceLock::new();
-
 /// Port of `pushinput(char **args)` from Src/Zle/zle_hist.c:883.
 pub fn pushinput() -> i32 {                                     // c:883
     // C body (c:883-895): push current line onto buffer-stack and
@@ -930,37 +838,6 @@ pub fn pushinput() -> i32 {                                     // c:883
     crate::ported::zle::zle_main::ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
     0
 }
-
-/// `ISEARCH_PROMPT` from `Src/Zle/zle_hist.c:1070`.
-/// Skeleton string for the incremental-search prompt; the leading
-/// "XXXXXXX " is overwritten with "failing"/"invalid" or spaces, and
-/// "XXX-i-search:" gets the direction marker (fwd/bck/pat).
-pub const ISEARCH_PROMPT: &str = "XXXXXXX XXX-i-search: ";                   // c:1070
-
-/// `FAILING_TEXT` from `Src/Zle/zle_hist.c:1071`.
-pub const FAILING_TEXT: &str = "failing";                                    // c:1071
-
-/// `INVALID_TEXT` from `Src/Zle/zle_hist.c:1072`.
-pub const INVALID_TEXT: &str = "invalid";                                    // c:1072
-
-/// `BAD_TEXT_LEN` from `Src/Zle/zle_hist.c:1073`.
-/// strlen("failing") == strlen("invalid") == 7.
-pub const BAD_TEXT_LEN: usize = 7;                                           // c:1073
-
-/// `NORM_PROMPT_POS` from `Src/Zle/zle_hist.c:1074`.
-/// `(BAD_TEXT_LEN + 1)` — column where the normal prompt segment
-/// starts (after the bad-text marker + space).
-pub const NORM_PROMPT_POS: usize = BAD_TEXT_LEN + 1;                         // c:1074
-
-/// `FIRST_SEARCH_CHAR` from `Src/Zle/zle_hist.c:965`.
-/// `(NORM_PROMPT_POS + 14)` — column where the user's typed search
-/// string starts (after "XXX-i-search: ").
-pub const FIRST_SEARCH_CHAR: usize = NORM_PROMPT_POS + 14;                   // c:1075
-
-/// `ISS_FORWARD` from `Src/Zle/zle_hist.c:965`.
-pub const ISS_FORWARD: u16 = 1;
-/// `ISS_NOMATCH_SHIFT` from `Src/Zle/zle_hist.c:974`.
-pub const ISS_NOMATCH_SHIFT: u16 = 1;
 
 /// Port of `zgetline(UNUSED(char **args))` from Src/Zle/zle_hist.c:898.
 pub fn zgetline() -> i32 {                                      // c:898
@@ -1001,6 +878,11 @@ pub fn historyincrementalpatternsearchforward() -> i32 {        // c:943
     // C body — `return doisearch(1, 1)`.
     doisearch(1)
 }
+
+/// `ISS_FORWARD` from `Src/Zle/zle_hist.c:965`.
+pub const ISS_FORWARD: u16 = 1;
+/// `ISS_NOMATCH_SHIFT` from `Src/Zle/zle_hist.c:974`.
+pub const ISS_NOMATCH_SHIFT: u16 = 1;
 
 /// Port of `free_isrch_spots()` from Src/Zle/zle_hist.c:965.
 pub fn free_isrch_spots() {                                                  // c:965
@@ -1083,6 +965,32 @@ pub fn save_isearch_buffer() -> i32 {                           // c:1058
     crate::ported::zle::zle_main::history().lock().unwrap().search_pattern = snap;
     0
 }
+
+/// `ISEARCH_PROMPT` from `Src/Zle/zle_hist.c:1070`.
+/// Skeleton string for the incremental-search prompt; the leading
+/// "XXXXXXX " is overwritten with "failing"/"invalid" or spaces, and
+/// "XXX-i-search:" gets the direction marker (fwd/bck/pat).
+pub const ISEARCH_PROMPT: &str = "XXXXXXX XXX-i-search: ";                   // c:1070
+
+/// `FAILING_TEXT` from `Src/Zle/zle_hist.c:1071`.
+pub const FAILING_TEXT: &str = "failing";                                    // c:1071
+
+/// `INVALID_TEXT` from `Src/Zle/zle_hist.c:1072`.
+pub const INVALID_TEXT: &str = "invalid";                                    // c:1072
+
+/// `BAD_TEXT_LEN` from `Src/Zle/zle_hist.c:1073`.
+/// strlen("failing") == strlen("invalid") == 7.
+pub const BAD_TEXT_LEN: usize = 7;                                           // c:1073
+
+/// `NORM_PROMPT_POS` from `Src/Zle/zle_hist.c:1074`.
+/// `(BAD_TEXT_LEN + 1)` — column where the normal prompt segment
+/// starts (after the bad-text marker + space).
+pub const NORM_PROMPT_POS: usize = BAD_TEXT_LEN + 1;                         // c:1074
+
+/// `FIRST_SEARCH_CHAR` from `Src/Zle/zle_hist.c:965`.
+/// `(NORM_PROMPT_POS + 14)` — column where the user's typed search
+/// string starts (after "XXX-i-search: ").
+pub const FIRST_SEARCH_CHAR: usize = NORM_PROMPT_POS + 14;                   // c:1075
 
 /// Port of `doisearch(char **args, int dir, int pattern)` from Src/Zle/zle_hist.c:1082.
 /// WARNING: param names don't match C — Rust=(zle, dir) vs C=(args, dir, pattern)
@@ -1296,6 +1204,98 @@ pub fn historybeginningsearchforward() -> i32 {                 // c:2085
     }
     0
 }
+
+pub static ISEARCH_ACTIVE: AtomicI32 = AtomicI32::new(0);                    // c:1078
+
+/// Port of `int isearch_startpos` from `Src/Zle/zle_hist.c:1078`.
+/// Byte offset of the start of the current isearch match.
+pub static ISEARCH_STARTPOS: AtomicI32 = AtomicI32::new(0);                  // c:1078
+
+/// Port of `int isearch_endpos` from `Src/Zle/zle_hist.c:1078`.
+/// Byte offset of the end of the current isearch match.
+pub static ISEARCH_ENDPOS: AtomicI32 = AtomicI32::new(0);                    // c:1078
+
+// Per-session ZLE history state. Rust-side aggregate over zsh's C
+// flat-globals (`hist_ring`/`histline`/`searchstr`/`have_edits`/etc.
+// in `Src/hist.c` + `Src/Zle/zle_hist.c`). The C side spreads these
+// across file-scope statics; the zshrs port collects the subset the
+// ZLE widgets actually drive into one container so a `&mut Zle` can
+// hold it. Eventual unification: drop `History.entries` and read from
+// `crate::ported::hist::hist_ring`; the cursor/saved_line/search
+// fields stay as file-scope statics matching zsh's globals.
+
+/// Single history entry — the Rust-side subset the ZLE widgets need
+/// (line text, event number, optional time). Maps loosely to fields
+/// from `struct histent` (Src/zsh.h:2234): `node.nam` ↔ `line`,
+/// `histnum` ↔ `num`, `stim` ↔ `time`.
+#[derive(Debug, Clone)]
+pub struct HistEntry {
+    /// The command line.
+    pub line: String,
+    /// Event number (1-based; mirrors `histent.histnum`).
+    pub num: i64,
+    /// Insertion time (Unix epoch seconds; mirrors `histent.stim`).
+    pub time: Option<i64>,
+}
+
+/// Per-session ZLE history state — entries + cursor + search state.
+/// Aggregate over zsh's C flat-globals (`hist_ring`, `histline`,
+/// `searchstr`, `have_edits`).
+#[derive(Debug, Default)]
+pub struct History {
+    /// History entries (newest last).
+    pub entries: Vec<HistEntry>,
+    /// Current position in history (mirrors `histline`).
+    pub cursor: usize,
+    /// Maximum history size (mirrors `histsiz`).
+    pub max_size: usize,
+    /// Saved line when navigating history (mirrors the C `zle_text`
+    /// shadow on `Histent`).
+    pub saved_line: Option<crate::ported::zle::zle_main::ZleString>,
+    /// Saved cursor position pre-navigation.
+    pub saved_cs: usize,
+    /// Previous search string. Mirrors `searchstr`
+    /// (Src/Zle/zle_hist.c:44).
+    pub search_pattern: String,
+    /// Last search direction (true = backward).
+    pub search_backward: bool,
+    /// Originals of edited entries: when `remember_edits` mutates
+    /// `entries[i].line`, the pre-edit text lands here at index `i`.
+    /// `forget_edits` restores them. Mirrors the C `Histent->zle_text`
+    /// shadow string + the global `have_edits` flag in
+    /// Src/Zle/zle_hist.c.
+    pub originals: Vec<Option<String>>,
+    /// True if any entry has a recorded original — mirrors
+    /// `have_edits` in Src/Zle/zle_hist.c:76.
+    pub have_edits: bool,
+    /// History skip-flags state. Bit-equivalent of zsh's
+    /// `hist_skip_flags` in Src/Zle/zle_hist.c:794: `HIST_FOREIGN` (1)
+    /// hides entries from other sessions when set; `setlocalhistory`
+    /// toggles this.
+    pub hist_skip_flags: u32,
+}
+
+/// `struct isrch_spot` — port of `Src/Zle/zle_hist.c:954-963`.
+/// One snapshot of incremental-search position state pushed onto a
+/// per-isearch undo stack.
+#[derive(Debug, Default, Clone, Copy)]
+#[allow(non_camel_case_types)]
+pub struct isrch_spot {                                                       // c:948
+    pub hl: i32,
+    pub pos: u16,
+    pub pat_hl: i32,
+    pub pat_pos: u16,
+    pub end_pos: u16,
+    pub cs: u16,
+    pub len: u16,
+    pub flags: u16,
+}
+
+/// Port of `static struct isrch_spot *isrch_spots` and `static int max_spot`
+/// from `Src/Zle/zle_hist.c:946-947` — heap-grown stack of incremental
+/// search positions used to back-up after deleting search chars.
+pub static ISRCH_SPOTS: std::sync::OnceLock<std::sync::Mutex<Vec<isrch_spot>>> =
+    std::sync::OnceLock::new();
 
     /// Set up history limits at ZLE startup.
     /// Stub mirroring the role of `inithist()` from Src/hist.c:1717,
@@ -1632,6 +1632,17 @@ mod isearch_prompt_tests {
         assert!(ISEARCH_PROMPT.contains("XXX-i-search:"));
     }
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

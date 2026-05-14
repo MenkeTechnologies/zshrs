@@ -56,76 +56,6 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-pub const CRT_SIMPLE: i32 = 0;                                               // c:79
-/// Port of `CRT_DESC` from `computil.c:80`. Match with description.
-pub const CRT_DESC:   i32 = 1;                                               // c:80
-/// Port of `CRT_SPEC` from `computil.c:81`. Special separator row.
-pub const CRT_SPEC:   i32 = 2;                                               // c:81
-/// Port of `CRT_DUMMY` from `computil.c:82`. Placeholder row.
-pub const CRT_DUMMY:  i32 = 3;                                               // c:82
-/// Port of `CRT_EXPL` from `computil.c:83`. Explanation header row.
-pub const CRT_EXPL:   i32 = 4;                                               // c:83
-
-/// Port of `CDF_SEP` from `Src/Zle/computil.c:924`. `-S` flag — `--`
-/// terminates options.
-pub const CDF_SEP: i32 = 1;                                                  // c:924
-
-// =====================================================================
-// CAO_* — Cadef option-argument attachment style — `computil.c:941-945`.
-// =====================================================================
-
-/// Port of `CAO_NEXT` from `computil.c:941`. Argument in next argv slot.
-pub const CAO_NEXT:    i32 = 1;                                              // c:941
-/// Port of `CAO_DIRECT` from `computil.c:942`. Argument directly attached
-/// to option (`-opt:value`).
-pub const CAO_DIRECT:  i32 = 2;                                              // c:942
-/// Port of `CAO_ODIRECT` from `computil.c:943`. Optional direct attach.
-pub const CAO_ODIRECT: i32 = 3;                                              // c:943
-/// Port of `CAO_EQUAL` from `computil.c:944`. Argument after `=`.
-pub const CAO_EQUAL:   i32 = 4;                                              // c:944
-/// Port of `CAO_OEQUAL` from `computil.c:945`. Optional `=` argument.
-pub const CAO_OEQUAL:  i32 = 5;                                              // c:945
-
-// =====================================================================
-// CAA_* — Cadef positional-argument kinds — `computil.c:964-968`.
-// =====================================================================
-
-/// Port of `CAA_NORMAL` from `computil.c:964`. Plain positional arg.
-pub const CAA_NORMAL: i32 = 1;                                               // c:964
-/// Port of `CAA_OPT` from `computil.c:965`. Optional positional arg.
-pub const CAA_OPT:    i32 = 2;                                               // c:965
-/// Port of `CAA_REST` from `computil.c:966`. Mandatory rest of args.
-pub const CAA_REST:   i32 = 3;                                               // c:966
-/// Port of `CAA_RARGS` from `computil.c:967`. Repeated args sequence.
-pub const CAA_RARGS:  i32 = 4;                                               // c:967
-/// Port of `CAA_RREST` from `computil.c:968`. Repeated rest of args.
-pub const CAA_RREST:  i32 = 5;                                               // c:968
-
-/// Port of `MAX_CACACHE` from `computil.c:972`. Cadef LRU cache size.
-pub const MAX_CACACHE: usize = 8;                                            // c:972
-
-// =====================================================================
-// CVV_* — Cvval value-kind — `computil.c:2949-2951`.
-// =====================================================================
-
-/// Port of `CVV_NOARG` from `computil.c:2949`. Value without argument.
-pub const CVV_NOARG: i32 = 0;                                                // c:2949
-/// Port of `CVV_ARG` from `computil.c:2950`. Value requires argument.
-pub const CVV_ARG:   i32 = 1;                                                // c:2950
-/// Port of `CVV_OPT` from `computil.c:2951`. Argument optional.
-pub const CVV_OPT:   i32 = 2;                                                // c:2951
-
-/// Port of `MAX_CVCACHE` from `computil.c:2955`. Cvdef LRU cache size.
-pub const MAX_CVCACHE: usize = 8;                                            // c:2955
-
-/// Port of `MAX_TAGS` from `computil.c:3755`. Maximum nested completion
-/// tags depth.
-pub const MAX_TAGS: usize = 256;                                             // c:3755
-
-/// Port of `PATH_MAX2` from `computil.c:4141`. `PATH_MAX * 2` — buffer
-/// budget for path-completion staging strings.
-pub const PATH_MAX2: usize = 8192;                                           // c:4141 (PATH_MAX*2, 4096*2)
-
 // =====================================================================
 // `_describe`-completion types — direct ports of the C structs at
 // Src/Zle/computil.c:40-91 (the cdset/cdstr/cdrun/cdstate chain
@@ -136,10 +66,21 @@ pub const PATH_MAX2: usize = 8192;                                           // 
 
 /// Port of `typedef struct cdset *Cdset` from `Src/Zle/computil.c:36`.
 pub type Cdset = Box<cdset>;                                                 // c:36
+
+/// Direct port of `struct cdset` from `Src/Zle/computil.c:85-91`.
+/// One set of matches (one `compadd` invocation worth) with its
+/// compadd options + the cdstr chain.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cdset {                                                           // c:85
+    pub next:  Option<Box<cdset>>,                                           // c:86 Cdset next
+    pub opts:  Option<Vec<String>>,                                          // c:87 char **opts
+    pub strs:  Option<Box<cdstr>>,                                           // c:88 Cdstr strs
+    pub count: i32,                                                          // c:89 int count
+    pub desc:  i32,                                                          // c:90 int desc
+}
 /// Port of `typedef struct cdstr *Cdstr` from `computil.c:37`.
 pub type Cdstr = Box<cdstr>;                                                 // c:37
-/// Port of `typedef struct cdrun *Cdrun` from `computil.c:38`.
-pub type Cdrun = Box<cdrun>;                                                 // c:38
 
 /// Direct port of `struct cdstr` from `Src/Zle/computil.c:58-70`.
 /// One match string inside a `_describe` group, with optional
@@ -159,6 +100,8 @@ pub struct cdstr {                                                           // 
     pub set:     usize,                                                      // c:68 Cdset set (raw ptr index)
     pub run:     Option<Box<cdstr>>,                                         // c:69 Cdstr run
 }
+/// Port of `typedef struct cdrun *Cdrun` from `computil.c:38`.
+pub type Cdrun = Box<cdrun>;                                                 // c:38
 
 /// Direct port of `struct cdrun` from `Src/Zle/computil.c:72-77`.
 /// One contiguous "run" of cdstr entries the shell code should
@@ -170,19 +113,6 @@ pub struct cdrun {                                                           // 
     pub r#type: i32,                                                         // c:74 int type (CRT_*)
     pub strs:   Option<Box<cdstr>>,                                          // c:75 Cdstr strs
     pub count:  i32,                                                         // c:76 int count
-}
-
-/// Direct port of `struct cdset` from `Src/Zle/computil.c:85-91`.
-/// One set of matches (one `compadd` invocation worth) with its
-/// compadd options + the cdstr chain.
-#[derive(Debug, Default)]
-#[allow(non_camel_case_types)]
-pub struct cdset {                                                           // c:85
-    pub next:  Option<Box<cdset>>,                                           // c:86 Cdset next
-    pub opts:  Option<Vec<String>>,                                          // c:87 char **opts
-    pub strs:  Option<Box<cdstr>>,                                           // c:88 Cdstr strs
-    pub count: i32,                                                          // c:89 int count
-    pub desc:  i32,                                                          // c:90 int desc
 }
 
 /// Direct port of `struct cdstate` from `Src/Zle/computil.c:40-56`.
@@ -208,14 +138,15 @@ pub struct cdstate {                                                         // 
     pub runs:    Option<Box<cdrun>>,                                         // c:55 Cdrun runs
 }
 
-/// Port of `static struct cdstate cd_state` from `Src/Zle/computil.c:93`.
-/// File-static instance the `_describe` engine reads/writes.
-pub static cd_state: std::sync::Mutex<cdstate> =                             // c:93
-    std::sync::Mutex::new(cdstate {
-        showd: 0, sep: None, slen: 0, swidth: 0, maxmlen: 0,
-        sets: None, pre: 0, premaxw: 0, suf: 0, maxg: 0, maxglen: 0,
-        groups: 0, descs: 0, gprew: 0, runs: None,
-    });
+pub const CRT_SIMPLE: i32 = 0;                                               // c:79
+/// Port of `CRT_DESC` from `computil.c:80`. Match with description.
+pub const CRT_DESC:   i32 = 1;                                               // c:80
+/// Port of `CRT_SPEC` from `computil.c:81`. Special separator row.
+pub const CRT_SPEC:   i32 = 2;                                               // c:81
+/// Port of `CRT_DUMMY` from `computil.c:82`. Placeholder row.
+pub const CRT_DUMMY:  i32 = 3;                                               // c:82
+/// Port of `CRT_EXPL` from `computil.c:83`. Explanation header row.
+pub const CRT_EXPL:   i32 = 4;                                               // c:83
 
 /// Port of `static int cd_parsed` from `Src/Zle/computil.c:188`. Flag
 /// signalling whether `cd_state` holds a parsed-but-unconsumed
@@ -365,12 +296,6 @@ pub fn cd_group(maxg: i32) {                                                 // 
         }
     }
 }
-
-/// CM_SPACE — inter-match spacing from `Src/Zle/zle_tricky.c:1700` /
-/// `Src/Zle/computil.c` (referenced as the literal `2`). Used to
-/// reserve a 2-char gap between adjacent matches when computing
-/// column widths.
-pub const CM_SPACE: i32 = 2;                                                 // c:zle_tricky.c
 
 /// Direct port of `static void cd_calc(void)` from
 /// `Src/Zle/computil.c:188-211`. Walks `cd_state.sets`, computing
@@ -1372,79 +1297,6 @@ pub fn cd_get(params: &[String]) -> i32 {                                    // 
     0                                                                        // c:839
 }
 
-// =====================================================================
-// `_arguments`-cache types — direct ports of the C structs at
-// Src/Zle/computil.c:899-968. CAO_* / CAA_* / CDF_SEP /
-// MAX_CACACHE constants already declared above (file scope).
-// =====================================================================
-
-/// Port of `typedef struct cadef *Cadef` from `Src/Zle/computil.c:899`.
-pub type Cadef = Box<cadef>;                                                 // c:899
-/// Port of `typedef struct caopt *Caopt` from `Src/Zle/computil.c:900`.
-pub type Caopt = Box<caopt>;                                                 // c:900
-/// Port of `typedef struct caarg *Caarg` from `Src/Zle/computil.c:901`.
-pub type Caarg = Box<caarg>;                                                 // c:901
-
-/// Direct port of `struct caarg` from `Src/Zle/computil.c:949-962`.
-/// Description for one `_arguments` argument spec.
-#[derive(Debug, Default, Clone)]
-#[allow(non_camel_case_types)]
-pub struct caarg {                                                           // c:949
-    pub next:   Option<Box<caarg>>,                                          // c:950 Caarg next
-    pub descr:  Option<String>,                                              // c:951 char *descr
-    pub xor:    Option<Vec<String>>,                                         // c:952 char **xor
-    pub action: Option<String>,                                              // c:953 char *action
-    pub r#type: i32,                                                         // c:954 int type (CAA_*)
-    pub end:    Option<String>,                                              // c:955 char *end
-    pub opt:    Option<String>,                                              // c:956 char *opt
-    pub num:    i32,                                                         // c:957 int num
-    pub min:    i32,                                                         // c:958 int min
-    pub direct: i32,                                                         // c:959 int direct
-    pub active: i32,                                                         // c:960 int active
-    pub gsname: Option<String>,                                              // c:961 char *gsname
-}
-
-/// Direct port of `struct caopt` from `Src/Zle/computil.c:928-939`.
-/// Description for one `_arguments` option spec.
-#[derive(Debug, Default, Clone)]
-#[allow(non_camel_case_types)]
-pub struct caopt {                                                           // c:928
-    pub next:   Option<Box<caopt>>,                                          // c:929 Caopt next
-    pub name:   Option<String>,                                              // c:930 char *name
-    pub descr:  Option<String>,                                              // c:931 char *descr
-    pub xor:    Option<Vec<String>>,                                         // c:932 char **xor
-    pub r#type: i32,                                                         // c:933 int type (CAO_*)
-    pub args:   Option<Box<caarg>>,                                          // c:934 Caarg args
-    pub active: i32,                                                         // c:935 int active
-    pub num:    i32,                                                         // c:936 int num
-    pub gsname: Option<String>,                                              // c:937 char *gsname
-    pub not:    i32,                                                         // c:938 int not
-}
-
-/// Direct port of `struct cadef` from `Src/Zle/computil.c:905-922`.
-/// Cache entry for a set of `_arguments` definitions.
-#[derive(Debug, Default, Clone)]
-#[allow(non_camel_case_types)]
-pub struct cadef {                                                           // c:905
-    pub next:       Option<Box<cadef>>,                                      // c:906 Cadef next
-    pub snext:      Option<Box<cadef>>,                                      // c:907 Cadef snext
-    pub opts:       Option<Box<caopt>>,                                      // c:908 Caopt opts
-    pub nopts:      i32,                                                     // c:909
-    pub ndopts:     i32,                                                     // c:909
-    pub nodopts:    i32,                                                     // c:909
-    pub args:       Option<Box<caarg>>,                                      // c:910 Caarg args
-    pub rest:       Option<Box<caarg>>,                                      // c:911 Caarg rest
-    pub defs:       Option<Vec<String>>,                                     // c:912 char **defs
-    pub ndefs:      i32,                                                     // c:913
-    pub lastt:      i64,                                                     // c:914 time_t lastt
-    pub single:     Option<Vec<Option<Box<caopt>>>>,                         // c:915 Caopt *single (188-slot)
-    pub r#match:    Option<String>,                                          // c:916 char *match
-    pub argsactive: i32,                                                     // c:917
-    pub set:        Option<String>,                                          // c:919 char *set
-    pub flags:      i32,                                                     // c:920 int flags (CDF_*)
-    pub nonarg:     Option<String>,                                          // c:921 char *nonarg
-}
-
 /// Direct port of `static int bin_compdescribe(char *nam, char **args,
 ///                                                UNUSED(Options ops),
 ///                                                UNUSED(int func))`
@@ -1517,6 +1369,126 @@ pub fn bin_compdescribe(nam: &str, args: &[String],                          // 
     }
 }
 
+// =====================================================================
+// `_arguments`-cache types — direct ports of the C structs at
+// Src/Zle/computil.c:899-968. CAO_* / CAA_* / CDF_SEP /
+// MAX_CACACHE constants already declared above (file scope).
+// =====================================================================
+
+/// Port of `typedef struct cadef *Cadef` from `Src/Zle/computil.c:899`.
+pub type Cadef = Box<cadef>;                                                 // c:899
+
+/// Direct port of `struct cadef` from `Src/Zle/computil.c:905-922`.
+/// Cache entry for a set of `_arguments` definitions.
+#[derive(Debug, Default, Clone)]
+#[allow(non_camel_case_types)]
+pub struct cadef {                                                           // c:905
+    pub next:       Option<Box<cadef>>,                                      // c:906 Cadef next
+    pub snext:      Option<Box<cadef>>,                                      // c:907 Cadef snext
+    pub opts:       Option<Box<caopt>>,                                      // c:908 Caopt opts
+    pub nopts:      i32,                                                     // c:909
+    pub ndopts:     i32,                                                     // c:909
+    pub nodopts:    i32,                                                     // c:909
+    pub args:       Option<Box<caarg>>,                                      // c:910 Caarg args
+    pub rest:       Option<Box<caarg>>,                                      // c:911 Caarg rest
+    pub defs:       Option<Vec<String>>,                                     // c:912 char **defs
+    pub ndefs:      i32,                                                     // c:913
+    pub lastt:      i64,                                                     // c:914 time_t lastt
+    pub single:     Option<Vec<Option<Box<caopt>>>>,                         // c:915 Caopt *single (188-slot)
+    pub r#match:    Option<String>,                                          // c:916 char *match
+    pub argsactive: i32,                                                     // c:917
+    pub set:        Option<String>,                                          // c:919 char *set
+    pub flags:      i32,                                                     // c:920 int flags (CDF_*)
+    pub nonarg:     Option<String>,                                          // c:921 char *nonarg
+}
+/// Port of `typedef struct caopt *Caopt` from `Src/Zle/computil.c:900`.
+pub type Caopt = Box<caopt>;                                                 // c:900
+
+/// Direct port of `struct caopt` from `Src/Zle/computil.c:928-939`.
+/// Description for one `_arguments` option spec.
+#[derive(Debug, Default, Clone)]
+#[allow(non_camel_case_types)]
+pub struct caopt {                                                           // c:928
+    pub next:   Option<Box<caopt>>,                                          // c:929 Caopt next
+    pub name:   Option<String>,                                              // c:930 char *name
+    pub descr:  Option<String>,                                              // c:931 char *descr
+    pub xor:    Option<Vec<String>>,                                         // c:932 char **xor
+    pub r#type: i32,                                                         // c:933 int type (CAO_*)
+    pub args:   Option<Box<caarg>>,                                          // c:934 Caarg args
+    pub active: i32,                                                         // c:935 int active
+    pub num:    i32,                                                         // c:936 int num
+    pub gsname: Option<String>,                                              // c:937 char *gsname
+    pub not:    i32,                                                         // c:938 int not
+}
+/// Port of `typedef struct caarg *Caarg` from `Src/Zle/computil.c:901`.
+pub type Caarg = Box<caarg>;                                                 // c:901
+
+/// Direct port of `struct caarg` from `Src/Zle/computil.c:949-962`.
+/// Description for one `_arguments` argument spec.
+#[derive(Debug, Default, Clone)]
+#[allow(non_camel_case_types)]
+pub struct caarg {                                                           // c:949
+    pub next:   Option<Box<caarg>>,                                          // c:950 Caarg next
+    pub descr:  Option<String>,                                              // c:951 char *descr
+    pub xor:    Option<Vec<String>>,                                         // c:952 char **xor
+    pub action: Option<String>,                                              // c:953 char *action
+    pub r#type: i32,                                                         // c:954 int type (CAA_*)
+    pub end:    Option<String>,                                              // c:955 char *end
+    pub opt:    Option<String>,                                              // c:956 char *opt
+    pub num:    i32,                                                         // c:957 int num
+    pub min:    i32,                                                         // c:958 int min
+    pub direct: i32,                                                         // c:959 int direct
+    pub active: i32,                                                         // c:960 int active
+    pub gsname: Option<String>,                                              // c:961 char *gsname
+}
+
+/// Port of `CDF_SEP` from `Src/Zle/computil.c:924`. `-S` flag — `--`
+/// terminates options.
+pub const CDF_SEP: i32 = 1;                                                  // c:924
+
+// =====================================================================
+// CAO_* — Cadef option-argument attachment style — `computil.c:941-945`.
+// =====================================================================
+
+/// Port of `CAO_NEXT` from `computil.c:941`. Argument in next argv slot.
+pub const CAO_NEXT:    i32 = 1;                                              // c:941
+/// Port of `CAO_DIRECT` from `computil.c:942`. Argument directly attached
+/// to option (`-opt:value`).
+pub const CAO_DIRECT:  i32 = 2;                                              // c:942
+/// Port of `CAO_ODIRECT` from `computil.c:943`. Optional direct attach.
+pub const CAO_ODIRECT: i32 = 3;                                              // c:943
+/// Port of `CAO_EQUAL` from `computil.c:944`. Argument after `=`.
+pub const CAO_EQUAL:   i32 = 4;                                              // c:944
+/// Port of `CAO_OEQUAL` from `computil.c:945`. Optional `=` argument.
+pub const CAO_OEQUAL:  i32 = 5;                                              // c:945
+
+// =====================================================================
+// CAA_* — Cadef positional-argument kinds — `computil.c:964-968`.
+// =====================================================================
+
+/// Port of `CAA_NORMAL` from `computil.c:964`. Plain positional arg.
+pub const CAA_NORMAL: i32 = 1;                                               // c:964
+/// Port of `CAA_OPT` from `computil.c:965`. Optional positional arg.
+pub const CAA_OPT:    i32 = 2;                                               // c:965
+/// Port of `CAA_REST` from `computil.c:966`. Mandatory rest of args.
+pub const CAA_REST:   i32 = 3;                                               // c:966
+/// Port of `CAA_RARGS` from `computil.c:967`. Repeated args sequence.
+pub const CAA_RARGS:  i32 = 4;                                               // c:967
+/// Port of `CAA_RREST` from `computil.c:968`. Repeated rest of args.
+pub const CAA_RREST:  i32 = 5;                                               // c:968
+
+/// Port of `MAX_CACACHE` from `computil.c:972`. Cadef LRU cache size.
+pub const MAX_CACACHE: usize = 8;                                            // c:972
+
+/// Port of `static Cadef cadef_cache[MAX_CACACHE]` from
+/// `Src/Zle/computil.c:973`. The LRU cache holds parsed
+/// `_arguments` defs keyed by the raw arg vector — `get_cadef`
+/// scans linearly, returns on first match (arr-compare on `defs`),
+/// and on miss evicts the entry with the oldest `lastt` slot before
+/// inserting the freshly parsed result.
+pub static cadef_cache: std::sync::Mutex<[Option<Box<cadef>>; MAX_CACACHE]> = // c:973
+    std::sync::Mutex::new([const { None }; MAX_CACACHE]);
+
 /// Direct port of `static int arrcmp(char **a, char **b)` from
 /// `Src/Zle/computil.c:978`. Element-wise string-equality test on
 /// two `char**` arrays — returns 1 if both are null or both contain
@@ -1537,71 +1509,6 @@ pub fn arrcmp(a: Option<&[String]>, b: Option<&[String]>) -> i32 {           // 
     }
 }
 
-// =====================================================================
-// `castate` — command-line parse state for `_arguments`.
-// Src/Zle/computil.c:1920-1957.
-// =====================================================================
-
-/// Port of `typedef struct castate *Castate` from
-/// `Src/Zle/computil.c:1922`.
-pub type Castate = Box<castate>;                                             // c:1922
-
-/// Direct port of `struct castate` from `Src/Zle/computil.c:1928-1953`.
-/// Encapsulates the parsed-command-line state for one `_arguments`
-/// set — used as a linked list (`snext`) with one state per set.
-#[derive(Debug, Default, Clone)]
-#[allow(non_camel_case_types)]
-pub struct castate {                                                         // c:1928
-    pub snext:   Option<Box<castate>>,                                       // c:1929 Castate snext
-    pub d:       Option<Box<cadef>>,                                         // c:1930 Cadef d
-    pub nopts:   i32,                                                        // c:1931
-    pub def:     Option<Box<caarg>>,                                         // c:1932 Caarg def
-    pub ddef:    Option<Box<caarg>>,                                         // c:1933 Caarg ddef
-    pub curopt:  Option<Box<caopt>>,                                         // c:1934 Caopt curopt
-    pub dopt:    Option<Box<caopt>>,                                         // c:1935 Caopt dopt
-    pub opt:     i32,                                                        // c:1936
-    pub arg:     i32,                                                        // c:1937
-    pub argbeg:  i32,                                                        // c:1938
-    pub optbeg:  i32,                                                        // c:1939
-    pub nargbeg: i32,                                                        // c:1941
-    pub restbeg: i32,                                                        // c:1942
-    pub curpos:  i32,                                                        // c:1943
-    pub argend:  i32,                                                        // c:1944
-    pub inopt:   i32,                                                        // c:1945
-    pub inarg:   i32,                                                        // c:1946
-    pub nth:     i32,                                                        // c:1947
-    pub singles: i32,                                                        // c:1948
-    pub oopt:    i32,                                                        // c:1949
-    pub actopts: i32,                                                        // c:1950
-    pub args:    Option<Vec<String>>,                                        // c:1951 LinkList args
-    pub oargs:   Option<Vec<Option<Vec<String>>>>,                           // c:1952 LinkList *oargs
-}
-
-/// Port of `static struct castate ca_laststate` from
-/// `Src/Zle/computil.c:1955`. Most recently parsed cmdline state.
-pub static ca_laststate: std::sync::Mutex<castate> =                         // c:1955
-    std::sync::Mutex::new(castate {
-        snext: None, d: None, nopts: 0, def: None, ddef: None,
-        curopt: None, dopt: None, opt: 0, arg: 0, argbeg: 0, optbeg: 0,
-        nargbeg: 0, restbeg: 0, curpos: 0, argend: 0, inopt: 0,
-        inarg: 0, nth: 0, singles: 0, oopt: 0, actopts: 0,
-        args: None, oargs: None,
-    });
-
-/// Port of `static int ca_parsed` from `Src/Zle/computil.c:1956`.
-pub static ca_parsed: std::sync::atomic::AtomicI32 =                         // c:1956
-    std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `static int ca_alloced` from `Src/Zle/computil.c:1960`.
-pub static ca_alloced: std::sync::atomic::AtomicI32 =                        // c:1960
-    std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `static int ca_doff` from `Src/Zle/computil.c:1960`. Count
-/// of chars of ignored prefix (for clumped options or arg to an
-/// option).
-pub static ca_doff: std::sync::atomic::AtomicI32 =                           // c:1960
-    std::sync::atomic::AtomicI32::new(0);
-
 /// Direct port of `static void freecaargs(Caarg a)` from
 /// `Src/Zle/computil.c:996`. Walks the `next` chain and frees
 /// each entry. In Rust this is `Box` ownership — dropping the head
@@ -1619,48 +1526,6 @@ pub fn freecaargs(mut a: Option<Box<caarg>>) {                               // 
         node.opt = None;                                                     // c:1013
         drop(node);                                                          // c:1013 zfree(a, sizeof(*a))
     }
-}
-
-// =====================================================================
-// `cvdef` / `cvval` — `_values` completion cache types.
-// Src/Zle/computil.c:2919-2956. CVV_* and MAX_CVCACHE consts
-// already declared above (file scope).
-// =====================================================================
-
-/// Port of `typedef struct cvdef *Cvdef` from `Src/Zle/computil.c:2919`.
-pub type Cvdef = Box<cvdef>;                                                 // c:2919
-/// Port of `typedef struct cvval *Cvval` from `computil.c:2920`.
-pub type Cvval = Box<cvval>;                                                 // c:2920
-
-/// Direct port of `struct cvdef` from `Src/Zle/computil.c:2924-2935`.
-/// One parsed `_values` definition entry, cached for reuse.
-#[derive(Debug, Default, Clone)]
-#[allow(non_camel_case_types)]
-pub struct cvdef {                                                           // c:2924
-    pub descr:  Option<String>,                                              // c:2925 char *descr
-    pub hassep: i32,                                                         // c:2926
-    pub sep:    i32,                                                         // c:2927 char sep
-    pub argsep: i32,                                                         // c:2928 char argsep
-    pub next:   Option<Box<cvdef>>,                                          // c:2929 Cvdef next
-    pub vals:   Option<Box<cvval>>,                                          // c:2930 Cvval vals
-    pub defs:   Option<Vec<String>>,                                         // c:2931 char **defs
-    pub ndefs:  i32,                                                         // c:2932
-    pub lastt:  i64,                                                         // c:2933 time_t lastt
-    pub words:  i32,                                                         // c:2934
-}
-
-/// Direct port of `struct cvval` from `Src/Zle/computil.c:2939-2947`.
-/// One value definition inside a cvdef.
-#[derive(Debug, Default, Clone)]
-#[allow(non_camel_case_types)]
-pub struct cvval {                                                           // c:2939
-    pub next:   Option<Box<cvval>>,                                          // c:2940 Cvval next
-    pub name:   Option<String>,                                              // c:2961 char *name
-    pub descr:  Option<String>,                                              // c:2961 char *descr
-    pub xor:    Option<Vec<String>>,                                         // c:2961 char **xor
-    pub r#type: i32,                                                         // c:2961 int type (CVV_*)
-    pub arg:    Option<Box<caarg>>,                                          // c:2961 Caarg arg
-    pub active: i32,                                                         // c:2961
 }
 
 /// Direct port of `static void freecadef(Cadef d)` from
@@ -1691,94 +1556,6 @@ pub fn freecadef(mut d: Option<Box<cadef>>) {                                // 
         node.single = None;                                                  // c:1037-1038
         drop(node);                                                          // c:1039 zfree(d, sizeof(*d))
     }
-}
-
-// =====================================================================
-// `cvstate` — `_values` parse state.
-// Src/Zle/computil.c:3220-3231.
-// =====================================================================
-
-/// Direct port of `struct cvstate` from `Src/Zle/computil.c:3222-3227`.
-#[derive(Debug, Default)]
-#[allow(non_camel_case_types)]
-pub struct cvstate {                                                         // c:3222
-    pub d:    Option<Box<cvdef>>,                                            // c:3223 Cvdef d
-    pub def:  Option<Box<caarg>>,                                            // c:3224 Caarg def
-    pub val:  Option<Box<cvval>>,                                            // c:3225 Cvval val
-    pub vals: Option<Vec<String>>,                                           // c:3226 LinkList vals
-}
-
-/// Port of `static struct cvstate cv_laststate` from
-/// `Src/Zle/computil.c:3229`.
-pub static cv_laststate: std::sync::Mutex<cvstate> =                         // c:3229
-    std::sync::Mutex::new(cvstate {
-        d: None, def: None, val: None, vals: None,
-    });
-
-/// Port of `static int cv_parsed` from `Src/Zle/computil.c:3230`.
-pub static cv_parsed: std::sync::atomic::AtomicI32 =                         // c:3230
-    std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `static int cv_alloced` from `Src/Zle/computil.c:3230`.
-pub static cv_alloced: std::sync::atomic::AtomicI32 =                        // c:3230
-    std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `static Cadef cadef_cache[MAX_CACACHE]` from
-/// `Src/Zle/computil.c:973`. The LRU cache holds parsed
-/// `_arguments` defs keyed by the raw arg vector — `get_cadef`
-/// scans linearly, returns on first match (arr-compare on `defs`),
-/// and on miss evicts the entry with the oldest `lastt` slot before
-/// inserting the freshly parsed result.
-pub static cadef_cache: std::sync::Mutex<[Option<Box<cadef>>; MAX_CACACHE]> = // c:973
-    std::sync::Mutex::new([const { None }; MAX_CACACHE]);
-
-/// Port of `static Cvdef cvdef_cache[MAX_CVCACHE]` from
-/// `Src/Zle/computil.c:2956`. Same LRU layout as cadef_cache;
-/// `get_cvdef` scans for a defs-match hit, evicts the oldest slot
-/// on miss.
-pub static cvdef_cache: std::sync::Mutex<[Option<Box<cvdef>>; MAX_CVCACHE]> = // c:2956
-    std::sync::Mutex::new([const { None }; MAX_CVCACHE]);
-
-/// Port of `static Ctags comptags[MAX_TAGS]` from
-/// `Src/Zle/computil.c:3756`. One ctags entry per `locallevel`;
-/// indexed by completion level.
-pub static comptags: std::sync::Mutex<[Option<Box<ctags>>; MAX_TAGS]> =        // c:3756
-    std::sync::Mutex::new([const { None }; MAX_TAGS]);
-
-/// Port of `static int lasttaglevel` from `Src/Zle/computil.c:3760`.
-/// "locallevel at last comptags -i".
-pub static lasttaglevel: std::sync::atomic::AtomicI32 =                       // c:3760
-    std::sync::atomic::AtomicI32::new(0);
-
-// =====================================================================
-// `ctags` / `ctset` — `comptags` cache.
-// Src/Zle/computil.c:3732-3760. MAX_TAGS already declared above.
-// =====================================================================
-
-/// Port of `typedef struct ctags *Ctags` from `Src/Zle/computil.c:3732`.
-pub type Ctags = Box<ctags>;                                                 // c:3732
-/// Port of `typedef struct ctset *Ctset` from `computil.c:3733`.
-pub type Ctset = Box<ctset>;                                                 // c:3733
-
-/// Direct port of `struct ctags` from `Src/Zle/computil.c:3737-3742`.
-/// A bunch of tag sets keyed by locallevel.
-#[derive(Debug, Default)]
-#[allow(non_camel_case_types)]
-pub struct ctags {                                                           // c:3737
-    pub all:     Option<Vec<String>>,                                        // c:3738 char **all
-    pub context: Option<String>,                                             // c:3739 char *context
-    pub init:    i32,                                                        // c:3740
-    pub sets:    Option<Box<ctset>>,                                         // c:3741 Ctset sets
-}
-
-/// Direct port of `struct ctset` from `Src/Zle/computil.c:3763`.
-#[derive(Debug, Default)]
-#[allow(non_camel_case_types)]
-pub struct ctset {                                                           // c:3763
-    pub next: Option<Box<ctset>>,                                            // c:3763 Ctset next
-    pub tags: Option<Vec<String>>,                                           // c:3763 char **tags
-    pub tag:  Option<String>,                                                // c:3763 char *tag
-    pub ptr:  i32,                                                           // c:3763 char **ptr (index)
 }
 
 /// Port of `rembslashcolon(char *s)` from `Src/Zle/computil.c:1046`.
@@ -2004,76 +1781,6 @@ pub fn alloc_cadef(args: Option<&[String]>, single: i32, matchstr: &str,    // c
         argsactive: 0,
         flags,                                                               // c:1174
     })
-}
-
-// `freecaargs(Caarg)` + `freecadef(Cadef)` ported above with the
-// caarg/caopt/cadef struct ports (c:996 / c:1013).
-
-#[cfg(test)]
-mod cao_caa_tests {
-    use super::*;
-
-    #[test]
-    fn cao_values_match_c_source() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:941-945 — sequential 1..=5.
-        assert_eq!(CAO_NEXT, 1);
-        assert_eq!(CAO_DIRECT, 2);
-        assert_eq!(CAO_ODIRECT, 3);
-        assert_eq!(CAO_EQUAL, 4);
-        assert_eq!(CAO_OEQUAL, 5);
-    }
-
-    #[test]
-    fn caa_values_match_c_source() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:964-968 — sequential 1..=5.
-        assert_eq!(CAA_NORMAL, 1);
-        assert_eq!(CAA_OPT,    2);
-        assert_eq!(CAA_REST,   3);
-        assert_eq!(CAA_RARGS,  4);
-        assert_eq!(CAA_RREST,  5);
-    }
-
-    #[test]
-    fn crt_values_match_c_source() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:79-83 — sequential 0..=4.
-        assert_eq!(CRT_SIMPLE, 0);
-        assert_eq!(CRT_DESC,   1);
-        assert_eq!(CRT_SPEC,   2);
-        assert_eq!(CRT_DUMMY,  3);
-        assert_eq!(CRT_EXPL,   4);
-    }
-
-    #[test]
-    fn cvv_values_match_c_source() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:2949-2951 — sequential 0..=2.
-        assert_eq!(CVV_NOARG, 0);
-        assert_eq!(CVV_ARG,   1);
-        assert_eq!(CVV_OPT,   2);
-    }
-
-    #[test]
-    fn cache_sizes_are_8() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        // c:972 + c:2955 — both LRU caches are 8 entries.
-        assert_eq!(MAX_CACACHE, 8);
-        assert_eq!(MAX_CVCACHE, 8);
-    }
-
-    #[test]
-    fn max_tags_is_256() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        assert_eq!(MAX_TAGS, 256);
-    }
-
-    #[test]
-    fn path_max2_is_8192() {
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        assert_eq!(PATH_MAX2, 8192);
-    }
 }
 
 
@@ -3381,6 +3088,56 @@ pub fn ca_inactive(d: &mut cadef, xor: &[String], cur: i32, opts: i32) {     // 
     }
 }
 
+// =====================================================================
+// `castate` — command-line parse state for `_arguments`.
+// Src/Zle/computil.c:1920-1957.
+// =====================================================================
+
+/// Port of `typedef struct castate *Castate` from
+/// `Src/Zle/computil.c:1922`.
+pub type Castate = Box<castate>;                                             // c:1922
+
+/// Direct port of `struct castate` from `Src/Zle/computil.c:1928-1953`.
+/// Encapsulates the parsed-command-line state for one `_arguments`
+/// set — used as a linked list (`snext`) with one state per set.
+#[derive(Debug, Default, Clone)]
+#[allow(non_camel_case_types)]
+pub struct castate {                                                         // c:1928
+    pub snext:   Option<Box<castate>>,                                       // c:1929 Castate snext
+    pub d:       Option<Box<cadef>>,                                         // c:1930 Cadef d
+    pub nopts:   i32,                                                        // c:1931
+    pub def:     Option<Box<caarg>>,                                         // c:1932 Caarg def
+    pub ddef:    Option<Box<caarg>>,                                         // c:1933 Caarg ddef
+    pub curopt:  Option<Box<caopt>>,                                         // c:1934 Caopt curopt
+    pub dopt:    Option<Box<caopt>>,                                         // c:1935 Caopt dopt
+    pub opt:     i32,                                                        // c:1936
+    pub arg:     i32,                                                        // c:1937
+    pub argbeg:  i32,                                                        // c:1938
+    pub optbeg:  i32,                                                        // c:1939
+    pub nargbeg: i32,                                                        // c:1941
+    pub restbeg: i32,                                                        // c:1942
+    pub curpos:  i32,                                                        // c:1943
+    pub argend:  i32,                                                        // c:1944
+    pub inopt:   i32,                                                        // c:1945
+    pub inarg:   i32,                                                        // c:1946
+    pub nth:     i32,                                                        // c:1947
+    pub singles: i32,                                                        // c:1948
+    pub oopt:    i32,                                                        // c:1949
+    pub actopts: i32,                                                        // c:1950
+    pub args:    Option<Vec<String>>,                                        // c:1951 LinkList args
+    pub oargs:   Option<Vec<Option<Vec<String>>>>,                           // c:1952 LinkList *oargs
+}
+
+/// Port of `static int ca_parsed` from `Src/Zle/computil.c:1956`.
+pub static ca_parsed: std::sync::atomic::AtomicI32 =                         // c:1956
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static int ca_doff` from `Src/Zle/computil.c:1960`. Count
+/// of chars of ignored prefix (for clumped options or arg to an
+/// option).
+pub static ca_doff: std::sync::atomic::AtomicI32 =                           // c:1960
+    std::sync::atomic::AtomicI32::new(0);
+
 /// Direct port of `static void freecastate(Castate s)` from
 /// `Src/Zle/computil.c:1960`. Frees the args/oargs lists.
 pub fn freecastate(s: &mut castate) {                                        // c:1960
@@ -4659,6 +4416,69 @@ pub fn bin_comparguments(nam: &str, args: &[String],                         // 
     }
 }
 
+// =====================================================================
+// `cvdef` / `cvval` — `_values` completion cache types.
+// Src/Zle/computil.c:2919-2956. CVV_* and MAX_CVCACHE consts
+// already declared above (file scope).
+// =====================================================================
+
+/// Port of `typedef struct cvdef *Cvdef` from `Src/Zle/computil.c:2919`.
+pub type Cvdef = Box<cvdef>;                                                 // c:2919
+
+/// Direct port of `struct cvdef` from `Src/Zle/computil.c:2924-2935`.
+/// One parsed `_values` definition entry, cached for reuse.
+#[derive(Debug, Default, Clone)]
+#[allow(non_camel_case_types)]
+pub struct cvdef {                                                           // c:2924
+    pub descr:  Option<String>,                                              // c:2925 char *descr
+    pub hassep: i32,                                                         // c:2926
+    pub sep:    i32,                                                         // c:2927 char sep
+    pub argsep: i32,                                                         // c:2928 char argsep
+    pub next:   Option<Box<cvdef>>,                                          // c:2929 Cvdef next
+    pub vals:   Option<Box<cvval>>,                                          // c:2930 Cvval vals
+    pub defs:   Option<Vec<String>>,                                         // c:2931 char **defs
+    pub ndefs:  i32,                                                         // c:2932
+    pub lastt:  i64,                                                         // c:2933 time_t lastt
+    pub words:  i32,                                                         // c:2934
+}
+/// Port of `typedef struct cvval *Cvval` from `computil.c:2920`.
+pub type Cvval = Box<cvval>;                                                 // c:2920
+
+/// Direct port of `struct cvval` from `Src/Zle/computil.c:2939-2947`.
+/// One value definition inside a cvdef.
+#[derive(Debug, Default, Clone)]
+#[allow(non_camel_case_types)]
+pub struct cvval {                                                           // c:2939
+    pub next:   Option<Box<cvval>>,                                          // c:2940 Cvval next
+    pub name:   Option<String>,                                              // c:2961 char *name
+    pub descr:  Option<String>,                                              // c:2961 char *descr
+    pub xor:    Option<Vec<String>>,                                         // c:2961 char **xor
+    pub r#type: i32,                                                         // c:2961 int type (CVV_*)
+    pub arg:    Option<Box<caarg>>,                                          // c:2961 Caarg arg
+    pub active: i32,                                                         // c:2961
+}
+
+// =====================================================================
+// CVV_* — Cvval value-kind — `computil.c:2949-2951`.
+// =====================================================================
+
+/// Port of `CVV_NOARG` from `computil.c:2949`. Value without argument.
+pub const CVV_NOARG: i32 = 0;                                                // c:2949
+/// Port of `CVV_ARG` from `computil.c:2950`. Value requires argument.
+pub const CVV_ARG:   i32 = 1;                                                // c:2950
+/// Port of `CVV_OPT` from `computil.c:2951`. Argument optional.
+pub const CVV_OPT:   i32 = 2;                                                // c:2951
+
+/// Port of `MAX_CVCACHE` from `computil.c:2955`. Cvdef LRU cache size.
+pub const MAX_CVCACHE: usize = 8;                                            // c:2955
+
+/// Port of `static Cvdef cvdef_cache[MAX_CVCACHE]` from
+/// `Src/Zle/computil.c:2956`. Same LRU layout as cadef_cache;
+/// `get_cvdef` scans for a defs-match hit, evicts the oldest slot
+/// on miss.
+pub static cvdef_cache: std::sync::Mutex<[Option<Box<cvdef>>; MAX_CVCACHE]> = // c:2956
+    std::sync::Mutex::new([const { None }; MAX_CVCACHE]);
+
 /// Direct port of `static void freecvdef(Cvdef d)` from
 /// `Src/Zle/computil.c:2961`. Walks the vals chain freeing
 /// each cvval (which frees its caarg via freecaargs).
@@ -4676,6 +4496,76 @@ pub fn freecvdef(d: Option<Box<cvdef>>) {                                    // 
         drop(v);                                                             // c:2977
     }
     drop(node);                                                              // c:2979
+}
+
+// `freecaargs(Caarg)` + `freecadef(Cadef)` ported above with the
+// caarg/caopt/cadef struct ports (c:996 / c:1013).
+
+#[cfg(test)]
+mod cao_caa_tests {
+    use super::*;
+
+    #[test]
+    fn cao_values_match_c_source() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // c:941-945 — sequential 1..=5.
+        assert_eq!(CAO_NEXT, 1);
+        assert_eq!(CAO_DIRECT, 2);
+        assert_eq!(CAO_ODIRECT, 3);
+        assert_eq!(CAO_EQUAL, 4);
+        assert_eq!(CAO_OEQUAL, 5);
+    }
+
+    #[test]
+    fn caa_values_match_c_source() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // c:964-968 — sequential 1..=5.
+        assert_eq!(CAA_NORMAL, 1);
+        assert_eq!(CAA_OPT,    2);
+        assert_eq!(CAA_REST,   3);
+        assert_eq!(CAA_RARGS,  4);
+        assert_eq!(CAA_RREST,  5);
+    }
+
+    #[test]
+    fn crt_values_match_c_source() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // c:79-83 — sequential 0..=4.
+        assert_eq!(CRT_SIMPLE, 0);
+        assert_eq!(CRT_DESC,   1);
+        assert_eq!(CRT_SPEC,   2);
+        assert_eq!(CRT_DUMMY,  3);
+        assert_eq!(CRT_EXPL,   4);
+    }
+
+    #[test]
+    fn cvv_values_match_c_source() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // c:2949-2951 — sequential 0..=2.
+        assert_eq!(CVV_NOARG, 0);
+        assert_eq!(CVV_ARG,   1);
+        assert_eq!(CVV_OPT,   2);
+    }
+
+    #[test]
+    fn cache_sizes_are_8() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        // c:972 + c:2955 — both LRU caches are 8 entries.
+        assert_eq!(MAX_CACACHE, 8);
+        assert_eq!(MAX_CVCACHE, 8);
+    }
+
+    #[test]
+    fn max_tags_is_256() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert_eq!(MAX_TAGS, 256);
+    }
+
+    #[test]
+    fn path_max2_is_8192() {
+        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        assert_eq!(PATH_MAX2, 8192);
+    }
 }
 
 /// Direct port of `static Cvdef parse_cvdef(char *nam, char **args)`
@@ -4992,6 +4882,25 @@ pub fn cv_inactive(d: &mut cvdef, xor: &[String]) {                          // 
         }
     }
 }
+
+// =====================================================================
+// `cvstate` — `_values` parse state.
+// Src/Zle/computil.c:3220-3231.
+// =====================================================================
+
+/// Direct port of `struct cvstate` from `Src/Zle/computil.c:3222-3227`.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct cvstate {                                                         // c:3222
+    pub d:    Option<Box<cvdef>>,                                            // c:3223 Cvdef d
+    pub def:  Option<Box<caarg>>,                                            // c:3224 Caarg def
+    pub val:  Option<Box<cvval>>,                                            // c:3225 Cvval val
+    pub vals: Option<Vec<String>>,                                           // c:3226 LinkList vals
+}
+
+/// Port of `static int cv_parsed` from `Src/Zle/computil.c:3230`.
+pub static cv_parsed: std::sync::atomic::AtomicI32 =                         // c:3230
+    std::sync::atomic::AtomicI32::new(0);
 
 /// Direct port of `static Cvval cv_next(Cvdef d, char **sp, char **ap)`
 /// from `Src/Zle/computil.c:3240-3331`. Splits the next value out of
@@ -5614,6 +5523,52 @@ pub fn bin_compquote(nam: &str, args: &[String],                             // 
     0                                                                        // c:3725
 }
 
+// =====================================================================
+// `ctags` / `ctset` — `comptags` cache.
+// Src/Zle/computil.c:3732-3760. MAX_TAGS already declared above.
+// =====================================================================
+
+/// Port of `typedef struct ctags *Ctags` from `Src/Zle/computil.c:3732`.
+pub type Ctags = Box<ctags>;                                                 // c:3732
+
+/// Direct port of `struct ctags` from `Src/Zle/computil.c:3737-3742`.
+/// A bunch of tag sets keyed by locallevel.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct ctags {                                                           // c:3737
+    pub all:     Option<Vec<String>>,                                        // c:3738 char **all
+    pub context: Option<String>,                                             // c:3739 char *context
+    pub init:    i32,                                                        // c:3740
+    pub sets:    Option<Box<ctset>>,                                         // c:3741 Ctset sets
+}
+/// Port of `typedef struct ctset *Ctset` from `computil.c:3733`.
+pub type Ctset = Box<ctset>;                                                 // c:3733
+
+/// Direct port of `struct ctset` from `Src/Zle/computil.c:3763`.
+#[derive(Debug, Default)]
+#[allow(non_camel_case_types)]
+pub struct ctset {                                                           // c:3763
+    pub next: Option<Box<ctset>>,                                            // c:3763 Ctset next
+    pub tags: Option<Vec<String>>,                                           // c:3763 char **tags
+    pub tag:  Option<String>,                                                // c:3763 char *tag
+    pub ptr:  i32,                                                           // c:3763 char **ptr (index)
+}
+
+/// Port of `MAX_TAGS` from `computil.c:3755`. Maximum nested completion
+/// tags depth.
+pub const MAX_TAGS: usize = 256;                                             // c:3755
+
+/// Port of `static Ctags comptags[MAX_TAGS]` from
+/// `Src/Zle/computil.c:3756`. One ctags entry per `locallevel`;
+/// indexed by completion level.
+pub static comptags: std::sync::Mutex<[Option<Box<ctags>>; MAX_TAGS]> =        // c:3756
+    std::sync::Mutex::new([const { None }; MAX_TAGS]);
+
+/// Port of `static int lasttaglevel` from `Src/Zle/computil.c:3760`.
+/// "locallevel at last comptags -i".
+pub static lasttaglevel: std::sync::atomic::AtomicI32 =                       // c:3760
+    std::sync::atomic::AtomicI32::new(0);
+
 /// Direct port of `static void freectset(Ctset s)` from
 /// `Src/Zle/computil.c:3780`.
 pub fn freectset(mut s: Option<Box<ctset>>) {                                // c:3763
@@ -6102,6 +6057,10 @@ pub fn bin_comptry(nam: &str, args: &[String],                               // 
     }
     0                                                                        // c:4138
 }
+
+/// Port of `PATH_MAX2` from `computil.c:4141`. `PATH_MAX * 2` — buffer
+/// budget for path-completion staging strings.
+pub const PATH_MAX2: usize = 8192;                                           // c:4141 (PATH_MAX*2, 4096*2)
 
 /// Direct port of `static LinkList cfp_test_exact(LinkList names,
 ///                                                  char **accept,
@@ -7135,6 +7094,47 @@ pub fn finish_() -> i32 {                                                    // 
     }
     0                                                                        // c:5179
 }
+
+/// Port of `static struct cdstate cd_state` from `Src/Zle/computil.c:93`.
+/// File-static instance the `_describe` engine reads/writes.
+pub static cd_state: std::sync::Mutex<cdstate> =                             // c:93
+    std::sync::Mutex::new(cdstate {
+        showd: 0, sep: None, slen: 0, swidth: 0, maxmlen: 0,
+        sets: None, pre: 0, premaxw: 0, suf: 0, maxg: 0, maxglen: 0,
+        groups: 0, descs: 0, gprew: 0, runs: None,
+    });
+
+/// CM_SPACE — inter-match spacing from `Src/Zle/zle_tricky.c:1700` /
+/// `Src/Zle/computil.c` (referenced as the literal `2`). Used to
+/// reserve a 2-char gap between adjacent matches when computing
+/// column widths.
+pub const CM_SPACE: i32 = 2;                                                 // c:zle_tricky.c
+
+/// Port of `static struct castate ca_laststate` from
+/// `Src/Zle/computil.c:1955`. Most recently parsed cmdline state.
+pub static ca_laststate: std::sync::Mutex<castate> =                         // c:1955
+    std::sync::Mutex::new(castate {
+        snext: None, d: None, nopts: 0, def: None, ddef: None,
+        curopt: None, dopt: None, opt: 0, arg: 0, argbeg: 0, optbeg: 0,
+        nargbeg: 0, restbeg: 0, curpos: 0, argend: 0, inopt: 0,
+        inarg: 0, nth: 0, singles: 0, oopt: 0, actopts: 0,
+        args: None, oargs: None,
+    });
+
+/// Port of `static int ca_alloced` from `Src/Zle/computil.c:1960`.
+pub static ca_alloced: std::sync::atomic::AtomicI32 =                        // c:1960
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static struct cvstate cv_laststate` from
+/// `Src/Zle/computil.c:3229`.
+pub static cv_laststate: std::sync::Mutex<cvstate> =                         // c:3229
+    std::sync::Mutex::new(cvstate {
+        d: None, def: None, val: None, vals: None,
+    });
+
+/// Port of `static int cv_alloced` from `Src/Zle/computil.c:3230`.
+pub static cv_alloced: std::sync::atomic::AtomicI32 =                        // c:3230
+    std::sync::atomic::AtomicI32::new(0);
 
 /// Mirror of `memcpy` from a locked `ca_laststate` so we can walk the
 /// snext chain without holding the mutex. Rust-only artifact.

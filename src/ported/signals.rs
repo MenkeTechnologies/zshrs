@@ -35,146 +35,10 @@ use crate::zsh_h::{
 // `crate::ported::signals::getsigidx` continue to compile.
 pub use crate::ported::jobs::{getsigidx, getsigname};
 
-// ---------------------------------------------------------------------------
-// Signal-queue state. Direct ports of `Src/signals.c:77-92`:
-//
-//   mod_export volatile int queueing_enabled, queue_front, queue_rear;   // c:77
-//   mod_export int signal_queue[MAX_QUEUE_SIZE];                         // c:79
-//   mod_export sigset_t signal_mask_queue[MAX_QUEUE_SIZE];               // c:81
-//   static volatile int trap_queueing_enabled,
-//                       trap_queue_front, trap_queue_rear;               // c:90
-//   static int trap_queue[MAX_QUEUE_SIZE];                               // c:92
-//
-// C uses flat module-level variables; Rust mirrors with file-scope
-// `AtomicI32` + `LazyLock<Mutex<Vec<...>>>` slabs so concurrent
-// pushes from the async signal handler synchronize without UB.
-// ---------------------------------------------------------------------------
-
-/// Signal-queue depth counter. Port of `mod_export volatile int
-/// queueing_enabled` from `Src/signals.c:77`.
-pub static queueing_enabled: AtomicI32 = AtomicI32::new(0);                  // c:77
-
-/// Ring-buffer head. Port of `mod_export volatile int queue_front`
-/// from `Src/signals.c:77`.
-pub static queue_front: AtomicUsize = AtomicUsize::new(0);                   // c:77
-
-/// Ring-buffer tail. Port of `mod_export volatile int queue_rear`
-/// from `Src/signals.c:77`.
-pub static queue_rear: AtomicUsize = AtomicUsize::new(0);                    // c:77
-
-/// Port of `mod_export volatile int queue_in` from `Src/signals.c:84`.
-/// Companion counter bumped by `queue_signals()` (signals.h:90) and
-/// decremented by `unqueue_signals()` (signals.h:94); used by
-/// `dont_queue_signals()` to snapshot the depth (signals.h:99) and
-/// by debug assertions (DPUTS2 at signals.h:105).
-pub static queue_in: AtomicI32 = AtomicI32::new(0);                          // c:84
-
-#[allow(clippy::declare_interior_mutable_const)]
-const ATOM_I32_ZERO: AtomicI32 = AtomicI32::new(0);
-
-/// Per-slot signal numbers. Port of `mod_export int
-/// signal_queue[MAX_QUEUE_SIZE]` from `Src/signals.c:79`.
-pub static signal_queue: [AtomicI32; MAX_QUEUE_SIZE] =                       // c:79
-    [ATOM_I32_ZERO; MAX_QUEUE_SIZE];
-
-/// Per-slot blocked-mask snapshots. Port of `mod_export sigset_t
-/// signal_mask_queue[MAX_QUEUE_SIZE]` from `Src/signals.c:81`.
-/// `sigset_t` isn't Copy on every platform — wrapped in a Mutex
-/// so the slabs initialize without const-eval gymnastics.
-pub static signal_mask_queue: std::sync::LazyLock<Mutex<Vec<libc::sigset_t>>> = // c:81
-    std::sync::LazyLock::new(|| {
-        let zero: libc::sigset_t = unsafe { std::mem::zeroed() };
-        Mutex::new(vec![zero; MAX_QUEUE_SIZE])
-    });
-
-/// Trap-queue depth counter. Port of `static volatile int
-/// trap_queueing_enabled` from `Src/signals.c:90`.
-pub static trap_queueing_enabled: AtomicI32 = AtomicI32::new(0);             // c:90
-
-/// Trap-queue head. Port of `static volatile int trap_queue_front`
-/// from `Src/signals.c:90`.
-pub static trap_queue_front: AtomicUsize = AtomicUsize::new(0);              // c:90
-
-/// Trap-queue tail. Port of `static volatile int trap_queue_rear`
-/// from `Src/signals.c:90`.
-pub static trap_queue_rear: AtomicUsize = AtomicUsize::new(0);               // c:90
-
 /// Per-slot trap-queue signals. Port of `static int
 /// trap_queue[MAX_QUEUE_SIZE]` from `Src/signals.c:92`.
 pub static trap_queue: [AtomicI32; MAX_QUEUE_SIZE] =                         // c:92
     [ATOM_I32_ZERO; MAX_QUEUE_SIZE];
-
-/// Port of `int last_signal` from `Src/signals.c:238`. Holds the
-/// signal number of the most recent delivery; used by `wait_cmd`
-/// in jobs.c to set `$?` to `128 + last_signal` when a trapped
-/// signal interrupts wait.
-pub static last_signal: AtomicI32 = AtomicI32::new(0);                       // c:238
-
-// ---------------------------------------------------------------------------
-// Per-signal trap state. Direct ports of the C globals declared in
-// `Src/signals.c:39/53/58`:
-//
-//   mod_export int      *sigtrapped;       // c:39 — flag word per sig
-//   mod_export Eprog    *siglists;         // c:53 — Eprog per sig (trap body)
-//   mod_export volatile int nsigtrapped;   // c:58 — trapped-signal count
-//
-// C allocates parallel arrays of length TRAPCOUNT at init time
-// (`Src/init.c:1398`). Rust mirrors with `Mutex<Vec<...>>` slabs
-// sized to TRAPCOUNT plus an atomic counter. TRAPxxx-function
-// trap bodies are NOT stored here in C either — `dotrap` looks
-// them up via `gettrapnode()` from shfunctab on signal delivery
-// (`Src/jobs.c:gettrapnode`).
-// ---------------------------------------------------------------------------
-
-/// Per-signal flag word. Port of `mod_export int *sigtrapped`
-/// from `Src/signals.c:39`. Bit values are `ZSIG_TRAPPED`,
-/// `ZSIG_IGNORED`, `ZSIG_FUNC`, plus `(locallevel << ZSIG_SHIFT)`
-/// in the high bits.
-pub static sigtrapped: std::sync::LazyLock<Mutex<Vec<i32>>> =                 // c:39
-    std::sync::LazyLock::new(|| Mutex::new(vec![0; TRAPCOUNT as usize]));
-
-/// Per-signal Eprog body. Port of `mod_export Eprog *siglists`
-/// from `Src/signals.c:53`. NULL for ZSIG_FUNC entries (function
-/// body resolves through `gettrapnode` at dispatch time).
-pub static siglists: std::sync::LazyLock<Mutex<Vec<Option<crate::ported::zsh_h::Eprog>>>> =     // c:53
-    std::sync::LazyLock::new(|| Mutex::new((0..TRAPCOUNT as usize).map(|_| None).collect()));
-
-/// Count of `ZSIG_TRAPPED`-flagged signals. Port of
-/// `mod_export volatile int nsigtrapped` from `Src/signals.c:58`.
-pub static nsigtrapped: AtomicI32 = AtomicI32::new(0);                        // c:58
-
-/// File-scope `int intrap` from `Src/signals.c`. Set while a
-/// trap body is running so nested `dotrap` calls short-circuit
-/// (matches the c:1245 dispatcher's `if (intrap) return`).
-pub static intrap: AtomicI32 = AtomicI32::new(0);                             // c:intrap
-
-/// File-scope `int in_exit_trap` from `Src/signals.c:60`. Set
-/// while the EXIT trap body is running so `exit` and friends can
-/// distinguish "real" exit from exit-trap-driven exit.
-pub static in_exit_trap: AtomicI32 = AtomicI32::new(0);                       // c:60
-
-/// Port of `volatile int trapisfunc` from `Src/signals.c:1062`.
-/// Set by `dotrapargs()` (signals.c:1156) when the trap body is a
-/// shell function (vs. inline command) — the `IN_EVAL_TRAP()` macro
-/// at zsh.h:2962 tests this against `intrap` + `locallevel`.
-pub static trapisfunc: AtomicI32 = AtomicI32::new(0);                         // c:1062
-
-/// Port of `volatile int traplocallevel` from `Src/signals.c:1069`.
-/// Captures `locallevel` at trap-entry so the trap body can detect
-/// whether it's running inside the same scope it was registered in
-/// (the third leg of `IN_EVAL_TRAP()` at zsh.h:2962).
-pub static traplocallevel: AtomicI32 = AtomicI32::new(0);                     // c:1069
-
-// Variables used by signal queueing                                       // c:74
-/// Enable signal queueing.
-// queue_signals / unqueue_signals live in `signals_h.rs` per the C
-// source split: both are `#define` macros in `Src/signals.h:90/112`
-// + `92/114`, not functions in `Src/signals.c`. Re-export from the
-// canonical home so callers using `crate::ported::signals::queue_signals`
-// continue to compile, and the QUEUEING_ENABLED state is shared
-// across all callers (instead of split between two parallel
-// SignalQueue/QUEUEING_ENABLED counters).
-pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
 
 /// Port of `install_handler(int sig)` from `Src/signals.c:100`.
 ///
@@ -603,6 +467,18 @@ pub fn killjb(jn: i32, sig: i32) -> i32 {                                 // c:5
     }
 }
 
+/// Port of `struct savetrap` from `Src/signals.c:611-624`.
+/// One stacked trap-state entry captured by `dosavetrap` so the
+/// outer-scope trap can be restored when an inner scope exits.
+#[allow(non_camel_case_types)]
+pub struct savetrap {                                                        // c:611
+    pub sig:   i32,                                                          // c:613
+    pub flags: i32,                                                          // c:614
+    pub local: i32,                                                          // c:615 locallevel at save
+    pub posix: i32,                                                          // c:616 exit_trap_posix snapshot
+    pub list:  Option<crate::ported::zsh_h::Eprog>,                          // c:617 trap eval-list Eprog
+}
+
 /// Direct port of `void dosavetrap(int sig, int level)` from
 /// `Src/signals.c:626`. Captures the current trap state for
 /// `sig` into a `savetrap` and pushes it onto `SAVETRAPS`.
@@ -742,6 +618,17 @@ pub fn unsettrap(sig: i32) {                                                 // 
         signal_default(sig);                                                 // c:846
     }
 }
+
+// Variables used by signal queueing                                       // c:74
+/// Enable signal queueing.
+// queue_signals / unqueue_signals live in `signals_h.rs` per the C
+// source split: both are `#define` macros in `Src/signals.h:90/112`
+// + `92/114`, not functions in `Src/signals.c`. Re-export from the
+// canonical home so callers using `crate::ported::signals::queue_signals`
+// continue to compile, and the QUEUEING_ENABLED state is shared
+// across all callers (instead of split between two parallel
+// SignalQueue/QUEUEING_ENABLED counters).
+pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
 
 /// Remove a trap completely and reset to default disposition.
 /// Port of `removetrap(int sig)` from Src/signals.c:772.
@@ -916,35 +803,6 @@ pub fn unqueue_traps() {                                                     // 
     }
 }
 
-/// Port of `struct savetrap` from `Src/signals.c:611-624`.
-/// One stacked trap-state entry captured by `dosavetrap` so the
-/// outer-scope trap can be restored when an inner scope exits.
-#[allow(non_camel_case_types)]
-pub struct savetrap {                                                        // c:611
-    pub sig:   i32,                                                          // c:613
-    pub flags: i32,                                                          // c:614
-    pub local: i32,                                                          // c:615 locallevel at save
-    pub posix: i32,                                                          // c:616 exit_trap_posix snapshot
-    pub list:  Option<crate::ported::zsh_h::Eprog>,                          // c:617 trap eval-list Eprog
-}
-
-/// File-scope `LinkList savetraps` from `Src/signals.c`. Stack of
-/// saved trap entries — pushed by `dosavetrap`, popped by
-/// `endtrapscope`. Inserts at front so it works as a LIFO stack.
-pub static SAVETRAPS: OnceLock<Mutex<Vec<savetrap>>> = OnceLock::new();
-
-/// File-scope `int exit_trap_posix` from `Src/signals.c`. POSIX-mode
-/// EXIT trap flag — when set, exit traps survive function-scope
-/// teardown instead of being unset.
-pub static EXIT_TRAP_POSIX: AtomicBool = AtomicBool::new(false);
-
-/// File-scope `int dontsavetrap` from `Src/signals.c`. Counter
-/// suppressing `dosavetrap` calls during `settrap` invoked from
-/// `endtrapscope`'s restore loop (so the restore itself doesn't
-/// push fresh save entries).
-pub static DONTSAVETRAP: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-
 // Standard call to execute a trap for a given signal.                     // c:1245
 /// Port of `mod_export int dotrap(int sig)` from
 /// `Src/signals.c:1245`. The synchronous trap dispatcher — looks
@@ -1054,6 +912,148 @@ pub fn rtsigname(sig: i32) -> String {
         format!("SIG{}", sig)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Signal-queue state. Direct ports of `Src/signals.c:77-92`:
+//
+//   mod_export volatile int queueing_enabled, queue_front, queue_rear;   // c:77
+//   mod_export int signal_queue[MAX_QUEUE_SIZE];                         // c:79
+//   mod_export sigset_t signal_mask_queue[MAX_QUEUE_SIZE];               // c:81
+//   static volatile int trap_queueing_enabled,
+//                       trap_queue_front, trap_queue_rear;               // c:90
+//   static int trap_queue[MAX_QUEUE_SIZE];                               // c:92
+//
+// C uses flat module-level variables; Rust mirrors with file-scope
+// `AtomicI32` + `LazyLock<Mutex<Vec<...>>>` slabs so concurrent
+// pushes from the async signal handler synchronize without UB.
+// ---------------------------------------------------------------------------
+
+/// Signal-queue depth counter. Port of `mod_export volatile int
+/// queueing_enabled` from `Src/signals.c:77`.
+pub static queueing_enabled: AtomicI32 = AtomicI32::new(0);                  // c:77
+
+/// Ring-buffer head. Port of `mod_export volatile int queue_front`
+/// from `Src/signals.c:77`.
+pub static queue_front: AtomicUsize = AtomicUsize::new(0);                   // c:77
+
+/// Ring-buffer tail. Port of `mod_export volatile int queue_rear`
+/// from `Src/signals.c:77`.
+pub static queue_rear: AtomicUsize = AtomicUsize::new(0);                    // c:77
+
+/// Port of `mod_export volatile int queue_in` from `Src/signals.c:84`.
+/// Companion counter bumped by `queue_signals()` (signals.h:90) and
+/// decremented by `unqueue_signals()` (signals.h:94); used by
+/// `dont_queue_signals()` to snapshot the depth (signals.h:99) and
+/// by debug assertions (DPUTS2 at signals.h:105).
+pub static queue_in: AtomicI32 = AtomicI32::new(0);                          // c:84
+
+#[allow(clippy::declare_interior_mutable_const)]
+const ATOM_I32_ZERO: AtomicI32 = AtomicI32::new(0);
+
+/// Per-slot signal numbers. Port of `mod_export int
+/// signal_queue[MAX_QUEUE_SIZE]` from `Src/signals.c:79`.
+pub static signal_queue: [AtomicI32; MAX_QUEUE_SIZE] =                       // c:79
+    [ATOM_I32_ZERO; MAX_QUEUE_SIZE];
+
+/// Per-slot blocked-mask snapshots. Port of `mod_export sigset_t
+/// signal_mask_queue[MAX_QUEUE_SIZE]` from `Src/signals.c:81`.
+/// `sigset_t` isn't Copy on every platform — wrapped in a Mutex
+/// so the slabs initialize without const-eval gymnastics.
+pub static signal_mask_queue: std::sync::LazyLock<Mutex<Vec<libc::sigset_t>>> = // c:81
+    std::sync::LazyLock::new(|| {
+        let zero: libc::sigset_t = unsafe { std::mem::zeroed() };
+        Mutex::new(vec![zero; MAX_QUEUE_SIZE])
+    });
+
+/// Trap-queue depth counter. Port of `static volatile int
+/// trap_queueing_enabled` from `Src/signals.c:90`.
+pub static trap_queueing_enabled: AtomicI32 = AtomicI32::new(0);             // c:90
+
+/// Trap-queue head. Port of `static volatile int trap_queue_front`
+/// from `Src/signals.c:90`.
+pub static trap_queue_front: AtomicUsize = AtomicUsize::new(0);              // c:90
+
+/// Trap-queue tail. Port of `static volatile int trap_queue_rear`
+/// from `Src/signals.c:90`.
+pub static trap_queue_rear: AtomicUsize = AtomicUsize::new(0);               // c:90
+
+/// Port of `int last_signal` from `Src/signals.c:238`. Holds the
+/// signal number of the most recent delivery; used by `wait_cmd`
+/// in jobs.c to set `$?` to `128 + last_signal` when a trapped
+/// signal interrupts wait.
+pub static last_signal: AtomicI32 = AtomicI32::new(0);                       // c:238
+
+// ---------------------------------------------------------------------------
+// Per-signal trap state. Direct ports of the C globals declared in
+// `Src/signals.c:39/53/58`:
+//
+//   mod_export int      *sigtrapped;       // c:39 — flag word per sig
+//   mod_export Eprog    *siglists;         // c:53 — Eprog per sig (trap body)
+//   mod_export volatile int nsigtrapped;   // c:58 — trapped-signal count
+//
+// C allocates parallel arrays of length TRAPCOUNT at init time
+// (`Src/init.c:1398`). Rust mirrors with `Mutex<Vec<...>>` slabs
+// sized to TRAPCOUNT plus an atomic counter. TRAPxxx-function
+// trap bodies are NOT stored here in C either — `dotrap` looks
+// them up via `gettrapnode()` from shfunctab on signal delivery
+// (`Src/jobs.c:gettrapnode`).
+// ---------------------------------------------------------------------------
+
+/// Per-signal flag word. Port of `mod_export int *sigtrapped`
+/// from `Src/signals.c:39`. Bit values are `ZSIG_TRAPPED`,
+/// `ZSIG_IGNORED`, `ZSIG_FUNC`, plus `(locallevel << ZSIG_SHIFT)`
+/// in the high bits.
+pub static sigtrapped: std::sync::LazyLock<Mutex<Vec<i32>>> =                 // c:39
+    std::sync::LazyLock::new(|| Mutex::new(vec![0; TRAPCOUNT as usize]));
+
+/// Per-signal Eprog body. Port of `mod_export Eprog *siglists`
+/// from `Src/signals.c:53`. NULL for ZSIG_FUNC entries (function
+/// body resolves through `gettrapnode` at dispatch time).
+pub static siglists: std::sync::LazyLock<Mutex<Vec<Option<crate::ported::zsh_h::Eprog>>>> =     // c:53
+    std::sync::LazyLock::new(|| Mutex::new((0..TRAPCOUNT as usize).map(|_| None).collect()));
+
+/// Count of `ZSIG_TRAPPED`-flagged signals. Port of
+/// `mod_export volatile int nsigtrapped` from `Src/signals.c:58`.
+pub static nsigtrapped: AtomicI32 = AtomicI32::new(0);                        // c:58
+
+/// File-scope `int intrap` from `Src/signals.c`. Set while a
+/// trap body is running so nested `dotrap` calls short-circuit
+/// (matches the c:1245 dispatcher's `if (intrap) return`).
+pub static intrap: AtomicI32 = AtomicI32::new(0);                             // c:intrap
+
+/// File-scope `int in_exit_trap` from `Src/signals.c:60`. Set
+/// while the EXIT trap body is running so `exit` and friends can
+/// distinguish "real" exit from exit-trap-driven exit.
+pub static in_exit_trap: AtomicI32 = AtomicI32::new(0);                       // c:60
+
+/// Port of `volatile int trapisfunc` from `Src/signals.c:1062`.
+/// Set by `dotrapargs()` (signals.c:1156) when the trap body is a
+/// shell function (vs. inline command) — the `IN_EVAL_TRAP()` macro
+/// at zsh.h:2962 tests this against `intrap` + `locallevel`.
+pub static trapisfunc: AtomicI32 = AtomicI32::new(0);                         // c:1062
+
+/// Port of `volatile int traplocallevel` from `Src/signals.c:1069`.
+/// Captures `locallevel` at trap-entry so the trap body can detect
+/// whether it's running inside the same scope it was registered in
+/// (the third leg of `IN_EVAL_TRAP()` at zsh.h:2962).
+pub static traplocallevel: AtomicI32 = AtomicI32::new(0);                     // c:1069
+
+/// File-scope `LinkList savetraps` from `Src/signals.c`. Stack of
+/// saved trap entries — pushed by `dosavetrap`, popped by
+/// `endtrapscope`. Inserts at front so it works as a LIFO stack.
+pub static SAVETRAPS: OnceLock<Mutex<Vec<savetrap>>> = OnceLock::new();
+
+/// File-scope `int exit_trap_posix` from `Src/signals.c`. POSIX-mode
+/// EXIT trap flag — when set, exit traps survive function-scope
+/// teardown instead of being unset.
+pub static EXIT_TRAP_POSIX: AtomicBool = AtomicBool::new(false);
+
+/// File-scope `int dontsavetrap` from `Src/signals.c`. Counter
+/// suppressing `dosavetrap` calls during `settrap` invoked from
+/// `endtrapscope`'s restore loop (so the restore itself doesn't
+/// push fresh save entries).
+pub static DONTSAVETRAP: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `killpg()` libc passthrough — used by jobs.c / signals.c
 /// callers; not in zsh source itself but referenced via libc.

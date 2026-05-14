@@ -83,8 +83,6 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-const PROBE_TIMEOUT_MS: u64 = 500;
-
 // =====================================================================
 // Pattern-tag bytes — `Src/Zle/termquery.c:36-67`. The `term_pat[]`
 // table encodes terminal-response patterns as byte streams; the high-
@@ -884,6 +882,8 @@ pub fn cursor_form() -> Vec<String> {                                        // 
     //                    empty.
     Vec::new()
 }
+
+const PROBE_TIMEOUT_MS: u64 = 500;
 
 #[cfg(test)]
 mod term_pat_tag_tests {

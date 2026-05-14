@@ -123,6 +123,53 @@ pub fn keymapsgetfn(keymaps: &[&str]) -> Vec<String> {                       // 
     keymaps.iter().map(|s| s.to_string()).collect()
 }
 
+
+
+/// Port of `setup_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:147`. C body
+/// is `return 0;` (UNUSED `Module m`).
+/// WARNING: param names don't match C — Rust=() vs C=(m)
+pub fn setup_() -> i32 {                                                 // c:147
+    0                                                                    // c:154
+}
+
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Zle/zleparameter.c:154`. C body
+/// is `*features = featuresarray(m, &module_features); return 0;`.
+/// Static-link path: 0.
+/// WARNING: param names don't match C — Rust=() vs C=(m, features)
+pub fn features_() -> i32 {                                              // c:154
+    0                                                                    // c:162
+}
+
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Zle/zleparameter.c:162`. C body
+/// is `return handlefeatures(m, &module_features, enables);`.
+/// Static-link path: 0.
+/// WARNING: param names don't match C — Rust=() vs C=(m, enables)
+pub fn enables_() -> i32 {                                               // c:162
+    0                                                                    // c:169
+}
+
+/// Port of `boot_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:169`. C body is
+/// `return 0;` (UNUSED `Module m`).
+/// WARNING: param names don't match C — Rust=() vs C=(m)
+pub fn boot_() -> i32 {                                                  // c:169
+    0                                                                    // c:176
+}
+
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:176`. C body
+/// is `return setfeatureenables(m, &module_features, NULL);`.
+/// Static-link path: 0.
+/// WARNING: param names don't match C — Rust=() vs C=(m)
+pub fn cleanup_() -> i32 {                                               // c:176
+    0                                                                    // c:183
+}
+
+/// Port of `finish_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:183`. C body
+/// is `return 0;` (UNUSED `Module m`).
+/// WARNING: param names don't match C — Rust=() vs C=(m)
+pub fn finish_() -> i32 {                                                // c:183
+    0                                                                    // c:183
+}
+
 /// Default builtin widget names for the $widgets parameter
 pub const BUILTIN_WIDGETS: &[&str] = &[
     "accept-and-hold",
@@ -297,53 +344,6 @@ pub const BUILTIN_WIDGETS: &[&str] = &[
 pub const DEFAULT_KEYMAPS: &[&str] = &[
     "emacs", "viins", "vicmd", "viopp", "visual", "isearch", "command", "main", ".safe",
 ];
-
-
-
-/// Port of `setup_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:147`. C body
-/// is `return 0;` (UNUSED `Module m`).
-/// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn setup_() -> i32 {                                                 // c:147
-    0                                                                    // c:154
-}
-
-/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Zle/zleparameter.c:154`. C body
-/// is `*features = featuresarray(m, &module_features); return 0;`.
-/// Static-link path: 0.
-/// WARNING: param names don't match C — Rust=() vs C=(m, features)
-pub fn features_() -> i32 {                                              // c:154
-    0                                                                    // c:162
-}
-
-/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Zle/zleparameter.c:162`. C body
-/// is `return handlefeatures(m, &module_features, enables);`.
-/// Static-link path: 0.
-/// WARNING: param names don't match C — Rust=() vs C=(m, enables)
-pub fn enables_() -> i32 {                                               // c:162
-    0                                                                    // c:169
-}
-
-/// Port of `boot_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:169`. C body is
-/// `return 0;` (UNUSED `Module m`).
-/// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn boot_() -> i32 {                                                  // c:169
-    0                                                                    // c:176
-}
-
-/// Port of `cleanup_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:176`. C body
-/// is `return setfeatureenables(m, &module_features, NULL);`.
-/// Static-link path: 0.
-/// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn cleanup_() -> i32 {                                               // c:176
-    0                                                                    // c:183
-}
-
-/// Port of `finish_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:183`. C body
-/// is `return 0;` (UNUSED `Module m`).
-/// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn finish_() -> i32 {                                                // c:183
-    0                                                                    // c:183
-}
 
 #[cfg(test)]
 mod tests {

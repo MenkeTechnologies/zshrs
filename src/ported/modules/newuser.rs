@@ -125,11 +125,6 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {           // c:4
     0                                                                    // c:104
 }
 
-// `SOURCE_NOT_FOUND` is the C `source.c` return code for a missing
-// startup script (`init.c:1551` family). zshrs's canonical
-// `crate::ported::init::source` returns the same numeric code.
-const SOURCE_NOT_FOUND: i32 = 1;
-
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/newuser.c:109`. C body is
 /// `return 0;` (UNUSED `Module m`).
 #[allow(unused_variables)]
@@ -143,3 +138,8 @@ pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {        // c:109
 pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {         // c:116
     0                                                                    // c:116
 }
+
+// `SOURCE_NOT_FOUND` is the C `source.c` return code for a missing
+// startup script (`init.c:1551` family). zshrs's canonical
+// `crate::ported::init::source` returns the same numeric code.
+const SOURCE_NOT_FOUND: i32 = 1;

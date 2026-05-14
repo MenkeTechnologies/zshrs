@@ -205,51 +205,6 @@ pub fn getterminfo(name: &str) -> Option<String> {                       // c:13
     None                                                                  // c:170
 }
 
-/// Capability names pre-loaded into the `${terminfo[…]}` assoc at
-/// shell start so iteration via `${(k)terminfo}` enumerates the
-/// common subset. Lazy lookups for any other name still resolve
-/// through `lookup()`. The list intentionally mirrors the strings
-/// that zsh keymap setups commonly read (function keys, navigation,
-/// editing, sgr).
-pub const COMMON_STRING_CAPS: &[&str] = &[
-    // Function keys F1-F20.
-    "kf1", "kf2", "kf3", "kf4", "kf5", "kf6", "kf7", "kf8", "kf9", "kf10",
-    "kf11", "kf12", "kf13", "kf14", "kf15", "kf16", "kf17", "kf18", "kf19",
-    "kf20",
-    // Cursor / arrow keys.
-    "kcuu1", "kcud1", "kcuf1", "kcub1",
-    // Navigation.
-    "khome", "kend", "kpp", "knp",
-    // Editing.
-    "kbs", "kich1", "kdch1",
-    // Clear / cursor positioning.
-    "clear", "ed", "el", "home", "civis", "cnorm",
-    // SGR.
-    "smso", "rmso", "smul", "rmul", "bold", "rev", "sgr0",
-    // Application keypad / alt-screen / colour.
-    "smkx", "rmkx", "smcup", "rmcup", "setaf", "setab",
-    // Cursor positioning + edit ops.
-    "cup", "ich1", "dch1", "il1", "dl1",
-];
-
-// ===========================================================
-// Methods moved verbatim from src/ported/exec.rs because their
-// C counterpart's source file maps 1:1 to this Rust module.
-// Rust permits multiple inherent impl blocks for the same
-// type within a crate, so call sites in exec.rs are unchanged.
-// ===========================================================
-
-// BEGIN moved-from-exec-rs
-// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
-
-// END moved-from-exec-rs
-
-// =====================================================================
-// static struct features module_features                            c:307 (terminfo.c)
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
 // === auto-generated stubs ===
 /// Port of `scanterminfo(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/terminfo.c:177`. The
 /// magic-assoc scan callback for `${(k)terminfo}` /
@@ -384,6 +339,24 @@ pub fn scanterminfo() -> Vec<(String, String)> {                         // c:17
     out
 }
 
+// ===========================================================
+// Methods moved verbatim from src/ported/exec.rs because their
+// C counterpart's source file maps 1:1 to this Rust module.
+// Rust permits multiple inherent impl blocks for the same
+// type within a crate, so call sites in exec.rs are unchanged.
+// ===========================================================
+
+// BEGIN moved-from-exec-rs
+// (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
+
+// END moved-from-exec-rs
+
+// =====================================================================
+// static struct features module_features                            c:307 (terminfo.c)
+// =====================================================================
+
+use crate::ported::zsh_h::module;
+
 // `bintab` — port of `static struct builtin bintab[]` (terminfo.c).
 
 
@@ -439,6 +412,33 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     0
 }
 
+/// Capability names pre-loaded into the `${terminfo[…]}` assoc at
+/// shell start so iteration via `${(k)terminfo}` enumerates the
+/// common subset. Lazy lookups for any other name still resolve
+/// through `lookup()`. The list intentionally mirrors the strings
+/// that zsh keymap setups commonly read (function keys, navigation,
+/// editing, sgr).
+pub const COMMON_STRING_CAPS: &[&str] = &[
+    // Function keys F1-F20.
+    "kf1", "kf2", "kf3", "kf4", "kf5", "kf6", "kf7", "kf8", "kf9", "kf10",
+    "kf11", "kf12", "kf13", "kf14", "kf15", "kf16", "kf17", "kf18", "kf19",
+    "kf20",
+    // Cursor / arrow keys.
+    "kcuu1", "kcud1", "kcuf1", "kcub1",
+    // Navigation.
+    "khome", "kend", "kpp", "knp",
+    // Editing.
+    "kbs", "kich1", "kdch1",
+    // Clear / cursor positioning.
+    "clear", "ed", "el", "home", "civis", "cnorm",
+    // SGR.
+    "smso", "rmso", "smul", "rmul", "bold", "rev", "sgr0",
+    // Application keypad / alt-screen / colour.
+    "smkx", "rmkx", "smcup", "rmcup", "setaf", "setab",
+    // Cursor positioning + edit ops.
+    "cup", "ich1", "dch1", "il1", "dl1",
+];
+
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
 
@@ -484,6 +484,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

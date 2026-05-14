@@ -8,31 +8,33 @@
 
 use std::cell::RefCell;
 
-// list of zsh heaps                                                        // c:127
-/// A memory arena for temporary allocations.
-///
-/// Port of the `heaps` linked-list arena C zsh maintains in
-/// Src/mem.c (see `new_heaps()` line 194 / `old_heaps()` line 220).
-/// The C source uses a hand-rolled bump allocator with `pushheap`/
-/// `popheap` semantics for shell-lifetime allocations; in Rust we
-/// stack `Vec<String>`/`Vec<Vec<u8>>` per generation and let normal
-/// drop semantics handle the actual frees.
-///
-/// `heap_arena` is the Rust port's wrapper around what C tracks via
-/// the module-static `Heap heaps` chain + `HeapStack heapstack` —
-/// there is no `struct heap_arena` in zsh C. Canonical C `struct heap`
-/// (the chunk header) is at `zsh_h.rs:1039`.
-#[allow(non_camel_case_types)]
-pub struct heap_arena {
-    /// Stack of arena generations
-    generations: Vec<Generation>,
+// ===========================================================
+// Direct ports of arena/heap routines from Src/mem.c. Rust
+// uses owned allocations + RAII, so the C heap-arena machinery
+// (zalloc, zhalloc, switch_heaps, mmap_heap_alloc, etc.) is
+// replaced by stdlib alloc + scoped owned strings. These free-
+// fn entries satisfy ABI/name parity for the drift gate.
+// ===========================================================
+
+/// Port of `new_heap_id()` from Src/mem.c:182.
+/// C: `static Heapid new_heap_id(void)` → `return next_heap_id++;`
+pub fn new_heap_id() -> u64 {                                                // c:182
+    NEXT_HEAP_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)          // c:182
 }
 
-struct Generation {
-    /// Strings allocated in this generation
-    strings: Vec<String>,
-    /// Byte buffers allocated in this generation
-    buffers: Vec<Vec<u8>>,
+// Use new heaps from now on. This returns the old heap-list.               // c:194
+/// Port of `new_heaps()` from Src/mem.c:194.
+/// C: `Heap new_heaps(void)` — save current `heaps`/`fheap` chain,
+///   reset both to NULL, return the saved head for later restoration.
+pub fn new_heaps() -> *mut std::ffi::c_void {                                // c:194
+    queue_signals();                                                         // c:194
+    // c:199 — `h = heaps;`
+    let h = HEAPS.load(std::sync::atomic::Ordering::Relaxed);                // c:199
+    // c:220 — `fheap = heaps = NULL;`
+    HEAPS.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed); // c:220
+    FHEAP.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed);
+    unqueue_signals();                                                       // c:220
+    h
 }
 
 impl Default for heap_arena {
@@ -117,35 +119,6 @@ impl heap_arena {
 
 thread_local! {
     static HEAP: RefCell<heap_arena> = RefCell::new(heap_arena::new());
-}
-
-// ===========================================================
-// Direct ports of arena/heap routines from Src/mem.c. Rust
-// uses owned allocations + RAII, so the C heap-arena machinery
-// (zalloc, zhalloc, switch_heaps, mmap_heap_alloc, etc.) is
-// replaced by stdlib alloc + scoped owned strings. These free-
-// fn entries satisfy ABI/name parity for the drift gate.
-// ===========================================================
-
-/// Port of `new_heap_id()` from Src/mem.c:182.
-/// C: `static Heapid new_heap_id(void)` → `return next_heap_id++;`
-pub fn new_heap_id() -> u64 {                                                // c:182
-    NEXT_HEAP_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)          // c:182
-}
-
-// Use new heaps from now on. This returns the old heap-list.               // c:194
-/// Port of `new_heaps()` from Src/mem.c:194.
-/// C: `Heap new_heaps(void)` — save current `heaps`/`fheap` chain,
-///   reset both to NULL, return the saved head for later restoration.
-pub fn new_heaps() -> *mut std::ffi::c_void {                                // c:194
-    queue_signals();                                                         // c:194
-    // c:199 — `h = heaps;`
-    let h = HEAPS.load(std::sync::atomic::Ordering::Relaxed);                // c:199
-    // c:220 — `fheap = heaps = NULL;`
-    HEAPS.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed); // c:220
-    FHEAP.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Relaxed);
-    unqueue_signals();                                                       // c:220
-    h
 }
 
 // Re-install the old heaps again, freeing the new ones.                    // c:220
@@ -364,6 +337,33 @@ pub fn bin_mem(                                                              // 
     // globals (m_l/m_high/m_s/m_b/m_m/m_f) don't exist.
     println!("memory statistics not available with system allocator");
     0
+}
+
+// list of zsh heaps                                                        // c:127
+/// A memory arena for temporary allocations.
+///
+/// Port of the `heaps` linked-list arena C zsh maintains in
+/// Src/mem.c (see `new_heaps()` line 194 / `old_heaps()` line 220).
+/// The C source uses a hand-rolled bump allocator with `pushheap`/
+/// `popheap` semantics for shell-lifetime allocations; in Rust we
+/// stack `Vec<String>`/`Vec<Vec<u8>>` per generation and let normal
+/// drop semantics handle the actual frees.
+///
+/// `heap_arena` is the Rust port's wrapper around what C tracks via
+/// the module-static `Heap heaps` chain + `HeapStack heapstack` —
+/// there is no `struct heap_arena` in zsh C. Canonical C `struct heap`
+/// (the chunk header) is at `zsh_h.rs:1039`.
+#[allow(non_camel_case_types)]
+pub struct heap_arena {
+    /// Stack of arena generations
+    generations: Vec<Generation>,
+}
+
+struct Generation {
+    /// Strings allocated in this generation
+    strings: Vec<String>,
+    /// Byte buffers allocated in this generation
+    buffers: Vec<Vec<u8>>,
 }
 
 /// Duplicate a string into heap storage.

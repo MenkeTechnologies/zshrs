@@ -69,272 +69,6 @@ use crate::ported::zsh_h::{Dnull, Equals, Hat, Inbrack, Inpar, Outpar, Pound, Qs
 use crate::ported::zle::comp_h::{CAF_ALL, CAF_MATCH, CAF_MATSORT, CAF_NOSORT, CAF_NUMSORT, CAF_QUOTE, CAF_REVSORT, CAF_UNIQALL, CAF_UNIQCON};
 
 // =====================================================================
-// Extern globals — declared in other C files, mirrored here per
-// PORT.md Rule 9 ("stub the EXTERN dependencies ... locally with
-// file:line citations to their home file") so the local body ports
-// below have a value source. When the canonical Rust homes land,
-// these become `pub use crate::ported::<canonical>::*` re-exports.
-// =====================================================================
-
-/// Port of `mod_export int wb` from `Src/lex.c:120`. Word-begin
-/// position in the metafied line for the currently-completing word.
-pub static WB: AtomicI32 = AtomicI32::new(0);                                // lex.c:120
-/// Port of `mod_export int we` from `Src/lex.c:120`. Word-end position.
-pub static WE: AtomicI32 = AtomicI32::new(0);                                // lex.c:120
-/// Port of `mod_export int zlemetacs` from `Src/lex.c:104`. Cursor
-/// position in the metafied line.
-pub static ZLEMETACS: AtomicI32 = AtomicI32::new(0);                         // lex.c:104
-/// Port of `mod_export int zlemetall` from `Src/lex.c:104`. Length
-/// of the metafied line.
-pub static ZLEMETALL: AtomicI32 = AtomicI32::new(0);                         // lex.c:104
-/// Port of `mod_export int addedx` from `Src/lex.c:115`. Non-zero
-/// while a dummy `x` cursor marker is in the line being lexed
-/// (so completion can capture the partial word at the cursor).
-pub static ADDEDX: AtomicI32 = AtomicI32::new(0);                            // lex.c:115
-
-/// Port of `mod_export char *zlemetaline` from `Src/lex.c:103`. The
-/// metafied edit buffer for the current ZLE session — `foredel`,
-/// `inststr`, `selfinsert` operate on this directly when compcore's
-/// error-recovery path fires (compcore.c:344-355).
-pub static ZLEMETALINE: OnceLock<Mutex<String>> = OnceLock::new();           // lex.c:103
-/// Port of `mod_export ZLE_STRING_T zleline` from `Src/zle_main.c`.
-pub static ZLELINE: OnceLock<Mutex<String>> = OnceLock::new();               // zle_main.c
-/// Port of `mod_export int zlecs` from `Src/zle_main.c`.
-pub static ZLECS: AtomicI32 = AtomicI32::new(0);                             // zle_main.c
-/// Port of `mod_export int zlell` from `Src/zle_main.c`.
-pub static ZLELL: AtomicI32 = AtomicI32::new(0);                             // zle_main.c
-/// Port of `mod_export int inwhat` from `Src/lex.c:110`. Lex context
-/// classification — IN_NOTHING / IN_CMD / IN_COND / IN_MATH / IN_PAR /
-/// IN_ENV.
-pub static INWHAT: AtomicI32 = AtomicI32::new(0);                            // lex.c:110
-/// Port of `mod_export int zmult` from `Src/zle_main.c`. Numeric
-/// prefix multiplier for the current ZLE command.
-pub static ZMULT: AtomicI32 = AtomicI32::new(1);                             // zle_main.c
-/// Port of `mod_export char *compfunc` from `Src/Zle/zle_tricky.c:143`.
-/// Name of the user completion shell function — non-empty when the
-/// new completion system (`compsys`) is active; empty for compctl.
-pub static compfunc: OnceLock<Mutex<Option<String>>> = OnceLock::new();      // zle_tricky.c:143
-/// Port of `mod_export char *comppatmatch` from `Src/Zle/zle_tricky.c`.
-/// `$compstate[pattern_match]` — when non-empty + non-"\0" enables
-/// pattern-aware matching for parameter-name completion.
-pub static comppatmatch: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-/// Port of `mod_export char *compqstack` from `Src/Zle/compcore.c`.
-/// Quoting-state stack (1 char per nesting level).
-pub static compqstack: OnceLock<Mutex<String>> = OnceLock::new();
-
-// Brace counters live in zle_tricky.c:114 — re-exported there. Local
-// re-exports here so call sites stay short:
-#[doc(hidden)]
-pub use crate::ported::zle::zle_tricky::{NBRBEG as _NBRBEG, NBREND as _NBREND};
-use crate::zsh_h::{isset, BASHAUTOLIST, NUMERICGLOBSORT, RCQUOTES, SORTIT_IGNORING_BACKSLASHES, SORTIT_NUMERICALLY};
-// =====================================================================
-// File-scope globals — `Src/Zle/compcore.c:36-279`.
-// =====================================================================
-
-/// Port of `int useexact` from compcore.c:36.
-pub static useexact: AtomicI32 = AtomicI32::new(0);                          // c:36
-/// Port of `int useline` from compcore.c:36.
-pub static useline: AtomicI32 = AtomicI32::new(0);                           // c:36
-/// Port of `int uselist` from compcore.c:36.
-pub static uselist: AtomicI32 = AtomicI32::new(0);                           // c:36
-/// Port of `int forcelist` from compcore.c:36.
-pub static forcelist: AtomicI32 = AtomicI32::new(0);                         // c:36
-/// Port of `int startauto` from compcore.c:36.
-pub static startauto: AtomicI32 = AtomicI32::new(0);                         // c:36
-
-/// Port of `mod_export int iforcemenu` from compcore.c:39.
-pub static iforcemenu: AtomicI32 = AtomicI32::new(0);                        // c:39
-
-/// Port of `mod_export int dolastprompt` from compcore.c:44.
-pub static dolastprompt: AtomicI32 = AtomicI32::new(0);                      // c:44
-
-/// Port of `mod_export int oldlist` from compcore.c:49.
-pub static oldlist: AtomicI32 = AtomicI32::new(0);                           // c:49
-/// Port of `mod_export int oldins` from compcore.c:49.
-pub static oldins: AtomicI32 = AtomicI32::new(0);                            // c:49
-
-/// Port of `int origlpre` from compcore.c:54.
-pub static origlpre: AtomicI32 = AtomicI32::new(0);                          // c:54
-/// Port of `int origlsuf` from compcore.c:54.
-pub static origlsuf: AtomicI32 = AtomicI32::new(0);                          // c:54
-/// Port of `int lenchanged` from compcore.c:54.
-pub static lenchanged: AtomicI32 = AtomicI32::new(0);                        // c:54
-
-/// Port of `int movetoend` from compcore.c:61.
-pub static movetoend: AtomicI32 = AtomicI32::new(0);                         // c:61
-
-/// Port of `mod_export int insmnum` from compcore.c:66.
-pub static insmnum: AtomicI32 = AtomicI32::new(0);                           // c:66
-/// Port of `mod_export int insspace` from compcore.c:66.
-pub static insspace: AtomicI32 = AtomicI32::new(0);                          // c:66
-
-/// Port of `mod_export int menuacc` from compcore.c:81.
-pub static menuacc: AtomicI32 = AtomicI32::new(0);                           // c:81
-
-/// Port of `int hasunqu` from compcore.c:86.
-pub static hasunqu: AtomicI32 = AtomicI32::new(0);                           // c:86
-/// Port of `int useqbr` from compcore.c:86.
-pub static useqbr: AtomicI32 = AtomicI32::new(0);                            // c:86
-/// Port of `int brpcs` from compcore.c:86.
-pub static brpcs: AtomicI32 = AtomicI32::new(0);                             // c:86
-/// Port of `int brscs` from compcore.c:86.
-pub static brscs: AtomicI32 = AtomicI32::new(0);                             // c:86
-
-/// Port of `mod_export int ispar` from compcore.c:91.
-pub static ispar: AtomicI32 = AtomicI32::new(0);                             // c:91
-/// Port of `mod_export int linwhat` from compcore.c:91.
-pub static linwhat: AtomicI32 = AtomicI32::new(0);                           // c:91
-
-/// Port of `char *parpre` from compcore.c:96.
-pub static parpre: OnceLock<Mutex<String>> = OnceLock::new();                // c:96
-
-/// Port of `int parflags` from compcore.c:101.
-pub static parflags: AtomicI32 = AtomicI32::new(0);                          // c:101
-
-/// Port of `mod_export int mflags` from compcore.c:106.
-pub static mflags: AtomicI32 = AtomicI32::new(0);                            // c:106
-
-/// Port of `int parq` from compcore.c:111.
-pub static parq: AtomicI32 = AtomicI32::new(0);                              // c:111
-/// Port of `int eparq` from compcore.c:111.
-pub static eparq: AtomicI32 = AtomicI32::new(0);                             // c:111
-
-/// Port of `mod_export char *ipre` from compcore.c:118.
-pub static ipre: OnceLock<Mutex<String>> = OnceLock::new();                  // c:118
-/// Port of `mod_export char *ripre` from compcore.c:118.
-pub static ripre: OnceLock<Mutex<String>> = OnceLock::new();                 // c:118
-/// Port of `mod_export char *isuf` from compcore.c:118.
-pub static isuf: OnceLock<Mutex<String>> = OnceLock::new();                  // c:118
-
-/// Port of `mod_export LinkList matches` from compcore.c:124.
-pub static matches: OnceLock<Mutex<Vec<Cmatch>>> = OnceLock::new();          // c:124
-/// Port of `LinkList fmatches` from compcore.c:126.
-pub static fmatches: OnceLock<Mutex<Vec<Cmatch>>> = OnceLock::new();         // c:126
-
-/// Port of `mod_export Cmgroup amatches` from compcore.c:135.
-pub static amatches: OnceLock<Mutex<Vec<Cmgroup>>> = OnceLock::new();        // c:135
-/// Port of `mod_export Cmgroup pmatches` from compcore.c:135.
-pub static pmatches: OnceLock<Mutex<Vec<Cmgroup>>> = OnceLock::new();        // c:135
-/// Port of `mod_export Cmgroup lastmatches` from compcore.c:135.
-pub static lastmatches: OnceLock<Mutex<Vec<Cmgroup>>> = OnceLock::new();     // c:135
-/// Port of `mod_export Cmgroup lmatches` from compcore.c:135. Last
-/// element pointer in the perm list; here a single-slot holder.
-pub static lmatches: OnceLock<Mutex<Option<Cmgroup>>> = OnceLock::new();     // c:135
-/// Port of `mod_export Cmgroup lastlmatches` from compcore.c:135.
-pub static lastlmatches: OnceLock<Mutex<Option<Cmgroup>>> = OnceLock::new(); // c:135
-
-/// Port of `mod_export int hasoldlist` from compcore.c:140.
-pub static hasoldlist: AtomicI32 = AtomicI32::new(0);                        // c:140
-/// Port of `mod_export int hasperm` from compcore.c:140.
-pub static hasperm: AtomicI32 = AtomicI32::new(0);                           // c:140
-/// Port of `int hasallmatch` from compcore.c:145.
-pub static hasallmatch: AtomicI32 = AtomicI32::new(0);                       // c:145
-
-/// Port of `mod_export int newmatches` from compcore.c:150.
-pub static newmatches: AtomicI32 = AtomicI32::new(0);                        // c:150
-
-/// Port of `mod_export int permmnum` from compcore.c:155.
-pub static permmnum: AtomicI32 = AtomicI32::new(0);                          // c:155
-/// Port of `mod_export int permgnum` from compcore.c:155.
-pub static permgnum: AtomicI32 = AtomicI32::new(0);                          // c:155
-/// Port of `mod_export int lastpermmnum` from compcore.c:155.
-pub static lastpermmnum: AtomicI32 = AtomicI32::new(0);                      // c:155
-/// Port of `mod_export int lastpermgnum` from compcore.c:155.
-pub static lastpermgnum: AtomicI32 = AtomicI32::new(0);                      // c:155
-
-/// Port of `mod_export int nmatches` from compcore.c:160.
-pub static nmatches: AtomicI32 = AtomicI32::new(0);                          // c:160
-/// Port of `mod_export int smatches` from compcore.c:162.
-pub static smatches: AtomicI32 = AtomicI32::new(0);                          // c:162
-
-/// Port of `mod_export int diffmatches` from compcore.c:167.
-pub static diffmatches: AtomicI32 = AtomicI32::new(0);                       // c:167
-
-/// Port of `mod_export int nmessages` from compcore.c:172.
-pub static nmessages: AtomicI32 = AtomicI32::new(0);                         // c:172
-
-/// Port of `mod_export int onlyexpl` from compcore.c:177.
-pub static onlyexpl: AtomicI32 = AtomicI32::new(0);                          // c:177
-
-/// Port of `mod_export struct cldata listdat` from compcore.c:182.
-pub static listdat: OnceLock<Mutex<crate::ported::zle::comp_h::Cldata>> =
-    OnceLock::new();                                                         // c:182
-
-/// Port of `mod_export int ispattern` from compcore.c:187.
-pub static ispattern: AtomicI32 = AtomicI32::new(0);                         // c:187
-/// Port of `mod_export int haspattern` from compcore.c:187.
-pub static haspattern: AtomicI32 = AtomicI32::new(0);                        // c:187
-
-/// Port of `mod_export int hasmatched` from compcore.c:192.
-pub static hasmatched: AtomicI32 = AtomicI32::new(0);                        // c:192
-/// Port of `mod_export int hasunmatched` from compcore.c:192.
-pub static hasunmatched: AtomicI32 = AtomicI32::new(0);                      // c:192
-
-/// Port of `Cmgroup mgroup` from compcore.c:197.
-pub static mgroup: OnceLock<Mutex<Option<Cmgroup>>> = OnceLock::new();       // c:197
-
-/// Port of `mod_export int mnum` from compcore.c:202.
-pub static mnum: AtomicI32 = AtomicI32::new(0);                              // c:202
-
-/// Port of `mod_export int unambig_mnum` from compcore.c:207.
-pub static unambig_mnum: AtomicI32 = AtomicI32::new(0);                      // c:207
-
-/// Port of `int maxmlen` from compcore.c:212.
-pub static maxmlen: AtomicI32 = AtomicI32::new(0);                           // c:212
-/// Port of `int minmlen` from compcore.c:212.
-pub static minmlen: AtomicI32 = AtomicI32::new(0);                           // c:212
-
-/// Port of `LinkList expls` from compcore.c:218.
-pub static expls: OnceLock<Mutex<Vec<Cexpl>>> = OnceLock::new();             // c:218
-
-/// Port of `mod_export Cexpl curexpl` from compcore.c:221.
-pub static curexpl: OnceLock<Mutex<Option<Cexpl>>> = OnceLock::new();        // c:221
-
-/// Port of `LinkList matchers` from compcore.c:236. The C list holds
-/// `Cmatcher` pointers (the parsed match-spec chains pushed by
-/// addmatches's `add_bmatchers` block). Rust port mirrors that with
-/// owned `Box<Cmatcher>` entries.
-pub static matchers: OnceLock<Mutex<Vec<Box<crate::ported::zle::comp_h::Cmatcher>>>> =
-    OnceLock::new();                                                         // c:236
-
-/// Port of `mod_export Aminfo ainfo` from compcore.c:246.
-pub static ainfo: OnceLock<Mutex<Option<Aminfo>>> = OnceLock::new();         // c:246
-/// Port of `mod_export Aminfo fainfo` from compcore.c:246.
-pub static fainfo: OnceLock<Mutex<Option<Aminfo>>> = OnceLock::new();        // c:246
-
-/// Port of `mod_export LinkList allccs` from compcore.c:259.
-pub static allccs: OnceLock<Mutex<Vec<String>>> = OnceLock::new();           // c:259
-
-/// Port of `int fromcomp` from compcore.c:271.
-pub static fromcomp: AtomicI32 = AtomicI32::new(0);                          // c:271
-
-/// Port of `mod_export int lastend` from compcore.c:276.
-pub static lastend: AtomicI32 = AtomicI32::new(0);                           // c:276
-
-/// Port of `mod_export Brinfo brbeg` from `Src/Zle/zle_tricky.c`.
-/// Linked list of opening-brace positions in the word being completed.
-pub static BRBEG: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Brinfo>>>>
-    = OnceLock::new();                                                       // zle_tricky.c brbeg
-
-/// Port of `mod_export Brinfo brend` from `Src/Zle/zle_tricky.c`.
-/// Linked list of closing-brace positions in the word being completed.
-pub static BREND: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Brinfo>>>>
-    = OnceLock::new();                                                       // zle_tricky.c brend
-
-/// Port of `static int oldmenucmp` from compcore.c:457.
-pub static OLDMENUCMP: AtomicI32 = AtomicI32::new(0);                        // c:457
-
-/// Port of `static int parwb` from compcore.c:540.
-pub static PARWB: AtomicI32 = AtomicI32::new(0);                             // c:540
-/// Port of `static int parwe` from compcore.c:540.
-pub static PARWE: AtomicI32 = AtomicI32::new(0);                             // c:540
-/// Port of `static int paroffs` from compcore.c:540.
-pub static PAROFFS: AtomicI32 = AtomicI32::new(0);                           // c:540
-
-/// Port of `static int matchorder` from compcore.c:3169.
-pub static MATCHORDER: AtomicI32 = AtomicI32::new(0);                        // c:3169
-
-// =====================================================================
 // Substrate-blocked stubs — bodies need substrate listed in each
 // doc comment. Returns shape-correct safe defaults.
 // =====================================================================
@@ -1530,6 +1264,12 @@ pub fn set_comp_sep() -> i32 {                                               // 
 
     1                                                                        // c:1937 ret = 1 means "no change"
 }
+
+// Brace counters live in zle_tricky.c:114 — re-exported there. Local
+// re-exports here so call sites stay short:
+#[doc(hidden)]
+pub use crate::ported::zle::zle_tricky::{NBRBEG as _NBRBEG, NBREND as _NBREND};
+use crate::zsh_h::{isset, BASHAUTOLIST, NUMERICGLOBSORT, RCQUOTES, SORTIT_IGNORING_BACKSLASHES, SORTIT_NUMERICALLY};
 
 // =====================================================================
 // set_list_array — `Src/Zle/compcore.c:1947`.
@@ -3012,18 +2752,6 @@ pub fn permmatches(last: i32) -> i32 {                                       // 
 pub fn freematch(_m: Cmatch) {                                               // c:3575
 }
 
-/// Port of `mod_export int lastchar` from `Src/Zle/zle_main.c`. Last
-/// keyboard char consumed by the binding loop — read by `selfinsert`.
-pub static LASTCHAR: AtomicI32 = AtomicI32::new(0);                          // zle_main.c
-// minfo_clear_cur / minfo_asked_zero deleted — Rust-only 2-line
-// wrappers around C's inline writes `minfo.cur = NULL` and
-// `minfo.asked = 0`. All call sites inlined.
-
-/// Direct port of `struct menuinfo minfo` — `Src/Zle/zle_tricky.c`
-/// (the single file-scope instance). The struct type itself lives
-/// in `comp_h.rs::Menuinfo` (port of comp.h:284-295).
-pub static MINFO: OnceLock<Mutex<crate::ported::zle::comp_h::Menuinfo>> = OnceLock::new(); // zle_tricky.c minfo
-
 /// Direct port of `mod_export void freematches(Cmgroup g, int cm)` from
 /// `Src/Zle/compcore.c:3605`. The C path walks the cmgroup chain freeing
 /// each Cmatch + ylist + expls + widths + name; in Rust those are
@@ -3041,6 +2769,278 @@ pub fn freematches(g: Vec<Cmgroup>, cm: i32) {                               // 
         }
     }
 }
+
+// =====================================================================
+// Extern globals — declared in other C files, mirrored here per
+// PORT.md Rule 9 ("stub the EXTERN dependencies ... locally with
+// file:line citations to their home file") so the local body ports
+// below have a value source. When the canonical Rust homes land,
+// these become `pub use crate::ported::<canonical>::*` re-exports.
+// =====================================================================
+
+/// Port of `mod_export int wb` from `Src/lex.c:120`. Word-begin
+/// position in the metafied line for the currently-completing word.
+pub static WB: AtomicI32 = AtomicI32::new(0);                                // lex.c:120
+/// Port of `mod_export int we` from `Src/lex.c:120`. Word-end position.
+pub static WE: AtomicI32 = AtomicI32::new(0);                                // lex.c:120
+/// Port of `mod_export int zlemetacs` from `Src/lex.c:104`. Cursor
+/// position in the metafied line.
+pub static ZLEMETACS: AtomicI32 = AtomicI32::new(0);                         // lex.c:104
+/// Port of `mod_export int zlemetall` from `Src/lex.c:104`. Length
+/// of the metafied line.
+pub static ZLEMETALL: AtomicI32 = AtomicI32::new(0);                         // lex.c:104
+/// Port of `mod_export int addedx` from `Src/lex.c:115`. Non-zero
+/// while a dummy `x` cursor marker is in the line being lexed
+/// (so completion can capture the partial word at the cursor).
+pub static ADDEDX: AtomicI32 = AtomicI32::new(0);                            // lex.c:115
+
+/// Port of `mod_export char *zlemetaline` from `Src/lex.c:103`. The
+/// metafied edit buffer for the current ZLE session — `foredel`,
+/// `inststr`, `selfinsert` operate on this directly when compcore's
+/// error-recovery path fires (compcore.c:344-355).
+pub static ZLEMETALINE: OnceLock<Mutex<String>> = OnceLock::new();           // lex.c:103
+/// Port of `mod_export ZLE_STRING_T zleline` from `Src/zle_main.c`.
+pub static ZLELINE: OnceLock<Mutex<String>> = OnceLock::new();               // zle_main.c
+/// Port of `mod_export int zlecs` from `Src/zle_main.c`.
+pub static ZLECS: AtomicI32 = AtomicI32::new(0);                             // zle_main.c
+/// Port of `mod_export int zlell` from `Src/zle_main.c`.
+pub static ZLELL: AtomicI32 = AtomicI32::new(0);                             // zle_main.c
+/// Port of `mod_export int inwhat` from `Src/lex.c:110`. Lex context
+/// classification — IN_NOTHING / IN_CMD / IN_COND / IN_MATH / IN_PAR /
+/// IN_ENV.
+pub static INWHAT: AtomicI32 = AtomicI32::new(0);                            // lex.c:110
+/// Port of `mod_export int zmult` from `Src/zle_main.c`. Numeric
+/// prefix multiplier for the current ZLE command.
+pub static ZMULT: AtomicI32 = AtomicI32::new(1);                             // zle_main.c
+/// Port of `mod_export char *compfunc` from `Src/Zle/zle_tricky.c:143`.
+/// Name of the user completion shell function — non-empty when the
+/// new completion system (`compsys`) is active; empty for compctl.
+pub static compfunc: OnceLock<Mutex<Option<String>>> = OnceLock::new();      // zle_tricky.c:143
+/// Port of `mod_export char *comppatmatch` from `Src/Zle/zle_tricky.c`.
+/// `$compstate[pattern_match]` — when non-empty + non-"\0" enables
+/// pattern-aware matching for parameter-name completion.
+pub static comppatmatch: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+/// Port of `mod_export char *compqstack` from `Src/Zle/compcore.c`.
+/// Quoting-state stack (1 char per nesting level).
+pub static compqstack: OnceLock<Mutex<String>> = OnceLock::new();
+// =====================================================================
+// File-scope globals — `Src/Zle/compcore.c:36-279`.
+// =====================================================================
+
+/// Port of `int useexact` from compcore.c:36.
+pub static useexact: AtomicI32 = AtomicI32::new(0);                          // c:36
+/// Port of `int useline` from compcore.c:36.
+pub static useline: AtomicI32 = AtomicI32::new(0);                           // c:36
+/// Port of `int uselist` from compcore.c:36.
+pub static uselist: AtomicI32 = AtomicI32::new(0);                           // c:36
+/// Port of `int forcelist` from compcore.c:36.
+pub static forcelist: AtomicI32 = AtomicI32::new(0);                         // c:36
+/// Port of `int startauto` from compcore.c:36.
+pub static startauto: AtomicI32 = AtomicI32::new(0);                         // c:36
+
+/// Port of `mod_export int iforcemenu` from compcore.c:39.
+pub static iforcemenu: AtomicI32 = AtomicI32::new(0);                        // c:39
+
+/// Port of `mod_export int dolastprompt` from compcore.c:44.
+pub static dolastprompt: AtomicI32 = AtomicI32::new(0);                      // c:44
+
+/// Port of `mod_export int oldlist` from compcore.c:49.
+pub static oldlist: AtomicI32 = AtomicI32::new(0);                           // c:49
+/// Port of `mod_export int oldins` from compcore.c:49.
+pub static oldins: AtomicI32 = AtomicI32::new(0);                            // c:49
+
+/// Port of `int origlpre` from compcore.c:54.
+pub static origlpre: AtomicI32 = AtomicI32::new(0);                          // c:54
+/// Port of `int origlsuf` from compcore.c:54.
+pub static origlsuf: AtomicI32 = AtomicI32::new(0);                          // c:54
+/// Port of `int lenchanged` from compcore.c:54.
+pub static lenchanged: AtomicI32 = AtomicI32::new(0);                        // c:54
+
+/// Port of `int movetoend` from compcore.c:61.
+pub static movetoend: AtomicI32 = AtomicI32::new(0);                         // c:61
+
+/// Port of `mod_export int insmnum` from compcore.c:66.
+pub static insmnum: AtomicI32 = AtomicI32::new(0);                           // c:66
+/// Port of `mod_export int insspace` from compcore.c:66.
+pub static insspace: AtomicI32 = AtomicI32::new(0);                          // c:66
+
+/// Port of `mod_export int menuacc` from compcore.c:81.
+pub static menuacc: AtomicI32 = AtomicI32::new(0);                           // c:81
+
+/// Port of `int hasunqu` from compcore.c:86.
+pub static hasunqu: AtomicI32 = AtomicI32::new(0);                           // c:86
+/// Port of `int useqbr` from compcore.c:86.
+pub static useqbr: AtomicI32 = AtomicI32::new(0);                            // c:86
+/// Port of `int brpcs` from compcore.c:86.
+pub static brpcs: AtomicI32 = AtomicI32::new(0);                             // c:86
+/// Port of `int brscs` from compcore.c:86.
+pub static brscs: AtomicI32 = AtomicI32::new(0);                             // c:86
+
+/// Port of `mod_export int ispar` from compcore.c:91.
+pub static ispar: AtomicI32 = AtomicI32::new(0);                             // c:91
+/// Port of `mod_export int linwhat` from compcore.c:91.
+pub static linwhat: AtomicI32 = AtomicI32::new(0);                           // c:91
+
+/// Port of `char *parpre` from compcore.c:96.
+pub static parpre: OnceLock<Mutex<String>> = OnceLock::new();                // c:96
+
+/// Port of `int parflags` from compcore.c:101.
+pub static parflags: AtomicI32 = AtomicI32::new(0);                          // c:101
+
+/// Port of `mod_export int mflags` from compcore.c:106.
+pub static mflags: AtomicI32 = AtomicI32::new(0);                            // c:106
+
+/// Port of `int parq` from compcore.c:111.
+pub static parq: AtomicI32 = AtomicI32::new(0);                              // c:111
+/// Port of `int eparq` from compcore.c:111.
+pub static eparq: AtomicI32 = AtomicI32::new(0);                             // c:111
+
+/// Port of `mod_export char *ipre` from compcore.c:118.
+pub static ipre: OnceLock<Mutex<String>> = OnceLock::new();                  // c:118
+/// Port of `mod_export char *ripre` from compcore.c:118.
+pub static ripre: OnceLock<Mutex<String>> = OnceLock::new();                 // c:118
+/// Port of `mod_export char *isuf` from compcore.c:118.
+pub static isuf: OnceLock<Mutex<String>> = OnceLock::new();                  // c:118
+
+/// Port of `mod_export LinkList matches` from compcore.c:124.
+pub static matches: OnceLock<Mutex<Vec<Cmatch>>> = OnceLock::new();          // c:124
+/// Port of `LinkList fmatches` from compcore.c:126.
+pub static fmatches: OnceLock<Mutex<Vec<Cmatch>>> = OnceLock::new();         // c:126
+
+/// Port of `mod_export Cmgroup amatches` from compcore.c:135.
+pub static amatches: OnceLock<Mutex<Vec<Cmgroup>>> = OnceLock::new();        // c:135
+/// Port of `mod_export Cmgroup pmatches` from compcore.c:135.
+pub static pmatches: OnceLock<Mutex<Vec<Cmgroup>>> = OnceLock::new();        // c:135
+/// Port of `mod_export Cmgroup lastmatches` from compcore.c:135.
+pub static lastmatches: OnceLock<Mutex<Vec<Cmgroup>>> = OnceLock::new();     // c:135
+/// Port of `mod_export Cmgroup lmatches` from compcore.c:135. Last
+/// element pointer in the perm list; here a single-slot holder.
+pub static lmatches: OnceLock<Mutex<Option<Cmgroup>>> = OnceLock::new();     // c:135
+/// Port of `mod_export Cmgroup lastlmatches` from compcore.c:135.
+pub static lastlmatches: OnceLock<Mutex<Option<Cmgroup>>> = OnceLock::new(); // c:135
+
+/// Port of `mod_export int hasoldlist` from compcore.c:140.
+pub static hasoldlist: AtomicI32 = AtomicI32::new(0);                        // c:140
+/// Port of `mod_export int hasperm` from compcore.c:140.
+pub static hasperm: AtomicI32 = AtomicI32::new(0);                           // c:140
+/// Port of `int hasallmatch` from compcore.c:145.
+pub static hasallmatch: AtomicI32 = AtomicI32::new(0);                       // c:145
+
+/// Port of `mod_export int newmatches` from compcore.c:150.
+pub static newmatches: AtomicI32 = AtomicI32::new(0);                        // c:150
+
+/// Port of `mod_export int permmnum` from compcore.c:155.
+pub static permmnum: AtomicI32 = AtomicI32::new(0);                          // c:155
+/// Port of `mod_export int permgnum` from compcore.c:155.
+pub static permgnum: AtomicI32 = AtomicI32::new(0);                          // c:155
+/// Port of `mod_export int lastpermmnum` from compcore.c:155.
+pub static lastpermmnum: AtomicI32 = AtomicI32::new(0);                      // c:155
+/// Port of `mod_export int lastpermgnum` from compcore.c:155.
+pub static lastpermgnum: AtomicI32 = AtomicI32::new(0);                      // c:155
+
+/// Port of `mod_export int nmatches` from compcore.c:160.
+pub static nmatches: AtomicI32 = AtomicI32::new(0);                          // c:160
+/// Port of `mod_export int smatches` from compcore.c:162.
+pub static smatches: AtomicI32 = AtomicI32::new(0);                          // c:162
+
+/// Port of `mod_export int diffmatches` from compcore.c:167.
+pub static diffmatches: AtomicI32 = AtomicI32::new(0);                       // c:167
+
+/// Port of `mod_export int nmessages` from compcore.c:172.
+pub static nmessages: AtomicI32 = AtomicI32::new(0);                         // c:172
+
+/// Port of `mod_export int onlyexpl` from compcore.c:177.
+pub static onlyexpl: AtomicI32 = AtomicI32::new(0);                          // c:177
+
+/// Port of `mod_export struct cldata listdat` from compcore.c:182.
+pub static listdat: OnceLock<Mutex<crate::ported::zle::comp_h::Cldata>> =
+    OnceLock::new();                                                         // c:182
+
+/// Port of `mod_export int ispattern` from compcore.c:187.
+pub static ispattern: AtomicI32 = AtomicI32::new(0);                         // c:187
+/// Port of `mod_export int haspattern` from compcore.c:187.
+pub static haspattern: AtomicI32 = AtomicI32::new(0);                        // c:187
+
+/// Port of `mod_export int hasmatched` from compcore.c:192.
+pub static hasmatched: AtomicI32 = AtomicI32::new(0);                        // c:192
+/// Port of `mod_export int hasunmatched` from compcore.c:192.
+pub static hasunmatched: AtomicI32 = AtomicI32::new(0);                      // c:192
+
+/// Port of `Cmgroup mgroup` from compcore.c:197.
+pub static mgroup: OnceLock<Mutex<Option<Cmgroup>>> = OnceLock::new();       // c:197
+
+/// Port of `mod_export int mnum` from compcore.c:202.
+pub static mnum: AtomicI32 = AtomicI32::new(0);                              // c:202
+
+/// Port of `mod_export int unambig_mnum` from compcore.c:207.
+pub static unambig_mnum: AtomicI32 = AtomicI32::new(0);                      // c:207
+
+/// Port of `int maxmlen` from compcore.c:212.
+pub static maxmlen: AtomicI32 = AtomicI32::new(0);                           // c:212
+/// Port of `int minmlen` from compcore.c:212.
+pub static minmlen: AtomicI32 = AtomicI32::new(0);                           // c:212
+
+/// Port of `LinkList expls` from compcore.c:218.
+pub static expls: OnceLock<Mutex<Vec<Cexpl>>> = OnceLock::new();             // c:218
+
+/// Port of `mod_export Cexpl curexpl` from compcore.c:221.
+pub static curexpl: OnceLock<Mutex<Option<Cexpl>>> = OnceLock::new();        // c:221
+
+/// Port of `LinkList matchers` from compcore.c:236. The C list holds
+/// `Cmatcher` pointers (the parsed match-spec chains pushed by
+/// addmatches's `add_bmatchers` block). Rust port mirrors that with
+/// owned `Box<Cmatcher>` entries.
+pub static matchers: OnceLock<Mutex<Vec<Box<crate::ported::zle::comp_h::Cmatcher>>>> =
+    OnceLock::new();                                                         // c:236
+
+/// Port of `mod_export Aminfo ainfo` from compcore.c:246.
+pub static ainfo: OnceLock<Mutex<Option<Aminfo>>> = OnceLock::new();         // c:246
+/// Port of `mod_export Aminfo fainfo` from compcore.c:246.
+pub static fainfo: OnceLock<Mutex<Option<Aminfo>>> = OnceLock::new();        // c:246
+
+/// Port of `mod_export LinkList allccs` from compcore.c:259.
+pub static allccs: OnceLock<Mutex<Vec<String>>> = OnceLock::new();           // c:259
+
+/// Port of `int fromcomp` from compcore.c:271.
+pub static fromcomp: AtomicI32 = AtomicI32::new(0);                          // c:271
+
+/// Port of `mod_export int lastend` from compcore.c:276.
+pub static lastend: AtomicI32 = AtomicI32::new(0);                           // c:276
+
+/// Port of `mod_export Brinfo brbeg` from `Src/Zle/zle_tricky.c`.
+/// Linked list of opening-brace positions in the word being completed.
+pub static BRBEG: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Brinfo>>>>
+    = OnceLock::new();                                                       // zle_tricky.c brbeg
+
+/// Port of `mod_export Brinfo brend` from `Src/Zle/zle_tricky.c`.
+/// Linked list of closing-brace positions in the word being completed.
+pub static BREND: OnceLock<Mutex<Option<Box<crate::ported::zle::comp_h::Brinfo>>>>
+    = OnceLock::new();                                                       // zle_tricky.c brend
+
+/// Port of `static int oldmenucmp` from compcore.c:457.
+pub static OLDMENUCMP: AtomicI32 = AtomicI32::new(0);                        // c:457
+
+/// Port of `static int parwb` from compcore.c:540.
+pub static PARWB: AtomicI32 = AtomicI32::new(0);                             // c:540
+/// Port of `static int parwe` from compcore.c:540.
+pub static PARWE: AtomicI32 = AtomicI32::new(0);                             // c:540
+/// Port of `static int paroffs` from compcore.c:540.
+pub static PAROFFS: AtomicI32 = AtomicI32::new(0);                           // c:540
+
+/// Port of `static int matchorder` from compcore.c:3169.
+pub static MATCHORDER: AtomicI32 = AtomicI32::new(0);                        // c:3169
+
+/// Port of `mod_export int lastchar` from `Src/Zle/zle_main.c`. Last
+/// keyboard char consumed by the binding loop — read by `selfinsert`.
+pub static LASTCHAR: AtomicI32 = AtomicI32::new(0);                          // zle_main.c
+// minfo_clear_cur / minfo_asked_zero deleted — Rust-only 2-line
+// wrappers around C's inline writes `minfo.cur = NULL` and
+// `minfo.asked = 0`. All call sites inlined.
+
+/// Direct port of `struct menuinfo minfo` — `Src/Zle/zle_tricky.c`
+/// (the single file-scope instance). The struct type itself lives
+/// in `comp_h.rs::Menuinfo` (port of comp.h:284-295).
+pub static MINFO: OnceLock<Mutex<crate::ported::zle::comp_h::Menuinfo>> = OnceLock::new(); // zle_tricky.c minfo
 
 // =====================================================================
 // matcheq — `Src/Zle/compcore.c:3203-3215`.

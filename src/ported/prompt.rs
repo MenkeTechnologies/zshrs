@@ -149,30 +149,48 @@ pub(crate) mod prompt_tls {
     }
 }
 
-// `pub enum CmdState` + `impl CmdState { from_u8, name }` —
-// DELETED per user directive ("CmdState fake"). Was a Rust-only
-// typed wrapper around the canonical `CS_*` integer constants
-// (`Src/zsh.h:2775-2806`, ported to `crate::ported::zsh_h::CS_*`).
-// C source pushes raw `unsigned char` bytes onto `cmdstack` and
-// indexes `cmdnames[CS_COUNT]` (`Src/prompt.c:62`) for the name.
-// Now ported 1:1: callers use `CS_FOO as u8` directly and look up
-// names through `cmdname()` below.
-
-// parser states, for %_                                                    // c:60
-/// Direct port of `cmdnames[CS_COUNT]` from `Src/prompt.c:62-71`.
-/// Indexed by the `CS_*` constants in `zsh_h::CS_FOR..CS_ALWAYS`
-/// (`Src/zsh.h:2775-2806`). Used by `%_` prompt expansion to print
-/// the active compound-command keyword stack.
-pub static CMDNAMES: [&str; crate::ported::zsh_h::CS_COUNT as usize] = [
-    "for",      "while",     "repeat",    "select",    // c:63 (CS_FOR..CS_SELECT)
-    "until",    "if",        "then",      "else",      // c:64 (CS_UNTIL..CS_ELSE)
-    "elif",     "math",      "cond",      "cmdor",     // c:65 (CS_ELIF..CS_CMDOR)
-    "cmdand",   "pipe",      "errpipe",   "foreach",   // c:66 (CS_CMDAND..CS_FOREACH)
-    "case",     "function",  "subsh",     "cursh",     // c:67 (CS_CASE..CS_CURSH)
-    "array",    "quote",     "dquote",    "bquote",    // c:68 (CS_ARRAY..CS_BQUOTE)
-    "cmdsubst", "mathsubst", "elif-then", "heredoc",   // c:69 (CS_CMDSUBST..CS_HEREDOC)
-    "heredocd", "brace",     "braceparam", "always",   // c:70 (CS_HEREDOCD..CS_ALWAYS)
-];
+/// `struct buf_vars` from `Src/prompt.c:76-121`. `dontcount` is C `%{`/`%}`
+/// nesting; `in_escape` holds readline `\x01`/`\x02` glue only.
+/// `last` pointer / full trunc `bp1` realloc: TODO.
+#[allow(non_camel_case_types)]
+pub struct buf_vars {                                                        // c:Src/prompt.c:76
+    pwd: String,
+    home: String,
+    user: String,
+    host: String,
+    host_short: String,
+    tty: String,
+    lastval: i32,
+    histnum: i64,
+    shlvl: i32,
+    num_jobs: i32,
+    is_root: bool,
+    cmd_stack: Vec<u8>,
+    psvar: Vec<String>,
+    term_width: usize,
+    lineno: i64,
+    scriptname: Option<String>,
+    scriptfilename: Option<String>,
+    argzero: String,
+    func_line_base: Option<i64>,
+    funcstack_filename: Option<String>,
+    pub buf: Vec<u8>,
+    pub bufspc: usize,
+    pub bp: usize,
+    pub bufline: usize,
+    pub bp1: Option<usize>,
+    pub fm: String,
+    pub fm_pos: usize,
+    pub truncwidth: i32,
+    pub dontcount: i32,
+    pub trunccount: i32,
+    pub rstring: Option<String>,
+    pub Rstring: Option<String>,
+    attrs: zattr,
+    in_escape: bool,
+    prompt_percent: bool,
+    prompt_bang: bool,
+}
 
 // Note: there is no Rust helper for `cmdnames[cmdstack[t0]]` — C
 // uses the bare array indexing inline (`Src/prompt.c:835`,
@@ -207,52 +225,6 @@ use crate::ported::zsh_h::{
     zattr,
 };
 use crate::zsh_h::{Inpar, Nularg, Outpar};
-// c:zsh.h:2685-2741
-
-// `Color` is the colour slot lifted out of `zattr` so callers can
-// pass a single integer around. Bit layout mirrors the C zattr
-// colour bits exactly:
-//   bit 31 (0x01000000): the local 24-bit flag — mirrors the
-//     C `TXT_ATTR_FG_24BIT` / `TXT_ATTR_BG_24BIT` bit (Src/zsh.h:2727).
-//     When set, the low 24 bits hold `0xRRGGBB`. When clear, the
-//     low 8 bits hold a palette index 0..=255, where 8 is the
-//     "default" sentinel per Src/prompt.c:1909.
-// Not a new type — same encoding C packs into `TXT_ATTR_FG_COL_MASK`.
-pub type Color = u32; // c:Src/zsh.h:2718 (colour slot)
-pub const COLOR_24BIT: Color = 0x0100_0000; // c:zsh.h:2727 (TXT_ATTR_FG_24BIT)
-
-// Sentinel "no colour set" — palette index that lives in
-// TXT_ATTR_FG_COL_MASK when the colour is `default` (8 in
-// Src/prompt.c:1909). Bits 16-39 are at most 24 bits, so any
-// value 0..=255 fits comfortably for palette mode.
-pub const COLOUR_DEFAULT: u8 = 8; // c:Src/prompt.c:1909
-
-// Named-colour palette constants. Indexes match `colour_names[]`
-// from `Src/prompt.c:1884-1887`. Used in place of the deleted
-// `Color::Black`..`Color::White`/`Color::Default` enum variants.
-pub const COLOR_BLACK:   Color = 0; // c:1885
-pub const COLOR_RED:     Color = 1; // c:1885
-pub const COLOR_GREEN:   Color = 2; // c:1885
-pub const COLOR_YELLOW:  Color = 3; // c:1885
-pub const COLOR_BLUE:    Color = 4; // c:1885
-pub const COLOR_MAGENTA: Color = 5; // c:1885
-pub const COLOR_CYAN:    Color = 6; // c:1885
-pub const COLOR_WHITE:   Color = 7; // c:1885
-pub const COLOR_DEFAULT: Color = COLOUR_DEFAULT as Color; // c:1909
-
-// Defines standard ANSI colour names in index order                        // c:1883
-/// Direct port of `colour_names[]` from `Src/prompt.c:1884-1887`.
-/// Indexed 0-7 = basic ANSI, 8 = "default" sentinel (per
-/// `Src/prompt.c:1909` comment "8 is the special value for
-/// default"). Single canonical source — the second
-/// `match_named_colour` further down this file consumed a
-/// drifted local table with `default = 9` which mis-rendered
-/// `%F{default}` output.
-pub static COLOUR_NAMES: [&str; 9] = [
-    "black", "red", "green", "yellow", // c:1885
-    "blue", "magenta", "cyan", "white", // c:1885
-    "default", // c:1886
-];
 
 // ---------------------------------------------------------------------------
 // Remaining missing functions from prompt.c
@@ -418,47 +390,301 @@ pub fn addbufspc(_buf: &mut String, _need: usize) {                         // c
     // Rust String handles allocation automatically
 }
 
-/// `struct buf_vars` from `Src/prompt.c:76-121`. `dontcount` is C `%{`/`%}`
-/// nesting; `in_escape` holds readline `\x01`/`\x02` glue only.
-/// `last` pointer / full trunc `bp1` realloc: TODO.
-#[allow(non_camel_case_types)]
-pub struct buf_vars {                                                        // c:Src/prompt.c:76
-    pwd: String,
-    home: String,
-    user: String,
-    host: String,
-    host_short: String,
-    tty: String,
-    lastval: i32,
-    histnum: i64,
-    shlvl: i32,
-    num_jobs: i32,
-    is_root: bool,
-    cmd_stack: Vec<u8>,
-    psvar: Vec<String>,
-    term_width: usize,
-    lineno: i64,
-    scriptname: Option<String>,
-    scriptfilename: Option<String>,
-    argzero: String,
-    func_line_base: Option<i64>,
-    funcstack_filename: Option<String>,
-    pub buf: Vec<u8>,
-    pub bufspc: usize,
-    pub bp: usize,
-    pub bufline: usize,
-    pub bp1: Option<usize>,
-    pub fm: String,
-    pub fm_pos: usize,
-    pub truncwidth: i32,
-    pub dontcount: i32,
-    pub trunccount: i32,
-    pub rstring: Option<String>,
-    pub Rstring: Option<String>,
-    attrs: zattr,
-    in_escape: bool,
-    prompt_percent: bool,
-    prompt_bang: bool,
+/// Append a string to the prompt buffer.
+/// Port of `stradd(char *d)` from Src/prompt.c:1016.
+/// WARNING: param names don't match C — Rust=(buf, s) vs C=(d)
+pub fn stradd(buf: &mut String, s: &str) {                                   // c:1016
+    buf.push_str(s);
+}
+
+/// Look up a terminal capability and emit its escape.
+/// Port of `tsetcap(int cap, int flags)` from Src/prompt.c:1083 — the C source
+/// resolves termcap/terminfo names; we map the most-common ones
+/// directly onto ANSI sequences.
+/// WARNING: param names don't match C — Rust=(cap) vs C=(cap, flags)
+pub fn tsetcap(cap: &str) -> String {                                        // c:1083
+    // Map common capability names to ANSI sequences
+    match cap {
+        "md" | "bold" => "\x1b[1m".to_string(),
+        "me" | "sgr0" => "\x1b[0m".to_string(),
+        "so" | "smso" => "\x1b[7m".to_string(),
+        "se" | "rmso" => "\x1b[27m".to_string(),
+        "us" | "smul" => "\x1b[4m".to_string(),
+        "ue" | "rmul" => "\x1b[24m".to_string(),
+        _ => String::new(),
+    }
+}
+
+/// Output a string from a terminal capability.
+/// Port of `putstr(int d)` from Src/prompt.c:1121.
+pub fn putstr(d: &str) -> String {
+    tsetcap(d)
+}
+
+/// Handle `%>...>` / `%<...<` / `%[truncchar string]` truncation.
+/// Port of `prompttrunc(int arg, int truncchar, int doprint, int endchar)` from Src/prompt.c:1276.
+///
+/// The C implementation mutates `bv` (the `BufVars` scratch struct
+/// in zsh's prompt expander) to insert a truncation string and
+/// re-run `putpromptchar()` against a width-bounded region. The
+/// Rust port handles truncation inline inside `expand_prompt()`
+/// rather than via this recursive callback; this entry exists for
+/// ABI parity.
+#[allow(unused_variables)]
+pub fn prompttrunc(arg: i32, truncchar: i32, doprint: i32, endchar: i32) -> i32 {
+    0
+}
+
+/// Push a parser context token. Port of `cmdpush()` from
+/// Src/prompt.c. Bounded at CMDSTACKSZ; over-push is silently
+/// ignored (matches the C source's `cmdsp < CMDSTACKSZ` guard).
+pub fn cmdpush(cmdtok: u8) {
+    CMDSTACK.with(|s| {
+        let mut stack = s.borrow_mut();
+        if stack.len() < CMDSTACKSZ {
+            stack.push(cmdtok);
+        }
+    });
+}
+
+/// Pop the top parser context token. Port of `cmdpop()` from
+/// Src/prompt.c. Empty-stack pop is a no-op (the C source emits
+/// a `BUG: cmdstack empty` debug print and continues).
+pub fn cmdpop() {
+    CMDSTACK.with(|s| {
+        s.borrow_mut().pop();
+    });
+}
+
+/// Port of `applytextattributes(int flags)` from `Src/prompt.c:1645`.
+///
+/// C body diff-syncs `txtcurrentattrs` against `txtpendingattrs`
+/// and emits the minimal termcap-driven sequence to transition
+/// the terminal — `tsetcap(TCALLATTRSOFF…)`, `TCBOLDFACEBEG`, etc.
+///
+/// Rust port: returns the SGR diff string built by [`treplaceattrs`]
+/// over the (current, pending) pair, and updates current = pending.
+/// The previous port was an empty `void` shim that emitted nothing
+/// — output gets emitted at flush time, which broke any caller
+/// expecting incremental attr changes. New shape returns the diff
+/// the caller can write to the terminal.
+///
+/// `_flags` parameter (currently unused in zshrs port — C uses it
+/// to gate "force reset" mode).
+#[allow(unused_variables)]
+pub fn applytextattributes(flags: i32) -> String {
+    let mut current = current_attrs_lock().lock().expect("current_attrs poisoned");
+    let pending = pending_attrs_lock()
+        .lock()
+        .expect("pending_attrs poisoned")
+        .clone();
+    let diff = treplaceattrs(*current, pending);
+    *current = pending;
+    diff
+}
+
+/// Replace one set of text attributes with another.
+/// Port of `treplaceattrs(zattr newattrs)` from Src/prompt.c:1719 — emits the
+/// minimal SGR delta between two attribute states.
+/// WARNING: param names don't match C — Rust=(old, new) vs C=(newattrs)
+pub fn treplaceattrs(old: zattr, new: zattr) -> String {             // c:1719
+    let mut result = String::new();
+
+    let old_b = old & TXTBOLDFACE != 0;
+    let new_b = new & TXTBOLDFACE != 0;
+    let old_u = old & TXTUNDERLINE != 0;
+    let new_u = new & TXTUNDERLINE != 0;
+    let old_s = old & TXTSTANDOUT != 0;
+    let new_s = new & TXTSTANDOUT != 0;
+
+    let need_reset = (old_b && !new_b) || (old_u && !new_u) || (old_s && !new_s);
+
+    if need_reset {
+        result.push_str("\x1b[0m");
+        if new_b { result.push_str("\x1b[1m"); }
+        if new_u { result.push_str("\x1b[4m"); }
+        if new_s { result.push_str("\x1b[7m"); }
+    } else {
+        if !old_b && new_b { result.push_str("\x1b[1m"); }
+        if !old_u && new_u { result.push_str("\x1b[4m"); }
+        if !old_s && new_s { result.push_str("\x1b[7m"); }
+    }
+
+    if (old & TXT_ATTR_FG_MASK) != (new & TXT_ATTR_FG_MASK) {
+        if new & TXTFGCOLOUR != 0 {
+            let raw = (new & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT;
+            let c = if new & TXT_ATTR_FG_24BIT != 0 {
+                COLOR_24BIT | (raw as Color & 0x00ff_ffff)
+            } else { raw as Color };
+            result.push_str(&color_to_ansi(c, true));
+        } else {
+            result.push_str("\x1b[39m");
+        }
+    }
+    if (old & TXT_ATTR_BG_MASK) != (new & TXT_ATTR_BG_MASK) {
+        if new & TXTBGCOLOUR != 0 {
+            let raw = (new & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT;
+            let c = if new & TXT_ATTR_BG_24BIT != 0 {
+                COLOR_24BIT | (raw as Color & 0x00ff_ffff)
+            } else { raw as Color };
+            result.push_str(&color_to_ansi(c, false));
+        } else {
+            result.push_str("\x1b[49m");
+        }
+    }
+
+    result
+}
+
+/// Set text attributes (full apply).
+/// Port of `tsetattrs(zattr newattrs)` from Src/prompt.c:1737.
+pub fn tsetattrs(newattrs: zattr) -> String {                               // c:1737
+    apply_text_attributes(newattrs)
+}
+
+/// Unset (clear) text attributes via SGR-22/24/27 + 39/49.
+/// Port of `tunsetattrs(zattr newattrs)` from Src/prompt.c:1755.
+pub fn tunsetattrs(newattrs: zattr) -> String {                             // c:1755
+    let mut result = String::new();
+    if newattrs & TXTBOLDFACE != 0 { result.push_str("\x1b[22m"); }
+    if newattrs & TXTUNDERLINE != 0 {
+        result.push_str("\x1b[24m");
+    }
+    if newattrs & TXTSTANDOUT != 0 { result.push_str("\x1b[27m"); }
+    if newattrs & TXTFGCOLOUR != 0 { result.push_str("\x1b[39m"); }
+    if newattrs & TXTBGCOLOUR != 0 { result.push_str("\x1b[49m"); }
+    result
+}
+
+/// Promote the 256-color value embedded in `atr` to an explicit
+/// 24-bit RGB value. Port of `map256toRGB(zattr *atr, int shift, zattr set24)` from Src/prompt.c.
+/// Used by the prompt-output path when the terminal supports
+/// truecolor and we want to emit RGB rather than the smaller
+/// 256-palette code.
+///
+/// `shift` selects fg-byte vs bg-byte position inside `atr`;
+/// `set24` is the bit that marks "this slot is now 24-bit".
+/// Algorithm mirrors the C: 16-231 are the 6×6×6 color cube,
+/// 232-255 are the 24-step grayscale ramp.
+#[allow(non_snake_case)]
+pub fn map256toRGB(atr: &mut u64, shift: u32, set24: u64) {
+    if (*atr & set24) != 0 {
+        return;
+    }
+    let colour: u32 = ((*atr >> shift) & 0xff) as u32;
+    if colour < 16 {
+        return;
+    }
+    let (red, green, blue) = if (16..232).contains(&colour) {
+        let mut c = colour - 16;
+        let blue = (if c != 0 { 0x37 } else { 0 }) + 40 * (c % 6);
+        c /= 6;
+        let green = (if c != 0 { 0x37 } else { 0 }) + 40 * (c % 6);
+        c /= 6;
+        let red = (if c != 0 { 0x37 } else { 0 }) + 40 * c;
+        (red, green, blue)
+    } else {
+        let v = 8 + 10 * (colour - 232);
+        (v, v, v)
+    };
+    *atr &= !((0xffffff_u64) << shift);
+    *atr |= set24 | ((((red as u64) << 8 | green as u64) << 8 | blue as u64) << shift);
+}
+
+/// Mix two sets of text attributes through a mask.
+/// Port of `mixattrs(zattr primary, zattr mask, zattr secondary)` from Src/prompt.c:1802 — primary wins
+/// where the mask says "set"; secondary fills the rest.
+pub fn mixattrs(primary: zattr, mask: zattr, secondary: zattr) -> zattr {
+    // Bit-level mix: for each TXT* bit set in `mask`, take the
+    // value from `primary`; else from `secondary`. Mirrors the C
+    // idiom `(mask & primary) | (!mask & secondary)`.
+    let mut out: zattr = 0;
+    for bit in [TXTBOLDFACE, TXTUNDERLINE, TXTSTANDOUT] {
+        if mask & bit != 0 { out |= primary & bit; } else { out |= secondary & bit; }
+    }
+    if mask & TXTFGCOLOUR != 0 { out |= primary & TXT_ATTR_FG_MASK; }
+    else { out |= secondary & TXT_ATTR_FG_MASK; }
+    if mask & TXTBGCOLOUR != 0 { out |= primary & TXT_ATTR_BG_MASK; }
+    else { out |= secondary & TXT_ATTR_BG_MASK; }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Missing functions from prompt.c
+// ---------------------------------------------------------------------------
+
+/// Truncate the prompt to a maximum width.
+/// Port of `prompttrunc(int arg, int truncchar, int doprint, int endchar)` from Src/prompt.c:1276 — the C source
+/// implements the `%N>string>` (right-truncate) and `%N<string<`
+/// (left-truncate) sequences with a configurable indicator.
+/// Port of `countprompt(char *str, int *wp, int *hp, int overf)` from `Src/prompt.c:1140`.
+///
+/// C signature:
+/// `void countprompt(char *str, int *wp, int *hp, int overf);`
+///
+/// Walks the expanded prompt counting visible columns, wrapping
+/// to the next line every `terminal_width` characters and bumping
+/// the height counter. Returns `(width, height)` — `width` is the
+/// column on the FINAL line; `height` is total line count
+/// including the first.
+///
+/// Faithful to C's prompt.c:1140 logic:
+/// - `\t` advances to the next 8-column boundary (`w = (w | 7) + 1`).
+/// - `\n` resets `w` to 0 and bumps `h`.
+/// - `\x01`/`\x02` (RL_PROMPT_*_IGNORE) toggle visibility skip.
+/// - `\x1b[...m` ANSI escapes consumed without counting.
+/// - Wrap rule: `while w > terminal_width && overf >= 0` →
+///   `h++; w -= terminal_width` (matches the C overflow loop at
+///   line 1158 + 1255).
+/// - Final-column-equals-width edge case: when `w == terminal_width
+///   && overf == 0`, snap to (0, h+1) — mirrors C lines 1265-1268.
+///
+// by locating them and finding out their screen width.                    // c:1135
+/// Previous Rust port took only `&str` and returned `(width,
+/// newlines)` — missing the `terminal_width` overflow tracking
+/// and the `overf` flag entirely.
+
+// `pub struct CmdStack` + `impl CmdStack { new, push, pop, top,
+// depth, as_slice }` — DELETED per user directive. C source uses
+// `unsigned char *cmdstack` + `int cmdsp` flat globals
+// (`Src/prompt.c:1915`) plus `cmdpush()`/`cmdpop()` functions
+// (`Src/prompt.c:1915`). The Rust-only `CmdStack` wrapper had
+// zero callers outside this file. The canonical port lives on
+// `prompt_tls::CMDSTACK` and `ShellExecutor.cmd_stack: Vec<u8>`.
+// `cmdpush()`/`cmdpop()` thread-local stack mirrors C file-statics.
+
+/// Resolve a color name to an ANSI base index.
+/// Port of `match_named_colour(const char **teststrp)` from Src/prompt.c:1915 —
+/// walks `colour_names[]` (now `COLOUR_NAMES` at file head), then
+/// falls through to numeric parsing. Returns palette index 0-7
+/// for basic colours, 8 for "default" sentinel (per C:1909),
+/// numeric value for raw integers.
+pub fn match_named_colour(teststrp: &str) -> Option<u8> {                        // c:1915
+    let lower = teststrp.to_lowercase(); // c:1915
+    for (i, &n) in COLOUR_NAMES.iter().enumerate() { // c:1922
+        if n == lower {
+            return Some(i as u8); // c:1929
+        }
+    }
+    teststrp.parse::<u8>().ok() // c:1933 (fall-through to numeric)
+}
+
+/// Detect whether the terminal supports true color (24-bit).
+/// Port of `truecolor_terminal()` from Src/prompt.c:1935.
+pub fn truecolor_terminal() -> bool {
+    // Check COLORTERM environment variable
+    if let Ok(ct) = std::env::var("COLORTERM") {
+        if ct == "truecolor" || ct == "24bit" {
+            return true;
+        }
+    }
+    // Check TERM for known truecolor terminals
+    if let Ok(term) = std::env::var("TERM") {
+        if term.contains("256color") || term.contains("direct") || term.contains("kitty") {
+            return true;
+        }
+    }
+    false
 }
 
 impl buf_vars {
@@ -1518,303 +1744,6 @@ color_from_name(&name) // c:336
     }
 }
 
-/// Append a string to the prompt buffer.
-/// Port of `stradd(char *d)` from Src/prompt.c:1016.
-/// WARNING: param names don't match C — Rust=(buf, s) vs C=(d)
-pub fn stradd(buf: &mut String, s: &str) {                                   // c:1016
-    buf.push_str(s);
-}
-
-/// Look up a terminal capability and emit its escape.
-/// Port of `tsetcap(int cap, int flags)` from Src/prompt.c:1083 — the C source
-/// resolves termcap/terminfo names; we map the most-common ones
-/// directly onto ANSI sequences.
-/// WARNING: param names don't match C — Rust=(cap) vs C=(cap, flags)
-pub fn tsetcap(cap: &str) -> String {                                        // c:1083
-    // Map common capability names to ANSI sequences
-    match cap {
-        "md" | "bold" => "\x1b[1m".to_string(),
-        "me" | "sgr0" => "\x1b[0m".to_string(),
-        "so" | "smso" => "\x1b[7m".to_string(),
-        "se" | "rmso" => "\x1b[27m".to_string(),
-        "us" | "smul" => "\x1b[4m".to_string(),
-        "ue" | "rmul" => "\x1b[24m".to_string(),
-        _ => String::new(),
-    }
-}
-
-/// Output a string from a terminal capability.
-/// Port of `putstr(int d)` from Src/prompt.c:1121.
-pub fn putstr(d: &str) -> String {
-    tsetcap(d)
-}
-
-/// Handle `%>...>` / `%<...<` / `%[truncchar string]` truncation.
-/// Port of `prompttrunc(int arg, int truncchar, int doprint, int endchar)` from Src/prompt.c:1276.
-///
-/// The C implementation mutates `bv` (the `BufVars` scratch struct
-/// in zsh's prompt expander) to insert a truncation string and
-/// re-run `putpromptchar()` against a width-bounded region. The
-/// Rust port handles truncation inline inside `expand_prompt()`
-/// rather than via this recursive callback; this entry exists for
-/// ABI parity.
-#[allow(unused_variables)]
-pub fn prompttrunc(arg: i32, truncchar: i32, doprint: i32, endchar: i32) -> i32 {
-    0
-}
-
-/// Push a parser context token. Port of `cmdpush()` from
-/// Src/prompt.c. Bounded at CMDSTACKSZ; over-push is silently
-/// ignored (matches the C source's `cmdsp < CMDSTACKSZ` guard).
-pub fn cmdpush(cmdtok: u8) {
-    CMDSTACK.with(|s| {
-        let mut stack = s.borrow_mut();
-        if stack.len() < CMDSTACKSZ {
-            stack.push(cmdtok);
-        }
-    });
-}
-
-/// Pop the top parser context token. Port of `cmdpop()` from
-/// Src/prompt.c. Empty-stack pop is a no-op (the C source emits
-/// a `BUG: cmdstack empty` debug print and continues).
-pub fn cmdpop() {
-    CMDSTACK.with(|s| {
-        s.borrow_mut().pop();
-    });
-}
-
-/// Port of `applytextattributes(int flags)` from `Src/prompt.c:1645`.
-///
-/// C body diff-syncs `txtcurrentattrs` against `txtpendingattrs`
-/// and emits the minimal termcap-driven sequence to transition
-/// the terminal — `tsetcap(TCALLATTRSOFF…)`, `TCBOLDFACEBEG`, etc.
-///
-/// Rust port: returns the SGR diff string built by [`treplaceattrs`]
-/// over the (current, pending) pair, and updates current = pending.
-/// The previous port was an empty `void` shim that emitted nothing
-/// — output gets emitted at flush time, which broke any caller
-/// expecting incremental attr changes. New shape returns the diff
-/// the caller can write to the terminal.
-///
-/// `_flags` parameter (currently unused in zshrs port — C uses it
-/// to gate "force reset" mode).
-#[allow(unused_variables)]
-pub fn applytextattributes(flags: i32) -> String {
-    let mut current = current_attrs_lock().lock().expect("current_attrs poisoned");
-    let pending = pending_attrs_lock()
-        .lock()
-        .expect("pending_attrs poisoned")
-        .clone();
-    let diff = treplaceattrs(*current, pending);
-    *current = pending;
-    diff
-}
-
-/// Replace one set of text attributes with another.
-/// Port of `treplaceattrs(zattr newattrs)` from Src/prompt.c:1719 — emits the
-/// minimal SGR delta between two attribute states.
-/// WARNING: param names don't match C — Rust=(old, new) vs C=(newattrs)
-pub fn treplaceattrs(old: zattr, new: zattr) -> String {             // c:1719
-    let mut result = String::new();
-
-    let old_b = old & TXTBOLDFACE != 0;
-    let new_b = new & TXTBOLDFACE != 0;
-    let old_u = old & TXTUNDERLINE != 0;
-    let new_u = new & TXTUNDERLINE != 0;
-    let old_s = old & TXTSTANDOUT != 0;
-    let new_s = new & TXTSTANDOUT != 0;
-
-    let need_reset = (old_b && !new_b) || (old_u && !new_u) || (old_s && !new_s);
-
-    if need_reset {
-        result.push_str("\x1b[0m");
-        if new_b { result.push_str("\x1b[1m"); }
-        if new_u { result.push_str("\x1b[4m"); }
-        if new_s { result.push_str("\x1b[7m"); }
-    } else {
-        if !old_b && new_b { result.push_str("\x1b[1m"); }
-        if !old_u && new_u { result.push_str("\x1b[4m"); }
-        if !old_s && new_s { result.push_str("\x1b[7m"); }
-    }
-
-    if (old & TXT_ATTR_FG_MASK) != (new & TXT_ATTR_FG_MASK) {
-        if new & TXTFGCOLOUR != 0 {
-            let raw = (new & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT;
-            let c = if new & TXT_ATTR_FG_24BIT != 0 {
-                COLOR_24BIT | (raw as Color & 0x00ff_ffff)
-            } else { raw as Color };
-            result.push_str(&color_to_ansi(c, true));
-        } else {
-            result.push_str("\x1b[39m");
-        }
-    }
-    if (old & TXT_ATTR_BG_MASK) != (new & TXT_ATTR_BG_MASK) {
-        if new & TXTBGCOLOUR != 0 {
-            let raw = (new & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT;
-            let c = if new & TXT_ATTR_BG_24BIT != 0 {
-                COLOR_24BIT | (raw as Color & 0x00ff_ffff)
-            } else { raw as Color };
-            result.push_str(&color_to_ansi(c, false));
-        } else {
-            result.push_str("\x1b[49m");
-        }
-    }
-
-    result
-}
-
-/// Set text attributes (full apply).
-/// Port of `tsetattrs(zattr newattrs)` from Src/prompt.c:1737.
-pub fn tsetattrs(newattrs: zattr) -> String {                               // c:1737
-    apply_text_attributes(newattrs)
-}
-
-/// Unset (clear) text attributes via SGR-22/24/27 + 39/49.
-/// Port of `tunsetattrs(zattr newattrs)` from Src/prompt.c:1755.
-pub fn tunsetattrs(newattrs: zattr) -> String {                             // c:1755
-    let mut result = String::new();
-    if newattrs & TXTBOLDFACE != 0 { result.push_str("\x1b[22m"); }
-    if newattrs & TXTUNDERLINE != 0 {
-        result.push_str("\x1b[24m");
-    }
-    if newattrs & TXTSTANDOUT != 0 { result.push_str("\x1b[27m"); }
-    if newattrs & TXTFGCOLOUR != 0 { result.push_str("\x1b[39m"); }
-    if newattrs & TXTBGCOLOUR != 0 { result.push_str("\x1b[49m"); }
-    result
-}
-
-/// Promote the 256-color value embedded in `atr` to an explicit
-/// 24-bit RGB value. Port of `map256toRGB(zattr *atr, int shift, zattr set24)` from Src/prompt.c.
-/// Used by the prompt-output path when the terminal supports
-/// truecolor and we want to emit RGB rather than the smaller
-/// 256-palette code.
-///
-/// `shift` selects fg-byte vs bg-byte position inside `atr`;
-/// `set24` is the bit that marks "this slot is now 24-bit".
-/// Algorithm mirrors the C: 16-231 are the 6×6×6 color cube,
-/// 232-255 are the 24-step grayscale ramp.
-#[allow(non_snake_case)]
-pub fn map256toRGB(atr: &mut u64, shift: u32, set24: u64) {
-    if (*atr & set24) != 0 {
-        return;
-    }
-    let colour: u32 = ((*atr >> shift) & 0xff) as u32;
-    if colour < 16 {
-        return;
-    }
-    let (red, green, blue) = if (16..232).contains(&colour) {
-        let mut c = colour - 16;
-        let blue = (if c != 0 { 0x37 } else { 0 }) + 40 * (c % 6);
-        c /= 6;
-        let green = (if c != 0 { 0x37 } else { 0 }) + 40 * (c % 6);
-        c /= 6;
-        let red = (if c != 0 { 0x37 } else { 0 }) + 40 * c;
-        (red, green, blue)
-    } else {
-        let v = 8 + 10 * (colour - 232);
-        (v, v, v)
-    };
-    *atr &= !((0xffffff_u64) << shift);
-    *atr |= set24 | ((((red as u64) << 8 | green as u64) << 8 | blue as u64) << shift);
-}
-
-/// Mix two sets of text attributes through a mask.
-/// Port of `mixattrs(zattr primary, zattr mask, zattr secondary)` from Src/prompt.c:1802 — primary wins
-/// where the mask says "set"; secondary fills the rest.
-pub fn mixattrs(primary: zattr, mask: zattr, secondary: zattr) -> zattr {
-    // Bit-level mix: for each TXT* bit set in `mask`, take the
-    // value from `primary`; else from `secondary`. Mirrors the C
-    // idiom `(mask & primary) | (!mask & secondary)`.
-    let mut out: zattr = 0;
-    for bit in [TXTBOLDFACE, TXTUNDERLINE, TXTSTANDOUT] {
-        if mask & bit != 0 { out |= primary & bit; } else { out |= secondary & bit; }
-    }
-    if mask & TXTFGCOLOUR != 0 { out |= primary & TXT_ATTR_FG_MASK; }
-    else { out |= secondary & TXT_ATTR_FG_MASK; }
-    if mask & TXTBGCOLOUR != 0 { out |= primary & TXT_ATTR_BG_MASK; }
-    else { out |= secondary & TXT_ATTR_BG_MASK; }
-    out
-}
-
-// ---------------------------------------------------------------------------
-// Missing functions from prompt.c
-// ---------------------------------------------------------------------------
-
-/// Truncate the prompt to a maximum width.
-/// Port of `prompttrunc(int arg, int truncchar, int doprint, int endchar)` from Src/prompt.c:1276 — the C source
-/// implements the `%N>string>` (right-truncate) and `%N<string<`
-/// (left-truncate) sequences with a configurable indicator.
-/// Port of `countprompt(char *str, int *wp, int *hp, int overf)` from `Src/prompt.c:1140`.
-///
-/// C signature:
-/// `void countprompt(char *str, int *wp, int *hp, int overf);`
-///
-/// Walks the expanded prompt counting visible columns, wrapping
-/// to the next line every `terminal_width` characters and bumping
-/// the height counter. Returns `(width, height)` — `width` is the
-/// column on the FINAL line; `height` is total line count
-/// including the first.
-///
-/// Faithful to C's prompt.c:1140 logic:
-/// - `\t` advances to the next 8-column boundary (`w = (w | 7) + 1`).
-/// - `\n` resets `w` to 0 and bumps `h`.
-/// - `\x01`/`\x02` (RL_PROMPT_*_IGNORE) toggle visibility skip.
-/// - `\x1b[...m` ANSI escapes consumed without counting.
-/// - Wrap rule: `while w > terminal_width && overf >= 0` →
-///   `h++; w -= terminal_width` (matches the C overflow loop at
-///   line 1158 + 1255).
-/// - Final-column-equals-width edge case: when `w == terminal_width
-///   && overf == 0`, snap to (0, h+1) — mirrors C lines 1265-1268.
-///
-// by locating them and finding out their screen width.                    // c:1135
-/// Previous Rust port took only `&str` and returned `(width,
-/// newlines)` — missing the `terminal_width` overflow tracking
-/// and the `overf` flag entirely.
-
-// `pub struct CmdStack` + `impl CmdStack { new, push, pop, top,
-// depth, as_slice }` — DELETED per user directive. C source uses
-// `unsigned char *cmdstack` + `int cmdsp` flat globals
-// (`Src/prompt.c:1915`) plus `cmdpush()`/`cmdpop()` functions
-// (`Src/prompt.c:1915`). The Rust-only `CmdStack` wrapper had
-// zero callers outside this file. The canonical port lives on
-// `prompt_tls::CMDSTACK` and `ShellExecutor.cmd_stack: Vec<u8>`.
-// `cmdpush()`/`cmdpop()` thread-local stack mirrors C file-statics.
-
-/// Resolve a color name to an ANSI base index.
-/// Port of `match_named_colour(const char **teststrp)` from Src/prompt.c:1915 —
-/// walks `colour_names[]` (now `COLOUR_NAMES` at file head), then
-/// falls through to numeric parsing. Returns palette index 0-7
-/// for basic colours, 8 for "default" sentinel (per C:1909),
-/// numeric value for raw integers.
-pub fn match_named_colour(teststrp: &str) -> Option<u8> {                        // c:1915
-    let lower = teststrp.to_lowercase(); // c:1915
-    for (i, &n) in COLOUR_NAMES.iter().enumerate() { // c:1922
-        if n == lower {
-            return Some(i as u8); // c:1929
-        }
-    }
-    teststrp.parse::<u8>().ok() // c:1933 (fall-through to numeric)
-}
-
-/// Detect whether the terminal supports true color (24-bit).
-/// Port of `truecolor_terminal()` from Src/prompt.c:1935.
-pub fn truecolor_terminal() -> bool {
-    // Check COLORTERM environment variable
-    if let Ok(ct) = std::env::var("COLORTERM") {
-        if ct == "truecolor" || ct == "24bit" {
-            return true;
-        }
-    }
-    // Check TERM for known truecolor terminals
-    if let Ok(term) = std::env::var("TERM") {
-        if term.contains("256color") || term.contains("direct") || term.contains("kitty") {
-            return true;
-        }
-    }
-    false
-}
-
 /// Match a `%F`/`%K` argument as a colour spec.
 /// Port of `match_colour(const char **teststrp, int is_fg, int colour)` from Src/prompt.c:1957 — accepts
 /// named, numeric, and `#RRGGBB` truecolor forms.
@@ -1912,6 +1841,77 @@ pub fn free_colour_buffer() {
 pub fn set_colour_attribute(color: Color, is_fg: bool) -> String {           // c:2440
 color_to_ansi(color, is_fg) // c:2440
 }
+
+// `pub enum CmdState` + `impl CmdState { from_u8, name }` —
+// DELETED per user directive ("CmdState fake"). Was a Rust-only
+// typed wrapper around the canonical `CS_*` integer constants
+// (`Src/zsh.h:2775-2806`, ported to `crate::ported::zsh_h::CS_*`).
+// C source pushes raw `unsigned char` bytes onto `cmdstack` and
+// indexes `cmdnames[CS_COUNT]` (`Src/prompt.c:62`) for the name.
+// Now ported 1:1: callers use `CS_FOO as u8` directly and look up
+// names through `cmdname()` below.
+
+// parser states, for %_                                                    // c:60
+/// Direct port of `cmdnames[CS_COUNT]` from `Src/prompt.c:62-71`.
+/// Indexed by the `CS_*` constants in `zsh_h::CS_FOR..CS_ALWAYS`
+/// (`Src/zsh.h:2775-2806`). Used by `%_` prompt expansion to print
+/// the active compound-command keyword stack.
+pub static CMDNAMES: [&str; crate::ported::zsh_h::CS_COUNT as usize] = [
+    "for",      "while",     "repeat",    "select",    // c:63 (CS_FOR..CS_SELECT)
+    "until",    "if",        "then",      "else",      // c:64 (CS_UNTIL..CS_ELSE)
+    "elif",     "math",      "cond",      "cmdor",     // c:65 (CS_ELIF..CS_CMDOR)
+    "cmdand",   "pipe",      "errpipe",   "foreach",   // c:66 (CS_CMDAND..CS_FOREACH)
+    "case",     "function",  "subsh",     "cursh",     // c:67 (CS_CASE..CS_CURSH)
+    "array",    "quote",     "dquote",    "bquote",    // c:68 (CS_ARRAY..CS_BQUOTE)
+    "cmdsubst", "mathsubst", "elif-then", "heredoc",   // c:69 (CS_CMDSUBST..CS_HEREDOC)
+    "heredocd", "brace",     "braceparam", "always",   // c:70 (CS_HEREDOCD..CS_ALWAYS)
+];
+// c:zsh.h:2685-2741
+
+// `Color` is the colour slot lifted out of `zattr` so callers can
+// pass a single integer around. Bit layout mirrors the C zattr
+// colour bits exactly:
+//   bit 31 (0x01000000): the local 24-bit flag — mirrors the
+//     C `TXT_ATTR_FG_24BIT` / `TXT_ATTR_BG_24BIT` bit (Src/zsh.h:2727).
+//     When set, the low 24 bits hold `0xRRGGBB`. When clear, the
+//     low 8 bits hold a palette index 0..=255, where 8 is the
+//     "default" sentinel per Src/prompt.c:1909.
+// Not a new type — same encoding C packs into `TXT_ATTR_FG_COL_MASK`.
+pub type Color = u32; // c:Src/zsh.h:2718 (colour slot)
+pub const COLOR_24BIT: Color = 0x0100_0000; // c:zsh.h:2727 (TXT_ATTR_FG_24BIT)
+
+// Sentinel "no colour set" — palette index that lives in
+// TXT_ATTR_FG_COL_MASK when the colour is `default` (8 in
+// Src/prompt.c:1909). Bits 16-39 are at most 24 bits, so any
+// value 0..=255 fits comfortably for palette mode.
+pub const COLOUR_DEFAULT: u8 = 8; // c:Src/prompt.c:1909
+
+// Named-colour palette constants. Indexes match `colour_names[]`
+// from `Src/prompt.c:1884-1887`. Used in place of the deleted
+// `Color::Black`..`Color::White`/`Color::Default` enum variants.
+pub const COLOR_BLACK:   Color = 0; // c:1885
+pub const COLOR_RED:     Color = 1; // c:1885
+pub const COLOR_GREEN:   Color = 2; // c:1885
+pub const COLOR_YELLOW:  Color = 3; // c:1885
+pub const COLOR_BLUE:    Color = 4; // c:1885
+pub const COLOR_MAGENTA: Color = 5; // c:1885
+pub const COLOR_CYAN:    Color = 6; // c:1885
+pub const COLOR_WHITE:   Color = 7; // c:1885
+pub const COLOR_DEFAULT: Color = COLOUR_DEFAULT as Color; // c:1909
+
+// Defines standard ANSI colour names in index order                        // c:1883
+/// Direct port of `colour_names[]` from `Src/prompt.c:1884-1887`.
+/// Indexed 0-7 = basic ANSI, 8 = "default" sentinel (per
+/// `Src/prompt.c:1909` comment "8 is the special value for
+/// default"). Single canonical source — the second
+/// `match_named_colour` further down this file consumed a
+/// drifted local table with `default = 9` which mis-rendered
+/// `%F{default}` output.
+pub static COLOUR_NAMES: [&str; 9] = [
+    "black", "red", "green", "yellow", // c:1885
+    "blue", "magenta", "cyan", "white", // c:1885
+    "default", // c:1886
+];
 
 // Colour / zattr helpers — C inlines these at each call site in Src/prompt.c.
 fn color_rgb(r: u8, g: u8, b: u8) -> Color {

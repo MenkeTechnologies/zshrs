@@ -41,6 +41,88 @@ extern "C" {
     fn cbrt(x: f64) -> f64;
 }
 
+/// Port of `math_string(UNUSED(char *name), char *arg, int id)` from `Src/Modules/mathfunc.c:439`. The
+/// string-arg math-fn dispatcher behind `rand48("seedvar")` and
+/// future string-takers. C signature:
+///   `static mnumber math_string(char *name, char *arg, int id)`
+///
+/// Strips leading/trailing iblank from `arg` (mathfunc.c:447-451)
+/// then switches on `id`. Currently only `MS_RAND48` exists; the
+/// random-bit production lives in `crate::ported::random` and
+/// `crate::ported::modules::random_real`. Returns `zero_mnumber`
+/// for unrecognised ids (matching C's pre-init `ret = zero_mnumber`).
+#[allow(unused_variables)]
+pub fn math_string(name: &str, arg: &str, id: i32) -> mnumber {         // c:439
+    let trimmed = arg.trim_matches(|c: char| c == ' ' || c == '\t');     // c:439-451 iblank
+    match id {
+        MS_RAND48 => {                                                   // c:457
+            // C decodes optional 12-hex seedstr from $seedvar then
+            // calls erand48(). zshrs uses `random_real()` which
+            // already produces uniform doubles via the OS-entropy
+            // path; the seed-from-param wiring is pending param-
+            // table integration.
+            let _ = trimmed;
+            mnumber {
+                l: 0,
+                d: crate::ported::modules::random_real::random_real(),
+                type_: MN_FLOAT,
+            }
+        }
+        _ => mnumber { l: 0, d: 0.0, type_: MN_INTEGER },                                         // zero_mnumber
+    }
+}
+
+// `mftab` — port of `static struct mathfunc mftab[]` (mathfunc.c:497).
+
+
+// `module_features` — port of `static struct features module_features`
+// from mathfunc.c:540.
+
+
+
+/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/mathfunc.c:548`.
+#[allow(unused_variables)]
+pub fn setup_(m: *const module) -> i32 {                                    // c:548
+    // C body c:550-551 — `return 0`. Faithful empty-body port.
+    0
+}
+
+/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/mathfunc.c:555`.
+/// C body: `*features = featuresarray(m, &module_features); return 0;`
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:555
+    *features = featuresarray(m, module_features());
+    0                                                                    // c:570
+}
+
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/mathfunc.c:563`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:563
+    handlefeatures(m, module_features(), enables) // c:570
+}
+
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/mathfunc.c:570`.
+#[allow(unused_variables)]
+pub fn boot_(m: *const module) -> i32 {                                     // c:570
+    // C body c:572-573 — `return 0`. Faithful empty-body port; the
+    //                    math functions are registered via the mf_list
+    //                    feature dispatch, no extra boot work needed.
+    0
+}
+
+/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/mathfunc.c:577`.
+/// C body: `return setfeatureenables(m, &module_features, NULL);`
+pub fn cleanup_(m: *const module) -> i32 {                                  // c:577
+    setfeatureenables(m, module_features(), None) // c:584
+}
+
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/mathfunc.c:584`.
+#[allow(unused_variables)]
+pub fn finish_(m: *const module) -> i32 {                                   // c:584
+    // C body c:586-587 — `return 0`. Faithful empty-body port; the
+    //                    math functions are unregistered via cleanup_.
+    0
+}
+
 // ============================================================
 // MF_* — port of the anonymous `enum {}` at mathfunc.c:34-84.
 // C `enum {}` with no typedef → untyped int constants. Rust
@@ -94,6 +176,15 @@ pub const MF_TANH:      i32 = 44;
 pub const MF_Y0:        i32 = 45;
 pub const MF_Y1:        i32 = 46;
 pub const MF_YN:        i32 = 47;                                        // c:84
+
+
+
+// =====================================================================
+// static struct mathfunc mftab[]                                    c:497
+// static struct features module_features                            c:540
+// =====================================================================
+
+use crate::ported::zsh_h::module;
 
 // ============================================================
 // MS_* — port of the anonymous `enum {}` at mathfunc.c:90.
@@ -261,97 +352,6 @@ pub fn math_func(_name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber {
     ret                                                                  // c:434
 }
 
-/// Port of `math_string(UNUSED(char *name), char *arg, int id)` from `Src/Modules/mathfunc.c:439`. The
-/// string-arg math-fn dispatcher behind `rand48("seedvar")` and
-/// future string-takers. C signature:
-///   `static mnumber math_string(char *name, char *arg, int id)`
-///
-/// Strips leading/trailing iblank from `arg` (mathfunc.c:447-451)
-/// then switches on `id`. Currently only `MS_RAND48` exists; the
-/// random-bit production lives in `crate::ported::random` and
-/// `crate::ported::modules::random_real`. Returns `zero_mnumber`
-/// for unrecognised ids (matching C's pre-init `ret = zero_mnumber`).
-#[allow(unused_variables)]
-pub fn math_string(name: &str, arg: &str, id: i32) -> mnumber {         // c:439
-    let trimmed = arg.trim_matches(|c: char| c == ' ' || c == '\t');     // c:439-451 iblank
-    match id {
-        MS_RAND48 => {                                                   // c:457
-            // C decodes optional 12-hex seedstr from $seedvar then
-            // calls erand48(). zshrs uses `random_real()` which
-            // already produces uniform doubles via the OS-entropy
-            // path; the seed-from-param wiring is pending param-
-            // table integration.
-            let _ = trimmed;
-            mnumber {
-                l: 0,
-                d: crate::ported::modules::random_real::random_real(),
-                type_: MN_FLOAT,
-            }
-        }
-        _ => mnumber { l: 0, d: 0.0, type_: MN_INTEGER },                                         // zero_mnumber
-    }
-}
-
-
-
-// =====================================================================
-// static struct mathfunc mftab[]                                    c:497
-// static struct features module_features                            c:540
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
-// `mftab` — port of `static struct mathfunc mftab[]` (mathfunc.c:497).
-
-
-// `module_features` — port of `static struct features module_features`
-// from mathfunc.c:540.
-
-
-
-/// Port of `setup_(UNUSED(Module m))` from `Src/Modules/mathfunc.c:548`.
-#[allow(unused_variables)]
-pub fn setup_(m: *const module) -> i32 {                                    // c:548
-    // C body c:550-551 — `return 0`. Faithful empty-body port.
-    0
-}
-
-/// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/mathfunc.c:555`.
-/// C body: `*features = featuresarray(m, &module_features); return 0;`
-pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c:555
-    *features = featuresarray(m, module_features());
-    0                                                                    // c:570
-}
-
-/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/mathfunc.c:563`.
-/// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:563
-    handlefeatures(m, module_features(), enables) // c:570
-}
-
-/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/mathfunc.c:570`.
-#[allow(unused_variables)]
-pub fn boot_(m: *const module) -> i32 {                                     // c:570
-    // C body c:572-573 — `return 0`. Faithful empty-body port; the
-    //                    math functions are registered via the mf_list
-    //                    feature dispatch, no extra boot work needed.
-    0
-}
-
-/// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/mathfunc.c:577`.
-/// C body: `return setfeatureenables(m, &module_features, NULL);`
-pub fn cleanup_(m: *const module) -> i32 {                                  // c:577
-    setfeatureenables(m, module_features(), None) // c:584
-}
-
-/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/mathfunc.c:584`.
-#[allow(unused_variables)]
-pub fn finish_(m: *const module) -> i32 {                                   // c:584
-    // C body c:586-587 — `return 0`. Faithful empty-body port; the
-    //                    math functions are unregistered via cleanup_.
-    0
-}
-
 use crate::ported::zsh_h::features as features_t;
 use std::sync::{Mutex, OnceLock};
 
@@ -394,6 +394,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

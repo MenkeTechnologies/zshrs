@@ -13,19 +13,6 @@
 /// integer keys. Used by `liitem()` for name→item lookup and by
 /// `scanlanginfo()` to enumerate every entry.
 use std::ffi::CStr;
-pub static NL_NAMES: &[&str] = &[                                         // c:65 nl_names
-    "CODESET", "D_T_FMT", "D_FMT", "T_FMT",
-    "RADIXCHAR", "THOUSEP", "YESEXPR", "NOEXPR", "CRNCYSTR",
-    "ABDAY_1", "ABDAY_2", "ABDAY_3", "ABDAY_4",
-    "ABDAY_5", "ABDAY_6", "ABDAY_7",
-    "DAY_1", "DAY_2", "DAY_3", "DAY_4", "DAY_5", "DAY_6", "DAY_7",
-    "ABMON_1", "ABMON_2", "ABMON_3", "ABMON_4", "ABMON_5", "ABMON_6",
-    "ABMON_7", "ABMON_8", "ABMON_9", "ABMON_10", "ABMON_11", "ABMON_12",
-    "MON_1", "MON_2", "MON_3", "MON_4", "MON_5", "MON_6",
-    "MON_7", "MON_8", "MON_9", "MON_10", "MON_11", "MON_12",
-    "T_FMT_AMPM", "AM_STR", "PM_STR",
-    "ERA", "ERA_D_FMT", "ERA_D_T_FMT", "ERA_T_FMT", "ALT_DIGITS",
-];
 
 /// Port of `liitem(const char *name)` from `Src/Modules/langinfo.c:379`. Walks the
 /// parallel `nl_names[]` / `nl_vals[]` arrays looking for `name`;
@@ -172,13 +159,6 @@ pub fn scanlanginfo() -> Vec<(String, String)> {                         // c:43
     out
 }
 
-// =====================================================================
-// static struct paramdef partab[]                                   c:455
-// static struct features module_features                            c:464
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
 // `partab` — port of `static struct paramdef partab[]` (langinfo.c:455).
 
 
@@ -192,6 +172,13 @@ use crate::ported::zsh_h::module;
 pub fn setup_(m: *const module) -> i32 {                                // c:472
     0                                                                    // c:487
 }
+
+// =====================================================================
+// static struct paramdef partab[]                                   c:455
+// static struct features module_features                            c:464
+// =====================================================================
+
+use crate::ported::zsh_h::module;
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/langinfo.c:479`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -223,6 +210,19 @@ pub fn cleanup_(m: *const module) -> i32 {                              // c:501
 pub fn finish_(m: *const module) -> i32 {                               // c:508
     0                                                                    // c:508
 }
+pub static NL_NAMES: &[&str] = &[                                         // c:65 nl_names
+    "CODESET", "D_T_FMT", "D_FMT", "T_FMT",
+    "RADIXCHAR", "THOUSEP", "YESEXPR", "NOEXPR", "CRNCYSTR",
+    "ABDAY_1", "ABDAY_2", "ABDAY_3", "ABDAY_4",
+    "ABDAY_5", "ABDAY_6", "ABDAY_7",
+    "DAY_1", "DAY_2", "DAY_3", "DAY_4", "DAY_5", "DAY_6", "DAY_7",
+    "ABMON_1", "ABMON_2", "ABMON_3", "ABMON_4", "ABMON_5", "ABMON_6",
+    "ABMON_7", "ABMON_8", "ABMON_9", "ABMON_10", "ABMON_11", "ABMON_12",
+    "MON_1", "MON_2", "MON_3", "MON_4", "MON_5", "MON_6",
+    "MON_7", "MON_8", "MON_9", "MON_10", "MON_11", "MON_12",
+    "T_FMT_AMPM", "AM_STR", "PM_STR",
+    "ERA", "ERA_D_FMT", "ERA_D_T_FMT", "ERA_T_FMT", "ALT_DIGITS",
+];
 
 
 
@@ -271,6 +271,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

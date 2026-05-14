@@ -14,24 +14,57 @@ use crate::ported::zsh_h::{OPT_ISSET, OPT_ARG};
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::PermissionsExt;
 
+/// Direct port of `recursivecmd(char *nam, int opt_noerr, int opt_recurse, int opt_safe, char **args, RecurseFunc dirpre_func, RecurseFunc dirpost_func, RecurseFunc leaf_func, void *magic)` from `Src/Modules/files.c:378`.
+/// C body (c:381-446): walk argv, dispatch each via recursivecmd_doone.
+/// The dirsav-based chdir-back stack (c:396-399, c:438-446) is omitted
+/// in the Rust port — std::fs operations take absolute paths so the
+/// chdir dance C uses to safely descend isn't needed.
+/// WARNING: param names don't match C — Rust=(opt_noerr, opt_recurse, opt_safe, args, dirpre_func, dirpost_func, leaf_func) vs C=(nam, opt_noerr, opt_recurse, opt_safe, args, dirpre_func, dirpost_func, leaf_func, magic)
+pub fn recursivecmd<P, R, L>(                                                // c:378
+    nam: &str, opt_noerr: i32, opt_recurse: i32, opt_safe: i32,
+    args: &[String], dirpre_func: P, dirpost_func: R, leaf_func: L,
+) -> i32                                                                     // c:378
+where
+    P: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
+    R: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
+    L: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
+{
+    let _ = opt_noerr;
+    let reccmd = recursivecmd {
+        nam, opt_noerr, opt_recurse, opt_safe,
+        dirpre_func, dirpost_func, leaf_func,
+    };
+    let mut err = 0i32;
+    for arg in args {                                                        // c:401
+        if (err & 2) != 0 { break; }
+        let first = if opt_safe != 0 { 0 } else { 1 };                       // c:421/c:434
+        err |= recursivecmd_doone(&reccmd, arg, arg, first);                 // c:450/c:434
+    }
+    if err != 0 { 1 } else { 0 }                                             // c:450 !!err
+}
+
 // =====================================================================
-// BIN_* / MV_* constants — `Src/Modules/files.c:170-178`.
+// recursivecmd family — `Src/Modules/files.c:365-526`.
 // =====================================================================
 
-pub const BIN_LN: i32 = 0;                                                   // c:170
-pub const BIN_MV: i32 = 1;                                                   // c:171
-
-pub const MV_NODIRS:        i32 = 1 << 0;                                    // c:173
-pub const MV_FORCE:         i32 = 1 << 1;                                    // c:174
-pub const MV_INTERACTIVE:   i32 = 1 << 2;                                    // c:175
-pub const MV_ASKNW:         i32 = 1 << 3;                                    // c:176
-pub const MV_ATOMIC:        i32 = 1 << 4;                                    // c:177
-pub const MV_NOCHASETARGET: i32 = 1 << 5;                                    // c:178
-
-/// `bin_chown` func discriminant — `Src/Modules/files.c:41`
-/// (`enum { BIN_CHOWN, BIN_CHGRP };`).
-pub const BIN_CHOWN: i32 = 0;                                                // c:719
-pub const BIN_CHGRP: i32 = 1;                                                // c:719
+/// Port of `struct recursivecmd` from `Src/Modules/files.c:365`.
+/// Holds the per-call recursion options + callback function pointers.
+/// Rust uses generic closures for the callbacks; the struct is the
+/// owned context object passed through the recursion.
+pub struct recursivecmd<'a, P, R, L>
+where
+    P: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
+    R: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
+    L: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
+{
+    pub nam: &'a str,                                                        // c:366
+    pub opt_noerr: i32,                                                      // c:367
+    pub opt_recurse: i32,                                                    // c:368
+    pub opt_safe: i32,                                                       // c:378
+    pub dirpre_func: P,                                                      // c:378
+    pub dirpost_func: R,                                                     // c:378
+    pub leaf_func: L,                                                        // c:378
+}
 
 // =====================================================================
 // ask() — `Src/Modules/files.c:41`.
@@ -199,16 +232,18 @@ pub fn bin_rmdir(nam: &str, args: &[String],                                 // 
 }
 
 // =====================================================================
-// bin_ln + domove — `Src/Modules/files.c:200`, `:298`.
+// BIN_* / MV_* constants — `Src/Modules/files.c:170-178`.
 // =====================================================================
 
-// `enum MoveFunc` deleted — C uses a bare function-pointer typedef
-// `typedef int (*MoveFunc)(char const *, char const *);` at
-// `Src/Modules/files.c:32`. Rust ports it directly as the same
-// function-pointer type alias below, so call sites can do
-// `movefn = mv_rename;` matching C's `movefn = rename;`.
-#[allow(non_camel_case_types)]
-pub type MoveFunc = fn(p: &std::ffi::CStr, q: &std::ffi::CStr) -> i32;
+pub const BIN_LN: i32 = 0;                                                   // c:170
+pub const BIN_MV: i32 = 1;                                                   // c:171
+
+pub const MV_NODIRS:        i32 = 1 << 0;                                    // c:173
+pub const MV_FORCE:         i32 = 1 << 1;                                    // c:174
+pub const MV_INTERACTIVE:   i32 = 1 << 2;                                    // c:175
+pub const MV_ASKNW:         i32 = 1 << 3;                                    // c:176
+pub const MV_ATOMIC:        i32 = 1 << 4;                                    // c:177
+pub const MV_NOCHASETARGET: i32 = 1 << 5;                                    // c:178
 
 /// Direct port of `bin_ln(char *nam, char **args, Options ops, int func)` from `Src/Modules/files.c:200`.
 /// C body (c:209-296):
@@ -371,35 +406,6 @@ pub fn domove(nam: &str, movefn: MoveFunc, p: &str, q: &str, flags: i32) -> i32 
     0                                                                        // c:362
 }
 
-/// Direct port of `recursivecmd(char *nam, int opt_noerr, int opt_recurse, int opt_safe, char **args, RecurseFunc dirpre_func, RecurseFunc dirpost_func, RecurseFunc leaf_func, void *magic)` from `Src/Modules/files.c:378`.
-/// C body (c:381-446): walk argv, dispatch each via recursivecmd_doone.
-/// The dirsav-based chdir-back stack (c:396-399, c:438-446) is omitted
-/// in the Rust port — std::fs operations take absolute paths so the
-/// chdir dance C uses to safely descend isn't needed.
-/// WARNING: param names don't match C — Rust=(opt_noerr, opt_recurse, opt_safe, args, dirpre_func, dirpost_func, leaf_func) vs C=(nam, opt_noerr, opt_recurse, opt_safe, args, dirpre_func, dirpost_func, leaf_func, magic)
-pub fn recursivecmd<P, R, L>(                                                // c:378
-    nam: &str, opt_noerr: i32, opt_recurse: i32, opt_safe: i32,
-    args: &[String], dirpre_func: P, dirpost_func: R, leaf_func: L,
-) -> i32                                                                     // c:378
-where
-    P: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
-    R: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
-    L: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
-{
-    let _ = opt_noerr;
-    let reccmd = recursivecmd {
-        nam, opt_noerr, opt_recurse, opt_safe,
-        dirpre_func, dirpost_func, leaf_func,
-    };
-    let mut err = 0i32;
-    for arg in args {                                                        // c:401
-        if (err & 2) != 0 { break; }
-        let first = if opt_safe != 0 { 0 } else { 1 };                       // c:421/c:434
-        err |= recursivecmd_doone(&reccmd, arg, arg, first);                 // c:450/c:434
-    }
-    if err != 0 { 1 } else { 0 }                                             // c:450 !!err
-}
-
 /// Direct port of `recursivecmd_doone(struct recursivecmd const *reccmd, char *arg, char *rp, struct dirsav *ds, int first)` from `Src/Modules/files.c:450`.
 /// C body (c:455-462): lstat the path; if recurse + S_ISDIR → dive
 /// via recursivecmd_dorec; else call leaf_func.
@@ -463,35 +469,24 @@ where
     err | (reccmd.dirpost_func)(arg, rp, Some(sp))                           // c:530
 }
 
-// =====================================================================
-// recursivecmd family — `Src/Modules/files.c:365-526`.
-// =====================================================================
-
-/// Port of `struct recursivecmd` from `Src/Modules/files.c:365`.
-/// Holds the per-call recursion options + callback function pointers.
-/// Rust uses generic closures for the callbacks; the struct is the
-/// owned context object passed through the recursion.
-pub struct recursivecmd<'a, P, R, L>
-where
-    P: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
-    R: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
-    L: Fn(&str, &str, Option<&std::fs::Metadata>) -> i32,
-{
-    pub nam: &'a str,                                                        // c:366
-    pub opt_noerr: i32,                                                      // c:367
-    pub opt_recurse: i32,                                                    // c:368
-    pub opt_safe: i32,                                                       // c:378
-    pub dirpre_func: P,                                                      // c:378
-    pub dirpost_func: R,                                                     // c:378
-    pub leaf_func: L,                                                        // c:378
-}
-
 /// Direct port of `recurse_donothing(UNUSED(char *arg), UNUSED(char *rp), UNUSED(struct stat const *sp), UNUSED(void *magic))` from `Src/Modules/files.c:530`.
 /// C body: `return 0;`.
 /// WARNING: param names don't match C — Rust=(_arg, _rp) vs C=(arg, rp, sp, magic)
 pub fn recurse_donothing(_arg: &str, _rp: &str,                              // c:530
                          _sp: Option<&std::fs::Metadata>) -> i32 {
     0                                                                        // c:533
+}
+
+// =====================================================================
+// bin_rm — `Src/Modules/files.c:537-630`.
+// =====================================================================
+
+/// Port of `struct rmmagic` from `Src/Modules/files.c:537`.
+pub struct rmmagic<'a> {
+    pub nam: &'a str,                                                        // c:546
+    pub opt_force: i32,                                                      // c:546
+    pub opt_interact: i32,                                                   // c:546
+    pub opt_unlinkdir: i32,                                                  // c:546
 }
 
 /// Direct port of `rm_leaf(char *arg, char *rp, struct stat const *sp, void *magic)` from `Src/Modules/files.c:546`.
@@ -586,15 +581,13 @@ pub fn bin_rm(nam: &str, args: &[String],                                    // 
 }
 
 // =====================================================================
-// bin_rm — `Src/Modules/files.c:537-630`.
+// bin_chmod — `Src/Modules/files.c:642`.
 // =====================================================================
 
-/// Port of `struct rmmagic` from `Src/Modules/files.c:537`.
-pub struct rmmagic<'a> {
-    pub nam: &'a str,                                                        // c:546
-    pub opt_force: i32,                                                      // c:546
-    pub opt_interact: i32,                                                   // c:546
-    pub opt_unlinkdir: i32,                                                  // c:546
+/// Port of `struct chmodmagic` from `Src/Modules/files.c:642`.
+pub struct chmodmagic<'a> {
+    pub nam: &'a str,                                                        // c:642
+    pub mode: u32,                                                           // c:642
 }
 
 /// Direct port of `chmod_dochmod(char *arg, char *rp, UNUSED(struct stat const *sp), void *magic)` from `Src/Modules/files.c:642`.
@@ -641,6 +634,17 @@ pub fn bin_chmod(nam: &str, args: &[String],                                 // 
         |a, r, s| chmod_dochmod(a, r, s, &chm))                              // leaf
 }
 
+// =====================================================================
+// bin_chown — `Src/Modules/files.c:674-801`.
+// =====================================================================
+
+/// Port of `struct chownmagic` from `Src/Modules/files.c:682`.
+pub struct chownmagic<'a> {
+    pub nam: &'a str,                                                        // c:682
+    pub uid: i64,                                                            // c:682 (uid_t but -1 sentinel)
+    pub gid: i64,                                                            // c:682
+}
+
 /// Direct port of `chown_dochown(char *arg, char *rp, UNUSED(struct stat const *sp), void *magic)` from `Src/Modules/files.c:682`.
 /// C body (c:686-692): `chown(rp, uid, gid)`; warn + return 1 on failure.
 /// WARNING: param names don't match C — Rust=(arg, rp, _sp) vs C=(arg, rp, sp, magic)
@@ -658,16 +662,6 @@ pub fn chown_dochown(arg: &str, rp: &str, _sp: Option<&std::fs::Metadata>,   // 
         return 1;                                                            // c:695
     }
     0                                                                        // c:695
-}
-
-// =====================================================================
-// bin_chmod — `Src/Modules/files.c:642`.
-// =====================================================================
-
-/// Port of `struct chmodmagic` from `Src/Modules/files.c:642`.
-pub struct chmodmagic<'a> {
-    pub nam: &'a str,                                                        // c:642
-    pub mode: u32,                                                           // c:642
 }
 
 /// Direct port of `chown_dolchown(char *arg, char *rp, UNUSED(struct stat const *sp), void *magic)` from `Src/Modules/files.c:695`.
@@ -795,15 +789,13 @@ pub fn bin_chown(nam: &str, args: &[String],                                 // 
 }
 
 // =====================================================================
-// bin_chown — `Src/Modules/files.c:674-801`.
+// `LN_OPTS` — `Src/Modules/files.c:799`.
 // =====================================================================
 
-/// Port of `struct chownmagic` from `Src/Modules/files.c:682`.
-pub struct chownmagic<'a> {
-    pub nam: &'a str,                                                        // c:682
-    pub uid: i64,                                                            // c:682 (uid_t but -1 sentinel)
-    pub gid: i64,                                                            // c:682
-}
+/// `LN_OPTS` — `Src/Modules/files.c:799` (`"dfhins"` when HAVE_LSTAT,
+/// `"dfi"` otherwise). zshrs targets POSIX hosts where lstat is
+/// always present, so the long form is canonical.
+pub const LN_OPTS: &str = "dfhins";                                          // c:799
 
 // `module_bintab` — port of `static struct builtin bintab[]` (files.c:803)
 // in the canonical `module::Builtin` shape (the local `FilesBuiltin`
@@ -843,26 +835,6 @@ pub fn boot_(m: *const module) -> i32 {                                     // c
     0
 }
 
-// =====================================================================
-// `LN_OPTS` — `Src/Modules/files.c:799`.
-// =====================================================================
-
-/// `LN_OPTS` — `Src/Modules/files.c:799` (`"dfhins"` when HAVE_LSTAT,
-/// `"dfi"` otherwise). zshrs targets POSIX hosts where lstat is
-/// always present, so the long form is canonical.
-pub const LN_OPTS: &str = "dfhins";                                          // c:799
-
-// bintab[] (`static struct builtin bintab[]` at files.c:803) lives in
-// the `MODULE_BINTAB` slice below in canonical `module::Builtin` shape;
-// the dispatcher in src/extensions/ reads it through the singleton
-// rather than a private aggregate type.
-
-// =====================================================================
-// module entries — `Src/Modules/files.c:828-876`.
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/files.c:867`.
 pub fn cleanup_(m: *const module) -> i32 {                                  // c:867
     setfeatureenables(m, module_features(), None)
@@ -875,6 +847,34 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     //                    builtins unregister via cleanup_'s setfeatureenables.
     0
 }
+
+/// `bin_chown` func discriminant — `Src/Modules/files.c:41`
+/// (`enum { BIN_CHOWN, BIN_CHGRP };`).
+pub const BIN_CHOWN: i32 = 0;                                                // c:719
+
+// bintab[] (`static struct builtin bintab[]` at files.c:803) lives in
+// the `MODULE_BINTAB` slice below in canonical `module::Builtin` shape;
+// the dispatcher in src/extensions/ reads it through the singleton
+// rather than a private aggregate type.
+
+// =====================================================================
+// module entries — `Src/Modules/files.c:828-876`.
+// =====================================================================
+
+use crate::ported::zsh_h::module;
+pub const BIN_CHGRP: i32 = 1;                                                // c:719
+
+// =====================================================================
+// bin_ln + domove — `Src/Modules/files.c:200`, `:298`.
+// =====================================================================
+
+// `enum MoveFunc` deleted — C uses a bare function-pointer typedef
+// `typedef int (*MoveFunc)(char const *, char const *);` at
+// `Src/Modules/files.c:32`. Rust ports it directly as the same
+// function-pointer type alias below, so call sites can do
+// `movefn = mv_rename;` matching C's `movefn = rename;`.
+#[allow(non_camel_case_types)]
+pub type MoveFunc = fn(p: &std::ffi::CStr, q: &std::ffi::CStr) -> i32;
 
 /// Adapter for `rename(2)` — used by `bin_mv`.
 pub fn mv_rename(p: &std::ffi::CStr, q: &std::ffi::CStr) -> i32 {
@@ -949,6 +949,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

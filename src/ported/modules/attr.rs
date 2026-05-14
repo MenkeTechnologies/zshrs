@@ -24,9 +24,6 @@ use std::ffi::CString;
 use crate::ported::utils::{metafy, unmetafy, zwarnnam};
 use crate::ported::zsh_h::{module, options, OPT_ISSET};
 
-#[cfg(target_os = "macos")]
-const XATTR_NOFOLLOW: i32 = 0x0001;
-
 // =====================================================================
 // xgetxattr(const char *path, const char *name, void *value, size_t size, int symlink)  c:36
 // =====================================================================
@@ -449,6 +446,9 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     0
 }
 
+#[cfg(target_os = "macos")]
+const XATTR_NOFOLLOW: i32 = 0x0001;
+
 // =====================================================================
 // External fns from other Src/*.c files — routed through the canonical
 // 2-arg variants that match the C signatures.
@@ -528,6 +528,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

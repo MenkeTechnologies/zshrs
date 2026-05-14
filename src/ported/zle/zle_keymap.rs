@@ -54,78 +54,6 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-pub const KMN_IMMORTAL: i32 = 1 << 1;                                        // c:62
-
-/// Port of `KM_IMMUTABLE` from `Src/Zle/zle_keymap.c:83`. Marks a
-/// keymap that can't have its bindings modified.
-pub const KM_IMMUTABLE: i32 = 1 << 1;                                        // c:83
-
-/// Port of `BS_LIST` from `Src/Zle/zle_keymap.c:114`. `bin_bindkey -L`:
-/// list bindings in `bindkey -M` syntax.
-pub const BS_LIST: i32 = 1 << 0;                                             // c:114
-
-/// Port of `BS_ALL` from `Src/Zle/zle_keymap.c:115`. `bin_bindkey -aL`:
-/// list ALL bindings, including default sequences.
-pub const BS_ALL: i32 = 1 << 1;                                              // c:115
-
-/// Port of `mod_export char *curkeymapname` from `Src/Zle/zle_keymap.c:126`.
-/// Name of the currently active keymap (driven by `bindkey -A` and the
-/// `KEYMAP` parameter). The Rust port wraps in OnceLock<Mutex<>> for
-/// thread-safe access from widget bodies.
-pub static CURKEYMAPNAME: std::sync::OnceLock<std::sync::Mutex<String>> =
-    std::sync::OnceLock::new();                                              // c:126
-
-/// Port of `createkeymapnamtab()` from Src/Zle/zle_keymap.c:153.
-pub fn createkeymapnamtab() {                                                // c:153
-    // c:153 — `keymapnamtab = newhashtable(7, "keymapnamtab", NULL)`.
-    // OnceLock-init via accessor.
-    let _ = keymapnamtab();
-}
-
-/// Port of `Keymap curkeymap` from `Src/Zle/zle_keymap.c:124`. The
-/// currently active keymap (per `bindkey -A` selection or KEYMAP
-/// parameter). Used inline at zle_keymap.c:519 (`curkeymap = km;`)
-/// and read by `getkeycmd`/`getkeybuf` to dispatch the next key.
-pub static curkeymap: Mutex<Option<Arc<Keymap>>> = Mutex::new(None);         // c:124
-
-/// Port of `char *keybuf` from `Src/Zle/zle_keymap.c:136`. The key
-/// sequence currently being read by `getkeycmd`. C uses a flat
-/// `char*` heap allocation sized by `keybufsz`; Rust uses
-/// `Vec<u8>` which manages its own capacity.
-pub static keybuf: Mutex<Vec<u8>> = Mutex::new(Vec::new());                  // c:136
-
-/// Port of `int keybuflen` from `Src/Zle/zle_keymap.c:139`. Current
-/// number of bytes in `keybuf`. Rust mirrors via `keybuf.lock().len()`
-/// but exposes the count as a separate static for callers that need
-/// it without holding the buffer lock.
-pub static keybuflen: std::sync::atomic::AtomicI32 =                         // c:139
-    std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `static Thingy lastnamed` from `Src/Zle/zle_keymap.c:145`.
-/// Last command executed by `execute-named-command` — used to
-/// re-execute via `bindkey -A name` then `getkeycmd`.
-pub static lastnamed: Mutex<Option<Thingy>> = Mutex::new(None);              // c:145
-
-// =====================================================================
-// keymapnamtab — `Src/Zle/zle_keymap.c:128/153`.
-// =====================================================================
-//
-// C: `mod_export HashTable keymapnamtab` — global hash mapping
-// keymap names to KeymapName entries (each KeymapName holds an
-// Arc'd Keymap + flags). zshrs uses Mutex<HashMap<String, KeymapName>>.
-
-static KEYMAPNAMTAB: OnceLock<Mutex<HashMap<String, KeymapName>>> = OnceLock::new();
-
-/// Port of `makekeymapnamnode(Keymap keymap)` from Src/Zle/zle_keymap.c:173.
-pub fn makekeymapnamnode(keymap: Arc<Keymap>) -> KeymapName {                    // c:173
-    // c:173-178 — `kmn = zshcalloc; kmn->keymap = keymap; return kmn`.
-    KeymapName {
-        nam: String::new(),
-        flags: 0,
-        keymap: keymap,
-    }
-}
-
 /// Direct port of `struct keymapname` from `Src/Zle/zle_keymap.c:54`.
 /// One node in the global `keymapnamtab` — maps a name to a Keymap
 /// + per-node flags (KMN_IMMORTAL for `.safe`).
@@ -136,31 +64,11 @@ pub struct KeymapName {                                                      // 
     pub keymap: Arc<Keymap>,                                                 // c:58 Keymap keymap
 }
 
-/// Direct port of `struct keymap` from `Src/Zle/zle_keymap.c:64`.
-/// A keymap — binding of keys to thingies.
-#[derive(Debug, Clone)]
-pub struct Keymap {                                                          // c:64
-    /// `Thingy first[256]` — c:65, base binding for each byte.
-    pub first: [Option<Thingy>; 256],
-    /// `HashTable multi` — c:66, multi-character bindings.
-    pub multi: HashMap<Vec<u8>, KeyBinding>,
-    /// `KeymapName primary` — c:78, primary alias for this map.
-    pub primary: Option<String>,
-    /// `int flags` — c:79 (KM_IMMUTABLE).
-    pub flags: i32,
-    /// `int rc` — c:80, reference count (refkeymap/unrefkeymap/
-    /// deletekeymap).
-    pub rc: i32,
-}
+pub const KMN_IMMORTAL: i32 = 1 << 1;                                        // c:62
 
-/// Direct port of `struct key` from `Src/Zle/zle_keymap.c:85`.
-/// A key binding (either a thingy or a string to send).
-#[derive(Debug, Clone)]
-pub struct KeyBinding {                                                      // c:85
-    pub bind: Option<Thingy>,                                                // c:88 Thingy bind
-    pub str: Option<String>,                                                 // c:89 char *str
-    pub prefixct: i32,                                                       // c:90 int prefixct
-}
+/// Port of `KM_IMMUTABLE` from `Src/Zle/zle_keymap.c:83`. Marks a
+/// keymap that can't have its bindings modified.
+pub const KM_IMMUTABLE: i32 = 1 << 1;                                        // c:83
 
 // `BindState` / `BindStateFlags` deleted — the C `struct bindstate`
 // at zle_keymap.c:95 is only used as a local in `printbinding()`/
@@ -192,6 +100,157 @@ pub struct remprefstate {                                                    // 
     /// to mirror the C struct shape; `self.prefix.len()` reads the
     /// same value).
     pub prefixlen: usize,                                                    // c:111
+}
+
+/// Port of `BS_LIST` from `Src/Zle/zle_keymap.c:114`. `bin_bindkey -L`:
+/// list bindings in `bindkey -M` syntax.
+pub const BS_LIST: i32 = 1 << 0;                                             // c:114
+
+/// Port of `BS_ALL` from `Src/Zle/zle_keymap.c:115`. `bin_bindkey -aL`:
+/// list ALL bindings, including default sequences.
+pub const BS_ALL: i32 = 1 << 1;                                              // c:115
+
+/// Port of `static Thingy lastnamed` from `Src/Zle/zle_keymap.c:145`.
+/// Last command executed by `execute-named-command` — used to
+/// re-execute via `bindkey -A name` then `getkeycmd`.
+pub static lastnamed: Mutex<Option<Thingy>> = Mutex::new(None);              // c:145
+
+/// Port of `createkeymapnamtab()` from Src/Zle/zle_keymap.c:153.
+pub fn createkeymapnamtab() {                                                // c:153
+    // c:153 — `keymapnamtab = newhashtable(7, "keymapnamtab", NULL)`.
+    // OnceLock-init via accessor.
+    let _ = keymapnamtab();
+}
+
+/// Port of `makekeymapnamnode(Keymap keymap)` from Src/Zle/zle_keymap.c:173.
+pub fn makekeymapnamnode(keymap: Arc<Keymap>) -> KeymapName {                    // c:173
+    // c:173-178 — `kmn = zshcalloc; kmn->keymap = keymap; return kmn`.
+    KeymapName {
+        nam: String::new(),
+        flags: 0,
+        keymap: keymap,
+    }
+}
+
+/// Port of `emptykeymapnamtab(HashTable ht)` from Src/Zle/zle_keymap.c:183.
+/// WARNING: param names don't match C — Rust=() vs C=(ht)
+pub fn emptykeymapnamtab() {                                                 // c:183
+    // c:183-198 — walk all nodes, free name + unrefkeymap + zfree.
+    // Rust drop cascade handles free; we just clear the table.
+    keymapnamtab().lock().unwrap().clear();
+}
+
+/// Direct port of `void refkeymap_by_name(char *name)` from
+/// `Src/Zle/zle_keymap.c:208-216`.
+/// ```c
+/// KeymapName kmn = keymapnamtab.getnode(keymapnamtab, name);
+/// if (kmn) {
+///     refkeymap(kmn->keymap);
+///     if (!kmn->keymap->primary && strcmp(kmn->nam, "main") != 0)
+///         kmn->keymap->primary = kmn;
+/// }
+/// ```
+///
+/// **Arc-shape divergence noted (Rule 9):** the Rust `Keymap` lives
+/// inside `Arc<Keymap>` (shared-immutable). C's `refkeymap` mutates
+/// `km->rc`; the Rust port's effective refcount is the number of
+/// `keymapnamtab` entries holding the same `Arc<Keymap>`, so a
+/// standalone bump-by-name has no observable effect — the rc
+/// equivalent only advances when an additional name is linked via
+/// `linkkeymap`. Same for `primary` promotion (`Arc<Keymap>` is
+/// immutable; promotion only happens on the next `linkkeymap`).
+/// We keep the lookup as a contract check so callers see a working
+/// "did this name exist?" probe.
+/// Port of `refkeymap_by_name(KeymapName kmn)` from `Src/Zle/zle_keymap.c:209`.
+pub fn refkeymap_by_name(kmn: &str) {                                       // c:209
+    let _ = keymapnamtab().lock().unwrap().get(kmn);                        // c:209 getnode probe
+}
+
+/// Direct port of `static void scanprimaryname(HashNode hn,
+///                                              UNUSED(int flags))` from
+/// `Src/Zle/zle_keymap.c:224`. Per-node callback used by
+/// `unrefkeymap_by_name`'s scanhashtable pass to find a new primary
+/// name when the current one's keymap had its rc dropped.
+///
+/// **Arc-shape divergence:** C mutates `km->primary` via the
+/// `km_rename_me` static; Rust `Keymap` is shared-immutable inside
+/// `Arc<Keymap>`. The standalone fn is invoked via scanhashtable
+/// from `unrefkeymap_by_name` only. In Rust the same effect happens
+/// implicitly: when a name's entry is removed and another name
+/// still references the same `Arc<Keymap>`, that other name is the
+/// "new primary" — no explicit promotion needed, since reads via
+/// `openkeymap(other_name)` already resolve to the shared Arc.
+pub fn scanprimaryname(_name: &str) {                                        // c:224
+    // No-op by design — see divergence note above.
+}
+
+/// Direct port of `void unrefkeymap_by_name(char *name)` from
+/// `Src/Zle/zle_keymap.c:246`.
+/// ```c
+/// kmname = keymapnamtab.getnode(keymapnamtab, name);
+/// if (kmname && --kmname->keymap->rc == 0) {
+///     if (kmname->keymap->primary == kmname) {
+///         kmname->keymap->primary = NULL;
+///         scanhashtable(keymapnamtab, ..., scanprimaryname, 0);
+///     }
+///     // chained deletekeymap via scanhashtable removal
+/// }
+/// ```
+pub fn unrefkeymap_by_name(name: &str) {                                     // c:246
+    // c:246 — `kmname = getnode(name)`. Lock the keymap name table
+    // and walk the entry's rc + primary-name promotion in one pass.
+    let mut tab = match keymapnamtab().lock() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    let Some(_kmn) = tab.get(name) else { return; };                         // c:249
+
+    // c:252 — `--km->rc`. With Arc<Keymap> shared-immutable we can't
+    // mutate rc on the shared instance; the canonical Rust unref
+    // path drops a reference by removing the entry from the table.
+    // Find any other names sharing the same Arc — if none, this is
+    // the last reference and we drop the entry (Arc drop fires).
+    let arc_to_remove = tab.get(name).map(|kmn| kmn.keymap.clone());
+    let shared_count = if let Some(ref arc) = arc_to_remove {
+        tab.values().filter(|kmn| std::sync::Arc::ptr_eq(&kmn.keymap, arc)).count()
+    } else { 0 };
+
+    if shared_count <= 1 {                                                   // c:253 rc==0 path
+        tab.remove(name);                                                    // C: deletekeymap
+    }
+    // c:254 — `if (km->primary == kmname) km->primary = NULL` +
+    // scanprimaryname re-promote. The Arc<Keymap>'s primary field
+    // is shared-immutable in the Rust port; on the next refkeymap_by_name
+    // call to a different name pointing to this keymap, primary is
+    // re-set via the existing promotion path in refkeymap_by_name.
+}
+
+
+
+/// Port of `freekeymapnamnode(HashNode hn)` from Src/Zle/zle_keymap.c:267.
+pub fn freekeymapnamnode(hn: &str) {                                       // c:267
+    // c:267-273 — `kmn = (KeymapName)hn; zsfree(kmn->nam);
+    //              unrefkeymap_by_name(kmn); zfree(kmn,...)`.
+    keymapnamtab().lock().unwrap().remove(hn);
+}
+
+/// Port of `newkeytab(char *kmname)` from Src/Zle/zle_keymap.c:278.
+/// WARNING: param names don't match C — Rust=() vs C=(kmname)
+pub fn newkeytab() -> HashMap<Vec<u8>, KeyBinding> {                         // c:278
+    // c:278-296 — `ht = newhashtable(7, kmname, NULL)`. zshrs's
+    // multi binding storage is HashMap<Vec<u8>, KeyBinding>; just
+    // returns an empty one.
+    HashMap::new()
+}
+
+/// Port of `makekeynode(Thingy t, char *str)` from Src/Zle/zle_keymap.c:301.
+pub fn makekeynode(t: Thingy, str: String) -> KeyBinding {                     // c:301
+    // c:301-307 — `k = zshcalloc; k->bind = t; k->str = str`.
+    KeyBinding {
+        bind: Some(t),
+        str: Some(str),
+        prefixct: 0,
+    }
 }
 
 impl Default for Keymap {
@@ -363,127 +422,6 @@ impl Keymap {
                 .map(|kb| kb.prefixct > 0)
                 .unwrap_or(false)
         }
-    }
-}
-
-/// Port of `emptykeymapnamtab(HashTable ht)` from Src/Zle/zle_keymap.c:183.
-/// WARNING: param names don't match C — Rust=() vs C=(ht)
-pub fn emptykeymapnamtab() {                                                 // c:183
-    // c:183-198 — walk all nodes, free name + unrefkeymap + zfree.
-    // Rust drop cascade handles free; we just clear the table.
-    keymapnamtab().lock().unwrap().clear();
-}
-
-/// Direct port of `void refkeymap_by_name(char *name)` from
-/// `Src/Zle/zle_keymap.c:208-216`.
-/// ```c
-/// KeymapName kmn = keymapnamtab.getnode(keymapnamtab, name);
-/// if (kmn) {
-///     refkeymap(kmn->keymap);
-///     if (!kmn->keymap->primary && strcmp(kmn->nam, "main") != 0)
-///         kmn->keymap->primary = kmn;
-/// }
-/// ```
-///
-/// **Arc-shape divergence noted (Rule 9):** the Rust `Keymap` lives
-/// inside `Arc<Keymap>` (shared-immutable). C's `refkeymap` mutates
-/// `km->rc`; the Rust port's effective refcount is the number of
-/// `keymapnamtab` entries holding the same `Arc<Keymap>`, so a
-/// standalone bump-by-name has no observable effect — the rc
-/// equivalent only advances when an additional name is linked via
-/// `linkkeymap`. Same for `primary` promotion (`Arc<Keymap>` is
-/// immutable; promotion only happens on the next `linkkeymap`).
-/// We keep the lookup as a contract check so callers see a working
-/// "did this name exist?" probe.
-/// Port of `refkeymap_by_name(KeymapName kmn)` from `Src/Zle/zle_keymap.c:209`.
-pub fn refkeymap_by_name(kmn: &str) {                                       // c:209
-    let _ = keymapnamtab().lock().unwrap().get(kmn);                        // c:209 getnode probe
-}
-
-/// Direct port of `static void scanprimaryname(HashNode hn,
-///                                              UNUSED(int flags))` from
-/// `Src/Zle/zle_keymap.c:224`. Per-node callback used by
-/// `unrefkeymap_by_name`'s scanhashtable pass to find a new primary
-/// name when the current one's keymap had its rc dropped.
-///
-/// **Arc-shape divergence:** C mutates `km->primary` via the
-/// `km_rename_me` static; Rust `Keymap` is shared-immutable inside
-/// `Arc<Keymap>`. The standalone fn is invoked via scanhashtable
-/// from `unrefkeymap_by_name` only. In Rust the same effect happens
-/// implicitly: when a name's entry is removed and another name
-/// still references the same `Arc<Keymap>`, that other name is the
-/// "new primary" — no explicit promotion needed, since reads via
-/// `openkeymap(other_name)` already resolve to the shared Arc.
-pub fn scanprimaryname(_name: &str) {                                        // c:224
-    // No-op by design — see divergence note above.
-}
-
-/// Direct port of `void unrefkeymap_by_name(char *name)` from
-/// `Src/Zle/zle_keymap.c:246`.
-/// ```c
-/// kmname = keymapnamtab.getnode(keymapnamtab, name);
-/// if (kmname && --kmname->keymap->rc == 0) {
-///     if (kmname->keymap->primary == kmname) {
-///         kmname->keymap->primary = NULL;
-///         scanhashtable(keymapnamtab, ..., scanprimaryname, 0);
-///     }
-///     // chained deletekeymap via scanhashtable removal
-/// }
-/// ```
-pub fn unrefkeymap_by_name(name: &str) {                                     // c:246
-    // c:246 — `kmname = getnode(name)`. Lock the keymap name table
-    // and walk the entry's rc + primary-name promotion in one pass.
-    let mut tab = match keymapnamtab().lock() {
-        Ok(t) => t,
-        Err(_) => return,
-    };
-    let Some(_kmn) = tab.get(name) else { return; };                         // c:249
-
-    // c:252 — `--km->rc`. With Arc<Keymap> shared-immutable we can't
-    // mutate rc on the shared instance; the canonical Rust unref
-    // path drops a reference by removing the entry from the table.
-    // Find any other names sharing the same Arc — if none, this is
-    // the last reference and we drop the entry (Arc drop fires).
-    let arc_to_remove = tab.get(name).map(|kmn| kmn.keymap.clone());
-    let shared_count = if let Some(ref arc) = arc_to_remove {
-        tab.values().filter(|kmn| std::sync::Arc::ptr_eq(&kmn.keymap, arc)).count()
-    } else { 0 };
-
-    if shared_count <= 1 {                                                   // c:253 rc==0 path
-        tab.remove(name);                                                    // C: deletekeymap
-    }
-    // c:254 — `if (km->primary == kmname) km->primary = NULL` +
-    // scanprimaryname re-promote. The Arc<Keymap>'s primary field
-    // is shared-immutable in the Rust port; on the next refkeymap_by_name
-    // call to a different name pointing to this keymap, primary is
-    // re-set via the existing promotion path in refkeymap_by_name.
-}
-
-
-
-/// Port of `freekeymapnamnode(HashNode hn)` from Src/Zle/zle_keymap.c:267.
-pub fn freekeymapnamnode(hn: &str) {                                       // c:267
-    // c:267-273 — `kmn = (KeymapName)hn; zsfree(kmn->nam);
-    //              unrefkeymap_by_name(kmn); zfree(kmn,...)`.
-    keymapnamtab().lock().unwrap().remove(hn);
-}
-
-/// Port of `newkeytab(char *kmname)` from Src/Zle/zle_keymap.c:278.
-/// WARNING: param names don't match C — Rust=() vs C=(kmname)
-pub fn newkeytab() -> HashMap<Vec<u8>, KeyBinding> {                         // c:278
-    // c:278-296 — `ht = newhashtable(7, kmname, NULL)`. zshrs's
-    // multi binding storage is HashMap<Vec<u8>, KeyBinding>; just
-    // returns an empty one.
-    HashMap::new()
-}
-
-/// Port of `makekeynode(Thingy t, char *str)` from Src/Zle/zle_keymap.c:301.
-pub fn makekeynode(t: Thingy, str: String) -> KeyBinding {                     // c:301
-    // c:301-307 — `k = zshcalloc; k->bind = t; k->str = str`.
-    KeyBinding {
-        bind: Some(t),
-        str: Some(str),
-        prefixct: 0,
     }
 }
 
@@ -1414,6 +1352,68 @@ pub fn readcommand() -> i32 {                                                // 
     0                                                                        // c:1819
 }
 
+/// Port of `mod_export char *curkeymapname` from `Src/Zle/zle_keymap.c:126`.
+/// Name of the currently active keymap (driven by `bindkey -A` and the
+/// `KEYMAP` parameter). The Rust port wraps in OnceLock<Mutex<>> for
+/// thread-safe access from widget bodies.
+pub static CURKEYMAPNAME: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();                                              // c:126
+
+/// Port of `Keymap curkeymap` from `Src/Zle/zle_keymap.c:124`. The
+/// currently active keymap (per `bindkey -A` selection or KEYMAP
+/// parameter). Used inline at zle_keymap.c:519 (`curkeymap = km;`)
+/// and read by `getkeycmd`/`getkeybuf` to dispatch the next key.
+pub static curkeymap: Mutex<Option<Arc<Keymap>>> = Mutex::new(None);         // c:124
+
+/// Port of `char *keybuf` from `Src/Zle/zle_keymap.c:136`. The key
+/// sequence currently being read by `getkeycmd`. C uses a flat
+/// `char*` heap allocation sized by `keybufsz`; Rust uses
+/// `Vec<u8>` which manages its own capacity.
+pub static keybuf: Mutex<Vec<u8>> = Mutex::new(Vec::new());                  // c:136
+
+/// Port of `int keybuflen` from `Src/Zle/zle_keymap.c:139`. Current
+/// number of bytes in `keybuf`. Rust mirrors via `keybuf.lock().len()`
+/// but exposes the count as a separate static for callers that need
+/// it without holding the buffer lock.
+pub static keybuflen: std::sync::atomic::AtomicI32 =                         // c:139
+    std::sync::atomic::AtomicI32::new(0);
+
+// =====================================================================
+// keymapnamtab — `Src/Zle/zle_keymap.c:128/153`.
+// =====================================================================
+//
+// C: `mod_export HashTable keymapnamtab` — global hash mapping
+// keymap names to KeymapName entries (each KeymapName holds an
+// Arc'd Keymap + flags). zshrs uses Mutex<HashMap<String, KeymapName>>.
+
+static KEYMAPNAMTAB: OnceLock<Mutex<HashMap<String, KeymapName>>> = OnceLock::new();
+
+/// Direct port of `struct keymap` from `Src/Zle/zle_keymap.c:64`.
+/// A keymap — binding of keys to thingies.
+#[derive(Debug, Clone)]
+pub struct Keymap {                                                          // c:64
+    /// `Thingy first[256]` — c:65, base binding for each byte.
+    pub first: [Option<Thingy>; 256],
+    /// `HashTable multi` — c:66, multi-character bindings.
+    pub multi: HashMap<Vec<u8>, KeyBinding>,
+    /// `KeymapName primary` — c:78, primary alias for this map.
+    pub primary: Option<String>,
+    /// `int flags` — c:79 (KM_IMMUTABLE).
+    pub flags: i32,
+    /// `int rc` — c:80, reference count (refkeymap/unrefkeymap/
+    /// deletekeymap).
+    pub rc: i32,
+}
+
+/// Direct port of `struct key` from `Src/Zle/zle_keymap.c:85`.
+/// A key binding (either a thingy or a string to send).
+#[derive(Debug, Clone)]
+pub struct KeyBinding {                                                      // c:85
+    pub bind: Option<Thingy>,                                                // c:88 Thingy bind
+    pub str: Option<String>,                                                 // c:89 char *str
+    pub prefixct: i32,                                                       // c:90 int prefixct
+}
+
 /// File-scope `Keymap localkeymap` from `Src/Zle/zle_keymap.c:1759`.
 /// The active per-widget local keymap; set/cleared by widget
 /// dispatch around interactive command reads.
@@ -1590,6 +1590,17 @@ pub fn setup_vicmd_keymap(km: &mut Keymap) {
     // c:1436 — bracketed paste.
     km.bind_seq(b"\x1b[200~", Thingy::builtin("bracketed-paste"));
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

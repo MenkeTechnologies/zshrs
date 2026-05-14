@@ -98,61 +98,6 @@ pub const COMP_LISTMATCH: i32 = 1 << 5;                                      // 
 /// "special" entry-point flags.
 pub const COMP_SPECIAL:   i32 = COMP_COMMAND | COMP_DEFAULT | COMP_FIRST;    // c:60
 
-/// Port of `CFN_FIRST` from `compctl.c:1672`. Internal flag for
-/// `printcompctl` — skip the cc_first per-table override.
-pub const CFN_FIRST:   i32 = 1;                                              // c:1672
-/// Port of `CFN_DEFAULT` from `compctl.c:1673`. Skip cc_default.
-pub const CFN_DEFAULT: i32 = 2;                                              // c:1673
-
-// =================================================================
-// Type definitions — port of Src/Zle/compctl.h:32-115
-// =================================================================
-
-// Compcond/CompcondData/Compctl/Patcomp/Compctlp ported in
-// compctl_h.rs (Src/Zle/compctl.h:39-115). Imported above.
-
-// =================================================================
-// Globals — port of Src/Zle/compctl.c:36-66
-// =================================================================
-
-/// Global cmatcher list. Port of file-static `Cmlist cmatcher;` at
-/// Src/Zle/compctl.c:36. Bucket-2 user-registered registry per
-/// PORT_PLAN.md — `compctl -M` writes via `freecmlist + cpcmlist`,
-/// every completion call reads. `RwLock` lets parallel completion
-/// reads proceed without serialising on a mutex.
-pub(crate) static CMATCHER:
-    std::sync::RwLock<Option<Box<crate::ported::zle::comp_h::Cmlist>>> =
-        std::sync::RwLock::new(None);                                        // c:36
-
-/// `compctltab` hash table — name → Compctl.
-/// Port of `HashTable compctltab;` at Src/Zle/compctl.c:46.
-/// Bucket-2 user-registered registry: `compctl name args` writes,
-/// every completion call reads. `RwLock` per PORT_PLAN.md.
-static COMPCTL_TAB: std::sync::RwLock<Option<HashMap<String, Arc<Compctl>>>>
-    = std::sync::RwLock::new(None);
-
-/// Pattern-compctl list. Port of `Patcomp patcomps;` at
-/// Src/Zle/compctl.c:51. Bucket-2 user-registered registry:
-/// `compctl -p` writes, every pattern-completion call reads.
-/// `RwLock` per PORT_PLAN.md.
-static PATCOMPS: std::sync::RwLock<Vec<(String, Arc<Compctl>)>>
-    = std::sync::RwLock::new(Vec::new());
-
-// `cclist` — flag for listing/command/default/first completion.
-// Port of file-static `int cclist;` at Src/Zle/compctl.c:63.
-// Bucket-1 per PORT_PLAN.md — per-completion-call scratch state,
-// thread_local so concurrent completion invocations don't race.
-thread_local! {
-    static CCLIST: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
-}
-
-// `showmask` — mask determining what to print.
-// Port of file-static `unsigned long showmask;` at Src/Zle/compctl.c:66.
-// Bucket-1 per PORT_PLAN.md.
-thread_local! {
-    static SHOWMASK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
 // =================================================================
 // Free fns — start of compctl.c proper
 // =================================================================
@@ -229,6 +174,21 @@ pub(crate) fn cpcmlist(                                                      // 
         l = src.next.as_deref();                                             // c:311 l = l->next
     }
     head                                                                     // c:311 return r
+}
+
+// `cclist` — flag for listing/command/default/first completion.
+// Port of file-static `int cclist;` at Src/Zle/compctl.c:63.
+// Bucket-1 per PORT_PLAN.md — per-completion-call scratch state,
+// thread_local so concurrent completion invocations don't race.
+thread_local! {
+    static CCLIST: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+}
+
+// `showmask` — mask determining what to print.
+// Port of file-static `unsigned long showmask;` at Src/Zle/compctl.c:66.
+// Bucket-1 per PORT_PLAN.md.
+thread_local! {
+    static SHOWMASK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Direct port of `static int set_gmatcher(char *name, char **argv)` from
@@ -1247,6 +1207,12 @@ pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
     ret
 }
 
+/// Port of `CFN_FIRST` from `compctl.c:1672`. Internal flag for
+/// `printcompctl` — skip the cc_first per-table override.
+pub const CFN_FIRST:   i32 = 1;                                              // c:1672
+/// Port of `CFN_DEFAULT` from `compctl.c:1673`. Skip cc_default.
+pub const CFN_DEFAULT: i32 = 2;                                              // c:1673
+
 /// `compcall` builtin entry point.
 /// Port of `bin_compcall(char *name, UNUSED(char **argv), Options ops, UNUSED(int func))` from Src/Zle/compctl.c:1676.
 ///
@@ -1281,6 +1247,99 @@ pub(crate) fn bin_compcall(name: &str, argv: &[String]) -> i32 {
     if !d_set { flags |= CFN_DEFAULT; }
     makecomplistctl(flags);
     0
+}
+
+/// Hook for completion-list build start.
+/// Port of `ccmakehookfn(UNUSED(Hookdef dummy), struct ccmakedat *dat)` from Src/Zle/compctl.c:1763 (~145 lines).
+///
+/// Called by the completion driver via `addhookfunc("compctl_make",
+/// ccmakehookfn)` (boot_). Walks `cmatcher` (global -M chain),
+/// builds matcher copy, runs makecomplistglobal for each, manages
+/// the per-iteration ccused/ccstack lists, accumulates results into
+/// pmatches/lastmatches.
+///
+/// Walks the global CMATCHER chain populating the per-call `matchers`
+/// Vec, clears bmatchers/ainfo/fainfo, resets LASTAMBIG/MENUCMP. The
+/// per-iteration `makecomplistglobal` call is driven from the
+/// dispatch surface (compcore.rs) which already invokes this hook.
+/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
+pub(crate) fn ccmakehookfn(_dat: ()) -> i32 {
+    use std::sync::atomic::Ordering;
+    // c:1779-1794 — copy global cmatcher list into the per-call
+    // `matchers` Vec so makecomplistglobal sees the matcher chain.
+    if let Ok(g) = CMATCHER.read() {
+        let mut cur: Option<&crate::ported::zle::comp_h::Cmlist> =
+            g.as_deref();
+        if let Ok(mut mlist) = crate::ported::zle::compcore::matchers
+            .get_or_init(|| std::sync::Mutex::new(Vec::new())).lock()
+        {
+            mlist.clear();
+            while let Some(p) = cur {                                        // c:1783
+                mlist.push(p.matcher.clone());                                // c:1789 addlinknode
+                cur = p.next.as_deref();
+            }
+        }
+    }
+    // c:1798 — bmatchers = NULL.
+    if let Ok(mut g) = crate::ported::zle::compcore::bmatchers
+        .get_or_init(|| std::sync::Mutex::new(None)).lock()
+    {
+        *g = None;
+    }
+    // c:1811-1812 — ainfo = fainfo = fresh Aminfo.
+    if let Ok(mut g) = crate::ported::zle::compcore::ainfo
+        .get_or_init(|| std::sync::Mutex::new(None)).lock()
+    {
+        *g = Some(crate::ported::zle::comp_h::Aminfo::default());
+    }
+    if let Ok(mut g) = crate::ported::zle::compcore::fainfo
+        .get_or_init(|| std::sync::Mutex::new(None)).lock()
+    {
+        *g = Some(crate::ported::zle::comp_h::Aminfo::default());
+    }
+    // c:1817 — `if (!validlist) lastambig = 0`.
+    crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Ordering::Relaxed);
+    // c:1830 — `menucmp = menuacc = 0`.
+    crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::Relaxed);
+    // c:1903-1905 — return value drives dat->lst.
+    0
+}
+
+/// Hook for completion-list build cleanup.
+/// Port of `cccleanuphookfn(UNUSED(Hookdef dummy), UNUSED(void *dat))` from Src/Zle/compctl.c:1910.
+///
+/// Called via `addhookfunc("compctl_cleanup", cccleanuphookfn)` at
+/// boot_. The C body just nulls the ccused/ccstack file-statics —
+/// Rust drops them automatically when the per-call state goes out
+/// of scope. Kept as a name-faithful entry for the hook table.
+/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
+pub(crate) fn cccleanuphookfn(_dat: ()) -> i32 {
+    // C: c:1912 — `ccused = ccstack = NULL;` — Rust equivalent is
+    // a no-op since per-call state is stack-allocated.
+    0
+}
+
+/// Direct port of `void maketildelist(void)` from `Src/Zle/compctl.c:2055`.
+/// Fills the named-directory table and adds every entry as a match.
+/// The C body is:
+///   ```c
+///   nameddirtab->filltable(nameddirtab);
+///   scanhashtable(nameddirtab, 0, 0, 0, addhnmatch, 0);
+///   ```
+/// `addhnmatch` formats the entry name with a leading `~`. The Rust
+/// port iterates the live `nameddirtab` from `hashnameddir.rs` and
+/// calls `addmatch` for each `~name`.
+pub(crate) fn maketildelist() {                                              // c:2055
+    // c:2058 — filltable. Our `hashnameddir::nameddirtab` is populated
+    // by the runtime when named directories are declared via `hash -d`.
+    let entries: Vec<String> = crate::ported::hashnameddir::nameddirtab()
+        .lock().ok().map(|t| t.keys().cloned().collect())
+        .unwrap_or_default();
+    // c:2060 — scanhashtable callback `addhnmatch` (compctl.c:2092)
+    // prefixes the name with `~`.
+    for name in entries {
+        addmatch(&format!("~{}", name), None);
+    }
 }
 
 // Are we inside a completion function? Set by the completion-driver
@@ -1375,179 +1434,6 @@ pub(crate) fn compctlread(name: &str, args: &[String]) -> i32 {
 thread_local! {
     pub(crate) static INCOMPCTLFUNC: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
-}
-
-/// Hook for completion-list build start.
-/// Port of `ccmakehookfn(UNUSED(Hookdef dummy), struct ccmakedat *dat)` from Src/Zle/compctl.c:1763 (~145 lines).
-///
-/// Called by the completion driver via `addhookfunc("compctl_make",
-/// ccmakehookfn)` (boot_). Walks `cmatcher` (global -M chain),
-/// builds matcher copy, runs makecomplistglobal for each, manages
-/// the per-iteration ccused/ccstack lists, accumulates results into
-/// pmatches/lastmatches.
-///
-/// Walks the global CMATCHER chain populating the per-call `matchers`
-/// Vec, clears bmatchers/ainfo/fainfo, resets LASTAMBIG/MENUCMP. The
-/// per-iteration `makecomplistglobal` call is driven from the
-/// dispatch surface (compcore.rs) which already invokes this hook.
-/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
-pub(crate) fn ccmakehookfn(_dat: ()) -> i32 {
-    use std::sync::atomic::Ordering;
-    // c:1779-1794 — copy global cmatcher list into the per-call
-    // `matchers` Vec so makecomplistglobal sees the matcher chain.
-    if let Ok(g) = CMATCHER.read() {
-        let mut cur: Option<&crate::ported::zle::comp_h::Cmlist> =
-            g.as_deref();
-        if let Ok(mut mlist) = crate::ported::zle::compcore::matchers
-            .get_or_init(|| std::sync::Mutex::new(Vec::new())).lock()
-        {
-            mlist.clear();
-            while let Some(p) = cur {                                        // c:1783
-                mlist.push(p.matcher.clone());                                // c:1789 addlinknode
-                cur = p.next.as_deref();
-            }
-        }
-    }
-    // c:1798 — bmatchers = NULL.
-    if let Ok(mut g) = crate::ported::zle::compcore::bmatchers
-        .get_or_init(|| std::sync::Mutex::new(None)).lock()
-    {
-        *g = None;
-    }
-    // c:1811-1812 — ainfo = fainfo = fresh Aminfo.
-    if let Ok(mut g) = crate::ported::zle::compcore::ainfo
-        .get_or_init(|| std::sync::Mutex::new(None)).lock()
-    {
-        *g = Some(crate::ported::zle::comp_h::Aminfo::default());
-    }
-    if let Ok(mut g) = crate::ported::zle::compcore::fainfo
-        .get_or_init(|| std::sync::Mutex::new(None)).lock()
-    {
-        *g = Some(crate::ported::zle::comp_h::Aminfo::default());
-    }
-    // c:1817 — `if (!validlist) lastambig = 0`.
-    crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Ordering::Relaxed);
-    // c:1830 — `menucmp = menuacc = 0`.
-    crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::Relaxed);
-    // c:1903-1905 — return value drives dat->lst.
-    0
-}
-
-/// Hook for completion-list build cleanup.
-/// Port of `cccleanuphookfn(UNUSED(Hookdef dummy), UNUSED(void *dat))` from Src/Zle/compctl.c:1910.
-///
-/// Called via `addhookfunc("compctl_cleanup", cccleanuphookfn)` at
-/// boot_. The C body just nulls the ccused/ccstack file-statics —
-/// Rust drops them automatically when the per-call state goes out
-/// of scope. Kept as a name-faithful entry for the hook table.
-/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
-pub(crate) fn cccleanuphookfn(_dat: ()) -> i32 {
-    // C: c:1912 — `ccused = ccstack = NULL;` — Rust equivalent is
-    // a no-op since per-call state is stack-allocated.
-    0
-}
-
-/// `addwhat` special-value constants — port of the negative-int
-/// dispatch values documented in Src/Zle/compctl.c:1940-1951:
-///   ADDWHAT_FILES_OTHER     = -1  (other file specs: ~/=...)
-///   ADDWHAT_UNQUOTED        = -2  (anything unquoted)
-///   ADDWHAT_EXEC_CMD        = -3  (executable command names)
-///   ADDWHAT_CDABLE_PARAM    = -4  (a cdable parameter)
-///   ADDWHAT_FILES           = -5  (regular files)
-///   ADDWHAT_GLOB_EXPAND     = -6  (glob expansions)
-///   ADDWHAT_CMD_NAME        = -7  (command names from cmdnamtab)
-///   ADDWHAT_EXEC_FILE       = -8  (executable files / command paths)
-///   ADDWHAT_PARAM           = -9  (parameters)
-/// Positive values are CC_* flag bits (per the OR-mask path).
-// `addwhat` accept-thread values are C bare literals (Src/Zle/compctl.c:1941-1949):
-//   -1 files other / -2 unquoted / -3 exec cmd / -4 cdable param /
-//   -5 files / -6 glob expand / -7 cmd name / -8 exec file / -9 param
-// C uses bare integer comparisons inline; the Rust port follows.
-
-// File-thread `addwhat` global. Port of file-static `int addwhat;`
-// from Src/Zle/compctl.c:1749. Set by the dispatcher before each
-// addmatch / dumphashtable call to communicate the source kind.
-thread_local! { static ADDWHAT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
-
-// Per-completion match list. Port of file-static `LinkList` of
-// matches in zle_tricky.c. The Rust port keeps a per-call Vec so
-// addmatch can accumulate results without touching ZLE globals.
-thread_local! { static MATCH_LIST: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) }; }
-
-/// Add a match to the per-call result list.
-/// Port of `addmatch(char *str, int flags, char ***dispp, int line)` from Src/Zle/compctl.c:1925 (~150 lines).
-///
-/// The C body is a switch over `addwhat` (file static) that:
-///   - addwhat ∈ {-1, -5, -6, -7, -8, CC_FILES} → file-match path
-///     (calls comp_match with prefix/suffix, applies fignore, etc.)
-///   - addwhat ∈ {CC_QUOTEFLAG, -2, -3, -4, -9} → conditional accept
-///   - addwhat > 0 with CC_* bits → hash-node-flag dispatch (vars,
-///     funcs, builtins, aliases, bindings filtered by per-flag bits)
-///   - else → reject
-/// Then comp_match builds the Cline and calls addmatch1 to push.
-///
-/// This port keeps the addwhat-based dispatch shape. The Cline
-/// build (comp_match → bld_parts → cline_matched) happens upstream
-/// in `compcore::addmatches` for compsys-driven `compadd`; for the
-/// legacy compctl path the per-flag tables walked by
-/// `makecomplistflags` (paramtab, shfunctab, etc.) feed entries here
-/// after their PM_* / hash-flag filtering. The function then routes
-/// each accepted match into `MATCH_LIST` for the call-result.
-pub(crate) fn addmatch(s: &str, _t: Option<&str>) {
-    let aw = ADDWHAT.with(|c| c.get());
-    // C: c:1957-1990 — file-thread accept.
-    // C body inline literals: -1, -5, -6, -7, -8 (files-other/files/
-    // glob-expand/cmd-name/exec-file) plus the CC_FILES-or-bigger arm.
-    let file_thread = matches!(aw, -1 | -5 | -6 | -7 | -8)
-        || (aw > 0 && (aw as u64 & CC_FILES) != 0);
-    if file_thread {
-        // c:1988 — for -7 (CMD_NAME), filter via `findcmd` so only
-        // commands that actually resolve get accepted.
-        if aw == -7 && crate::ported::builtin::findcmd(s, 0, 0).is_none() {
-            return;
-        }
-        MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
-        return;
-    }
-    // C: c:1991-2014 — conditional-accept thread.
-    // C inline literals: -2 (unquoted), -3 (exec cmd), -4 (cdable
-    // param), -9 (param).
-    if matches!(aw, -2 | -3 | -4 | -9) {
-        MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
-        return;
-    }
-    if aw > 0 {
-        // CC_QUOTEFLAG / CC_BINDINGS / CC_SHFUNCS / etc. — accept.
-        // The per-flag filtering is done upstream in `makecomplistflags`
-        // (the paramtab / shfunctab / cmdnamtab walks filter by PM_*
-        // / hash bits before calling `addmatch`), so this arm just
-        // accepts the already-filtered name.
-        MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
-    }
-    // else: reject — match dropped on the floor per the C `return` path.
-}
-
-/// Direct port of `void maketildelist(void)` from `Src/Zle/compctl.c:2055`.
-/// Fills the named-directory table and adds every entry as a match.
-/// The C body is:
-///   ```c
-///   nameddirtab->filltable(nameddirtab);
-///   scanhashtable(nameddirtab, 0, 0, 0, addhnmatch, 0);
-///   ```
-/// `addhnmatch` formats the entry name with a leading `~`. The Rust
-/// port iterates the live `nameddirtab` from `hashnameddir.rs` and
-/// calls `addmatch` for each `~name`.
-pub(crate) fn maketildelist() {                                              // c:2055
-    // c:2058 — filltable. Our `hashnameddir::nameddirtab` is populated
-    // by the runtime when named directories are declared via `hash -d`.
-    let entries: Vec<String> = crate::ported::hashnameddir::nameddirtab()
-        .lock().ok().map(|t| t.keys().cloned().collect())
-        .unwrap_or_default();
-    // c:2060 — scanhashtable callback `addhnmatch` (compctl.c:2092)
-    // prefixes the name with `~`.
-    for name in entries {
-        addmatch(&format!("~{}", name), None);
-    }
 }
 
 /// Hash-pattern match for `compctl -x` n[…] / N[…] conditions.
@@ -1646,6 +1532,86 @@ pub(crate) fn dumphashtable<I: IntoIterator<Item = String>>(names: I, what: i32)
     }
 }
 
+/// `addwhat` special-value constants — port of the negative-int
+/// dispatch values documented in Src/Zle/compctl.c:1940-1951:
+///   ADDWHAT_FILES_OTHER     = -1  (other file specs: ~/=...)
+///   ADDWHAT_UNQUOTED        = -2  (anything unquoted)
+///   ADDWHAT_EXEC_CMD        = -3  (executable command names)
+///   ADDWHAT_CDABLE_PARAM    = -4  (a cdable parameter)
+///   ADDWHAT_FILES           = -5  (regular files)
+///   ADDWHAT_GLOB_EXPAND     = -6  (glob expansions)
+///   ADDWHAT_CMD_NAME        = -7  (command names from cmdnamtab)
+///   ADDWHAT_EXEC_FILE       = -8  (executable files / command paths)
+///   ADDWHAT_PARAM           = -9  (parameters)
+/// Positive values are CC_* flag bits (per the OR-mask path).
+// `addwhat` accept-thread values are C bare literals (Src/Zle/compctl.c:1941-1949):
+//   -1 files other / -2 unquoted / -3 exec cmd / -4 cdable param /
+//   -5 files / -6 glob expand / -7 cmd name / -8 exec file / -9 param
+// C uses bare integer comparisons inline; the Rust port follows.
+
+// File-thread `addwhat` global. Port of file-static `int addwhat;`
+// from Src/Zle/compctl.c:1749. Set by the dispatcher before each
+// addmatch / dumphashtable call to communicate the source kind.
+thread_local! { static ADDWHAT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
+
+// Per-completion match list. Port of file-static `LinkList` of
+// matches in zle_tricky.c. The Rust port keeps a per-call Vec so
+// addmatch can accumulate results without touching ZLE globals.
+thread_local! { static MATCH_LIST: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) }; }
+
+/// Add a match to the per-call result list.
+/// Port of `addmatch(char *str, int flags, char ***dispp, int line)` from Src/Zle/compctl.c:1925 (~150 lines).
+///
+/// The C body is a switch over `addwhat` (file static) that:
+///   - addwhat ∈ {-1, -5, -6, -7, -8, CC_FILES} → file-match path
+///     (calls comp_match with prefix/suffix, applies fignore, etc.)
+///   - addwhat ∈ {CC_QUOTEFLAG, -2, -3, -4, -9} → conditional accept
+///   - addwhat > 0 with CC_* bits → hash-node-flag dispatch (vars,
+///     funcs, builtins, aliases, bindings filtered by per-flag bits)
+///   - else → reject
+/// Then comp_match builds the Cline and calls addmatch1 to push.
+///
+/// This port keeps the addwhat-based dispatch shape. The Cline
+/// build (comp_match → bld_parts → cline_matched) happens upstream
+/// in `compcore::addmatches` for compsys-driven `compadd`; for the
+/// legacy compctl path the per-flag tables walked by
+/// `makecomplistflags` (paramtab, shfunctab, etc.) feed entries here
+/// after their PM_* / hash-flag filtering. The function then routes
+/// each accepted match into `MATCH_LIST` for the call-result.
+pub(crate) fn addmatch(s: &str, _t: Option<&str>) {
+    let aw = ADDWHAT.with(|c| c.get());
+    // C: c:1957-1990 — file-thread accept.
+    // C body inline literals: -1, -5, -6, -7, -8 (files-other/files/
+    // glob-expand/cmd-name/exec-file) plus the CC_FILES-or-bigger arm.
+    let file_thread = matches!(aw, -1 | -5 | -6 | -7 | -8)
+        || (aw > 0 && (aw as u64 & CC_FILES) != 0);
+    if file_thread {
+        // c:1988 — for -7 (CMD_NAME), filter via `findcmd` so only
+        // commands that actually resolve get accepted.
+        if aw == -7 && crate::ported::builtin::findcmd(s, 0, 0).is_none() {
+            return;
+        }
+        MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
+        return;
+    }
+    // C: c:1991-2014 — conditional-accept thread.
+    // C inline literals: -2 (unquoted), -3 (exec cmd), -4 (cdable
+    // param), -9 (param).
+    if matches!(aw, -2 | -3 | -4 | -9) {
+        MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
+        return;
+    }
+    if aw > 0 {
+        // CC_QUOTEFLAG / CC_BINDINGS / CC_SHFUNCS / etc. — accept.
+        // The per-flag filtering is done upstream in `makecomplistflags`
+        // (the paramtab / shfunctab / cmdnamtab walks filter by PM_*
+        // / hash bits before calling `addmatch`), so this arm just
+        // accepts the already-filtered name.
+        MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
+    }
+    // else: reject — match dropped on the floor per the C `return` path.
+}
+
 /// Hash-node → match adapter for scanhashtable callbacks.
 /// Port of `addhnmatch(HashNode hn, UNUSED(int flags))` from Src/Zle/compctl.c:2122.
 ///
@@ -1733,79 +1699,6 @@ pub(crate) fn gen_matches_files(dirs: bool, execs: bool, all: bool) {
         }
         addmatch(&name, None);
     }
-}
-
-// Pre-cursor directory path (`prpre` global). Port of file-static
-// `char *prpre` at Src/Zle/compctl.c:1736 — the directory portion
-// of the path component the cursor is in, expanded for `opendir`.
-// Set by the completion driver before calling gen_matches_files.
-thread_local! { static PRPRE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
-
-/// Find a node in a linked list by data-pointer equality.
-/// Port of `findnode(LinkList list, void *dat)` from Src/Zle/compctl.c:2288.
-///
-/// C signature: `LinkNode findnode(LinkList list, void *dat)` —
-/// walks `list` looking for the node whose data pointer == `dat`.
-/// Returns the matching node or NULL.
-///
-/// Rust generic over `T: PartialEq` — returns the index of the
-/// matching element, or None.
-/// WARNING: param names don't match C — Rust=(dat) vs C=(list, dat)
-pub(crate) fn findnode<T: PartialEq>(list: &[T], dat: &T) -> Option<usize> {
-    list.iter().position(|x| x == dat)
-}
-
-// `cdepth` recursion guard. Port of file-static `int cdepth = 0;`
-// at Src/Zle/compctl.c:2300.
-thread_local! { static CDEPTH: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
-
-/// Port of `MAX_CDEPTH` from `Src/Zle/compctl.c:2302`. Maximum
-/// recursion depth — prevents infinite recursion between compctl-
-/// driven completion and the wrapper.
-pub const MAX_CDEPTH: i32 = 16;                                              // c:2302
-
-// `ccont` continuation flags. Port of file-static `unsigned long
-// ccont;` at Src/Zle/compctl.c:1714. Bitmask of CC_CCCONT/etc.
-// controlling whether the dispatch loop continues to next compctl.
-thread_local! { static CCONT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
-
-/// Build the completion list — top-level dispatch.
-/// Port of `makecomplistctl(int flags)` from Src/Zle/compctl.c:2305.
-///
-/// Entry point used by bin_compcall and the completion driver.
-/// The C body:
-///   1. Recursion guard (cdepth >= MAX_CDEPTH → return 0)
-///   2. SWITCHHEAPS to the compheap (Rust uses the global allocator)
-///   3. Save lots of state (cmdstr, clwords, instring, qipre/qisuf,
-///      isuf, autoq, offs)
-///   4. Set up new state from compquote / compqiprefix / compqisuffix /
-///      compisuffix / compwords / compcurrent
-///   5. Set incompfunc=2 (deeper-nested marker)
-///   6. Call makecomplistglobal(str, !clwpos, COMP_COMPLETE, flags)
-///   7. Restore state
-///   8. cdepth-- and return
-///
-/// This Rust port keeps the recursion guard + flag dispatch + the
-/// makecomplistglobal call. The compfunc state save/restore relies
-/// on ZLE-tricky globals (clwords, etc.) that aren't ported here.
-pub(crate) fn makecomplistctl(flags: i32) -> i32 {
-    let cdepth = CDEPTH.with(|c| c.get());
-    if cdepth == MAX_CDEPTH {                                 // c:2311
-        return 0;
-    }
-    CDEPTH.with(|c| c.set(cdepth + 1));                       // c:2314
-
-    // C: c:2372 — bump incompfunc to 2 (recursion marker)
-    let saved_incomp = INCOMPFUNC.with(|c| c.get());
-    INCOMPFUNC.with(|c| c.set(2));
-
-    // C: c:2373 — recurse to global dispatch
-    let str_in = "";  // placeholder; real impl reads comp_str
-    let ret = makecomplistglobal(str_in, false, COMP_LIST as i32, flags);
-
-    INCOMPFUNC.with(|c| c.set(saved_incomp));
-    CDEPTH.with(|c| c.set(c.get() - 1));
-    ret
 }
 
 /// Line-context dispatch — global completion entry.
@@ -1961,68 +1854,6 @@ pub(crate) fn makecomplistcmd(os: &str, incmd: bool, flags: i32) -> i32 {
     ret
 }
 
-// `cmdstr` — current command word being completed.
-// Port of file-static `char *cmdstr` (zle_tricky.c). Set by the
-// completion driver before invoking makecomplistcmd.
-thread_local! { static CMDSTR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
-
-/// C body (c:2532-2552):
-/// ```c
-/// s = ((shfunctab->getnode(shfunctab, cmdstr) ||
-///       builtintab->getnode(builtintab, cmdstr)) ? NULL :
-///      findcmd(cmdstr, 1, 0));
-/// for (pc = patcomps; pc; pc = pc->next) {
-///     if ((pat = patcompile(pc->pat, PAT_STATIC, NULL)) &&
-///         (pattry(pat, cmdstr) ||
-///          (s && pattry(pat, s)))) {
-///         makecomplistcc(pc->cc, os, incmd);
-///         ret |= 2;
-///         if (!(ccont & CC_CCCONT))
-///             return ret;
-///     }
-/// }
-/// return ret;
-/// ```
-/// Port of `makecomplistpc(char *os, int incmd)` from `Src/Zle/compctl.c:2530`.
-/// WARNING: param names don't match C — Rust=(incmd) vs C=(os, incmd)
-pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {                 // c:2530
-    let mut ret: i32 = 0;                                                    // c:2530
-    let cmdstr = match CMDSTR.with(|r| r.borrow().clone()) {                 // c:2533
-        Some(s) => s,
-        None => return 0,
-    };
-    // c:2537-2540 — `s = (shfunctab[cmdstr] || builtintab[cmdstr]) ?
-    // NULL : findcmd(cmdstr, 1, 0);` — only resolve via $PATH when
-    // cmdstr is neither a defined function nor a builtin.
-    let is_function = crate::ported::builtin::shfunctab_table().lock()
-        .map(|t| t.contains_key(&cmdstr)).unwrap_or(false);
-    let is_builtin = crate::ported::builtin::BUILTINS.iter()
-        .any(|b| b.node.nam == cmdstr);
-    let s_resolved: Option<String> = if is_function || is_builtin {          // c:2537
-        None                                                                 // c:2538 NULL
-    } else {
-        crate::ported::builtin::findcmd(&cmdstr, 1, 0)                       // c:2540
-    };
-
-    let pats = PATCOMPS.read().unwrap().clone();
-    for (pat, cc) in &pats {                                                 // c:2542
-        // c:2543 patcompile(pc->pat) — Rust patmatch compiles inline.
-        // c:2544-2545 — pattry(pat, cmdstr) || (s && pattry(pat, s)).
-        let matches = crate::ported::pattern::patmatch(pat, &cmdstr)         // c:2544
-            || s_resolved.as_deref()
-                .map(|sr| crate::ported::pattern::patmatch(pat, sr))         // c:2545
-                .unwrap_or(false);
-        if matches {
-            makecomplistcc(cc, os, incmd);                                   // c:2546
-            ret |= 2;                                                        // c:2547
-            if (CCONT.with(|c| c.get()) & CC_CCCONT) == 0 {          // c:2548
-                return ret;                                                  // c:2549
-            }
-        }
-    }
-    ret                                                                      // c:2558
-}
-
 /// Per-compctl entry — track usage + dispatch the OR chain.
 /// Port of `makecomplistcc(Compctl cc, char *s, int incmd)` from Src/Zle/compctl.c:2558.
 ///
@@ -2044,30 +1875,77 @@ pub(crate) fn makecomplistcc(cc: &Arc<Compctl>, s: &str, incmd: bool) {
     makecomplistor(cc, s, incmd, 0, 0);
 }
 
-// `ccused` — per-completion list of compctls used. Port of
-// file-static `LinkList ccused` at Src/Zle/compctl.c:2574.
-thread_local! { static CCUSED: std::cell::RefCell<Vec<Arc<Compctl>>> = const { std::cell::RefCell::new(Vec::new()) }; }
+// Pre-cursor directory path (`prpre` global). Port of file-static
+// `char *prpre` at Src/Zle/compctl.c:1736 — the directory portion
+// of the path component the cursor is in, expanded for `opendir`.
+// Set by the completion driver before calling gen_matches_files.
+thread_local! { static PRPRE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
 
-/// Walk the xor chain of compctls.
-/// Port of `makecomplistor(Compctl cc, char *s, int incmd, int compadd, int sub)` from Src/Zle/compctl.c:2574.
+/// Find a node in a linked list by data-pointer equality.
+/// Port of `findnode(LinkList list, void *dat)` from Src/Zle/compctl.c:2288.
 ///
-/// C body:
-///   - Loop over xors (cc->xor chain)
-///   - For each, call makecomplistlist
-///   - Track newly-added matches (mn diff)
-///   - Stop based on ccont bits (CC_PATCONT, CC_DEFCONT, CC_XORCONT)
-/// WARNING: param names don't match C — Rust=(s, incmd, compadd, sub) vs C=(cc, s, incmd, compadd, sub)
-pub(crate) fn makecomplistor(cc: &Arc<Compctl>, s: &str, incmd: bool, compadd: i32, sub: i32) {
-    let mut current = cc.clone();
-    loop {
-        makecomplistlist(&current, s, incmd, compadd);
-        // Walk to next xor
-        match &current.xor {
-            Some(next) => current = next.clone(),
-            None => break,
-        }
-        let _ = sub;
+/// C signature: `LinkNode findnode(LinkList list, void *dat)` —
+/// walks `list` looking for the node whose data pointer == `dat`.
+/// Returns the matching node or NULL.
+///
+/// Rust generic over `T: PartialEq` — returns the index of the
+/// matching element, or None.
+/// WARNING: param names don't match C — Rust=(dat) vs C=(list, dat)
+pub(crate) fn findnode<T: PartialEq>(list: &[T], dat: &T) -> Option<usize> {
+    list.iter().position(|x| x == dat)
+}
+
+// `cdepth` recursion guard. Port of file-static `int cdepth = 0;`
+// at Src/Zle/compctl.c:2300.
+thread_local! { static CDEPTH: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
+
+/// Port of `MAX_CDEPTH` from `Src/Zle/compctl.c:2302`. Maximum
+/// recursion depth — prevents infinite recursion between compctl-
+/// driven completion and the wrapper.
+pub const MAX_CDEPTH: i32 = 16;                                              // c:2302
+
+// `ccont` continuation flags. Port of file-static `unsigned long
+// ccont;` at Src/Zle/compctl.c:1714. Bitmask of CC_CCCONT/etc.
+// controlling whether the dispatch loop continues to next compctl.
+thread_local! { static CCONT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+/// Build the completion list — top-level dispatch.
+/// Port of `makecomplistctl(int flags)` from Src/Zle/compctl.c:2305.
+///
+/// Entry point used by bin_compcall and the completion driver.
+/// The C body:
+///   1. Recursion guard (cdepth >= MAX_CDEPTH → return 0)
+///   2. SWITCHHEAPS to the compheap (Rust uses the global allocator)
+///   3. Save lots of state (cmdstr, clwords, instring, qipre/qisuf,
+///      isuf, autoq, offs)
+///   4. Set up new state from compquote / compqiprefix / compqisuffix /
+///      compisuffix / compwords / compcurrent
+///   5. Set incompfunc=2 (deeper-nested marker)
+///   6. Call makecomplistglobal(str, !clwpos, COMP_COMPLETE, flags)
+///   7. Restore state
+///   8. cdepth-- and return
+///
+/// This Rust port keeps the recursion guard + flag dispatch + the
+/// makecomplistglobal call. The compfunc state save/restore relies
+/// on ZLE-tricky globals (clwords, etc.) that aren't ported here.
+pub(crate) fn makecomplistctl(flags: i32) -> i32 {
+    let cdepth = CDEPTH.with(|c| c.get());
+    if cdepth == MAX_CDEPTH {                                 // c:2311
+        return 0;
     }
+    CDEPTH.with(|c| c.set(cdepth + 1));                       // c:2314
+
+    // C: c:2372 — bump incompfunc to 2 (recursion marker)
+    let saved_incomp = INCOMPFUNC.with(|c| c.get());
+    INCOMPFUNC.with(|c| c.set(2));
+
+    // C: c:2373 — recurse to global dispatch
+    let str_in = "";  // placeholder; real impl reads comp_str
+    let ret = makecomplistglobal(str_in, false, COMP_LIST as i32, flags);
+
+    INCOMPFUNC.with(|c| c.set(saved_incomp));
+    CDEPTH.with(|c| c.set(c.get() - 1));
+    ret
 }
 
 /// Top-level per-compctl dispatch.
@@ -2140,110 +2018,67 @@ pub(crate) fn makecomplistext(occ: &Arc<Compctl>, os: &str, incmd: bool) {
     }
 }
 
-// =================================================================
-// zle_tricky.c state required by sep_comp_string and the
-// completion-driver hooks. Ports of the file-statics in
-// Src/Zle/zle_tricky.c that compctl reads/writes during the
-// completion flow. Each is a `Mutex<...>` singleton matching the
-// C global's name + type (translated to Rust idioms).
-// =================================================================
+// `cmdstr` — current command word being completed.
+// Port of file-static `char *cmdstr` (zle_tricky.c). Set by the
+// completion driver before invoking makecomplistcmd.
+thread_local! { static CMDSTR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
 
-// `we` / `wb` — word end / begin positions (1-based byte offsets
-// into zlemetaline). Port of `int wb, we;` at Src/Zle/zle_tricky.c.
-thread_local! { static WE: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
-thread_local! { static WB: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
+/// C body (c:2532-2552):
+/// ```c
+/// s = ((shfunctab->getnode(shfunctab, cmdstr) ||
+///       builtintab->getnode(builtintab, cmdstr)) ? NULL :
+///      findcmd(cmdstr, 1, 0));
+/// for (pc = patcomps; pc; pc = pc->next) {
+///     if ((pat = patcompile(pc->pat, PAT_STATIC, NULL)) &&
+///         (pattry(pat, cmdstr) ||
+///          (s && pattry(pat, s)))) {
+///         makecomplistcc(pc->cc, os, incmd);
+///         ret |= 2;
+///         if (!(ccont & CC_CCCONT))
+///             return ret;
+///     }
+/// }
+/// return ret;
+/// ```
+/// Port of `makecomplistpc(char *os, int incmd)` from `Src/Zle/compctl.c:2530`.
+/// WARNING: param names don't match C — Rust=(incmd) vs C=(os, incmd)
+pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {                 // c:2530
+    let mut ret: i32 = 0;                                                    // c:2530
+    let cmdstr = match CMDSTR.with(|r| r.borrow().clone()) {                 // c:2533
+        Some(s) => s,
+        None => return 0,
+    };
+    // c:2537-2540 — `s = (shfunctab[cmdstr] || builtintab[cmdstr]) ?
+    // NULL : findcmd(cmdstr, 1, 0);` — only resolve via $PATH when
+    // cmdstr is neither a defined function nor a builtin.
+    let is_function = crate::ported::builtin::shfunctab_table().lock()
+        .map(|t| t.contains_key(&cmdstr)).unwrap_or(false);
+    let is_builtin = crate::ported::builtin::BUILTINS.iter()
+        .any(|b| b.node.nam == cmdstr);
+    let s_resolved: Option<String> = if is_function || is_builtin {          // c:2537
+        None                                                                 // c:2538 NULL
+    } else {
+        crate::ported::builtin::findcmd(&cmdstr, 1, 0)                       // c:2540
+    };
 
-// `zlemetacs` — cursor position (byte offset). Port of `int zlemetacs;`.
-thread_local! { static ZLEMETACS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
-
-/// `zlemetall` — line length in bytes. Port of `int zlemetall;`.
-static ZLEMETALL: Mutex<i32> = Mutex::new(0);
-
-/// `zlemetaline` — the actual line buffer. Port of `char *zlemetaline;`.
-static ZLEMETALINE: Mutex<String> = Mutex::new(String::new());
-
-/// `noerrs` / `noaliases` — lexer error/alias-suppression flags.
-static NOERRS: Mutex<i32> = Mutex::new(0);
-static NOALIASES: Mutex<i32> = Mutex::new(0);
-
-/// `instring` — quoting context. Port of `int instring;`. The QT_*
-/// values are the C enum at `Src/zsh.h:253-292` (ported in zsh_h.rs).
-use crate::ported::zsh_h::{QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS, QT_BACKTICK};
-static INSTRING: Mutex<i32> = Mutex::new(QT_NONE);
-
-/// `inbackt` — inside backtick command-substitution. Port of `int inbackt;`.
-static INBACKT: Mutex<i32> = Mutex::new(0);
-
-/// `autoq` — auto-quote chars to insert with completed match. Port of
-/// `char *autoq;`.
-static AUTOQ: Mutex<String> = Mutex::new(String::new());
-
-/// `compqstack` — current quoting-context stack. Port of `char *compqstack;`.
-static COMPQSTACK: Mutex<String> = Mutex::new(String::new());
-
-/// `qipre` / `qisuf` — quoted ignored prefix/suffix from the
-/// completion driver. Port of `char *qipre, *qisuf;`.
-static QIPRE: Mutex<String> = Mutex::new(String::new());
-static QISUF: Mutex<String> = Mutex::new(String::new());
-
-/// `compqiprefix` / `compqisuffix` / `compisuffix` — completion-context
-/// state from the user's compfunc. Port of those file-statics.
-static COMPQIPREFIX: Mutex<String> = Mutex::new(String::new());
-static COMPQISUFFIX: Mutex<String> = Mutex::new(String::new());
-static COMPISUFFIX: Mutex<String> = Mutex::new(String::new());
-
-/// `compwords` — current word array from the completion driver.
-static COMPWORDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-static COMPCURRENT: Mutex<i32> = Mutex::new(0);
-
-/// `clwords` / `clwsize` / `clwnum` / `clwpos` — current line word
-/// array + sizes used by the completion code.
-static CLWORDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-static CLWSIZE: Mutex<i32> = Mutex::new(0);
-static CLWNUM: Mutex<i32> = Mutex::new(0);
-static CLWPOS: Mutex<i32> = Mutex::new(0);
-
-/// `offs` — completion offset into the current word.
-static OFFS: Mutex<i32> = Mutex::new(0);
-
-/// `addedx` — non-zero while the dummy `x` cursor marker is in
-/// the line being lexed.
-static ADDEDX: Mutex<i32> = Mutex::new(0);
-
-/// `lexflags` — lexer mode flags (LEXFLAGS_ZLE etc.). Port of
-/// `int lexflags;` from Src/lex.c.
-static LEXFLAGS: Mutex<i32> = Mutex::new(0);
-
-/// LEXFLAGS_ZLE — the bit set during ZLE-driven completion lex.
-/// Port of `LEXFLAGS_ZLE` from Src/zsh.h.
-const LEXFLAGS_ZLE: i32 = 1 << 0;
-
-/// `brange` / `erange` — `-l` word-range begin/end.
-static BRANGE: Mutex<i32> = Mutex::new(0);
-static ERANGE: Mutex<i32> = Mutex::new(0);
-
-/// `linwhat` — line-context kind. Port of `mod_export int linwhat`
-/// from `Src/Zle/compcore.c:91`. Values are the `IN_*` enum at
-/// `Src/zsh.h:2321-2332` (ported in zsh_h.rs). NB: dead code is
-/// fake — the previous Rust `linwhat_kind` mod had `IN_ENV=1` and
-/// an invented `IN_REDIR=4`; both wrong vs the real C enum.
-static LINWHAT: Mutex<i32> = Mutex::new(crate::ported::zsh_h::IN_NOTHING);
-
-/// `linredir` — non-zero when completing inside a redirection.
-static LINREDIR: Mutex<i32> = Mutex::new(0);
-
-/// `insubscr` — non-zero inside an array subscript context.
-static INSUBSCR: Mutex<i32> = Mutex::new(0);
-
-/// Inull-token chars from Src/zsh.h. These are the byte values
-/// the lexer uses to mark suppressed quoted-region boundaries
-/// (Snull = single-quote, Dnull = double-quote, Bnull = backslash,
-/// String/Qstring = `$`/`'$'` markers).
-pub const Snull: char  = '\u{9d}';  // Single-quote null
-pub const Dnull: char  = '\u{9e}';  // Double-quote null
-pub const Bnull: char  = '\u{9f}';  // Backslash null
-pub const Stringg: char  = '\u{85}';  // META-$
-pub const QSTRING_TOK: char = '\u{84}';  // Qstring (for $'...')
+    let pats = PATCOMPS.read().unwrap().clone();
+    for (pat, cc) in &pats {                                                 // c:2542
+        // c:2543 patcompile(pc->pat) — Rust patmatch compiles inline.
+        // c:2544-2545 — pattry(pat, cmdstr) || (s && pattry(pat, s)).
+        let matches = crate::ported::pattern::patmatch(pat, &cmdstr)         // c:2544
+            || s_resolved.as_deref()
+                .map(|sr| crate::ported::pattern::patmatch(pat, sr))         // c:2545
+                .unwrap_or(false);
+        if matches {
+            makecomplistcc(cc, os, incmd);                                   // c:2546
+            ret |= 2;                                                        // c:2547
+            if (CCONT.with(|c| c.get()) & CC_CCCONT) == 0 {          // c:2548
+                return ret;                                                  // c:2549
+            }
+        }
+    }
+    ret                                                                      // c:2558
+}
 
 /// Separate the cursor word into prefix/word/suffix components.
 /// Port of `sep_comp_string(char *ss, char *s, int noffs)` from Src/Zle/compctl.c:2806 (~225 lines).
@@ -2560,6 +2395,32 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     0
 }
 
+// `ccused` — per-completion list of compctls used. Port of
+// file-static `LinkList ccused` at Src/Zle/compctl.c:2574.
+thread_local! { static CCUSED: std::cell::RefCell<Vec<Arc<Compctl>>> = const { std::cell::RefCell::new(Vec::new()) }; }
+
+/// Walk the xor chain of compctls.
+/// Port of `makecomplistor(Compctl cc, char *s, int incmd, int compadd, int sub)` from Src/Zle/compctl.c:2574.
+///
+/// C body:
+///   - Loop over xors (cc->xor chain)
+///   - For each, call makecomplistlist
+///   - Track newly-added matches (mn diff)
+///   - Stop based on ccont bits (CC_PATCONT, CC_DEFCONT, CC_XORCONT)
+/// WARNING: param names don't match C — Rust=(s, incmd, compadd, sub) vs C=(cc, s, incmd, compadd, sub)
+pub(crate) fn makecomplistor(cc: &Arc<Compctl>, s: &str, incmd: bool, compadd: i32, sub: i32) {
+    let mut current = cc.clone();
+    loop {
+        makecomplistlist(&current, s, incmd, compadd);
+        // Walk to next xor
+        match &current.xor {
+            Some(next) => current = next.clone(),
+            None => break,
+        }
+        let _ = sub;
+    }
+}
+
 /// The flag-driven completion-list builder — workhorse fn.
 /// Port of `makecomplistflags(Compctl cc, char *s, int incmd, int compadd)` from Src/Zle/compctl.c:3499 (~500 lines).
 ///
@@ -2671,30 +2532,23 @@ pub(crate) fn setup_() -> i32 {
 }
 
 // =================================================================
-// Module boot/cleanup hooks — port of compctl.c:4000+
+// zle_tricky.c state required by sep_comp_string and the
+// completion-driver hooks. Ports of the file-statics in
+// Src/Zle/zle_tricky.c that compctl reads/writes during the
+// completion flow. Each is a `Mutex<...>` singleton matching the
+// C global's name + type (translated to Rust idioms).
 // =================================================================
 
-/// Storage for the special compctl targets — `cc_compos` (command
-/// completion), `cc_default` (default completion), `cc_first`
-/// (first completion). Port of the file-static C declarations at
-/// Src/Zle/compctl.c:41 — `struct compctl cc_compos, cc_default,
-/// cc_first, cc_dummy;`. setup_ initializes the masks; tests +
-/// real-completion paths read them.
-pub(crate) static CC_COMPOS: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
-pub(crate) static CC_DEFAULT: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
-pub(crate) static CC_FIRST: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
-pub(crate) static CC_DUMMY: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
+// `we` / `wb` — word end / begin positions (1-based byte offsets
+// into zlemetaline). Port of `int wb, we;` at Src/Zle/zle_tricky.c.
+thread_local! { static WE: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
+thread_local! { static WB: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
-/// Last-used compctl tracking list. Port of `LinkList lastccused`
-/// at Src/Zle/compctl.c:1702. setup_ initializes to empty; finish_
-/// frees its contents.
-static LASTCCUSED: Mutex<Vec<Arc<Compctl>>> = Mutex::new(Vec::new());
+// `zlemetacs` — cursor position (byte offset). Port of `int zlemetacs;`.
+thread_local! { static ZLEMETACS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
 
-/// Pointer to compctlread (vs fallback_compctlread). Port of the
-/// `CompctlReadFn compctlreadptr` indirect dispatch at
-/// Src/Modules/zle/compctl.c:4016. setup_ installs this; finish_
-/// restores the fallback.
-static COMPCTLREAD_INSTALLED: Mutex<bool> = Mutex::new(false);
+/// `zlemetall` — line length in bytes. Port of `int zlemetall;`.
+static ZLEMETALL: Mutex<i32> = Mutex::new(0);
 
 /// Features hook — port of `features_(UNUSED(Module m), UNUSED(char ***features))` from Src/Zle/compctl.c:4034.
 ///
@@ -2731,6 +2585,10 @@ pub(crate) fn boot_() -> i32 {
     0
 }
 
+/// `instring` — quoting context. Port of `int instring;`. The QT_*
+/// values are the C enum at `Src/zsh.h:253-292` (ported in zsh_h.rs).
+use crate::ported::zsh_h::{QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS, QT_BACKTICK};
+
 /// Cleanup hook — port of `cleanup_(UNUSED(Module m))` from Src/Zle/compctl.c:4058.
 ///
 /// Reverses boot_: removes the two hooks, then disables features
@@ -2754,6 +2612,148 @@ pub(crate) fn finish_() -> i32 {
     *COMPCTLREAD_INSTALLED.lock().unwrap() = false;           // c:4074
     0
 }
+
+// =================================================================
+// Type definitions — port of Src/Zle/compctl.h:32-115
+// =================================================================
+
+// Compcond/CompcondData/Compctl/Patcomp/Compctlp ported in
+// compctl_h.rs (Src/Zle/compctl.h:39-115). Imported above.
+
+// =================================================================
+// Globals — port of Src/Zle/compctl.c:36-66
+// =================================================================
+
+/// Global cmatcher list. Port of file-static `Cmlist cmatcher;` at
+/// Src/Zle/compctl.c:36. Bucket-2 user-registered registry per
+/// PORT_PLAN.md — `compctl -M` writes via `freecmlist + cpcmlist`,
+/// every completion call reads. `RwLock` lets parallel completion
+/// reads proceed without serialising on a mutex.
+pub(crate) static CMATCHER:
+    std::sync::RwLock<Option<Box<crate::ported::zle::comp_h::Cmlist>>> =
+        std::sync::RwLock::new(None);                                        // c:36
+
+/// `compctltab` hash table — name → Compctl.
+/// Port of `HashTable compctltab;` at Src/Zle/compctl.c:46.
+/// Bucket-2 user-registered registry: `compctl name args` writes,
+/// every completion call reads. `RwLock` per PORT_PLAN.md.
+static COMPCTL_TAB: std::sync::RwLock<Option<HashMap<String, Arc<Compctl>>>>
+    = std::sync::RwLock::new(None);
+
+/// Pattern-compctl list. Port of `Patcomp patcomps;` at
+/// Src/Zle/compctl.c:51. Bucket-2 user-registered registry:
+/// `compctl -p` writes, every pattern-completion call reads.
+/// `RwLock` per PORT_PLAN.md.
+static PATCOMPS: std::sync::RwLock<Vec<(String, Arc<Compctl>)>>
+    = std::sync::RwLock::new(Vec::new());
+
+/// `zlemetaline` — the actual line buffer. Port of `char *zlemetaline;`.
+static ZLEMETALINE: Mutex<String> = Mutex::new(String::new());
+
+/// `noerrs` / `noaliases` — lexer error/alias-suppression flags.
+static NOERRS: Mutex<i32> = Mutex::new(0);
+static NOALIASES: Mutex<i32> = Mutex::new(0);
+static INSTRING: Mutex<i32> = Mutex::new(QT_NONE);
+
+/// `inbackt` — inside backtick command-substitution. Port of `int inbackt;`.
+static INBACKT: Mutex<i32> = Mutex::new(0);
+
+/// `autoq` — auto-quote chars to insert with completed match. Port of
+/// `char *autoq;`.
+static AUTOQ: Mutex<String> = Mutex::new(String::new());
+
+/// `compqstack` — current quoting-context stack. Port of `char *compqstack;`.
+static COMPQSTACK: Mutex<String> = Mutex::new(String::new());
+
+/// `qipre` / `qisuf` — quoted ignored prefix/suffix from the
+/// completion driver. Port of `char *qipre, *qisuf;`.
+static QIPRE: Mutex<String> = Mutex::new(String::new());
+static QISUF: Mutex<String> = Mutex::new(String::new());
+
+/// `compqiprefix` / `compqisuffix` / `compisuffix` — completion-context
+/// state from the user's compfunc. Port of those file-statics.
+static COMPQIPREFIX: Mutex<String> = Mutex::new(String::new());
+static COMPQISUFFIX: Mutex<String> = Mutex::new(String::new());
+static COMPISUFFIX: Mutex<String> = Mutex::new(String::new());
+
+/// `compwords` — current word array from the completion driver.
+static COMPWORDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static COMPCURRENT: Mutex<i32> = Mutex::new(0);
+
+/// `clwords` / `clwsize` / `clwnum` / `clwpos` — current line word
+/// array + sizes used by the completion code.
+static CLWORDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static CLWSIZE: Mutex<i32> = Mutex::new(0);
+static CLWNUM: Mutex<i32> = Mutex::new(0);
+static CLWPOS: Mutex<i32> = Mutex::new(0);
+
+/// `offs` — completion offset into the current word.
+static OFFS: Mutex<i32> = Mutex::new(0);
+
+/// `addedx` — non-zero while the dummy `x` cursor marker is in
+/// the line being lexed.
+static ADDEDX: Mutex<i32> = Mutex::new(0);
+
+/// `lexflags` — lexer mode flags (LEXFLAGS_ZLE etc.). Port of
+/// `int lexflags;` from Src/lex.c.
+static LEXFLAGS: Mutex<i32> = Mutex::new(0);
+
+/// LEXFLAGS_ZLE — the bit set during ZLE-driven completion lex.
+/// Port of `LEXFLAGS_ZLE` from Src/zsh.h.
+const LEXFLAGS_ZLE: i32 = 1 << 0;
+
+/// `brange` / `erange` — `-l` word-range begin/end.
+static BRANGE: Mutex<i32> = Mutex::new(0);
+static ERANGE: Mutex<i32> = Mutex::new(0);
+
+/// `linwhat` — line-context kind. Port of `mod_export int linwhat`
+/// from `Src/Zle/compcore.c:91`. Values are the `IN_*` enum at
+/// `Src/zsh.h:2321-2332` (ported in zsh_h.rs). NB: dead code is
+/// fake — the previous Rust `linwhat_kind` mod had `IN_ENV=1` and
+/// an invented `IN_REDIR=4`; both wrong vs the real C enum.
+static LINWHAT: Mutex<i32> = Mutex::new(crate::ported::zsh_h::IN_NOTHING);
+
+/// `linredir` — non-zero when completing inside a redirection.
+static LINREDIR: Mutex<i32> = Mutex::new(0);
+
+/// `insubscr` — non-zero inside an array subscript context.
+static INSUBSCR: Mutex<i32> = Mutex::new(0);
+
+/// Inull-token chars from Src/zsh.h. These are the byte values
+/// the lexer uses to mark suppressed quoted-region boundaries
+/// (Snull = single-quote, Dnull = double-quote, Bnull = backslash,
+/// String/Qstring = `$`/`'$'` markers).
+pub const Snull: char  = '\u{9d}';  // Single-quote null
+pub const Dnull: char  = '\u{9e}';  // Double-quote null
+pub const Bnull: char  = '\u{9f}';  // Backslash null
+pub const Stringg: char  = '\u{85}';  // META-$
+pub const QSTRING_TOK: char = '\u{84}';  // Qstring (for $'...')
+
+// =================================================================
+// Module boot/cleanup hooks — port of compctl.c:4000+
+// =================================================================
+
+/// Storage for the special compctl targets — `cc_compos` (command
+/// completion), `cc_default` (default completion), `cc_first`
+/// (first completion). Port of the file-static C declarations at
+/// Src/Zle/compctl.c:41 — `struct compctl cc_compos, cc_default,
+/// cc_first, cc_dummy;`. setup_ initializes the masks; tests +
+/// real-completion paths read them.
+pub(crate) static CC_COMPOS: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
+pub(crate) static CC_DEFAULT: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
+pub(crate) static CC_FIRST: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
+pub(crate) static CC_DUMMY: Mutex<Option<Arc<Compctl>>> = Mutex::new(None);
+
+/// Last-used compctl tracking list. Port of `LinkList lastccused`
+/// at Src/Zle/compctl.c:1702. setup_ initializes to empty; finish_
+/// frees its contents.
+static LASTCCUSED: Mutex<Vec<Arc<Compctl>>> = Mutex::new(Vec::new());
+
+/// Pointer to compctlread (vs fallback_compctlread). Port of the
+/// `CompctlReadFn compctlreadptr` indirect dispatch at
+/// Src/Modules/zle/compctl.c:4016. setup_ installs this; finish_
+/// restores the fallback.
+static COMPCTLREAD_INSTALLED: Mutex<bool> = Mutex::new(false);
 
 /// Direct port of `#define inull(X) zistype(X,INULL)` from
 /// `Src/ztype.h:62`. Tests whether `c` is one of the parser's

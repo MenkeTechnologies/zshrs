@@ -35,45 +35,32 @@ use crate::ported::zsh_h::{
     GLOBSTARSHORT, LISTTYPES, MARKDIRS, NULLGLOB, NUMERICGLOBSORT,
 };
 
-// =====================================================================
-// Thread-local glob option snapshot — race fix.
-//
-// `Src/glob.c` reads `isset(NULLGLOB)` / `isset(BAREGLOBQUAL)` / etc.
-// inline at each callsite during a glob. In zsh those reads hit the
-// thread-local C `opts[]` array (zsh is single-threaded). In zshrs
-// they hit `OPTS_LIVE` — a process-wide `RwLock<HashMap>`.
-//
-// Embedders that snapshot/restore options around individual glob
-// invocations on multiple threads (e.g. stryke's `StrykeGlobOptsGuard`
-// + `glob_par` rayon parallelism) race: thread A sets bareglobqual=1,
-// calls glob; while A is mid-parse, thread B's matching guard restores
-// bareglobqual=0; A's qualifier-parse step sees bareglobqual=0 and
-// drops the trailing `(N)` as a literal substring, producing false
-// matches.
-//
-// Fix: snapshot every glob-relevant option ONCE at glob() entry into
-// a thread-local cache, then read all isset() inside glob from the
-// snapshot. The snapshot is dropped on glob exit via an RAII guard.
-// Each thread's in-flight glob() sees a coherent set of options
-// regardless of concurrent setopt/unsetopt on other threads.
-// =====================================================================
-
-/// Snapshot of glob-relevant zsh options taken at glob entry. Holds
-/// the live `isset(...)` value for each option that the glob engine
-/// or its helpers (`parse_qualifiers`, `scanner`, `scan_pattern`,
-/// `sort_matches`, `glob_emit_path`) consult.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct GlobOptSnapshot {
-    pub bareglobqual:    bool,
-    pub braceccl:        bool,
-    pub caseglob:        bool,
-    pub extendedglob:    bool,
-    pub globdots:        bool,
-    pub globstarshort:   bool,
-    pub listtypes:       bool,
-    pub markdirs:        bool,
-    pub nullglob:        bool,
-    pub numericglobsort: bool,
+/// A glob match with metadata for sorting
+#[derive(Debug, Clone)]
+/// One glob match result.
+/// Port of `struct gmatch` from Src/glob.c — `gmatchcmp()`
+/// (line 936) sorts arrays of these for the `o`/`O` qualifier.
+pub struct gmatch {
+    pub name: String,
+    pub path: PathBuf,
+    pub size: u64,
+    pub atime: i64,
+    pub mtime: i64,
+    pub ctime: i64,
+    pub links: u64,
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+    pub dev: u64,
+    pub ino: u64,
+    // For symlink targets (when following)
+    pub target_size: u64,
+    pub target_atime: i64,
+    pub target_mtime: i64,
+    pub target_ctime: i64,
+    pub target_links: u64,
+    // For exec sort strings
+    pub sort_strings: Vec<String>,
 }
 
 impl GlobOptSnapshot {
@@ -103,53 +90,6 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// RAII guard that drops the thread-local snapshot on scope exit.
-/// Constructed by `enter_glob_scope()`. Nested glob calls on the
-/// same thread reuse the outer snapshot (the guard's `populated`
-/// field tracks whether we installed or just observed).
-pub struct GlobOptsGuard {
-    populated: bool,
-}
-
-impl Drop for GlobOptsGuard {
-    fn drop(&mut self) {
-        if self.populated {
-            GLOB_OPTS_TLS.with_borrow_mut(|g| *g = None);
-        }
-    }
-}
-
-/// Add path component (from glob.c addpath lines 263-274)
-/// Append a path component to a glob path buffer.
-/// Port of `addpath(char *s, int l)` from Src/glob.c:265.
-pub fn addpath(s: &mut String, l: &str) {                          // c:265
-    s.push_str(l);
-    if !s.ends_with('/') {
-        s.push('/');
-    }
-}
-
-/// Stat full path (from glob.c statfullpath lines 282-347)
-/// `stat`/`lstat` a (pathbuf, name) tuple.
-/// Port of `statfullpath(const char *s, struct stat *st, int l)` from Src/glob.c:283.
-pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<std::fs::Metadata> { // c:283
-    let full = if st.is_empty() {
-        if s.is_empty() {
-            ".".to_string()
-        } else {
-            s.to_string()
-        }
-    } else {
-        format!("{}{}", s, st)
-    };
-
-    if l {
-        std::fs::metadata(&full).ok()
-    } else {
-        std::fs::symlink_metadata(&full).ok()
-    }
-}
-
 // =====================================================================
 // GS_* — sort-specifier flag bits — `Src/glob.c:77-94`. The `glob -O`
 // + `glob -o` sort-spec parser stuffs these bits into the per-glob
@@ -158,6 +98,14 @@ pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<std::fs::Metadata> { /
 
 /// Port of `GS_NAME` from `Src/glob.c:77`. Sort by filename.
 pub const GS_NAME:  i32 = 1;                                                 // c:77
+
+impl Drop for GlobOptsGuard {
+    fn drop(&mut self) {
+        if self.populated {
+            GLOB_OPTS_TLS.with_borrow_mut(|g| *g = None);
+        }
+    }
+}
 /// Port of `GS_DEPTH` from `Src/glob.c:78`. Sort by directory depth.
 pub const GS_DEPTH: i32 = 2;                                                 // c:78
 /// Port of `GS_EXEC` from `Src/glob.c:79`. Sort via external function.
@@ -242,152 +190,73 @@ pub const TT_TERABYTES:    i32 = 5;                                          // 
 /// per glob (`glob -O 'reverse(name).size'` style).
 pub const MAX_SORTS: usize = 12;                                             // c:164
 
-/// Sort specifier flags
-// `GlobSort` / `SortOrder` / `SortSpec` deleted — C uses bit-flag
-// `int tp` in `struct globsort { int tp; char *exec; }` (Src/glob.c:155):
-//   tp & ~GS_DESC selects the sort key (GS_NAME/GS_DEPTH/GS_EXEC/…),
-//   tp & GS_DESC reverses direction (`O` vs `o` qualifier),
-//   tp << GS_SHIFT carries the follow-link variants.
-// All those bits already exist as i32 constants at glob.rs:33+
-// (GS_NAME / GS_DEPTH / GS_SIZE / … / GS_DESC / GS_NONE / GS__SIZE /
-// …). The enum + Ascending/Descending + struct triple-wrapper was a
-// Rust-only convenience with no C counterpart; callers now operate
-// on the raw i32 the same way `gmatchcmp()` at glob.c:936 does.
-
-// `TimeUnit` / `SizeUnit` / `RangeOp` enums deleted — Rust-only
-// wrappers around constants/chars that exist as raw values in C:
-//   `TimeUnit::Seconds` → TT_SECONDS i32 (glob.c:126 → glob.rs:99)
-//   `TimeUnit::Minutes` → TT_MINS (c:123)
-//   `TimeUnit::Hours`   → TT_HOURS (c:122)
-//   `TimeUnit::Days`    → TT_DAYS (c:121)
-//   `TimeUnit::Weeks`   → TT_WEEKS (c:124)
-//   `TimeUnit::Months`  → TT_MONTHS (c:125)
-//   `SizeUnit::Bytes`   → TT_BYTES (c:128)
-//   `SizeUnit::PosixBlocks` → TT_POSIX_BLOCKS (c:129)
-//   `SizeUnit::Kilobytes`   → TT_KILOBYTES (c:130)
-//   `SizeUnit::Megabytes`   → TT_MEGABYTES (c:131)
-//   `SizeUnit::Gigabytes`   → TT_GIGABYTES (c:132)
-//   `SizeUnit::Terabytes`   → TT_TERABYTES (c:133)
-//   `RangeOp::Less`/`Equal`/`Greater` → raw chars `<` `=` `>`
-//      (zsh's qgetnum at glob.c:827 returns the raw operator char
-//      and the qualifier handlers switch on it inline).
-
-/// A glob qualifier function
-// Next qualifier, must match                                              // c:139
-// Alternative set of qualifiers to match                                   // c:140
-// Function to call to test match                                           // c:141
-#[derive(Debug, Clone)]
-/// One glob qualifier — Rust-extension sum type. C uses a linked
-/// list of `struct qual` (`Src/zsh.h:140-152`) with function-pointer
-/// `func` per node; each variant here maps to one of C's `q*` test
-/// fns (`qisreg`, `qisdir`, `qowner`, `qtime`, ...) at
-/// `Src/glob.c:1080-1340`. The full `struct qual` port + per-test fn
-/// dispatch lives in a later phase; this enum keeps the parsed-form
-/// the per-match filter inside `scanner()` (line 500) needs.
+/// Main glob state — port of `struct globdata` from Src/glob.c:168.
+/// C zsh has a single file-static `static struct globdata curglobdata;`
+/// (glob.c:196) and accesses fields through a wall of #define macros
+/// (`matchsz`/`matchct`/`pathbuf`/`pathpos`/`quals`/...) that all
+/// resolve to `curglobdata.gd_*`. The Rust port collapses the
+/// `gd_matchsz`/`gd_matchct`/`gd_matchbuf`/`gd_matchptr` quartet into
+/// `matches: Vec<GlobMatch>` (the natural Rust shape) and folds the
+/// `gd_gf_*` glob-flag bag into `options: GlobOptions`, but the
+/// 1:1 correspondence to `struct globdata` is otherwise faithful.
+// struct to easily save/restore current state                              // c:166
 #[allow(non_camel_case_types)]
-pub enum qualifier {
-    /// File type qualifiers
-    IsRegular,
-    IsDirectory,
-    IsSymlink,
-    IsSocket,
-    IsFifo,
-    IsBlockDev,
-    IsCharDev,
-    IsDevice,
-    IsExecutable,
-
-    /// Permission qualifiers
-    Readable,
-    Writable,
-    Executable,
-    WorldReadable,
-    WorldWritable,
-    WorldExecutable,
-    GroupReadable,
-    GroupWritable,
-    GroupExecutable,
-    Setuid,
-    Setgid,
-    Sticky,
-
-    /// Ownership qualifiers
-    OwnedByEuid,
-    OwnedByEgid,
-    OwnedByUid(u32),
-    OwnedByGid(u32),
-
-    /// Numeric qualifiers with range. `unit` is a `TT_*` i32
-    /// (glob.rs:99-113 / glob.c:121-133); `op` is the raw range
-    /// operator char (`<`, `=`, `>`) — mirrors C's qgetnum which
-    /// returns the operator char and the handler switches inline.
-    Size {
-        value: u64,
-        unit: i32,
-        op: char,
-    },
-    Links {
-        value: u64,
-        op: char,
-    },
-    Atime {
-        value: i64,
-        unit: i32,
-        op: char,
-    },
-    Mtime {
-        value: i64,
-        unit: i32,
-        op: char,
-    },
-    Ctime {
-        value: i64,
-        unit: i32,
-        op: char,
-    },
-
-    /// Mode specification
-    Mode {
-        yes: u32,
-        no: u32,
-    },
-
-    /// Device number
-    Device(u64),
-
-    /// Non-empty directory
-    NonEmptyDir,
-
-    /// Shell evaluation
-    Eval(String),
+pub struct globdata {                                                       // c:168
+    pub matches: Vec<gmatch>,
+    pub qualifiers: Option<qualifier_set>,
+    pub pathbuf: String,                                                     // c:170 gd_pathbuf
+    pub pathpos: usize,                                                      // c:169 gd_pathpos
+    pub matchct: i32,                                                        // c:173 gd_matchct
+    pub pathbufcwd: i32,                                                     // c:175 gd_pathbufcwd
 }
 
-/// A glob match with metadata for sorting
-#[derive(Debug, Clone)]
-/// One glob match result.
-/// Port of `struct gmatch` from Src/glob.c — `gmatchcmp()`
-/// (line 936) sorts arrays of these for the `o`/`O` qualifier.
-pub struct gmatch {
-    pub name: String,
-    pub path: PathBuf,
-    pub size: u64,
-    pub atime: i64,
-    pub mtime: i64,
-    pub ctime: i64,
-    pub links: u64,
-    pub mode: u32,
-    pub uid: u32,
-    pub gid: u32,
-    pub dev: u64,
-    pub ino: u64,
-    // For symlink targets (when following)
-    pub target_size: u64,
-    pub target_atime: i64,
-    pub target_mtime: i64,
-    pub target_ctime: i64,
-    pub target_links: u64,
-    // For exec sort strings
-    pub sort_strings: Vec<String>,
+/// Port of `struct complist` from `Src/glob.c:252`.
+/// C body:
+/// ```c
+/// struct complist {
+///     Complist next;
+///     Patprog  pat;
+///     int      closure;  /* 1 if this is a (foo/)# */
+///     int      follow;   /* 1 to go thru symlinks  */
+/// };
+/// ```
+#[allow(non_camel_case_types)]
+pub struct complist {                                                        // c:252
+    pub next: Option<Box<complist>>,                                         // c:253
+    pub pat: crate::ported::pattern::Patprog,                                // c:254
+    pub closure: i32,                                                        // c:255
+    pub follow: i32,                                                         // c:256
+}
+
+/// Add path component (from glob.c addpath lines 263-274)
+/// Append a path component to a glob path buffer.
+/// Port of `addpath(char *s, int l)` from Src/glob.c:265.
+pub fn addpath(s: &mut String, l: &str) {                          // c:265
+    s.push_str(l);
+    if !s.ends_with('/') {
+        s.push('/');
+    }
+}
+
+/// Stat full path (from glob.c statfullpath lines 282-347)
+/// `stat`/`lstat` a (pathbuf, name) tuple.
+/// Port of `statfullpath(const char *s, struct stat *st, int l)` from Src/glob.c:283.
+pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<std::fs::Metadata> { // c:283
+    let full = if st.is_empty() {
+        if s.is_empty() {
+            ".".to_string()
+        } else {
+            s.to_string()
+        }
+    } else {
+        format!("{}{}", s, st)
+    };
+
+    if l {
+        std::fs::metadata(&full).ok()
+    } else {
+        std::fs::symlink_metadata(&full).ok()
+    }
 }
 // END moved-from-exec-rs (free fns)
 
@@ -409,106 +278,6 @@ pub fn insert(s: &str, checked: i32) {                                     // c:
     // gf_listpos sort. Static-link path: result list lives in the
     // src/ported/exec.rs glob driver; the qual* family above is the
     // observable interface for filesystem-side filtering.
-}
-
-// Misnamed `gmatchcmp(&str, &str)` deleted — was a Rust-only
-// locale-aware string compare claiming to be the C qsort
-// comparator. The real C `gmatchcmp(Gmatch, Gmatch)` at glob.c:936
-// is now ported as `gmatchcmp(&GlobMatch, &GlobMatch, &[i32], bool)`
-// below. The string-compare case the old name claimed routes
-// through canonical `crate::ported::sort::zstrcmp` (sort.c:191).
-
-// `GlobOptions` struct deleted — Rust-only Bag-of-options with no
-// C counterpart. C reads each option directly from the global
-// `opts[]` array via `isset(NULL_GLOB)` / `isset(EXTENDED_GLOB)`
-// / etc. (Src/options.c). The Rust port uses the canonical
-// `crate::ported::options::opt_state_get(name) -> Option<bool>`
-// which reads from the same global store. Inlined at each
-// callsite as `opt_state_get("name").unwrap_or(default)`.
-
-/// Parsed glob qualifier set
-#[derive(Debug, Clone, Default)]
-/// Compiled qualifier list for one glob.
-/// Mirrors the `struct qual *` linked list `parsepat()`
-/// (Src/glob.c:791) builds — every `(qual)` after a glob pattern
-/// adds to it.
-#[allow(non_camel_case_types)]
-pub struct qualifier_set {                                                   // c:138
-    pub qualifiers: Vec<qualifier>,
-    pub alternatives: Vec<Vec<qualifier>>,
-    pub negated: bool,
-    pub follow_links: bool,
-    /// Packed sort-spec flags, one per `o`/`O` qualifier in the pattern.
-    /// Each entry is the C `struct globsort.tp` field — `GS_NAME` /
-    /// `GS_DEPTH` / `GS_EXEC` / `GS_SIZE` / `GS_ATIME` / `GS_MTIME` /
-    /// `GS_CTIME` / `GS_LINKS` (or their `<< GS_SHIFT` follow-link
-    /// variants), OR'd with `GS_DESC` for reverse direction.
-    pub sorts: Vec<i32>,                                                     // c:155 struct globsort.tp[]
-    pub first: Option<i32>,
-    pub last: Option<i32>,
-    pub colon_mods: Option<String>,
-    pub pre_words: Vec<String>,
-    pub post_words: Vec<String>,
-    /// `(M)` qualifier — append `/` to directory entries in output.
-    /// Direct port of zsh/Src/glob.c:1557-1561 (`case 'M'`):
-    ///   `gf_markdirs = !(sense & 1)` — set when the qualifier appears
-    ///   without a `^` toggle. Stored per-qualifier-set rather than per
-    ///   GlobOptions so a single glob call's qualifier picks it up.
-    pub mark_dirs: bool,
-    /// `(T)` qualifier — append type-char (ls -F style) to every entry.
-    /// Direct port of zsh/Src/glob.c:1562-1566 (`case 'T'`).
-    pub list_types: bool,
-}
-
-/// Port of `struct complist` from `Src/glob.c:252`.
-/// C body:
-/// ```c
-/// struct complist {
-///     Complist next;
-///     Patprog  pat;
-///     int      closure;  /* 1 if this is a (foo/)# */
-///     int      follow;   /* 1 to go thru symlinks  */
-/// };
-/// ```
-#[allow(non_camel_case_types)]
-pub struct complist {                                                        // c:252
-    pub next: Option<Box<complist>>,                                         // c:253
-    pub pat: crate::ported::pattern::Patprog,                                // c:254
-    pub closure: i32,                                                        // c:255
-    pub follow: i32,                                                         // c:256
-}
-
-/// Main glob state — port of `struct globdata` from Src/glob.c:168.
-/// C zsh has a single file-static `static struct globdata curglobdata;`
-/// (glob.c:196) and accesses fields through a wall of #define macros
-/// (`matchsz`/`matchct`/`pathbuf`/`pathpos`/`quals`/...) that all
-/// resolve to `curglobdata.gd_*`. The Rust port collapses the
-/// `gd_matchsz`/`gd_matchct`/`gd_matchbuf`/`gd_matchptr` quartet into
-/// `matches: Vec<GlobMatch>` (the natural Rust shape) and folds the
-/// `gd_gf_*` glob-flag bag into `options: GlobOptions`, but the
-/// 1:1 correspondence to `struct globdata` is otherwise faithful.
-// struct to easily save/restore current state                              // c:166
-#[allow(non_camel_case_types)]
-pub struct globdata {                                                       // c:168
-    pub matches: Vec<gmatch>,
-    pub qualifiers: Option<qualifier_set>,
-    pub pathbuf: String,                                                     // c:170 gd_pathbuf
-    pub pathpos: usize,                                                      // c:169 gd_pathpos
-    pub matchct: i32,                                                        // c:173 gd_matchct
-    pub pathbufcwd: i32,                                                     // c:175 gd_pathbufcwd
-}
-
-impl globdata {
-    pub fn new() -> Self {
-        globdata {
-            matches: Vec::new(),
-            qualifiers: None,
-            pathbuf: String::with_capacity(4096),
-            pathpos: 0,
-            matchct: 0,
-            pathbufcwd: 0,
-        }
-    }
 }
 
 /// Top-level glob walker dispatching by pattern component.
@@ -575,6 +344,19 @@ pub fn qgetnum(s: &str) -> Option<(i64, &str)> {                             // 
     }
     let num = s[..end].parse::<i64>().ok()?;
     Some((num, &s[end..]))
+}
+
+impl globdata {
+    pub fn new() -> Self {
+        globdata {
+            matches: Vec::new(),
+            qualifiers: None,
+            pathbuf: String::with_capacity(4096),
+            pathpos: 0,
+            matchct: 0,
+            pathbufcwd: 0,
+        }
+    }
 }
 
 // ============================================================================
@@ -1099,13 +881,6 @@ pub fn compgetmatch(pat: &str) -> Option<(String, i32)> {
     Some((pattern, flags))
 }
 
-/// Pattern component
-#[derive(Debug, Clone)]
-enum PatternComponent {
-    Pattern(String),
-    Recursive { follow_links: bool },
-}
-
 /// Get pattern match with optional replacement (from glob.c getmatch line 2710)
 ///
 /// This implements ${var#pat}, ${var##pat}, ${var%pat}, ${var%%pat},
@@ -1623,6 +1398,231 @@ pub fn qualnonemptydir(name: &str, buf: &libc::stat, days: i64, str: &str) -> i3
             }) as i32,
         Err(_) => 0,
     }
+}
+
+// =====================================================================
+// Thread-local glob option snapshot — race fix.
+//
+// `Src/glob.c` reads `isset(NULLGLOB)` / `isset(BAREGLOBQUAL)` / etc.
+// inline at each callsite during a glob. In zsh those reads hit the
+// thread-local C `opts[]` array (zsh is single-threaded). In zshrs
+// they hit `OPTS_LIVE` — a process-wide `RwLock<HashMap>`.
+//
+// Embedders that snapshot/restore options around individual glob
+// invocations on multiple threads (e.g. stryke's `StrykeGlobOptsGuard`
+// + `glob_par` rayon parallelism) race: thread A sets bareglobqual=1,
+// calls glob; while A is mid-parse, thread B's matching guard restores
+// bareglobqual=0; A's qualifier-parse step sees bareglobqual=0 and
+// drops the trailing `(N)` as a literal substring, producing false
+// matches.
+//
+// Fix: snapshot every glob-relevant option ONCE at glob() entry into
+// a thread-local cache, then read all isset() inside glob from the
+// snapshot. The snapshot is dropped on glob exit via an RAII guard.
+// Each thread's in-flight glob() sees a coherent set of options
+// regardless of concurrent setopt/unsetopt on other threads.
+// =====================================================================
+
+/// Snapshot of glob-relevant zsh options taken at glob entry. Holds
+/// the live `isset(...)` value for each option that the glob engine
+/// or its helpers (`parse_qualifiers`, `scanner`, `scan_pattern`,
+/// `sort_matches`, `glob_emit_path`) consult.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GlobOptSnapshot {
+    pub bareglobqual:    bool,
+    pub braceccl:        bool,
+    pub caseglob:        bool,
+    pub extendedglob:    bool,
+    pub globdots:        bool,
+    pub globstarshort:   bool,
+    pub listtypes:       bool,
+    pub markdirs:        bool,
+    pub nullglob:        bool,
+    pub numericglobsort: bool,
+}
+
+/// RAII guard that drops the thread-local snapshot on scope exit.
+/// Constructed by `enter_glob_scope()`. Nested glob calls on the
+/// same thread reuse the outer snapshot (the guard's `populated`
+/// field tracks whether we installed or just observed).
+pub struct GlobOptsGuard {
+    populated: bool,
+}
+
+/// Sort specifier flags
+// `GlobSort` / `SortOrder` / `SortSpec` deleted — C uses bit-flag
+// `int tp` in `struct globsort { int tp; char *exec; }` (Src/glob.c:155):
+//   tp & ~GS_DESC selects the sort key (GS_NAME/GS_DEPTH/GS_EXEC/…),
+//   tp & GS_DESC reverses direction (`O` vs `o` qualifier),
+//   tp << GS_SHIFT carries the follow-link variants.
+// All those bits already exist as i32 constants at glob.rs:33+
+// (GS_NAME / GS_DEPTH / GS_SIZE / … / GS_DESC / GS_NONE / GS__SIZE /
+// …). The enum + Ascending/Descending + struct triple-wrapper was a
+// Rust-only convenience with no C counterpart; callers now operate
+// on the raw i32 the same way `gmatchcmp()` at glob.c:936 does.
+
+// `TimeUnit` / `SizeUnit` / `RangeOp` enums deleted — Rust-only
+// wrappers around constants/chars that exist as raw values in C:
+//   `TimeUnit::Seconds` → TT_SECONDS i32 (glob.c:126 → glob.rs:99)
+//   `TimeUnit::Minutes` → TT_MINS (c:123)
+//   `TimeUnit::Hours`   → TT_HOURS (c:122)
+//   `TimeUnit::Days`    → TT_DAYS (c:121)
+//   `TimeUnit::Weeks`   → TT_WEEKS (c:124)
+//   `TimeUnit::Months`  → TT_MONTHS (c:125)
+//   `SizeUnit::Bytes`   → TT_BYTES (c:128)
+//   `SizeUnit::PosixBlocks` → TT_POSIX_BLOCKS (c:129)
+//   `SizeUnit::Kilobytes`   → TT_KILOBYTES (c:130)
+//   `SizeUnit::Megabytes`   → TT_MEGABYTES (c:131)
+//   `SizeUnit::Gigabytes`   → TT_GIGABYTES (c:132)
+//   `SizeUnit::Terabytes`   → TT_TERABYTES (c:133)
+//   `RangeOp::Less`/`Equal`/`Greater` → raw chars `<` `=` `>`
+//      (zsh's qgetnum at glob.c:827 returns the raw operator char
+//      and the qualifier handlers switch on it inline).
+
+/// A glob qualifier function
+// Next qualifier, must match                                              // c:139
+// Alternative set of qualifiers to match                                   // c:140
+// Function to call to test match                                           // c:141
+#[derive(Debug, Clone)]
+/// One glob qualifier — Rust-extension sum type. C uses a linked
+/// list of `struct qual` (`Src/zsh.h:140-152`) with function-pointer
+/// `func` per node; each variant here maps to one of C's `q*` test
+/// fns (`qisreg`, `qisdir`, `qowner`, `qtime`, ...) at
+/// `Src/glob.c:1080-1340`. The full `struct qual` port + per-test fn
+/// dispatch lives in a later phase; this enum keeps the parsed-form
+/// the per-match filter inside `scanner()` (line 500) needs.
+#[allow(non_camel_case_types)]
+pub enum qualifier {
+    /// File type qualifiers
+    IsRegular,
+    IsDirectory,
+    IsSymlink,
+    IsSocket,
+    IsFifo,
+    IsBlockDev,
+    IsCharDev,
+    IsDevice,
+    IsExecutable,
+
+    /// Permission qualifiers
+    Readable,
+    Writable,
+    Executable,
+    WorldReadable,
+    WorldWritable,
+    WorldExecutable,
+    GroupReadable,
+    GroupWritable,
+    GroupExecutable,
+    Setuid,
+    Setgid,
+    Sticky,
+
+    /// Ownership qualifiers
+    OwnedByEuid,
+    OwnedByEgid,
+    OwnedByUid(u32),
+    OwnedByGid(u32),
+
+    /// Numeric qualifiers with range. `unit` is a `TT_*` i32
+    /// (glob.rs:99-113 / glob.c:121-133); `op` is the raw range
+    /// operator char (`<`, `=`, `>`) — mirrors C's qgetnum which
+    /// returns the operator char and the handler switches inline.
+    Size {
+        value: u64,
+        unit: i32,
+        op: char,
+    },
+    Links {
+        value: u64,
+        op: char,
+    },
+    Atime {
+        value: i64,
+        unit: i32,
+        op: char,
+    },
+    Mtime {
+        value: i64,
+        unit: i32,
+        op: char,
+    },
+    Ctime {
+        value: i64,
+        unit: i32,
+        op: char,
+    },
+
+    /// Mode specification
+    Mode {
+        yes: u32,
+        no: u32,
+    },
+
+    /// Device number
+    Device(u64),
+
+    /// Non-empty directory
+    NonEmptyDir,
+
+    /// Shell evaluation
+    Eval(String),
+}
+
+// Misnamed `gmatchcmp(&str, &str)` deleted — was a Rust-only
+// locale-aware string compare claiming to be the C qsort
+// comparator. The real C `gmatchcmp(Gmatch, Gmatch)` at glob.c:936
+// is now ported as `gmatchcmp(&GlobMatch, &GlobMatch, &[i32], bool)`
+// below. The string-compare case the old name claimed routes
+// through canonical `crate::ported::sort::zstrcmp` (sort.c:191).
+
+// `GlobOptions` struct deleted — Rust-only Bag-of-options with no
+// C counterpart. C reads each option directly from the global
+// `opts[]` array via `isset(NULL_GLOB)` / `isset(EXTENDED_GLOB)`
+// / etc. (Src/options.c). The Rust port uses the canonical
+// `crate::ported::options::opt_state_get(name) -> Option<bool>`
+// which reads from the same global store. Inlined at each
+// callsite as `opt_state_get("name").unwrap_or(default)`.
+
+/// Parsed glob qualifier set
+#[derive(Debug, Clone, Default)]
+/// Compiled qualifier list for one glob.
+/// Mirrors the `struct qual *` linked list `parsepat()`
+/// (Src/glob.c:791) builds — every `(qual)` after a glob pattern
+/// adds to it.
+#[allow(non_camel_case_types)]
+pub struct qualifier_set {                                                   // c:138
+    pub qualifiers: Vec<qualifier>,
+    pub alternatives: Vec<Vec<qualifier>>,
+    pub negated: bool,
+    pub follow_links: bool,
+    /// Packed sort-spec flags, one per `o`/`O` qualifier in the pattern.
+    /// Each entry is the C `struct globsort.tp` field — `GS_NAME` /
+    /// `GS_DEPTH` / `GS_EXEC` / `GS_SIZE` / `GS_ATIME` / `GS_MTIME` /
+    /// `GS_CTIME` / `GS_LINKS` (or their `<< GS_SHIFT` follow-link
+    /// variants), OR'd with `GS_DESC` for reverse direction.
+    pub sorts: Vec<i32>,                                                     // c:155 struct globsort.tp[]
+    pub first: Option<i32>,
+    pub last: Option<i32>,
+    pub colon_mods: Option<String>,
+    pub pre_words: Vec<String>,
+    pub post_words: Vec<String>,
+    /// `(M)` qualifier — append `/` to directory entries in output.
+    /// Direct port of zsh/Src/glob.c:1557-1561 (`case 'M'`):
+    ///   `gf_markdirs = !(sense & 1)` — set when the qualifier appears
+    ///   without a `^` toggle. Stored per-qualifier-set rather than per
+    ///   GlobOptions so a single glob call's qualifier picks it up.
+    pub mark_dirs: bool,
+    /// `(T)` qualifier — append type-char (ls -F style) to every entry.
+    /// Direct port of zsh/Src/glob.c:1562-1566 (`case 'T'`).
+    pub list_types: bool,
+}
+
+/// Pattern component
+#[derive(Debug, Clone)]
+enum PatternComponent {
+    Pattern(String),
+    Recursive { follow_links: bool },
 }
 
 /// Enter a glob scope: snapshot options into TLS if no outer scope

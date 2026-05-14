@@ -60,9 +60,6 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-pub static INVCOUNT: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:37
-
 /// Truncate a long completion line with `...` so it fits a column
 /// budget.
 /// Port of `cut_cline(Cline l)` from Src/Zle/compresult.c. The C source
@@ -1070,13 +1067,6 @@ pub fn calclist(showall: i32) -> i32 {                                       // 
     1                                                                        // c:1920
 }
 
-thread_local! {
-    /// `static int lastinvcount = -1;` from compresult.c:1497 inside
-    /// `calclist`. Caches the last `invcount` seen so the early-exit
-    /// at c:1506-1511 fires when nothing has changed.
-    static LASTINVCOUNT: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
-}
-
 /// Direct port of `int asklist(void)` from
 /// `Src/Zle/compresult.c:1925`. The "do you wish to see all N
 /// possibilities?" prompt that gates display of long completion
@@ -1178,6 +1168,13 @@ pub fn asklist() -> i32 {                                                       
     let asked_now = MINFO.get().and_then(|m| m.lock().ok())
         .map(|m| m.asked).unwrap_or(0);
     if asked_now != 0 { asked_now - 1 } else { 0 }
+}
+
+thread_local! {
+    /// `static int lastinvcount = -1;` from compresult.c:1497 inside
+    /// `calclist`. Caches the last `invcount` seen so the early-exit
+    /// at c:1506-1511 fires when nothing has changed.
+    static LASTINVCOUNT: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
 }
 
 /// Port of `printlist(int over, CLPrintFunc printm, int showall)` from `Src/Zle/compresult.c:1978`.
@@ -1576,6 +1573,9 @@ pub fn invalidate_list() -> i32 {                                            // 
     }
     0                                                                        // c:2358
 }
+
+pub static INVCOUNT: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:37
 
 #[cfg(test)]
 mod tests {

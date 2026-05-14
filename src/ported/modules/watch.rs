@@ -18,18 +18,15 @@ use chrono::{Local, TimeZone};
 #[cfg(unix)]
 use std::ffi::CStr;
 
-/// Default watch format string
-pub const DEFAULT_WATCHFMT: &str = "%n has %a %l from %m.";
-
-/// Default watch format without host support
-pub const DEFAULT_WATCHFMT_NOHOST: &str = "%n has %a %l.";
-
 /// `WATCH_STRUCT_UTMP` typedef alias matching `Src/Modules/watch.c:71-79`:
 /// resolves to `libc::utmpx` on platforms with `<utmpx.h>` support
 /// (Linux/macOS), `libc::utmp` otherwise. The C source uses this
 /// alias name everywhere so the Rust port keeps it.
 #[cfg(unix)]
 pub type WATCH_STRUCT_UTMP = libc::utmpx;
+
+/// Default watch format string
+pub const DEFAULT_WATCHFMT: &str = "%n has %a %l from %m.";
 
 /// Port of `getlogtime(WATCH_STRUCT_UTMP *u, int inout)` from `Src/Modules/watch.c:161`. For
 /// login events (`inout` non-zero) returns the entry's `ut_time`
@@ -330,6 +327,30 @@ pub fn watchlog(inout: i32, u: &libc::utmpx, w: &[String], fmt: &str) {  // c:45
     }
 }
 
+/// Port of `ucmp(WATCH_STRUCT_UTMP *u, WATCH_STRUCT_UTMP *v)` from
+/// `Src/Modules/watch.c:527`. qsort comparator for utmp records:
+/// by `ut_time` ascending, then by `ut_line` lexicographic.
+///
+/// C body:
+/// ```c
+/// if (u->ut_time == v->ut_time)
+///     return strncmp(u->ut_line, v->ut_line, sizeof(u->ut_line));
+/// return u->ut_time - v->ut_time;
+/// ```
+pub fn ucmp(u: &libc::utmpx, v: &libc::utmpx) -> i32 {                   // c:527
+    let ut = u.ut_tv.tv_sec as i64;
+    let vt = v.ut_tv.tv_sec as i64;
+    if ut == vt {                                                        // c:527
+        // c:530 — `return strncmp(u->ut_line, v->ut_line, sizeof(u->ut_line));`
+        return match utmp_line(u).cmp(&utmp_line(v)) {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
+        };
+    }
+    (ut - vt) as i32                                                     // c:531 return u->ut_time - v->ut_time
+}
+
 // Per-evaluator watch-module state — bucket-1 dissolution per
 // PORT_PLAN.md Phase 2. C source has these file-statics in
 // `Src/Modules/watch.c`:
@@ -374,30 +395,6 @@ thread_local! {
     static WATCH: std::cell::RefCell<Vec<String>> = const {
         std::cell::RefCell::new(Vec::new())
     };
-}
-
-/// Port of `ucmp(WATCH_STRUCT_UTMP *u, WATCH_STRUCT_UTMP *v)` from
-/// `Src/Modules/watch.c:527`. qsort comparator for utmp records:
-/// by `ut_time` ascending, then by `ut_line` lexicographic.
-///
-/// C body:
-/// ```c
-/// if (u->ut_time == v->ut_time)
-///     return strncmp(u->ut_line, v->ut_line, sizeof(u->ut_line));
-/// return u->ut_time - v->ut_time;
-/// ```
-pub fn ucmp(u: &libc::utmpx, v: &libc::utmpx) -> i32 {                   // c:527
-    let ut = u.ut_tv.tv_sec as i64;
-    let vt = v.ut_tv.tv_sec as i64;
-    if ut == vt {                                                        // c:527
-        // c:530 — `return strncmp(u->ut_line, v->ut_line, sizeof(u->ut_line));`
-        return match utmp_line(u).cmp(&utmp_line(v)) {
-            std::cmp::Ordering::Less => -1,
-            std::cmp::Ordering::Equal => 0,
-            std::cmp::Ordering::Greater => 1,
-        };
-    }
-    (ut - vt) as i32                                                     // c:531 return u->ut_time - v->ut_time
 }
 
 /// Port of `readwtab(WATCH_STRUCT_UTMP **head, int initial_sz)` from
@@ -657,6 +654,12 @@ pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c
     0
 }
 
+/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/watch.c:731`.
+/// C body: `return handlefeatures(m, &module_features, enables);`
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:731
+    handlefeatures(m, module_features(), enables)
+}
+
 
 
 // ===========================================================
@@ -676,29 +679,6 @@ pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {     // c
 
 use crate::ported::zsh_h::{module, builtin};
 use crate::ported::builtin::BUILTIN;
-
-/// Port of `static struct builtin bintab[]` from `Src/Modules/watch.c:693`:
-/// ```c
-/// static struct builtin bintab[] = {
-///     BUILTIN("log", 0, bin_log, 0, 0, 0, NULL, NULL),
-/// };
-/// ```
-/// Exposed so `crate::ported::builtin::createbuiltintable` can fold
-/// the watch-module entries into the live `builtintab` at startup
-/// (zshrs auto-loads all modules so the per-module bintabs become
-/// part of the core table). `disable log` in `/etc/zshrc` (on
-/// macOS, to dodge `/usr/bin/log`) then finds the hashtable entry
-/// to flip.
-pub static bintab: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::new(|| vec![
-    BUILTIN("log", 0, Some(bin_log as crate::ported::zsh_h::HandlerFunc),
-            0, 0, 0, None, None),
-]);
-
-/// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/watch.c:731`.
-/// C body: `return handlefeatures(m, &module_features, enables);`
-pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {  // c:731
-    handlefeatures(m, module_features(), enables)
-}
 
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/watch.c:738`.
 #[allow(unused_variables)]
@@ -740,6 +720,26 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     //                    not module-lifetime.
     0
 }
+
+/// Default watch format without host support
+pub const DEFAULT_WATCHFMT_NOHOST: &str = "%n has %a %l.";
+
+/// Port of `static struct builtin bintab[]` from `Src/Modules/watch.c:693`:
+/// ```c
+/// static struct builtin bintab[] = {
+///     BUILTIN("log", 0, bin_log, 0, 0, 0, NULL, NULL),
+/// };
+/// ```
+/// Exposed so `crate::ported::builtin::createbuiltintable` can fold
+/// the watch-module entries into the live `builtintab` at startup
+/// (zshrs auto-loads all modules so the per-module bintabs become
+/// part of the core table). `disable log` in `/etc/zshrc` (on
+/// macOS, to dodge `/usr/bin/log`) then finds the hashtable entry
+/// to flip.
+pub static bintab: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::new(|| vec![
+    BUILTIN("log", 0, Some(bin_log as crate::ported::zsh_h::HandlerFunc),
+            0, 0, 0, None, None),
+]);
 
 // `UtmpEntry` struct + `SessionType` enum + `impl is_active`
 // DELETED. Watch.c uses `WATCH_STRUCT_UTMP` (= `libc::utmpx`) directly
@@ -1037,6 +1037,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

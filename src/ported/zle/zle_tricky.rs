@@ -50,115 +50,6 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-pub static USEMENU: AtomicI32 = AtomicI32::new(0);                           // c:96
-
-/// Port of `mod_export int useglob` from `Src/Zle/zle_tricky.c:96`.
-pub static USEGLOB: AtomicI32 = AtomicI32::new(0);                           // c:96
-
-/// Port of `mod_export int wouldinstab` from `Src/Zle/zle_tricky.c:101`.
-pub static WOULDINSTAB: AtomicI32 = AtomicI32::new(0);                       // c:101
-
-/// Port of `mod_export int nbrbeg` from `Src/Zle/zle_tricky.c:114`.
-/// Number of opened braces seen in the current word during completion.
-pub static NBRBEG: AtomicI32 = AtomicI32::new(0);                            // c:114
-/// Port of `mod_export int nbrend` from `Src/Zle/zle_tricky.c:114`.
-pub static NBREND: AtomicI32 = AtomicI32::new(0);                            // c:114
-
-/// Port of `mod_export int origcs` from `Src/Zle/zle_tricky.c:75`.
-/// Cursor position saved at completion entry.
-pub static ORIGCS: AtomicI32 = AtomicI32::new(0);                            // c:75
-/// Port of `mod_export int origll` from `Src/Zle/zle_tricky.c:75`.
-/// Line length saved at completion entry.
-pub static ORIGLL: AtomicI32 = AtomicI32::new(0);                            // c:75
-
-/// Port of `mod_export int insubscr` from `Src/Zle/zle_tricky.c:405`.
-/// != 0 if we are inside `${name[...]}` or `${(P)name[...]}`.
-pub static INSUBSCR: AtomicI32 = AtomicI32::new(0);                          // c:405
-
-/// Port of `mod_export int instring` from `Src/Zle/zle_tricky.c:419`.
-/// QT_NONE (0), QT_SINGLE, QT_DOUBLE, QT_DOLLARS, or QT_BACKSLASH.
-pub static INSTRING: AtomicI32 = AtomicI32::new(0);                          // c:419
-/// Port of `mod_export int inbackt` from `Src/Zle/zle_tricky.c:419`.
-pub static INBACKT: AtomicI32 = AtomicI32::new(0);                           // c:419
-
-/// Port of `mod_export char *origline` from `Src/Zle/zle_tricky.c`.
-/// The metafied line saved at completion entry.
-pub static ORIGLINE: std::sync::OnceLock<std::sync::Mutex<String>> =
-    std::sync::OnceLock::new();                                              // zle_tricky.c
-
-/// Port of `mod_export char *lastprebr` from `Src/Zle/zle_tricky.c`.
-pub static LASTPREBR: std::sync::OnceLock<std::sync::Mutex<String>> =
-    std::sync::OnceLock::new();                                              // zle_tricky.c
-/// Port of `mod_export char *lastpostbr` from `Src/Zle/zle_tricky.c`.
-pub static LASTPOSTBR: std::sync::OnceLock<std::sync::Mutex<String>> =
-    std::sync::OnceLock::new();                                              // zle_tricky.c
-
-/// Port of `mod_export char *compquote` from `Src/Zle/zle_tricky.c`.
-/// `$compstate[quote]` — current quoting context character.
-pub static COMPQUOTE: std::sync::OnceLock<std::sync::Mutex<String>> =
-    std::sync::OnceLock::new();                                              // zle_tricky.c
-/// Port of `mod_export char *autoq` from `Src/Zle/zle_tricky.c`.
-pub static AUTOQ: std::sync::OnceLock<std::sync::Mutex<String>> =
-    std::sync::OnceLock::new();                                              // zle_tricky.c
-
-/// Port of `mod_export int menucmp` from `Src/Zle/zle_tricky.c:106`.
-/// Non-zero while inside a menu-completion sequence.
-pub static MENUCMP: AtomicI32 = AtomicI32::new(0);                           // c:106
-
-/// Port of `int comppref` from `Src/Zle/zle_tricky.c`. Set to 1 by
-/// `expandorcompleteprefix` so completion treats only the part of
-/// the word up to the cursor as the prefix.
-pub static COMPPREF: AtomicI32 = AtomicI32::new(0);                          // c:78
-
-/// Port of `mod_export int validlist` from `Src/Zle/zle_tricky.c:122`.
-/// Non-zero when the cached list of completion matches is still
-/// usable (didn't fall victim to a `clearlist` / `invalidate_list`).
-pub static VALIDLIST: AtomicI32 = AtomicI32::new(0);                         // c:122
-
-/// Port of `mod_export int showagain` from `Src/Zle/zle_tricky.c:127`.
-/// Set by `comp_list` when the user re-asks for the same list — drives
-/// the "redraw without re-running compfunc" branch in `before_complete`.
-pub static SHOWAGAIN: AtomicI32 = AtomicI32::new(0);                         // c:127
-
-/// Port of `mod_export int lastambig` from `Src/Zle/zle_tricky.c:157`.
-/// Sticky flag set when the last completion left the line in an
-/// ambiguous state — drives automenu kick-in via `before_complete`.
-pub static LASTAMBIG: AtomicI32 = AtomicI32::new(0);                         // c:157
-
-/// Port of `mod_export int bashlistfirst` from
-/// `Src/Zle/zle_tricky.c:157`. Sets the listing style.
-pub static BASHLISTFIRST: AtomicI32 = AtomicI32::new(0);                     // c:157
-
-/// Port of `mod_export int amenu` from `Src/Zle/zle_tricky.c`. Set
-/// non-zero while a menu-completion is in progress — drives the
-/// list-with-cursor refresh path.
-pub static AMENU: AtomicI32 = AtomicI32::new(0);                             // c:zle_tricky.c
-
-// `CompletionState` struct deleted — Rust-invented state container
-// with no C counterpart. C uses file-static globals (`compcontext`,
-// `compfunc`, `usemenu`, `useglob`, brbeg/brend, etc.) for the same
-// data, not a passed struct. The Rust port's old `impl Zle` methods
-// (since dissolved into free fns) that took `&mut CompletionState`
-// (complete_word/menu_complete/
-// reverse_menu_complete/expand_or_complete/expand_or_complete_prefix/
-// list_choices/delete_char_or_list/accept_and_menu_complete + their
-// do_complete/apply_completion/get_word_bounds/try_expand/do_expansion/
-// do_expand_hist/get_completions helpers) were also Rust-only
-// simplified stand-alones — they didn't match C signatures and had
-// no external callers. The real C-faithful ports (completeword,
-// menucomplete, deletecharorlist, docomplete, docompletion, etc.)
-// already live as `pub fn` at file scope below; they read/write the
-// C globals directly.
-
-// `BraceInfo` deleted — Rust-invented `{ str_val, pos, cur_pos,
-// qpos, curlen }` struct that wasn't referenced anywhere (dead
-// code). C uses the legit `struct brinfo` at zle.h:368 (ported in
-// zle_h.rs:528) for brace-expansion bookkeeping during completion.
-
-
-/// Meta character for zsh's internal encoding (0x83)
-pub const META: char = '\u{83}';
-
 /// Port of `usetab()` from Src/Zle/zle_tricky.c:183.
 /// WARNING: param names don't match C — Rust=(zle, keybuf) vs C=()
 pub fn usetab(keybuf: &[u8]) -> i32 { // c:183
@@ -1169,6 +1060,115 @@ pub fn endoflist() -> i32 {                                                  // 
     // Without the live curses substrate we no-op and report success.
     0
 }
+
+pub static USEMENU: AtomicI32 = AtomicI32::new(0);                           // c:96
+
+/// Port of `mod_export int useglob` from `Src/Zle/zle_tricky.c:96`.
+pub static USEGLOB: AtomicI32 = AtomicI32::new(0);                           // c:96
+
+/// Port of `mod_export int wouldinstab` from `Src/Zle/zle_tricky.c:101`.
+pub static WOULDINSTAB: AtomicI32 = AtomicI32::new(0);                       // c:101
+
+/// Port of `mod_export int nbrbeg` from `Src/Zle/zle_tricky.c:114`.
+/// Number of opened braces seen in the current word during completion.
+pub static NBRBEG: AtomicI32 = AtomicI32::new(0);                            // c:114
+/// Port of `mod_export int nbrend` from `Src/Zle/zle_tricky.c:114`.
+pub static NBREND: AtomicI32 = AtomicI32::new(0);                            // c:114
+
+/// Port of `mod_export int origcs` from `Src/Zle/zle_tricky.c:75`.
+/// Cursor position saved at completion entry.
+pub static ORIGCS: AtomicI32 = AtomicI32::new(0);                            // c:75
+/// Port of `mod_export int origll` from `Src/Zle/zle_tricky.c:75`.
+/// Line length saved at completion entry.
+pub static ORIGLL: AtomicI32 = AtomicI32::new(0);                            // c:75
+
+/// Port of `mod_export int insubscr` from `Src/Zle/zle_tricky.c:405`.
+/// != 0 if we are inside `${name[...]}` or `${(P)name[...]}`.
+pub static INSUBSCR: AtomicI32 = AtomicI32::new(0);                          // c:405
+
+/// Port of `mod_export int instring` from `Src/Zle/zle_tricky.c:419`.
+/// QT_NONE (0), QT_SINGLE, QT_DOUBLE, QT_DOLLARS, or QT_BACKSLASH.
+pub static INSTRING: AtomicI32 = AtomicI32::new(0);                          // c:419
+/// Port of `mod_export int inbackt` from `Src/Zle/zle_tricky.c:419`.
+pub static INBACKT: AtomicI32 = AtomicI32::new(0);                           // c:419
+
+/// Port of `mod_export char *origline` from `Src/Zle/zle_tricky.c`.
+/// The metafied line saved at completion entry.
+pub static ORIGLINE: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();                                              // zle_tricky.c
+
+/// Port of `mod_export char *lastprebr` from `Src/Zle/zle_tricky.c`.
+pub static LASTPREBR: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();                                              // zle_tricky.c
+/// Port of `mod_export char *lastpostbr` from `Src/Zle/zle_tricky.c`.
+pub static LASTPOSTBR: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();                                              // zle_tricky.c
+
+/// Port of `mod_export char *compquote` from `Src/Zle/zle_tricky.c`.
+/// `$compstate[quote]` — current quoting context character.
+pub static COMPQUOTE: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();                                              // zle_tricky.c
+/// Port of `mod_export char *autoq` from `Src/Zle/zle_tricky.c`.
+pub static AUTOQ: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();                                              // zle_tricky.c
+
+/// Port of `mod_export int menucmp` from `Src/Zle/zle_tricky.c:106`.
+/// Non-zero while inside a menu-completion sequence.
+pub static MENUCMP: AtomicI32 = AtomicI32::new(0);                           // c:106
+
+/// Port of `int comppref` from `Src/Zle/zle_tricky.c`. Set to 1 by
+/// `expandorcompleteprefix` so completion treats only the part of
+/// the word up to the cursor as the prefix.
+pub static COMPPREF: AtomicI32 = AtomicI32::new(0);                          // c:78
+
+/// Port of `mod_export int validlist` from `Src/Zle/zle_tricky.c:122`.
+/// Non-zero when the cached list of completion matches is still
+/// usable (didn't fall victim to a `clearlist` / `invalidate_list`).
+pub static VALIDLIST: AtomicI32 = AtomicI32::new(0);                         // c:122
+
+/// Port of `mod_export int showagain` from `Src/Zle/zle_tricky.c:127`.
+/// Set by `comp_list` when the user re-asks for the same list — drives
+/// the "redraw without re-running compfunc" branch in `before_complete`.
+pub static SHOWAGAIN: AtomicI32 = AtomicI32::new(0);                         // c:127
+
+/// Port of `mod_export int lastambig` from `Src/Zle/zle_tricky.c:157`.
+/// Sticky flag set when the last completion left the line in an
+/// ambiguous state — drives automenu kick-in via `before_complete`.
+pub static LASTAMBIG: AtomicI32 = AtomicI32::new(0);                         // c:157
+
+/// Port of `mod_export int bashlistfirst` from
+/// `Src/Zle/zle_tricky.c:157`. Sets the listing style.
+pub static BASHLISTFIRST: AtomicI32 = AtomicI32::new(0);                     // c:157
+
+/// Port of `mod_export int amenu` from `Src/Zle/zle_tricky.c`. Set
+/// non-zero while a menu-completion is in progress — drives the
+/// list-with-cursor refresh path.
+pub static AMENU: AtomicI32 = AtomicI32::new(0);                             // c:zle_tricky.c
+
+// `CompletionState` struct deleted — Rust-invented state container
+// with no C counterpart. C uses file-static globals (`compcontext`,
+// `compfunc`, `usemenu`, `useglob`, brbeg/brend, etc.) for the same
+// data, not a passed struct. The Rust port's old `impl Zle` methods
+// (since dissolved into free fns) that took `&mut CompletionState`
+// (complete_word/menu_complete/
+// reverse_menu_complete/expand_or_complete/expand_or_complete_prefix/
+// list_choices/delete_char_or_list/accept_and_menu_complete + their
+// do_complete/apply_completion/get_word_bounds/try_expand/do_expansion/
+// do_expand_hist/get_completions helpers) were also Rust-only
+// simplified stand-alones — they didn't match C signatures and had
+// no external callers. The real C-faithful ports (completeword,
+// menucomplete, deletecharorlist, docomplete, docompletion, etc.)
+// already live as `pub fn` at file scope below; they read/write the
+// C globals directly.
+
+// `BraceInfo` deleted — Rust-invented `{ str_val, pos, cur_pos,
+// qpos, curlen }` struct that wasn't referenced anywhere (dead
+// code). C uses the legit `struct brinfo` at zle.h:368 (ported in
+// zle_h.rs:528) for brace-expansion bookkeeping during completion.
+
+
+/// Meta character for zsh's internal encoding (0x83)
+pub const META: char = '\u{83}';
 
 /// Port of the `inststr(X)` macro from `Src/Zle/compcore.c:278` and
 /// `Src/Zle/compresult.c:39` (both files share the same macro).

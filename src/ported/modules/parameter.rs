@@ -20,49 +20,6 @@ use crate::ported::zsh_h::{SCANPM_WANTVALS, SCANPM_MATCHVAL, SCANPM_WANTKEYS};
 use crate::ported::zsh_h::{nameddir, hashnode};
 use crate::ported::zsh_h::ND_USERNAME;
 
-/// Port of `struct pardef` from `Src/Modules/parameter.c:2179`. The
-/// per-magic-assoc parameter spec table — one entry per
-/// `${parameters}`/`${commands}`/`${functions}`/etc. exposed by the
-/// `zsh/parameter` module.
-///
-/// C definition (c:2179-2187):
-/// ```c
-/// struct pardef {
-///     char *name;
-///     int flags;
-///     GetNodeFunc getnfn;
-///     ScanTabFunc scantfn;
-///     GsuHash hash_gsu;
-///     GsuArray array_gsu;
-///     Param pm;
-/// };
-/// ```
-///
-/// Rust port keeps the same shape; the GSU function-table fields
-/// (`hash_gsu`, `array_gsu`) are type-erased via `usize` because the
-/// `GsuHash`/`GsuArray` types (zsh_h.rs:797-798, `Box<gsu_hash>` /
-/// `Box<gsu_array>`) own their callback function pointers and can't
-/// be const-initialised in a Rust static. Consumers cast back at
-/// dispatch time.
-#[allow(non_camel_case_types)]
-#[derive(Debug, Clone, Copy)]
-pub struct pardef {                                                          // c:2179
-    /// Parameter name (e.g. "commands", "functions", "options").
-    pub name: &'static str,                                                  // c:2180
-    /// Flags (PM_* bits — typically PM_HASHED|PM_SPECIAL|PM_HIDE).
-    pub flags: i32,                                                          // c:2181
-    /// `GetNodeFunc` getnfn — type-erased: 0 when not yet wired.
-    pub getnfn: usize,                                                       // c:2182
-    /// `ScanTabFunc` scantfn — type-erased: 0 when not yet wired.
-    pub scantfn: usize,                                                      // c:2183
-    /// `GsuHash` hash_gsu — type-erased.
-    pub hash_gsu: usize,                                                     // c:2184
-    /// `GsuArray` array_gsu — type-erased.
-    pub array_gsu: usize,                                                    // c:2185
-    /// `Param pm` — type-erased pointer; populated by createparam.
-    pub pm: usize,                                                           // c:2186
-}
-
 // Bag-of-globals `ParamType`/`ParamFlags` enum + `*Table` structs
 // deleted (PORT_PLAN.md Phase 2 anti-pattern #1): C has no
 // counterpart — paramtypestr now reads `PM_TYPE(pm->node.flags)`
@@ -111,46 +68,6 @@ pub fn paramtypestr(pm: &crate::ported::zsh_h::param) -> String {            // 
     val                                                                      // c:94
 }
 
-#[cfg(test)]
-mod paramtypestr_tests {
-    use super::*;
-    use crate::ported::zsh_h::{
-        hashnode, param, PM_ARRAY, PM_EXPORTED, PM_SCALAR, PM_UNSET,
-    };
-
-    fn make_pm(flags: u32, level: i32) -> param {
-        param {
-            node: hashnode { next: None, nam: String::new(), flags: flags as i32 },
-            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
-            u_hash: None,
-            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
-            base: 0, width: 0, env: None, ename: None, old: None, level,
-        }
-    }
-
-    /// Mirrors Src/Modules/parameter.c:43-95 — switch on
-    /// `PM_TYPE(pm->node.flags)` then dyncat'd modifier chain.
-    #[test]
-    fn paramtypestr_matches_c_dispatch() {
-        // c:53 — plain scalar.
-        assert_eq!(paramtypestr(&make_pm(PM_SCALAR, 0)), "scalar");
-        // c:55,63-64,81-82 — array + level=1 + PM_EXPORTED.
-        assert_eq!(
-            paramtypestr(&make_pm(PM_ARRAY | PM_EXPORTED, 1)),
-            "array-local-export",
-        );
-        // c:91-92 — PM_UNSET short-circuits to "".
-        assert_eq!(paramtypestr(&make_pm(PM_UNSET, 0)), "");
-    }
-}
-
-
-// =====================================================================
-// static struct features module_features                            c:2300 (parameter.c)
-// =====================================================================
-
-use crate::ported::zsh_h::module;
-
 /// Direct port of `getpmparameter(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:99.
 /// C body (c:102-210): `paramtab[name]` lookup; emit a scalar Param
 /// whose value is the type-letter encoding (`scalar`, `array`,
@@ -193,6 +110,46 @@ pub fn getpmparameter(ht: *mut HashTable, name: &str) -> Option<Param> {    // c
     });
     Some(pm)                                                                 // c:210
 }
+
+#[cfg(test)]
+mod paramtypestr_tests {
+    use super::*;
+    use crate::ported::zsh_h::{
+        hashnode, param, PM_ARRAY, PM_EXPORTED, PM_SCALAR, PM_UNSET,
+    };
+
+    fn make_pm(flags: u32, level: i32) -> param {
+        param {
+            node: hashnode { next: None, nam: String::new(), flags: flags as i32 },
+            u_data: 0, u_arr: None, u_str: None, u_val: 0, u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+            base: 0, width: 0, env: None, ename: None, old: None, level,
+        }
+    }
+
+    /// Mirrors Src/Modules/parameter.c:43-95 — switch on
+    /// `PM_TYPE(pm->node.flags)` then dyncat'd modifier chain.
+    #[test]
+    fn paramtypestr_matches_c_dispatch() {
+        // c:53 — plain scalar.
+        assert_eq!(paramtypestr(&make_pm(PM_SCALAR, 0)), "scalar");
+        // c:55,63-64,81-82 — array + level=1 + PM_EXPORTED.
+        assert_eq!(
+            paramtypestr(&make_pm(PM_ARRAY | PM_EXPORTED, 1)),
+            "array-local-export",
+        );
+        // c:91-92 — PM_UNSET short-circuits to "".
+        assert_eq!(paramtypestr(&make_pm(PM_UNSET, 0)), "");
+    }
+}
+
+
+// =====================================================================
+// static struct features module_features                            c:2300 (parameter.c)
+// =====================================================================
+
+use crate::ported::zsh_h::module;
 
 /// Port of `scanpmparameters(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:124.
 #[allow(non_snake_case)]
@@ -385,25 +342,6 @@ pub fn scanpmcommands(_ht: *mut HashTable, func: Option<ScanFunc>,           // 
     }
     let _ = cmds;
 }
-
-// =====================================================================
-// !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
-// =====================================================================
-//
-// `ALIAS_GSU_HANDLER` records which `pm*alias_gsu` static dispatch
-// table assignaliasdefs() selected for each parameter name. The C
-// source stores this directly on `Param->gsu.s` as a function-table
-// pointer (Src/Modules/parameter.c:1842-1860). Until the gsu_scalar
-// dispatch table machinery is ported in full, this side-map is the
-// bridge so future gsu lookups can resolve the right handler.
-//
-// !!! Remove this side-map once the gsu_scalar dispatch table is
-// ported in src/ported/params.rs and assignaliasdefs() can write
-// `pm->gsu.s = &pmralias_gsu` directly. !!!
-// =====================================================================
-static ALIAS_GSU_HANDLER: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, String>>> =
-    std::sync::OnceLock::new();
 
 /// Port of `setfunction(char *name, char *val, int dis)` from Src/Modules/parameter.c:284.
 /// C: `static void setfunction(char *name, char *val, int dis)` — install
@@ -600,18 +538,6 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, _dis: i32)               // 
     Some(pm)                                                                 // c:441
 }
 
-// File-static globals for parameter.c port — c:38-44, src/init.c.
-// `dirstack` lives in src/exec.c globals; `funcstack` in src/init.c.
-// Mirror as Mutex<Vec<...>> for cross-thread safety.
-pub static DIRSTACK: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
-pub static INCLEANUP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-
-// `funcstack` global from Src/exec.c:340 — head of the active shell
-// function call stack. Rust port mirrors the chain as Vec snapshot
-// (the C source walks `funcstack->prev` to produce array params).
-pub static FUNCSTACK: std::sync::Mutex<Vec<crate::ported::zsh_h::funcstack>>
-    = std::sync::Mutex::new(Vec::new());
-
 /// Port of `getpmfunction(HashTable ht, const char *name)` from Src/Modules/parameter.c:444.
 /// C: `static HashNode getpmfunction(HashTable ht, const char *name)` →
 ///   `return getfunction(ht, name, 0);`
@@ -627,9 +553,6 @@ pub fn getpmfunction(ht: *mut HashTable, name: &str) -> Option<Param> {      // 
 pub fn getpmdisfunction(ht: *mut HashTable, name: &str) -> Option<Param> {   // c:451
     getfunction(ht, name, DISABLED)                                          // c:451
 }
-
-use crate::ported::zsh_h::{HashTable, HashNode, Param, param as ParamStruct};
-use crate::ported::zsh_h::{ALIAS_GLOBAL, DISABLED};
 
 /// Port of `scanfunctions(UNUSED(HashTable ht), ScanFunc func, int flags, int dis)` from Src/Modules/parameter.c:458.
 /// C: `static void scanfunctions(UNUSED(HashTable ht), ScanFunc func,
@@ -735,6 +658,9 @@ pub fn scanfunctions_source(_ht: *mut HashTable, func: Option<ScanFunc>,     // 
         }
     }
 }
+
+use crate::ported::zsh_h::{HashTable, HashNode, Param, param as ParamStruct};
+use crate::ported::zsh_h::{ALIAS_GLOBAL, DISABLED};
 
 /// Port of `getpmfunction_source(HashTable ht, const char *name)` from Src/Modules/parameter.c:591.
 /// C: `static HashNode getpmfunction_source(HashTable ht, const char *name)`
@@ -1096,11 +1022,6 @@ pub fn setpmoptions(pm: Param, ht: *mut HashTable) {                        // c
     }
 }
 
-// `getreswords()` (Src/lex.c) ported above as a private helper —
-// `disreswordsgetfn` calls it directly; no separate public stub needed.
-
-use crate::ported::zsh_h::ScanFunc;
-
 /// Port of `getpmoption(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:988.
 /// C: `static HashNode getpmoption(UNUSED(HashTable ht), const char *name)`
 /// — emit "on"/"off" for the named shell option.
@@ -1190,6 +1111,11 @@ pub fn dirssetfn(pm: *mut crate::ported::zsh_h::param, x: Vec<String>) {    // c
     // c:1142-1143 — freearray(ox); Rust drops `x` automatically.
     drop(x);
 }
+
+// `getreswords()` (Src/lex.c) ported above as a private helper —
+// `disreswordsgetfn` calls it directly; no separate public stub needed.
+
+use crate::ported::zsh_h::ScanFunc;
 
 /// Port of `dirsgetfn(UNUSED(Param pm))` from Src/Modules/parameter.c:1147.
 /// C: `static char **dirsgetfn(UNUSED(Param pm))` →
@@ -1661,8 +1587,6 @@ pub fn unsetpmalias(pm: Param, exp: i32) {                                  // c
     }
 }
 
-use crate::ported::zsh_h::ALIAS_SUFFIX;
-
 /// Port of `unsetpmsalias(Param pm, UNUSED(int exp))` from Src/Modules/parameter.c:1759.
 /// C: `static void unsetpmsalias(Param pm, UNUSED(int exp))` — remove the
 /// named suffix alias from `sufaliastab`.
@@ -1703,6 +1627,8 @@ pub fn setpmdisraliases(pm: Param, ht: *mut HashTable) {                     // 
 pub fn setpmgaliases(pm: Param, ht: *mut HashTable) {                        // c:1826
     setaliases(std::ptr::null_mut(), pm, ht, ALIAS_GLOBAL)                   // c:1826
 }
+
+use crate::ported::zsh_h::ALIAS_SUFFIX;
 
 /// Port of `setpmdisgaliases(Param pm, HashTable ht)` from Src/Modules/parameter.c:1833.
 /// C: `setaliases(aliastab, pm, ht, ALIAS_GLOBAL|DISABLED);`
@@ -2024,6 +1950,49 @@ pub fn scanpmusergroups(_ht: *mut HashTable, func: Option<ScanFunc>,         // 
     }
 }
 
+/// Port of `struct pardef` from `Src/Modules/parameter.c:2179`. The
+/// per-magic-assoc parameter spec table — one entry per
+/// `${parameters}`/`${commands}`/`${functions}`/etc. exposed by the
+/// `zsh/parameter` module.
+///
+/// C definition (c:2179-2187):
+/// ```c
+/// struct pardef {
+///     char *name;
+///     int flags;
+///     GetNodeFunc getnfn;
+///     ScanTabFunc scantfn;
+///     GsuHash hash_gsu;
+///     GsuArray array_gsu;
+///     Param pm;
+/// };
+/// ```
+///
+/// Rust port keeps the same shape; the GSU function-table fields
+/// (`hash_gsu`, `array_gsu`) are type-erased via `usize` because the
+/// `GsuHash`/`GsuArray` types (zsh_h.rs:797-798, `Box<gsu_hash>` /
+/// `Box<gsu_array>`) own their callback function pointers and can't
+/// be const-initialised in a Rust static. Consumers cast back at
+/// dispatch time.
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy)]
+pub struct pardef {                                                          // c:2179
+    /// Parameter name (e.g. "commands", "functions", "options").
+    pub name: &'static str,                                                  // c:2180
+    /// Flags (PM_* bits — typically PM_HASHED|PM_SPECIAL|PM_HIDE).
+    pub flags: i32,                                                          // c:2181
+    /// `GetNodeFunc` getnfn — type-erased: 0 when not yet wired.
+    pub getnfn: usize,                                                       // c:2182
+    /// `ScanTabFunc` scantfn — type-erased: 0 when not yet wired.
+    pub scantfn: usize,                                                      // c:2183
+    /// `GsuHash` hash_gsu — type-erased.
+    pub hash_gsu: usize,                                                     // c:2184
+    /// `GsuArray` array_gsu — type-erased.
+    pub array_gsu: usize,                                                    // c:2185
+    /// `Param pm` — type-erased pointer; populated by createparam.
+    pub pm: usize,                                                           // c:2186
+}
+
 // `partab` — port of `static struct paramdef partab[]` (parameter.c).
 // 33 SPECIALPMDEF entries — each ties a `${assoc}` magic-assoc name
 // to its scanpm*/getpm* C callbacks. Rust-side dispatch happens via
@@ -2086,6 +2055,37 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     //                      partab dispatch in cleanup_.
     0
 }
+
+// =====================================================================
+// !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+//
+// `ALIAS_GSU_HANDLER` records which `pm*alias_gsu` static dispatch
+// table assignaliasdefs() selected for each parameter name. The C
+// source stores this directly on `Param->gsu.s` as a function-table
+// pointer (Src/Modules/parameter.c:1842-1860). Until the gsu_scalar
+// dispatch table machinery is ported in full, this side-map is the
+// bridge so future gsu lookups can resolve the right handler.
+//
+// !!! Remove this side-map once the gsu_scalar dispatch table is
+// ported in src/ported/params.rs and assignaliasdefs() can write
+// `pm->gsu.s = &pmralias_gsu` directly. !!!
+// =====================================================================
+static ALIAS_GSU_HANDLER: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::OnceLock::new();
+
+// File-static globals for parameter.c port — c:38-44, src/init.c.
+// `dirstack` lives in src/exec.c globals; `funcstack` in src/init.c.
+// Mirror as Mutex<Vec<...>> for cross-thread safety.
+pub static DIRSTACK: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+pub static INCLEANUP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+// `funcstack` global from Src/exec.c:340 — head of the active shell
+// function call stack. Rust port mirrors the chain as Vec snapshot
+// (the C source walks `funcstack->prev` to produce array params).
+pub static FUNCSTACK: std::sync::Mutex<Vec<crate::ported::zsh_h::funcstack>>
+    = std::sync::Mutex::new(Vec::new());
 
 // =====================================================================
 // !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
@@ -2169,6 +2169,17 @@ fn setfeatureenables(
 ) -> i32 {
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

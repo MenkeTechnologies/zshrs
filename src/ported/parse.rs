@@ -35,33 +35,8 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Port of C `struct eccstr` (zsh.h:836) — the long-string dedup BST
-/// node. The dedup-walk and cmp logic in `ecstrcode` is faithful to
-/// parse.c:447-453 including the conditional cmp chain
-/// (nfunc → hashval → strcmp), so corpus inputs where C's eccstr BST walk
-/// finds-or-misses match get the same outcome on the Rust side.
-struct EccstrNode {
-    left: Option<Box<EccstrNode>>,
-    right: Option<Box<EccstrNode>>,
-    /// C-byte form of the string (single byte per char ≤ 0xff).
-    /// Owned because Rust doesn't have C zsh's "stable pointers into
-    /// the lexer's tokstr arena" — every tokstr lives as a fresh
-    /// Rust String allocation.
-    str: Vec<u8>,
-    /// Wordcode-encoded offset: `(byte_offset << 2) | token_bit`.
-    /// Same shape as `Eccstr::offs` (parse.c:459).
-    offs: u32,
-    /// Absolute byte offset in the final strs region (= `ecsoffs` at
-    /// insert time). C `Eccstr::aoffs` (parse.c:464). copy_ecstr uses
-    /// THIS for the write position — distinct from `offs` which is
-    /// ecssub-relative and collides across funcdef scopes.
-    aoffs: u32,
-    /// `nfunc` snapshot at insert time. Per-function namespace key
-    /// — top-level scripts use 0; each funcdef bumps it.
-    nfunc: i32,
-    /// Hash of `str` computed via zsh's `hasher` (hashtable.c:86).
-    hashval: u32,
-}
+// Direct port of `Src/parse.c:287-289` grow-policy constants.
+const EC_INIT_SIZE: i32 = 256;
 
 // Pending-here-document list — direct port of `Src/parse.c:84
 // struct heredocs *hdocs;`. Per-parser file-static (bucket-1 in
@@ -122,9 +97,6 @@ thread_local! {
     pub static ECSTRS_REVERSE: std::cell::RefCell<std::collections::HashMap<u32, Vec<u8>>>
         = std::cell::RefCell::new(std::collections::HashMap::new());
 }
-
-// Direct port of `Src/parse.c:287-289` grow-policy constants.
-const EC_INIT_SIZE: i32 = 256;
 const EC_DOUBLE_THRESHOLD: i32 = 32768;
 const EC_INCREMENT: i32 = 1024;
 
@@ -210,6 +182,20 @@ pub fn parse_context_restore(ps: &parse_stack) {
     );
 }
 
+/// Direct port of `ecadjusthere(int p, int d)` at `Src/parse.c:360`. Walk
+/// the pending-heredocs list and bump each `pc` by `d` if it's
+/// at or after position `p`. Called by `ecispace` / `ecdel` when
+/// wordcodes shift.
+#[allow(unused_variables)]
+pub fn ecadjusthere(p: usize, d: i32) {
+    // parse.c:362-366 — `for (p2 = hdocs; p2; p2 = p2->next) if
+    // (p2->pc >= p) p2->pc += d;`. zshrs's hdocs are still
+    // Vec<HereDoc> on the lexer (pre-P9c migration); since none
+    // of them carry a wordcode pc today (the AST tree has no pc
+    // slots), this is a no-op until Phase 9c wires
+    // `hdocs.pc` into wordcode emission.
+}
+
 // === AST tree relocated to src/extensions/zsh_ast.rs ===
 //
 // zsh C does NOT have an AST tree — it emits wordcode directly via
@@ -251,100 +237,6 @@ use crate::zsh_h::{
     WC_SUBLIST_FLAGS, WC_SUBLIST_OR, WC_SUBLIST_SIMPLE, WC_SUBLIST_TYPE, WC_TIMED_EMPTY,
     WC_TIMED_PIPE, WC_WHILE_UNTIL, WC_WHILE_WHILE, Z_ASYNC, Z_DISOWN, Z_END, Z_SIMPLE, Z_SYNC,
 };
-// === end AST relocation ===
-
-// Parser state lives in file-scope thread_locals:
-//   - LEX_* (lexer side, matching Src/lex.c file-statics)
-//   - ECBUF / ECLEN / ECUSED / ECNPATS / ECSOFFS / ECSSUB / ECNFUNC /
-//     ECSTRS_INDEX / ECSTRS_REVERSE (wordcode-emission state, matching
-//     Src/parse.c file-statics)
-//
-// Callers use the free-fn entry points directly:
-//   crate::ported::parse::parse_init(input);
-//   let prog = crate::ported::parse::parse();
-
-const MAX_RECURSION_DEPTH: usize = 500;
-
-/// Direct port of `struct parse_stack` at `Src/zsh.h:3099-3109`.
-/// Used by `parse_context_save` / `parse_context_restore`
-/// (parse.c:295-355) to snapshot per-parse-call state so a nested
-/// parse (e.g. inside command substitution) doesn't clobber the
-/// outer parse.
-///
-/// A second port of `struct parse_stack` exists at
-/// `crate::ported::zsh_h::parse_stack` (zsh.h:1066) using canonical
-/// Wordcode / Eccstr / `struct heredocs` types — that port is unused
-/// today and will become authoritative when Phase 9b (PORT_PLAN.md)
-/// wires wordcode emission. This local version uses the working-set
-/// shapes (`Vec<HereDoc>`, stubbed wordcode fields) suited to zshrs's
-/// pre-wordcode AST architecture; the consolidation happens in P9b.
-#[allow(non_camel_case_types)]
-#[derive(Debug, Default, Clone)]
-pub struct parse_stack {
-    // ── Direct port of struct parse_stack at zsh.h:3099-3109 ──
-    /// Pending heredocs awaiting body collection (canonical C
-    /// linked-list shape). C: `struct heredocs *hdocs` (zsh.h:3100).
-    /// Mirrors `parse::HDOCS` thread_local across nested parses.
-    pub hdocs: Option<Box<crate::ported::zsh_h::heredocs>>,
-    /// !!! WARNING: NOT IN PARSE_STACK — Rust-only AST-glue !!!
-    /// Snapshot of `lex::LEX_HEREDOCS` (the parallel Rust-only Vec
-    /// carrying terminator / strip_tabs / quoted metadata).
-    /// Saved/restored alongside the canonical `hdocs` so nested
-    /// parses get a clean AST view. C's parse_stack has no analog
-    /// because C tracks terminator metadata implicitly via tokstr.
-    pub lex_heredocs: Vec<HereDoc>,
-    /// C: `int incmdpos` (zsh.h:3102).
-    pub incmdpos: bool,
-    /// C: `int aliasspaceflag` (zsh.h:3103).
-    pub aliasspaceflag: i32,
-    /// C: `int incond` (zsh.h:3104).
-    pub incond: i32,
-    /// C: `int inredir` (zsh.h:3105).
-    pub inredir: bool,
-    /// C: `int incasepat` (zsh.h:3106).
-    pub incasepat: i32,
-    /// C: `int isnewlin` (zsh.h:3107).
-    pub isnewlin: i32,
-    /// C: `int infor` (zsh.h:3108).
-    pub infor: i32,
-    /// C: `int inrepeat_` (zsh.h:3109).
-    pub inrepeat_: i32,
-    /// C: `int intypeset` (zsh.h:3110).
-    pub intypeset: bool,
-    // ── Wordcode-buffer state — STUB until Phase 9b ──
-    // C `Wordcode ecbuf` (zsh.h:3112) + `Eccstr ecstrs` (zsh.h:3113) +
-    // `int eclen/ecused/ecnpats/ecsoffs/ecssub/ecnfunc` (zsh.h:3112-3114).
-    // zshrs hasn't emitted wordcode yet — these fields exist to
-    // preserve the C shape but read/write nothing until P9b lands.
-    pub eclen: i32,
-    pub ecused: i32,
-    pub ecnpats: i32,
-    pub ecbuf: Option<Vec<u32>>,
-    pub ecstrs: Option<Vec<u8>>,
-    pub ecsoffs: i32,
-    pub ecssub: i32,
-    pub ecnfunc: i32,
-}
-
-// Old uppercase Rust-only `ParseStack` is gone. Compat alias so
-// existing call sites (context.rs) keep resolving until the
-// rename ripples through.
-#[allow(non_camel_case_types)]
-pub type ParseStack = parse_stack;
-
-/// Direct port of `ecadjusthere(int p, int d)` at `Src/parse.c:360`. Walk
-/// the pending-heredocs list and bump each `pc` by `d` if it's
-/// at or after position `p`. Called by `ecispace` / `ecdel` when
-/// wordcodes shift.
-#[allow(unused_variables)]
-pub fn ecadjusthere(p: usize, d: i32) {
-    // parse.c:362-366 — `for (p2 = hdocs; p2; p2 = p2->next) if
-    // (p2->pc >= p) p2->pc += d;`. zshrs's hdocs are still
-    // Vec<HereDoc> on the lexer (pre-P9c migration); since none
-    // of them carry a wordcode pc today (the AST tree has no pc
-    // slots), this is a no-op until Phase 9c wires
-    // `hdocs.pc` into wordcode emission.
-}
 
 /// Direct port of `ecispace(int p, int n)` at `Src/parse.c:372`. Insert `n`
 /// empty wordcode slots at position `p`, shifting later entries
@@ -2148,23 +2040,6 @@ pub fn setheredoc(pc: usize, redir_type: i32, doc: &str, term: &str, munged_term
     });
 }
 
-/// `mod_export struct eprog dummy_eprog;` from `Src/parse.c:3066`.
-/// Placeholder Eprog used by `shf->funcdef = &dummy_eprog;` in
-/// builtin.c when clearing a stale autoload stub. Held in a Mutex
-/// so `init_eprog` can set it once at shell startup.
-pub static DUMMY_EPROG: std::sync::Mutex<crate::ported::zsh_h::eprog> =
-    std::sync::Mutex::new(crate::ported::zsh_h::eprog {
-        flags: 0,
-        len: 0,
-        npats: 0,
-        nref: 0,
-        prog: Vec::new(),
-        strs: None,
-        pats: Vec::new(),
-        shf: None,
-        dump: None,
-    });
-
 /// Parse a wordlist for `for ... in WORDS;`. Direct port of
 /// zsh/Src/parse.c:2362 `par_wordlist`. Reads STRING tokens
 /// until the next SEPER / SEMI / NEWLIN.
@@ -2194,6 +2069,14 @@ pub fn par_nl_wordlist() -> Vec<String> {
         zshlex();
     }
     out
+}
+
+/// `COND_SEP()` macro from `Src/parse.c:2433`. True when the current
+/// token is a separator usable inside `[[ … ]]` (newline / semi /
+/// `&`). C uses it to skip optional whitespace between cond terms.
+#[inline]
+pub fn COND_SEP() -> bool {
+    matches!(tok(), NEWLIN | SEMI | AMPER)
 }
 
 /// Parse [[ ... ]] conditional
@@ -2239,14 +2122,6 @@ fn par_cond() -> Option<ZshCommand> {
     }
 
     cond.map(ZshCommand::Cond)
-}
-
-/// par_time's `static int inpartime` guard at C parse.c:1038
-/// preventing infinite recursion on `time time foo`. The wordcode
-/// path keeps this as a thread_local since C uses a function-level
-/// `static int` (per-process; per-evaluator semantically matches).
-thread_local! {
-    static PARSER_INPARTIME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Port of `par_cond_1(void)` from `Src/parse.c:2434`. Parses one
@@ -2466,6 +2341,14 @@ pub fn get_cond_num(tst: &str) -> i32 {
         }
     }
     -1 // c:2656
+}
+
+/// par_time's `static int inpartime` guard at C parse.c:1038
+/// preventing infinite recursion on `time time foo`. The wordcode
+/// path keeps this as a thread_local since C uses a function-level
+/// `static int` (per-process; per-evaluator semantically matches).
+thread_local! {
+    static PARSER_INPARTIME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Port of `par_cond_triple(char *a, char *b, char *c)` from
@@ -3022,6 +2905,99 @@ pub fn init_eprog() {
     d.flags = 0;
     d.npats = 0;
     d.nref = 0;
+}
+
+// =====================================================================
+// `bin_zcompile` and wordcode-dump helpers — port of `Src/parse.c:3104+`.
+//
+// The wordcode dump format (`.zwc`) is a serialized parse tree zsh can
+// `mmap()` and dispatch from without re-parsing on every shell start.
+// File layout (one struct = `FD_PRELEN` `u32`s):
+//   - `pre[0]` = magic word (FD_MAGIC native byte-order, FD_OMAGIC
+//     opposite byte-order).
+//   - `pre[1]` = packed `{flags(8) | other_offset(24)}` byte field.
+//   - `pre[2..12]` = `ZSH_VERSION` C-string padded to 40 bytes.
+//   - `pre[12]` = `fdheaderlen` (total prelude+header word count).
+//   - Then a sequence of `struct fdhead` records, one per function,
+//     each followed by its NUL-terminated name (padded to 4-byte).
+//   - Then the wordcode bytes for every function back-to-back.
+//
+// On a little-endian host writing a dump twice: first `FD_MAGIC` for
+// native readers, then re-walks the body byte-swapped and emits a
+// second `FD_OMAGIC` copy so big-endian readers can mmap it too.
+// =====================================================================
+
+// File-format constants — port of `Src/parse.c:3104-3150`.
+
+/// `#define FD_EXT ".zwc"` from `Src/parse.c:3104`.
+pub const FD_EXT: &str = ".zwc";
+
+/// `#define FD_MINMAP 4096` from `Src/parse.c:3105`. mmap threshold
+/// — `-M` mode only kicks in when the wordcode body is at least
+/// this many bytes (otherwise read(2) is preferred).
+pub const FD_MINMAP: usize = 4096;
+
+/// `#define FD_PRELEN 12` from `Src/parse.c:3107`. File-header
+/// length in u32 words: magic + packed-flags-byte + 10 version words.
+pub const FD_PRELEN: usize = 12;
+
+/// `#define FD_MAGIC 0x04050607` from `Src/parse.c:3108`. Sentinel
+/// for native-byte-order dumps.
+pub const FD_MAGIC: u32 = 0x04050607;
+
+/// `#define FD_OMAGIC 0x07060504` from `Src/parse.c:3109`. Sentinel
+/// for opposite-byte-order dumps (byte-swapped FD_MAGIC).
+pub const FD_OMAGIC: u32 = 0x07060504;
+
+/// `#define FDF_MAP 1` from `Src/parse.c:3111`. Bit set when the
+/// dump should be `mmap()`-ed (`-M` flag) vs read normally (`-R`).
+pub const FDF_MAP: u32 = 1;
+
+/// `#define FDF_OTHER 2` from `Src/parse.c:3112`. Bit indicating
+/// this dump has an opposite-byte-order copy at `fdother(f)`.
+pub const FDF_OTHER: u32 = 2;
+
+/// Port of `struct fdhead` from `Src/parse.c:3116`. One per function
+/// inside a wordcode dump. All fields are `wordcode` (u32).
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy)]
+pub struct fdhead {
+    /// Offset (in u32 words) to the start of this function's
+    /// wordcode body inside the dump.
+    pub start: u32, // c:3117
+    /// Wordcode-byte length of the body (excludes pattern-prog slots).
+    pub len: u32, // c:3118
+    /// Number of compiled patterns the body references.
+    pub npats: u32, // c:3119
+    /// Offset of the string table inside `prog->prog`.
+    pub strs: u32, // c:3120
+    /// Header-record length in u32 words (record + name).
+    pub hlen: u32, // c:3121
+    /// Packed `{ kshload_bits(2) | name_tail_offset(30) }` field.
+    pub flags: u32, // c:3122
+}
+
+/// `#define FDHF_KSHLOAD 1` from `Src/parse.c:3149`. Function-header
+/// flag word — `-k` ksh-style autoload marker.
+pub const FDHF_KSHLOAD: u32 = 1;
+
+/// `#define FDHF_ZSHLOAD 2` from `Src/parse.c:3150`. `-z` zsh-style
+/// autoload marker.
+pub const FDHF_ZSHLOAD: u32 = 2;
+
+/// Port of `struct wcfunc` from `Src/parse.c:3158`. Build-time
+/// per-function aggregate before write_dump emits it. The Rust
+/// port stores the source-text body inline since the C-side
+/// `Eprog` ↔ `parse_string` chain isn't fully wired through this
+/// layer yet (`build_dump` falls back to source-text caching).
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
+pub struct wcfunc {
+    pub name: String, // c:3159
+    pub flags: u32,   // c:3161
+    /// Compiled body wordcode (one `u32` array per fn). Empty until
+    /// the eprog emit-side lands; `write_dump` then walks each entry.
+    pub body: Vec<u32>,
 }
 
 /// Port of `dump_find_func(Wordcode h, char *name)` from
@@ -3602,6 +3578,131 @@ pub fn dump_autoload(
     zwarnnam(nam, &format!("{}: zwc-based autoload not yet ported", file));
     1
 }
+
+/// Port of C `struct eccstr` (zsh.h:836) — the long-string dedup BST
+/// node. The dedup-walk and cmp logic in `ecstrcode` is faithful to
+/// parse.c:447-453 including the conditional cmp chain
+/// (nfunc → hashval → strcmp), so corpus inputs where C's eccstr BST walk
+/// finds-or-misses match get the same outcome on the Rust side.
+struct EccstrNode {
+    left: Option<Box<EccstrNode>>,
+    right: Option<Box<EccstrNode>>,
+    /// C-byte form of the string (single byte per char ≤ 0xff).
+    /// Owned because Rust doesn't have C zsh's "stable pointers into
+    /// the lexer's tokstr arena" — every tokstr lives as a fresh
+    /// Rust String allocation.
+    str: Vec<u8>,
+    /// Wordcode-encoded offset: `(byte_offset << 2) | token_bit`.
+    /// Same shape as `Eccstr::offs` (parse.c:459).
+    offs: u32,
+    /// Absolute byte offset in the final strs region (= `ecsoffs` at
+    /// insert time). C `Eccstr::aoffs` (parse.c:464). copy_ecstr uses
+    /// THIS for the write position — distinct from `offs` which is
+    /// ecssub-relative and collides across funcdef scopes.
+    aoffs: u32,
+    /// `nfunc` snapshot at insert time. Per-function namespace key
+    /// — top-level scripts use 0; each funcdef bumps it.
+    nfunc: i32,
+    /// Hash of `str` computed via zsh's `hasher` (hashtable.c:86).
+    hashval: u32,
+}
+// === end AST relocation ===
+
+// Parser state lives in file-scope thread_locals:
+//   - LEX_* (lexer side, matching Src/lex.c file-statics)
+//   - ECBUF / ECLEN / ECUSED / ECNPATS / ECSOFFS / ECSSUB / ECNFUNC /
+//     ECSTRS_INDEX / ECSTRS_REVERSE (wordcode-emission state, matching
+//     Src/parse.c file-statics)
+//
+// Callers use the free-fn entry points directly:
+//   crate::ported::parse::parse_init(input);
+//   let prog = crate::ported::parse::parse();
+
+const MAX_RECURSION_DEPTH: usize = 500;
+
+/// Direct port of `struct parse_stack` at `Src/zsh.h:3099-3109`.
+/// Used by `parse_context_save` / `parse_context_restore`
+/// (parse.c:295-355) to snapshot per-parse-call state so a nested
+/// parse (e.g. inside command substitution) doesn't clobber the
+/// outer parse.
+///
+/// A second port of `struct parse_stack` exists at
+/// `crate::ported::zsh_h::parse_stack` (zsh.h:1066) using canonical
+/// Wordcode / Eccstr / `struct heredocs` types — that port is unused
+/// today and will become authoritative when Phase 9b (PORT_PLAN.md)
+/// wires wordcode emission. This local version uses the working-set
+/// shapes (`Vec<HereDoc>`, stubbed wordcode fields) suited to zshrs's
+/// pre-wordcode AST architecture; the consolidation happens in P9b.
+#[allow(non_camel_case_types)]
+#[derive(Debug, Default, Clone)]
+pub struct parse_stack {
+    // ── Direct port of struct parse_stack at zsh.h:3099-3109 ──
+    /// Pending heredocs awaiting body collection (canonical C
+    /// linked-list shape). C: `struct heredocs *hdocs` (zsh.h:3100).
+    /// Mirrors `parse::HDOCS` thread_local across nested parses.
+    pub hdocs: Option<Box<crate::ported::zsh_h::heredocs>>,
+    /// !!! WARNING: NOT IN PARSE_STACK — Rust-only AST-glue !!!
+    /// Snapshot of `lex::LEX_HEREDOCS` (the parallel Rust-only Vec
+    /// carrying terminator / strip_tabs / quoted metadata).
+    /// Saved/restored alongside the canonical `hdocs` so nested
+    /// parses get a clean AST view. C's parse_stack has no analog
+    /// because C tracks terminator metadata implicitly via tokstr.
+    pub lex_heredocs: Vec<HereDoc>,
+    /// C: `int incmdpos` (zsh.h:3102).
+    pub incmdpos: bool,
+    /// C: `int aliasspaceflag` (zsh.h:3103).
+    pub aliasspaceflag: i32,
+    /// C: `int incond` (zsh.h:3104).
+    pub incond: i32,
+    /// C: `int inredir` (zsh.h:3105).
+    pub inredir: bool,
+    /// C: `int incasepat` (zsh.h:3106).
+    pub incasepat: i32,
+    /// C: `int isnewlin` (zsh.h:3107).
+    pub isnewlin: i32,
+    /// C: `int infor` (zsh.h:3108).
+    pub infor: i32,
+    /// C: `int inrepeat_` (zsh.h:3109).
+    pub inrepeat_: i32,
+    /// C: `int intypeset` (zsh.h:3110).
+    pub intypeset: bool,
+    // ── Wordcode-buffer state — STUB until Phase 9b ──
+    // C `Wordcode ecbuf` (zsh.h:3112) + `Eccstr ecstrs` (zsh.h:3113) +
+    // `int eclen/ecused/ecnpats/ecsoffs/ecssub/ecnfunc` (zsh.h:3112-3114).
+    // zshrs hasn't emitted wordcode yet — these fields exist to
+    // preserve the C shape but read/write nothing until P9b lands.
+    pub eclen: i32,
+    pub ecused: i32,
+    pub ecnpats: i32,
+    pub ecbuf: Option<Vec<u32>>,
+    pub ecstrs: Option<Vec<u8>>,
+    pub ecsoffs: i32,
+    pub ecssub: i32,
+    pub ecnfunc: i32,
+}
+
+// Old uppercase Rust-only `ParseStack` is gone. Compat alias so
+// existing call sites (context.rs) keep resolving until the
+// rename ripples through.
+#[allow(non_camel_case_types)]
+pub type ParseStack = parse_stack;
+
+/// `mod_export struct eprog dummy_eprog;` from `Src/parse.c:3066`.
+/// Placeholder Eprog used by `shf->funcdef = &dummy_eprog;` in
+/// builtin.c when clearing a stale autoload stub. Held in a Mutex
+/// so `init_eprog` can set it once at shell startup.
+pub static DUMMY_EPROG: std::sync::Mutex<crate::ported::zsh_h::eprog> =
+    std::sync::Mutex::new(crate::ported::zsh_h::eprog {
+        flags: 0,
+        len: 0,
+        npats: 0,
+        nref: 0,
+        prog: Vec::new(),
+        strs: None,
+        pats: Vec::new(),
+        shf: None,
+        dump: None,
+    });
 
 /// Walk every ZshRedir in the program and, for any with a `heredoc_idx`,
 /// pull the body+terminator out of `bodies` and stuff into `heredoc`.
@@ -5393,102 +5494,9 @@ pub fn par_funcdef_wordcode(cmplx: &mut i32) {
     set_lineno(lineno() + oldlineno);
 }
 
-// =====================================================================
-// `bin_zcompile` and wordcode-dump helpers — port of `Src/parse.c:3104+`.
-//
-// The wordcode dump format (`.zwc`) is a serialized parse tree zsh can
-// `mmap()` and dispatch from without re-parsing on every shell start.
-// File layout (one struct = `FD_PRELEN` `u32`s):
-//   - `pre[0]` = magic word (FD_MAGIC native byte-order, FD_OMAGIC
-//     opposite byte-order).
-//   - `pre[1]` = packed `{flags(8) | other_offset(24)}` byte field.
-//   - `pre[2..12]` = `ZSH_VERSION` C-string padded to 40 bytes.
-//   - `pre[12]` = `fdheaderlen` (total prelude+header word count).
-//   - Then a sequence of `struct fdhead` records, one per function,
-//     each followed by its NUL-terminated name (padded to 4-byte).
-//   - Then the wordcode bytes for every function back-to-back.
-//
-// On a little-endian host writing a dump twice: first `FD_MAGIC` for
-// native readers, then re-walks the body byte-swapped and emits a
-// second `FD_OMAGIC` copy so big-endian readers can mmap it too.
-// =====================================================================
-
-// File-format constants — port of `Src/parse.c:3104-3150`.
-
-/// `#define FD_EXT ".zwc"` from `Src/parse.c:3104`.
-pub const FD_EXT: &str = ".zwc";
-
-/// `#define FD_MINMAP 4096` from `Src/parse.c:3105`. mmap threshold
-/// — `-M` mode only kicks in when the wordcode body is at least
-/// this many bytes (otherwise read(2) is preferred).
-pub const FD_MINMAP: usize = 4096;
-
-/// `#define FD_PRELEN 12` from `Src/parse.c:3107`. File-header
-/// length in u32 words: magic + packed-flags-byte + 10 version words.
-pub const FD_PRELEN: usize = 12;
-
-/// `#define FD_MAGIC 0x04050607` from `Src/parse.c:3108`. Sentinel
-/// for native-byte-order dumps.
-pub const FD_MAGIC: u32 = 0x04050607;
-
-/// `#define FD_OMAGIC 0x07060504` from `Src/parse.c:3109`. Sentinel
-/// for opposite-byte-order dumps (byte-swapped FD_MAGIC).
-pub const FD_OMAGIC: u32 = 0x07060504;
-
-/// `#define FDF_MAP 1` from `Src/parse.c:3111`. Bit set when the
-/// dump should be `mmap()`-ed (`-M` flag) vs read normally (`-R`).
-pub const FDF_MAP: u32 = 1;
-
-/// `#define FDF_OTHER 2` from `Src/parse.c:3112`. Bit indicating
-/// this dump has an opposite-byte-order copy at `fdother(f)`.
-pub const FDF_OTHER: u32 = 2;
-
-/// `#define FDHF_KSHLOAD 1` from `Src/parse.c:3149`. Function-header
-/// flag word — `-k` ksh-style autoload marker.
-pub const FDHF_KSHLOAD: u32 = 1;
-
-/// `#define FDHF_ZSHLOAD 2` from `Src/parse.c:3150`. `-z` zsh-style
-/// autoload marker.
-pub const FDHF_ZSHLOAD: u32 = 2;
-
-/// Port of `struct fdhead` from `Src/parse.c:3116`. One per function
-/// inside a wordcode dump. All fields are `wordcode` (u32).
-#[allow(non_camel_case_types)]
-#[derive(Debug, Clone, Copy)]
-pub struct fdhead {
-    /// Offset (in u32 words) to the start of this function's
-    /// wordcode body inside the dump.
-    pub start: u32, // c:3117
-    /// Wordcode-byte length of the body (excludes pattern-prog slots).
-    pub len: u32, // c:3118
-    /// Number of compiled patterns the body references.
-    pub npats: u32, // c:3119
-    /// Offset of the string table inside `prog->prog`.
-    pub strs: u32, // c:3120
-    /// Header-record length in u32 words (record + name).
-    pub hlen: u32, // c:3121
-    /// Packed `{ kshload_bits(2) | name_tail_offset(30) }` field.
-    pub flags: u32, // c:3122
-}
-
 /// Size of `struct fdhead` in `wordcode` (u32) units. Used by all
 /// the header-walk macros below.
 pub const FDHEAD_WORDS: usize = std::mem::size_of::<fdhead>() / 4;
-
-/// Port of `struct wcfunc` from `Src/parse.c:3158`. Build-time
-/// per-function aggregate before write_dump emits it. The Rust
-/// port stores the source-text body inline since the C-side
-/// `Eprog` ↔ `parse_string` chain isn't fully wired through this
-/// layer yet (`build_dump` falls back to source-text caching).
-#[allow(non_camel_case_types)]
-#[derive(Debug, Clone)]
-pub struct wcfunc {
-    pub name: String, // c:3159
-    pub flags: u32,   // c:3161
-    /// Compiled body wordcode (one `u32` array per fn). Empty until
-    /// the eprog emit-side lands; `write_dump` then walks each entry.
-    pub body: Vec<u32>,
-}
 
 /// `Src/parse.c:1619-1665`. Handles both `(...)` subshell and
 /// `{...}` brace group (cursh) plus optional `always { ... }`
@@ -7749,14 +7757,6 @@ pub fn ecstr(s: &str) {
 #[inline]
 pub fn condlex() {
     zshlex();
-}
-
-/// `COND_SEP()` macro from `Src/parse.c:2433`. True when the current
-/// token is a separator usable inside `[[ … ]]` (newline / semi /
-/// `&`). C uses it to skip optional whitespace between cond terms.
-#[inline]
-pub fn COND_SEP() -> bool {
-    matches!(tok(), NEWLIN | SEMI | AMPER)
 }
 
 fn copy_ecstr_walk(node: &Option<Box<EccstrNode>>, p: &mut [u8]) {

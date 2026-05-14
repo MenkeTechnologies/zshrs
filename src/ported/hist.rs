@@ -20,44 +20,6 @@ use crate::zsh_h::{
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::Component::*;
-// =========================================================================
-// File-scope globals from hist.c
-// =========================================================================
-
-// != 0 means history substitution is turned off                              // c:57
-// (stophist is in zsh.h as an extern; we own it here.)
-
-/// Port of `HashTable histtab` from Src/hist.c:101.
-/// Lookup table for histent by name (placeholder until hashtable port lands). // c:101
-pub static histtab: Mutex<Vec<usize>> = Mutex::new(Vec::new());              // c:101
-
-/// Port of `mod_export Histent hist_ring` from Src/hist.c:103.
-/// Doubly-linked ring of history entries; modelled here as a `Vec<histent>`
-/// since each histent already has up/down pointers in the C struct.
-pub static hist_ring: Mutex<Vec<histent>> = Mutex::new(Vec::new());          // c:103
-
-/// Port of `struct histent curline` from Src/hist.c:91. Sentinel
-/// histent for the in-progress edit; spliced into the ring head by
-/// linkcurline() and removed by unlinkcurline().
-pub static curline: Mutex<Option<histent>> = Mutex::new(None);               // c:91
-
-/// Port of `zlong histsiz` from Src/hist.c:108.
-pub static histsiz: AtomicI64 = AtomicI64::new(0);                           // c:108
-
-/// Port of `zlong savehistsiz` from Src/hist.c:113.
-pub static savehistsiz: AtomicI64 = AtomicI64::new(0);                       // c:113
-
-/// Port of `int histdone` from Src/hist.c:119.
-pub static histdone: AtomicI32 = AtomicI32::new(0);                          // c:119
-
-/// Port of `int histactive` from Src/hist.c:124.
-pub static histactive: AtomicU32 = AtomicU32::new(0);                        // c:124
-
-/// Port of `int hist_ignore_all_dups` from Src/hist.c:130.
-pub static hist_ignore_all_dups: AtomicI32 = AtomicI32::new(0);              // c:130
-
-/// Port of `mod_export int hist_skip_flags` from Src/hist.c:135.
-pub static hist_skip_flags: AtomicI32 = AtomicI32::new(0);                   // c:135
 
 // Bits of histactive variable                                               // c:137
 /// Port of `HA_ACTIVE` from Src/hist.c:138. History mechanism is active.
@@ -69,80 +31,11 @@ pub const HA_INWORD: u32 = 1 << 2;                                           // 
 /// Port of `HA_UNGET` from Src/hist.c:142. Recursively ungetting.
 pub const HA_UNGET: u32 = 1 << 3;                                            // c:142
 
-/// Port of `short *chwords` from Src/hist.c:147.
-/// Word beginning/end offsets in current history line.
-pub static chwords: Mutex<Vec<i16>> = Mutex::new(Vec::new());                // c:147
-
-/// Port of `int chwordlen` from Src/hist.c:154.
-pub static chwordlen: AtomicI32 = AtomicI32::new(0);                         // c:154
-
-/// Port of `int chwordpos` from Src/hist.c:154.
-pub static chwordpos: AtomicI32 = AtomicI32::new(0);                         // c:154
-
-/// Port of `char *hsubl` from Src/hist.c:159.
-/// Last `l` for `s/l/r/` history substitution.
-pub static hsubl: Mutex<Option<String>> = Mutex::new(None);                  // c:159
-
-/// Port of `char *hsubr` from Src/hist.c:164.
-pub static hsubr: Mutex<Option<String>> = Mutex::new(None);                  // c:164
-
-/// Port of `int hsubpatopt` from Src/hist.c:169.
-pub static hsubpatopt: AtomicI32 = AtomicI32::new(0);                        // c:169
-
-/// Port of `mod_export char *hptr` from Src/hist.c:174.
-/// Pointer into the history line; tracked as the byte length of `chline`.
-pub static hptr: AtomicUsize = AtomicUsize::new(0);                          // c:174
-
-/// Port of `mod_export char *chline` from Src/hist.c:179.
-pub static chline: Mutex<String> = Mutex::new(String::new());                // c:179
-
-/// Port of `mod_export char *zle_chline` from Src/hist.c:195.
-pub static zle_chline: Mutex<Option<String>> = Mutex::new(None);             // c:195
-
-/// Port of `int qbang` from Src/hist.c:201.
-pub static qbang: AtomicBool = AtomicBool::new(false);                       // c:201
-
-/// Port of `int hlinesz` from Src/hist.c:206.
-pub static hlinesz: AtomicI32 = AtomicI32::new(0);                           // c:206
-
 /// Port of `static zlong defev` from Src/hist.c:210.
 static defev: AtomicI64 = AtomicI64::new(0);                                 // c:210
 
 /// Port of `static int hist_keep_comment` from Src/hist.c:217.
 static hist_keep_comment: AtomicI32 = AtomicI32::new(0);                     // c:217
-
-/// Port of `static struct histfile_stats lasthist` from Src/hist.c:220-226.
-#[allow(non_camel_case_types)]
-pub struct histfile_stats {                                                  // c:220
-    pub text: Option<String>,                                                // c:221
-    pub stim: i64,                                                           // c:222 time_t
-    pub mtim: i64,                                                           // c:222
-    pub fpos: i64,                                                           // c:223 off_t
-    pub fsiz: i64,                                                           // c:223
-    pub interrupted: i32,                                                    // c:224
-    pub next_write_ev: i64,                                                  // c:225 zlong
-}
-static lasthist: Mutex<histfile_stats> = Mutex::new(histfile_stats {         // c:226
-    text: None, stim: 0, mtim: 0, fpos: 0, fsiz: 0,
-    interrupted: 0, next_write_ev: 0,
-});
-
-/// Port of `static struct histsave` from Src/hist.c:228-238.
-#[allow(non_camel_case_types)]
-pub struct histsave {                                                        // c:228
-    pub lasthist: histfile_stats,                                            // c:229
-    pub histfile: Option<String>,                                            // c:230
-    pub hist_ring: Vec<histent>,                                             // c:232
-    pub curhist: i64,                                                        // c:233 zlong
-    pub histlinect: i64,                                                     // c:234
-    pub histsiz: i64,                                                        // c:235
-    pub savehistsiz: i64,                                                    // c:236
-    pub locallevel: i32,                                                     // c:237
-}
-
-/// Port of `static struct histsave *histsave_stack` from Src/hist.c:238.
-#[allow(clippy::vec_init_then_push)]
-static histsave_stack: Mutex<Vec<histsave>> = Mutex::new(Vec::new());        // c:238
 
 /// Port of `static int histsave_stack_size` from Src/hist.c:239.
 static histsave_stack_size: AtomicI32 = AtomicI32::new(0);                   // c:239
@@ -152,24 +45,6 @@ static histsave_stack_pos: AtomicI32 = AtomicI32::new(0);                    // 
 
 /// Port of `static zlong histfile_linect` from Src/hist.c:242.
 static histfile_linect: AtomicI64 = AtomicI64::new(0);                       // c:242
-
-// =========================================================================
-// Externs from other C files used in hist.c
-// =========================================================================
-
-/// Port of `int stophist` (extern from zsh.h, owned by other C files).
-/// Track history-stop depth here so the hist module's save/restore work.
-pub static stophist: AtomicI32 = AtomicI32::new(0);
-
-/// Port of `zlong curhist` (extern). Current history event number.
-pub static curhist: AtomicI64 = AtomicI64::new(0);
-
-/// Port of `zlong histlinect` (extern). Number of entries currently in ring.
-pub static histlinect: AtomicI64 = AtomicI64::new(0);
-
-/// Port of `char bangchar` from `Src/params.c:130`. History expansion
-/// lead character (`!` by default).
-pub static bangchar: AtomicI32 = AtomicI32::new(b'!' as i32);
 
 // =========================================================================
 // Functions from hist.c
@@ -206,53 +81,6 @@ pub fn hist_context_save(hs: &mut crate::ported::zsh_h::hist_stack, toplevel: i3
     histactive.store(0, Ordering::SeqCst);                                   // c:296
     // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:296-289
 }
-
-/// Port of `int lockhistct` from Src/hist.c. Re-entrant lock counter.
-static lockhistct: AtomicI32 = AtomicI32::new(0);
-
-/// Port of `int lexstop` (extern from lex.c) — used by ihgetc/histsubchar.
-pub static lexstop: AtomicBool = AtomicBool::new(false);
-
-/// Port of `int exit_pending` (extern). Set by SIGINT/`exit` builtin.
-pub static exit_pending: AtomicBool = AtomicBool::new(false);
-
-/// Port of `int strin` from Src/hist.c — counts nested string-input
-/// scopes (eval/source/here-string).
-static strin: AtomicI32 = AtomicI32::new(0);
-
-// =========================================================================
-// HIST_* flags (from zsh.h)
-// =========================================================================
-
-/// Port of `HIST_OLD` from Src/zsh.h. Entry came from the history file.
-pub const HIST_OLD: u32 = 1 << 0;
-/// Port of `HIST_DUP` from Src/zsh.h.
-pub const HIST_DUP: u32 = 1 << 1;
-/// Port of `HIST_FOREIGN` from Src/zsh.h.
-pub const HIST_FOREIGN: u32 = 1 << 2;
-/// Port of `HIST_TMPSTORE` from Src/zsh.h.
-pub const HIST_TMPSTORE: u32 = 1 << 3;
-/// Port of `HIST_NOWRITE` from Src/zsh.h.
-pub const HIST_NOWRITE: u32 = 1 << 4;
-
-// =========================================================================
-// CASMOD_ enum (port of zsh.h:3122-3127)
-// =========================================================================
-
-/// Port of `enum { CASMOD_NONE, CASMOD_UPPER, CASMOD_LOWER, CASMOD_CAPS }`
-/// from Src/zsh.h:3122.
-// =========================================================================
-// HISTFLAG_* (port of zsh.h)
-// =========================================================================
-
-/// Port of `HISTFLAG_DONE` from Src/zsh.h.
-pub const HISTFLAG_DONE: i32 = 1;
-/// Port of `HISTFLAG_NOEXEC` from Src/zsh.h.
-pub const HISTFLAG_NOEXEC: i32 = 2;
-/// Port of `HISTFLAG_RECALL` from Src/zsh.h.
-pub const HISTFLAG_RECALL: i32 = 4;
-/// Port of `HISTFLAG_SETTY` from Src/zsh.h.
-pub const HISTFLAG_SETTY: i32 = 8;
 
 /// Port of `void hist_context_restore(const struct hist_stack *hs, int toplevel)`
 /// from Src/hist.c:296.
@@ -1518,6 +1346,9 @@ pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {               // 
     unlockhistfile(&path);
 }
 
+/// Port of `int lockhistct` from Src/hist.c. Re-entrant lock counter.
+static lockhistct: AtomicI32 = AtomicI32::new(0);
+
 /// Port of `int checklocktime(char *fn, time_t mtim)` from Src/hist.c.
 pub fn checklocktime(path: &str, max_age_secs: u64) -> i32 {
     let lockfile = format!("{}.lock", path);
@@ -1666,6 +1497,175 @@ pub fn saveandpophiststack(writeflags: i32) {
     savehistfile(None, writeflags);
     pophiststack();
 }
+// =========================================================================
+// File-scope globals from hist.c
+// =========================================================================
+
+// != 0 means history substitution is turned off                              // c:57
+// (stophist is in zsh.h as an extern; we own it here.)
+
+/// Port of `HashTable histtab` from Src/hist.c:101.
+/// Lookup table for histent by name (placeholder until hashtable port lands). // c:101
+pub static histtab: Mutex<Vec<usize>> = Mutex::new(Vec::new());              // c:101
+
+/// Port of `mod_export Histent hist_ring` from Src/hist.c:103.
+/// Doubly-linked ring of history entries; modelled here as a `Vec<histent>`
+/// since each histent already has up/down pointers in the C struct.
+pub static hist_ring: Mutex<Vec<histent>> = Mutex::new(Vec::new());          // c:103
+
+/// Port of `struct histent curline` from Src/hist.c:91. Sentinel
+/// histent for the in-progress edit; spliced into the ring head by
+/// linkcurline() and removed by unlinkcurline().
+pub static curline: Mutex<Option<histent>> = Mutex::new(None);               // c:91
+
+/// Port of `zlong histsiz` from Src/hist.c:108.
+pub static histsiz: AtomicI64 = AtomicI64::new(0);                           // c:108
+
+/// Port of `zlong savehistsiz` from Src/hist.c:113.
+pub static savehistsiz: AtomicI64 = AtomicI64::new(0);                       // c:113
+
+/// Port of `int histdone` from Src/hist.c:119.
+pub static histdone: AtomicI32 = AtomicI32::new(0);                          // c:119
+
+/// Port of `int histactive` from Src/hist.c:124.
+pub static histactive: AtomicU32 = AtomicU32::new(0);                        // c:124
+
+/// Port of `int hist_ignore_all_dups` from Src/hist.c:130.
+pub static hist_ignore_all_dups: AtomicI32 = AtomicI32::new(0);              // c:130
+
+/// Port of `mod_export int hist_skip_flags` from Src/hist.c:135.
+pub static hist_skip_flags: AtomicI32 = AtomicI32::new(0);                   // c:135
+
+/// Port of `short *chwords` from Src/hist.c:147.
+/// Word beginning/end offsets in current history line.
+pub static chwords: Mutex<Vec<i16>> = Mutex::new(Vec::new());                // c:147
+
+/// Port of `int chwordlen` from Src/hist.c:154.
+pub static chwordlen: AtomicI32 = AtomicI32::new(0);                         // c:154
+
+/// Port of `int chwordpos` from Src/hist.c:154.
+pub static chwordpos: AtomicI32 = AtomicI32::new(0);                         // c:154
+
+/// Port of `char *hsubl` from Src/hist.c:159.
+/// Last `l` for `s/l/r/` history substitution.
+pub static hsubl: Mutex<Option<String>> = Mutex::new(None);                  // c:159
+
+/// Port of `char *hsubr` from Src/hist.c:164.
+pub static hsubr: Mutex<Option<String>> = Mutex::new(None);                  // c:164
+
+/// Port of `int hsubpatopt` from Src/hist.c:169.
+pub static hsubpatopt: AtomicI32 = AtomicI32::new(0);                        // c:169
+
+/// Port of `mod_export char *hptr` from Src/hist.c:174.
+/// Pointer into the history line; tracked as the byte length of `chline`.
+pub static hptr: AtomicUsize = AtomicUsize::new(0);                          // c:174
+
+/// Port of `mod_export char *chline` from Src/hist.c:179.
+pub static chline: Mutex<String> = Mutex::new(String::new());                // c:179
+
+/// Port of `mod_export char *zle_chline` from Src/hist.c:195.
+pub static zle_chline: Mutex<Option<String>> = Mutex::new(None);             // c:195
+
+/// Port of `int qbang` from Src/hist.c:201.
+pub static qbang: AtomicBool = AtomicBool::new(false);                       // c:201
+
+/// Port of `int hlinesz` from Src/hist.c:206.
+pub static hlinesz: AtomicI32 = AtomicI32::new(0);                           // c:206
+
+/// Port of `static struct histfile_stats lasthist` from Src/hist.c:220-226.
+#[allow(non_camel_case_types)]
+pub struct histfile_stats {                                                  // c:220
+    pub text: Option<String>,                                                // c:221
+    pub stim: i64,                                                           // c:222 time_t
+    pub mtim: i64,                                                           // c:222
+    pub fpos: i64,                                                           // c:223 off_t
+    pub fsiz: i64,                                                           // c:223
+    pub interrupted: i32,                                                    // c:224
+    pub next_write_ev: i64,                                                  // c:225 zlong
+}
+static lasthist: Mutex<histfile_stats> = Mutex::new(histfile_stats {         // c:226
+    text: None, stim: 0, mtim: 0, fpos: 0, fsiz: 0,
+    interrupted: 0, next_write_ev: 0,
+});
+
+/// Port of `static struct histsave` from Src/hist.c:228-238.
+#[allow(non_camel_case_types)]
+pub struct histsave {                                                        // c:228
+    pub lasthist: histfile_stats,                                            // c:229
+    pub histfile: Option<String>,                                            // c:230
+    pub hist_ring: Vec<histent>,                                             // c:232
+    pub curhist: i64,                                                        // c:233 zlong
+    pub histlinect: i64,                                                     // c:234
+    pub histsiz: i64,                                                        // c:235
+    pub savehistsiz: i64,                                                    // c:236
+    pub locallevel: i32,                                                     // c:237
+}
+
+/// Port of `static struct histsave *histsave_stack` from Src/hist.c:238.
+#[allow(clippy::vec_init_then_push)]
+static histsave_stack: Mutex<Vec<histsave>> = Mutex::new(Vec::new());        // c:238
+
+// =========================================================================
+// Externs from other C files used in hist.c
+// =========================================================================
+
+/// Port of `int stophist` (extern from zsh.h, owned by other C files).
+/// Track history-stop depth here so the hist module's save/restore work.
+pub static stophist: AtomicI32 = AtomicI32::new(0);
+
+/// Port of `zlong curhist` (extern). Current history event number.
+pub static curhist: AtomicI64 = AtomicI64::new(0);
+
+/// Port of `zlong histlinect` (extern). Number of entries currently in ring.
+pub static histlinect: AtomicI64 = AtomicI64::new(0);
+
+/// Port of `char bangchar` from `Src/params.c:130`. History expansion
+/// lead character (`!` by default).
+pub static bangchar: AtomicI32 = AtomicI32::new(b'!' as i32);
+
+/// Port of `int lexstop` (extern from lex.c) — used by ihgetc/histsubchar.
+pub static lexstop: AtomicBool = AtomicBool::new(false);
+
+/// Port of `int exit_pending` (extern). Set by SIGINT/`exit` builtin.
+pub static exit_pending: AtomicBool = AtomicBool::new(false);
+
+/// Port of `int strin` from Src/hist.c — counts nested string-input
+/// scopes (eval/source/here-string).
+static strin: AtomicI32 = AtomicI32::new(0);
+
+// =========================================================================
+// HIST_* flags (from zsh.h)
+// =========================================================================
+
+/// Port of `HIST_OLD` from Src/zsh.h. Entry came from the history file.
+pub const HIST_OLD: u32 = 1 << 0;
+/// Port of `HIST_DUP` from Src/zsh.h.
+pub const HIST_DUP: u32 = 1 << 1;
+/// Port of `HIST_FOREIGN` from Src/zsh.h.
+pub const HIST_FOREIGN: u32 = 1 << 2;
+/// Port of `HIST_TMPSTORE` from Src/zsh.h.
+pub const HIST_TMPSTORE: u32 = 1 << 3;
+/// Port of `HIST_NOWRITE` from Src/zsh.h.
+pub const HIST_NOWRITE: u32 = 1 << 4;
+
+// =========================================================================
+// CASMOD_ enum (port of zsh.h:3122-3127)
+// =========================================================================
+
+/// Port of `enum { CASMOD_NONE, CASMOD_UPPER, CASMOD_LOWER, CASMOD_CAPS }`
+/// from Src/zsh.h:3122.
+// =========================================================================
+// HISTFLAG_* (port of zsh.h)
+// =========================================================================
+
+/// Port of `HISTFLAG_DONE` from Src/zsh.h.
+pub const HISTFLAG_DONE: i32 = 1;
+/// Port of `HISTFLAG_NOEXEC` from Src/zsh.h.
+pub const HISTFLAG_NOEXEC: i32 = 2;
+/// Port of `HISTFLAG_RECALL` from Src/zsh.h.
+pub const HISTFLAG_RECALL: i32 = 4;
+/// Port of `HISTFLAG_SETTY` from Src/zsh.h.
+pub const HISTFLAG_SETTY: i32 = 8;
 
 /// Direct port of C's `getsparam("HISTFILE")` lookup used inside
 /// `lockhistfile()` (c:3188) and `readhistfile()` / `savehistfile()`

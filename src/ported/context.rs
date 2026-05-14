@@ -24,9 +24,6 @@ pub struct context_stack {                                                   // 
     pub parse_stack: ParseStack,                                             // c:52
 }
 
-/// Port of `static struct context_stack *cstack` from Src/context.c:52.
-static cstack: Mutex<Option<Box<context_stack>>> = Mutex::new(None);         // c:52
-
 /// Port of `void zcontext_save_partial(int parts)` from Src/context.c:52.
 #[allow(non_snake_case)]
 pub fn zcontext_save_partial(parts: i32) {                                   // c:52
@@ -100,6 +97,9 @@ pub fn zcontext_restore_partial(parts: i32) {                                // 
 pub fn zcontext_restore() {                                                  // c:117
     zcontext_restore_partial(ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE);
 }
+
+/// Port of `static struct context_stack *cstack` from Src/context.c:52.
+static cstack: Mutex<Option<Box<context_stack>>> = Mutex::new(None);         // c:52
 
 #[cfg(test)]
 mod tests {

@@ -31,96 +31,6 @@ use crate::ported::zsh_h::{EMULATE_KSH, EMULATE_SH, EMULATION};
 use std::sync::Mutex;
 use std::sync::atomic::AtomicI64;
 
-/// Script name for error messages
-pub static mut SCRIPT_NAME: Option<String> = None;
-/// Script filename
-pub static mut SCRIPT_FILENAME: Option<String> = None;
-
-/// Print a fatal error to stderr.
-/// Port of `zerr(VA_ALIST1(const char *fmt))` from Src/utils.c:172. C source sets `errflag`
-/// after emitting `<prefix>: <msg>\n` so the running script aborts
-/// at the next safe point. The Rust port currently just prints —
-// =====================================================================
-// Module-static state for the zerr/zwarn/zerrnam/zwarnnam family —
-// port of the file-statics in Src/init.c + Src/exec.c that
-// `zwarning()` (utils.c:142) reads to build the error prefix.
-// =====================================================================
-
-// name of script being sourced                                             // c:33
-/// Port of `char *scriptname` from `Src/init.c`. Set when `source`
-/// is reading a script; cleared on return. Used by `zwarning()`
-/// (utils.c:147) as the diagnostic prefix.
-static SCRIPTNAME: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
-    std::sync::OnceLock::new();
-
-/// Port of `char *argzero` from `Src/init.c`. The shell's argv[0].
-/// Used by `zwarning()` (utils.c:147) as the fallback diagnostic
-/// prefix when scriptname is unset.
-static ARGZERO: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
-    std::sync::OnceLock::new();
-
-// error flag: bits from enum errflag_bits                                 // c:124
-/// Port of `int errflag` from `Src/init.c`. Tracks whether an
-/// error has been raised (`ERRFLAG_ERROR = 1`) or break/return
-/// is in flight (`ERRFLAG_INT = 2`).
-///
-/// Direct global access: `errflag.load(Ordering::Relaxed)` reads
-/// the current value, `errflag.fetch_or(ERRFLAG_ERROR, …)` matches
-/// C's `errflag |= ERRFLAG_ERROR`, `errflag.store(0, …)` matches
-/// C's `errflag = 0`.
-#[allow(non_upper_case_globals)]
-pub static errflag: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `int noerrs` from `Src/init.c`. Counter — when `> 0`,
-/// suppresses error printing. `noerrs >= 2` also suppresses the
-/// `errflag` set inside `zerr`/`zerrnam`.
-static NOERRS: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock::new();
-
-/// Port of `int locallevel` from `Src/init.c`. Function-call depth
-/// (0 = top-level, 1+ = inside a fn). `zwarning()` checks this in
-/// the script-prefix path (utils.c:150).
-// `LOCALLEVEL` removed — see `locallevel_lock` removal comment
-// below. Canonical static lives in `crate::ported::params::locallevel`
-// (port of params.c:54).
-
-/// Port of `int lineno` from `Src/init.c`. Current line number;
-/// `zerrmsg()` includes it in the diagnostic when locallevel > 0
-/// or shinstdin is unset (utils.c:301).
-static LINENO: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock::new();
-
-/// Port of the `isset(SHINSTDIN)` check from utils.c:150. C reads
-/// the SHINSTDIN option directly; the Rust port caches it here so
-/// callers don't pull in the whole option-table for every error.
-static SHINSTDIN_OPT: std::sync::OnceLock<std::sync::Mutex<bool>> = std::sync::OnceLock::new();
-
-/// `ERRFLAG_ERROR` from `Src/zsh.h`. Set on `zerr`/`zerrnam` to
-/// signal a fatal error has occurred.
-pub const ERRFLAG_ERROR: i32 = 1;
-
-/// Port of `mod_export int incompfunc` from `Src/utils.c:46`.
-/// Set non-zero while a `comp*` builtin is dispatching from inside
-/// a user-defined completion function — guards `comparguments` /
-/// `compset` / `compadd` / `compdescribe` / `comptags` / `compvalues`
-/// / `compfiles` / `compgroups` / `compquote` against being called
-/// outside the `compfunc` shfunc context (each builtin checks
-/// `INCOMPFUNC` early and emits "can only be called from completion
-/// function" when zero).
-pub static INCOMPFUNC: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:46
-
-/// Port of `mod_export int resetneeded` from `Src/utils.c:1821`.
-/// Set when the editor needs a redraw — incremented by widgets +
-/// signal handlers (e.g. SIGWINCH); the next prompt loop tick clears
-/// it after running zrefresh.
-pub static RESETNEEDED: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:1821
-
-/// Port of `mod_export int winchanged` from `Src/utils.c:1827`.
-/// Set by the SIGWINCH handler — the next refresh re-queries the
-/// terminal size and re-renders, then clears the flag.
-pub static WINCHANGED: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:1827
-
 /// Set a wide-char array from a multibyte source string.
 /// Port of `set_widearray(char *mb_array, Widechar_array wca)` from `Src/utils.c:69`.
 ///
@@ -2780,20 +2690,6 @@ pub fn makecommaspecial(yesno: bool) {                                       // 
     }
 }
 
-/// Port of C's `GETKEY_*` flag enumeration from `Src/zsh.h:3143`.
-/// Passed to `getkeystring_with` to alter escape interpretation:
-///   - GETKEY_OCTAL_ESC: `\NNN` octal escapes are interpreted (1<<0)
-///   - GETKEY_EMACS: unknown `\<char>` drops the backslash (1<<1)
-///   - GETKEY_BACKSLASH_C: `\c` truncates the result (1<<3)
-pub const GETKEY_OCTAL_ESC: u32 = 1 << 0;                                    // c:zsh.h:3143
-pub const GETKEY_EMACS: u32 = 1 << 1;                                        // c:zsh.h:3150
-pub const GETKEY_BACKSLASH_C: u32 = 1 << 3;                                  // c:zsh.h:3154
-
-/// `GETKEYS_PRINT = GETKEY_OCTAL_ESC | GETKEY_BACKSLASH_C |
-/// GETKEY_EMACS` per Src/zsh.h:3185 — the flag set `bin_print` /
-/// `bin_echo` use when interpreting escapes.
-pub const GETKEYS_PRINT: u32 = GETKEY_OCTAL_ESC | GETKEY_EMACS | GETKEY_BACKSLASH_C; // c:zsh.h:3185
-
 /// Port of `void makebangspecial(int yesno)` from Src/utils.c:4283.
 ///
 /// Toggles `ISPECIAL` on the current `bangchar`. When `yesno==0`
@@ -2883,11 +2779,6 @@ pub fn wcsitype(c: char, itype: u32) -> bool {                               // 
     let _ = IALNUM;
     c.is_alphanumeric()                                                      // c:4370
 }
-
-/// Static `int ep` from Src/utils.c:4775 — sticky flag suppressing the
-/// `can't set tty pgrp` warning after the first failure.
-static ATTACHTTY_EP: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:4775
 
 /// Check if a character type at end of string (from utils.c itype_end)
 /// Returns the position after the identifier characters
@@ -3433,39 +3324,6 @@ pub fn nicezputs(s: &str) -> String {                                       // c
     s.chars().map(nicechar).collect()
 }
 
-// =====================================================================
-// !!! WARNING: RUST-ONLY HELPERS — NO DIRECT C COUNTERPART !!!
-// =====================================================================
-//
-// These three fns (`fdtable_lock`, `fdtable_get`, `fdtable_set`) DO
-// NOT EXIST as functions in `Src/utils.c`. The C source declares
-// `fdtable` as a bare `unsigned char *` global (Src/utils.c:~63) and
-// every call site reads/writes it as a direct array index:
-//
-//     if (fdtable[fd] != FDT_UNUSED) ...
-//     fdtable[fd] = FDT_EXTERNAL;
-//
-// Rust can't hand out raw mutable indexes through a `Mutex<Vec<u8>>`
-// safely without a borrow scope, so the Rust port wraps the same
-// slot access in three `pub fn`s. Each call site to these helpers
-// corresponds 1:1 to a `fdtable[fd] = X` or `fdtable[fd] != X`
-// statement in the C source — they are NOT new policy, they only
-// adapt the storage shape from `unsigned char *` to a growable
-// `Mutex<Vec<i32>>`.
-//
-// Also adapts `growfdtable` (Src/utils.c:1965) by lazily growing the
-// Vec inside `fdtable_set` instead of a separate `growfdtable`
-// call — the C source calls `growfdtable(fd)` immediately before
-// every `fdtable[fd] = X` write anyway.
-//
-// !!! Do NOT use these for any state that the C source does not
-// already store in `fdtable[]`. Adding a new "fd kind" here is a
-// scope expansion, not a port. !!!
-// =====================================================================
-
-static FDTABLE: std::sync::OnceLock<std::sync::Mutex<Vec<i32>>> =
-    std::sync::OnceLock::new();
-
 /// Port of `niceztrlen(char const *s)` from `Src/utils.c:5324`.
 ///
 /// Returns the length (in bytes) of the visible representation of
@@ -3893,14 +3751,6 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {                     // 
         s.to_string()
     }
 }
-
-/// Port of `Meta` from `Src/zsh.h`. Sentinel byte (0x83) zsh
-/// prepends in front of any byte whose top bit it wants to escape;
-/// the byte that follows is XOR'd with 32. `unmetafy` (and the
-/// `Meta`-aware loops throughout zsh) walk the result byte-by-byte
-/// and reverse the encoding.
-#[allow(non_upper_case_globals)]
-pub const Meta: u8 = 0x83;
 
 // ===========================================================
 // xtrace helpers moved from src/ported/exec.rs.
@@ -4639,6 +4489,156 @@ pub fn mailstat(path: &str, st: &mut libc::stat) -> i32 {                    // 
     0                                                                        // c:7787
 }
 
+/// Script name for error messages
+pub static mut SCRIPT_NAME: Option<String> = None;
+/// Script filename
+pub static mut SCRIPT_FILENAME: Option<String> = None;
+
+/// Print a fatal error to stderr.
+/// Port of `zerr(VA_ALIST1(const char *fmt))` from Src/utils.c:172. C source sets `errflag`
+/// after emitting `<prefix>: <msg>\n` so the running script aborts
+/// at the next safe point. The Rust port currently just prints —
+// =====================================================================
+// Module-static state for the zerr/zwarn/zerrnam/zwarnnam family —
+// port of the file-statics in Src/init.c + Src/exec.c that
+// `zwarning()` (utils.c:142) reads to build the error prefix.
+// =====================================================================
+
+// name of script being sourced                                             // c:33
+/// Port of `char *scriptname` from `Src/init.c`. Set when `source`
+/// is reading a script; cleared on return. Used by `zwarning()`
+/// (utils.c:147) as the diagnostic prefix.
+static SCRIPTNAME: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+
+/// Port of `char *argzero` from `Src/init.c`. The shell's argv[0].
+/// Used by `zwarning()` (utils.c:147) as the fallback diagnostic
+/// prefix when scriptname is unset.
+static ARGZERO: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+
+// error flag: bits from enum errflag_bits                                 // c:124
+/// Port of `int errflag` from `Src/init.c`. Tracks whether an
+/// error has been raised (`ERRFLAG_ERROR = 1`) or break/return
+/// is in flight (`ERRFLAG_INT = 2`).
+///
+/// Direct global access: `errflag.load(Ordering::Relaxed)` reads
+/// the current value, `errflag.fetch_or(ERRFLAG_ERROR, …)` matches
+/// C's `errflag |= ERRFLAG_ERROR`, `errflag.store(0, …)` matches
+/// C's `errflag = 0`.
+#[allow(non_upper_case_globals)]
+pub static errflag: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int noerrs` from `Src/init.c`. Counter — when `> 0`,
+/// suppresses error printing. `noerrs >= 2` also suppresses the
+/// `errflag` set inside `zerr`/`zerrnam`.
+static NOERRS: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock::new();
+
+/// Port of `int locallevel` from `Src/init.c`. Function-call depth
+/// (0 = top-level, 1+ = inside a fn). `zwarning()` checks this in
+/// the script-prefix path (utils.c:150).
+// `LOCALLEVEL` removed — see `locallevel_lock` removal comment
+// below. Canonical static lives in `crate::ported::params::locallevel`
+// (port of params.c:54).
+
+/// Port of `int lineno` from `Src/init.c`. Current line number;
+/// `zerrmsg()` includes it in the diagnostic when locallevel > 0
+/// or shinstdin is unset (utils.c:301).
+static LINENO: std::sync::OnceLock<std::sync::Mutex<i32>> = std::sync::OnceLock::new();
+
+/// Port of the `isset(SHINSTDIN)` check from utils.c:150. C reads
+/// the SHINSTDIN option directly; the Rust port caches it here so
+/// callers don't pull in the whole option-table for every error.
+static SHINSTDIN_OPT: std::sync::OnceLock<std::sync::Mutex<bool>> = std::sync::OnceLock::new();
+
+/// `ERRFLAG_ERROR` from `Src/zsh.h`. Set on `zerr`/`zerrnam` to
+/// signal a fatal error has occurred.
+pub const ERRFLAG_ERROR: i32 = 1;
+
+/// Port of `mod_export int incompfunc` from `Src/utils.c:46`.
+/// Set non-zero while a `comp*` builtin is dispatching from inside
+/// a user-defined completion function — guards `comparguments` /
+/// `compset` / `compadd` / `compdescribe` / `comptags` / `compvalues`
+/// / `compfiles` / `compgroups` / `compquote` against being called
+/// outside the `compfunc` shfunc context (each builtin checks
+/// `INCOMPFUNC` early and emits "can only be called from completion
+/// function" when zero).
+pub static INCOMPFUNC: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:46
+
+/// Port of `mod_export int resetneeded` from `Src/utils.c:1821`.
+/// Set when the editor needs a redraw — incremented by widgets +
+/// signal handlers (e.g. SIGWINCH); the next prompt loop tick clears
+/// it after running zrefresh.
+pub static RESETNEEDED: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:1821
+
+/// Port of `mod_export int winchanged` from `Src/utils.c:1827`.
+/// Set by the SIGWINCH handler — the next refresh re-queries the
+/// terminal size and re-renders, then clears the flag.
+pub static WINCHANGED: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:1827
+
+/// Port of C's `GETKEY_*` flag enumeration from `Src/zsh.h:3143`.
+/// Passed to `getkeystring_with` to alter escape interpretation:
+///   - GETKEY_OCTAL_ESC: `\NNN` octal escapes are interpreted (1<<0)
+///   - GETKEY_EMACS: unknown `\<char>` drops the backslash (1<<1)
+///   - GETKEY_BACKSLASH_C: `\c` truncates the result (1<<3)
+pub const GETKEY_OCTAL_ESC: u32 = 1 << 0;                                    // c:zsh.h:3143
+pub const GETKEY_EMACS: u32 = 1 << 1;                                        // c:zsh.h:3150
+pub const GETKEY_BACKSLASH_C: u32 = 1 << 3;                                  // c:zsh.h:3154
+
+/// `GETKEYS_PRINT = GETKEY_OCTAL_ESC | GETKEY_BACKSLASH_C |
+/// GETKEY_EMACS` per Src/zsh.h:3185 — the flag set `bin_print` /
+/// `bin_echo` use when interpreting escapes.
+pub const GETKEYS_PRINT: u32 = GETKEY_OCTAL_ESC | GETKEY_EMACS | GETKEY_BACKSLASH_C; // c:zsh.h:3185
+
+/// Static `int ep` from Src/utils.c:4775 — sticky flag suppressing the
+/// `can't set tty pgrp` warning after the first failure.
+static ATTACHTTY_EP: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:4775
+
+// =====================================================================
+// !!! WARNING: RUST-ONLY HELPERS — NO DIRECT C COUNTERPART !!!
+// =====================================================================
+//
+// These three fns (`fdtable_lock`, `fdtable_get`, `fdtable_set`) DO
+// NOT EXIST as functions in `Src/utils.c`. The C source declares
+// `fdtable` as a bare `unsigned char *` global (Src/utils.c:~63) and
+// every call site reads/writes it as a direct array index:
+//
+//     if (fdtable[fd] != FDT_UNUSED) ...
+//     fdtable[fd] = FDT_EXTERNAL;
+//
+// Rust can't hand out raw mutable indexes through a `Mutex<Vec<u8>>`
+// safely without a borrow scope, so the Rust port wraps the same
+// slot access in three `pub fn`s. Each call site to these helpers
+// corresponds 1:1 to a `fdtable[fd] = X` or `fdtable[fd] != X`
+// statement in the C source — they are NOT new policy, they only
+// adapt the storage shape from `unsigned char *` to a growable
+// `Mutex<Vec<i32>>`.
+//
+// Also adapts `growfdtable` (Src/utils.c:1965) by lazily growing the
+// Vec inside `fdtable_set` instead of a separate `growfdtable`
+// call — the C source calls `growfdtable(fd)` immediately before
+// every `fdtable[fd] = X` write anyway.
+//
+// !!! Do NOT use these for any state that the C source does not
+// already store in `fdtable[]`. Adding a new "fd kind" here is a
+// scope expansion, not a port. !!!
+// =====================================================================
+
+static FDTABLE: std::sync::OnceLock<std::sync::Mutex<Vec<i32>>> =
+    std::sync::OnceLock::new();
+
+/// Port of `Meta` from `Src/zsh.h`. Sentinel byte (0x83) zsh
+/// prepends in front of any byte whose top bit it wants to escape;
+/// the byte that follows is XOR'd with 32. `unmetafy` (and the
+/// `Meta`-aware loops throughout zsh) walk the result byte-by-byte
+/// and reverse the encoding.
+#[allow(non_upper_case_globals)]
+pub const Meta: u8 = 0x83;
+
 
 /// Setter for `scriptname`. Called from `bin_dot` / `source`
 /// when entering a script.
@@ -5348,6 +5348,28 @@ pub(crate) fn bufferwords(s: &str) -> Vec<String> {
     flush(&mut out, &mut cur);
     out
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

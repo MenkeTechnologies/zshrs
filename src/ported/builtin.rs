@@ -151,172 +151,6 @@ pub fn printbuiltinnode(hn: *mut crate::ported::zsh_h::hashnode,             // 
     // c:199-198 — default form: just emit the name.
     println!("{}", bn.nam);
 }
-// ---------------------------------------------------------------------------
-// Builtin descriptor.
-// Port of `struct builtin` from `Src/zsh.h` (the one expanded by the
-// `BUILTIN` / `BIN_PREFIX` macros at line 1452 of zsh.h).
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// The master registration table.
-//
-// Direct, line-for-line port of `static struct builtin builtins[]`
-// at `Src/builtin.c:40-137`. Entries appear in the same order so
-// any diff against the C source stays trivial. The `handler_name`
-// column points at the canonical Rust port that the dispatcher in
-// `Executor::register_builtins` (`src/ported/exec.rs`) wires up.
-// ---------------------------------------------------------------------------
-
-pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::new(|| vec![
-    BIN_PREFIX("-", BINF_DASH),
-    BIN_PREFIX("builtin", BINF_BUILTIN),
-    BIN_PREFIX("command", BINF_COMMAND),
-    BIN_PREFIX("exec", BINF_EXEC),
-    BIN_PREFIX("noglob", BINF_NOGLOB),
-    BUILTIN("[", BINF_HANDLES_OPTS, Some(bin_test as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_BRACKET, None, None),
-    BUILTIN(".", BINF_PSPECIAL, Some(bin_dot as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
-    BUILTIN(":", BINF_PSPECIAL, Some(bin_true as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, None, None),
-    BUILTIN("alias", BINF_MAGICEQUALS | BINF_PLUSOPTS, Some(bin_alias as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("Lgmrs"), None),
-    BUILTIN("autoload", BINF_PLUSOPTS, None, 0, -1, 0, Some("dmktrRTUwWXz"), Some("u")),
-    BUILTIN("bg", 0, Some(crate::ported::jobs::bin_fg as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_BG, None, None),
-    BUILTIN("break", BINF_PSPECIAL, Some(bin_break as crate::ported::zsh_h::HandlerFunc), 0, 1, BIN_BREAK, None, None),
-    BUILTIN("bye", 0, None, 0, 1, BIN_EXIT, None, None),
-    BUILTIN("cd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, Some(bin_cd as crate::ported::zsh_h::HandlerFunc), 0, 2, BIN_CD, Some("qsPL"), None),
-    BUILTIN("chdir", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, Some(bin_cd as crate::ported::zsh_h::HandlerFunc), 0, 2, BIN_CD, Some("qsPL"), None),
-    BUILTIN("continue", BINF_PSPECIAL, Some(bin_break as crate::ported::zsh_h::HandlerFunc), 0, 1, BIN_CONTINUE, None, None),
-    BUILTIN("declare", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klmnp:%rtuxz"), None),
-    BUILTIN("dirs", 0, Some(bin_dirs as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("clpv"), None),
-    BUILTIN("disable", 0, Some(bin_enable as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_DISABLE, Some("afmprs"), None),
-    BUILTIN("disown", 0, Some(crate::ported::jobs::bin_fg as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_DISOWN, None, None),
-    BUILTIN("echo", BINF_SKIPINVALID, Some(bin_print as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_ECHO, Some("neE"), Some("-")),
-    BUILTIN("emulate", 0, Some(bin_emulate as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("lLR"), None),
-    BUILTIN("enable", 0, Some(bin_enable as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_ENABLE, Some("afmprs"), None),
-    BUILTIN("eval", BINF_PSPECIAL, Some(bin_eval as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_EVAL, None, None),
-    BUILTIN("exit", BINF_PSPECIAL, Some(bin_break as crate::ported::zsh_h::HandlerFunc), 0, 1, BIN_EXIT, None, None),
-    BUILTIN("export", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_EXPORT, Some("E:%F:%HL:%R:%TUZ:%afhi:%lp:%rtu"), Some("xg")),
-    BUILTIN("false", 0, Some(bin_false as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, None, None),
-    // C source (Src/builtin.c:69-73): the argument to -e used to be
-    // optional; making it required is more consistent.
-    BUILTIN("fc", 0, None, 0, -1, BIN_FC, Some("aAdDe:EfiIlLmnpPrRst:W"), None),
-    BUILTIN("fg", 0, None, 0, -1, BIN_FG, None, None),
-    BUILTIN("float", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("E:%F:%HL:%R:%Z:%ghlp:%rtux"), Some("E")),
-    BUILTIN("functions", BINF_PLUSOPTS, Some(bin_functions as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("ckmMstTuUWx:z"), None),
-    BUILTIN("getln", 0, None, 0, -1, 0, Some("ecnAlE"), Some("zr")),
-    BUILTIN("getopts", 0, Some(bin_getopts as crate::ported::zsh_h::HandlerFunc), 2, -1, 0, None, None),
-    BUILTIN("hash", BINF_MAGICEQUALS, Some(bin_hash as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("Ldfmrv"), None),
-    // Src/builtin.c — `#ifdef ZSH_HASH_DEBUG`
-    //   BUILTIN("hashinfo", 0, bin_hashinfo, 0, 0, 0, NULL, NULL)
-    BUILTIN("hashinfo", 0, None, 0, 0, 0, None, None),
-    BUILTIN("history", 0, None, 0, -1, BIN_FC, Some("adDEfiLmnpPrt:"), Some("l")),
-    BUILTIN("integer", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("HL:%R:%Z:%ghi:%lp:%rtux"), Some("i")),
-    BUILTIN("jobs", 0, Some(crate::ported::jobs::bin_fg as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_JOBS, Some("dlpZrs"), None),
-    BUILTIN("kill", BINF_HANDLES_OPTS, None, 0, -1, 0, None, None),
-    BUILTIN("let", 0, Some(bin_let as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
-    BUILTIN("local", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%ahi:%lnp:%rtux"), None),
-    BUILTIN("logout", 0, Some(bin_break as crate::ported::zsh_h::HandlerFunc), 0, 1, BIN_LOGOUT, None, None),
-    // Src/builtin.c — `#if defined(ZSH_MEM) & defined(ZSH_MEM_DEBUG)`
-    //   BUILTIN("mem", 0, bin_mem, 0, 0, 0, "v", NULL)
-    BUILTIN("mem", 0, None, 0, 0, 0, Some("v"), None),
-    BUILTIN("popd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, None, 0, 1, BIN_POPD, Some("q"), None),
-    // Src/builtin.c — `#if defined(ZSH_PAT_DEBUG)`
-    //   BUILTIN("patdebug", 0, bin_patdebug, 1, -1, 0, "p", NULL)
-    BUILTIN("patdebug", 0, None, 1, -1, 0, Some("p"), None),
-    BUILTIN("print", BINF_PRINTOPTS, Some(bin_print as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_PRINT, Some("abcC:Df:ilmnNoOpPrRsSu:v:x:X:z-"), None),
-    BUILTIN("printf", BINF_SKIPINVALID | BINF_SKIPDASH, Some(bin_print as crate::ported::zsh_h::HandlerFunc), 1, -1, BIN_PRINTF, Some("v:"), None),
-    BUILTIN("pushd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, None, 0, 2, BIN_PUSHD, Some("qsPL"), None),
-    BUILTIN("pushln", 0, None, 0, -1, BIN_PRINT, None, Some("-nz")),
-    BUILTIN("pwd", 0, Some(bin_pwd as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, Some("rLP"), None),
-    BUILTIN("r", 0, None, 0, -1, BIN_R, Some("IlLnr"), None),
-    BUILTIN("read", 0, Some(bin_read as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("cd:ek:%lnpqrst:%zu:AE"), None),
-    BUILTIN("readonly", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_READONLY, Some("AE:%F:%HL:%R:%TUZ:%afghi:%lptux"), Some("r")),
-    BUILTIN("rehash", 0, Some(bin_hash as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, Some("df"), Some("r")),
-    BUILTIN("return", BINF_PSPECIAL, Some(bin_break as crate::ported::zsh_h::HandlerFunc), 0, 1, BIN_RETURN, None, None),
-    BUILTIN("set", BINF_PSPECIAL | BINF_HANDLES_OPTS, Some(bin_set as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, None, None),
-    BUILTIN("setopt", 0, None, 0, -1, BIN_SETOPT, None, None),
-    BUILTIN("shift", BINF_PSPECIAL, Some(bin_shift as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("p"), None),
-    BUILTIN("source", BINF_PSPECIAL, Some(bin_dot as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
-    BUILTIN("suspend", 0, None, 0, 0, 0, Some("f"), None),
-    BUILTIN("test", BINF_HANDLES_OPTS, Some(bin_test as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_TEST, None, None),
-    BUILTIN("ttyctl", 0, Some(bin_ttyctl as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, Some("fu"), None),
-    // c:Src/Builtins/rlimits.c:868-870 — limit/ulimit/unlimit are
-    // declared in the rlimits Builtins-module's bintab. zshrs has the
-    // free-fn ports at src/ported/builtins/rlimits.rs but never
-    // registered them; the BUILTIN_NAMES derivation missed them and
-    // `type limit` etc. returned empty.
-    BUILTIN("limit",   0, None, 0, -1, 0, Some("sh"), None),                  // c:rlimits.c:868
-    BUILTIN("ulimit",  0, None, 0, -1, 0, None,       None),                  // c:rlimits.c:869
-    BUILTIN("unlimit", 0, None, 0, -1, 0, Some("hs"), None),                  // c:rlimits.c:870
-    BUILTIN("times", BINF_PSPECIAL, Some(bin_times as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, None, None),
-    BUILTIN("trap", BINF_PSPECIAL | BINF_HANDLES_OPTS, Some(bin_trap as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, None, None),
-    BUILTIN("true", 0, Some(bin_true as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, None, None),
-    BUILTIN("type", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("ampfsSw"), Some("v")),
-    BUILTIN("typeset", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klp:%rtuxmnz"), None),
-    BUILTIN("umask", 0, Some(bin_umask as crate::ported::zsh_h::HandlerFunc), 0, 1, 0, Some("S"), None),
-    BUILTIN("unalias", 0, Some(bin_unhash as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_UNALIAS, Some("ams"), None),
-    BUILTIN("unfunction", 0, Some(bin_unhash as crate::ported::zsh_h::HandlerFunc), 1, -1, BIN_UNFUNCTION, Some("m"), Some("f")),
-    BUILTIN("unhash", 0, Some(bin_unhash as crate::ported::zsh_h::HandlerFunc), 1, -1, BIN_UNHASH, Some("adfms"), None),
-    BUILTIN("unset", BINF_PSPECIAL, Some(bin_unset as crate::ported::zsh_h::HandlerFunc), 1, -1, BIN_UNSET, Some("fmvn"), None),
-    BUILTIN("unsetopt", 0, None, 0, -1, BIN_UNSETOPT, None, None),
-    BUILTIN("wait", 0, Some(crate::ported::jobs::bin_fg as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_WAIT, None, None),
-    BUILTIN("whence", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("acmpvfsSwx:"), None),
-    BUILTIN("where", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("pmsSwx:"), Some("ca")),
-    BUILTIN("which", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("ampsSwx:"), Some("c")),
-    BUILTIN("zmodload", 0, Some(crate::ported::module::bin_zmodload as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("AFRILP:abcfdilmpsue"), None),
-    BUILTIN("zcompile", 0, None, 0, -1, 0, Some("tUMRcmzka"), None),
-    // Module builtins (zsh/zutil, zsh/cap, zsh/pcre, etc.) — these
-    // live in src/ported/modules/* and src/ported/zle/* but their
-    // canonical pub fn signatures match HandlerFunc, so they can be
-    // dispatched via execbuiltin alongside the main builtins.
-    BUILTIN("zstyle", 0, Some(crate::ported::modules::zutil::bin_zstyle as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("LeLdgabsTtmnH"), None),
-    BUILTIN("zformat", 0, Some(crate::ported::modules::zutil::bin_zformat as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("Faf"), None),
-    BUILTIN("zparseopts", 0, Some(crate::ported::modules::zutil::bin_zparseopts as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("D-EFK-M-a:"), None),
-    BUILTIN("zregexparse", 0, Some(crate::ported::modules::zutil::bin_zregexparse as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("c"), None),
-    BUILTIN("cap", 0, Some(crate::ported::modules::cap::bin_cap as crate::ported::zsh_h::HandlerFunc), 0, 1, 0, None, None),
-    BUILTIN("getcap", 0, Some(crate::ported::modules::cap::bin_getcap as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
-    BUILTIN("setcap", 0, Some(crate::ported::modules::cap::bin_setcap as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
-    BUILTIN("pcre_compile", 0, Some(crate::ported::modules::pcre::bin_pcre_compile as crate::ported::zsh_h::HandlerFunc), 1, 1, 0, Some("aimx"), None),
-    BUILTIN("pcre_study", 0, Some(crate::ported::modules::pcre::bin_pcre_study as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, None, None),
-    // bin_pcre_match returns (i32, Option<String>, Vec<...>) — non-standard
-    // signature, can't dispatch via execbuiltin. Wrapper stays in exec.rs.
-    BUILTIN("pcre_match", 0, None, 1, -1, 0, Some("ab:nv:"), None),
-    BUILTIN("ztcp", 0, Some(crate::ported::modules::tcp::bin_ztcp as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("acdflLtv"), None),
-    BUILTIN("ztie", 0, Some(crate::ported::modules::db_gdbm::bin_ztie as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("d:f:r"), None),
-    BUILTIN("zuntie", 0, Some(crate::ported::modules::db_gdbm::bin_zuntie as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("u"), None),
-    BUILTIN("zgdbmpath", 0, Some(crate::ported::modules::db_gdbm::bin_zgdbmpath as crate::ported::zsh_h::HandlerFunc), 1, 1, 0, None, None),
-    BUILTIN("echoti", 0, Some(crate::ported::modules::terminfo::bin_echoti as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
-    BUILTIN("fg", 0, Some(crate::ported::jobs::bin_fg as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_FG, None, None),
-    BUILTIN("kill", BINF_HANDLES_OPTS, Some(crate::ported::jobs::bin_kill as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, None, None),
-    BUILTIN("suspend", 0, Some(crate::ported::jobs::bin_suspend as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, Some("f"), None),
-    BUILTIN("bindkey", 0, Some(crate::ported::zle::zle_keymap::bin_bindkey as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("evaMldDANmrsLR"), None),
-    BUILTIN("vared", 0, Some(crate::ported::zle::zle_main::bin_vared as crate::ported::zsh_h::HandlerFunc), 1, 1, 0, Some("AaceghM:m:p:r:i:f:"), None),
-    BUILTIN("compadd", 0, Some(crate::ported::zle::complete::bin_compadd as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("J:V:1X:fnqQF:Wsi"), None),
-    BUILTIN("compset", 0, Some(crate::ported::zle::complete::bin_compset as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("npqPS:"), None),
-    BUILTIN("zle", 0, Some(crate::ported::zle::zle_thingy::bin_zle as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("aAcCDfFIKlLmMNRTU"), None),
-    // zsh/files module — file-manipulation builtins. All have
-    // HandlerFunc-compatible signatures already.
-    BUILTIN("mkdir", 0, Some(crate::ported::modules::files::bin_mkdir as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("pm:"), None),
-    BUILTIN("rmdir", 0, Some(crate::ported::modules::files::bin_rmdir as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
-    BUILTIN("ln", 0, Some(crate::ported::modules::files::bin_ln as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("dfins"), None),
-    BUILTIN("rm", 0, Some(crate::ported::modules::files::bin_rm as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("dfiRrs"), None),
-    BUILTIN("chmod", 0, Some(crate::ported::modules::files::bin_chmod as crate::ported::zsh_h::HandlerFunc), 2, -1, 0, Some("Rs"), None),
-    BUILTIN("chown", 0, Some(crate::ported::modules::files::bin_chown as crate::ported::zsh_h::HandlerFunc), 2, -1, 0, Some("Rs"), None),
-    BUILTIN("sync", 0, Some(crate::ported::modules::files::bin_sync as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, None, None),
-]);
-// hash table containing builtin commands                                   // c:143
-/// Process-wide builtin lookup table. Filled lazily the first time
-/// `builtintab()` is called; mirrors the C `mod_export HashTable
-/// builtintab` exposed at `Src/builtin.c:146`.
-static builtintab: OnceLock<HashMap<String, &'static builtin>> = OnceLock::new();
-
-/// Names whose `node.flags & DISABLED` is set in C. The Rust port's
-/// `builtintab` is an immutable static, so the disabled bit lives
-/// in this parallel set; `bin_enable` toggles it via builtin.c:587.
-/// Dispatch sites check `is_builtin_disabled(name)` before calling
-/// `handlerfunc` to mirror C's "skip nodes with DISABLED set" walk.
-pub static BUILTINS_DISABLED: std::sync::LazyLock<                           // c:587 (Src/builtin.c)
-    std::sync::Mutex<std::collections::HashSet<String>>
-> = std::sync::LazyLock::new(|| {
-    std::sync::Mutex::new(std::collections::HashSet::new())
-});
 
 /// Port of `freebuiltinnode(HashNode hn)` from Src/builtin.c:199.
 /// C: `static void freebuiltinnode(HashNode hn)` — free a builtin-table
@@ -327,28 +161,6 @@ pub fn freebuiltinnode(hn: *mut crate::ported::zsh_h::hashnode) {            // 
     // c:204 — `if (!(bn->node.flags & BINF_ADDED))` then free.
     if (bn.flags as u32 & crate::ported::zsh_h::BINF_ADDED) == 0 {           // c:204
         // Rust drop handles the actual free; nothing more to do.
-    }
-}
-
-
-// ===========================================================
-// ksh_autoload_body moved from src/ported/exec.rs.
-// Mirrors the ksh-style autoload helper in Src/builtin.c
-// (bin_functions / load_function_def).
-// ===========================================================
-// (impl crate::ported::exec::ShellExecutor block deleted — was lines 12343..12376; per user feedback the bin_* methods were fake. Recorder hooks preserved at file bottom.)
-
-
-bitflags::bitflags! {
-    /// Flags for autoloaded functions (autoload builtin -- Src/builtin.c bin_autoload).
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct AutoloadFlags: u32 {
-        const NO_ALIAS = 0b00000001;      // -U: don't expand aliases
-        const ZSH_STYLE = 0b00000010;     // -z: zsh-style autoload
-        const KSH_STYLE = 0b00000100;     // -k: ksh-style autoload
-        const TRACE = 0b00001000;         // -t: trace execution
-        const USE_CALLER_DIR = 0b00010000; // -d: use calling function's dir
-        const LOADED = 0b00100000;        // function has been loaded
     }
 }
 
@@ -375,6 +187,10 @@ pub fn init_builtins() {                                                     // 
     }
 }
 
+/// Port of `OPT_ALLOC_CHUNK` from `Src/builtin.c:227`. Number of
+/// `ops->args[]` slots `new_optarg()` grows the array by when full.
+pub const OPT_ALLOC_CHUNK: i32 = 16;                                         // c:227
+
 /// Port of `new_optarg(Options ops)` from Src/builtin.c:227.
 /// C: `static int new_optarg(Options ops)` — grow the `ops->args[]`
 ///   array by `OPT_ALLOC_CHUNK` slots when full. Returns 1 on overflow
@@ -391,6 +207,28 @@ pub fn new_optarg(ops: &mut crate::ported::zsh_h::options) -> i32 {          // 
     }
     ops.argscount += 1;                                                      // c:243
     0                                                                        // c:244
+}
+
+
+// ===========================================================
+// ksh_autoload_body moved from src/ported/exec.rs.
+// Mirrors the ksh-style autoload helper in Src/builtin.c
+// (bin_functions / load_function_def).
+// ===========================================================
+// (impl crate::ported::exec::ShellExecutor block deleted — was lines 12343..12376; per user feedback the bin_* methods were fake. Recorder hooks preserved at file bottom.)
+
+
+bitflags::bitflags! {
+    /// Flags for autoloaded functions (autoload builtin -- Src/builtin.c bin_autoload).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct AutoloadFlags: u32 {
+        const NO_ALIAS = 0b00000001;      // -U: don't expand aliases
+        const ZSH_STYLE = 0b00000010;     // -z: zsh-style autoload
+        const KSH_STYLE = 0b00000100;     // -k: ksh-style autoload
+        const TRACE = 0b00001000;         // -t: trace execution
+        const USE_CALLER_DIR = 0b00010000; // -d: use calling function's dir
+        const LOADED = 0b00100000;        // function has been loaded
+    }
 }
 
 /// Port of `execbuiltin(LinkList args, LinkList assigns, Builtin bn)` from Src/builtin.c:250.
@@ -714,10 +552,6 @@ pub fn execbuiltin(args: Vec<String>, assigns: Vec<crate::ported::zsh_h::asgment
     let handler = bn_ref.handlerfunc.expect("handlerfunc checked at c:264");
     handler(&name, &trimmed, &ops, bn_ref.funcid)                            // c:506
 }
-
-/// Port of `OPT_ALLOC_CHUNK` from `Src/builtin.c:227`. Number of
-/// `ops->args[]` slots `new_optarg()` grows the array by when full.
-pub const OPT_ALLOC_CHUNK: i32 = 16;                                         // c:227
 
 /// Port of `bin_enable(char *name, char **argv, Options ops, int func)` from Src/builtin.c:517.
 /// C: `int bin_enable(char *name, char **argv, Options ops, int func)` —
@@ -2262,12 +2096,6 @@ pub fn typeset_single(_cname: &str, _pname: &str,                            // 
     std::ptr::null_mut()
 }
 
-// `shfunctab` global from Src/init.c — name → Shfunc map. Static-link
-// path: store the raw Shfunc pointer keyed by name. Lazy via OnceLock
-// because HashMap::new isn't const.
-static SHFUNCTAB_INNER: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, usize>>>
-    = std::sync::OnceLock::new();
-
 /// Port of `bin_typeset(char *name, char **argv, LinkList assigns, Options ops, int func)` from Src/builtin.c:2655.
 /// C: `int bin_typeset(char *name, char **argv, LinkList assigns,
 ///     Options ops, int func)`.
@@ -2774,10 +2602,6 @@ pub fn check_autoload(shf: *mut crate::ported::zsh_h::shfunc, name: &str,    // 
     }
     0                                                                        // c:3243
 }
-
-// `matchednodes` global from Src/builtin.c:4550.
-pub static MATCHEDNODES: std::sync::Mutex<Vec<String>> =
-    std::sync::Mutex::new(Vec::new());
 
 
 /// Port of `listusermathfunc(MathFunc p)` from Src/builtin.c:3243.
@@ -3520,22 +3344,6 @@ pub fn bin_functions(name: &str, argv: &[String],                            // 
     returnval
 }
 
-// `stopmsg` global from Src/jobs.c — non-zero when checkjobs() printed.
-pub static STOPMSG: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-// `sfcontext` global from Src/exec.c:239 — current shell-function
-// dispatch context (SFC_NONE / SFC_BUILTIN / SFC_FUNC / SFC_SUBST...).
-pub static SFCONTEXT: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);                                    // c:exec.c:239
-// `maxjob` / `thisjob` globals from Src/jobs.c:62/63.
-pub static MAXJOB:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-pub static THISJOB: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-// `jobstats` mirror — flat per-slot stat bits (STAT_*). Real jobtab
-// lives in src/ported/jobs.rs's JobTable; this mirror is updated by
-// the spawn/wait paths that already touch STOPMSG. Empty → no jobs,
-// matching the post-init state of `jobtab[]`.
-pub static JOBSTATS: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
-
 /// Port of `mkautofn(Shfunc shf)` from Src/builtin.c:3790.
 /// C: `Eprog mkautofn(Shfunc shf)` — synthesize a 5-wordcode body that
 ///   re-fires the autoload mechanism when first called.
@@ -3684,16 +3492,6 @@ pub fn bin_unset(name: &str, argv: &[String],                                // 
     crate::ported::mem::unqueue_signals();                                   // c:3914
     returnval                                                                // c:3915
 }
-
-// File-static globals for [_]realexit/zexit — c:5945+, init.c, signals.c.
-pub static SHELL_EXITING: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-pub static EXIT_PENDING: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-pub static EXIT_VAL: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-pub static LASTVAL: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `fetchcmdnamnode(HashNode hn, UNUSED(int printflags))` from Src/builtin.c:3967.
 /// C: `static void fetchcmdnamnode(HashNode hn, UNUSED(int printflags))` →
@@ -4391,27 +4189,6 @@ pub fn bin_unhash(name: &str, argv: &[String],                               // 
     returnval                                                                // c:4450
 }
 
-// `tok` for the test builtin — Src/builtin.c:7000 ranges. The full enum
-// lives in src/ported/lex.rs; we mirror the few values testlex() touches.
-pub static TEST_TOK: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-const TEST_LEXERR:  i32 = -1;                                                // c:7209
-const TEST_NULLTOK: i32 =  0;
-const TEST_DBAR:    i32 =  2;                                                // c:7213
-const TEST_DAMPER:  i32 =  3;                                                // c:7215
-const TEST_BANG:    i32 =  4;                                                // c:7217
-const TEST_INPAR:   i32 =  5;                                                // c:7219
-const TEST_OUTPAR:  i32 =  6;                                                // c:7221
-const TEST_INANG:   i32 =  7;                                                // c:7223
-const TEST_OUTANG:  i32 =  8;                                                // c:7225
-const TEST_STRING:  i32 =  9;                                                // c:7227
-
-// `testargs` / `curtestarg` / `tokstr` globals from Src/builtin.c — the
-// argv-style cursor that bin_test seeds and testlex() advances.
-pub static TESTARGS:     std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
-pub static TESTARGS_IDX: std::sync::atomic::AtomicI32  = std::sync::atomic::AtomicI32::new(0);
-pub static TOKSTR:       std::sync::Mutex<String>      = std::sync::Mutex::new(String::new());
-
 /// Port of `bin_alias(char *name, char **argv, Options ops, UNUSED(int func))` from Src/builtin.c:4450.
 /// C: `int bin_alias(char *name, char **argv, Options ops, ...)` — list,
 ///   define, glob-list, or display aliases. `-r`/`-g`/`-s` filter type;
@@ -4576,17 +4353,6 @@ pub fn bin_false(_name: &str, _argv: &[String],                              // 
                  _ops: &crate::ported::zsh_h::options, _func: i32) -> i32 {
     1                                                                        // c:4562
 }
-
-// int doprintdir = 0; set in exec.c (for autocd, cdpath, etc.)            // c:722
-// `doprintdir` from Src/exec.c — set when an autocd'd command should
-// echo the new directory before executing.
-pub static DOPRINTDIR: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-// set if we are resolving links to their true paths                       // c:829
-// `chasinglinks` from Src/exec.c — non-zero when CHASELINKS / -P
-// resolution is active.
-pub static CHASINGLINKS: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `bin_print(char *name, char **args, Options ops, int func)` from Src/builtin.c:4587.
 /// C: `int bin_print(char *name, char **args, Options ops, int func)`.
@@ -4794,10 +4560,6 @@ pub fn bin_shift(name: &str, argv: &[String],                                // 
     crate::ported::mem::unqueue_signals();                                   // c:5658
     ret                                                                      // c:5659
 }
-
-// `pparams` global from Src/init.c — positional parameters $1..$N.
-pub static PPARAMS: std::sync::Mutex<Vec<String>> =
-    std::sync::Mutex::new(Vec::new());
 
 /// Port of `bin_getopts(UNUSED(char *name), char **argv, UNUSED(Options ops), UNUSED(int func))` from Src/builtin.c:5672.
 /// C: `int bin_getopts(UNUSED(char *name), char **argv, UNUSED(Options ops),
@@ -5124,13 +4886,6 @@ pub fn realexit() -> ! {                                                     // 
     };
     std::process::exit(code);                                                // c:5962
 }
-
-// `zoptind` (Src/builtin.c:5667) and `optcind` (c:5670) — the two
-// pieces of getopts state. zoptind backs the user-visible $OPTIND.
-pub static ZOPTIND: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(1);
-pub static OPTCIND: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `_realexit()` from Src/builtin.c:5962.
 /// C: `void _realexit(void)` →
@@ -5878,11 +5633,6 @@ pub fn bin_ttyctl(_name: &str, _argv: &[String],                             // 
     0                                                                        // c:7463
 }
 
-// `ttyfrozen` global from Src/init.c — tty-state freeze flag controlled
-// by `ttyctl -f/-u` and consulted by ZLE on prompt entry.
-pub static TTYFROZEN: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
-
 /// Port of `bin_let(UNUSED(char *name), char **argv, UNUSED(Options ops), UNUSED(int func))` from Src/builtin.c:7469.
 /// C: `int bin_let(UNUSED(char *name), char **argv, UNUSED(Options ops),
 ///     UNUSED(int func))` — evaluate each arg as a math expression;
@@ -5912,25 +5662,6 @@ pub fn bin_let(_name: &str, argv: &[String],                                 // 
         (val.d == 0.0) as i32
     }
 }
-
-/// Port of `mod_export int ineval` from `Src/builtin.c:6389`. Set
-/// while `eval` is dispatching its body (incremented before
-/// `execode(prog, 1, 0, "eval")`, decremented after). Tested by
-/// `IN_EVAL_TRAP()` in zsh.h:2962 to determine trap-context state.
-pub static INEVAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:6389
-
-// `loops` / `breaks` / `contflag` / `retflag` / `locallevel` / `sourcelevel`
-// globals from Src/loop.c + Src/init.c — control-flow state consulted by
-// the bin_break dispatcher.
-pub static LOOPS:        std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-pub static BREAKS:       std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-pub static CONTFLAG:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-pub static RETFLAG:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-pub static LOCALLEVEL:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-pub static SOURCELEVEL:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-
-// `ZEXIT_NORMAL` from Src/zsh.h — zexit() exit-mode discriminant.
-pub const ZEXIT_NORMAL: i32 = 0;
 
 /// Port of `bin_umask(char *nam, char **args, Options ops, UNUSED(int func))` from Src/builtin.c:7491.
 /// C: `int bin_umask(char *nam, char **args, Options ops, ...)` —
@@ -6060,6 +5791,275 @@ pub fn bin_notavail(nam: &str, _argv: &[String],                             // 
     crate::ported::utils::zwarnnam(nam, "not available on this system");     // c:7607
     1                                                                        // c:7608
 }
+// ---------------------------------------------------------------------------
+// Builtin descriptor.
+// Port of `struct builtin` from `Src/zsh.h` (the one expanded by the
+// `BUILTIN` / `BIN_PREFIX` macros at line 1452 of zsh.h).
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// The master registration table.
+//
+// Direct, line-for-line port of `static struct builtin builtins[]`
+// at `Src/builtin.c:40-137`. Entries appear in the same order so
+// any diff against the C source stays trivial. The `handler_name`
+// column points at the canonical Rust port that the dispatcher in
+// `Executor::register_builtins` (`src/ported/exec.rs`) wires up.
+// ---------------------------------------------------------------------------
+
+pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::new(|| vec![
+    BIN_PREFIX("-", BINF_DASH),
+    BIN_PREFIX("builtin", BINF_BUILTIN),
+    BIN_PREFIX("command", BINF_COMMAND),
+    BIN_PREFIX("exec", BINF_EXEC),
+    BIN_PREFIX("noglob", BINF_NOGLOB),
+    BUILTIN("[", BINF_HANDLES_OPTS, Some(bin_test as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_BRACKET, None, None),
+    BUILTIN(".", BINF_PSPECIAL, Some(bin_dot as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
+    BUILTIN(":", BINF_PSPECIAL, Some(bin_true as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, None, None),
+    BUILTIN("alias", BINF_MAGICEQUALS | BINF_PLUSOPTS, Some(bin_alias as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("Lgmrs"), None),
+    BUILTIN("autoload", BINF_PLUSOPTS, None, 0, -1, 0, Some("dmktrRTUwWXz"), Some("u")),
+    BUILTIN("bg", 0, Some(crate::ported::jobs::bin_fg as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_BG, None, None),
+    BUILTIN("break", BINF_PSPECIAL, Some(bin_break as crate::ported::zsh_h::HandlerFunc), 0, 1, BIN_BREAK, None, None),
+    BUILTIN("bye", 0, None, 0, 1, BIN_EXIT, None, None),
+    BUILTIN("cd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, Some(bin_cd as crate::ported::zsh_h::HandlerFunc), 0, 2, BIN_CD, Some("qsPL"), None),
+    BUILTIN("chdir", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, Some(bin_cd as crate::ported::zsh_h::HandlerFunc), 0, 2, BIN_CD, Some("qsPL"), None),
+    BUILTIN("continue", BINF_PSPECIAL, Some(bin_break as crate::ported::zsh_h::HandlerFunc), 0, 1, BIN_CONTINUE, None, None),
+    BUILTIN("declare", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klmnp:%rtuxz"), None),
+    BUILTIN("dirs", 0, Some(bin_dirs as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("clpv"), None),
+    BUILTIN("disable", 0, Some(bin_enable as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_DISABLE, Some("afmprs"), None),
+    BUILTIN("disown", 0, Some(crate::ported::jobs::bin_fg as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_DISOWN, None, None),
+    BUILTIN("echo", BINF_SKIPINVALID, Some(bin_print as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_ECHO, Some("neE"), Some("-")),
+    BUILTIN("emulate", 0, Some(bin_emulate as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("lLR"), None),
+    BUILTIN("enable", 0, Some(bin_enable as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_ENABLE, Some("afmprs"), None),
+    BUILTIN("eval", BINF_PSPECIAL, Some(bin_eval as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_EVAL, None, None),
+    BUILTIN("exit", BINF_PSPECIAL, Some(bin_break as crate::ported::zsh_h::HandlerFunc), 0, 1, BIN_EXIT, None, None),
+    BUILTIN("export", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_EXPORT, Some("E:%F:%HL:%R:%TUZ:%afhi:%lp:%rtu"), Some("xg")),
+    BUILTIN("false", 0, Some(bin_false as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, None, None),
+    // C source (Src/builtin.c:69-73): the argument to -e used to be
+    // optional; making it required is more consistent.
+    BUILTIN("fc", 0, None, 0, -1, BIN_FC, Some("aAdDe:EfiIlLmnpPrRst:W"), None),
+    BUILTIN("fg", 0, None, 0, -1, BIN_FG, None, None),
+    BUILTIN("float", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("E:%F:%HL:%R:%Z:%ghlp:%rtux"), Some("E")),
+    BUILTIN("functions", BINF_PLUSOPTS, Some(bin_functions as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("ckmMstTuUWx:z"), None),
+    BUILTIN("getln", 0, None, 0, -1, 0, Some("ecnAlE"), Some("zr")),
+    BUILTIN("getopts", 0, Some(bin_getopts as crate::ported::zsh_h::HandlerFunc), 2, -1, 0, None, None),
+    BUILTIN("hash", BINF_MAGICEQUALS, Some(bin_hash as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("Ldfmrv"), None),
+    // Src/builtin.c — `#ifdef ZSH_HASH_DEBUG`
+    //   BUILTIN("hashinfo", 0, bin_hashinfo, 0, 0, 0, NULL, NULL)
+    BUILTIN("hashinfo", 0, None, 0, 0, 0, None, None),
+    BUILTIN("history", 0, None, 0, -1, BIN_FC, Some("adDEfiLmnpPrt:"), Some("l")),
+    BUILTIN("integer", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("HL:%R:%Z:%ghi:%lp:%rtux"), Some("i")),
+    BUILTIN("jobs", 0, Some(crate::ported::jobs::bin_fg as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_JOBS, Some("dlpZrs"), None),
+    BUILTIN("kill", BINF_HANDLES_OPTS, None, 0, -1, 0, None, None),
+    BUILTIN("let", 0, Some(bin_let as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
+    BUILTIN("local", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%ahi:%lnp:%rtux"), None),
+    BUILTIN("logout", 0, Some(bin_break as crate::ported::zsh_h::HandlerFunc), 0, 1, BIN_LOGOUT, None, None),
+    // Src/builtin.c — `#if defined(ZSH_MEM) & defined(ZSH_MEM_DEBUG)`
+    //   BUILTIN("mem", 0, bin_mem, 0, 0, 0, "v", NULL)
+    BUILTIN("mem", 0, None, 0, 0, 0, Some("v"), None),
+    BUILTIN("popd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, None, 0, 1, BIN_POPD, Some("q"), None),
+    // Src/builtin.c — `#if defined(ZSH_PAT_DEBUG)`
+    //   BUILTIN("patdebug", 0, bin_patdebug, 1, -1, 0, "p", NULL)
+    BUILTIN("patdebug", 0, None, 1, -1, 0, Some("p"), None),
+    BUILTIN("print", BINF_PRINTOPTS, Some(bin_print as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_PRINT, Some("abcC:Df:ilmnNoOpPrRsSu:v:x:X:z-"), None),
+    BUILTIN("printf", BINF_SKIPINVALID | BINF_SKIPDASH, Some(bin_print as crate::ported::zsh_h::HandlerFunc), 1, -1, BIN_PRINTF, Some("v:"), None),
+    BUILTIN("pushd", BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID, None, 0, 2, BIN_PUSHD, Some("qsPL"), None),
+    BUILTIN("pushln", 0, None, 0, -1, BIN_PRINT, None, Some("-nz")),
+    BUILTIN("pwd", 0, Some(bin_pwd as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, Some("rLP"), None),
+    BUILTIN("r", 0, None, 0, -1, BIN_R, Some("IlLnr"), None),
+    BUILTIN("read", 0, Some(bin_read as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("cd:ek:%lnpqrst:%zu:AE"), None),
+    BUILTIN("readonly", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_READONLY, Some("AE:%F:%HL:%R:%TUZ:%afghi:%lptux"), Some("r")),
+    BUILTIN("rehash", 0, Some(bin_hash as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, Some("df"), Some("r")),
+    BUILTIN("return", BINF_PSPECIAL, Some(bin_break as crate::ported::zsh_h::HandlerFunc), 0, 1, BIN_RETURN, None, None),
+    BUILTIN("set", BINF_PSPECIAL | BINF_HANDLES_OPTS, Some(bin_set as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, None, None),
+    BUILTIN("setopt", 0, None, 0, -1, BIN_SETOPT, None, None),
+    BUILTIN("shift", BINF_PSPECIAL, Some(bin_shift as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("p"), None),
+    BUILTIN("source", BINF_PSPECIAL, Some(bin_dot as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
+    BUILTIN("suspend", 0, None, 0, 0, 0, Some("f"), None),
+    BUILTIN("test", BINF_HANDLES_OPTS, Some(bin_test as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_TEST, None, None),
+    BUILTIN("ttyctl", 0, Some(bin_ttyctl as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, Some("fu"), None),
+    // c:Src/Builtins/rlimits.c:868-870 — limit/ulimit/unlimit are
+    // declared in the rlimits Builtins-module's bintab. zshrs has the
+    // free-fn ports at src/ported/builtins/rlimits.rs but never
+    // registered them; the BUILTIN_NAMES derivation missed them and
+    // `type limit` etc. returned empty.
+    BUILTIN("limit",   0, None, 0, -1, 0, Some("sh"), None),                  // c:rlimits.c:868
+    BUILTIN("ulimit",  0, None, 0, -1, 0, None,       None),                  // c:rlimits.c:869
+    BUILTIN("unlimit", 0, None, 0, -1, 0, Some("hs"), None),                  // c:rlimits.c:870
+    BUILTIN("times", BINF_PSPECIAL, Some(bin_times as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, None, None),
+    BUILTIN("trap", BINF_PSPECIAL | BINF_HANDLES_OPTS, Some(bin_trap as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, None, None),
+    BUILTIN("true", 0, Some(bin_true as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, None, None),
+    BUILTIN("type", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("ampfsSw"), Some("v")),
+    BUILTIN("typeset", BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN, Some(bin_typeset as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("AE:%F:%HL:%R:%TUZ:%afghi:%klp:%rtuxmnz"), None),
+    BUILTIN("umask", 0, Some(bin_umask as crate::ported::zsh_h::HandlerFunc), 0, 1, 0, Some("S"), None),
+    BUILTIN("unalias", 0, Some(bin_unhash as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_UNALIAS, Some("ams"), None),
+    BUILTIN("unfunction", 0, Some(bin_unhash as crate::ported::zsh_h::HandlerFunc), 1, -1, BIN_UNFUNCTION, Some("m"), Some("f")),
+    BUILTIN("unhash", 0, Some(bin_unhash as crate::ported::zsh_h::HandlerFunc), 1, -1, BIN_UNHASH, Some("adfms"), None),
+    BUILTIN("unset", BINF_PSPECIAL, Some(bin_unset as crate::ported::zsh_h::HandlerFunc), 1, -1, BIN_UNSET, Some("fmvn"), None),
+    BUILTIN("unsetopt", 0, None, 0, -1, BIN_UNSETOPT, None, None),
+    BUILTIN("wait", 0, Some(crate::ported::jobs::bin_fg as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_WAIT, None, None),
+    BUILTIN("whence", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("acmpvfsSwx:"), None),
+    BUILTIN("where", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("pmsSwx:"), Some("ca")),
+    BUILTIN("which", 0, Some(bin_whence as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("ampsSwx:"), Some("c")),
+    BUILTIN("zmodload", 0, Some(crate::ported::module::bin_zmodload as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("AFRILP:abcfdilmpsue"), None),
+    BUILTIN("zcompile", 0, None, 0, -1, 0, Some("tUMRcmzka"), None),
+    // Module builtins (zsh/zutil, zsh/cap, zsh/pcre, etc.) — these
+    // live in src/ported/modules/* and src/ported/zle/* but their
+    // canonical pub fn signatures match HandlerFunc, so they can be
+    // dispatched via execbuiltin alongside the main builtins.
+    BUILTIN("zstyle", 0, Some(crate::ported::modules::zutil::bin_zstyle as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("LeLdgabsTtmnH"), None),
+    BUILTIN("zformat", 0, Some(crate::ported::modules::zutil::bin_zformat as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("Faf"), None),
+    BUILTIN("zparseopts", 0, Some(crate::ported::modules::zutil::bin_zparseopts as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("D-EFK-M-a:"), None),
+    BUILTIN("zregexparse", 0, Some(crate::ported::modules::zutil::bin_zregexparse as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("c"), None),
+    BUILTIN("cap", 0, Some(crate::ported::modules::cap::bin_cap as crate::ported::zsh_h::HandlerFunc), 0, 1, 0, None, None),
+    BUILTIN("getcap", 0, Some(crate::ported::modules::cap::bin_getcap as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
+    BUILTIN("setcap", 0, Some(crate::ported::modules::cap::bin_setcap as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
+    BUILTIN("pcre_compile", 0, Some(crate::ported::modules::pcre::bin_pcre_compile as crate::ported::zsh_h::HandlerFunc), 1, 1, 0, Some("aimx"), None),
+    BUILTIN("pcre_study", 0, Some(crate::ported::modules::pcre::bin_pcre_study as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, None, None),
+    // bin_pcre_match returns (i32, Option<String>, Vec<...>) — non-standard
+    // signature, can't dispatch via execbuiltin. Wrapper stays in exec.rs.
+    BUILTIN("pcre_match", 0, None, 1, -1, 0, Some("ab:nv:"), None),
+    BUILTIN("ztcp", 0, Some(crate::ported::modules::tcp::bin_ztcp as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("acdflLtv"), None),
+    BUILTIN("ztie", 0, Some(crate::ported::modules::db_gdbm::bin_ztie as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("d:f:r"), None),
+    BUILTIN("zuntie", 0, Some(crate::ported::modules::db_gdbm::bin_zuntie as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("u"), None),
+    BUILTIN("zgdbmpath", 0, Some(crate::ported::modules::db_gdbm::bin_zgdbmpath as crate::ported::zsh_h::HandlerFunc), 1, 1, 0, None, None),
+    BUILTIN("echoti", 0, Some(crate::ported::modules::terminfo::bin_echoti as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
+    BUILTIN("fg", 0, Some(crate::ported::jobs::bin_fg as crate::ported::zsh_h::HandlerFunc), 0, -1, BIN_FG, None, None),
+    BUILTIN("kill", BINF_HANDLES_OPTS, Some(crate::ported::jobs::bin_kill as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, None, None),
+    BUILTIN("suspend", 0, Some(crate::ported::jobs::bin_suspend as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, Some("f"), None),
+    BUILTIN("bindkey", 0, Some(crate::ported::zle::zle_keymap::bin_bindkey as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("evaMldDANmrsLR"), None),
+    BUILTIN("vared", 0, Some(crate::ported::zle::zle_main::bin_vared as crate::ported::zsh_h::HandlerFunc), 1, 1, 0, Some("AaceghM:m:p:r:i:f:"), None),
+    BUILTIN("compadd", 0, Some(crate::ported::zle::complete::bin_compadd as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("J:V:1X:fnqQF:Wsi"), None),
+    BUILTIN("compset", 0, Some(crate::ported::zle::complete::bin_compset as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("npqPS:"), None),
+    BUILTIN("zle", 0, Some(crate::ported::zle::zle_thingy::bin_zle as crate::ported::zsh_h::HandlerFunc), 0, -1, 0, Some("aAcCDfFIKlLmMNRTU"), None),
+    // zsh/files module — file-manipulation builtins. All have
+    // HandlerFunc-compatible signatures already.
+    BUILTIN("mkdir", 0, Some(crate::ported::modules::files::bin_mkdir as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("pm:"), None),
+    BUILTIN("rmdir", 0, Some(crate::ported::modules::files::bin_rmdir as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, None, None),
+    BUILTIN("ln", 0, Some(crate::ported::modules::files::bin_ln as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("dfins"), None),
+    BUILTIN("rm", 0, Some(crate::ported::modules::files::bin_rm as crate::ported::zsh_h::HandlerFunc), 1, -1, 0, Some("dfiRrs"), None),
+    BUILTIN("chmod", 0, Some(crate::ported::modules::files::bin_chmod as crate::ported::zsh_h::HandlerFunc), 2, -1, 0, Some("Rs"), None),
+    BUILTIN("chown", 0, Some(crate::ported::modules::files::bin_chown as crate::ported::zsh_h::HandlerFunc), 2, -1, 0, Some("Rs"), None),
+    BUILTIN("sync", 0, Some(crate::ported::modules::files::bin_sync as crate::ported::zsh_h::HandlerFunc), 0, 0, 0, None, None),
+]);
+// hash table containing builtin commands                                   // c:143
+/// Process-wide builtin lookup table. Filled lazily the first time
+/// `builtintab()` is called; mirrors the C `mod_export HashTable
+/// builtintab` exposed at `Src/builtin.c:146`.
+static builtintab: OnceLock<HashMap<String, &'static builtin>> = OnceLock::new();
+
+/// Names whose `node.flags & DISABLED` is set in C. The Rust port's
+/// `builtintab` is an immutable static, so the disabled bit lives
+/// in this parallel set; `bin_enable` toggles it via builtin.c:587.
+/// Dispatch sites check `is_builtin_disabled(name)` before calling
+/// `handlerfunc` to mirror C's "skip nodes with DISABLED set" walk.
+pub static BUILTINS_DISABLED: std::sync::LazyLock<                           // c:587 (Src/builtin.c)
+    std::sync::Mutex<std::collections::HashSet<String>>
+> = std::sync::LazyLock::new(|| {
+    std::sync::Mutex::new(std::collections::HashSet::new())
+});
+
+// `shfunctab` global from Src/init.c — name → Shfunc map. Static-link
+// path: store the raw Shfunc pointer keyed by name. Lazy via OnceLock
+// because HashMap::new isn't const.
+static SHFUNCTAB_INNER: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, usize>>>
+    = std::sync::OnceLock::new();
+
+// `matchednodes` global from Src/builtin.c:4550.
+pub static MATCHEDNODES: std::sync::Mutex<Vec<String>> =
+    std::sync::Mutex::new(Vec::new());
+
+// `stopmsg` global from Src/jobs.c — non-zero when checkjobs() printed.
+pub static STOPMSG: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+// `sfcontext` global from Src/exec.c:239 — current shell-function
+// dispatch context (SFC_NONE / SFC_BUILTIN / SFC_FUNC / SFC_SUBST...).
+pub static SFCONTEXT: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);                                    // c:exec.c:239
+// `maxjob` / `thisjob` globals from Src/jobs.c:62/63.
+pub static MAXJOB:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static THISJOB: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+// `jobstats` mirror — flat per-slot stat bits (STAT_*). Real jobtab
+// lives in src/ported/jobs.rs's JobTable; this mirror is updated by
+// the spawn/wait paths that already touch STOPMSG. Empty → no jobs,
+// matching the post-init state of `jobtab[]`.
+pub static JOBSTATS: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
+
+// File-static globals for [_]realexit/zexit — c:5945+, init.c, signals.c.
+pub static SHELL_EXITING: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+pub static EXIT_PENDING: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+pub static EXIT_VAL: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+pub static LASTVAL: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+// `tok` for the test builtin — Src/builtin.c:7000 ranges. The full enum
+// lives in src/ported/lex.rs; we mirror the few values testlex() touches.
+pub static TEST_TOK: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+const TEST_LEXERR:  i32 = -1;                                                // c:7209
+const TEST_NULLTOK: i32 =  0;
+const TEST_DBAR:    i32 =  2;                                                // c:7213
+const TEST_DAMPER:  i32 =  3;                                                // c:7215
+const TEST_BANG:    i32 =  4;                                                // c:7217
+const TEST_INPAR:   i32 =  5;                                                // c:7219
+const TEST_OUTPAR:  i32 =  6;                                                // c:7221
+const TEST_INANG:   i32 =  7;                                                // c:7223
+const TEST_OUTANG:  i32 =  8;                                                // c:7225
+const TEST_STRING:  i32 =  9;                                                // c:7227
+
+// `testargs` / `curtestarg` / `tokstr` globals from Src/builtin.c — the
+// argv-style cursor that bin_test seeds and testlex() advances.
+pub static TESTARGS:     std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+pub static TESTARGS_IDX: std::sync::atomic::AtomicI32  = std::sync::atomic::AtomicI32::new(0);
+pub static TOKSTR:       std::sync::Mutex<String>      = std::sync::Mutex::new(String::new());
+
+// int doprintdir = 0; set in exec.c (for autocd, cdpath, etc.)            // c:722
+// `doprintdir` from Src/exec.c — set when an autocd'd command should
+// echo the new directory before executing.
+pub static DOPRINTDIR: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+// set if we are resolving links to their true paths                       // c:829
+// `chasinglinks` from Src/exec.c — non-zero when CHASELINKS / -P
+// resolution is active.
+pub static CHASINGLINKS: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+// `pparams` global from Src/init.c — positional parameters $1..$N.
+pub static PPARAMS: std::sync::Mutex<Vec<String>> =
+    std::sync::Mutex::new(Vec::new());
+
+// `zoptind` (Src/builtin.c:5667) and `optcind` (c:5670) — the two
+// pieces of getopts state. zoptind backs the user-visible $OPTIND.
+pub static ZOPTIND: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(1);
+pub static OPTCIND: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+// `ttyfrozen` global from Src/init.c — tty-state freeze flag controlled
+// by `ttyctl -f/-u` and consulted by ZLE on prompt entry.
+pub static TTYFROZEN: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `mod_export int ineval` from `Src/builtin.c:6389`. Set
+/// while `eval` is dispatching its body (incremented before
+/// `execode(prog, 1, 0, "eval")`, decremented after). Tested by
+/// `IN_EVAL_TRAP()` in zsh.h:2962 to determine trap-context state.
+pub static INEVAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:6389
+
+// `loops` / `breaks` / `contflag` / `retflag` / `locallevel` / `sourcelevel`
+// globals from Src/loop.c + Src/init.c — control-flow state consulted by
+// the bin_break dispatcher.
+pub static LOOPS:        std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static BREAKS:       std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static CONTFLAG:     std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static RETFLAG:      std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static LOCALLEVEL:   std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+pub static SOURCELEVEL:  std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+// `ZEXIT_NORMAL` from Src/zsh.h — zexit() exit-mode discriminant.
+pub const ZEXIT_NORMAL: i32 = 0;
 
 // Local builders that construct C-shape `builtin` rows for the
 // static registration table below. They mirror the
@@ -6361,6 +6361,17 @@ fn pat_enables(_name: &str, argv: &[String], _on: bool) -> i32 {
     let _ = argv;
     0
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

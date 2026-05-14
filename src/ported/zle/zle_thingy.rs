@@ -47,12 +47,26 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-#[derive(Debug, Clone)]
-pub struct Thingy {                                                          // c:224
-    pub nam: String,                                                         // c:226 char *nam
-    pub flags: i32,                                                          // c:227 int flags
-    pub rc: i32,                                                             // c:228 int rc
-    pub widget: Option<Arc<Widget>>,                                         // c:229 Widget widget
+// =====================================================================
+// hashtable management — `Src/Zle/zle_thingy.c:58-124`.
+// =====================================================================
+
+/// Port of `createthingytab()` from `Src/Zle/zle_thingy.c:60`.
+/// ```c
+/// static void
+/// createthingytab(void)
+/// {
+///     thingytab = newhashtable(199, "thingytab", NULL);
+///     thingytab->hash = hasher;
+///     thingytab->emptytable = emptythingytab;
+///     ...
+/// }
+/// ```
+/// Allocate the global thingytab. In Rust the table is `OnceLock`-
+/// initialized lazily; this entry forces creation eagerly to match
+/// C's "pre-zle init" call site at zle_main.c.
+pub fn createthingytab() {                                                   // c:60
+    let _ = thingytab();                                                     // c:60 newhashtable
 }
 
 impl Thingy {
@@ -113,53 +127,6 @@ impl Thingy {
     pub fn is_thingy(&self, name: &str) -> bool {
         self.nam == name || self.nam == format!(".{}", name)
     }
-}
-
-// `pub mod names` removed — Rust-fabricated namespace wrapping
-// thingy-name string literals. C source uses bare `"accept-line"`/
-// `"self-insert"`/etc. directly at `zle_thingy.c` registration
-// sites; no namespace, no helper consts. The mod had no callers.
-
-// =====================================================================
-// thingytab — `Src/Zle/zle_thingy.c:52`.
-// =====================================================================
-//
-// C: `mod_export HashTable thingytab;`. One global hash keyed by
-// thingy name; each entry is a `Thingy` struct (rc + flags + widget
-// + samew circular-list pointer). Allocated by `createthingytab()`
-// at zle init and torn down by `cleanup_zle()`.
-//
-// Rust: `Mutex<HashMap<String, Thingy>>`. The C `samew` circular
-// list isn't represented as a field — `bindwidget`/`unbindwidget`
-// walk the table to find peers via `Arc<Widget>` identity (Arc::
-// ptr_eq). O(n) instead of C's O(1), but n is small (typical
-// thingy count: a few hundred) and the simpler representation
-// avoids a parallel widget→thingies table that would have to stay
-// in sync.
-
-// Hashtable of thingies. Enabled nodes are those that refer to widgets.   // c:49
-static THINGYTAB: OnceLock<Mutex<HashMap<String, Thingy>>> = OnceLock::new();
-
-// =====================================================================
-// hashtable management — `Src/Zle/zle_thingy.c:58-124`.
-// =====================================================================
-
-/// Port of `createthingytab()` from `Src/Zle/zle_thingy.c:60`.
-/// ```c
-/// static void
-/// createthingytab(void)
-/// {
-///     thingytab = newhashtable(199, "thingytab", NULL);
-///     thingytab->hash = hasher;
-///     thingytab->emptytable = emptythingytab;
-///     ...
-/// }
-/// ```
-/// Allocate the global thingytab. In Rust the table is `OnceLock`-
-/// initialized lazily; this entry forces creation eagerly to match
-/// C's "pre-zle init" call site at zle_main.c.
-pub fn createthingytab() {                                                   // c:60
-    let _ = thingytab();                                                     // c:60 newhashtable
 }
 
 /// Port of `emptythingytab(UNUSED(HashTable ht))` from `Src/Zle/zle_thingy.c:80`.
@@ -1240,6 +1207,39 @@ pub fn init_thingies() -> i32 {                                              // 
     0
 }
 
+#[derive(Debug, Clone)]
+pub struct Thingy {                                                          // c:224
+    pub nam: String,                                                         // c:226 char *nam
+    pub flags: i32,                                                          // c:227 int flags
+    pub rc: i32,                                                             // c:228 int rc
+    pub widget: Option<Arc<Widget>>,                                         // c:229 Widget widget
+}
+
+// `pub mod names` removed — Rust-fabricated namespace wrapping
+// thingy-name string literals. C source uses bare `"accept-line"`/
+// `"self-insert"`/etc. directly at `zle_thingy.c` registration
+// sites; no namespace, no helper consts. The mod had no callers.
+
+// =====================================================================
+// thingytab — `Src/Zle/zle_thingy.c:52`.
+// =====================================================================
+//
+// C: `mod_export HashTable thingytab;`. One global hash keyed by
+// thingy name; each entry is a `Thingy` struct (rc + flags + widget
+// + samew circular-list pointer). Allocated by `createthingytab()`
+// at zle init and torn down by `cleanup_zle()`.
+//
+// Rust: `Mutex<HashMap<String, Thingy>>`. The C `samew` circular
+// list isn't represented as a field — `bindwidget`/`unbindwidget`
+// walk the table to find peers via `Arc<Widget>` identity (Arc::
+// ptr_eq). O(n) instead of C's O(1), but n is small (typical
+// thingy count: a few hundred) and the simpler representation
+// avoids a parallel widget→thingies table that would have to stay
+// in sync.
+
+// Hashtable of thingies. Enabled nodes are those that refer to widgets.   // c:49
+static THINGYTAB: OnceLock<Mutex<HashMap<String, Thingy>>> = OnceLock::new();
+
 
 /// Look up a Thingy by name via `gethashnode2(thingytab, name)` —
 /// the C zle.h dispatch for `Th(X)` lookup. Direct port of the
@@ -1268,6 +1268,17 @@ pub fn getwidgettarget(name: &str) -> Option<String> {
         super::zle_h::WidgetImpl::Comp { func, .. } => Some(func.clone()),
     }
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

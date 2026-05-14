@@ -178,27 +178,6 @@ pub static sh_edchar: Mutex<String> = Mutex::new(String::new());        // c:108
 /// Port of `static char sh_edmode[2];` from `ksh93.c:109`.
 pub static sh_edmode: Mutex<[u8; 2]> = Mutex::new([0, 0]);              // c:109
 
-// =====================================================================
-/*
- * Some parameters listed here do not appear in ksh93.mdd autofeatures
- * because they are only instantiated by ksh93_wrapper() below.  This
- * obviously includes those commented out here.
- */                                                                    // c:111-115
-// static struct paramdef partab[]                                    c:116
-// static struct features module_features                             c:133
-//
-// Param/feature dispatch tables. Omitted pending module-loader port.
-// =====================================================================
-
-// =====================================================================
-// ksh93_wrapper(Eprog prog, FuncWrap w, char *name)                  c:142
-// =====================================================================
-
-/// `LOCAL_NAMEREF` — `#define LOCAL_NAMEREF (PM_LOCAL|PM_UNSET|PM_NAMEREF)`
-/// from `Src/Modules/ksh93.c:143`.
-#[allow(dead_code)]
-const LOCAL_NAMEREF: u32 = PM_LOCAL | PM_UNSET | PM_NAMEREF;            // c:143
-
 /// Port of `ksh93_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/ksh93.c:143`.
 ///
 /// C signature mirrored verbatim:
@@ -390,6 +369,27 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
 }
 
 // =====================================================================
+/*
+ * Some parameters listed here do not appear in ksh93.mdd autofeatures
+ * because they are only instantiated by ksh93_wrapper() below.  This
+ * obviously includes those commented out here.
+ */                                                                    // c:111-115
+// static struct paramdef partab[]                                    c:116
+// static struct features module_features                             c:133
+//
+// Param/feature dispatch tables. Omitted pending module-loader port.
+// =====================================================================
+
+// =====================================================================
+// ksh93_wrapper(Eprog prog, FuncWrap w, char *name)                  c:142
+// =====================================================================
+
+/// `LOCAL_NAMEREF` — `#define LOCAL_NAMEREF (PM_LOCAL|PM_UNSET|PM_NAMEREF)`
+/// from `Src/Modules/ksh93.c:143`.
+#[allow(dead_code)]
+const LOCAL_NAMEREF: u32 = PM_LOCAL | PM_UNSET | PM_NAMEREF;            // c:143
+
+// =====================================================================
 // static struct funcwrap wrapper[]                                   c:230
 //
 // Per-function wrapper table consumed by `addwrapper(m, wrapper)` at
@@ -486,8 +486,6 @@ pub fn cleanup_(m: *const module) -> i32 {
 
 use crate::ported::zsh_h::features as features_t;
 
-static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
-
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/ksh93.c:284`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {                                   // c:284
@@ -496,6 +494,8 @@ pub fn finish_(m: *const module) -> i32 {                                   // c
     //                    deletewrapper.
     0
 }
+
+static MODULE_FEATURES: OnceLock<Mutex<features_t>> = OnceLock::new();
 
 
 // Local descriptor stub mirroring the C bintab + partab.
@@ -597,6 +597,17 @@ const VIMODE:    i32 = crate::ported::zsh_h::VIMODE;
 // (locallevel is AtomicI32 to match C `int` for that field).
 #[allow(dead_code)]
 const _: AtomicI64 = AtomicI64::new(0);
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ─── RUST-ONLY ACCESSORS ───
+//
+// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// RwLock<T>>` globals declared above. C zsh uses direct global
+// access; Rust needs these wrappers because `OnceLock::get_or_init`
+// is the only way to lazily construct shared state. These fns sit
+// here so the body of this file reads in C source order without
+// the accessor wrappers interleaved between real port fns.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

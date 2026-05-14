@@ -43,33 +43,24 @@ use crate::ported::zle::textobjects::*;
 #[allow(unused_imports)]
 use crate::ported::zle::deltochar::*;
 
-pub static VIRANGEFLAG: std::sync::atomic::AtomicI32 =                       // c:36
-    std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `int wordflag;` from `Src/Zle/zle_vi.c:41`. Kludge flag
-/// used by `cw`/`dw` so they stop at word boundaries.
-pub static WORDFLAG: std::sync::atomic::AtomicI32 =                          // c:41
-    std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `int vilinerange;` from `Src/Zle/zle_vi.c:46`. Set when
-/// the pending range is whole-line (e.g. `dd`, `yy`).
-pub static VILINERANGE: std::sync::atomic::AtomicI32 =                       // c:46
-    std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `int vichgflag;` from `Src/Zle/zle_vi.c:65`. Set while a
-/// vi change-tracker (`.`) is recording.
-pub static VICHGFLAG: std::sync::atomic::AtomicI32 =                         // c:65
-    std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `int viinrepeat;` from `Src/Zle/zle_vi.c:73`. Set during
-/// `.` replay so the recorder doesn't re-record.
-pub static VIINREPEAT: std::sync::atomic::AtomicI32 =                        // c:73
-    std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `int viinsbegin;` from `Src/Zle/zle_vi.c:78`. Buffer
-/// position where vi insert mode was last entered.
-pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // c:78
-    std::sync::atomic::AtomicI32::new(0);
+/// Direct port of `int vichange(UNUSED(char **args))` from
+/// `Src/Zle/zle_vi.c:438`. vi `c{motion}` — delete the range covered
+/// by the motion, then enter insert mode. The motion-driven range
+/// comes from `getvirange`; on success forekill+startvitext, else
+/// startvitext at the current position.
+pub fn vichange() -> i32 {        // c:438
+    use std::sync::atomic::Ordering;
+    startvichange(1);                                                         // c:440
+    let c2 = getvirange(0);                                                   // c:441
+    if c2 != -1 {
+        let cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
+        crate::ported::zle::zle_utils::forekill(c2 - cs,                      // c:443
+            crate::ported::zle::zle_h::CUT_RAW);
+        startvitext(1);                                                       // c:444
+        return 0;
+    }
+    1                                                                          // c:453 ret=1
+}
 
 /// Direct port of `void startvichange(int im)` from
 /// `Src/Zle/zle_vi.c:90`.
@@ -247,25 +238,6 @@ pub fn videletechar() -> i32 {    // c:405
         return 1;                                                            // c:421-422
     }
     crate::ported::zle::zle_misc::deletechar()
-}
-
-/// Direct port of `int vichange(UNUSED(char **args))` from
-/// `Src/Zle/zle_vi.c:438`. vi `c{motion}` — delete the range covered
-/// by the motion, then enter insert mode. The motion-driven range
-/// comes from `getvirange`; on success forekill+startvitext, else
-/// startvitext at the current position.
-pub fn vichange() -> i32 {        // c:438
-    use std::sync::atomic::Ordering;
-    startvichange(1);                                                         // c:440
-    let c2 = getvirange(0);                                                   // c:441
-    if c2 != -1 {
-        let cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
-        crate::ported::zle::zle_utils::forekill(c2 - cs,                      // c:443
-            crate::ported::zle::zle_h::CUT_RAW);
-        startvitext(1);                                                       // c:444
-        return 0;
-    }
-    1                                                                          // c:453 ret=1
 }
 
 /// Port of `visubstitute(UNUSED(char **args))` from Src/Zle/zle_vi.c:455.
@@ -827,6 +799,34 @@ pub fn vidigitorbeginningofline() -> i32 {  // c:vidigitorbeginningofline
     }
     crate::ported::zle::zle_move::vibeginningofline()
 }
+
+pub static VIRANGEFLAG: std::sync::atomic::AtomicI32 =                       // c:36
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int wordflag;` from `Src/Zle/zle_vi.c:41`. Kludge flag
+/// used by `cw`/`dw` so they stop at word boundaries.
+pub static WORDFLAG: std::sync::atomic::AtomicI32 =                          // c:41
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int vilinerange;` from `Src/Zle/zle_vi.c:46`. Set when
+/// the pending range is whole-line (e.g. `dd`, `yy`).
+pub static VILINERANGE: std::sync::atomic::AtomicI32 =                       // c:46
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int vichgflag;` from `Src/Zle/zle_vi.c:65`. Set while a
+/// vi change-tracker (`.`) is recording.
+pub static VICHGFLAG: std::sync::atomic::AtomicI32 =                         // c:65
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int viinrepeat;` from `Src/Zle/zle_vi.c:73`. Set during
+/// `.` replay so the recorder doesn't re-record.
+pub static VIINREPEAT: std::sync::atomic::AtomicI32 =                        // c:73
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int viinsbegin;` from `Src/Zle/zle_vi.c:78`. Buffer
+/// position where vi insert mode was last entered.
+pub static VIINSBEGIN: std::sync::atomic::AtomicI32 =                        // c:78
+    std::sync::atomic::AtomicI32::new(0);
 
     /// Read the active numeric multiplier.
     /// Port of `zmult` macro at Src/Zle/zle.h:267 (`#define zmult
