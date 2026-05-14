@@ -223,24 +223,14 @@ pub fn shiftchars(to: i32, cnt: i32) { // c:846
 }
 
 /// Port of `cut(int i, int ct, int flags)` from Src/Zle/zle_utils.c:935.
-/// `i` is the start byte offset; `ct` is the count to cut; `dir` is
-/// the cut direction flag (0=after, non-zero=before).
-/// WARNING: param names don't match C — Rust=(zle, i, dir) vs C=(i, ct, flags)
-pub fn cut(i: i32,              // c:935
-           ct: i32, dir: i32) -> i32 {
-    // C body c:937-944 — `cuttext(zleline+i, ct, dir)`. Fold to a
-    //                    single helper that pushes a slice into the
-    //                    kill ring (or vibuf when MOD_VIBUF is set).
-    if ct <= 0 || i < 0 {
-        return 0;
-    }
-    let start = i as usize;
-    let end = (start + ct as usize).min( ZLELINE.lock().unwrap().len());
-    if start >= end {
-        return 0;
-    }
-    let chunk: Vec<char> =  ZLELINE.lock().unwrap()[start..end].to_vec();
-    cuttext(&chunk, dir);
+/// C body (single statement):
+///     `cuttext(zleline + i, ct, flags);`
+/// WARNING: param names don't match C — Rust=(i, ct, dir) vs C=(i, ct, flags)
+pub fn cut(i: i32, ct: i32, dir: i32) -> i32 {                               // c:935
+    let line = ZLELINE.lock().unwrap();                                      // c:937 zleline + i
+    let start = (i.max(0) as usize).min(line.len());
+    let end = (start + ct.max(0) as usize).min(line.len());
+    cuttext(&line[start..end].to_vec(), dir);                                // c:937
     0
 }
 
@@ -629,19 +619,12 @@ pub fn handlefeep() -> i32 {                                                 // 
 }
 
 /// Port of `handlesuffix(UNUSED(char **args))` from Src/Zle/zle_utils.c:1415.
-/// WARNING: param names don't match C — Rust=(zle, c) vs C=(args)
+/// C body: `return 0;` — the real suffix-handling lives on the
+/// callers (insertsuffix / removesuffix); this entry is a no-op
+/// stub the C source kept for hook-table registration.
 pub fn handlesuffix(c: i32) -> i32 { // c:1415
-    // C body c:1417-1444 — peeks the next byte; if SUFFIXLEN is set
-    //                      and the byte is in the suffix's noinsert
-    //                      set, drop the suffix; else keep + insert.
-    use std::sync::atomic::Ordering;
-    use crate::ported::zle::zle_misc::SUFFIXLEN;
     let _ = c;
-    let len = SUFFIXLEN.load(Ordering::SeqCst);
-    if len > 0 {
-        SUFFIXLEN.store(0, Ordering::SeqCst);
-    }
-    0
+    0                                  // c:1417
 }
 
 /// Port of `initundo()` from Src/Zle/zle_utils.c:1446.

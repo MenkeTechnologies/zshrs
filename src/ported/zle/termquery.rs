@@ -375,21 +375,13 @@ pub fn base64_decode(src: &str) -> Vec<u8> {                                 // 
 ///                                          int clen, void *output)`
 /// from `Src/Zle/termquery.c:595`.
 ///
-/// C body: `*(char**)output = base64_decode(capture, clen);` — drops
-/// a decoded payload into the caller-supplied `output` pointer.
-/// Rust port returns the decoded bytes as a String so callers can
-/// receive without unsafe pointer writes.
+/// C body (single statement):
+///     `*(char**)output = base64_decode(capture, clen);`
+/// Rust returns the decoded bytes as a String (caller no longer
+/// receives via an out-pointer).
 pub fn handle_paste(seq: &str, len: usize) -> String {                       // c:595
-    // C ignores `sequence`, `numbers`, `len` (UNUSED markers); only
-    // `capture` + `clen` are read. `seq` here is the captured payload;
-    // `len` mirrors `clen`.
-    let capture = if len > 0 && len <= seq.len() {
-        &seq[..len]
-    } else {
-        seq
-    };
-    let bytes = base64_decode(capture);                                      // c:598
-    String::from_utf8_lossy(&bytes).into_owned()
+    let capture = seq.get(..len).unwrap_or(seq);                             // c:598 capture+clen
+    String::from_utf8_lossy(&base64_decode(capture)).into_owned()            // c:598
 }
 
 // `handle_query(int sequence, int *numbers, int len, char *capture,

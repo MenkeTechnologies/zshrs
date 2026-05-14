@@ -859,25 +859,12 @@ pub fn vigotomark(ch: char) -> i32 { // c:887
 }
 
 /// Port of `vigotomarkline(char **args)` from Src/Zle/zle_move.c:929.
-/// WARNING: param names don't match C — Rust=(zle, ch) vs C=(args)
-pub fn vigotomarkline(ch: char) -> i32 { // c:929
-    // c:929-958 — like vigotomark but lands at first non-blank of
-    //              the marked line.
-    let r = vigotomark(ch);
-    if r == 0 {
-        // Snap to start of line + first non-blank.
-        let bol = crate::ported::zle::zle_utils::findbol();
-        let mut p = bol;
-        while p < crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
-            let c = crate::ported::zle::zle_main::ZLELINE.lock().unwrap()[p];
-            if c != ' ' && c != '\t' {
-                break;
-            }
-            p += 1;
-        }
-        crate::ported::zle::zle_main::ZLECS.store(p, std::sync::atomic::Ordering::SeqCst);
-    }
-    r
+/// C body (single statement chain):
+///     `vigotomark(args); return vifirstnonblank(zlenoargs);`
+/// WARNING: param names don't match C — Rust=(ch) vs C=(args)
+pub fn vigotomarkline(ch: char) -> i32 {                                     // c:929
+    vigotomark(ch);                                                          // c:931
+    vifirstnonblank()                                                        // c:932
 }
 
     pub fn move_to_bol() {
