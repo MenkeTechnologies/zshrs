@@ -385,12 +385,17 @@ def main() -> int:
             #             stub.
             #   missing = only doc-comment mentions ("Port of foo()")
             #             with no actual Rust fn definition
+            # Body-size thresholds mirror gen_port_stubs.py: only flag
+            # stub when C body is non-trivial (>= 10 lines). Tiny C
+            # fns (1-9 line one-liners) get the benefit of the doubt
+            # since an empty Rust body for a tiny C fn is often
+            # intentional (drop-cascade no-op, name-parity shim).
             STUB_RATIO_THRESHOLD = 30  # percent
+            STUB_MIN_C_BODY = 10  # lines
             if not rust_locs:
                 status = "missing"
-            elif c_body > 0 and rs_body == 0:
-                status = "stub"
-            elif c_body > 0 and (rs_body * 100 / c_body) < STUB_RATIO_THRESHOLD:
+            elif (c_body >= STUB_MIN_C_BODY
+                  and (rs_body * 100 / c_body) < STUB_RATIO_THRESHOLD):
                 status = "stub"
             else:
                 status = "ported"
@@ -609,7 +614,23 @@ def main() -> int:
     lc_rows: list[str] = []
     ro_rows: list[str] = []
     ex_rows: list[str] = []
-    for r in sorted(rows, key=lambda r: (r["cfile"], r["name"])):
+    # Sort by ratio ascending so the worst porting gaps surface at the top.
+    # Rust-only rows have no ratio — push them to the bottom (sort key
+    # below pins them to +inf). Within the same ratio, fall back to
+    # (cfile, name) for stable order.
+    def _row_sort_key(r: dict) -> tuple:
+        if r["cfile"] == "(rust-only)":
+            return (2, 0, r["cfile"], r["name"])  # rust-only last
+        cb = r.get("c_body", 0)
+        rb = r.get("rust_body", 0)
+        if cb > 0:
+            ratio = round(rb / cb * 100)
+        elif rb > 0:
+            ratio = 100
+        else:
+            ratio = 100
+        return (0, ratio, r["cfile"], r["name"])
+    for r in sorted(rows, key=_row_sort_key):
         c_first = r["c_locs"][0] if r["c_locs"] else ("", 0)
         rs_first = r["rust_locs"][0] if r["rust_locs"] else ("", 0)
         c_file_short = c_first[0].replace("src/zsh/Src/", "") if c_first[0] else ""
@@ -1015,7 +1036,7 @@ Excluded from this report by design:
         <th data-sort="cbody"     onclick="lcs('cbody')">C lines</th>
         <th data-sort="rline"     onclick="lcs('rline')">Rust file:line</th>
         <th data-sort="rbody"     onclick="lcs('rbody')">Rust lines</th>
-        <th data-sort="ratio"     onclick="lcs('ratio')">ratio</th>
+        <th data-sort="ratio"     class="sort-asc" onclick="lcs('ratio')">ratio</th>
         <th data-sort="status"    onclick="lcs('status')">status</th>
       </tr></thead>
       <tbody id="lc-tbody">
@@ -1190,7 +1211,8 @@ function lcf(){{
   const ct = document.getElementById('lcct');
   if (ct) ct.textContent = shown + ' / ' + document.querySelectorAll('#lc-tbody tr.lc-row').length + ' rows';
 }}
-let lcSortKey = null, lcSortDir = 1;
+// Default sort matches Python-side row order: ratio ascending.
+let lcSortKey = 'ratio', lcSortDir = 1;
 function lcs(key){{
   if (lcSortKey === key) lcSortDir = -lcSortDir;
   else {{ lcSortKey = key; lcSortDir = 1; }}
