@@ -800,11 +800,32 @@ pub fn par_list1() -> Option<ZshSublist> {
 /// that resolve_redir applies during the post-parse fill_in pass.
 /// This method is the AST-side equivalent: writes back to the
 /// matching redir node by index.
-pub fn setheredoc(_pc: usize, _redir_type: i32, _doc: &str, _term: &str, _munged_term: &str) {
-    // zshrs's heredoc resolution happens in fill_in_command /
-    // resolve_redir at parse top. This stub exists for API
-    // parity with the C signature; live wiring happens via
-    // heredocs which the post-parse pass consumes.
+/// Port of `setheredoc(int pc, int type, char *str, char *termstr,
+/// char *munged_termstr)` from `Src/parse.c:2347-2355`. Patches the
+/// pending heredoc redir at `pc` with its body string + raw and
+/// munged terminator forms.
+pub fn setheredoc(pc: usize, redir_type: i32, doc: &str, term: &str, munged_term: &str) {
+    // c:2350 — `int varid = WC_REDIR_VARID(ecbuf[pc]) ? REDIR_VARID_MASK : 0;`
+    let cur = ECBUF.with_borrow(|b| b.get(pc).copied().unwrap_or(0));
+    let varid = if WC_REDIR_VARID(cur) != 0 {
+        REDIR_VARID_MASK
+    } else {
+        0
+    };
+    // c:2351 — `ecbuf[pc] = WCB_REDIR(type | REDIR_FROM_HEREDOC_MASK | varid);`
+    let new_header = WCB_REDIR((redir_type | REDIR_FROM_HEREDOC_MASK | varid) as wordcode);
+    // c:2352 — `ecbuf[pc + 2] = ecstrcode(str);`
+    let coded_str = ecstrcode(doc);
+    // c:2353 — `ecbuf[pc + 3] = ecstrcode(termstr);`
+    let coded_term = ecstrcode(term);
+    // c:2354 — `ecbuf[pc + 4] = ecstrcode(munged_termstr);`
+    let coded_munged = ecstrcode(munged_term);
+    ECBUF.with_borrow_mut(|b| {
+        b[pc] = new_header;
+        b[pc + 2] = coded_str;
+        b[pc + 3] = coded_term;
+        b[pc + 4] = coded_munged;
+    });
 }
 
 /// Parse a wordlist for `for ... in WORDS;`. Direct port of
