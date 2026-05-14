@@ -277,7 +277,8 @@ use crate::zsh_h::{
     WCB_FOR, WCB_FUNCDEF, WCB_IF, WCB_LIST, WCB_PIPE, WCB_REDIR, WCB_REPEAT, WCB_SELECT,
     WCB_SUBLIST, WCB_SUBSH, WCB_TIMED, WCB_TRY, WCB_TYPESET, WCB_WHILE, WC_ASSIGN_ARRAY, WC_ASSIGN_INC,
     WC_ASSIGN_NEW, WC_ASSIGN_SCALAR, WC_CASE_AND, WC_CASE_HEAD, WC_CASE_OR, WC_CASE_TESTAND,
-    WC_FOR_COND, WC_FOR_LIST, WC_FOR_PPARAM, WC_IF_HEAD, WC_IF_IF, WC_PIPE_END, WC_PIPE_LINENO,
+    WC_FOR_COND, WC_FOR_LIST, WC_FOR_PPARAM, WC_IF_ELIF, WC_IF_ELSE, WC_IF_HEAD, WC_IF_IF,
+    WC_PIPE_END, WC_PIPE_LINENO,
     WC_PIPE_MID, WC_REDIR_WORDS, WC_SELECT_LIST, WC_SELECT_PPARAM, WC_SUBLIST_AND, WC_SUBLIST_END,
     WC_SUBLIST_FLAGS, WC_SUBLIST_OR, WC_SUBLIST_SIMPLE, WC_SUBLIST_TYPE, WC_TIMED_EMPTY,
     WC_TIMED_PIPE, WC_WHILE_UNTIL, WC_WHILE_WHILE, Z_ASYNC, Z_DISOWN, Z_END, Z_SIMPLE, Z_SYNC,
@@ -1047,7 +1048,13 @@ pub fn ecstrcode(s: &str) -> u32 {
             c_bytes.extend_from_slice(ch.encode_utf8(&mut tmp).as_bytes());
         }
     }
-    let t = c_bytes.iter().any(|&b| (0x83..=0x9f).contains(&b));
+    // c:`has_token` (Src/utils.c:2282) → `itok(*s)` → `typtab[c] & ITOK`.
+    // ITOK is set for bytes `Pound..=Nularg` (0x84..=0xa1) per
+    // Src/utils.c:4198 (`for (t0=Pound; t0<=LAST_NORMAL_TOK; t0++)
+    // typtab[t0]|=ITOK`) plus :4200 (`for (t0=Snull; t0<=Nularg; t0++)
+    // typtab[t0]|=ITOK|IMETA|INULL`). Pound=0x84 Bang=0x9c (last normal),
+    // Snull=0x9d..Nularg=0xa1. Meta=0x83 has IMETA but NOT ITOK.
+    let t = c_bytes.iter().any(|&b| (0x84..=0xa1).contains(&b));
     let l = c_bytes.len() + 1; // include NUL terminator
     if l <= 4 {
         // parse.c:436-445 — short-string inline pack. Uses raw C-bytes
@@ -1792,6 +1799,28 @@ pub fn par_list1_wordcode() {
     }
 }
 
+/// Port of `par_save_list(C)` macro from `Src/parse.c:475-480`.
+///   do { int eu = ecused; par_list(C); if (eu == ecused) ecadd(WCB_END()); } while (0)
+/// Wraps par_list_wordcode with an empty-body fallback: if no
+/// wordcodes were emitted, append a `WCB_END()` slot so the
+/// surrounding construct's skip-count matches C byte-for-byte.
+pub fn par_save_list_wordcode() {
+    let eu = ECUSED.get();
+    par_list_wordcode();
+    if ECUSED.get() == eu {
+        ecadd(WCB_END());
+    }
+}
+
+/// Port of `par_save_list1(C)` macro from `Src/parse.c:481-486`.
+pub fn par_save_list1_wordcode() {
+    let eu = ECUSED.get();
+    par_list1_wordcode();
+    if ECUSED.get() == eu {
+        ecadd(WCB_END());
+    }
+}
+
 /// Port of `par_sublist(int *cmplx)` from `Src/parse.c:823-865`.
 /// `sublist : sublist2 [ ( DBAR | DAMPER ) { SEPER } sublist ]`.
 /// Emits a WCB_SUBLIST header, recurses into par_sublist2 for
@@ -2258,7 +2287,8 @@ pub fn par_for_wordcode() {
 fn par_loop_body_wordcode(csh: bool) {
     if tok() == DOLOOP {
         zshlex();
-        par_list_wordcode();
+        // c:1172 — `par_save_list(cmplx);`
+        par_save_list_wordcode();
         if tok() != DONE {
             error("missing `done`");
             return;
@@ -2267,7 +2297,8 @@ fn par_loop_body_wordcode(csh: bool) {
         zshlex();
     } else if tok() == INBRACE_TOK {
         zshlex();
-        par_list_wordcode();
+        // c:1179 — `par_save_list(cmplx);`
+        par_save_list_wordcode();
         if tok() != OUTBRACE_TOK {
             error("missing `}`");
             return;
@@ -2275,7 +2306,8 @@ fn par_loop_body_wordcode(csh: bool) {
         set_incmdpos(false);
         zshlex();
     } else if csh || isset(CSHJUNKIELOOPS) {
-        par_list_wordcode();
+        // c:1185 — `par_save_list(cmplx);`
+        par_save_list_wordcode();
         if tok() != ZEND {
             error("missing `end`");
             return;
@@ -2285,7 +2317,8 @@ fn par_loop_body_wordcode(csh: bool) {
     } else if unset(SHORTLOOPS) {
         error("short loop form requires SHORTLOOPS");
     } else {
-        par_list1_wordcode();
+        // c:1193 — `par_save_list1(cmplx);`
+        par_save_list1_wordcode();
     }
 }
 
@@ -2370,7 +2403,8 @@ pub fn par_case_wordcode() {
         }
         set_incmdpos(true);
         zshlex();
-        par_list_wordcode();
+        // c:1380 — `par_save_list(cmplx);`
+        par_save_list_wordcode();
         // c:1330-1336 — arm-terminator drives the WC_CASE_OR /
         // WC_CASE_AND / WC_CASE_TESTAND type tag in the WCB_CASE
         // header, which is patched at pp.
@@ -2404,10 +2438,14 @@ pub fn par_case_wordcode() {
 pub fn par_if_wordcode() {
     let p = ecadd(0);
     cmdpush(CS_IF as u8);
+    // c:1437 — `type = (xtok == IF ? WC_IF_IF : WC_IF_ELIF);`. First
+    // loop iteration consumes IF; subsequent ones consume ELIF.
+    let mut first = true;
     loop {
         let arm = ecadd(0);
         zshlex();
-        par_list_wordcode();
+        // c:1438 — `par_save_list(cmplx);` — condition body.
+        par_save_list_wordcode();
         let body_brace = tok() == INBRACE_TOK;
         if !body_brace {
             while tok() == SEPER {
@@ -2422,13 +2460,16 @@ pub fn par_if_wordcode() {
         cmdpop();
         cmdpush(CS_IFTHEN as u8);
         zshlex();
-        par_list_wordcode();
+        // c:1453 / c:1462 — `par_save_list(cmplx);` — then-body.
+        par_save_list_wordcode();
         cmdpop();
         let used = ECUSED.get() as usize;
         let arm_off = used.saturating_sub(1 + arm) as wordcode;
+        let arm_type = if first { WC_IF_IF } else { WC_IF_ELIF };
+        first = false;
         ECBUF.with_borrow_mut(|b| {
             if arm < b.len() {
-                b[arm] = WCB_IF(WC_IF_IF, arm_off);
+                b[arm] = WCB_IF(arm_type, arm_off);
             }
         });
         match tok() {
@@ -2440,12 +2481,14 @@ pub fn par_if_wordcode() {
                 cmdpush(CS_ELSE as u8);
                 let arm = ecadd(0);
                 zshlex();
-                par_list_wordcode();
+                // c:1494 / c:1500 — `par_save_list(cmplx);` — else body.
+                par_save_list_wordcode();
                 let used = ECUSED.get() as usize;
                 let arm_off = used.saturating_sub(1 + arm) as wordcode;
+                // c:1507 — `ecbuf[pp] = WCB_IF(WC_IF_ELSE, ecused - 1 - pp);`
                 ECBUF.with_borrow_mut(|b| {
                     if arm < b.len() {
-                        b[arm] = WCB_IF(WC_IF_IF, arm_off);
+                        b[arm] = WCB_IF(WC_IF_ELSE, arm_off);
                     }
                 });
                 cmdpop();
@@ -2484,7 +2527,8 @@ pub fn par_while_wordcode() {
     let until = tok() == UNTIL;
     let p = ecadd(0);
     zshlex();
-    par_list_wordcode();
+    // c:1528 — `par_save_list(cmplx);` — condition.
+    par_save_list_wordcode();
     while tok() == SEPER {
         zshlex();
     }
@@ -2661,7 +2705,7 @@ pub fn par_subsh_wordcode_impl(zsh_construct: bool) {
         // c:1648 — `zshlex();`
         zshlex();
         // c:1649 — `par_save_list(cmplx);`
-        par_list_wordcode();
+        par_save_list_wordcode();
         // c:1650-1651 — `while (tok == SEPER) zshlex();`
         while tok() == SEPER {
             zshlex();

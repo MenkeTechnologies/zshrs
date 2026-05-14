@@ -1142,6 +1142,13 @@ par_subsh_wordcode
 par_time_wordcode
 par_until_wordcode
 par_while_wordcode
+# Ports of C macros (parse.c:475-486) — `par_save_list(C)` and
+# `par_save_list1(C)`. C inlines them at each call site via do-while
+# expansion; Rust factors them out because the form
+# `int eu = ecused; par_list(C); if (eu == ecused) ecadd(WCB_END());`
+# is impractical to repeat at 12+ sites without a helper.
+par_save_list_wordcode
+par_save_list1_wordcode
 ecgetstr_wordcode
 invoke_argv_wordcode
 skip_form
