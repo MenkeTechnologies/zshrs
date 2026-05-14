@@ -59,7 +59,8 @@ fn main() {
     // (parse.rs:1524) which would duplicate the one bld_eprog adds
     // (parse.rs:5497), producing the wrong eprog len + extra END
     // words versus C.
-    zsh::parse::par_list_wordcode();
+    let mut cmplx: i32 = 0;
+    zsh::parse::par_list_wordcode(&mut cmplx);
 
     if zsh::lex::tok() != ENDINPUT {
         println!("PARSE_ERR");

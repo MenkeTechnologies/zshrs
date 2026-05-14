@@ -1125,9 +1125,6 @@ par_cmd_wordcode_noargs
 par_simple_wordcode
 par_simple_wordcode_impl
 par_arith_wordcode
-cmplx_get
-cmplx_or
-cmplx_set
 par_loop_body_wordcode
 par_case_wordcode
 par_cond_wordcode

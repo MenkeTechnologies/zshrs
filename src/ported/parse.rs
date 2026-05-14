@@ -1669,11 +1669,14 @@ pub fn parse() -> ZshProgram {
 /// exec_wordcode) have a real wordcode buffer to walk.
 pub fn par_event_wordcode() -> usize {
     let start = ECUSED.get() as usize;
-    // parse.c:691-710 — par_list loop. Each iteration emits one WC_LIST
-    // entry plus its sublist payload; terminator handling between
-    // lists matches the SEMI/NEWLIN/AMPER/SEPER switch in the C source.
+    // C `parse_list` (parse.c:697-712) calls par_list ONCE — par_list's
+    // own goto-rec loop handles all SEPER-separated sublists. The
+    // outer loop here exists for safety against early-return cases
+    // (LEXERR, missing terminator) but normally par_list_wordcode
+    // consumes everything in one call.
+    let mut cmplx: i32 = 0;
     while tok() != ENDINPUT && tok() != LEXERR {
-        par_list_wordcode();
+        par_list_wordcode(&mut cmplx);
         match tok() {
             SEMI | NEWLIN | AMPER | AMPERBANG | SEPER => {
                 zshlex();
@@ -1686,60 +1689,45 @@ pub fn par_event_wordcode() -> usize {
     start
 }
 
-/// Thread-local mirror of C parse.c's `int *cmplx` argument. Each
-/// `par_*` wordcode emitter ORs its complexity bit into this
-/// during the recursive descent; the outer `par_event_wordcode`
-/// reads it at the end. Mirrors C's `int *cmplx` plumbing
-/// through every par_* function — Rust uses a thread_local so
-/// the signatures can stay no-arg.
+/// par_time's `static int inpartime` guard at C parse.c:1038
+/// preventing infinite recursion on `time time foo`. The wordcode
+/// path keeps this as a thread_local since C uses a function-level
+/// `static int` (per-process; per-evaluator semantically matches).
 thread_local! {
-    static PARSER_CMPLX: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static PARSER_INPARTIME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-#[inline]
-fn cmplx_get() -> bool {
-    PARSER_CMPLX.with(|c| c.get())
-}
-#[inline]
-fn cmplx_or(b: bool) {
-    PARSER_CMPLX.with(|c| c.set(c.get() | b));
-}
-#[inline]
-fn cmplx_set(b: bool) {
-    PARSER_CMPLX.with(|c| c.set(b));
-}
-
-/// Port of `par_list(int *cmplx)` from `Src/parse.c:771-803`.
+/// Port of `par_list(int *cmplx)` from `Src/parse.c:769-803`.
 /// `list : { SEPER } [ sublist [ { SEPER | AMPER | AMPERBANG } list ] ]`.
-/// Drives the WCB_LIST chain — for each sublist, emits a WCB_LIST
-/// header, recurses into par_sublist, then patches the header
-/// with the right Z_SYNC/Z_ASYNC/Z_ASYNC|Z_DISOWN flag + Z_END
-/// marker on the last entry.
-pub fn par_list_wordcode() {
-    let mut lp: Option<usize> = None;
+/// True line-by-line port: takes `cmplx: &mut i32` matching C's
+/// `int *cmplx` out-parameter, uses stack-local `c` per iteration
+/// like C (so inner sublist cmplx is independent of outer).
+pub fn par_list_wordcode(cmplx: &mut i32) {
+    // c:773 — `int p, lp = -1, c;`
+    let mut p: usize;
+    let mut lp: i32 = -1;
+    let mut c: i32;
     loop {
-        // c:780 — `while (tok == SEPER) zshlex();`
+        // c:775 `rec:` — c:777-778 `while (tok == SEPER) zshlex();`
         while tok() == SEPER {
             zshlex();
         }
-        // c:782 — `p = ecadd(0);`
-        let p = ecadd(0);
-        // c:783 — `c = 0;` — local cmplx accumulator for this sublist.
-        let outer = cmplx_get();
-        cmplx_set(false);
-        let sublist_ok = par_sublist_wordcode();
-        let c = cmplx_get();
-        cmplx_set(outer | c);
-        if sublist_ok {
-            // c:785 — `*cmplx |= c;` (already done above)
+        // c:780 — `p = ecadd(0);`
+        p = ecadd(0);
+        // c:781 — `c = 0;`
+        c = 0;
+        // c:783 — `if (par_sublist(&c)) { ... }`
+        if par_sublist_wordcode(&mut c) {
+            // c:784 — `*cmplx |= c;`
+            *cmplx |= c;
+            // c:785 — `if (tok == SEPER || tok == AMPER || tok == AMPERBANG)`
             let t = tok();
             if t == SEPER || t == AMPER || t == AMPERBANG {
-                // c:787 — `if (tok != SEPER) *cmplx = 1;`
+                // c:786-787 — `if (tok != SEPER) *cmplx = 1;`
                 if t != SEPER {
-                    cmplx_set(true);
+                    *cmplx = 1;
                 }
-                // c:788 — `set_list_code(p, ...)`
+                // c:788-790 — `set_list_code(p, ..., c);`
                 let z = if t == SEPER {
                     Z_SYNC
                 } else if t == AMPER {
@@ -1747,29 +1735,30 @@ pub fn par_list_wordcode() {
                 } else {
                     Z_ASYNC | Z_DISOWN
                 };
-                set_list_code(p, z, c);
-                // c:792-794 — `incmdpos = 1; do { zshlex(); } while
-                // (tok == SEPER);`
+                set_list_code(p, z, c != 0);
+                // c:791 — `incmdpos = 1;`
                 set_incmdpos(true);
+                // c:792-794 — `do { zshlex(); } while (tok == SEPER);`
                 loop {
                     zshlex();
                     if tok() != SEPER {
                         break;
                     }
                 }
-                lp = Some(p);
-                continue; // c:795 `goto rec;`
+                // c:795 — `lp = p;` c:796 — `goto rec;`
+                lp = p as i32;
+                continue;
             } else {
-                // c:797 — `set_list_code(p, (Z_SYNC | Z_END), c);`
-                set_list_code(p, Z_SYNC | Z_END, c);
+                // c:798 — `set_list_code(p, (Z_SYNC | Z_END), c);`
+                set_list_code(p, Z_SYNC | Z_END, c != 0);
             }
         } else {
-            // c:799-802 — `ecused--; if (lp >= 0) ecbuf[lp] |= wc_bdata(Z_END);`
+            // c:800-802 — `ecused--; if (lp >= 0) ecbuf[lp] |= wc_bdata(Z_END);`
             ECUSED.set((ECUSED.get() - 1).max(0));
-            if let Some(prev) = lp {
+            if lp >= 0 {
                 ECBUF.with_borrow_mut(|b| {
-                    if prev < b.len() {
-                        b[prev] |= wc_bdata(Z_END as wordcode);
+                    if (lp as usize) < b.len() {
+                        b[lp as usize] |= wc_bdata(Z_END as wordcode);
                     }
                 });
             }
@@ -1778,44 +1767,40 @@ pub fn par_list_wordcode() {
     }
 }
 
-/// Port of `par_list1(int *cmplx)` from `Src/parse.c:805-816`.
+/// Port of `par_list1(int *cmplx)` from `Src/parse.c:806-817`.
 /// Single-sublist variant used by funcdef bodies and the short
 /// `for`/`while`/`repeat` forms — exactly one sublist with
 /// `Z_SYNC|Z_END`, no chain.
-pub fn par_list1_wordcode() {
-    // c:807 — `p = ecadd(0); c = 0;`
+pub fn par_list1_wordcode(cmplx: &mut i32) {
+    // c:810 — `int p = ecadd(0), c = 0;`
     let p = ecadd(0);
-    let outer = cmplx_get();
-    cmplx_set(false);
-    let ok = par_sublist_wordcode();
-    let c = cmplx_get();
-    cmplx_set(outer | c);
-    if ok {
-        // c:809-811 — `set_list_code(p, Z_SYNC|Z_END, c); *cmplx |= c;`
-        set_list_code(p, Z_SYNC | Z_END, c);
+    let mut c: i32 = 0;
+    // c:812 — `if (par_sublist(&c)) { ... }`
+    if par_sublist_wordcode(&mut c) {
+        // c:813 — `set_list_code(p, (Z_SYNC | Z_END), c);`
+        set_list_code(p, Z_SYNC | Z_END, c != 0);
+        // c:814 — `*cmplx |= c;`
+        *cmplx |= c;
     } else {
-        // c:813 — `ecused--;`
+        // c:816 — `ecused--;`
         ECUSED.set((ECUSED.get() - 1).max(0));
     }
 }
 
 /// Port of `par_save_list(C)` macro from `Src/parse.c:475-480`.
 ///   do { int eu = ecused; par_list(C); if (eu == ecused) ecadd(WCB_END()); } while (0)
-/// Wraps par_list_wordcode with an empty-body fallback: if no
-/// wordcodes were emitted, append a `WCB_END()` slot so the
-/// surrounding construct's skip-count matches C byte-for-byte.
-pub fn par_save_list_wordcode() {
+pub fn par_save_list_wordcode(cmplx: &mut i32) {
     let eu = ECUSED.get();
-    par_list_wordcode();
+    par_list_wordcode(cmplx);
     if ECUSED.get() == eu {
         ecadd(WCB_END());
     }
 }
 
 /// Port of `par_save_list1(C)` macro from `Src/parse.c:481-486`.
-pub fn par_save_list1_wordcode() {
+pub fn par_save_list1_wordcode(cmplx: &mut i32) {
     let eu = ECUSED.get();
-    par_list1_wordcode();
+    par_list1_wordcode(cmplx);
     if ECUSED.get() == eu {
         ecadd(WCB_END());
     }
@@ -1827,39 +1812,37 @@ pub fn par_save_list1_wordcode() {
 /// the !/coproc prefix + pipeline, then chains via DBAR (`||`)
 /// or DAMPER (`&&`) recursively. Returns true if at least one
 /// pipeline was emitted.
-pub fn par_sublist_wordcode() -> bool {
-    // c:827 — `p = ecadd(0);`
+pub fn par_sublist_wordcode(cmplx: &mut i32) -> bool {
+    // c:827 — `int f, p, c = 0;`
+    let mut c: i32 = 0;
+    // c:829 — `p = ecadd(0);`
     let p = ecadd(0);
-    let outer = cmplx_get();
-    cmplx_set(false);
-    let mut c2 = 0i32;
-    let f = par_sublist2(&mut c2);
-    let c = c2 != 0;
-    cmplx_set(outer | c);
-    match f {
-        Some(flags) => {
-            // c:831 — `e = ecused;`
+    // c:831 — `if ((f = par_sublist2(&c)) != -1) { ... }`
+    match par_sublist2(&mut c) {
+        Some(f) => {
+            // c:832 — `int e = ecused;`
             let e = ECUSED.get() as usize;
+            // c:834 — `*cmplx |= c;`
+            *cmplx |= c;
             if tok() == DBAR || tok() == DAMPER {
-                // c:834 — `qtok = tok;`
+                // c:836 — `enum lextok qtok = tok;`
                 let qtok = tok();
-                // c:836 — `cmdpush(tok == DBAR ? CS_CMDOR : CS_CMDAND);`
+                // c:839 — `cmdpush(tok == DBAR ? CS_CMDOR : CS_CMDAND);`
                 cmdpush(if qtok == DBAR {
                     CS_CMDOR as u8
                 } else {
                     CS_CMDAND as u8
                 });
-                // c:837 — `zshlex();`
+                // c:840 — `zshlex();`
                 zshlex();
-                // c:838-839 — `while (tok == SEPER) zshlex();`
+                // c:841-842 — `while (tok == SEPER) zshlex();`
                 while tok() == SEPER {
                     zshlex();
                 }
-                // c:840 — `sl = par_sublist(cmplx);`
-                let sl = par_sublist_wordcode();
-                // c:841-844 — `set_sublist_code(p, (sl ? (qtok==DBAR ?
-                // WC_SUBLIST_OR : WC_SUBLIST_AND) : WC_SUBLIST_END),
-                // f, e-1-p, c);`
+                // c:843 — `sl = par_sublist(cmplx);`
+                let sl = par_sublist_wordcode(cmplx);
+                // c:844-847 — `set_sublist_code(p, (sl ? ... : WC_SUBLIST_END),
+                // f, (e - 1 - p), c);`
                 let st = if sl {
                     if qtok == DBAR {
                         WC_SUBLIST_OR
@@ -1869,26 +1852,25 @@ pub fn par_sublist_wordcode() -> bool {
                 } else {
                     WC_SUBLIST_END
                 };
-                set_sublist_code(p, st as i32, flags, (e - 1 - p) as i32, c);
-                // c:845 — `cmdpop();`
+                set_sublist_code(p, st as i32, f, (e - 1 - p) as i32, c != 0);
+                // c:848 — `cmdpop();`
                 cmdpop();
             } else {
-                // c:847-849 — `if (tok == AMPER || tok == AMPERBANG)
+                // c:850-853 — `if (tok == AMPER || tok == AMPERBANG)
                 // { c = 1; *cmplx |= c; }`
-                let c_final = if tok() == AMPER || tok() == AMPERBANG {
-                    cmplx_set(true);
-                    true
-                } else {
-                    c
-                };
-                // c:851 — `set_sublist_code(p, WC_SUBLIST_END, f,
-                // e-1-p, c);`
-                set_sublist_code(p, WC_SUBLIST_END as i32, flags, (e - 1 - p) as i32, c_final);
+                if tok() == AMPER || tok() == AMPERBANG {
+                    c = 1;
+                    *cmplx |= c;
+                }
+                // c:854 — `set_sublist_code(p, WC_SUBLIST_END, f,
+                // (e - 1 - p), c);`
+                set_sublist_code(p, WC_SUBLIST_END as i32, f, (e - 1 - p) as i32, c != 0);
             }
+            // c:856 — `return 1;`
             true
         }
         None => {
-            // c:855-857 — `ecused--; return 0;`
+            // c:858-859 — `ecused--; return 0;`
             ECUSED.set((ECUSED.get() - 1).max(0));
             false
         }
@@ -1899,27 +1881,32 @@ pub fn par_sublist_wordcode() -> bool {
 /// `pline : cmd [ ( BAR | BARAMP ) { SEPER } pline ]`. Emits a
 /// WCB_PIPE header (mid for chain links, end for the last cmd)
 /// plus the optional BARAMP `2>&1` synthetic redir.
-pub fn par_pipe_wordcode() -> bool {
+/// Port of `par_pline(int *cmplx)` from `Src/parse.c:893-947`.
+/// (Named `par_pipe_wordcode` to disambiguate from the AST
+/// `par_pline` at parse.rs:3744 — semantically the same `pline`
+/// production.)
+pub fn par_pipe_wordcode(cmplx: &mut i32) -> bool {
+    // c:897 — `zlong line = toklineno;`
     let line = toklineno() as i64;
-    // c:898 — `p = ecadd(0);`
+    // c:899 — `p = ecadd(0);`
     let p = ecadd(0);
-    // c:900-903 — `if (!par_cmd(cmplx, 0)) { ecused--; return 0; }`
-    if !par_cmd_wordcode(false) {
+    // c:901-904 — `if (!par_cmd(cmplx, 0)) { ecused--; return 0; }`
+    if !par_cmd_wordcode(cmplx, 0) {
         ECUSED.set((ECUSED.get() - 1).max(0));
         return false;
     }
     if tok() == BAR_TOK {
-        // c:905 — `*cmplx = 1;`
-        cmplx_set(true);
-        // c:906 — `cmdpush(CS_PIPE);`
+        // c:906 — `*cmplx = 1;`
+        *cmplx = 1;
+        // c:907 — `cmdpush(CS_PIPE);`
         cmdpush(CS_PIPE as u8);
-        // c:907 — `zshlex();`
+        // c:908 — `zshlex();`
         zshlex();
-        // c:908-909 — `while (tok == SEPER) zshlex();`
+        // c:909-910 — `while (tok == SEPER) zshlex();`
         while tok() == SEPER {
             zshlex();
         }
-        // c:910 — `ecbuf[p] = WCB_PIPE(WC_PIPE_MID, line>=0 ? line+1 : 0);`
+        // c:911 — `ecbuf[p] = WCB_PIPE(WC_PIPE_MID, line>=0 ? line+1 : 0);`
         ECBUF.with_borrow_mut(|b| {
             if p < b.len() {
                 b[p] = WCB_PIPE(
@@ -1928,23 +1915,24 @@ pub fn par_pipe_wordcode() -> bool {
                 );
             }
         });
-        // c:911 — `ecispace(p+1, 1);`
+        // c:912 — `ecispace(p+1, 1);`
         ecispace(p + 1, 1);
-        // c:912 — `ecbuf[p+1] = ecused - 1 - p;`
+        // c:913 — `ecbuf[p+1] = ecused - 1 - p;`
         let used = ECUSED.get() as usize;
         ECBUF.with_borrow_mut(|b| {
             if p + 1 < b.len() {
                 b[p + 1] = (used.saturating_sub(1 + p)) as wordcode;
             }
         });
-        // c:913-915 — `if (!par_pline(cmplx)) tok = LEXERR;`
-        if !par_pipe_wordcode() {
+        // c:914-916 — `if (!par_pline(cmplx)) { tok = LEXERR; }`
+        if !par_pipe_wordcode(cmplx) {
             set_tok(LEXERR);
         }
+        // c:917 — `cmdpop();`
         cmdpop();
         true
     } else if tok() == BARAMP {
-        // c:920-924 — walk past inline WC_REDIR to find r.
+        // c:920-923 — walk past inline WC_REDIR to find r.
         let mut r = p + 1;
         loop {
             let code = ECBUF.with_borrow(|b| b.get(r).copied().unwrap_or(0));
@@ -1953,7 +1941,7 @@ pub fn par_pipe_wordcode() -> bool {
             }
             r += WC_REDIR_WORDS(code) as usize;
         }
-        // c:926-929 — `ecispace(r, 3);` + synthetic `2>&1` redir
+        // c:925-928 — `ecispace(r, 3);` + synthetic `2>&1` redir
         ecispace(r, 3);
         ECBUF.with_borrow_mut(|b| {
             if r + 2 < b.len() {
@@ -1962,7 +1950,8 @@ pub fn par_pipe_wordcode() -> bool {
                 b[r + 2] = ecstrcode("1");
             }
         });
-        cmplx_set(true);
+        // c:930 — `*cmplx = 1;`
+        *cmplx = 1;
         cmdpush(CS_ERRPIPE as u8);
         zshlex();
         while tok() == SEPER {
@@ -1983,13 +1972,13 @@ pub fn par_pipe_wordcode() -> bool {
                 b[p + 1] = (used.saturating_sub(1 + p)) as wordcode;
             }
         });
-        if !par_pipe_wordcode() {
+        if !par_pipe_wordcode(cmplx) {
             set_tok(LEXERR);
         }
         cmdpop();
         true
     } else {
-        // c:951 — `ecbuf[p] = WCB_PIPE(WC_PIPE_END, line>=0 ? line+1 : 0);`
+        // c:944 — `ecbuf[p] = WCB_PIPE(WC_PIPE_END, line>=0 ? line+1 : 0);`
         ECBUF.with_borrow_mut(|b| {
             if p < b.len() {
                 b[p] = WCB_PIPE(
@@ -2007,77 +1996,82 @@ pub fn par_pipe_wordcode() -> bool {
 /// dispatches on the current token to the right par_* builder.
 /// Returns false only when no command was emitted (no redirs +
 /// par_simple returned 0).
-pub fn par_cmd_wordcode(zsh_construct: bool) -> bool {
-    let mut nr = 0i32;
-    // c:962 — `r = ecused;` — used for trailing-redir patch
-    // bookkeeping; the actual redir mutation goes through par_redir
-    // which keeps its own offset.
+/// Port of `par_cmd(int *cmplx, int zsh_construct)` from
+/// `Src/parse.c:957-1077`.
+pub fn par_cmd_wordcode(cmplx: &mut i32, zsh_construct: i32) -> bool {
+    // c:960 — `int r, nr = 0;`
+    let mut nr: i32 = 0;
+    // c:962 — `r = ecused;`
     let mut r = ECUSED.get();
     // c:964-969 — leading redirs.
     if IS_REDIROP(tok()) {
-        cmplx_set(true);
+        // c:965 — `*cmplx = 1;`
+        *cmplx = 1;
         while IS_REDIROP(tok()) {
-            if let Some(_) = par_redir() {
+            if par_redir().is_some() {
                 nr += 1;
             } else {
                 break;
             }
         }
     }
+    // c:970-1066 — token-dispatch switch.
     match tok() {
         FOR => {
             cmdpush(CS_FOR as u8);
-            par_for_wordcode();
+            par_for_wordcode(cmplx);
             cmdpop();
         }
         FOREACH => {
             cmdpush(CS_FOREACH as u8);
-            par_for_wordcode();
+            par_for_wordcode(cmplx);
             cmdpop();
         }
         SELECT => {
-            cmplx_set(true);
+            // c:982 — `*cmplx = 1;`
+            *cmplx = 1;
             cmdpush(CS_SELECT as u8);
-            par_for_wordcode();
+            par_for_wordcode(cmplx);
             cmdpop();
         }
         CASE => {
             cmdpush(CS_CASE as u8);
-            par_case_wordcode();
+            par_case_wordcode(cmplx);
             cmdpop();
         }
         IF => {
-            par_if_wordcode();
+            par_if_wordcode(cmplx);
         }
         WHILE => {
             cmdpush(CS_WHILE as u8);
-            par_while_wordcode();
+            par_while_wordcode(cmplx);
             cmdpop();
         }
         UNTIL => {
             cmdpush(CS_UNTIL as u8);
-            par_while_wordcode();
+            par_while_wordcode(cmplx);
             cmdpop();
         }
         REPEAT => {
             cmdpush(CS_REPEAT as u8);
-            par_repeat_wordcode();
+            par_repeat_wordcode(cmplx);
             cmdpop();
         }
         INPAR_TOK => {
-            cmplx_set(true);
+            // c:1011 — `*cmplx = 1;`
+            *cmplx = 1;
             cmdpush(CS_SUBSH as u8);
-            par_subsh_wordcode_impl(zsh_construct);
+            par_subsh_wordcode_impl(cmplx, zsh_construct);
             cmdpop();
         }
         INBRACE_TOK => {
             cmdpush(CS_CURSH as u8);
-            par_subsh_wordcode_impl(zsh_construct);
+            par_subsh_wordcode_impl(cmplx, zsh_construct);
             cmdpop();
         }
         FUNC => {
             cmdpush(CS_FUNCDEF as u8);
-            par_funcdef_wordcode();
+            par_funcdef_wordcode(cmplx);
             cmdpop();
         }
         DINBRACK => {
@@ -2092,61 +2086,63 @@ pub fn par_cmd_wordcode(zsh_construct: bool) -> bool {
             // c:1037-1050 — `static int inpartime` guard so
             // `time time foo` doesn't recurse infinitely.
             if !PARSER_INPARTIME.with(|c| c.get()) {
-                cmplx_set(true);
+                // c:1041 — `*cmplx = 1;`
+                *cmplx = 1;
                 PARSER_INPARTIME.with(|c| c.set(true));
                 par_time_wordcode();
                 PARSER_INPARTIME.with(|c| c.set(false));
             } else {
                 set_tok(STRING_LEX);
-                let sr = par_simple_wordcode_impl(nr);
+                let sr = par_simple_wordcode_impl(cmplx, nr);
                 if sr == 0 && nr == 0 {
                     return false;
                 }
                 if sr > 1 {
-                    cmplx_set(true);
+                    *cmplx = 1;
                     r += sr - 1;
                 }
             }
         }
         _ => {
             // c:1054 — `if (!(sr = par_simple(cmplx, nr)))`
-            let sr = par_simple_wordcode_impl(nr);
+            let sr = par_simple_wordcode_impl(cmplx, nr);
             if sr == 0 {
                 if nr == 0 {
                     return false;
                 }
             } else if sr > 1 {
-                cmplx_set(true);
+                // c:1060-1061 — `*cmplx = 1; r += sr - 1;`
+                *cmplx = 1;
                 r += sr - 1;
             }
         }
     }
-    // c:1075-1078 — trailing redirs.
+    // c:1067-1071 — trailing redirs.
     if IS_REDIROP(tok()) {
-        cmplx_set(true);
+        *cmplx = 1;
         while IS_REDIROP(tok()) {
             let _ = par_redir();
         }
     }
-    // c:1079-1082 — `incmdpos=1; incasepat=0; incond=0; intypeset=0;`
+    // c:1072-1075 — `incmdpos=1; incasepat=0; incond=0; intypeset=0;`
     set_incmdpos(true);
     set_incasepat(0);
     set_incond(0);
     set_intypeset(false);
     let _ = r;
+    // c:1076 — `return 1;`
     true
 }
 
-/// Adapter: par_cmd_wordcode wrapper for sites that don't supply
-/// the zsh_construct flag (defaults to false, matching the C
-/// `par_cmd(cmplx, 0)` call shape at c:902).
+/// Adapter: par_cmd_wordcode wrapper for callers without cmplx
+/// (currently only legacy paths). Allocates a throwaway local.
 pub fn par_cmd_wordcode_noargs() {
-    par_cmd_wordcode(false);
+    let mut cmplx: i32 = 0;
+    par_cmd_wordcode(&mut cmplx, 0);
 }
 
-/// P9c stub: direct port of `par_for(int *complex)` from
-/// Port of `par_for(int *cmplx)` from `Src/parse.c:1087-1199`.
-pub fn par_for_wordcode() {
+/// Port of `par_for(int *cmplx)` from `Src/parse.c:1087-1198`.
+pub fn par_for_wordcode(cmplx: &mut i32) {
     let csh = tok() == FOREACH;
     let sel = tok() == SELECT;
     let p = ecadd(0);
@@ -2268,7 +2264,7 @@ pub fn par_for_wordcode() {
     while tok() == SEPER {
         zshlex();
     }
-    par_loop_body_wordcode(csh);
+    par_loop_body_wordcode(cmplx, csh);
     let used = ECUSED.get() as usize;
     let off = used.saturating_sub(1 + p) as wordcode;
     ECBUF.with_borrow_mut(|b| {
@@ -2283,12 +2279,12 @@ pub fn par_for_wordcode() {
 }
 
 /// Body dispatch shared by par_for / par_while / par_repeat.
-/// Direct port of `Src/parse.c:1167-1195`.
-fn par_loop_body_wordcode(csh: bool) {
+/// Direct port of `Src/parse.c:1170-1194`.
+fn par_loop_body_wordcode(cmplx: &mut i32, csh: bool) {
     if tok() == DOLOOP {
         zshlex();
         // c:1172 — `par_save_list(cmplx);`
-        par_save_list_wordcode();
+        par_save_list_wordcode(cmplx);
         if tok() != DONE {
             error("missing `done`");
             return;
@@ -2298,7 +2294,7 @@ fn par_loop_body_wordcode(csh: bool) {
     } else if tok() == INBRACE_TOK {
         zshlex();
         // c:1179 — `par_save_list(cmplx);`
-        par_save_list_wordcode();
+        par_save_list_wordcode(cmplx);
         if tok() != OUTBRACE_TOK {
             error("missing `}`");
             return;
@@ -2307,7 +2303,7 @@ fn par_loop_body_wordcode(csh: bool) {
         zshlex();
     } else if csh || isset(CSHJUNKIELOOPS) {
         // c:1185 — `par_save_list(cmplx);`
-        par_save_list_wordcode();
+        par_save_list_wordcode(cmplx);
         if tok() != ZEND {
             error("missing `end`");
             return;
@@ -2318,17 +2314,17 @@ fn par_loop_body_wordcode(csh: bool) {
         error("short loop form requires SHORTLOOPS");
     } else {
         // c:1193 — `par_save_list1(cmplx);`
-        par_save_list1_wordcode();
+        par_save_list1_wordcode(cmplx);
     }
 }
 
-/// `select` shares par_for body (c:1024 routes SELECT to par_for).
-pub fn par_select_wordcode() {
-    par_for_wordcode();
+/// `select` shares par_for body (c:983-985 routes SELECT to par_for).
+pub fn par_select_wordcode(cmplx: &mut i32) {
+    par_for_wordcode(cmplx);
 }
 
-/// Port of `par_case(int *cmplx)` from `Src/parse.c:1209-1409`.
-pub fn par_case_wordcode() {
+/// Port of `par_case(int *cmplx)` from `Src/parse.c:1209-1400`.
+pub fn par_case_wordcode(cmplx: &mut i32) {
     let p = ecadd(0);
     set_incmdpos(false);
     zshlex();
@@ -2404,7 +2400,7 @@ pub fn par_case_wordcode() {
         set_incmdpos(true);
         zshlex();
         // c:1380 — `par_save_list(cmplx);`
-        par_save_list_wordcode();
+        par_save_list_wordcode(cmplx);
         // c:1330-1336 — arm-terminator drives the WC_CASE_OR /
         // WC_CASE_AND / WC_CASE_TESTAND type tag in the WCB_CASE
         // header, which is patched at pp.
@@ -2434,8 +2430,8 @@ pub fn par_case_wordcode() {
     });
 }
 
-/// Port of `par_if(int *cmplx)` from `Src/parse.c:1411-1519`.
-pub fn par_if_wordcode() {
+/// Port of `par_if(int *cmplx)` from `Src/parse.c:1410-1512`.
+pub fn par_if_wordcode(cmplx: &mut i32) {
     let p = ecadd(0);
     cmdpush(CS_IF as u8);
     // c:1437 — `type = (xtok == IF ? WC_IF_IF : WC_IF_ELIF);`. First
@@ -2445,7 +2441,7 @@ pub fn par_if_wordcode() {
         let arm = ecadd(0);
         zshlex();
         // c:1438 — `par_save_list(cmplx);` — condition body.
-        par_save_list_wordcode();
+        par_save_list_wordcode(cmplx);
         let body_brace = tok() == INBRACE_TOK;
         if !body_brace {
             while tok() == SEPER {
@@ -2461,7 +2457,7 @@ pub fn par_if_wordcode() {
         cmdpush(CS_IFTHEN as u8);
         zshlex();
         // c:1453 / c:1462 — `par_save_list(cmplx);` — then-body.
-        par_save_list_wordcode();
+        par_save_list_wordcode(cmplx);
         cmdpop();
         let used = ECUSED.get() as usize;
         let arm_off = used.saturating_sub(1 + arm) as wordcode;
@@ -2482,7 +2478,7 @@ pub fn par_if_wordcode() {
                 let arm = ecadd(0);
                 zshlex();
                 // c:1494 / c:1500 — `par_save_list(cmplx);` — else body.
-                par_save_list_wordcode();
+                par_save_list_wordcode(cmplx);
                 let used = ECUSED.get() as usize;
                 let arm_off = used.saturating_sub(1 + arm) as wordcode;
                 // c:1507 — `ecbuf[pp] = WCB_IF(WC_IF_ELSE, ecused - 1 - pp);`
@@ -2522,17 +2518,17 @@ pub fn par_if_wordcode() {
     });
 }
 
-/// Port of `par_while(int *cmplx)` from `Src/parse.c:1521-1564`.
-pub fn par_while_wordcode() {
+/// Port of `par_while(int *cmplx)` from `Src/parse.c:1520-1557`.
+pub fn par_while_wordcode(cmplx: &mut i32) {
     let until = tok() == UNTIL;
     let p = ecadd(0);
     zshlex();
     // c:1528 — `par_save_list(cmplx);` — condition.
-    par_save_list_wordcode();
+    par_save_list_wordcode(cmplx);
     while tok() == SEPER {
         zshlex();
     }
-    par_loop_body_wordcode(false);
+    par_loop_body_wordcode(cmplx, false);
     let type_code = if until {
         WC_WHILE_UNTIL
     } else {
@@ -2548,12 +2544,12 @@ pub fn par_while_wordcode() {
 }
 
 /// `until` shares par_while body — tok==UNTIL flips the type.
-pub fn par_until_wordcode() {
-    par_while_wordcode();
+pub fn par_until_wordcode(cmplx: &mut i32) {
+    par_while_wordcode(cmplx);
 }
 
-/// Port of `par_repeat(int *cmplx)` from `Src/parse.c:1565-1618`.
-pub fn par_repeat_wordcode() {
+/// Port of `par_repeat(int *cmplx)` from `Src/parse.c:1564-1606`.
+pub fn par_repeat_wordcode(cmplx: &mut i32) {
     let p = ecadd(0);
     set_incmdpos(false);
     zshlex();
@@ -2567,7 +2563,7 @@ pub fn par_repeat_wordcode() {
     while tok() == SEPER {
         zshlex();
     }
-    par_loop_body_wordcode(false);
+    par_loop_body_wordcode(cmplx, false);
     let used = ECUSED.get() as usize;
     let off = used.saturating_sub(1 + p) as wordcode;
     ECBUF.with_borrow_mut(|b| {
@@ -2587,7 +2583,7 @@ pub fn par_repeat_wordcode() {
 /// Critical: saves/resets `ecnpats` + `ecssub` + `ecsoffs` around
 /// the body parse so per-function pattern counts don't leak into
 /// the enclosing scope's `ecnpats` accumulator (parse.c:1723-1758).
-pub fn par_funcdef_wordcode() {
+pub fn par_funcdef_wordcode(cmplx: &mut i32) {
     let oecssub = ECSSUB.get();
     // c:1684-1685 — `p = ecadd(0); ecadd(0); /* p+1 */`.
     let p = ecadd(0);
@@ -2654,15 +2650,19 @@ pub fn par_funcdef_wordcode() {
     // pattern count.
     ECNFUNC.set(ECNFUNC.get() + 1);
     let so = ECSOFFS.get();
-    let onp = ECNPATS.with(|c| c.get());
-    ECNPATS.with(|c| c.set(0));
+    let onp = ECNPATS.with(|cc| cc.get());
+    ECNPATS.with(|cc| cc.set(0));
     ECSSUB.set(so);
+    // c:1674 — `int c = 0;` — INNER cmplx for body parse. C's
+    // `*cmplx` is unchanged by the body; we mirror by passing a
+    // fresh local `&mut c` rather than the caller's cmplx.
+    let mut body_c: i32 = 0;
     if tok() == INBRACE_TOK {
         zshlex();
-        par_list_wordcode();
+        par_list_wordcode(&mut body_c);
         if tok() != OUTBRACE_TOK {
             // c:1731-1735 — restore + error.
-            ECNPATS.with(|c| c.set(onp));
+            ECNPATS.with(|cc| cc.set(onp));
             ECSSUB.set(oecssub);
             error("par_funcdef: expected `}`");
             return;
@@ -2674,14 +2674,15 @@ pub fn par_funcdef_wordcode() {
         zshlex();
     } else if unset(SHORTLOOPS) {
         // c:1742-1746 — restore + error.
-        ECNPATS.with(|c| c.set(onp));
+        ECNPATS.with(|cc| cc.set(onp));
         ECSSUB.set(oecssub);
         error("par_funcdef: short body requires SHORTLOOPS");
         return;
     } else {
         // c:1748 — `par_list1(&c);`
-        par_list1_wordcode();
+        par_list1_wordcode(&mut body_c);
     }
+    let _ = body_c; // C's outer *cmplx is NOT modified by body
     // c:1750 — `ecadd(WCB_END());`
     ecadd(WCB_END());
     // c:1751-1755 — fill the 4 metadata slots + names-count slot.
@@ -2697,7 +2698,7 @@ pub fn par_funcdef_wordcode() {
         }
     });
     // c:1757-1759 — restore + ecnfunc++ (second bump).
-    ECNPATS.with(|c| c.set(onp));
+    ECNPATS.with(|cc| cc.set(onp));
     ECSSUB.set(oecssub);
     ECNFUNC.set(ECNFUNC.get() + 1);
     // c:1761 — `ecbuf[p] = WCB_FUNCDEF(ecused - 1 - p);`.
@@ -2719,8 +2720,9 @@ pub fn par_funcdef_wordcode() {
             argc += 1;
             zshlex();
         }
+        // c:1773-1774 — `if (num > 0) *cmplx = 1;`
         if argc > 0 {
-            cmplx_set(true);
+            *cmplx = 1;
         }
         let used2 = ECUSED.get() as usize;
         ECBUF.with_borrow_mut(|b| {
@@ -2736,7 +2738,7 @@ pub fn par_funcdef_wordcode() {
 /// `{...}` brace group (cursh) plus optional `always { ... }`
 /// trailing block. C uses a single function with `zsh_construct=1`
 /// for `{...}` and 0 for `(...)`.
-pub fn par_subsh_wordcode_impl(zsh_construct: bool) {
+pub fn par_subsh_wordcode_impl(cmplx: &mut i32, zsh_construct: i32) {
     // c:1621 — `enum lextok otok = tok;`
     let otok = tok();
     // c:1624 — `p = ecadd(0);`
@@ -2746,7 +2748,7 @@ pub fn par_subsh_wordcode_impl(zsh_construct: bool) {
     // c:1627 — `zshlex();`
     zshlex();
     // c:1628 — `par_list(cmplx);`
-    par_list_wordcode();
+    par_list_wordcode(cmplx);
     // c:1629 — `ecadd(WCB_END());`
     ecadd(WCB_END());
     // c:1630-1631 — `if (tok != ((otok == INPAR) ? OUTPAR : OUTBRACE))
@@ -2761,7 +2763,7 @@ pub fn par_subsh_wordcode_impl(zsh_construct: bool) {
         return;
     }
     // c:1633 — `incmdpos = !zsh_construct;`
-    set_incmdpos(!zsh_construct);
+    set_incmdpos(zsh_construct == 0);
     // c:1634 — `zshlex();`
     zshlex();
 
@@ -2794,7 +2796,7 @@ pub fn par_subsh_wordcode_impl(zsh_construct: bool) {
         // c:1648 — `zshlex();`
         zshlex();
         // c:1649 — `par_save_list(cmplx);`
-        par_save_list_wordcode();
+        par_save_list_wordcode(cmplx);
         // c:1650-1651 — `while (tok == SEPER) zshlex();`
         while tok() == SEPER {
             zshlex();
@@ -2832,18 +2834,18 @@ pub fn par_subsh_wordcode_impl(zsh_construct: bool) {
     }
 }
 
-/// Wrapper for `(...)` subshell — calls `par_subsh_wordcode_impl(false)`.
-pub fn par_subsh_wordcode() {
-    par_subsh_wordcode_impl(false);
+/// Wrapper for `(...)` subshell — calls `par_subsh_wordcode_impl(0)`.
+pub fn par_subsh_wordcode(cmplx: &mut i32) {
+    par_subsh_wordcode_impl(cmplx, 0);
 }
 
 /// Wrapper for `{...}` brace group (cursh) — calls
-/// `par_subsh_wordcode_impl(true)`. C uses the same `par_subsh`
+/// `par_subsh_wordcode_impl(1)`. C uses the same `par_subsh`
 /// function with `zsh_construct=1`; the Rust split exists because
 /// the par_cmd dispatch at parse.rs:1446 already named them
 /// separately.
-pub fn par_cursh_wordcode() {
-    par_subsh_wordcode_impl(true);
+pub fn par_cursh_wordcode(cmplx: &mut i32) {
+    par_subsh_wordcode_impl(cmplx, 1);
 }
 
 /// Port of `par_time(void)` from `Src/parse.c:1787`. `time PIPE`
@@ -2950,27 +2952,19 @@ pub fn par_arith_wordcode() {
 /// and `name() { body }` funcdef detection — those paths are
 /// progressively wired into the AST parser; this wordcode-emitter
 /// covers the simple `cmd args...` case + interleaved redirs.
-pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
-    // c:1836-1842 — `int oecused = ecused, isnull = 1, r, argc = 0,
-    // p, isfunc = 0, sr = 0; int c = *cmplx, nrediradd, assignments
-    // = 0, ppost = 0, is_typeset = 0; ...`
-    // c:1839 — `int c = *cmplx`. Captures the initial cmplx value at
-    // entry so the INOUTPAR funcdef branch (c:2070) can restore it via
-    // `*cmplx = c;` — funcdef is NOT structurally complex from the
-    // enclosing list's perspective, even though par_simple sets cmplx
-    // to true while collecting names. Without this save/restore, the
-    // top-level WC_LIST loses its Z_SIMPLE optimization for
-    // single-funcdef-cmd files (set_list_code requires !cmplx).
+pub fn par_simple_wordcode_impl(cmplx: &mut i32, mut nr: i32) -> i32 {
+    // c:1838-1841 — `int oecused = ecused, isnull = 1, r, argc = 0,
+    //   p, isfunc = 0, sr = 0;`
+    //   `int c = *cmplx, nrediradd, assignments = 0, ppost = 0,
+    //   is_typeset = 0;`
+    // c is the SAVED initial cmplx so INOUTPAR can restore via
+    // `*cmplx = c;` at c:2070.
     let _oecused = ECUSED.get() as usize;
-    let initial_cmplx = cmplx_get();
+    let c_saved = *cmplx;
     let mut isnull = true;
     let mut argc: u32 = 0;
     let mut sr: i32 = 0;
     let mut assignments = false;
-    // c:1838 — `int isfunc = 0`. Set to 1 when INOUTPAR funcdef
-    // branch fires so the post-loop WCB_SIMPLE/WCB_TYPESET emission
-    // is skipped (c:2189 `if (!isfunc) { ecbuf[p] = ... }`).
-    // Without this flag the FUNCDEF header gets clobbered by SIMPLE.
     let mut isfunc = false;
 
     // c:1843 — `r = ecused;` — saves the offset where redirs get
@@ -2988,7 +2982,7 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
         match tok() {
             NOCORRECT => {
                 // c:1846-1849
-                cmplx_set(true);
+                *cmplx = 1;
                 set_nocorrect(1);
             }
             ENVSTRING => {
@@ -3062,7 +3056,7 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                             || *ch == '\u{94}' /* Inang */
                             || *ch == '\u{96}' /* OutangProc */
                         {
-                            cmplx_set(true);
+                            *cmplx = 1;
                             break;
                         }
                     }
@@ -3081,7 +3075,7 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 // emitter yet; fall back to a minimal placeholder
                 // so the WCB_ASSIGN slot exists at the expected
                 // position. TODO: full port of c:1898-1922.
-                cmplx_set(true);
+                *cmplx = 1;
                 let p = ecadd(0);
                 set_incmdpos(false);
                 let raw = tokstr().unwrap_or_default();
@@ -3134,7 +3128,7 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 // distinct from the AST par_redir — it INSERTS
                 // WCB_REDIR + fd + ecstrcode(name) at offset `r`
                 // via ecispace, shifting any later words down.
-                cmplx_set(true);
+                *cmplx = 1;
                 let added = par_redir_wordcode(&mut r);
                 if added == 0 {
                     break;
@@ -3166,7 +3160,7 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
         match tok() {
             STRING_LEX | TYPESET => {
                 // c:1928-1929 — `*cmplx = 1; incmdpos = 0;`
-                cmplx_set(true);
+                *cmplx = 1;
                 set_incmdpos(false);
                 // c:1931-1932 — TYPESET → intypeset = is_typeset = 1.
                 if tok() == TYPESET {
@@ -3233,7 +3227,7 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 // the elements. C also toggles intypeset=0 around the
                 // wordlist so the lexer doesn't try to re-emit
                 // assignments inside the array.
-                cmplx_set(true);
+                *cmplx = 1;
                 if postassigns == 0 {
                     ppost = ecadd(0);
                 }
@@ -3279,7 +3273,7 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 // c:1999-2010 — `nrediradd = par_redir(&r, NULL);
                 // p += nrediradd; if (ppost) ppost += nrediradd;
                 // sr += nrediradd;`
-                cmplx_set(true);
+                *cmplx = 1;
                 let added = par_redir_wordcode(&mut r);
                 if added == 0 {
                     break;
@@ -3320,10 +3314,9 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                     return 0;
                 }
                 // c:2070 — `*cmplx = c;` — restore the saved initial
-                // cmplx (typically false) so the enclosing list can
-                // apply Z_SIMPLE optimization to a single-funcdef cmd.
-                // OLD CODE SET cmplx=true which broke Z_SIMPLE.
-                cmplx_set(initial_cmplx);
+                // cmplx so the enclosing list can apply Z_SIMPLE
+                // optimization to a single-funcdef cmd.
+                *cmplx = c_saved;
                 set_incmdpos(true);
                 cmdpush(CS_FUNCDEF as u8);
                 zshlex();
@@ -3344,25 +3337,20 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 ecadd(0);
                 ecadd(0);
                 let so = ECSOFFS.get();
-                let onp = ECNPATS.with(|c| c.get());
-                ECNPATS.with(|c| c.set(0));
+                let onp = ECNPATS.with(|cc| cc.get());
+                ECNPATS.with(|cc| cc.set(0));
                 ECNFUNC.set(ECNFUNC.get() + 1);
                 let oecssub = ECSSUB.get();
                 ECSSUB.set(so);
                 // c:2091 — `int c = 0;` — INNER cmplx local to the
-                // body parse. C's `*cmplx` (the enclosing scope's
-                // cmplx) is NOT modified by the body's pattern
-                // setting. The funcdef header gets the body's
-                // cmplx-derived set_*_code, but the enclosing list
-                // sees only the saved initial_cmplx (already set
-                // above per c:2070). Save outer TLS cmplx, run body
-                // with fresh inner cmplx, then RESTORE outer — do
-                // NOT OR in the inner.
-                let body_outer_cmplx = cmplx_get();
+                // body parse. C's enclosing *cmplx is NOT modified by
+                // the body. We use a stack-local `body_c` and pass
+                // `&mut body_c` so the inner cmplx is independent —
+                // exactly matching C's `&c` semantics.
+                let mut body_c: i32 = 0;
                 if tok() == INBRACE_TOK {
-                    cmplx_set(false);
                     zshlex();
-                    par_list_wordcode();
+                    par_list_wordcode(&mut body_c);
                     if tok() != OUTBRACE_TOK {
                         cmdpop();
                         error("par_simple: funcdef expected `}`");
@@ -3373,22 +3361,18 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                         set_incmdpos(false);
                     }
                     zshlex();
-                    cmplx_set(body_outer_cmplx);
                 } else {
-                    // c:2107-2132 — short-body funcdef form: `f() cmd` or
-                    // `() cmd`. Wraps single par_cmd result in a synthetic
-                    // WC_LIST / WC_SUBLIST / WC_PIPE(WC_PIPE_END, 0)
-                    // header trio.
+                    // c:2107-2132 — short-body funcdef form: `f() cmd`
+                    // or `() cmd`. Wraps single par_cmd result in a
+                    // synthetic WC_LIST / WC_SUBLIST /
+                    // WC_PIPE(WC_PIPE_END, 0) header trio.
                     let ll = ecadd(0);
                     let sl = ecadd(0);
                     ecadd(WCB_PIPE(WC_PIPE_END, 0));
-                    cmplx_set(false);
-                    let ok = par_cmd_wordcode(argc == 0);
-                    let inner_c = cmplx_get();
+                    let ok = par_cmd_wordcode(&mut body_c, if argc == 0 { 1 } else { 0 });
                     if !ok {
                         cmdpop();
                         error("par_simple: funcdef short-body: missing command");
-                        cmplx_set(body_outer_cmplx);
                         return 0;
                     }
                     if argc == 0 {
@@ -3398,19 +3382,23 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                     }
                     // c:2130-2131 — inner sublist/list use inner cmplx.
                     let used = ECUSED.get() as usize;
-                    set_sublist_code(sl, WC_SUBLIST_END as i32, 0, (used.saturating_sub(1 + sl)) as i32, inner_c);
-                    set_list_code(ll, Z_SYNC | Z_END, inner_c);
-                    // Restore OUTER cmplx — inner's pattern-setting does
-                    // not leak into the enclosing list's cmplx.
-                    cmplx_set(body_outer_cmplx);
+                    set_sublist_code(
+                        sl,
+                        WC_SUBLIST_END as i32,
+                        0,
+                        (used.saturating_sub(1 + sl)) as i32,
+                        body_c != 0,
+                    );
+                    set_list_code(ll, Z_SYNC | Z_END, body_c != 0);
                 }
+                let _ = body_c;
                 cmdpop();
                 ecadd(WCB_END());
                 let used = ECUSED.get() as usize;
                 let header_off = used.saturating_sub(1 + p) as wordcode;
                 let p_argc = (p + (argc as usize) + 2) as usize;
                 let cur_so = ECSOFFS.get();
-                let np_now = ECNPATS.with(|c| c.get());
+                let np_now = ECNPATS.with(|cc| cc.get());
                 ECBUF.with_borrow_mut(|b| {
                     if p_argc + 3 < b.len() {
                         b[p_argc] = (so - oecssub) as wordcode;
@@ -3422,7 +3410,7 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                         b[p] = WCB_FUNCDEF(header_off);
                     }
                 });
-                ECNPATS.with(|c| c.set(onp));
+                ECNPATS.with(|cc| cc.set(onp));
                 ECSSUB.set(oecssub);
                 ECNFUNC.set(ECNFUNC.get() + 1);
                 // c:2160-2162 — `isfunc = 1; isnull = 0; break;`.
@@ -3474,10 +3462,11 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
     1 + sr
 }
 
-/// Wrapper for the par_cmd dispatch sites that don't pass `nr`
-/// (matches C's call shape at parse.c:1054 `par_simple(cmplx, nr)`).
+/// Wrapper for callers without a cmplx accumulator. Allocates a
+/// local cmplx and ignores it — only used by legacy dispatch sites.
 pub fn par_simple_wordcode() {
-    par_simple_wordcode_impl(0);
+    let mut cmplx: i32 = 0;
+    par_simple_wordcode_impl(&mut cmplx, 0);
 }
 
 /// Port of `par_redir(int *rp, char *idstring)` from
@@ -6635,8 +6624,9 @@ pub fn parse_cond() -> Option<eprog> {
 /// Secondary-sublist arm: handles the `COPROC`/`Bang` prefix
 /// in front of a pline. Returns the WC_SUBLIST flag word added.
 pub fn par_sublist2(cmplx: &mut i32) -> Option<i32> {
-    // c:869
-    let mut f = 0i32;
+    // c:870 — `int f = 0;`
+    let mut f: i32 = 0;
+    // c:873-880 — COPROC / BANG prefix flags.
     if tok() == COPROC {
         *cmplx = 1;
         f |= WC_SUBLIST_COPROC as i32;
@@ -6646,22 +6636,11 @@ pub fn par_sublist2(cmplx: &mut i32) -> Option<i32> {
         f |= WC_SUBLIST_NOT as i32;
         zshlex();
     }
-    // c:884 — `if (!par_pline(cmplx) && !f) return -1;`
-    // The wordcode-emitter call chain (par_sublist_wordcode →
-    // par_sublist2 → par_pipe_wordcode) needs the wordcode pipe
-    // emitter, NOT the AST `par_pline`. The previous version called
-    // `par_pline` which builds AST nodes and never writes to ECBUF —
-    // the entire wordcode dispatch tree was broken below sublist
-    // level (every script lexed to LIST + END only, since pipes /
-    // commands / args never got emitted).
-    let outer = cmplx_get();
-    cmplx_set(false);
-    let ok = par_pipe_wordcode();
-    *cmplx |= cmplx_get() as i32;
-    cmplx_set(outer | cmplx_get());
-    if !ok && f == 0 {
+    // c:882-883 — `if (!par_pline(cmplx) && !f) return -1;`
+    if !par_pipe_wordcode(cmplx) && f == 0 {
         return None;
     }
+    // c:885 — `return f;`
     Some(f)
 }
 

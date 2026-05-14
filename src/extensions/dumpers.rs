@@ -186,7 +186,8 @@ pub fn dump_wordcode(src: &str) -> String {
     lex::set_tok(ENDINPUT);
     parse::init_parse();
     lex::zshlex();
-    parse::par_list_wordcode();
+    let mut cmplx: i32 = 0;
+    parse::par_list_wordcode(&mut cmplx);
     if lex::tok() != ENDINPUT {
         return "PARSE_ERR\n".to_string();
     }
