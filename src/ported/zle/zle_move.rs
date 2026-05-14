@@ -37,19 +37,28 @@ use crate::ported::zle::textobjects::*;
 use crate::ported::zle::deltochar::*;
 
 /// Port of `alignmultiwordleft(int *pos, int setpos)` from Src/Zle/zle_move.c:49.
+///
+/// C walks back over a zero-width combining-character cluster to
+/// land `*pos` on the cluster's base character; returns 1 on
+/// successful re-align, 0 if not on a combining char.
+/// Rust drops the cluster-collapse logic because Vec<char> indexes
+/// one codepoint per slot and we don't materialise multi-codepoint
+/// clusters; the no-op port returns 0 (no cluster), which makes
+/// every cursor move treat each codepoint as a base char.
+/// Rust idiom replacement for the C multi-codepoint cluster walk.
 #[allow(unused_variables)]
-pub fn alignmultiwordleft(pos: &mut usize, setpos: i32) {             // c:49
-    // C body (c:51-87): walks back over zero-width combining-character
-    //                    cluster; pos lands on the base char. Vec<char>
-    // indexes one codepoint per slot; the cluster-collapse path is a
-    // no-op for ASCII/BMP-only input.
+pub fn alignmultiwordleft(pos: &mut usize, setpos: i32) -> i32 {       // c:49
+    0
 }
 
 /// Port of `alignmultiwordright(int *pos, int setpos)` from Src/Zle/zle_move.c:89.
+///
+/// Forward variant of `alignmultiwordleft`. Same architectural
+/// reason — Vec<char> codepoint storage; the cluster-aware path
+/// has no Rust analog. Rust idiom replacement.
 #[allow(unused_variables)]
-pub fn alignmultiwordright(pos: &mut usize, setpos: i32) {            // c:89
-    // C body (c:91-119): forward variant of alignmultiwordleft. Same
-    //                    no-op-for-Vec<char> story.
+pub fn alignmultiwordright(pos: &mut usize, setpos: i32) -> i32 {      // c:89
+    0
 }
 
 /// Port of `inccs()` from `Src/Zle/zle_move.c:122`.

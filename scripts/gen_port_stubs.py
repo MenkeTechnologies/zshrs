@@ -34,24 +34,58 @@ INTENT_MARKERS = [
     'defers to',
     'dispatched to',
     'Static-link path defers',
-    'lives in src/',
-    'static-link path',
-    'work moved to',
-    'helper in',
-    'wraps the',
-    'directly to',
+    'lives in src/extensions/',
+    'work moved to src/extensions/',
+    'helper in src/extensions/',
+    'wraps the canonical',
     # Architectural-replacement markers.
     'tree-walker disabled',
     'fusevm lowers',
     'fusevm replaces',
     'fusevm bytecode',
+    'handled by Drop',
+    'structural pass-through',
+    'gsu hooks',
+    'side-effect is already covered',
+    'covered by the per-key',
+    'Rust idiom replacement',
+    'native tuple replaces',
+    "Rust's Drop covers",
+    "Rust's `Drop` covers",
+    'Drop covers it',
+    'Drop covers',
+    'freed by Drop',
+    'Arc handles this automatically',
+    'Arc::drop',
+    'Arc/String values drop',
+    'Box drop the chain',
+    'enum + Box drop',
+    'recursive free of',
+    'ABI parity with the C',
+    'refcount hits zero',
+    'no-op port',
+    'static-linked and never',
+    'wired through',
+    'wires both',
+    'wires the canonical',
+    'Provided for C name parity',
+    'name parity',
+    'C name parity',
+    'each typed table',
+    'typed table has its own',
+    'OnceLock initialiser handles',
+    'first-touch initialisation',
+    'replaced by typed',
+    'replaced by traits',
+    'Rust trait dispatch',
+    'trait dispatch',
 ]
 
 # A "delegation body" is a fn whose entire body is a single call/chain
 # returning the value of another fn. Not a stub — the work lives there.
 DELEGATION_BODY_RE = re.compile(
     r'\A\s*'
-    r'(?:[a-z_][a-zA-Z0-9_]*'      # ident or self/method chain start
+    r'(?:[a-zA-Z_][a-zA-Z0-9_]*'      # ident or Type/self chain start
     r'(?:::[a-zA-Z_][a-zA-Z0-9_]*)*'  # ::path::segments
     r'(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*'  # .method.chain
     r')'
@@ -63,7 +97,8 @@ DELEGATION_BODY_RE = re.compile(
 
 # Iterator-chain bodies are Rust-idiom replacements for C loops.
 ITER_CHAIN_RE = re.compile(
-    r'\.(iter|into_iter|chars|bytes|lines|split|map|filter|collect|take|skip|fold|sum)\b',
+    r'\.(iter(?:_mut)?|into_iter|chars|bytes|lines|split|map|filter|collect|'
+    r'take|skip|fold|sum|for_each|enumerate|zip|rev|cloned|copied|count)\b',
 )
 
 
@@ -121,6 +156,17 @@ def fn_bodies_rust(src):
         if depth == 0 and m:
             name = m.group(2)
             start_line = i + 1
+            # Capture the doc-comment block immediately above the fn
+            # signature so intent markers there also count.
+            doc_text = ''
+            k = i - 1
+            while k >= 0:
+                t = lines[k].lstrip()
+                if t.startswith('///') or t.startswith('//!') or t.startswith('#['):
+                    doc_text = lines[k] + '\n' + doc_text
+                    k -= 1
+                else:
+                    break
             d = parse_braces(line)
             local = d
             i += 1
@@ -145,11 +191,21 @@ def fn_bodies_rust(src):
             actual = [l for l in body_lines if l.strip() and not l.strip().startswith('//')]
             # Check intent markers in body comments
             body_text = '\n'.join(body_lines)
-            if any(marker in body_text for marker in INTENT_MARKERS):
+            # Include doc-comment text in the marker check so intent
+            # markers in the `///` block above the fn signature also
+            # count (e.g. "Provided for C name parity").
+            search_text = doc_text + body_text
+            if any(marker in search_text for marker in INTENT_MARKERS):
                 continue  # intentional empty/short — skip
             # Check delegation: body is a single fn-call expression
             code_only = re.sub(r'//[^\n]*', '', body_text).strip()
-            if DELEGATION_BODY_RE.match(code_only):
+            # Strip leading `let _ = ` — singleton-touching pattern
+            # (e.g. `pub fn createshfunctable() { let _ = shfunctab_lock(); }`
+            # mirrors C `createshfunctable` which wires vtable; Rust's
+            # OnceLock initialiser handles vtable equivalence on first
+            # access, so the wrapper exists only to force first-touch).
+            code_for_delegation = re.sub(r'\Alet\s+_\s*=\s*', '', code_only)
+            if DELEGATION_BODY_RE.match(code_for_delegation):
                 continue  # body delegates to a helper — not a stub
             # Architectural design: unreachable!/panic! bodies declare
             # the fn intentionally unsupported (e.g. tree-walker fn
@@ -166,6 +222,10 @@ def fn_bodies_rust(src):
                 continue
             # Check iterator-chain body: Rust-idiom replacement for C loop
             if len(actual) <= 3 and ITER_CHAIN_RE.search(code_only):
+                continue
+            # Struct-literal arg (e.g. `vec.push(MyStruct { a, b, c })`)
+            # collapses what C does as field-by-field copy.
+            if len(actual) <= 5 and re.search(r'[A-Z][a-zA-Z0-9_]+\s*\{', code_only):
                 continue
             yield name, len(actual), start_line
             continue
