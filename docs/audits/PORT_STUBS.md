@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-14T21:08:17.153541+00:00
+Generated: 2026-05-14T21:15:08.194688+00:00
 
 ## Method
 
@@ -16,74 +16,68 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 216 stubs across 47 files
+## Summary: 178 stubs across 46 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
-| `src/ported/utils.rs` | 18 | `lchdir` (8 / 298) |
-| `src/ported/hist.rs` | 10 | `hdynread` (1 / 18) |
-| `src/ported/zle/compctl.rs` | 9 | `freecompcond` (0 / 37) |
-| `src/ported/glob.rs` | 8 | `insert` (0 / 116) |
+| `src/ported/utils.rs` | 13 | `lchdir` (8 / 298) |
 | `src/ported/jobs.rs` | 8 | `clearjobtab` (1 / 22) |
-| `src/ported/module.rs` | 8 | `load_and_bind` (1 / 20) |
 | `src/ported/modules/zutil.rs` | 8 | `zalloc_default_array` (1 / 17) |
 | `src/ported/zle/zle_hist.rs` | 8 | `doisearch` (12 / 454) |
-| `src/ported/zle/zle_main.rs` | 8 | `describekeybriefly` (1 / 28) |
 | `src/ported/zle/zle_refresh.rs` | 8 | `moveto` (2 / 44) |
-| `src/ported/builtin.rs` | 7 | `cd_do_chdir` (4 / 63) |
-| `src/ported/hashtable.rs` | 7 | `newhashtable` (1 / 17) |
 | `src/ported/prompt.rs` | 7 | `prompttrunc` (1 / 183) |
-| `src/ported/zle/zle_keymap.rs` | 7 | `getkeymapcmd` (1 / 87) |
-| `src/ported/zle/zle_vi.rs` | 7 | `getvirange` (5 / 83) |
+| `src/ported/zle/compctl.rs` | 7 | `makecomplistflags` (19 / 746) |
+| `src/ported/zle/zle_main.rs` | 7 | `getbyte` (10 / 74) |
+| `src/ported/hashtable.rs` | 6 | `hashdir` (4 / 54) |
 | `src/ported/pattern.rs` | 6 | `patmatch` (4 / 558) |
 | `src/ported/zle/compresult.rs` | 6 | `do_single` (4 / 180) |
 | `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
+| `src/ported/builtin.rs` | 5 | `cd_new_pwd` (6 / 71) |
+| `src/ported/glob.rs` | 5 | `zglob` (13 / 604) |
+| `src/ported/hist.rs` | 5 | `bufferwords` (15 / 158) |
 | `src/ported/init.rs` | 5 | `init_term` (8 / 86) |
 | `src/ported/parse.rs` | 5 | `check_dump_file` (1 / 83) |
 | `src/ported/zle/zle_utils.rs` | 5 | `stringaszleline` (14 / 102) |
 | `src/ported/modules/db_gdbm.rs` | 4 | `gdbmgetfn` (7 / 28) |
 | `src/ported/signals.rs` | 4 | `killrunjobs` (1 / 13) |
+| `src/ported/zle/complist.rs` | 4 | `compprintfmt` (4 / 232) |
 | `src/ported/zle/zle_params.rs` | 4 | `get_zle_state` (9 / 46) |
 | `src/ported/zle/zle_thingy.rs` | 4 | `bin_zle_call` (7 / 95) |
-| `src/ported/mem.rs` | 3 | `hrealloc` (3 / 102) |
-| `src/ported/modules/pcre.rs` | 3 | `zpcre_get_substrings` (1 / 103) |
-| `src/ported/zle/complist.rs` | 3 | `compprintfmt` (4 / 232) |
+| `src/ported/zle/zle_vi.rs` | 4 | `vigetkey` (5 / 32) |
 | `src/ported/zle/termquery.rs` | 3 | `handle_color` (1 / 24) |
+| `src/ported/zle/zle_keymap.rs` | 3 | `getrestchar_keybuf` (2 / 39) |
 | `src/ported/zle/zle_move.rs` | 3 | `backwardmetafiedchar` (3 / 73) |
-| `src/ported/compat.rs` | 2 | `zgettime_monotonic_if_available` (23 / 345) |
+| `src/ported/compat.rs` | 2 | `zgettime_monotonic_if_available` (23 / 309) |
 | `src/ported/input.rs` | 2 | `inputline` (5 / 88) |
+| `src/ported/mem.rs` | 2 | `hrealloc` (3 / 102) |
 | `src/ported/modules/curses.rs` | 2 | `zccmd_input` (33 / 162) |
-| `src/ported/modules/parameter.rs` | 2 | `funcfiletracegetfn` (4 / 23) |
-| `src/ported/options.rs` | 2 | `dosetopt` (11 / 97) |
 | `src/ported/zle/compcore.rs` | 2 | `set_comp_sep` (9 / 319) |
 | `src/ported/zle/zle_misc.rs` | 2 | `makesuffixstr` (3 / 42) |
 | `src/ported/math.rs` | 1 | `setmathvar` (7 / 44) |
+| `src/ported/module.rs` | 1 | `printmodulenode` (10 / 89) |
 | `src/ported/modules/files.rs` | 1 | `recursivecmd` (12 / 59) |
 | `src/ported/modules/mathfunc.rs` | 1 | `math_string` (12 / 66) |
+| `src/ported/modules/pcre.rs` | 1 | `cond_pcre_match` (19 / 70) |
 | `src/ported/modules/termcap.rs` | 1 | `scantermcap` (8 / 78) |
 | `src/ported/modules/watch.rs` | 1 | `readwtab` (20 / 169) |
 | `src/ported/modules/zprof.rs` | 1 | `name_for_anonymous_function` (1 / 11) |
 | `src/ported/modules/zpty.rs` | 1 | `newptycmd` (18 / 118) |
+| `src/ported/options.rs` | 1 | `createoptiontable` (4 / 16) |
 | `src/ported/params.rs` | 1 | `assignaparam` (45 / 187) |
 | `src/ported/zle/compmatch.rs` | 1 | `bld_line` (40 / 137) |
 | `src/ported/zle/computil.rs` | 1 | `cfp_add_sdirs` (18 / 73) |
 
 ## Per-file detail
 
-### `src/ported/utils.rs` — 18 stubs
+### `src/ported/utils.rs` — 13 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
 | 4229 | `lchdir` | 8 | 298 | 2% |
 | 2067 | `spckword` | 10 | 156 | 6% |
-| 3387 | `mb_niceformat` | 6 | 70 | 8% |
 | 2109 | `ztrftime` | 28 | 192 | 14% |
-| 2215 | `spacesplit` | 5 | 33 | 15% |
-| 3480 | `mb_metacharlenconv_r` | 5 | 32 | 15% |
-| 3585 | `sb_niceformat` | 9 | 55 | 16% |
 | 269 | `zerrmsg` | 12 | 72 | 16% |
 | 1902 | `checkrmall` | 8 | 48 | 16% |
-| 3520 | `mb_metastrlenend` | 8 | 48 | 16% |
 | 2030 | `getquery` | 13 | 69 | 18% |
 | 68 | `set_widearray` | 6 | 28 | 21% |
 | 2393 | `sepjoin` | 5 | 23 | 21% |
@@ -92,48 +86,6 @@ python3 scripts/gen_port_stubs.py
 | 972 | `checkmailpath` | 19 | 73 | 26% |
 | 2823 | `itype_end` | 18 | 65 | 27% |
 | 3294 | `zreaddir` | 8 | 28 | 28% |
-
-### `src/ported/hist.rs` — 10 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1194 | `hdynread` | 1 | 18 | 5% |
-| 1431 | `bufferwords` | 15 | 158 | 9% |
-| 1345 | `savehistfile` | 22 | 191 | 11% |
-| 1387 | `lockhistfile` | 21 | 109 | 19% |
-| 1450 | `histsplitwords` | 24 | 117 | 20% |
-| 1038 | `casemodify` | 23 | 101 | 22% |
-| 870 | `getargspec` | 8 | 34 | 23% |
-| 491 | `putoldhistentryontop` | 8 | 33 | 24% |
-| 373 | `histreduceblanks` | 10 | 39 | 25% |
-| 1027 | `remlpaths` | 7 | 26 | 26% |
-
-### `src/ported/zle/compctl.rs` — 9 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 147 | `freecompcond` | 0 | 37 | 0% |
-| 2463 | `makecomplistflags` | 19 | 746 | 2% |
-| 917 | `delpatcomp` | 2 | 13 | 15% |
-| 1931 | `makecomplistctl` | 12 | 74 | 16% |
-| 1581 | `addmatch` | 17 | 99 | 17% |
-| 1639 | `getreal` | 2 | 11 | 18% |
-| 1974 | `makecomplistext` | 36 | 150 | 24% |
-| 110 | `createcompctltable` | 4 | 14 | 28% |
-| 1266 | `ccmakehookfn` | 32 | 108 | 29% |
-
-### `src/ported/glob.rs` — 8 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 276 | `insert` | 0 | 116 | 0% |
-| 1058 | `igetmatch` | 1 | 268 | 0% |
-| 322 | `parsecomplist` | 1 | 55 | 1% |
-| 596 | `zglob` | 13 | 604 | 2% |
-| 844 | `get_match_ret` | 5 | 71 | 7% |
-| 293 | `scanner` | 17 | 162 | 10% |
-| 1370 | `qualsheval` | 7 | 25 | 28% |
-| 523 | `glob_exec_string` | 7 | 24 | 29% |
 
 ### `src/ported/jobs.rs` — 8 stubs
 
@@ -147,19 +99,6 @@ python3 scripts/gen_port_stubs.py
 | 810 | `addfilelist` | 4 | 15 | 26% |
 | 638 | `should_report_time` | 12 | 44 | 27% |
 | 545 | `printtime` | 56 | 192 | 29% |
-
-### `src/ported/module.rs` — 8 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 815 | `load_and_bind` | 1 | 20 | 5% |
-| 283 | `checkaddparam` | 1 | 15 | 6% |
-| 854 | `try_load_module` | 1 | 14 | 7% |
-| 1079 | `module_func` | 1 | 13 | 7% |
-| 36 | `printmodulenode` | 10 | 89 | 11% |
-| 2022 | `bin_zmodload_features` | 26 | 217 | 11% |
-| 1942 | `unload_named_module` | 5 | 36 | 13% |
-| 2129 | `autofeatures` | 45 | 160 | 28% |
 
 ### `src/ported/modules/zutil.rs` — 8 stubs
 
@@ -187,19 +126,6 @@ python3 scripts/gen_port_stubs.py
 | 1180 | `historybeginningsearchbackward` | 8 | 36 | 22% |
 | 1195 | `historybeginningsearchforward` | 8 | 36 | 22% |
 
-### `src/ported/zle/zle_main.rs` — 8 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 855 | `describekeybriefly` | 1 | 28 | 3% |
-| 352 | `getbyte` | 10 | 74 | 13% |
-| 68 | `zsetterm` | 10 | 70 | 14% |
-| 544 | `zleread` | 20 | 125 | 16% |
-| 953 | `reexpandprompt` | 5 | 26 | 19% |
-| 425 | `getrestchar` | 7 | 36 | 19% |
-| 1008 | `trashzle` | 5 | 22 | 22% |
-| 270 | `raw_getbyte` | 46 | 195 | 23% |
-
 ### `src/ported/zle/zle_refresh.rs` — 8 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -213,30 +139,6 @@ python3 scripts/gen_port_stubs.py
 | 558 | `snextline` | 5 | 27 | 18% |
 | 544 | `nextline` | 6 | 22 | 27% |
 
-### `src/ported/builtin.rs` — 7 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1258 | `cd_do_chdir` | 4 | 63 | 6% |
-| 1326 | `cd_new_pwd` | 6 | 71 | 8% |
-| 4368 | `bin_print` | 67 | 777 | 8% |
-| 5057 | `eval` | 4 | 45 | 8% |
-| 4908 | `zexit` | 6 | 51 | 11% |
-| 5197 | `bin_read` | 111 | 534 | 20% |
-| 1299 | `cd_try_chdir` | 11 | 43 | 25% |
-
-### `src/ported/hashtable.rs` — 7 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 62 | `newhashtable` | 1 | 17 | 5% |
-| 838 | `hashdir` | 4 | 54 | 7% |
-| 716 | `expandhashtable` | 2 | 15 | 13% |
-| 725 | `resizehashtable` | 4 | 18 | 22% |
-| 1047 | `freeshfuncnode` | 4 | 17 | 23% |
-| 1570 | `addhistnode` | 4 | 17 | 23% |
-| 761 | `printhashtabinfo` | 6 | 22 | 27% |
-
 ### `src/ported/prompt.rs` — 7 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -249,29 +151,40 @@ python3 scripts/gen_port_stubs.py
 | 475 | `applytextattributes` | 8 | 52 | 15% |
 | 1751 | `match_colour` | 13 | 55 | 23% |
 
-### `src/ported/zle/zle_keymap.rs` — 7 stubs
+### `src/ported/zle/compctl.rs` — 7 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 1247 | `getkeymapcmd` | 1 | 87 | 1% |
-| 1309 | `getkeycmd` | 1 | 29 | 3% |
-| 1233 | `getrestchar_keybuf` | 2 | 39 | 5% |
-| 1205 | `default_bindings` | 17 | 121 | 14% |
-| 1185 | `add_cursor_key` | 3 | 18 | 16% |
-| 994 | `bin_bindkey_meta` | 4 | 17 | 23% |
-| 885 | `bin_bindkey_lsmaps` | 4 | 16 | 25% |
+| 2463 | `makecomplistflags` | 19 | 746 | 2% |
+| 917 | `delpatcomp` | 2 | 13 | 15% |
+| 1931 | `makecomplistctl` | 12 | 74 | 16% |
+| 1581 | `addmatch` | 17 | 99 | 17% |
+| 1639 | `getreal` | 2 | 11 | 18% |
+| 1974 | `makecomplistext` | 36 | 150 | 24% |
+| 110 | `createcompctltable` | 4 | 14 | 28% |
 
-### `src/ported/zle/zle_vi.rs` — 7 stubs
+### `src/ported/zle/zle_main.rs` — 7 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 129 | `getvirange` | 5 | 83 | 6% |
-| 548 | `virepeatchange` | 1 | 16 | 6% |
-| 78 | `startvichange` | 3 | 22 | 13% |
-| 103 | `vigetkey` | 5 | 32 | 15% |
-| 147 | `dovilinerange` | 4 | 23 | 17% |
-| 409 | `vireplacechars` | 14 | 62 | 22% |
-| 231 | `videletechar` | 5 | 19 | 26% |
+| 352 | `getbyte` | 10 | 74 | 13% |
+| 68 | `zsetterm` | 10 | 70 | 14% |
+| 544 | `zleread` | 20 | 125 | 16% |
+| 953 | `reexpandprompt` | 5 | 26 | 19% |
+| 425 | `getrestchar` | 7 | 36 | 19% |
+| 1008 | `trashzle` | 5 | 22 | 22% |
+| 270 | `raw_getbyte` | 46 | 195 | 23% |
+
+### `src/ported/hashtable.rs` — 6 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 838 | `hashdir` | 4 | 54 | 7% |
+| 716 | `expandhashtable` | 2 | 15 | 13% |
+| 725 | `resizehashtable` | 4 | 18 | 22% |
+| 1047 | `freeshfuncnode` | 4 | 17 | 23% |
+| 1570 | `addhistnode` | 4 | 17 | 23% |
+| 761 | `printhashtabinfo` | 6 | 22 | 27% |
 
 ### `src/ported/pattern.rs` — 6 stubs
 
@@ -290,10 +203,10 @@ python3 scripts/gen_port_stubs.py
 |---|---|---|---|---|
 | 316 | `do_single` | 4 | 180 | 2% |
 | 297 | `do_allmatches` | 2 | 47 | 4% |
-| 157 | `build_pos_string` | 1 | 21 | 4% |
+| 157 | `build_pos_string` | 1 | 18 | 5% |
 | 69 | `cut_cline` | 5 | 81 | 6% |
 | 207 | `instmatch` | 6 | 80 | 7% |
-| 96 | `cline_str` | 45 | 269 | 16% |
+| 96 | `cline_str` | 45 | 268 | 16% |
 
 ### `src/ported/zle/zle_tricky.rs` — 6 stubs
 
@@ -305,6 +218,36 @@ python3 scripts/gen_port_stubs.py
 | 855 | `listlist` | 33 | 174 | 18% |
 | 377 | `docomplete` | 40 | 210 | 19% |
 | 1034 | `expandcmdpath` | 6 | 28 | 21% |
+
+### `src/ported/builtin.rs` — 5 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 1326 | `cd_new_pwd` | 6 | 71 | 8% |
+| 4368 | `bin_print` | 67 | 777 | 8% |
+| 5057 | `eval` | 4 | 45 | 8% |
+| 5197 | `bin_read` | 111 | 533 | 20% |
+| 1299 | `cd_try_chdir` | 11 | 43 | 25% |
+
+### `src/ported/glob.rs` — 5 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 596 | `zglob` | 13 | 604 | 2% |
+| 844 | `get_match_ret` | 5 | 71 | 7% |
+| 293 | `scanner` | 17 | 162 | 10% |
+| 1370 | `qualsheval` | 7 | 25 | 28% |
+| 523 | `glob_exec_string` | 7 | 24 | 29% |
+
+### `src/ported/hist.rs` — 5 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 1441 | `bufferwords` | 15 | 158 | 9% |
+| 1355 | `savehistfile` | 22 | 191 | 11% |
+| 1397 | `lockhistfile` | 21 | 109 | 19% |
+| 1460 | `histsplitwords` | 24 | 117 | 20% |
+| 1048 | `casemodify` | 23 | 101 | 22% |
 
 ### `src/ported/init.rs` — 5 stubs
 
@@ -354,6 +297,15 @@ python3 scripts/gen_port_stubs.py
 | 285 | `wait_for_processes` | 10 | 81 | 12% |
 | 462 | `killjb` | 5 | 39 | 12% |
 
+### `src/ported/zle/complist.rs` — 4 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 568 | `compprintfmt` | 4 | 232 | 1% |
+| 532 | `asklistscroll` | 2 | 40 | 5% |
+| 199 | `getcolval` | 2 | 37 | 5% |
+| 472 | `clnicezputs` | 25 | 104 | 24% |
+
 ### `src/ported/zle/zle_params.rs` — 4 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -372,29 +324,14 @@ python3 scripts/gen_port_stubs.py
 | 1125 | `bin_zle_fd` | 21 | 81 | 25% |
 | 1024 | `bin_zle_flags` | 11 | 39 | 28% |
 
-### `src/ported/mem.rs` — 3 stubs
+### `src/ported/zle/zle_vi.rs` — 4 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 229 | `hrealloc` | 3 | 102 | 2% |
-| 311 | `realloc` | 2 | 32 | 6% |
-| 128 | `old_heaps` | 3 | 29 | 10% |
-
-### `src/ported/modules/pcre.rs` — 3 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 180 | `zpcre_get_substrings` | 1 | 103 | 0% |
-| 143 | `pcre_callout` | 1 | 15 | 6% |
-| 324 | `cond_pcre_match` | 19 | 70 | 27% |
-
-### `src/ported/zle/complist.rs` — 3 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 568 | `compprintfmt` | 4 | 232 | 1% |
-| 532 | `asklistscroll` | 2 | 40 | 5% |
-| 472 | `clnicezputs` | 25 | 104 | 24% |
+| 103 | `vigetkey` | 5 | 32 | 15% |
+| 147 | `dovilinerange` | 4 | 23 | 17% |
+| 409 | `vireplacechars` | 14 | 62 | 22% |
+| 231 | `videletechar` | 5 | 19 | 26% |
 
 ### `src/ported/zle/termquery.rs` — 3 stubs
 
@@ -403,6 +340,14 @@ python3 scripts/gen_port_stubs.py
 | 235 | `handle_color` | 1 | 24 | 4% |
 | 249 | `query_terminal` | 7 | 42 | 16% |
 | 167 | `probe_terminal` | 46 | 205 | 22% |
+
+### `src/ported/zle/zle_keymap.rs` — 3 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 1233 | `getrestchar_keybuf` | 2 | 39 | 5% |
+| 1205 | `default_bindings` | 17 | 121 | 14% |
+| 885 | `bin_bindkey_lsmaps` | 4 | 16 | 25% |
 
 ### `src/ported/zle/zle_move.rs` — 3 stubs
 
@@ -416,7 +361,7 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 69 | `zgettime_monotonic_if_available` | 23 | 345 | 6% |
+| 69 | `zgettime_monotonic_if_available` | 23 | 309 | 7% |
 | 217 | `zgetdir` | 15 | 120 | 12% |
 
 ### `src/ported/input.rs` — 2 stubs
@@ -426,6 +371,13 @@ python3 scripts/gen_port_stubs.py
 | 293 | `inputline` | 5 | 88 | 5% |
 | 420 | `inpoptop` | 8 | 28 | 28% |
 
+### `src/ported/mem.rs` — 2 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 229 | `hrealloc` | 3 | 102 | 2% |
+| 311 | `realloc` | 2 | 32 | 6% |
+
 ### `src/ported/modules/curses.rs` — 2 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -433,26 +385,12 @@ python3 scripts/gen_port_stubs.py
 | 1028 | `zccmd_input` | 33 | 162 | 20% |
 | 611 | `zccmd_delwin` | 12 | 44 | 27% |
 
-### `src/ported/modules/parameter.rs` — 2 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 749 | `funcfiletracegetfn` | 4 | 23 | 17% |
-| 568 | `scanfunctions` | 12 | 50 | 24% |
-
-### `src/ported/options.rs` — 2 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 573 | `dosetopt` | 11 | 97 | 11% |
-| 155 | `createoptiontable` | 4 | 16 | 25% |
-
 ### `src/ported/zle/compcore.rs` — 2 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
 | 1240 | `set_comp_sep` | 9 | 319 | 2% |
-| 514 | `callcompfunc` | 46 | 339 | 13% |
+| 514 | `callcompfunc` | 46 | 330 | 13% |
 
 ### `src/ported/zle/zle_misc.rs` — 2 stubs
 
@@ -467,6 +405,12 @@ python3 scripts/gen_port_stubs.py
 |---|---|---|---|---|
 | 1339 | `setmathvar` | 7 | 44 | 15% |
 
+### `src/ported/module.rs` — 1 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 36 | `printmodulenode` | 10 | 89 | 11% |
+
 ### `src/ported/modules/files.rs` — 1 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -478,6 +422,12 @@ python3 scripts/gen_port_stubs.py
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
 | 55 | `math_string` | 12 | 66 | 18% |
+
+### `src/ported/modules/pcre.rs` — 1 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 324 | `cond_pcre_match` | 19 | 70 | 27% |
 
 ### `src/ported/modules/termcap.rs` — 1 stubs
 
@@ -502,6 +452,12 @@ python3 scripts/gen_port_stubs.py
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
 | 236 | `newptycmd` | 18 | 118 | 15% |
+
+### `src/ported/options.rs` — 1 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 155 | `createoptiontable` | 4 | 16 | 25% |
 
 ### `src/ported/params.rs` — 1 stubs
 

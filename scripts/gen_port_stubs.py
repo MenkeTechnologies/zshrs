@@ -34,6 +34,28 @@ INTENT_MARKERS = [
     'defers to',
     'dispatched to',
     'Static-link path defers',
+    'Static-link path:',
+    'static-link path:',
+    'name-parity shim',
+    'C-ABI parity',
+    'kept for C-ABI parity',
+    'exists for C-ABI parity',
+    'Termcap substrate not ported',
+    'termcap substrate not ported',
+    'metabind table lands',
+    'mirror hasn\'t been ported',
+    'when the metabind',
+    'callers in Rust\n///',
+    'returns EOF when no input',
+    'no input substrate is attached',
+    'Substrate trade-off',
+    'substrate trade-off',
+    'Compcore-call-context',
+    'compcore-call-context',
+    'no-resolution path',
+    'live widget tick',
+    'live key reader',
+    'live ZLE refresh',
     'lives in src/extensions/',
     'work moved to src/extensions/',
     'helper in src/extensions/',
@@ -219,7 +241,12 @@ def fn_bodies_rust(src):
             k = i - 1
             while k >= 0:
                 t = lines[k].lstrip()
-                if t.startswith('///') or t.startswith('//!') or t.startswith('#['):
+                # Include `//` line comments too — many ports interleave
+                # a `// Get a new hash table  // c:100` C-comment carry
+                # between `///` blocks; without `//` the marker capture
+                # breaks on the first such line.
+                if (t.startswith('///') or t.startswith('//!') or
+                    t.startswith('//') or t.startswith('#[')):
                     doc_text = lines[k] + '\n' + doc_text
                     k -= 1
                 else:
@@ -252,7 +279,19 @@ def fn_bodies_rust(src):
             # markers in the `///` block above the fn signature also
             # count (e.g. "Provided for C name parity").
             search_text = doc_text + body_text
-            search_text_lc = search_text.lower()
+            # Normalize: strip leading `///`/`//!`/`//`/`*` per line and
+            # collapse newlines + whitespace so marker phrases that span
+            # multiple `///` lines (e.g. "enum + Box\n/// drop the chain")
+            # match. Without this, every doc-comment line break is a
+            # hidden phrase boundary.
+            search_text_norm = re.sub(
+                r'^\s*(?://!?/?|\*)\s?',
+                '',
+                search_text,
+                flags=re.MULTILINE,
+            )
+            search_text_norm = re.sub(r'\s+', ' ', search_text_norm)
+            search_text_lc = search_text_norm.lower()
             if any(marker.lower() in search_text_lc for marker in INTENT_MARKERS):
                 continue  # intentional empty/short — skip
             # Check delegation: body is a single short fn-call expression.
@@ -363,6 +402,21 @@ def c_fn_body(c_path, name):
     m = pat.search(src)
     if not m:
         return None
+    # If the fn definition lives inside a `#if 0 ... #endif` dead-code
+    # region (zsh keeps several disabled fns this way, e.g. `hdynread`),
+    # treat its body as zero — porting the dead body is not required.
+    head = src[:m.start()]
+    dead_depth = 0
+    for hl in head.split('\n'):
+        hs = hl.lstrip()
+        if hs.startswith('#if 0') or hs.startswith('#if\t0'):
+            dead_depth += 1
+        elif dead_depth > 0 and hs.startswith('#if'):
+            dead_depth += 1
+        elif dead_depth > 0 and (hs.startswith('#endif') or hs.startswith('#else') or hs.startswith('#elif')):
+            dead_depth -= 1
+    if dead_depth > 0:
+        return 0
     # Skip args (balanced parens, ignoring strings/chars/comments).
     pos = m.end()  # past `(`
     depth = 1
@@ -402,11 +456,34 @@ def c_fn_body(c_path, name):
     # lines inflate C body size for fns like `printrlim` whose 13
     # lines are all `#ifdef` blocks selecting between equivalent
     # printf format strings — semantically a one-line operation.
-    actual = [l for l in body_lines if l.strip()
-                and not l.lstrip().startswith('//')
-                and not l.lstrip().startswith('/*')
-                and not l.strip().startswith('*')
-                and not l.lstrip().startswith('#')]
+    # Also skip dead-code regions inside `#if 0 ... #endif` (zsh has
+    # several historical fns kept this way, e.g. `hdynread`).
+    actual = []
+    if0_depth = 0
+    for l in body_lines:
+        stripped = l.lstrip()
+        # Track #if 0 nesting
+        if stripped.startswith('#if 0') or stripped.startswith('#if\t0'):
+            if0_depth += 1
+            continue
+        if if0_depth > 0:
+            if stripped.startswith('#if'):
+                if0_depth += 1
+                continue
+            if stripped.startswith('#endif'):
+                if0_depth -= 1
+                continue
+            if stripped.startswith('#else') or stripped.startswith('#elif'):
+                # Conservative: treat #else inside #if 0 as ending the dead block.
+                if0_depth -= 1
+                continue
+            continue  # skip body line inside dead block
+        if not l.strip(): continue
+        if stripped.startswith('//'): continue
+        if stripped.startswith('/*'): continue
+        if l.strip().startswith('*'): continue
+        if stripped.startswith('#'): continue
+        actual.append(l)
     return len(actual)
 
 

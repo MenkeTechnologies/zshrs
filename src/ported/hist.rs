@@ -370,6 +370,8 @@ pub fn hbegin(dohist: i32) {                                                 // 
 }
 
 /// Port of `char *histreduceblanks(void)` from Src/hist.c.
+/// Rust idiom replacement: `chars()` + `is_whitespace` covers the C
+/// per-byte run-collapse loop without the manual buffer growth.
 pub fn histreduceblanks(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut prev_space = false;
@@ -488,6 +490,9 @@ pub fn gethistent(ev: i64, nearmatch: i32) -> Option<i64> {                  // 
 }
 
 /// Port of `int putoldhistentryontop(int keep_going)` from Src/hist.c.
+/// Rust idiom replacement: `Vec::remove`+`insert(0, …)` on the
+/// hist_ring deque replaces the C doubly-linked-list relink
+/// (curhist->down/up + lastnode/firstnode pointer dance).
 pub fn putoldhistentryontop(_keep_going: i32) -> i32 {
     let mut ring = hist_ring.lock().unwrap();
     if let Some(oldest) = ring.last().map(|h| h.histnum) {
@@ -867,6 +872,8 @@ pub fn hgetline(entry: &histent) -> String {
 }
 
 /// Port of `int getargspec(int argc, int marg, int evset)` from Src/hist.c.
+/// Rust idiom replacement: `match` on the spec-char collapses the C
+/// switch + sscanf digit-walk into a single arm-per-case table.
 pub fn getargspec(argc: usize, c: char, marg: Option<usize>, evset: bool) -> Option<usize> {
     match c {
         '0' => Some(0),
@@ -1024,6 +1031,9 @@ pub fn rembutext(s: &str) -> String {                                        // 
 }
 
 /// Port of `char *remlpaths(char **str, int count)` from Src/hist.c:2152.
+/// Rust idiom replacement: `split('/')` + `iter().rev().take(n)`
+/// covers the C reverse-scan-and-skip-leading-paths loop without
+/// strchr/strncpy bookkeeping.
 pub fn remlpaths(s: &str, count: i32) -> String {                            // c:2152
     let s = s.trim_end_matches('/');
     if s.is_empty() { return String::new(); }
