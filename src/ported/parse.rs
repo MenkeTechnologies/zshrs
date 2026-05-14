@@ -2995,16 +2995,28 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 ecstr(name);
                 cmdpush(CS_ARRAY as u8);
                 zshlex();
-                // Count words until OUTPAR_TOK.
+                // c:1901 — `n = par_nl_wordlist();` (parse.c:2379-2391):
+                //   `while (tok == STRING || tok == SEPER) {
+                //     if (tok != SEPER) { ecstr(tokstr); num++; }
+                //     zshlex();
+                //   }`
+                // SEPER is the lexer's general line-terminator token —
+                // covers `;`, `\n`, and `\r\n`. The old loop only handled
+                // NEWLIN and started inside-string, which couldn't enter
+                // when the first post-`(` token was a newline (multi-line
+                // array literals always start that way).
                 let mut n = 0u32;
-                while tok() == STRING_LEX {
-                    let w = tokstr().unwrap_or_default();
-                    ecstr(&w);
-                    n += 1;
-                    zshlex();
-                    while tok() == NEWLIN {
-                        zshlex();
+                loop {
+                    let t = tok();
+                    if t != STRING_LEX && t != SEPER && t != NEWLIN {
+                        break;
                     }
+                    if t == STRING_LEX {
+                        let w = tokstr().unwrap_or_default();
+                        ecstr(&w);
+                        n += 1;
+                    }
+                    zshlex();
                 }
                 ECBUF.with_borrow_mut(|b| {
                     if p < b.len() {
@@ -3139,14 +3151,19 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                 cmdpush(CS_ARRAY as u8);
                 set_intypeset(false);
                 zshlex();
+                // c:2044 — `n = par_nl_wordlist();` (parse.c:2379-2391).
+                // SEPER + NEWLIN both allowed between elements.
                 let mut nelem = 0u32;
-                while tok() == STRING_LEX {
-                    ecstr(&tokstr().unwrap_or_default());
-                    nelem += 1;
-                    zshlex();
-                    while tok() == NEWLIN {
-                        zshlex();
+                loop {
+                    let t = tok();
+                    if t != STRING_LEX && t != SEPER && t != NEWLIN {
+                        break;
                     }
+                    if t == STRING_LEX {
+                        ecstr(&tokstr().unwrap_or_default());
+                        nelem += 1;
+                    }
+                    zshlex();
                 }
                 ECBUF.with_borrow_mut(|b| {
                     if parr < b.len() {
