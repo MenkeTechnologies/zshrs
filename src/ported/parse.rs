@@ -51,6 +51,11 @@ struct EccstrNode {
     /// Wordcode-encoded offset: `(byte_offset << 2) | token_bit`.
     /// Same shape as `Eccstr::offs` (parse.c:459).
     offs: u32,
+    /// Absolute byte offset in the final strs region (= `ecsoffs` at
+    /// insert time). C `Eccstr::aoffs` (parse.c:464). copy_ecstr uses
+    /// THIS for the write position — distinct from `offs` which is
+    /// ecssub-relative and collides across funcdef scopes.
+    aoffs: u32,
     /// `nfunc` snapshot at insert time. Per-function namespace key
     /// — top-level scripts use 0; each funcdef bumps it.
     nfunc: i32,
@@ -1131,8 +1136,11 @@ pub fn ecstrcode(s: &str) -> u32 {
         if let Some(offs) = found_offs {
             return offs;
         }
+        // c:462 — `p->offs = ((ecsoffs - ecssub) << 2) | (t ? 1 : 0);`
         let offs =
             (((ECSOFFS.get() - ECSSUB.get()) as u32) << 2) | if t { 1 } else { 0 };
+        // c:463 — `p->aoffs = ecsoffs;` (absolute write position).
+        let aoffs = ECSOFFS.get() as u32;
         // c:457-465 — insert new node at the NULL slot the walk
         // terminated at. Encode the walk path as a Vec<bool> of
         // left/right turns (true = right), then re-descend to
@@ -1146,6 +1154,7 @@ pub fn ecstrcode(s: &str) -> u32 {
             right: None,
             str: stored.clone(),
             offs,
+            aoffs,
             nfunc,
             hashval: val,
         });
@@ -7236,24 +7245,35 @@ pub fn COND_SEP() -> bool {
 }
 
 /// Port of `copy_ecstr(Eccstr s, char *p)` from `Src/parse.c:537`.
-/// Walks the in-build string-eccstr tree and writes each entry to
-/// `p[s->aoffs..]`. The Rust port mirrors via the
-/// `ECSTRS_REVERSE` HashMap (eccstr-tree replacement) and writes
-/// into a `Vec<u8>` slice.
-pub fn copy_ecstr(table: &std::collections::HashMap<u32, Vec<u8>>, p: &mut [u8]) {
-    // c:537. Map key is the wordcode-encoded offs from `ecstrcode`
-    // (`(byte_offset << 2) | token_bit`, parse.c:459); strip the
-    // low 2 bits to get the real byte offset. Map value is the
-    // metafied byte form — written verbatim to match C's strs
-    // region byte-for-byte.
-    for (&offs, bytes) in table.iter() {
-        let off = (offs >> 2) as usize;
-        let need = off + bytes.len() + 1;
-        if need > p.len() {
-            continue;
+/// Walks the BST and writes each entry to `p[s->aoffs..]` matching
+/// C's recursive in-order traversal exactly. The old impl used the
+/// `ECSTRS_REVERSE` HashMap keyed by `offs` (= ecssub-relative
+/// wordcode-encoded offset), which collides across funcdef scopes:
+/// a string at relative offs=0 inside funcdef A and another at
+/// relative offs=0 inside funcdef B share the same key, so one
+/// overwrites the other.
+pub fn copy_ecstr(_table: &std::collections::HashMap<u32, Vec<u8>>, p: &mut [u8]) {
+    // c:537-544 — walk eccstr BST recursively, writing each node's
+    // str at p[node->aoffs..node->aoffs + strlen + 1] (NUL-terminated).
+    ECSTRS_TREE.with_borrow(|root| {
+        copy_ecstr_walk(root, p);
+    });
+}
+
+fn copy_ecstr_walk(node: &Option<Box<EccstrNode>>, p: &mut [u8]) {
+    let mut cur = node.as_ref();
+    while let Some(n) = cur {
+        // c:540 — `memcpy(p + s->aoffs, s->str, strlen(s->str) + 1);`
+        let off = n.aoffs as usize;
+        let need = off + n.str.len() + 1;
+        if need <= p.len() {
+            p[off..off + n.str.len()].copy_from_slice(&n.str);
+            p[off + n.str.len()] = 0;
         }
-        p[off..off + bytes.len()].copy_from_slice(bytes);
-        p[off + bytes.len()] = 0;
+        // c:541 — `copy_ecstr(s->left, p);`
+        copy_ecstr_walk(&n.left, p);
+        // c:542 — `s = s->right;`
+        cur = n.right.as_ref();
     }
 }
 
