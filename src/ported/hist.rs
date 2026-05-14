@@ -183,10 +183,31 @@ pub fn safeinungetc(_c: i32) {
     // port wired here the call site uses InputBuffer::inungetc directly.
 }
 
-/// Port of `void herrflush(void)` from Src/hist.c.
+/// Port of `void herrflush(void)` from Src/hist.c:477.
 pub fn herrflush() {                                                         // c:477
-    // Reset history error flags - in zsh this clears the input buffer
-    // accumulated during the failed expansion.
+    // c:479 — `inpopalias();`
+    crate::ported::input::inpopalias();
+
+    // c:481-482 — `if (lexstop) return;`
+    if crate::ported::lex::LEX_LEXSTOP.with(|f| f.get()) {
+        return;
+    }
+
+    // c:494-500 — drain the input buffer when expanding history for
+    // ZLE (`strin` set + `lex_add_raw`) by reading + re-feeding chars
+    // into the history line via `hwaddc`+`addtoline`. Skipped:
+    // `hwaddc` (hist.c:357 ihwaddc) and `addtoline` depend on the
+    // history-build cursor globals (`chline`, `hptr`, `hlinesz`,
+    // `qbang`, `bangchar`, `stophist`, `inbufflags`) that haven't
+    // been ported. The drain is a no-op outside ZLE-history-
+    // expansion paths; static-link CLI scripts hit the early
+    // `lexstop` return above.
+    //
+    // C:
+    //   while (inbufct && (!strin || lex_add_raw)) {
+    //       int c = ingetc();
+    //       if (!lexstop) { hwaddc(c); addtoline(c); }
+    //   }
 }
 
 /// Port of `int getargc(Histent ehist)` from Src/hist.c.

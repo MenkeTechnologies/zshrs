@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
-<title>zshrs-daemon — DAEMON.md coverage matrix (updated 2026-05-13)</title>
-<meta name="description" content="zshrs-daemon DAEMON.md coverage matrix. 23,881 daemon LOC (tracked daemon/**/*.rs). Single $ZSHRS_HOME, separate daemon/recorder binaries, three log files, default 127.0.0.1:7733 listener with /openapi. Updated 2026-05-13.">
+<title>zshrs-daemon — DAEMON.md coverage matrix (updated 2026-05-14)</title>
+<meta name="description" content="zshrs-daemon DAEMON.md coverage matrix. 23,885 daemon LOC (tracked daemon/**/*.rs). Single $ZSHRS_HOME, separate daemon/recorder binaries, three log files, default 127.0.0.1:7733 listener with /openapi. Updated 2026-05-14.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
@@ -51,7 +51,7 @@
 <body>
 <main class="tutorial-main">
 <h1>zshrs-daemon — DAEMON.md coverage matrix</h1>
-<p class="ledger" style="margin-top:-0.4rem;">Last refresh: 2026-05-13 &middot; 23,881 daemon LOC (<code>git ls-files daemon | rg '\.rs$' | xargs wc -l</code>)</p>
+<p class="ledger" style="margin-top:-0.4rem;">Last refresh: 2026-05-14 &middot; 23,885 daemon LOC (<code>git ls-files daemon | rg '\.rs$' | xargs wc -l</code>)</p>
 
 <div class="summary-box honest">
   <p><strong>Earlier version of this report claimed "100% implemented." That claim was false.</strong> A second-pass line-by-line audit found 20+ gaps; an explicit follow-up round closed every one of the seven items the previous draft disclosed as remaining.</p>
@@ -89,8 +89,8 @@
   <div class="stat-card"><div class="stat-val">14</div><div class="stat-label">Async events</div></div>
   <div class="stat-card"><div class="stat-val accent">23</div><div class="stat-label">z* builtins</div></div>
   <div class="stat-card"><div class="stat-val">41</div><div class="stat-label">Daemon source files</div></div>
-  <div class="stat-card"><div class="stat-val">23,881</div><div class="stat-label">LOC in daemon/</div></div>
-  <div class="stat-card"><div class="stat-val yellow">3</div><div class="stat-label">Known partial / gap</div></div>
+  <div class="stat-card"><div class="stat-val">23,885</div><div class="stat-label">LOC in daemon/</div></div>
+  <div class="stat-card"><div class="stat-val yellow">2</div><div class="stat-label">Known partial / gap</div></div>
   <div class="stat-card"><div class="stat-val">0</div><div class="stat-label">Unimplemented dispatch arms</div></div>
 </div>
 
@@ -147,13 +147,6 @@
   <td>Was just an upsert + emit. Now: per spec step 1 (validate dirs exist for PATH, no duplicates, no empty), step 2 (in-mem + rkyv persist), step 3 (delta-walk only the new dirs into command_hash/autoload_table via walk::walk_paths + INSERT into entries), step 4 (fsnotify watch_path on new dir), step 5 (canonical_changed event includes delta_walked_dirs).</td>
   <td class="cite">zsync.rs:91 (op_push_canonical) + validate_push_payload</td>
 </tr>
-<tr>
-  <td class="cite">DAEMON.md:684</td>
-  <td><code>zcache rebuild --parallel N</code></td>
-  <td class="status-cell"><span class="st-missing">GAP</span></td>
-  <td>Flag now parsed by zcache_rebuild, passed through to op_rebuild, acknowledged in tracing log. Honest no-op until walk_paths gains rayon dispatch — see "Known remaining gaps" below.</td>
-  <td class="cite">builtins.rs:535 + ops.rs:467 (parallel arg)</td>
-</tr>
 </tbody>
 </table>
 
@@ -180,12 +173,6 @@
   <td class="cite">zsync.rs:217 apply_delta_walk extracted as shared helper. Called from both op_push_canonical (zsync up) and fsnotify::reanalyze_zshrc (steady-state). Adds dirs → walk + watch; removes dirs → drop entries + unwatch.</td>
 </tr>
 <tr>
-  <td class="cite">DAEMON.md:892</td>
-  <td>Cold-build-complete znotify</td>
-  <td class="status-cell"><span class="st-missing">GAP</span></td>
-  <td class="cite">ops.rs:734 op_first_init now broadcasts <code>Frame::event("notify", …)</code> with elapsed_ms + entry count payload. "daemon ready — future shells &lt;10ms cold-start (took {N}s, {N} entries)".</td>
-</tr>
-<tr>
   <td class="cite">DAEMON.md:339-342</td>
   <td>Sensitive read/write: <code>O_NOFOLLOW</code> + <code>MAP_PRIVATE</code></td>
   <td class="status-cell"><span class="st-partial">PARTIAL</span></td>
@@ -210,12 +197,6 @@
 <table class="fmap">
 <thead><tr><th>Spec line</th><th>Feature</th><th>Status</th><th>Why it's not "done"</th></tr></thead>
 <tbody>
-<tr>
-  <td class="cite">DAEMON.md:684</td>
-  <td><code>zcache rebuild --parallel N</code> with actual parallelism</td>
-  <td class="status-cell"><span class="st-partial">PARTIAL</span></td>
-  <td>Flag is parsed + accepted + logged. <code>walk::walk_paths</code> is single-threaded readdir/stat (syscall-bound, not CPU-bound). Adding rayon would need a measurement that proves it helps — the daemon doesn't ship optimizations on speculation per the world-fastest principle.</td>
-</tr>
 <tr>
   <td class="cite">Compiled_files.bytecode BLOB</td>
   <td>Real bytecode storage in compiled_files</td>
@@ -244,10 +225,6 @@
 <tr><td><code>send</code></td><td class="fn">op_send + cmd_result</td><td class="cite">ops.rs:183, 254</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>notify</code></td><td class="fn">op_notify</td><td class="cite">ops.rs:341</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>daemon</code> (status / stop / restart)</td><td class="fn">op_daemon + spawn_replacement_daemon</td><td class="cite">ops.rs:371 + ops.rs:2429</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>rebuild</code></td><td class="fn">op_rebuild</td><td class="cite">ops.rs:463</td><td class="status-cell"><span class="st-partial">PARTIAL</span><br><span class="partial-note">--parallel N is acknowledged but no-op'd</span></td></tr>
-<tr><td><code>zshrc_analyze</code></td><td class="fn">op_zshrc_analyze</td><td class="cite">ops.rs:553</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>plugin_discover</code></td><td class="fn">op_plugin_discover</td><td class="cite">ops.rs:693</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
-<tr><td><code>first_init</code></td><td class="fn">op_first_init</td><td class="cite">ops.rs:712, 734</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>cmd_started</code></td><td class="fn">op_cmd_started</td><td class="cite">ops.rs:754</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>complete</code></td><td class="fn">op_complete</td><td class="cite">ops.rs:787</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
 <tr><td><code>suggest</code></td><td class="fn">op_suggest</td><td class="cite">ops.rs:868</td><td class="status-cell"><span class="st-full">FULL</span></td></tr>
@@ -319,14 +296,14 @@
 <tr><td>"Cache layout"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">Every file in CachePaths struct + 0700/0600 enforced</td></tr>
 <tr><td>"catalog.db schema"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">All tables in catalog.rs:62 (plugins, plugin_deps, entries, hooks, entry_stats, compiled_files w/ sensitive col, parent_paths) + canonical view + jobs</td></tr>
 <tr><td>"Special parameters served by daemon" (_comps, _services, _patcomps, _describe_handlers)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">Each is a canonical subsystem; op_keys serves flat key arrays; export.rs renders all four</td></tr>
-<tr><td>"Starting state served by daemon" (PATH/FPATH/MANPATH/CDPATH/INFOPATH/LD_LIBRARY_PATH/named_dir/aliases/galiases/saliases/setopt/bindkey/zmodload/env/params/zstyle/theme)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">All 17 captured by zshrc_analysis.rs and stored in canonical engine. theme via params subsystem.</td></tr>
+<tr><td>"Starting state served by daemon" (PATH/FPATH/MANPATH/CDPATH/INFOPATH/LD_LIBRARY_PATH/named_dir/aliases/galiases/saliases/setopt/bindkey/zmodload/env/params/zstyle/theme)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">All 17 captured by <code>zshrs-recorder</code> (runtime AOP intercept) and stored in canonical engine via <code>recorder_ingest</code>. theme via params subsystem. (Static <code>zshrc_analysis.rs</code> walker pipeline retired; see daemon/lib.rs:53.)</td></tr>
 <tr><td>"Determinism boundary" (per-shell replay log)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">paths.rs <code>replay_dir</code> at <code>~/.zshrs/replay/</code>; ops.rs:write_replay_log emits <code>{hash8}-{stem}.zsh</code> per source root with non_deterministic_lines body; new op <code>replay_log</code> (op_replay_log) returns body for client to <code>eval</code> at boot.</td></tr>
-<tr><td>"Walk lifecycle — first init" (4-pass)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">op_first_init runs Pass 1+2 (analyze) → Pass 3 (walk) → Pass 4 (serialize+catalog) → Pass 5 (plugins). ops.rs:712</td></tr>
+<tr><td>"Walk lifecycle — first init" (4-pass)</td><td class="status-cell"><span class="st-design">DESIGN</span></td><td class="cite">Static 4-pass walker (<code>op_first_init</code>, <code>op_zshrc_analyze</code>, <code>op_plugin_discover</code>, <code>op_rebuild</code>) retired; state attribution now comes from <code>zshrs-recorder</code> runtime AOP intercept (<code>recorder_ingest</code>). See daemon/lib.rs:53.</td></tr>
 <tr><td>"Steady state: fsnotify only, with delta-walks for newly-introduced directories"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">zsync.rs:217 <code>apply_delta_walk</code> extracted as shared helper; called from both op_push_canonical (zsync up) and fsnotify::reanalyze_zshrc (steady-state). Adds dirs &rarr; walk + watch; removes dirs &rarr; drop entries + unwatch.</td></tr>
 <tr><td>"Source / dot interception"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">source_resolver.rs handles full mtime+inode cache + sensitive flag</td></tr>
 <tr><td>"Compat surface and zpwr-scale validation target" (zpwr 1.6M LOC, 478k history, .tokens.sh)</td><td class="status-cell"><span class="st-design">DESIGN</span></td><td class="cite">No bench measurement yet; architecture supports it but no &lt;60s cold-build proof exists</td></tr>
-<tr><td>"Plugin manager interop" (8 managers)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">zinit/OMZ/antigen/zplug/antibody/sheldon/znap + direct git-clone — all parsed by zshrc_analysis::match_plugin (24 tests)</td></tr>
-<tr><td>".zwc / .zcompdump invisible to scans, importable on demand"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">plugin_walk.rs:123, 185 filter; ops.rs op_import_zwc + op_import_zcompdump for explicit ingest; verify+clean now flag/remove litter</td></tr>
+<tr><td>"Plugin manager interop" (8 managers)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">zinit/OMZ/antigen/zplug/antibody/sheldon/znap + direct git-clone — captured at runtime via <code>zshrs-recorder</code> intercept and shipped through <code>recorder_ingest</code> (static <code>zshrc_analysis::match_plugin</code> parser retired with the walker pipeline; see daemon/lib.rs:53)</td></tr>
+<tr><td>".zwc / .zcompdump invisible to scans, importable on demand"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">ops.rs <code>op_import_zwc</code> + <code>op_import_zcompdump</code> for explicit ingest; <code>verify</code>+<code>clean</code> flag/remove litter. (Walker-side filter retired with <code>plugin_walk.rs</code>; see daemon/lib.rs:53.)</td></tr>
 <tr><td>"History migration"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">op_import_history + render_zsh_histfile round-trip</td></tr>
 <tr><td>"Promoting client-local changes to daemon canonical" (zsync up/diff/pull/watch)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">push_canonical now validates + delta-walks + registers fsnotify + emits canonical_changed (zsync.rs:91)</td></tr>
 <tr><td>"Universal cache dump / view / export" (30+ targets × 9 formats)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">export.rs supports all 9 formats per target. <code>zd export TARGET FORMAT</code> auto-unwraps for binary formats (pdf/sh/csv/json/yaml/text) &mdash; <code>--json</code> opt-in restores envelope. <code>export --all</code> emits POSIX ustar (op_export_all, ops.rs:2434). Reverse-import wired: op_import_catalog (2298), op_import_shard (2369), op_import_all (2528).</td></tr>
@@ -334,7 +311,7 @@
 <tr><td>"Daemon lifecycle" (singleton flock / crash recovery / degraded mode / explicit start)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">pidlock.rs flock singleton; client.rs handles NotConnected fallback. Daemon is its own binary (<code>zshrs-daemon</code>) and is started explicitly &mdash; never auto-spawned from a shell entrypoint.</td></tr>
 <tr><td>"First-run user notification"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">firstrun.rs:18 maybe_print + ZSHRS_QUIET_FIRST_RUN gate</td></tr>
 <tr><td>"Long-running command notices" (4 events)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">history.rs:260-283 publishes long_cmd_complete/failed/signaled; ops.rs:754 op_cmd_started</td></tr>
-<tr><td>"Cold-build-complete znotify"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">op_first_init broadcasts <code>Frame::event("notify", &hellip;)</code> with elapsed_ms + entry count payload (ops.rs:734). "daemon ready &mdash; future shells &lt;10ms cold-start (took {N}s, {N} entries)".</td></tr>
+<tr><td>"Cold-build-complete znotify"</td><td class="status-cell"><span class="st-design">DESIGN</span></td><td class="cite">Tied to retired <code>op_first_init</code> walker (see daemon/lib.rs:53). Will move to a <code>recorder_ingest</code>-complete broadcast when the recorder pipeline lands the equivalent payload.</td></tr>
 <tr><td>"zask — daemon-queued UI primitives"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">zask.rs full inbox with critical-first ordering, Ctrl-X q activation, 60-min timeout</td></tr>
 <tr><td>"Daemon logging"</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">log.rs init + ticker.rs rotation (10MB, 4 archives) + zlog tail/grep/level/clear/rotate/path/stats</td></tr>
 <tr><td>"Hard invariants" (13 REJECT-list items)</td><td class="status-cell"><span class="st-full">FULL</span></td><td class="cite">All 13 enforced — no client polling, sole writer, no .zwc auto-import, etc.</td></tr>
@@ -353,7 +330,7 @@
 <code class="build-cmd">grep -nE "unimplemented|todo!|FIXME" daemon/*.rs   # → no matches</code>
 
 <p class="ledger" style="margin-top:2rem;">
-  <strong>What changed in this audit pass.</strong> First report claimed "100% implemented" — that was wrong. Re-reading DAEMON.md line by line surfaced 20+ gaps. Eight were fixable in one session and are now closed (round 1, top table). Round 2 closed every remaining item: <code>import catalog/shard/--all</code>, <code>export --all</code> tar archive, fsnotify delta-walk via shared helper, cold-build-complete znotify, <code>O_NOFOLLOW</code> + <code>MAP_PRIVATE</code> for sensitive content, per-shell replay log + <code>replay_log</code> op, RTT bench harness binary. May 2026 then landed the architectural moves listed in the second summary box (single <code>$ZSHRS_HOME</code>, separate <code>zshrs-daemon</code>/<code>zshrs-recorder</code> binaries, three log files, default 127.0.0.1:7733 listener with <code>/openapi</code>, <code>zd</code> two-surface design, <code>zlock</code>/<code>zpublish</code>/<code>zwhere</code> builtins, <code>zjob attach</code> bidirectional ptmx, <code>zsync up --all</code>, <code>skip_configs</code>). Remaining open items are <code>zcache rebuild --parallel</code> measurement, real bytecode in compiled_files BLOB, and committed perf-budget numbers — listed honestly in section "What's still legitimately incomplete."
+  <strong>What changed in this audit pass.</strong> First report claimed "100% implemented" — that was wrong. Re-reading DAEMON.md line by line surfaced 20+ gaps. Eight were fixable in one session and are now closed (round 1, top table). Round 2 closed every remaining item: <code>import catalog/shard/--all</code>, <code>export --all</code> tar archive, fsnotify delta-walk via shared helper, cold-build-complete znotify, <code>O_NOFOLLOW</code> + <code>MAP_PRIVATE</code> for sensitive content, per-shell replay log + <code>replay_log</code> op, RTT bench harness binary. May 2026 then landed the architectural moves listed in the second summary box (single <code>$ZSHRS_HOME</code>, separate <code>zshrs-daemon</code>/<code>zshrs-recorder</code> binaries, three log files, default 127.0.0.1:7733 listener with <code>/openapi</code>, <code>zd</code> two-surface design, <code>zlock</code>/<code>zpublish</code>/<code>zwhere</code> builtins, <code>zjob attach</code> bidirectional ptmx, <code>zsync up --all</code>, <code>skip_configs</code>). Remaining open items are real bytecode in compiled_files BLOB and committed perf-budget numbers — listed honestly in section "What's still legitimately incomplete." (The <code>zcache rebuild --parallel</code> row was retired alongside the walker pipeline; see daemon/lib.rs:53.)
 </p>
 
 </main>
