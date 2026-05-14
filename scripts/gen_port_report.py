@@ -589,20 +589,27 @@ def main() -> int:
         rs_line = rs_first[1]
         c_body = r.get("c_body", 0)
         r_body = r.get("rust_body", 0)
-        # Ratio (Rust/C) as integer pct; 0/0 → blank.
+        # Ratio (Rust/C) as integer pct. Three special cases:
+        #   - C=0, Rust=0:   intentionally empty on both sides (no-op
+        #                    fn like `nohw`, `noop_function`). Treat as
+        #                    100% match (green) — there's nothing to
+        #                    port.
+        #   - C=0, Rust>0:   C decl-only / macro shell with a real Rust
+        #                    body. Mark as 100% (green) — Rust does
+        #                    more than C surface implies.
+        #   - C>0, Rust=0:   TRUE porting gap. Ratio=0% (red).
+        #   - both >0:       normal Rust/C pct.
         if c_body > 0:
             ratio = round(r_body / c_body * 100)
+        elif r_body > 0:
+            ratio = 100  # Rust does work where C is decl-only
         else:
-            ratio = ""
+            ratio = 100  # both empty: nothing to port, matched
         # Row tint: red (low ratio) → yellow (~50%) → green (≥100%).
         # Hue 0=red, 60=yellow, 120=green. Cap ratio at 100 so very-large
         # Rust ports still show pure green instead of rotating past green.
-        # No-rust rows (ratio="") get a neutral dim background.
-        if isinstance(ratio, int):
-            hue = max(0, min(int(ratio), 100)) * 1.2  # 0..120
-            row_style = f"background:hsl({hue:.0f},45%,11%);"
-        else:
-            row_style = "background:hsl(0,0%,9%);"
+        hue = max(0, min(int(ratio), 100)) * 1.2  # 0..120
+        row_style = f"background:hsl({hue:.0f},45%,11%);"
         c_cell = (
             f'<a href="../{html.escape(c_first[0])}#L{c_line}">'
             f'{html.escape(c_file_short)}:{c_line}</a>'
@@ -640,13 +647,13 @@ def main() -> int:
             f'data-status="{r["status"]}" '
             f'data-cbody="{c_body}" data-rbody="{r_body}" '
             f'data-cline="{c_line}" data-rline="{rs_line}" '
-            f'data-ratio="{ratio if ratio != "" else -1}">'
+            f'data-ratio="{ratio}">'
             f'<td><b>{html.escape(r["name"])}</b></td>'
             f'<td>{c_cell}</td>'
-            f'<td class="num">{c_body or ""}</td>'
+            f'<td class="num">{c_body}</td>'
             f'<td>{rs_cell}</td>'
-            f'<td class="num">{r_body or ""}</td>'
-            f'<td class="num">{(str(ratio) + "%") if ratio != "" else ""}</td>'
+            f'<td class="num">{r_body}</td>'
+            f'<td class="num">{ratio}%</td>'
             f'<td class="status">{r["status"]}</td>'
             f'</tr>'
         )
@@ -960,7 +967,7 @@ Excluded from this report by design:
         <option value="lt10">&lt;10%</option>
         <option value="lt30">&lt;30%</option>
         <option value="ge100">≥100%</option>
-        <option value="empty">no rust</option>
+        <option value="empty">porting gap (C&gt;0, Rust=0)</option>
       </select>
       <span id="lcct" class="legend" style="margin-left:auto;font-size:10px;"></span>
     </div>
@@ -1131,10 +1138,14 @@ function lcf(){{
     const ms  = !st || tr.dataset.status === st;
     const ratio = parseInt(tr.dataset.ratio, 10);
     let mr = true;
-    if (rt === 'lt10')   mr = ratio >= 0 && ratio < 10;
-    else if (rt === 'lt30')  mr = ratio >= 0 && ratio < 30;
+    // ratio is always 0..100+ now (empty-bodied rows pin at 100).
+    // "no rust" band = real porting gaps: C body > 0 + Rust body = 0.
+    const cb = parseInt(tr.dataset.cbody, 10);
+    const rb = parseInt(tr.dataset.rbody, 10);
+    if (rt === 'lt10')   mr = ratio < 10;
+    else if (rt === 'lt30')  mr = ratio < 30;
     else if (rt === 'ge100') mr = ratio >= 100;
-    else if (rt === 'empty') mr = ratio < 0;
+    else if (rt === 'empty') mr = cb > 0 && rb === 0;
     const ok = mq && ms && mr;
     tr.style.display = ok ? '' : 'none';
     if (ok) shown++;
