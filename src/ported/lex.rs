@@ -1279,11 +1279,23 @@ fn hgetc() -> Option<char> {
     Some(c)
 }
 
-/// Put character back into input
+/// Put character back into input. Direct port of `inungetc(int c)`
+/// from `Src/input.c:546-583`. Critical: C decrements lineno on
+/// `\n` ungetc UNCONDITIONALLY (modulo input-flags). Rust's
+/// previous `LEX_LINENO.get() > 1` guard caused off-by-one drift
+/// when lineno was set to 0 (via par_funcdef's `set_lineno(0)`)
+/// then a `\n` got read+ungetted: hungetc wouldn't decrement
+/// (because LEX_LINENO==1 fails `> 1`), but the subsequent re-read
+/// in hgetc DOES increment, leaving LEX_LINENO=2 instead of 1.
 fn hungetc(c: char) {
     LEX_UNGET_BUF.with_borrow_mut(|b| b.push_front(c));
-    if c == '\n' && LEX_LINENO.get() > 1 {
-        LEX_LINENO.set(LEX_LINENO.get() - 1);
+    if c == '\n' {
+        // c:input.c:561-562 — `if (((inbufflags & INP_LINENO) ||
+        // !strin) && c == '\n') lineno--;`
+        let cur = LEX_LINENO.get();
+        if cur > 0 {
+            LEX_LINENO.set(cur - 1);
+        }
     }
     LEX_LEXSTOP.set(false);
     // c:input.c:549,609 — `inungetc` calls `zshlex_raw_back()` so
