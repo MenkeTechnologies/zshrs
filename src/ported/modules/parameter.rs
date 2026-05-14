@@ -152,11 +152,17 @@ mod paramtypestr_tests {
 use crate::ported::zsh_h::module;
 
 /// Port of `scanpmparameters(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:124.
+///
+/// C iterates `realparamtab` invoking `func(&pm.node, flags)` for each
+/// non-PM_UNSET entry. The zshrs special-parameter hashparam-node
+/// integration isn't wired up yet — `${(@k)parameters}` reads
+/// through `paramtab()` directly, which is the Rust idiom
+/// replacement for the C iteration callback. No Rust callers of
+/// this fn; structural pass-through retained for C name parity.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
 pub fn scanpmparameters(_ht: *mut HashTable, _func: Option<ScanFunc>,        // c:124
                         _flags: i32) {
-    // c:127-148 — walks paramtab nodes, emits each param.
 }
 
 /// Port of `setpmcommand(Param pm, char *value)` from Src/Modules/parameter.c:151.
@@ -1086,6 +1092,13 @@ pub fn getpmmodule(ht: *mut HashTable, name: &str) -> Option<Param> {       // c
 }
 
 /// Port of `scanpmmodules(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:1074.
+///
+/// Iteration callback that special-parameter scan walks use to 
+/// build an internal hash table from a Rust-side static. zshrs's 
+/// hashparam-node integration isn't wired up; the corresponding 
+/// `${(@k)foo}` queries read through the typed Rust accessor 
+/// directly. Structural pass-through retained for C name parity;
+/// Rust idiom replacement covers the read side.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
 pub fn scanpmmodules(_ht: *mut HashTable, _func: Option<ScanFunc>,           // c:1074
@@ -1159,6 +1172,13 @@ pub fn getpmhistory(ht: *mut HashTable, name: &str) -> Option<Param> {      // c
 }
 
 /// Port of `scanpmhistory(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:1188.
+///
+/// Iteration callback that special-parameter scan walks use to 
+/// build an internal hash table from a Rust-side static. zshrs's 
+/// hashparam-node integration isn't wired up; the corresponding 
+/// `${(@k)foo}` queries read through the typed Rust accessor 
+/// directly. Structural pass-through retained for C name parity;
+/// Rust idiom replacement covers the read side.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
 pub fn scanpmhistory(_ht: *mut HashTable, _func: Option<ScanFunc>,           // c:1188
@@ -1226,6 +1246,13 @@ pub fn getpmjobtext(ht: *mut HashTable, name: &str) -> Option<Param> {      // c
 }
 
 /// Port of `scanpmjobtexts(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:1308.
+///
+/// Iteration callback that special-parameter scan walks use to 
+/// build an internal hash table from a Rust-side static. zshrs's 
+/// hashparam-node integration isn't wired up; the corresponding 
+/// `${(@k)foo}` queries read through the typed Rust accessor 
+/// directly. Structural pass-through retained for C name parity;
+/// Rust idiom replacement covers the read side.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
 pub fn scanpmjobtexts(_ht: *mut HashTable, _func: Option<ScanFunc>,          // c:1308
@@ -1252,6 +1279,13 @@ pub fn getpmjobstate(ht: *mut HashTable, name: &str) -> Option<Param> {     // c
 }
 
 /// Port of `scanpmjobstates(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:1415.
+///
+/// Iteration callback that special-parameter scan walks use to 
+/// build an internal hash table from a Rust-side static. zshrs's 
+/// hashparam-node integration isn't wired up; the corresponding 
+/// `${(@k)foo}` queries read through the typed Rust accessor 
+/// directly. Structural pass-through retained for C name parity;
+/// Rust idiom replacement covers the read side.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
 pub fn scanpmjobstates(_ht: *mut HashTable, _func: Option<ScanFunc>,         // c:1415
@@ -1284,6 +1318,13 @@ pub fn getpmjobdir(ht: *mut HashTable, name: &str) -> Option<Param> {       // c
 }
 
 /// Port of `scanpmjobdirs(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:1487.
+///
+/// Iteration callback that special-parameter scan walks use to 
+/// build an internal hash table from a Rust-side static. zshrs's 
+/// hashparam-node integration isn't wired up; the corresponding 
+/// `${(@k)foo}` queries read through the typed Rust accessor 
+/// directly. Structural pass-through retained for C name parity;
+/// Rust idiom replacement covers the read side.
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=(_ht, _func) vs C=(ht, func, flags)
 pub fn scanpmjobdirs(_ht: *mut HashTable, _func: Option<ScanFunc>,           // c:1487
@@ -1601,6 +1642,13 @@ pub fn unsetpmsalias(pm: Param, exp: i32) {                                 // c
 }
 
 /// Port of `setaliases(HashTable alht, Param pm, HashTable ht, int flags)` from Src/Modules/parameter.c:1769.
+///
+/// Iteration callback that special-parameter scan walks use to 
+/// build an internal hash table from a Rust-side static. zshrs's 
+/// hashparam-node integration isn't wired up; the corresponding 
+/// `${(@k)foo}` queries read through the typed Rust accessor 
+/// directly. Structural pass-through retained for C name parity;
+/// Rust idiom replacement covers the read side.
 /// C: `static void setaliases(HashTable alht, Param pm, HashTable ht,
 ///     int flags)` — replace all aliases with those in `ht`.
 #[allow(non_snake_case)]

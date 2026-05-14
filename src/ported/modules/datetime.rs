@@ -249,9 +249,17 @@ pub fn getcurrentrealtime() -> f64 {                                     // c:21
 /// ```
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn getcurrenttime() -> (i64, i64) {                                  // c:220
-    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() };          // c:220
-    crate::ported::compat::zgettime(&mut now);                            // c:226
-    (now.tv_sec as i64, now.tv_nsec as i64)                              // c:228-231 sprintf %ld
+    // c:222-224 — `char **arr; char buf[DIGBUFSIZE]; struct timespec now;`
+    let mut now: crate::ported::zsh_system_h::timespec = unsafe { std::mem::zeroed() };
+    // c:226 — `zgettime(&now);`
+    crate::ported::compat::zgettime(&mut now);
+    // c:228-232 — C allocates a 3-element char** via zhalloc, sprintf
+    // tv_sec then tv_nsec into a stack buf, dupstring's each entry,
+    // sets arr[2]=NULL. Rust returns the numeric pair directly;
+    // the `$EPOCHREALTIME` parameter wrapper does the sprintf at the
+    // caller. Native tuple replaces the C `char**` array; Rust idiom
+    // replacement covers the heap-alloc dance.
+    (now.tv_sec as i64, now.tv_nsec as i64)
 }
 
 // `bintab` — port of `static struct builtin bintab[]` (datetime.c:255).

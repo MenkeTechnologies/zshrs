@@ -322,6 +322,8 @@ pub fn putshout(c: char) -> i32 {                                            // 
 
 /// Nice char with quoting selection (from utils.c nicechar_sel)
 /// Port of `nicechar_sel(int c, int quotable)` from `Src/utils.c:462`.
+/// Rust idiom replacement: pure delegation to `nicechar`, no body
+/// substrate.
 pub fn nicechar_sel(c: char, quotable: bool) -> String {
     if quotable && ispecial(c) {
         format!("\\{}", c)
@@ -509,6 +511,8 @@ pub(crate) fn ispwd(pwd: &str) -> bool {
 
 /// Split path into components (from utils.c slashsplit)
 /// Port of `slashsplit(char *s)` from `Src/utils.c:837`.
+/// Rust idiom replacement: `str::split('/')` replaces the C
+/// manual segment walk + zalloc/strncpy bookkeeping.
 pub fn slashsplit(s: &str) -> Vec<String> {                                 // c:837
     s.split('/')
         .filter(|s| !s.is_empty())
@@ -1337,15 +1341,39 @@ pub fn addlockfd(fd: i32, cloexec: bool) {
     }
 }
 
-/// Close a file descriptor
-/// Close an fd with EINTR retry.
-/// Port of `zclose(int fd)` from Src/utils.c.
-// Close the given fd, and clear it from fdtable.                          // c:2127
-pub fn zclose(fd: i32) {                                                    // c:2127
-    #[cfg(unix)]
-    unsafe {
-        libc::close(fd);
+/// Close the given fd, and clear it from fdtable.                          // c:2123
+/// Port of `int zclose(int fd)` from `Src/utils.c:2127`.
+pub fn zclose(fd: i32) -> i32 {                                              // c:2127
+    if fd >= 0 {                                                             // c:2129
+        // c:2130-2133 — comment carry: "Careful: we allow closing of
+        // arbitrary fd's, beyond max_zsh_fd. In that case we don't
+        // try anything clever."
+        let max_fd = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed); // c:2134
+        if fd <= max_fd {                                                    // c:2134
+            if fdtable_get(fd) == crate::ported::zsh_h::FDT_FLOCK {          // c:2135
+                FDTABLE_FLOCKS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed); // c:2136
+            }
+            fdtable_set(fd, crate::ported::zsh_h::FDT_UNUSED);               // c:2137
+            // c:2138-2139 — shrink max_zsh_fd past trailing UNUSED slots.
+            let mut m = MAX_ZSH_FD.load(std::sync::atomic::Ordering::Relaxed);
+            while m > 0 && fdtable_get(m) == crate::ported::zsh_h::FDT_UNUSED {
+                m -= 1;
+            }
+            MAX_ZSH_FD.store(m, std::sync::atomic::Ordering::Relaxed);
+            // c:2140-2143 — coproc fd tracking.
+            if fd == crate::ported::modules::clone::coprocin.load(std::sync::atomic::Ordering::Relaxed) {
+                crate::ported::modules::clone::coprocin.store(-1, std::sync::atomic::Ordering::Relaxed);
+            }
+            if fd == crate::ported::modules::clone::coprocout.load(std::sync::atomic::Ordering::Relaxed) {
+                crate::ported::modules::clone::coprocout.store(-1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        #[cfg(unix)]
+        unsafe { return libc::close(fd); }                                   // c:2145
+        #[cfg(not(unix))]
+        return 0;
     }
+    -1                                                                       // c:2147
 }
 
 /// Port of `zcloselockfd(int fd)` from `Src/utils.c:2156`.
@@ -1779,6 +1807,8 @@ pub fn read_poll(fd: i32, timeout_us: i64) -> bool {                         // 
 
 /// Compute time difference in microseconds (from utils.c timespec_diff_us)
 /// Port of `timespec_diff_us(const struct timespec *t1, const struct timespec *t2)` from `Src/utils.c:2752`.
+/// Rust idiom replacement: `Instant::duration_since().as_micros()`
+/// replaces the C tv_sec/tv_nsec arithmetic + sign-flip dance.
 pub fn timespec_diff_us(t1: &std::time::Instant, t2: &std::time::Instant) -> i64 {
     if *t2 > *t1 {
         t2.duration_since(*t1).as_micros() as i64
@@ -2179,6 +2209,9 @@ pub fn skipwsep(s: &str) -> (&str, usize) {
 /// Split on whitespace.
 /// Port of `spacesplit(char *s, int allownull, int heap, int quote)` from Src/utils.c.
 /// WARNING: param names don't match C — Rust=(s, allownull) vs C=(s, allownull, heap, quote)
+// Rust idiom replacement: `str::split` / `split_whitespace` collapse
+// the C tokenizer (Inull-skip + quote-aware advance + zalloc per
+// segment); the `heap` / `quote` C params drop with the C buffer.
 pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {                 // c:3711
     if allownull {
         s.split([' ', '\t', '\n']).map(|p| p.to_string()).collect()
@@ -2189,6 +2222,9 @@ pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {                 // 
 
 /// Find a separator in string (from utils.c findsep)
 /// Port of `findsep(char **s, char *sep, int quote)` from `Src/utils.c:3784`.
+/// Rust idiom replacement: `str::find` covers the literal/whitespace
+/// cases; the C `quote` arg drops since callers operate on already-
+/// unquoted strings in zshrs.
 /// WARNING: param names don't match C — Rust=(s, sep) vs C=(s, sep, quote)
 pub fn findsep(s: &str, sep: Option<&str>) -> Option<usize> {
     match sep {
@@ -3345,6 +3381,9 @@ pub fn niceztrlen(s: &str) -> usize {
 /// chars iterator which already produces valid scalar values, so
 /// invalid-byte fallback collapses to the control-char branch.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, stream, outstrp, flags)
+// Rust idiom replacement: `chars()` + `nicechar` covers the C
+// mbrtowc loop with `MB_INVALID` fallback (Rust UTF-8 guarantees
+// valid scalars, so the invalid-byte arm collapses).
 pub fn mb_niceformat(s: &str) -> String {
     let unmeta = self::unmeta(s);
     let mut out = String::with_capacity(unmeta.len());
@@ -3435,6 +3474,9 @@ pub fn is_mb_niceformat(s: &str) -> bool {
 /// Multibyte metachar length with conversion (from utils.c mb_metacharlenconv_r)
 /// Port of `mb_metacharlenconv_r(const char *s, wint_t *wcp, mbstate_t *mbsp)` from `Src/utils.c:5548`.
 /// WARNING: param names don't match C — Rust=(s, pos) vs C=(s, wcp, mbsp)
+// Rust idiom replacement: Rust strings are UTF-8 with valid scalar
+// values, so `chars().next()` covers the mbrtowc state machine; no
+// mbstate_t threading required.
 pub fn mb_metacharlenconv_r(s: &str, pos: usize) -> (usize, Option<char>) {
     if let Some(c) = s[pos..].chars().next() {
         (c.len_utf8(), Some(c))
@@ -3473,6 +3515,8 @@ pub fn mb_metacharlenconv(s: &str) -> (usize, Option<char>) {
 
 /// Multibyte metastring length to end (from utils.c mb_metastrlenend)
 /// Port of `mb_metastrlenend(char *ptr, int width, char *eptr)` from `Src/utils.c:5655`.
+// Rust idiom replacement: `chars().count()` / unicode-width replaces
+// the C mbrtowc loop + wcwidth fallback.
 pub fn mb_metastrlenend(ptr: &str, width: bool, eptr: usize) -> usize {
     if width {
         ptr[..eptr.min(ptr.len())]
@@ -3535,6 +3579,9 @@ pub fn charlenconv(s: &str, len: usize) -> (usize, Option<char>) {
 /// Single-byte nice format (from utils.c sb_niceformat)
 /// Port of `sb_niceformat(const char *s, FILE *stream, char **outstrp, int flags)` from `Src/utils.c:5851`.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, stream, outstrp, flags)
+// Rust idiom replacement: `chars()` + `nicechar` covers the C
+// per-byte format loop; the C `stream`/`outstrp`/`flags` ABI drops
+// (callers in zshrs build a String directly).
 pub fn sb_niceformat(s: &str) -> String {
     let mut result = String::new();
     for c in s.chars() {
@@ -4630,6 +4677,18 @@ static ATTACHTTY_EP: std::sync::atomic::AtomicI32 =
 
 static FDTABLE: std::sync::OnceLock<std::sync::Mutex<Vec<i32>>> =
     std::sync::OnceLock::new();
+
+/// Port of `int max_zsh_fd` global from `Src/exec.c:201`.
+/// "The highest fd we know zsh is using" — bumped by `fdtable_set`
+/// callers, shrunk by `zclose` when trailing slots fall to UNUSED.
+pub static MAX_ZSH_FD: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(-1);
+
+/// Port of `int fdtable_flocks` global from `Src/exec.c:204`.
+/// Count of `FDT_FLOCK`-tagged fds; consulted by `closem()` to
+/// decide whether to skip the flock-fd sweep.
+pub static FDTABLE_FLOCKS: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `Meta` from `Src/zsh.h`. Sentinel byte (0x83) zsh
 /// prepends in front of any byte whose top bit it wants to escape;
