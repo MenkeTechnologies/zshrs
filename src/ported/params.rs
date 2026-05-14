@@ -6069,57 +6069,15 @@ pub fn convbase_ptr(v: i64, base: i32) -> (String, i32) {
 // Integer/Float conversion (from convbase/convfloat)
 // ---------------------------------------------------------------------------
 
-/// Convert integer to string with base (from params.c convbase)
-/// Port of `convbase(char *s, zlong v, int base)` from `Src/params.c:5632`.
+/// Port of `convbase(char *s, zlong v, int base)` from
+/// `Src/params.c:5632`. C body (single statement):
+///     `convbase_ptr(s, v, base, NULL);`
+/// Rust takes (v, base) and returns the formatted string since Rust
+/// strings own their buffer; the discarded `ndigits` out-param of
+/// `convbase_ptr` is `.1` of the returned tuple.
 /// WARNING: param names don't match C — Rust=(val, base) vs C=(s, v, base)
-pub fn convbase(val: i64, base: u32) -> String {
-    if base == 0 || base == 10 {
-        return val.to_string();
-    }
-
-    let negative = val < 0;
-    let mut v = if negative { (-val) as u64 } else { val as u64 };
-
-    if v == 0 {
-        return match base {
-            16 => "0x0".to_string(),
-            8 => "00".to_string(),
-            _ => format!("{}#0", base),
-        };
-    }
-
-    let mut digits = Vec::new();
-    while v > 0 {
-        let dig = (v % base as u64) as u8;
-        digits.push(if dig < 10 {
-            b'0' + dig
-        } else {
-            b'A' + dig - 10
-        });
-        v /= base as u64;
-    }
-    digits.reverse();
-
-    let prefix = match base {
-        16 => "0x",
-        8 => "0",
-        10 => "",
-        _ => "",
-    };
-
-    let base_prefix = if base != 10 && base != 16 && base != 8 {
-        format!("{}#", base)
-    } else {
-        prefix.to_string()
-    };
-
-    let sign = if negative { "-" } else { "" };
-    format!(
-        "{}{}{}",
-        sign,
-        base_prefix,
-        String::from_utf8_lossy(&digits)
-    )
+pub fn convbase(val: i64, base: u32) -> String {                             // c:5632
+    convbase_ptr(val, base as i32).0                                         // c:5634
 }
 
 /// Convert integer to string with underscores for readability
@@ -7584,10 +7542,13 @@ mod tests {
 
     #[test]
     fn test_convbase() {
-        assert_eq!(convbase(255, 16), "0xFF");
+        // CBASES off (default): `16#FF` / `8#7` form. The `0x.../
+        // 0...` short-prefix output is gated on `setopt CBASES` —
+        // see Src/params.c:5599-5605.
+        assert_eq!(convbase(255, 16), "16#FF");
         assert_eq!(convbase(10, 10), "10");
         assert_eq!(convbase(-5, 10), "-5");
-        assert_eq!(convbase(7, 8), "07");
+        assert_eq!(convbase(7, 8), "8#7");
         assert_eq!(convbase(5, 2), "2#101");
     }
 
