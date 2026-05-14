@@ -1059,33 +1059,48 @@ pub fn ecdel(p: usize) {
 /// metafied byte count — same as C `strlen(s) + 1` where C's `s`
 /// is already metafied at this point.
 pub fn ecstrcode(s: &str) -> u32 {
-    // Convert Rust UTF-8 → C-byte form. zsh stores two kinds of high
-    // bytes in tokstr:
-    //   1) Single-byte zsh markers (Meta=0x83, Pound=0x84, ...,
-    //      Marker=0xa2). These were inserted by the lexer at tokenize
-    //      time to mark token boundaries (Dash, Inang, etc.).
-    //   2) Multi-byte UTF-8 sequences from user-input chars 0x80+
-    //      (e.g. 'º' = U+00BA = `0xc2 0xba`). zsh treats UTF-8 as
-    //      opaque bytes — the lex reads them as raw 2-byte sequences.
+    // Convert Rust char-form → C-byte form. zsh's metafy() at
+    // Src/utils.c only converts bytes flagged IMETA: 0x00, 0x83
+    // (Meta itself), and 0x84..=0xa2 (Pound..Marker, the lex
+    // markers). Other bytes 0x01..=0x82 and 0xa3..=0xff pass
+    // through unchanged. See utils.c:4195-4204 typtab init.
     //
-    // Rust receives both as `char`. We must distinguish:
-    //   - codepoint in [0x83..=0xa2] → ZSH MARKER → emit as 1 byte
-    //   - codepoint in [0x80..=0x82] or [0xa3..=0xff] → UTF-8 char →
-    //     emit as its 2-byte UTF-8 encoding (`0xc2 0xXX` or `0xc3 0xXX`)
-    //   - codepoint > 0xff → 3+ byte UTF-8 char → emit UTF-8 encoding
-    //   - codepoint < 0x80 → ASCII → emit as 1 byte
+    // Rust receives chars. Classify each:
+    //   - codepoint in [0x83..=0xa2] → marker char (emitted by lex
+    //     post-metafy in C); 1 byte unchanged
+    //   - codepoint < 0x80 → ASCII, 1 byte unchanged
+    //   - codepoint in [0x80..=0x82] or [0xa3..=0xff] → single
+    //     non-imeta byte (user-input range); 1 byte unchanged
+    //   - codepoint > 0xff → multi-byte UTF-8 source char (e.g.
+    //     '━' = U+2501 = 0xe2 0x94 0x81). Metafy ONLY the bytes
+    //     that fall in 0x83..=0xa2; pass others through. For '━':
+    //     0xe2 stays, 0x94 → 0x83 0xb4, 0x81 stays.
     let mut c_bytes: Vec<u8> = Vec::with_capacity(s.len());
+    let imeta = |b: u8| -> bool { b == 0 || (0x83..=0xa2).contains(&b) };
     for ch in s.chars() {
         let cu = ch as u32;
         if cu < 0x80 {
+            // ASCII — single byte unchanged.
             c_bytes.push(cu as u8);
         } else if (0x83..=0xa2).contains(&cu) {
-            // zsh marker byte (single-byte representation).
+            // Lex marker char (emitted by lex.add(Marker) post-metafy
+            // in C). Stored as single byte.
             c_bytes.push(cu as u8);
         } else {
-            // UTF-8 char: emit its multi-byte encoding.
+            // User-input char: encode UTF-8 then metafy imeta bytes.
+            // For chars 0x80..=0xff (like 'º' U+00BA), UTF-8 gives
+            // 2 bytes (e.g. `0xc2 0xba`) — zsh's lex reads these as
+            // raw bytes from input and metafy passes 0xc2 / 0xba
+            // through (both NOT imeta).
             let mut tmp = [0u8; 4];
-            c_bytes.extend_from_slice(ch.encode_utf8(&mut tmp).as_bytes());
+            for &b in ch.encode_utf8(&mut tmp).as_bytes() {
+                if imeta(b) {
+                    c_bytes.push(0x83);
+                    c_bytes.push(b ^ 0x20);
+                } else {
+                    c_bytes.push(b);
+                }
+            }
         }
     }
     // c:`has_token` (Src/utils.c:2282) → `itok(*s)` → `typtab[c] & ITOK`.
@@ -4836,18 +4851,12 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     const MAX_ITERATIONS: usize = 10_000;
     let mut iterations = 0;
 
-    // c:1934 — `if (!isset(IGNOREBRACES) && *tokstr == Inbrace) { ... }`
-    // gates the `{var}>file` brace-FD recognition (a non-POSIX zsh
-    // extension that lets `{varname}>file` redirect into the named
-    // shell variable). zshrs's parser doesn't recognise the brace-FD
-    // shape yet, so the gate is wired here as a marker — when the
-    // {var}-FD feature lands, swap this `false` for the actual
-    // `tokstr starts with Inbrace` test and route into a {var}>file
-    // redir builder.
-    let saw_brace_fd_candidate = false;
-    if !isset(IGNOREBRACES) && saw_brace_fd_candidate {
-        // TODO: {var}>file FD recognition (par_simple body at c:1934-2000).
-    }
+    // c:1934-1974 — `{var}>file` brace-FD detection is wired
+    // INSIDE the words loop below (parse.rs:4940-4956) rather than
+    // here at the head. The words-loop site sees the tok=STRING
+    // `{varname}` followed by a REDIROP and routes into par_redir
+    // with redir.varid populated. C does it inline at the start of
+    // each STRING/TYPESET arm iteration; functionally equivalent.
 
     // Parse leading assignments
     while tok() == ENVSTRING || tok() == ENVARRAY {
@@ -5143,6 +5152,16 @@ fn parse_assign() -> Option<ZshAssign> {
 /// (or here-doc body / pipe-redir command), and any `{var}` style
 /// fd-binding parameter.
 fn par_redir() -> Option<ZshRedir> {
+    par_redir_with_id(None)
+}
+
+/// AST `par_redir` variant accepting an idstring for the
+/// `{var}>file` brace-FD shape. C signature
+/// `par_redir(int *rp, char *idstring)` (parse.c:2229). The
+/// idstring is stored in the resulting ZshRedir.varid for the
+/// executor to bind the named variable to the chosen fd.
+fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
+    let varid: Option<String> = idstring.map(|s| s.to_string());
     let rtype = match tok() {
         OUTANG_TOK => REDIR_WRITE,
         OUTANGBANG => REDIR_WRITENOW,
@@ -5254,7 +5273,7 @@ fn par_redir() -> Option<ZshRedir> {
         fd,
         name,
         heredoc: None,
-        varid: None,
+        varid,
         heredoc_idx,
     })
 }

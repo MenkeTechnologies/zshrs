@@ -106,18 +106,32 @@ fn main() {
     }
     let _ = writeln!(buf, "STRS {}", entries.len());
     for (i, e) in entries.iter().enumerate() {
-        // Match C `dumpwordcode` output. Strs holds unmetafied bytes;
-        // C's dumpwordcode runs unmetafy as a precaution (no-op on
-        // already-unmetafied data) then escapes byte-by-byte. Walk
-        // raw bytes here and escape each — `String::from_utf8_lossy`
-        // would replace single-byte zsh markers (e.g. Dash 0x9b)
-        // with the U+FFFD replacement (`\xef\xbf\xbd`) breaking
-        // byte-for-byte parity with C output.
+        // Match C `dumpwordcode` (zshrs_dump.c:308-313): unmetafy
+        // before escaping. zsh stores strs in METAFIED form;
+        // display shows the unmetafied original bytes.
         let _ = write!(buf, "STR[{}]=\"", i);
-        esc_bytes(&mut buf, e);
+        let unmetafied = unmetafy_bytes(e);
+        esc_bytes(&mut buf, &unmetafied);
         buf.push_str("\"\n");
     }
     print!("{}", buf);
+}
+
+/// Unmetafy a byte slice: each `0x83 X` pair → `X ^ 0x20`. Mirrors
+/// C `unmetafy` in Src/utils.c.
+fn unmetafy_bytes(src: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(src.len());
+    let mut i = 0;
+    while i < src.len() {
+        if src[i] == 0x83 && i + 1 < src.len() {
+            out.push(src[i + 1] ^ 0x20);
+            i += 2;
+        } else {
+            out.push(src[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 fn esc_bytes(out: &mut String, bytes: &[u8]) {
