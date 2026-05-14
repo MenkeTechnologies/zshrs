@@ -1448,11 +1448,80 @@ pub fn histfileIsLocked() -> i32 {
 }
 
 /// Port of `int bufferwords(LinkList list, char *buf, int *index, int flags)` from Src/hist.c.
-/// Rust idiom replacement: `split_whitespace` + index-walk covers
-/// the C `getargspec`+`bufferwordslist` shparser callout; the
-/// `flags` arg drops since callers pre-select the IFS classification.
+/// Rust idiom replacement: char-by-char tokenizer covers the C
+/// shparser callout (`(z)` flag at subst.c:4186 always passes
+/// `NULL, 0`). The returned `(words, cursor_word_idx)` pair lets
+/// `${(z)var}` callers (which want just `words`) take `.0` while
+/// `bufferwords` callers that need the cursor index get `.1`.
 pub fn bufferwords(line: &str, cursor_pos: usize) -> (Vec<String>, usize) {
-    let words: Vec<String> = line.split_whitespace().map(String::from).collect();
+    let mut words: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    let flush = |out: &mut Vec<String>, cur: &mut String| {
+        if !cur.is_empty() {
+            out.push(std::mem::take(cur));
+        }
+    };
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            ' ' | '\t' | '\n' => {
+                flush(&mut words, &mut cur);
+                i += 1;
+            }
+            ';' | '&' | '|' | '<' | '>' | '(' | ')' => {
+                flush(&mut words, &mut cur);
+                let mut tok = String::new();
+                tok.push(c);
+                while i + 1 < chars.len()
+                    && chars[i + 1] == c
+                    && matches!(c, '&' | '|' | ';' | '<' | '>')
+                {
+                    tok.push(c);
+                    i += 1;
+                }
+                words.push(tok);
+                i += 1;
+            }
+            '\'' => {
+                i += 1;
+                while i < chars.len() && chars[i] != '\'' {
+                    cur.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    i += 1;
+                }
+            }
+            '"' => {
+                i += 1;
+                while i < chars.len() && chars[i] != '"' {
+                    if chars[i] == '\\' && i + 1 < chars.len() {
+                        i += 1;
+                        cur.push(chars[i]);
+                        i += 1;
+                        continue;
+                    }
+                    cur.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    i += 1;
+                }
+            }
+            '\\' if i + 1 < chars.len() => {
+                cur.push(chars[i + 1]);
+                i += 2;
+            }
+            _ => {
+                cur.push(c);
+                i += 1;
+            }
+        }
+    }
+    flush(&mut words, &mut cur);
+    // Find which word index the cursor is in (best-effort).
     let mut pos = 0;
     let mut word_idx = 0;
     for (i, word) in line.split_whitespace().enumerate() {

@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-14T21:41:24.381590+00:00
+Generated: 2026-05-14T22:44:48.435317+00:00
 
 ## Method
 

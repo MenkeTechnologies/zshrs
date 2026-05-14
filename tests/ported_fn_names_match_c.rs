@@ -338,8 +338,18 @@ fn ported_fns_match_c_source() {
         fs::read_to_string(&file_mapping_allowlist_path).unwrap_or_default();
     let file_mapping_allowlist: HashSet<String> = file_mapping_src
         .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .map(|l| {
+            // Strip inline `# justification` so `key # comment`
+            // parses to just `key`. Matches the name-allowlist
+            // parser above.
+            let l = match l.find('#') {
+                Some(i) => &l[..i],
+                None => l,
+            };
+            l.trim()
+        })
+        .filter(|l| !l.is_empty())
         .map(|l| l.to_string())
         .collect();
 

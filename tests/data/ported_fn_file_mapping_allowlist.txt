@@ -21,37 +21,34 @@
 #
 # Lines starting with `#` are comments. Blank lines ignored.
 
-src/ported/compat.rs::pastebuf
-src/ported/compat.rs::unmetafy
-src/ported/init.rs::set_pwd_env
+# string.c family — Rust hosts string helpers in mem.rs since they
+# share the heap-arena/zalloc ABI. C splits string.c (zalloc wrappers
+# for char* manipulation) and mem.c (the arena itself); zshrs collapses
+# both into mem.rs.
 src/ported/mem.rs::appstr
+src/ported/mem.rs::bicat
+src/ported/mem.rs::dupstring
+src/ported/mem.rs::dupstring_wlen
+src/ported/mem.rs::dyncat
+src/ported/mem.rs::strend
+src/ported/mem.rs::tricat
+src/ported/mem.rs::ztrdup
+src/ported/mem.rs::ztrduppfx
+
+# utils.c-resident array helpers hosted in mem.rs (same heap-arena
+# rationale as the string.c entries above).
 src/ported/mem.rs::arrdup_max
 src/ported/mem.rs::arrlen
 src/ported/mem.rs::arrlen_gt
 src/ported/mem.rs::arrlen_le
 src/ported/mem.rs::arrlen_lt
-src/ported/mem.rs::bicat
-src/ported/mem.rs::dupstring
-src/ported/mem.rs::dupstring_wlen
-src/ported/mem.rs::dyncat
 src/ported/mem.rs::sepjoin
 src/ported/mem.rs::sepsplit
-src/ported/mem.rs::strend
-src/ported/mem.rs::tricat
 src/ported/mem.rs::zarrdup
-src/ported/mem.rs::zcontext_restore
-src/ported/mem.rs::zcontext_save
-src/ported/mem.rs::ztrdup
-src/ported/mem.rs::ztrduppfx
-src/ported/modules/watch.rs::printtime
-src/ported/signals.rs::getsigidx
-src/ported/signals.rs::getsigname
-src/ported/signals.rs::handler
-src/ported/utils.rs::base64_decode
-src/ported/utils.rs::bufferwords
-src/ported/utils.rs::checkglobqual
-src/ported/utils.rs::convfloat
-src/ported/utils.rs::convfloat_underscore
+
+# libc wrappers — zsh's C source references these without defining
+# them; the file-grep finds call-site occurrences only. utils.rs hosts
+# them since the syscall-wrapper layer collapses there in zshrs.
 src/ported/utils.rs::getegid
 src/ported/utils.rs::getenv
 src/ported/utils.rs::getgid
@@ -59,37 +56,42 @@ src/ported/utils.rs::gethostname
 src/ported/utils.rs::getpid
 src/ported/utils.rs::getppid
 src/ported/utils.rs::mkdir
-src/ported/utils.rs::pastebuf
-src/ported/utils.rs::printtime
 src/ported/utils.rs::realpath
 src/ported/utils.rs::setenv
-src/ported/utils.rs::statuidprint
 src/ported/utils.rs::symlink
 src/ported/utils.rs::unsetenv
-src/ported/utils.rs::zgetcwd
-src/ported/zle/zle_main.rs::acceptline
-src/ported/zle/zle_utils.rs::pastebuf
-src/ported/zle/compmatch.rs::parse_cmatcher
-src/ported/utils.rs::isident
-src/ported/modules/hlgroup.rs::match_colour
-src/ported/zle/zle_refresh.rs::match_colour
-src/ported/zle/zle_word.rs::bufferwords
+
+# Misplaced fns hosted in utils.rs that belong in their respective
+# C-file homes. Move-when-touched.
+src/ported/utils.rs::base64_decode      # termquery.c
+src/ported/utils.rs::checkglobqual      # glob.c
+src/ported/utils.rs::convfloat          # params.c
+src/ported/utils.rs::convfloat_underscore   # params.c (sibling of convfloat)
+src/ported/utils.rs::isident            # params.c
+src/ported/utils.rs::statuidprint       # stat.c (Modules)
+src/ported/utils.rs::zgetcwd            # compat.c
+src/ported/modules/watch.rs::printtime  # jobs.c (watch.c calls but doesn't define)
+
+# zle_bindings.rs hosts ports that span zle_keymap.c (bindkey,
+# bindlistout) + utils.c (getkeystring) + zle_utils.c (printbind).
+# The Rust file groups the user-facing `bindkey` builtin surface.
 src/ported/zle/zle_bindings.rs::bindkey
+src/ported/zle/zle_bindings.rs::bindlistout
 src/ported/zle/zle_bindings.rs::getkeystring
 src/ported/zle/zle_bindings.rs::printbind
-src/ported/zle/zle_bindings.rs::bindlistout
+
 # Port of `#define zistype(X,Y)` macro from Src/ztype.h:47. C indexes
 # it as `utils.c:zistype` because the macro is consumed inline in
-# utils.c; the canonical home is ztype.h which we map to ztype.rs.
-src/ported/ztype.rs::zistype
+# utils.c; the canonical home is ztype.h which we map to ztype_h.rs.
+src/ported/ztype_h.rs::zistype
 
 # Port of zsh_system.h's per-platform stat-time-nanosecond accessor
 # macros (zsh_system.h:877-897). C indexes them from the call sites
 # (cond.c, glob.c, stat.c — wherever stat() results are inspected);
-# canonical home is zsh_system.h which maps to zsh_system.rs.
-src/ported/zsh_system.rs::GET_ST_ATIME_NSEC
-src/ported/zsh_system.rs::GET_ST_MTIME_NSEC
-src/ported/zsh_system.rs::GET_ST_CTIME_NSEC
+# canonical home is zsh_system.h which maps to zsh_system_h.rs.
+src/ported/zsh_system_h.rs::GET_ST_ATIME_NSEC
+src/ported/zsh_system_h.rs::GET_ST_MTIME_NSEC
+src/ported/zsh_system_h.rs::GET_ST_CTIME_NSEC
 
 # Port of signals.h's macro family (signals.h:39-127). C uses
 # preprocessor macros so call sites get indexed across many .c
@@ -154,4 +156,3 @@ src/ported/zsh_h.rs::STRPARAMDEF
 src/ported/zsh_h.rs::ARRPARAMDEF
 src/ported/zsh_h.rs::SPECIALPMDEF
 src/ported/zsh_h.rs::WRAPDEF
-src/ported/zsh_h.rs::ZLONG_CONST

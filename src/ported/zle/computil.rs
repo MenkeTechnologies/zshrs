@@ -533,7 +533,7 @@ pub fn cd_prep() -> i32 {                                                    // 
         // c:297-303 — set sortstr from unmetafy(str) for each line.
         for line in prep_lines.iter_mut() {
             let s = line.str.clone().unwrap_or_default();
-            line.sortstr = Some(crate::ported::zle::zle_utils::unmetafy(&s));
+            line.sortstr = Some(crate::ported::utils::unmeta(&s));
         }
 
         // c:305 — sort if requested.

@@ -3633,7 +3633,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // contents as one token, strip outer quotes from
                     // the result). Matches zsh's `(z)` flag.
                     state = match state {
-                        St::S(s) => St::A(bufferwords_z(&s)),
+                        St::S(s) => St::A(bufferwords_z_tuple(&s, 0).0),
                         St::A(a) => St::A(a),
                     };
                 }

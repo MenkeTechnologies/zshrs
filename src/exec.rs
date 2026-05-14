@@ -83,9 +83,9 @@ pub(crate) use crate::func_body_fmt::FuncBodyFmt;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::utils::base64_decode;
 #[allow(unused_imports)]
-pub(crate) use crate::ported::utils::{
-    bufferwords as bufferwords_z, ispwd, printprompt4, quotedzputs,
-};
+pub(crate) use crate::ported::utils::{ispwd, printprompt4, quotedzputs};
+#[allow(unused_imports)]
+pub(crate) use crate::ported::hist::bufferwords as bufferwords_z_tuple;
 
 pub(crate) use crate::intercepts::intercept_matches;
 /// AOP advice type — before, after, or around.
