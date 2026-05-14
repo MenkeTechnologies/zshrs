@@ -436,7 +436,7 @@ impl lexbufstate {
 // `crate::lex::HereDoc` / `crate::parse::HereDocInfo` call sites keep
 // resolving. Both die in Phase 9e (PORT_PLAN.md) when the wordcode
 // port reinstates C's `struct heredocs` shape (zsh.h:1152) +
-// `gethere()` deferred body collection.
+// `gethere()` body collection.
 pub use crate::heredoc_ast::HereDoc;
 
 // =============================================================================
