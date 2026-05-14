@@ -2597,7 +2597,13 @@ pub fn par_funcdef_wordcode() {
     while tok() == STRING_LEX {
         let s = tokstr().unwrap_or_default();
         let bytes = s.as_bytes();
-        if bytes.len() == 1 && (bytes[0] == b'{' || s == "\u{8f}") {
+        // c:1701-1709 — `if (tokstr[0] == Inbrace || tokstr[0] == '{')
+        // { tok = INBRACE; break; }`. C tests the FIRST BYTE of tokstr,
+        // not its byte count. UTF-8: `\u{8f}` = `0xc2 0x8f` (2 bytes)
+        // but its first BYTE distinguishes the Inbrace marker form.
+        // Old `bytes.len() == 1` precondition rejected this 2-byte
+        // form and the funcdef body never started.
+        if (bytes.len() == 1 && bytes[0] == b'{') || s == "\u{8f}" {
             set_tok(INBRACE_TOK);
             break;
         }
@@ -3240,10 +3246,32 @@ pub fn par_simple_wordcode_impl(mut nr: i32) -> i32 {
                     }
                     zshlex();
                 } else {
-                    // Short-body or non-brace form not yet ported.
-                    cmdpop();
-                    error("par_simple: funcdef expected `{`");
-                    return 0;
+                    // c:2107-2132 — short-body funcdef form: `f() cmd` or
+                    // `() cmd`. Wraps single par_cmd result in a synthetic
+                    // WC_LIST / WC_SUBLIST / WC_PIPE(WC_PIPE_END, 0)
+                    // header trio.
+                    let ll = ecadd(0);
+                    let sl = ecadd(0);
+                    ecadd(WCB_PIPE(WC_PIPE_END, 0));
+                    let outer_cmplx = cmplx_get();
+                    cmplx_set(false);
+                    let ok = par_cmd_wordcode(argc == 0);
+                    let c = cmplx_get();
+                    cmplx_set(outer_cmplx | c);
+                    if !ok {
+                        cmdpop();
+                        error("par_simple: funcdef short-body: missing command");
+                        return 0;
+                    }
+                    if argc == 0 {
+                        // c:2118-2127 — anonymous funcdef may take args
+                        // after the body; first one already read.
+                        set_incmdpos(false);
+                    }
+                    // c:2130-2131
+                    let used = ECUSED.get() as usize;
+                    set_sublist_code(sl, WC_SUBLIST_END as i32, 0, (used.saturating_sub(1 + sl)) as i32, c);
+                    set_list_code(ll, Z_SYNC | Z_END, c);
                 }
                 cmdpop();
                 ecadd(WCB_END());
