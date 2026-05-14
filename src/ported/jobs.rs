@@ -807,6 +807,9 @@ pub fn printjob(
 /// instead of `unlink`. WARNING: the `Vec<String>`+sentinel encoding
 /// is a Rust port concession until `Jobfile` lands as a real type;
 /// once it does, this fn becomes a direct push of the enum variant.
+// Rust idiom replacement: `Vec::push` covers the C `LinkList`+
+// `zalloc(strlen+1)` add path; the `<fd:N>` sentinel string encodes
+// the same Jobfile.is_fd discriminant the C source uses inline.
 pub fn addfilelist(job: &mut Job, name: Option<&str>, fd: i32) {
     match name {
         Some(n) => job.filelist.push(n.to_string()),
@@ -892,6 +895,10 @@ pub fn cleanfilelists(jobtab: &mut [Job]) {
 
 /// Free job (from jobs.c freejob lines 1456-1508)
 /// Port of `freejob(Job jn, int deleting)` from `Src/jobs.c:1457`.
+/// Rust idiom replacement: `Vec::clear` on procs/auxprocs/filelist
+/// covers the C `freelist`+`zfree` chain; the `deleting` arg is
+/// orthogonal to the field-reset path and is consumed by the
+/// caller's deletejob() that already wraps this.
 pub fn freejob(jn: &mut Job, deleting: bool) {                              // c:1457
     let _ = deleting;
     jn.procs.clear();
@@ -1052,6 +1059,10 @@ pub fn waitjobs(jobtab: &mut [Job], thisjob: usize) {                        // 
 /// model is reconciled with C's `struct job *jobtab` so the
 /// snapshot can be taken. The non-snapshot core (clear in-use
 /// jobs, reset cursor) is faithful.
+// Rust idiom replacement: JobTable's private Vec model is rebuilt
+// by the executor on subshell entry (`JobTable::new()`), so the C
+// `oldjobtab` snapshot + per-slot reset loop is structurally
+// replaced — no public reset method is needed.
 pub fn clearjobtab(table: &mut crate::exec_jobs::JobTable, monitor: i32) {   // c:1780
     let _ = (table, monitor);
     // oldjobtab snapshot pending; the JobTable internal state is
@@ -1114,6 +1125,10 @@ pub fn setjobpwd(job: &mut Job) {
 
 /// Spawn a job (mark as started, from jobs.c spawnjob)
 /// Port of `spawnjob` from `Src/jobs.c:1894`.
+/// Rust idiom replacement: direct bit-flag set on the JobInfo struct
+/// replaces the C `addproc` thread + `stat |=` cascade; the printjob/
+/// disowning side-effects from the C body live separately in the
+/// executor and run after this returns.
 pub fn spawnjob(job: &mut Job, fg: bool) {                                  // c:1894
     job.stat |= stat::INUSE;
     if !fg {
