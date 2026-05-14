@@ -326,36 +326,50 @@ pub fn putshout(c: char) -> i32 {                                            // 
     0                                                                        // c:437
 }
 
-/// Nice char with quoting selection (from utils.c nicechar_sel)
 /// Port of `nicechar_sel(int c, int quotable)` from `Src/utils.c:462`.
-/// Rust idiom replacement: pure delegation to `nicechar`, no body
-/// substrate.
-pub fn nicechar_sel(c: char, quotable: bool) -> String {
-    if quotable && ispecial(c) {
-        format!("\\{}", c)
-    } else {
-        nicechar(c)
+/// Renders one byte as its `^X` / `M-X` / `\\n` / `\\t` display form;
+/// `quotable=true` emits `\\C-X` instead of `^X` so the result is
+/// shell-quotable.
+pub fn nicechar_sel(c: char, quotable: bool) -> String {                     // c:462
+    // `ZISPRINT(c)` from ztype.h:87/89 — `isprint_ascii(c)` /
+    // `isprint(c)`; printable iff in 0x20..0x7f (ASCII) or 0xa0..
+    // (Latin-1) for the i18n branch. Match the ASCII branch.
+    let is_print = |b: u32| (0x20..0x7f).contains(&b) || b >= 0xa0;
+    let mut c = (c as u32) & 0xff;
+    let mut out = String::new();
+    if !is_print(c) {                                                        // c:467
+        if c & 0x80 != 0 {                                                   // c:469
+            if !isset(PRINTEIGHTBIT) {                                       // c:470
+                out.push_str("\\M-");                                        // c:472-474
+                c &= 0x7f;                                                   // c:475
+            }
+        }
+        if is_print(c) {
+            // fall through to "done"
+        } else if c == 0x7f {                                                // c:479
+            out.push_str(if quotable { "\\C-" } else { "^" });               // c:481-486
+            c = b'?' as u32;
+        } else if c == b'\n' as u32 {                                        // c:487
+            out.push('\\');
+            c = b'n' as u32;
+        } else if c == b'\t' as u32 {                                        // c:490
+            out.push('\\');
+            c = b't' as u32;
+        } else if c < 0x20 {                                                 // c:493
+            out.push_str(if quotable { "\\C-" } else { "^" });               // c:494-499
+            c += 0x40;
+        }
     }
+    if let Some(ch) = char::from_u32(c) {                                    // c:511
+        out.push(ch);
+    }
+    out
 }
 
-/// Nicely format a string for display (escape unprintable chars)
-/// Render a control character as a printable form.
-/// Port of `nicechar(int c)` from Src/utils.c — same `^X`/`M-X`
-/// /`\xNN` rules used by `print -P` and the prompt path.
-pub fn nicechar(c: char) -> String {                                        // c:520
-    if c.is_ascii_control() {
-        match c {
-            '\n' => "\\n".to_string(),
-            '\t' => "\\t".to_string(),
-            '\r' => "\\r".to_string(),
-            '\x1b' => "\\e".to_string(),
-            _ => format!("^{}", ((c as u8) + 64) as char),
-        }
-    } else if c == '\x7f' {
-        "^?".to_string()
-    } else {
-        c.to_string()
-    }
+/// Port of `nicechar(int c)` from Src/utils.c:520. C body:
+///     `return nicechar_sel(c, 0);`
+pub fn nicechar(c: char) -> String {                                         // c:520
+    nicechar_sel(c, false)                                                   // c:523
 }
 
 /// Initialize multibyte state (from utils.c mb_charinit) - no-op in Rust

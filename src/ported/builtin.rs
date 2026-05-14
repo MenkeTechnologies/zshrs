@@ -4874,31 +4874,19 @@ pub fn checkjobs() {                                                         // 
 }
 
 /// Port of `realexit()` from Src/builtin.c:5953.
-/// C: `void realexit(void)` →
+/// C body (single statement):
 ///     `exit((shell_exiting || exit_pending) ? exit_val : lastval);`
 pub fn realexit() -> ! {                                                     // c:5953
-    let code = if SHELL_EXITING.load(std::sync::atomic::Ordering::Relaxed) != 0
-        || EXIT_PENDING.load(std::sync::atomic::Ordering::Relaxed) != 0      // c:5962
-    {
-        EXIT_VAL.load(std::sync::atomic::Ordering::Relaxed)
-    } else {
-        LASTVAL.load(std::sync::atomic::Ordering::Relaxed)
-    };
-    std::process::exit(code);                                                // c:5962
+    use std::sync::atomic::Ordering::Relaxed;
+    std::process::exit(if SHELL_EXITING.load(Relaxed) != 0 || EXIT_PENDING.load(Relaxed) != 0 { EXIT_VAL.load(Relaxed) } else { LASTVAL.load(Relaxed) });
 }
 
 /// Port of `_realexit()` from Src/builtin.c:5962.
-/// C: `void _realexit(void)` →
+/// C body (single statement):
 ///     `_exit((shell_exiting || exit_pending) ? exit_val : lastval);`
 pub fn _realexit() -> ! {                                                    // c:5962
-    let code = if SHELL_EXITING.load(std::sync::atomic::Ordering::Relaxed) != 0
-        || EXIT_PENDING.load(std::sync::atomic::Ordering::Relaxed) != 0      // c:5965
-    {
-        EXIT_VAL.load(std::sync::atomic::Ordering::Relaxed)
-    } else {
-        LASTVAL.load(std::sync::atomic::Ordering::Relaxed)
-    };
-    unsafe { libc::_exit(code) }                                             // c:5965
+    use std::sync::atomic::Ordering::Relaxed;
+    unsafe { libc::_exit(if SHELL_EXITING.load(Relaxed) != 0 || EXIT_PENDING.load(Relaxed) != 0 { EXIT_VAL.load(Relaxed) } else { LASTVAL.load(Relaxed) }) }
 }
 
 /// Port of `zexit(int val, enum zexit_t from_where)` from Src/builtin.c:5977.
